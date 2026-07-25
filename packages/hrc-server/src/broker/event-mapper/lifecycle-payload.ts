@@ -89,6 +89,9 @@ export function emitLifecycleEvent(
   if (eventKind === 'turn.user_prompt' && isEchoedUserPrompt(db, envelope, ctx)) {
     return undefined
   }
+  if (eventKind === 'turn.accepted' && hasDurableTurnAcceptance(db, ctx)) {
+    return undefined
+  }
   return appendHrcEvent(db, eventKind, {
     ts: now,
     hostSessionId: ctx.hostSessionId,
@@ -100,6 +103,13 @@ export function emitLifecycleEvent(
     transport: ctx.transport,
     payload: lifecyclePayload(envelope, ctx.transport),
   })
+}
+
+function hasDurableTurnAcceptance(db: HrcDatabase, ctx: ProjectionContext): boolean {
+  return (
+    ctx.runId !== undefined &&
+    db.hrcEvents.listByRun(ctx.runId, { eventKind: 'turn.accepted' }).length > 0
+  )
 }
 
 function isEchoedUserPrompt(

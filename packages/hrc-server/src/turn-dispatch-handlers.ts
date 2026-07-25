@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -10,6 +10,7 @@ import {
 } from 'hrc-core'
 import type {
   DispatchTurnResponse,
+  DispatchTurnTerminalOutcome,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -68,6 +69,209 @@ import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+
+type PublicDispatchWaitStage = 'accepted' | 'turn_started' | 'terminal'
+
+type InFlightIdempotentDispatch = {
+  requestHash: string
+  promise: Promise<DispatchTurnResponse>
+}
+
+const idempotentDispatches = new WeakMap<
+  HrcServerInstanceForHandlers,
+  Map<string, InFlightIdempotentDispatch>
+>()
+
+function canonicalDispatchJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalDispatchJson).join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalDispatchJson(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function dispatchRequestHash(input: {
+  prompt: string
+  runtimeIntent?: HrcRuntimeIntent | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+  attachments?: unknown
+  whenBusy?: 'reject' | undefined
+  repair?: unknown
+}): string {
+  return createHash('sha256')
+    .update(
+      canonicalDispatchJson({
+        prompt: input.prompt,
+        runtimeIntent: input.runtimeIntent,
+        responseFormat: input.responseFormat,
+        attachments: input.attachments,
+        whenBusy: input.whenBusy,
+        repair: input.repair,
+      })
+    )
+    .digest('hex')
+}
+
+function resolvePublicWaitStage(input: {
+  waitFor?: PublicDispatchWaitStage | undefined
+  waitForCompletion?: boolean | undefined
+}): PublicDispatchWaitStage {
+  if (input.waitFor !== undefined) return input.waitFor
+  return input.waitForCompletion === true ? 'terminal' : 'accepted'
+}
+
+function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefined {
+  return status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'zombie'
+    ? status
+    : undefined
+}
+
+function publicDispatchBody(
+  body: Omit<DispatchTurnResponse, 'stage' | 'status' | 'outcome' | 'replayed' | 'error'> & {
+    status?: string | undefined
+  },
+  stage: DispatchTurnResponse['stage'],
+  options: {
+    replayed: boolean
+    outcome?: DispatchTurnTerminalOutcome | undefined
+    errorCode?: string | undefined
+    errorMessage?: string | undefined
+  }
+): DispatchTurnResponse {
+  const status =
+    stage === 'accepted'
+      ? 'accepted'
+      : stage === 'turn_started'
+        ? 'started'
+        : (options.outcome ?? 'failed')
+  return {
+    ...body,
+    stage,
+    status,
+    replayed: options.replayed,
+    ...(options.outcome !== undefined ? { outcome: options.outcome } : {}),
+    ...(options.errorMessage !== undefined
+      ? {
+          error: {
+            ...(options.errorCode !== undefined ? { code: options.errorCode } : {}),
+            message: options.errorMessage,
+          },
+        }
+      : {}),
+  } as DispatchTurnResponse
+}
+
+function replayDispatchBody(
+  server: HrcServerInstanceForHandlers,
+  run: NonNullable<ReturnType<HrcServerInstanceForHandlers['db']['runs']['getByRunId']>>
+): DispatchTurnResponse {
+  const runtime =
+    run.runtimeId !== undefined ? server.db.runtimes.getByRuntimeId(run.runtimeId) : null
+  if (runtime === null || run.runtimeId === undefined) {
+    throw new HrcRuntimeUnavailableError('accepted dispatch runtime is unavailable', {
+      runId: run.runId,
+      hostSessionId: run.hostSessionId,
+      route: 'dispatch-idempotency-replay',
+    })
+  }
+  const invocationId = run.invocationId ?? runtime.activeInvocationId
+  const firstLifecycleSeq =
+    server.db.hrcEvents.listByRun(run.runId).map((event) => event.hrcSeq)[0] ??
+    server.db.hrcEvents.maxHrcSeq() + 1
+  const base = {
+    runId: run.runId,
+    hostSessionId: run.hostSessionId,
+    generation: run.generation,
+    runtimeId: run.runtimeId,
+    transport: runtime.transport as DispatchTurnResponse['transport'],
+    // Broker-headless runtime rows remain queue-capable internally, but the
+    // public in-flight endpoint is SDK-only. Preserve the same truthful
+    // capability projection on idempotent replay as on the original response.
+    supportsInFlightInput: runtime.transport === 'headless' ? false : runtime.supportsInflightInput,
+    startIdentity:
+      invocationId !== undefined
+        ? ({ kind: 'broker', invocationId } as const)
+        : ({ kind: 'sdk' } as const),
+    observation: {
+      lifecycle: {
+        selector: {
+          runId: run.runId,
+          runtimeId: run.runtimeId,
+          generation: run.generation,
+        },
+        fromSeq: firstLifecycleSeq,
+      },
+      ...(invocationId !== undefined
+        ? {
+            broker: {
+              selector: {
+                invocationId,
+                runId: run.runId,
+                runtimeId: run.runtimeId,
+                generation: run.generation,
+              },
+              afterSeq: 0,
+            },
+          }
+        : {}),
+    },
+  }
+  const outcome = terminalOutcome(run.status)
+  return publicDispatchBody(base, outcome === undefined ? 'accepted' : 'terminal', {
+    replayed: true,
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+    ...(run.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+  })
+}
+
+async function waitForPublicDispatchStage(
+  server: HrcServerInstanceForHandlers,
+  base: DispatchTurnResponse,
+  requested: PublicDispatchWaitStage,
+  replayed: boolean
+): Promise<Response> {
+  if (requested === 'accepted' || base.stage === 'terminal') {
+    return json({ ...base, replayed }, base.stage === 'accepted' ? 202 : 200)
+  }
+
+  for (;;) {
+    const run = server.db.runs.getByRunId(base.runId)
+    if (run === null) {
+      throw new HrcRuntimeUnavailableError('accepted dispatch run disappeared', {
+        runId: base.runId,
+        route: 'dispatch-stage-wait',
+      })
+    }
+    const started =
+      server.db.hrcEvents.listByRun(base.runId, { eventKind: 'turn.started' }).length > 0
+    if (requested === 'turn_started' && started) {
+      return json(publicDispatchBody(base, 'turn_started', { replayed }), 200)
+    }
+    const outcome = terminalOutcome(run.status)
+    if (outcome !== undefined) {
+      return json(
+        publicDispatchBody(base, 'terminal', {
+          replayed,
+          outcome,
+          ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+          ...(run.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+        }),
+        200
+      )
+    }
+    await delay(25)
+  }
+}
 
 export async function handleEnsureRuntime(
   this: HrcServerInstanceForHandlers,
@@ -209,7 +413,16 @@ export async function handleDispatchTurn(
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'dispatch-turn',
   })
+  const waitFor = resolvePublicWaitStage(body)
   const runId = `run-${randomUUID()}`
+  const requestHash = dispatchRequestHash({
+    prompt: body.prompt,
+    runtimeIntent: body.runtimeIntent ?? session.lastAppliedIntentJson,
+    responseFormat: body.responseFormat,
+    attachments: body.attachments,
+    whenBusy: body.whenBusy,
+    repair: body.repair,
+  })
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
     session,
@@ -219,16 +432,95 @@ export async function handleDispatchTurn(
     body.attachments !== undefined
       ? { ...parsedIntent, attachments: body.attachments }
       : parsedIntent
+  const idempotencyKey = body.idempotencyKey
 
-  return await this.dispatchTurnForSession(session, intent, body.prompt, {
-    runId,
-    waitForCompletion: body.waitForCompletion,
-    whenBusy: body.whenBusy,
-    responseFormat: body.responseFormat,
-    ...(body.repair !== undefined
-      ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
-      : {}),
-  })
+  if (idempotencyKey !== undefined) {
+    const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
+    if (existing !== null) {
+      if (
+        existing.dispatchRequestHash !== undefined &&
+        existing.dispatchRequestHash !== requestHash
+      ) {
+        throw new HrcConflictError(
+          HrcErrorCode.STALE_CONTEXT,
+          'dispatch idempotency key was already used for a different request',
+          {
+            hostSessionId: session.hostSessionId,
+            idempotencyKey,
+            runId: existing.runId,
+          }
+        )
+      }
+      return await waitForPublicDispatchStage(
+        this,
+        replayDispatchBody(this, existing),
+        waitFor,
+        true
+      )
+    }
+  }
+
+  const operationKey =
+    idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
+  const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
+  if (!idempotentDispatches.has(this)) {
+    idempotentDispatches.set(this, operations)
+  }
+  const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
+  if (pending !== undefined) {
+    if (pending.requestHash !== requestHash) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        'dispatch idempotency key is in flight for a different request',
+        {
+          hostSessionId: session.hostSessionId,
+          idempotencyKey,
+        }
+      )
+    }
+    return await waitForPublicDispatchStage(this, await pending.promise, waitFor, true)
+  }
+
+  const dispatch = async (): Promise<DispatchTurnResponse> => {
+    const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
+      runId,
+      // Public dispatch acknowledgement is always detached at the route layer.
+      // Evidence-backed waits happen below against the durable run projection.
+      waitForCompletion: false,
+      whenBusy: body.whenBusy,
+      responseFormat: body.responseFormat,
+      ...(body.repair !== undefined
+        ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
+        : {}),
+    })
+    const legacy = (await response.json()) as DispatchTurnResponse
+    if (idempotencyKey !== undefined) {
+      this.db.runs.update(runId, {
+        dispatchIdempotencyKey: idempotencyKey,
+        dispatchRequestHash: requestHash,
+      })
+    }
+    const run = this.db.runs.getByRunId(runId)
+    const outcome = run ? terminalOutcome(run.status) : undefined
+    return publicDispatchBody(legacy, outcome === undefined ? 'accepted' : 'terminal', {
+      replayed: false,
+      ...(outcome !== undefined ? { outcome } : {}),
+      ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+      ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+    })
+  }
+
+  const dispatchPromise = dispatch()
+  if (operationKey !== undefined) {
+    operations.set(operationKey, { requestHash, promise: dispatchPromise })
+  }
+  try {
+    return await waitForPublicDispatchStage(this, await dispatchPromise, waitFor, false)
+  } finally {
+    if (operationKey !== undefined && operations.get(operationKey)?.promise === dispatchPromise) {
+      operations.delete(operationKey)
+    }
+  }
 }
 
 export async function openHeadlessBrokerSessionForSession(

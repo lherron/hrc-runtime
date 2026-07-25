@@ -556,6 +556,7 @@ export async function startController(
           }
         : input.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
+    await input.onAccepted?.(persisted)
     if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
       await ctx.pauseForAttachedInvocationStart({
         pending: input.attachBeforeInvocationStart,

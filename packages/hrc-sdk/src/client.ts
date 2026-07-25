@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   HrcHttpError,
   HrcLifecycleEvent,
@@ -348,7 +350,10 @@ export class HrcClient {
   }
 
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
-    return this.postJson<DispatchTurnResponse>('/v1/turns', request)
+    return this.postJson<DispatchTurnResponse>('/v1/turns', {
+      ...request,
+      idempotencyKey: request.idempotencyKey ?? `hrc-sdk-${randomUUID()}`,
+    })
   }
 
   async prepareAttachedRun(

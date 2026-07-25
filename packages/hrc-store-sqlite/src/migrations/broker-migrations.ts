@@ -592,6 +592,32 @@ const observationalEventProvenanceMigration: HrcMigration = {
   },
 }
 
+// T-06592: caller-stable dispatch identity closes the lost-response duplicate
+// window on shared POST /v1/turns. The partial unique index preserves legacy
+// rows (NULL key) while making one key authoritative per host session.
+const runsDispatchIdempotencyMigration: HrcMigration = {
+  id: '0034_runs_dispatch_idempotency',
+  apply(db) {
+    const runColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!runColumns.has('dispatch_idempotency_key')) {
+      db.exec('ALTER TABLE runs ADD COLUMN dispatch_idempotency_key TEXT')
+    }
+    if (!runColumns.has('dispatch_request_hash')) {
+      db.exec('ALTER TABLE runs ADD COLUMN dispatch_request_hash TEXT')
+    }
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_dispatch_idempotency
+        ON runs(host_session_id, dispatch_idempotency_key)
+        WHERE dispatch_idempotency_key IS NOT NULL;
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -604,4 +630,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runtimeArtifactOperationKindMigration,
   runsBrokerInputFenceMigration,
   observationalEventProvenanceMigration,
+  runsDispatchIdempotencyMigration,
 ]

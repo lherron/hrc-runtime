@@ -597,7 +597,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
     expect(body.runtimeId).toBe(runtimeId)
     expect(runIdsForRuntime(runtimeId)).toHaveLength(runIdsBefore.length + 1)
@@ -643,7 +643,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as { runtimeId?: string }
     expect(body.runtimeId).toBe(headlessRuntimeId)
     expect(dispatchSpy.calls).toHaveLength(1)
@@ -678,7 +678,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as { runtimeId?: string }
     expect(body.runtimeId).toBe(interactiveRuntimeId)
     expect(dispatchSpy.calls).toHaveLength(1)
@@ -739,7 +739,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as { runtimeId?: string }
     expect(body.runtimeId).toBe(interactiveRuntimeId)
     expect(dispatchSpy.calls).toHaveLength(1)

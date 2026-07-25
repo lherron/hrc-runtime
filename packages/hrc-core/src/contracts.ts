@@ -374,6 +374,10 @@ export type HrcRunRecord = {
   // canonical run/runtime state.
   brokerInputFencedAt?: string | undefined
   brokerInputFenceReason?: string | undefined
+  /** Caller-owned retry identity for shared /v1/turns dispatch. */
+  dispatchIdempotencyKey?: string | undefined
+  /** Canonical semantic request hash used to reject conflicting key reuse. */
+  dispatchRequestHash?: string | undefined
 }
 
 export type HrcLaunchRecord = {

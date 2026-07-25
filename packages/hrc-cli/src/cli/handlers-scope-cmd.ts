@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-import type { HrcRuntimeIntent } from 'hrc-core'
+import type { DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
@@ -57,11 +58,18 @@ export function buildStartFollowCommands(scopeRef: string): StartFollowCommand[]
   ]
 }
 
-function printStartFollowHint(follow: readonly StartFollowCommand[]): void {
+function printStartFollowHint(
+  follow: readonly StartFollowCommand[],
+  stage?: 'accepted' | 'turn_started' | 'terminal'
+): void {
+  const headline =
+    stage === 'turn_started'
+      ? 'turn started — follow with:'
+      : stage === 'terminal'
+        ? 'turn terminal — inspect with:'
+        : 'accepted detached — follow with:'
   process.stderr.write(
-    `started detached — follow with:\n${follow
-      .map(({ purpose, cmd }) => `  ${cmd}  # ${purpose}`)
-      .join('\n')}\n`
+    `${headline}\n${follow.map(({ purpose, cmd }) => `  ${cmd}  # ${purpose}`).join('\n')}\n`
   )
 }
 
@@ -72,7 +80,8 @@ export async function executeManagedStart(
     intent: HrcRuntimeIntent
     prompt?: string | undefined
     restartStyle: 'reuse_pty' | 'fresh_pty'
-    waitForCompletion?: boolean | undefined
+    waitFor?: NonNullable<DispatchTurnRequest['waitFor']> | undefined
+    idempotencyKey?: string | undefined
   }
 ) {
   const prompt = input.prompt
@@ -94,9 +103,11 @@ export async function executeManagedStart(
 
   const result = await client.dispatchTurn({
     hostSessionId: input.hostSessionId,
+    idempotencyKey: input.idempotencyKey ?? `hrc-start-${randomUUID()}`,
     prompt,
     runtimeIntent: input.intent,
-    waitForCompletion: input.waitForCompletion === true,
+    waitFor: input.waitFor ?? 'accepted',
+    waitForCompletion: input.waitFor === 'terminal',
   })
   const execution = (
     result as typeof result & {
@@ -106,6 +117,11 @@ export async function executeManagedStart(
   if (execution?.state === 'failed') {
     throw new Error(
       execution.errorMessage ?? `input "${prompt}" was not delivered by the target runtime`
+    )
+  }
+  if (result.stage === 'terminal' && result.outcome !== 'completed') {
+    throw new Error(
+      result.error?.message ?? `turn ${result.runId} ended with ${result.outcome ?? result.status}`
     )
   }
   return result
@@ -438,7 +454,23 @@ export async function cmdStart(args: string[]): Promise<void> {
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
   const jsonOutput = hasFlag(args, '--json')
-  const waitForCompletion = hasFlag(args, '--wait')
+  const waitToken = args.find((arg) => arg === '--wait' || arg.startsWith('--wait='))
+  const waitIndex = args.indexOf('--wait')
+  const followingWaitMode = waitIndex >= 0 ? args[waitIndex + 1] : undefined
+  const waitMode = waitToken?.startsWith('--wait=')
+    ? waitToken.slice('--wait='.length)
+    : followingWaitMode === 'started' || followingWaitMode === 'completed'
+      ? followingWaitMode
+      : waitToken === '--wait'
+        ? 'completed'
+        : undefined
+  const waitFor =
+    waitMode === 'started'
+      ? ('turn_started' as const)
+      : waitMode === 'completed'
+        ? 'terminal'
+        : undefined
+  const idempotencyKey = parseFlag(args, '--idempotency-key')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
@@ -451,6 +483,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--no-register',
       '--json',
       '--wait',
+      '--idempotency-key',
       '--project-id',
       '--project-root',
     ],
@@ -496,7 +529,8 @@ export async function cmdStart(args: string[]): Promise<void> {
       intent,
       prompt,
       restartStyle,
-      waitForCompletion,
+      waitFor,
+      idempotencyKey,
     })
 
     const follow = prompt === undefined ? undefined : buildStartFollowCommands(scope.scopeRef)
@@ -508,7 +542,10 @@ export async function cmdStart(args: string[]): Promise<void> {
       ...(jsonOutput && follow !== undefined ? { follow } : {}),
     })
     if (!jsonOutput && follow !== undefined) {
-      printStartFollowHint(follow)
+      printStartFollowHint(
+        follow,
+        'stage' in runtime ? (runtime.stage as 'accepted' | 'turn_started' | 'terminal') : undefined
+      )
     }
   } catch (err) {
     if (jsonOutput) {

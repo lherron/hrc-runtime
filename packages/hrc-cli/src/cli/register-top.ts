@@ -56,11 +56,12 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
+    .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .addOption(
-      new Option('--wait [mode]', 'wait for the prompt turn to complete')
-        .choices(['completed'])
+      new Option('--wait [mode]', 'wait for the prompt turn to start or become terminal')
+        .choices(['started', 'completed'])
         .preset('completed')
     )
     .action(async (_scope, _opts, cmd: Command) => {
@@ -71,8 +72,8 @@ export function registerTopLevelCommands(program: Command): void {
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json', 'wait'],
+        strings: ['project-id', 'project-root', 'prompt-file', 'idempotency-key', 'wait'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['register'],
       })
       await cmdStart(args)

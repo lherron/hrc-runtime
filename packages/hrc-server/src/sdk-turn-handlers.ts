@@ -36,7 +36,10 @@ import {
 import type { InFlightInputResponse } from './server-types.js'
 import { json, timestamp } from './server-util.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
 
 export function failSdkHarnessPath(
   this: HrcServerInstanceForHandlers,

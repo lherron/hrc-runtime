@@ -227,11 +227,18 @@ export type EnsureWindowResponse = EnsureRuntimeResponse & {
 
 export type DispatchTurnRequest = {
   hostSessionId: string
+  /**
+   * Caller-stable identity for retrying a dispatch after an ambiguous/lost
+   * response. Reuse with a different semantic request is rejected.
+   */
+  idempotencyKey?: string | undefined
   prompt: string
   responseFormat?: HrcTurnResponseFormat | undefined
   attachments?: AttachmentRef[] | undefined
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
+  /** Preferred acknowledgement boundary. Supersedes waitForCompletion when set. */
+  waitFor?: 'accepted' | 'turn_started' | 'terminal' | undefined
   waitForCompletion?: boolean | undefined
   whenBusy?: 'reject' | undefined
   repair?:
@@ -249,13 +256,19 @@ export type DispatchTurnRequest = {
   allowStaleGeneration?: boolean | undefined
 }
 
+export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'
+
 export type DispatchTurnResponse = {
   runId: string
   hostSessionId: string
   generation: number
   runtimeId: string
   transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
-  status: 'completed' | 'started'
+  stage: 'accepted' | 'turn_started' | 'terminal'
+  status: 'accepted' | 'started' | DispatchTurnTerminalOutcome
+  outcome?: DispatchTurnTerminalOutcome | undefined
+  replayed: boolean
+  error?: { code?: string | undefined; message: string } | undefined
   supportsInFlightInput: boolean
   startIdentity: { kind: 'broker'; invocationId: string } | { kind: 'sdk' }
   observation: {

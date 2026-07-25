@@ -413,6 +413,18 @@ export type BrokerControllerStartInput = {
    * startRequestHash (INV-14.4 compiler closure).
    */
   lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
+  /**
+   * Fires after the complete start graph is durable and before the potentially
+   * long invocation-start RPC. Detached callers use this as their truthful
+   * acceptance boundary.
+   */
+  onAccepted?:
+    | ((graph: {
+        runtime: HrcRuntimeSnapshot
+        run?: HrcRunRecord | undefined
+        invocation: HrcBrokerInvocationRecord
+      }) => Promise<void> | void)
+    | undefined
 }
 
 export type BrokerControllerStartResult =

@@ -361,16 +361,24 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   }
 
   const runtimeIntent = input['runtimeIntent']
+  const idempotencyKey = readOptionalNonEmptyStringField(input, 'idempotencyKey')
   const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
   const waitForCompletion = readOptionalBooleanField(input, 'waitForCompletion')
+  const waitFor = requireOptionalOneOf(
+    input['waitFor'],
+    ['accepted', 'turn_started', 'terminal'],
+    'waitFor must be "accepted", "turn_started", or "terminal"',
+    { field: 'waitFor' }
+  )
   const whenBusy = parseOptionalDispatchTurnWhenBusy(input['whenBusy'])
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
 
   return {
     hostSessionId: hostSessionId.trim(),
+    ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     prompt: prompt.trim(),
     ...(responseFormat !== undefined ? { responseFormat } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
@@ -379,6 +387,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
       : {}),
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
     ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
+    ...(waitFor !== undefined ? { waitFor } : {}),
     ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(repair !== undefined ? { repair } : {}),

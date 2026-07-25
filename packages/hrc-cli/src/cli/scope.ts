@@ -422,7 +422,12 @@ export async function parseScopePrompt(
 
     if (options.passthroughFlags.includes(arg)) {
       // Value-taking passthrough flags must also consume their value.
-      if (arg === '--project-id' || arg === '--project-root') {
+      if (
+        arg === '--project-id' ||
+        arg === '--project-root' ||
+        arg === '--wait' ||
+        arg === '--idempotency-key'
+      ) {
         if (args[i + 1] === undefined) fatal(`${arg} requires a value`)
         i += 1
       }

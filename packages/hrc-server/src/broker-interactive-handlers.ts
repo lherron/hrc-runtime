@@ -69,7 +69,10 @@ import {
   spawnHeadlessClaudeViewer,
 } from './broker-interactive-handlers/controller-factory.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -444,28 +447,68 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
-  const runtime = await this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
+  let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
+  let rejectAccepted!: (error: unknown) => void
+  let acceptedSettled = false
+  const accepted = new Promise<HrcRuntimeSnapshot>((resolve, reject) => {
+    resolveAccepted = (runtime) => {
+      acceptedSettled = true
+      resolve(runtime)
+    }
+    rejectAccepted = reject
+  })
+  const bootOperation = this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
     flagEnvName: flagOptions.flagEnvName,
     allowedBrokerDriver: flagOptions.allowedBrokerDriver,
     ...(flagOptions.attachBeforeInvocationStart
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
+    onAccepted: (runtime) => {
+      if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
+        const acceptedAt = timestamp()
+        this.notifyEvent(
+          appendHrcEvent(this.db, 'turn.accepted', {
+            ts: acceptedAt,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runId,
+            runtimeId: runtime.runtimeId,
+            transport: 'tmux',
+            payload: {
+              promptLength: prompt.length,
+              authority: 'durable-start-graph',
+            },
+          })
+        )
+      }
+      resolveAccepted(runtime)
+    },
+  })
+    .then((runtime) => {
+      // Claude broker dispatch through non-attached surfaces (hrcchat,
+      // agent-loop) starts a tmux TUI with no operator terminal watching it.
+      // Presentation stays best-effort and outside the acceptance boundary.
+      if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
+        void this.spawnBrokerHeadlessViewer(runtime, {
+          operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+        })
+      }
+      if (!acceptedSettled) resolveAccepted(runtime)
+      return runtime
+    })
+    .finally(() => {
+      this.runtimeStartOperations?.delete(session.hostSessionId)
+    })
+  this.runtimeStartOperations?.set(session.hostSessionId, bootOperation)
+  void bootOperation.catch((error) => {
+    if (!acceptedSettled) rejectAccepted(error)
   })
 
-  // Claude broker dispatch through non-attached surfaces (hrcchat, agent-loop)
-  // starts a tmux TUI with no operator terminal watching it. Pop a best-effort
-  // viewer; spawnBrokerHeadlessViewer owns the global policy gate and dedupe.
-  if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-    await this.spawnBrokerHeadlessViewer(runtime, {
-      operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
-    })
-  }
-
-  // T-01770 Phase C: block the synchronous caller on the first broker turn
-  // (the start delivers the initial prompt under diagnosticRunId). Async
-  // reply-bridge callers pass waitForCompletion:false to get status:'started'.
   if (!shouldBlockForBrokerTurnCompletion(flagOptions.waitForCompletion)) {
+    const runtime = await accepted
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -477,6 +520,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     } satisfies DispatchTurnResponseBase)
   }
 
+  const runtime = await bootOperation
+  // T-01770 Phase C: block the synchronous caller on the first broker turn
+  // (the start delivers the initial prompt under diagnosticRunId). Async
+  // reply-bridge callers pass waitForCompletion:false to get status:'started'.
   await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
   return json({
     runId,
@@ -869,6 +916,7 @@ export async function startInteractiveTmuxBrokerRuntime(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
   const now = timestamp()
@@ -1039,9 +1087,71 @@ export async function startInteractiveTmuxBrokerRuntime(
         routeId: `interactive-broker:${compiled.profile.brokerDriver}`,
         brokerRoute: true,
       }),
+      ...(flagOptions.onAccepted
+        ? {
+            onAccepted: async (graph) => {
+              await flagOptions.onAccepted?.(graph.runtime)
+            },
+          }
+        : {}),
     })
 
     if (!result.ok) {
+      const acceptedRun = this.db.runs.getByRunId(diagnosticRunId)
+      if (acceptedRun !== null && isRunActive(acceptedRun)) {
+        const failedAt = timestamp()
+        this.db.runs.markCompleted(diagnosticRunId, {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: result.error.message,
+        })
+        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
+          invocationState: 'failed',
+          updatedAt: failedAt,
+        })
+        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: result.error.code,
+          errorMessage: result.error.message,
+        })
+        this.db.runtimes.update(runtimeId, {
+          status: 'failed',
+          statusChangedAt: failedAt,
+          activeRunId: diagnosticRunId,
+          updatedAt: failedAt,
+          runtimeStateJson: {
+            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+            status: 'failed',
+            updatedAt: failedAt,
+            startFailure: {
+              code: result.error.code,
+              message: result.error.message,
+            },
+          },
+        })
+        this.notifyEvent(
+          appendHrcEvent(this.db, 'turn.failed', {
+            ts: failedAt,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runId: diagnosticRunId,
+            runtimeId,
+            transport: 'tmux',
+            errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+            payload: {
+              code: result.error.code,
+              message: result.error.message,
+              phase: 'broker-invocation-start',
+            },
+          })
+        )
+      }
       if (
         result.error.code === 'unsupported_capability' &&
         flagOptions.responseFormat?.kind === 'json_schema'

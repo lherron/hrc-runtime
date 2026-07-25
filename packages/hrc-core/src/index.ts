@@ -188,6 +188,7 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  DispatchTurnTerminalOutcome,
   DropContinuationRequest,
   DropContinuationResponse,
   EnsureAppSessionDryRunPlan,

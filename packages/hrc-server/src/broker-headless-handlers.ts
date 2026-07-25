@@ -54,7 +54,10 @@ import {
   toBrokerResponseFormat,
 } from './turn-response-format.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -279,6 +282,7 @@ export async function startHeadlessBrokerRuntime(
   options: {
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const turnIntent: HrcRuntimeIntent =
@@ -395,9 +399,70 @@ export async function startHeadlessBrokerRuntime(
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,
         brokerRoute: true,
       }),
+      ...(options.onAccepted
+        ? {
+            onAccepted: async (graph) => {
+              await options.onAccepted?.(graph.runtime)
+            },
+          }
+        : {}),
     })
 
     if (!result.ok) {
+      const acceptedRun = this.db.runs.getByRunId(runId)
+      if (acceptedRun !== null) {
+        const failedAt = timestamp()
+        this.db.runs.markCompleted(runId, {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: result.error.message,
+        })
+        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
+          invocationState: 'failed',
+          updatedAt: failedAt,
+        })
+        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: result.error.code,
+          errorMessage: result.error.message,
+        })
+        this.db.runtimes.update(runtimeId, {
+          status: 'failed',
+          statusChangedAt: failedAt,
+          activeRunId: runId,
+          updatedAt: failedAt,
+          runtimeStateJson: {
+            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+            status: 'failed',
+            updatedAt: failedAt,
+            startFailure: {
+              code: result.error.code,
+              message: result.error.message,
+            },
+          },
+        })
+        const failedEvent = appendHrcEvent(this.db, 'turn.failed', {
+          ts: failedAt,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runId,
+          runtimeId,
+          transport: 'headless',
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          payload: {
+            code: result.error.code,
+            message: result.error.message,
+            phase: 'broker-invocation-start',
+          },
+        })
+        this.notifyEvent(failedEvent)
+      }
       if (
         result.error.code === 'unsupported_capability' &&
         options.responseFormat?.kind === 'json_schema'
@@ -438,20 +503,62 @@ export async function executeHeadlessBrokerStartTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
+  let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
+  let rejectAccepted!: (error: unknown) => void
+  let acceptedSettled = false
+  const accepted = new Promise<HrcRuntimeSnapshot>((resolve, reject) => {
+    resolveAccepted = (runtime) => {
+      acceptedSettled = true
+      resolve(runtime)
+    }
+    rejectAccepted = reject
+  })
   // Publish the runtime-producing promise before yielding so crossing dispatches
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
-  }).finally(() => {
-    this.runtimeStartOperations.delete(session.hostSessionId)
+    onAccepted: (runtime) => {
+      if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
+        const acceptedAt = timestamp()
+        const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
+          ts: acceptedAt,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runId,
+          runtimeId: runtime.runtimeId,
+          transport: 'headless',
+          payload: {
+            promptLength: prompt.length,
+            authority: 'durable-start-graph',
+          },
+        })
+        this.notifyEvent(acceptedEvent)
+      }
+      resolveAccepted(runtime)
+    },
   })
+    .then((runtime) => {
+      // Detached acceptance must not wait for presentation, but completion of
+      // the background boot still owns the best-effort viewer side effect.
+      if (canOperatorAttach(runtime)) {
+        void this.spawnBrokerHeadlessViewer(runtime)
+      }
+      // Test doubles and older controller adapters may not implement the
+      // acceptance callback. Full boot is a conservative fallback boundary.
+      if (!acceptedSettled) resolveAccepted(runtime)
+      return runtime
+    })
+    .finally(() => {
+      this.runtimeStartOperations.delete(session.hostSessionId)
+    })
   this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
-  const runtime = await bootOperation
-  if (canOperatorAttach(runtime)) {
-    void this.spawnBrokerHeadlessViewer(runtime)
-  }
-
+  void bootOperation.catch((error) => {
+    if (!acceptedSettled) rejectAccepted(error)
+  })
   if (options.waitForCompletion === false) {
+    const runtime = await accepted
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -462,7 +569,7 @@ export async function executeHeadlessBrokerStartTurn(
       supportsInFlightInput: false,
     } satisfies DispatchTurnResponseBase)
   }
-
+  const runtime = await bootOperation
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
   return json({
     runId,

@@ -365,6 +365,8 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'dispatchedInputId', column: 'dispatched_input_id' },
   { key: 'brokerInputFencedAt', column: 'broker_input_fenced_at' },
   { key: 'brokerInputFenceReason', column: 'broker_input_fence_reason' },
+  { key: 'dispatchIdempotencyKey', column: 'dispatch_idempotency_key' },
+  { key: 'dispatchRequestHash', column: 'dispatch_request_hash' },
 ]
 
 export class RunRepository {
@@ -393,8 +395,10 @@ export class RunRepository {
           invocation_id,
           dispatched_input_id,
           broker_input_fenced_at,
-          broker_input_fence_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          broker_input_fence_reason,
+          dispatch_idempotency_key,
+          dispatch_request_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -414,7 +418,9 @@ export class RunRepository {
       record.invocationId ?? null,
       record.dispatchedInputId ?? null,
       record.brokerInputFencedAt ?? null,
-      record.brokerInputFenceReason ?? null
+      record.brokerInputFenceReason ?? null,
+      record.dispatchIdempotencyKey ?? null,
+      record.dispatchRequestHash ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
@@ -444,6 +450,18 @@ export class RunRepository {
     const row = this.db
       .query<RunRow, [string]>(`SELECT ${RUN_COLUMNS} FROM runs WHERE run_id = ?`)
       .get(runId)
+
+    return row ? mapRunRow(row) : null
+  }
+
+  getByDispatchIdempotencyKey(hostSessionId: string, idempotencyKey: string): HrcRunRecord | null {
+    const row = this.db
+      .query<RunRow, [string, string]>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          WHERE host_session_id = ? AND dispatch_idempotency_key = ?
+          LIMIT 1`
+      )
+      .get(hostSessionId, idempotencyKey)
 
     return row ? mapRunRow(row) : null
   }
