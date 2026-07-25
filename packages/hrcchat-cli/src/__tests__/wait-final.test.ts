@@ -220,6 +220,52 @@ async function runDm(
 }
 
 describe('hrcchat dm --wait response', () => {
+  it('returns a durable federated reply without waiting for local lifecycle events', async () => {
+    const request = makeRecord({
+      execution: {
+        state: 'started',
+        runId: 'run-remote',
+        runtimeId: 'rt-remote',
+        hostSessionId: 'hsid-remote',
+        generation: 1,
+      },
+      metadataJson: { federationSemanticTurnOrigin: true },
+    })
+    const reply = makeReply({
+      execution: {
+        state: 'completed',
+        runId: 'run-remote',
+        runtimeId: 'rt-remote',
+        hostSessionId: 'hsid-remote',
+        generation: 1,
+      },
+    })
+    const client = {
+      async semanticDm(): Promise<SemanticDmResponse> {
+        return { request }
+      },
+      async listMessages(): Promise<ListMessagesResponse> {
+        return { messages: [reply] }
+      },
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    } as HrcClient
+
+    const { stdout } = await runDm(
+      client,
+      { wait: 'response', timeout: '100ms', quiet: true, json: true },
+      ['clod@hrc-runtime:primary', 'please review remotely']
+    )
+
+    expect(JSON.parse(stdout.trim())).toMatchObject({
+      status: 'responded',
+      response: { messageId: 'msg-reply', text: 'chat-follow validation done' },
+    })
+  })
+
   it('waits for the session run terminal event and returns the newest direct final reply, not the preamble', async () => {
     const request = makeRecord({
       messageSeq: 200,
@@ -538,6 +584,53 @@ async function runTurn(
 }
 
 describe('hrcchat turn --wait final', () => {
+  it('returns a durable federated reply without waiting for local lifecycle events', async () => {
+    const request = makeRecord({
+      execution: {
+        state: 'started',
+        runId: 'run-test',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        generation: 1,
+      },
+      metadataJson: { federationSemanticTurnOrigin: true },
+    })
+    const reply = makeReply({
+      execution: {
+        state: 'completed',
+        runId: 'run-test',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        generation: 1,
+      },
+    })
+    const client = {
+      async semanticTurnHandoff(): Promise<SemanticTurnHandoffResponse> {
+        return makeHandoff()
+      },
+      async listMessages(filter?: HrcMessageFilter): Promise<ListMessagesResponse> {
+        return {
+          messages: filter?.messageId === request.messageId ? [request] : [reply],
+        }
+      },
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    } as HrcClient
+
+    const { stdout } = await runTurn(client, { wait: 'final', timeout: '100ms' }, [
+      'clod@hrc-runtime:primary',
+      'do the remote thing',
+    ])
+
+    expect(JSON.parse(stdout.trim())).toMatchObject({
+      status: 'responded',
+      response: { messageId: 'msg-reply', text: 'chat-follow validation done' },
+    })
+  })
+
   it('emits one responded JSON object with the durable reply, no stderr', async () => {
     const client = createTurnWaitClient({
       events: [lifecycle('turn_end')],

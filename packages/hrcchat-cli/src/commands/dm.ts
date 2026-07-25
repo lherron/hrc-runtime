@@ -15,6 +15,7 @@ import {
   buildDmFinalResponseResult,
   buildDmWaitResult,
   findCorrelatedDmFinalResponse,
+  isFederatedSemanticTurnOrigin,
   isRuntimeDeadEvent,
   isSuccessfulTurnTerminalEvent,
   isTurnFailureTerminalEvent,
@@ -161,6 +162,17 @@ export async function cmdDm(
       return
     }
 
+    if (isFederatedSemanticTurnOrigin(request)) {
+      await runDmFederatedResponseWait({
+        client,
+        request,
+        target: to,
+        timeoutMs: waitTimeoutMs,
+        startedAt,
+      })
+      return
+    }
+
     if (request.execution.runId && canWatchLifecycle(client)) {
       await runDmSessionRunWait({
         client,
@@ -226,6 +238,80 @@ export async function cmdDm(
     process.stdout.write(
       `dm sent to ${toStr} as ${formatAddress(from)} (seq: ${result.request.messageSeq})\n`
     )
+  }
+}
+
+async function runDmFederatedResponseWait(args: {
+  client: HrcClient
+  request: HrcMessageRecord
+  target: HrcMessageAddress
+  timeoutMs: number
+  startedAt: number
+}): Promise<void> {
+  const { client, request, target, timeoutMs, startedAt } = args
+  const deadlineMs = Date.now() + timeoutMs
+  const abortController = new AbortController()
+  let timedOut = false
+  let interrupted = false
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    abortController.abort()
+  }, timeoutMs)
+  const sigintHandler = () => {
+    interrupted = true
+    abortController.abort()
+  }
+  process.on('SIGINT', sigintHandler)
+
+  try {
+    const reply = await findCorrelatedDmFinalResponse({
+      client,
+      request,
+      deadlineMs,
+      pollMs: DM_FINAL_RESPONSE_POLL_MS,
+      expectedResponder: request.to,
+      expectedRecipient: request.from,
+      signal: abortController.signal,
+    })
+    const elapsedMs = Date.now() - startedAt
+    if (reply !== undefined) {
+      printJsonLine(buildDmFinalResponseResult({ request, reply, target, elapsedMs }))
+      return
+    }
+    if (interrupted) {
+      printJsonLine({
+        status: 'cancelled',
+        sentMessageId: request.messageId,
+        target: formatAddress(target),
+        elapsedMs,
+        lastSeq: request.messageSeq,
+      })
+      process.exitCode = 130
+      return
+    }
+    if (timedOut || Date.now() >= deadlineMs) {
+      printJsonLine({
+        status: 'timeout',
+        sentMessageId: request.messageId,
+        target: formatAddress(target),
+        elapsedMs,
+        lastSeq: request.messageSeq,
+      })
+      process.exitCode = 1
+      return
+    }
+    printJsonLine({
+      status: 'error',
+      sentMessageId: request.messageId,
+      target: formatAddress(target),
+      elapsedMs,
+      lastSeq: request.messageSeq,
+      errorCode: 'final_response_unavailable',
+    })
+    process.exitCode = 4
+  } finally {
+    clearTimeout(timeoutTimer)
+    process.removeListener('SIGINT', sigintHandler)
   }
 }
 

@@ -228,6 +228,103 @@ describe('T-06972 federated semantic-turn timeout and signal ordering', () => {
     }
   })
 
+  test('a remote terminal failure projects error facts once onto the origin request', async () => {
+    const fixture = await createHrcTestFixture('hrc-t06977-terminal-failure-')
+    fixtures.push(fixture)
+    const requestId = 'msg-33333333-3333-4333-8333-333333333333'
+    const signalId = 'msg-44444444-4444-4444-8444-444444444444'
+    const identity: FederationSemanticTurnIdentity = {
+      sessionRef: REMOTE_SESSION,
+      scopeRef: REMOTE_SCOPE,
+      laneRef: 'main',
+      hostSessionId: 'hs-t06977-remote',
+      runtimeId: 'rt-t06977-remote',
+      runId: 'run-t06977-remote',
+      generation: 2,
+      mode: 'headless',
+      transport: 'headless',
+    }
+
+    let signalRecord: HrcMessageRecord
+    const seed = openHrcDatabase(fixture.dbPath)
+    try {
+      seed.messages.insert({
+        messageId: requestId,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'session', sessionRef: ORIGIN_SESSION },
+        to: { kind: 'session', sessionRef: REMOTE_SESSION },
+        body: 'fail remotely',
+        execution: { state: 'started', ...identity },
+        metadataJson: { federationSemanticTurnOrigin: true },
+      })
+      signalRecord = seed.messages.insert({
+        messageId: signalId,
+        kind: 'dm',
+        phase: 'response',
+        from: { kind: 'session', sessionRef: REMOTE_SESSION },
+        to: { kind: 'session', sessionRef: ORIGIN_SESSION },
+        body: 'remote failure',
+        replyToMessageId: requestId,
+        rootMessageId: requestId,
+        execution: { state: 'not_applicable' },
+      })
+    } finally {
+      seed.close()
+    }
+
+    const server = (await createHrcServer(
+      fixture.serverOpts({ otelListenerEnabled: false })
+    )) as unknown as ServerSeams
+    const envelope: FederationMessageEnvelope = {
+      protocolVersion: '1.0',
+      messageId: signalId,
+      kind: 'dm',
+      phase: 'response',
+      from: { kind: 'session', sessionRef: REMOTE_SESSION },
+      to: { kind: 'session', sessionRef: ORIGIN_SESSION },
+      body: 'remote failure',
+      replyToMessageId: requestId,
+      rootMessageId: requestId,
+      expected: { homeNodeId: 'svc-test', placementEpoch: 1 },
+      semanticTurnSignal: {
+        version: 1,
+        type: 'terminal',
+        sourceHrcSeq: 43,
+        identity,
+        outcome: 'failed',
+        errorCode: 'remote_turn_failed',
+        errorMessage: 'remote harness exited 1',
+      },
+    }
+    try {
+      await server.deliverFederationAcceptedMessage(envelope, signalRecord)
+      await server.deliverFederationAcceptedMessage(envelope, signalRecord)
+
+      const verify = openHrcDatabase(fixture.dbPath)
+      try {
+        expect(verify.messages.getById(requestId)?.execution).toMatchObject({
+          state: 'failed',
+          runId: identity.runId,
+          errorCode: 'remote_turn_failed',
+          errorMessage: 'remote harness exited 1',
+        })
+        expect(verify.messages.getById(signalId)?.execution).toMatchObject({
+          state: 'failed',
+          errorCode: 'remote_turn_failed',
+          errorMessage: 'remote harness exited 1',
+        })
+        expect(
+          verify.hrcEvents.listByRun(identity.runId, { eventKind: 'turn.completed' })
+        ).toHaveLength(1)
+      } finally {
+        verify.close()
+      }
+    } finally {
+      await server.stop()
+    }
+  })
+
   test('a late started signal does not append after the run already completed', async () => {
     const fixture = await createHrcTestFixture('hrc-t06972-terminal-first-')
     fixtures.push(fixture)

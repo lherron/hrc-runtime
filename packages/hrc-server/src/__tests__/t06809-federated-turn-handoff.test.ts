@@ -223,11 +223,9 @@ describe('T-06809 federated semantic turn handoff', () => {
             scopeRef: REMOTE_SCOPE,
             laneRef: 'default',
             generation: remoteGeneration,
-            runtimeId: remoteRuntimeId,
             runId: remoteRunId,
             category: 'turn',
             eventKind: 'turn.completed',
-            transport: 'headless',
             replayed: false,
             payload: { success: true },
           })

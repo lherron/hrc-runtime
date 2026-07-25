@@ -33,7 +33,13 @@ import { type StackedAggregator, createStackedAggregator } from '../stacked-aggr
 import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result } from '../stacked-types.js'
-import type { WaitFinalResult } from '../wait-final.js'
+import {
+  type WaitFinalResult,
+  buildDmFinalResponseResult,
+  findCorrelatedDmFinalResponse,
+  findMessageById,
+  isFederatedSemanticTurnOrigin,
+} from '../wait-final.js'
 
 export type TurnOptions = {
   /** Explicit sender principal ("human" or an agent handle); wins over the envelope. */
@@ -438,6 +444,17 @@ export async function cmdTurn(
   // one compact JSON object. No frames are rendered while blocking. The
   // streaming path below is left entirely untouched (AC7).
   if (waitMode === 'final' && waitTimeoutMs !== undefined) {
+    const originRequest = await findMessageById(client, handoff.messageId)
+    if (originRequest !== undefined && isFederatedSemanticTurnOrigin(originRequest)) {
+      await runTurnFederatedFinalWait({
+        client,
+        request: originRequest,
+        expectedResponder,
+        expectedRecipient: from,
+        timeoutMs: waitTimeoutMs,
+      })
+      return
+    }
     await runTurnFinalWait({
       client,
       handoff,
@@ -610,6 +627,82 @@ export async function cmdTurn(
   }
 
   // exit 0 — success (implicit return)
+}
+
+async function runTurnFederatedFinalWait(args: {
+  client: HrcClient
+  request: HrcMessageRecord
+  expectedResponder: HrcMessageAddress
+  expectedRecipient: HrcMessageAddress
+  timeoutMs: number
+}): Promise<void> {
+  const { client, request, expectedResponder, expectedRecipient, timeoutMs } = args
+  const startedAt = Date.now()
+  const deadlineMs = startedAt + timeoutMs
+  const abortController = new AbortController()
+  let timedOut = false
+  let interrupted = false
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    abortController.abort()
+  }, timeoutMs)
+  const sigintHandler = () => {
+    interrupted = true
+    abortController.abort()
+  }
+  process.on('SIGINT', sigintHandler)
+
+  try {
+    const reply = await findCorrelatedDmFinalResponse({
+      client,
+      request,
+      deadlineMs,
+      pollMs: TURN_FINAL_REPLY_POLL_MS,
+      expectedResponder,
+      expectedRecipient,
+      signal: abortController.signal,
+    })
+    const elapsedMs = Date.now() - startedAt
+    const target = expectedResponder
+    if (reply !== undefined) {
+      printJsonLine(buildDmFinalResponseResult({ request, reply, target, elapsedMs }))
+      return
+    }
+    if (interrupted) {
+      printJsonLine({
+        status: 'cancelled',
+        sentMessageId: request.messageId,
+        target: formatAddress(target),
+        elapsedMs,
+        lastSeq: request.messageSeq,
+      })
+      process.exitCode = TURN_EXIT_SIGINT
+      return
+    }
+    if (timedOut || Date.now() >= deadlineMs) {
+      printJsonLine({
+        status: 'timeout',
+        sentMessageId: request.messageId,
+        target: formatAddress(target),
+        elapsedMs,
+        lastSeq: request.messageSeq,
+      })
+      process.exitCode = TURN_EXIT_STALL
+      return
+    }
+    printJsonLine({
+      status: 'error',
+      sentMessageId: request.messageId,
+      target: formatAddress(target),
+      elapsedMs,
+      lastSeq: request.messageSeq,
+      errorCode: 'final_response_unavailable',
+    })
+    process.exitCode = TURN_EXIT_RUNTIME_DEAD
+  } finally {
+    clearTimeout(timeoutTimer)
+    process.removeListener('SIGINT', sigintHandler)
+  }
 }
 
 /**

@@ -421,10 +421,10 @@ export function finalizeSemanticTurnResponse(
   if (!request) return
 
   const run = this.db.runs.getByRunId(runId)
-  const runtimeId = event.runtimeId ?? run?.runtimeId
+  const runtimeId = event.runtimeId ?? run?.runtimeId ?? request.execution.runtimeId
   const hostSessionId = event.hostSessionId
   const generation = event.generation
-  const transport = event.transport ?? run?.transport
+  const transport = event.transport ?? run?.transport ?? request.execution.transport
   const failed = Boolean(event.errorCode) || run?.status === 'failed'
   const bufferedOutput = this.db.runtimeBuffers
     .listByRunId(runId)
