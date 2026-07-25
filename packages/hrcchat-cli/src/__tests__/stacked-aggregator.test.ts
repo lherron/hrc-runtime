@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { HrcLifecycleEvent, SemanticTurnHandoffResponse } from 'hrc-core'
+import type { HrcLifecycleEvent, SemanticTurnHandoffStartedResponse } from 'hrc-core'
 
 type StackedLine = {
   type: 'turn_stacked'
@@ -67,8 +67,8 @@ async function loadAggregatorModule(): Promise<{
 }
 
 function makeHandoff(
-  overrides: Partial<SemanticTurnHandoffResponse> = {}
-): SemanticTurnHandoffResponse {
+  overrides: Partial<SemanticTurnHandoffStartedResponse> = {}
+): SemanticTurnHandoffStartedResponse {
   return {
     messageId: 'msg-request',
     sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',

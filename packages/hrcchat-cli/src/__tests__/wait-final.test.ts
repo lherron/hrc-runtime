@@ -10,6 +10,7 @@ import type {
   SemanticDmResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
   WaitMessageRequest,
   WaitMessageResponse,
 } from 'hrc-core'
@@ -442,8 +443,8 @@ describe('hrcchat dm --wait response', () => {
 // -- cmdTurn --wait final -----------------------------------------------------
 
 function makeHandoff(
-  overrides: Partial<SemanticTurnHandoffResponse> = {}
-): SemanticTurnHandoffResponse {
+  overrides: Partial<SemanticTurnHandoffStartedResponse> = {}
+): SemanticTurnHandoffStartedResponse {
   return {
     messageId: 'msg-request',
     sessionRef: 'agent:clod:project:hrc-runtime/lane:main',

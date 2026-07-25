@@ -14,6 +14,7 @@ import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
   FederationMessageEnvelope,
+  FederationOutboxDeliveryRecord,
   FederationOutboxState,
   FederationSemanticTurnSignal,
   HrcMessageAddress,
@@ -27,7 +28,8 @@ import type {
   ListMessagesResponse,
   SemanticDmRequest,
   SemanticDmResponse,
-  SemanticTurnHandoffResponse,
+  SemanticTurnHandoffPendingResponse,
+  SemanticTurnHandoffStartedResponse,
   TraceMessageRequest,
   TraceMessageResponse,
   WaitMessageResponse,
@@ -680,6 +682,36 @@ export function assertReplyScopeMatches(
   })
 }
 
+function failFederatedSemanticTurnAdmission(
+  server: HrcServerInstanceForHandlers,
+  record: HrcMessageRecord,
+  delivery: FederationOutboxDeliveryRecord,
+  cancellationAttempted: boolean
+): never {
+  const errorCode =
+    delivery.lastError?.code ?? delivery.lastErrorCode ?? HrcErrorCode.RUNTIME_UNAVAILABLE
+  const detail =
+    delivery.lastError?.message ??
+    delivery.lastErrorMessage ??
+    'remote semantic turn delivery failed before admission'
+  server.db.messages.updateExecution(record.messageId, {
+    state: 'failed',
+    errorCode,
+    errorMessage: detail,
+  })
+  throw new HrcRuntimeUnavailableError(detail, {
+    messageId: record.messageId,
+    reason: 'timeout',
+    deliveryId: delivery.deliveryId,
+    deliveryState: delivery.state,
+    cancellation: {
+      attempted: cancellationAttempted,
+      outcome: errorCode === 'operator_cancelled' ? 'cancelled' : 'terminally_failed',
+      reason: delivery.lastError?.reason ?? errorCode,
+    },
+  })
+}
+
 export async function handleSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -791,22 +823,100 @@ export async function handleSemanticTurnHandoff(
       record.messageId
     )
     if (!started.matched) {
-      const detail =
-        started.reason === 'delivery_failed'
-          ? `${started.errorCode}${started.errorMessage ? `: ${started.errorMessage}` : ''}`
-          : 'timed out awaiting remote turn admission'
-      this.db.messages.updateExecution(record.messageId, {
-        state: 'failed',
-        errorCode:
-          started.reason === 'delivery_failed'
-            ? started.errorCode
-            : HrcErrorCode.RUNTIME_UNAVAILABLE,
-        errorMessage: detail,
-      })
-      throw new HrcRuntimeUnavailableError(detail, {
+      if (started.reason === 'delivery_failed') {
+        const detail = `${started.errorCode}${
+          started.errorMessage ? `: ${started.errorMessage}` : ''
+        }`
+        this.db.messages.updateExecution(record.messageId, {
+          state: 'failed',
+          errorCode: started.errorCode,
+          errorMessage: detail,
+        })
+        throw new HrcRuntimeUnavailableError(detail, {
+          messageId: record.messageId,
+          reason: started.reason,
+        })
+      }
+
+      const outbox = this.federationOriginOutbox
+      let delivery =
+        outbox?.list().find((row) => row.deliveryId === federationRoute.delivery.deliveryId) ??
+        federationRoute.delivery
+      let cancellation: SemanticTurnHandoffPendingResponse['delivery']['cancellation']
+
+      if (delivery.state === 'dead_letter') {
+        failFederatedSemanticTurnAdmission(this, record, delivery, false)
+      }
+
+      const deliveryWasPreAck =
+        delivery.state === 'pending' ||
+        delivery.state === 'retry_scheduled' ||
+        delivery.state === 'peer_unreachable'
+      if (deliveryWasPreAck && outbox !== undefined) {
+        let cancellationError: unknown
+        try {
+          delivery = outbox.cancel(delivery.deliveryId)
+        } catch (error) {
+          cancellationError = error
+        }
+        if (cancellationError === undefined) {
+          failFederatedSemanticTurnAdmission(this, record, delivery, true)
+        } else {
+          delivery = outbox.list().find((row) => row.deliveryId === delivery.deliveryId) ?? delivery
+          if (cancellationError instanceof FederationOutboxCancelError) {
+            cancellation = {
+              attempted: true,
+              outcome: 'attempt_in_flight',
+              reason: cancellationError.reason,
+            }
+          } else if (delivery.state === 'delivered') {
+            cancellation = {
+              attempted: true,
+              outcome: 'not_cancellable',
+              reason: 'delivered',
+            }
+          } else {
+            cancellation = {
+              attempted: true,
+              outcome: 'failed',
+              reason:
+                cancellationError instanceof Error
+                  ? cancellationError.message
+                  : String(cancellationError),
+            }
+          }
+        }
+      } else if (delivery.state === 'delivered') {
+        cancellation = {
+          attempted: false,
+          outcome: 'not_cancellable',
+          reason: 'delivered',
+        }
+      } else {
+        cancellation = {
+          attempted: false,
+          outcome: 'failed',
+          reason: 'outbox_unavailable',
+        }
+      }
+
+      if (delivery.state === 'dead_letter') {
+        failFederatedSemanticTurnAdmission(this, record, delivery, true)
+      }
+
+      const pending = {
+        status: 'pending',
+        outcome: 'unknown',
         messageId: record.messageId,
-        reason: started.reason,
-      })
+        fromSeq: originFromSeq,
+        delivery: {
+          deliveryId: delivery.deliveryId,
+          state: delivery.state,
+          cancellation,
+        },
+      } satisfies SemanticTurnHandoffPendingResponse
+      writeServerLog('WARN', 'federation.semantic_turn.admission_unknown', pending)
+      return json(pending, 202)
     }
     const signal = semanticTurnSignalFromRecord(started.record)
     if (signal?.type !== 'started') {
@@ -826,7 +936,7 @@ export async function handleSemanticTurnHandoff(
       runId: signal.identity.runId,
       generation: signal.identity.generation,
       fromSeq: originFromSeq,
-    } satisfies SemanticTurnHandoffResponse)
+    } satisfies SemanticTurnHandoffStartedResponse)
   }
 
   return json(await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo))
@@ -837,7 +947,7 @@ export async function deliverPersistedSemanticTurnHandoff(
   body: SemanticDmRequest & { to: Extract<HrcMessageAddress, { kind: 'session' }> },
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress
-): Promise<SemanticTurnHandoffResponse> {
+): Promise<SemanticTurnHandoffStartedResponse> {
   assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
   const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
   let session = findTargetSession(this.db, body.to.sessionRef)
@@ -1023,7 +1133,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
-    } satisfies SemanticTurnHandoffResponse
+    } satisfies SemanticTurnHandoffStartedResponse
   } catch (err) {
     this.turnResponseFinalizers.delete(runId)
     const errorMessage = err instanceof Error ? err.message : String(err)
@@ -1049,7 +1159,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
     fromSeq: number
     responseFormat?: HrcTurnResponseFormat | undefined
   }
-): Promise<SemanticTurnHandoffResponse | undefined> {
+): Promise<SemanticTurnHandoffStartedResponse | undefined> {
   const { session, runtime, request, payload, runId, sessionRef, fromSeq, responseFormat } = input
   if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
     return undefined
@@ -1748,14 +1858,15 @@ function projectFederatedSemanticTurnSignal(
   }
   this.db.messages.updateExecution(record.messageId, execution)
 
-  const alreadyProjected = this.db.hrcEvents
-    .listByRun(identity.runId)
-    .some(
-      (event) =>
-        isObjectRecord(event.payload) &&
-        event.payload['federationSignalMessageId'] === record.messageId
-    )
-  if (alreadyProjected) return
+  const runEvents = this.db.hrcEvents.listByRun(identity.runId)
+  const alreadyProjected = runEvents.some(
+    (event) =>
+      isObjectRecord(event.payload) &&
+      event.payload['federationSignalMessageId'] === record.messageId
+  )
+  const terminalAlreadyProjected =
+    signal.type === 'started' && runEvents.some((event) => event.eventKind === 'turn.completed')
+  if (alreadyProjected || terminalAlreadyProjected) return
 
   const projected = appendHrcEvent(
     this.db,

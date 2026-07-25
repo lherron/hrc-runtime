@@ -7,7 +7,9 @@ import type {
   HrcMessageFilter,
   HrcMessageRecord,
   HrcTurnResponseFormat,
+  SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
@@ -61,6 +63,12 @@ export type TurnOptions = {
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
 const TURN_FINAL_REPLY_GRACE_MS = 1_000
 const TURN_FINAL_REPLY_POLL_MS = 50
+
+function isPendingSemanticTurnHandoff(
+  response: SemanticTurnHandoffResponse
+): response is SemanticTurnHandoffPendingResponse {
+  return 'status' in response && response.status === 'pending'
+}
 
 type TurnBodyInput = {
   targetInput: string
@@ -408,6 +416,10 @@ export async function cmdTurn(
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
   })
+  if (isPendingSemanticTurnHandoff(handoff)) {
+    printJsonLine(handoff)
+    return
+  }
   const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
 
   // ── Final-only Codex wait mode ──
@@ -601,7 +613,7 @@ export async function cmdTurn(
  */
 async function runTurnFinalWait(args: {
   client: HrcClient
-  handoff: SemanticTurnHandoffResponse
+  handoff: SemanticTurnHandoffStartedResponse
   expectedResponder: HrcMessageAddress
   expectedRecipient: HrcMessageAddress
   projectId: string
@@ -769,7 +781,7 @@ function deriveStackedPhase(
 
 async function enrichFinalEvent(
   client: HrcClient,
-  handoff: SemanticTurnHandoffResponse,
+  handoff: SemanticTurnHandoffStartedResponse,
   event: HrcLifecycleEvent,
   correlation: {
     expectedResponder: HrcMessageAddress
@@ -807,7 +819,7 @@ async function enrichFinalEvent(
 async function findDurableReply(
   client: HrcClient,
   correlation: {
-    handoff: SemanticTurnHandoffResponse
+    handoff: SemanticTurnHandoffStartedResponse
     expectedResponder: HrcMessageAddress
     expectedRecipient: HrcMessageAddress
     graceMs?: number | undefined
@@ -875,7 +887,7 @@ async function findDurableReply(
 function matchesDurableReply(
   message: HrcMessageRecord,
   correlation: {
-    handoff: SemanticTurnHandoffResponse
+    handoff: SemanticTurnHandoffStartedResponse
     expectedResponder: HrcMessageAddress
     expectedRecipient: HrcMessageAddress
     allowMissingExecutionIdentity?: boolean | undefined

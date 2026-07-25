@@ -6,6 +6,7 @@ import type {
   HrcTargetView,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
@@ -47,8 +48,8 @@ function restoreEnv(name: string, value: string | undefined): void {
 type MockWatchEvents = HrcLifecycleEvent[]
 
 function makeHandoff(
-  overrides: Partial<SemanticTurnHandoffResponse> = {}
-): SemanticTurnHandoffResponse {
+  overrides: Partial<SemanticTurnHandoffStartedResponse> = {}
+): SemanticTurnHandoffStartedResponse {
   return {
     messageId: 'msg-turn-test',
     sessionRef: 'agent:cody:project:agent-spaces/lane:main',
@@ -394,6 +395,43 @@ describe('hrcchat turn — exit codes', () => {
 })
 
 describe('hrcchat turn — handoff uses correct parameters', () => {
+  it('reports a pending/unknown federated admission without starting an invalid watch', async () => {
+    let watchStarted = false
+    const client = {
+      ...createTurnClient({
+        handoff: {
+          status: 'pending',
+          outcome: 'unknown',
+          messageId: 'msg-pending',
+          fromSeq: 100,
+          delivery: {
+            deliveryId: 'delivery-pending',
+            state: 'delivered',
+            cancellation: {
+              attempted: false,
+              outcome: 'not_cancellable',
+              reason: 'delivered',
+            },
+          },
+        },
+      }),
+      async *watch(): AsyncIterable<HrcLifecycleEvent> {
+        watchStarted = true
+        yield* []
+      },
+    } as HrcClient
+
+    const result = await runTurnCommand(client, {}, ['cody@agent-spaces', 'my prompt'])
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: 'pending',
+      outcome: 'unknown',
+      messageId: 'msg-pending',
+    })
+    expect(watchStarted).toBe(false)
+  })
+
   it('passes body, target sessionRef, and createIfMissing to semanticTurnHandoff', async () => {
     const handoffCalls: SemanticTurnHandoffRequest[] = []
     const client = createTurnClient({ handoffCalls })

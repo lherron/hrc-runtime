@@ -3167,6 +3167,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "SemanticTurnHandoffPendingResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticTurnHandoffPendingResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "SemanticTurnHandoffRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -3179,6 +3187,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|SemanticTurnHandoffResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SemanticTurnHandoffStartedResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticTurnHandoffStartedResponse|type",
       "count": 1
     },
     {

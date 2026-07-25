@@ -8,7 +8,7 @@ import type {
   HrcLifecycleEvent,
   HrcMessageRecord,
   SemanticDmRequest,
-  SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -173,7 +173,7 @@ describe('T-06809 federated semantic turn handoff', () => {
           },
         })
         expect(response.status).toBe(200)
-        const handoff = (await response.json()) as SemanticTurnHandoffResponse
+        const handoff = (await response.json()) as SemanticTurnHandoffStartedResponse
         expect(handoff).toMatchObject({
           sessionRef: REMOTE_SESSION,
           scopeRef: REMOTE_SCOPE,

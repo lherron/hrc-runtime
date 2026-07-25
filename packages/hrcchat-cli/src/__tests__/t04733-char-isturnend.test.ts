@@ -24,7 +24,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import type { HrcLifecycleEvent, SemanticTurnHandoffResponse } from 'hrc-core'
+import type {
+  HrcLifecycleEvent,
+  SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
+} from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { TurnExitError, type TurnOptions, cmdTurn } from '../commands/turn.js'
@@ -74,8 +78,8 @@ class FakeClock {
 }
 
 function makeAggHandoff(
-  overrides: Partial<SemanticTurnHandoffResponse> = {}
-): SemanticTurnHandoffResponse {
+  overrides: Partial<SemanticTurnHandoffStartedResponse> = {}
+): SemanticTurnHandoffStartedResponse {
   return {
     messageId: 'msg-t04733',
     sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
@@ -139,8 +143,8 @@ async function makeAggregator() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function makeWlHandoff(
-  overrides: Partial<SemanticTurnHandoffResponse> = {}
-): SemanticTurnHandoffResponse {
+  overrides: Partial<SemanticTurnHandoffStartedResponse> = {}
+): SemanticTurnHandoffStartedResponse {
   return {
     messageId: 'msg-wl-t04733',
     sessionRef: 'agent:cody:project:agent-spaces/lane:main',

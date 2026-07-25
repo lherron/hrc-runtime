@@ -1,4 +1,4 @@
-import type { HrcLifecycleEvent, SemanticTurnHandoffResponse } from 'hrc-core'
+import type { HrcLifecycleEvent, SemanticTurnHandoffStartedResponse } from 'hrc-core'
 import type { RenderAction } from 'hrc-frame-render'
 
 export enum FlushReason {
@@ -105,4 +105,4 @@ export interface Summarizer {
   summarize(input: SummarizerInput): Promise<string>
 }
 
-export type StackedHandoff = SemanticTurnHandoffResponse
+export type StackedHandoff = SemanticTurnHandoffStartedResponse

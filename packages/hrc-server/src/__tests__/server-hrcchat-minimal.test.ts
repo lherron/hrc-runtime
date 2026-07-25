@@ -6,7 +6,7 @@ import type {
   HrcTargetView,
   ListMessagesResponse,
   SemanticDmResponse,
-  SemanticTurnHandoffResponse,
+  SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -767,7 +767,7 @@ if (cmd === 'app-server') {
       },
     })
     expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
     expect(handoff.runtimeId).toBe(runtimeId)
     expect(dispatchedInputs).toHaveLength(1)
     expect(dispatchedInputs[0]).toMatchObject({
@@ -875,7 +875,7 @@ if (cmd === 'app-server') {
       },
     })
     expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
 
     const replyRes = await fixture.postJson('/v1/messages/dm', {
       from: { kind: 'session', sessionRef },
@@ -986,7 +986,7 @@ if (cmd === 'app-server') {
       },
     })
     expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
 
     // The daemon that dispatched the turn restarts mid-turn: the replacement
     // instance starts with an empty in-memory turnResponseFinalizers map.
@@ -1171,7 +1171,7 @@ if (cmd === 'app-server') {
       },
     })
     expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
     expect(handoff.runtimeId).not.toBe(runtimeId)
 
     const verifyDb = openHrcDatabase(fixture.dbPath)

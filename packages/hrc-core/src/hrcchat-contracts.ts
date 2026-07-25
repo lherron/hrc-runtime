@@ -1,5 +1,8 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
-import type { FederationOutboxDeliveryRecord } from './federation-contracts.js'
+import type {
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
+} from './federation-contracts.js'
 import type { HrcBirthCredential } from './federation.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
@@ -442,7 +445,7 @@ export type SemanticDmResponse = {
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)
 export type SemanticTurnHandoffRequest = Omit<SemanticDmRequest, 'wait'>
 
-export type SemanticTurnHandoffResponse = {
+export type SemanticTurnHandoffStartedResponse = {
   messageId: string
   sessionRef: string
   scopeRef: string
@@ -453,3 +456,29 @@ export type SemanticTurnHandoffResponse = {
   generation: number
   fromSeq: number
 }
+
+/**
+ * The origin durably queued a federated semantic turn, but did not observe the
+ * destination's admission signal before its bounded wait expired. `unknown`
+ * is intentional: a delivered envelope may still execute, and no origin-only
+ * cancellation can revoke it after the peer ACK.
+ */
+export type SemanticTurnHandoffPendingResponse = {
+  status: 'pending'
+  outcome: 'unknown'
+  messageId: string
+  fromSeq: number
+  delivery: {
+    deliveryId: string
+    state: FederationOutboxState
+    cancellation: {
+      attempted: boolean
+      outcome: 'not_cancellable' | 'attempt_in_flight' | 'failed'
+      reason: string
+    }
+  }
+}
+
+export type SemanticTurnHandoffResponse =
+  | SemanticTurnHandoffStartedResponse
+  | SemanticTurnHandoffPendingResponse

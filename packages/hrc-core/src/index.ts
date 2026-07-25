@@ -330,6 +330,8 @@ export type {
   SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffRequest,
+  SemanticTurnHandoffStartedResponse,
+  SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffResponse,
 } from './hrcchat-contracts.js'
 
