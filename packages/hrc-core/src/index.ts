@@ -93,6 +93,7 @@ export type {
   HrcAppSessionRecord,
   HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcActuatorSplitAuthorityView,
   HrcActuatorSplitPolicy,
   HrcApprovedMutationRef,
   HrcRuntimeKind,

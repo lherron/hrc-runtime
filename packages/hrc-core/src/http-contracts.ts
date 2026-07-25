@@ -5,6 +5,7 @@ import type { AttachmentRef } from 'spaces-runtime'
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
+  HrcActuatorSplitAuthorityView,
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcBrokerInvocationEventRecord,
@@ -524,6 +525,8 @@ export type InspectRuntimeResponse = {
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
+  /** Non-secret effective mutation authority projected from durable runtime state. */
+  authority?: HrcActuatorSplitAuthorityView | undefined
   control?:
     | {
         mode: string

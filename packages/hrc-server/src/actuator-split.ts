@@ -3,6 +3,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import {
+  type HrcActuatorSplitAuthorityView,
   type HrcActuatorSplitPolicy,
   type HrcApprovedMutationRef,
   type HrcRuntimeIntent,
@@ -738,5 +739,60 @@ export function actuatorSplitRuntimeAuthority(
           },
         }
       : {}),
+  }
+}
+
+/**
+ * Project only the non-secret, effective actuator authority for operator
+ * inspection. Approval/artifact refs are deliberately omitted: operators need
+ * the immutable hashes, fences, and path scope, not local storage locations.
+ */
+export function projectActuatorSplitInspectAuthority(
+  runtimeStateJson: Record<string, unknown> | undefined
+): HrcActuatorSplitAuthorityView | undefined {
+  const rawAuthority = runtimeStateJson?.['authority']
+  if (!isRecord(rawAuthority)) return undefined
+
+  let policy: HrcActuatorSplitPolicy | undefined
+  try {
+    policy = normalizeActuatorSplitPolicy(rawAuthority['actuatorSplit'])
+  } catch {
+    return undefined
+  }
+  if (!policy || policy.mode === 'off') return undefined
+
+  const { approval: _approval, ...actuatorSplit } = policy
+  const rawApprovedMutation = rawAuthority['approvedMutation']
+  if (!isRecord(rawApprovedMutation)) {
+    return { actuatorSplit }
+  }
+
+  const approvalRecordHash = rawApprovedMutation['approvalRecordHash']
+  const artifactContentHash = rawApprovedMutation['artifactContentHash']
+  const targetPaths = rawApprovedMutation['targetPaths']
+  if (
+    typeof approvalRecordHash !== 'string' ||
+    typeof artifactContentHash !== 'string' ||
+    !Array.isArray(targetPaths) ||
+    targetPaths.some((path) => typeof path !== 'string')
+  ) {
+    return { actuatorSplit }
+  }
+
+  const expectedBaseRevision = rawApprovedMutation['expectedBaseRevision']
+  const expectedBaseTreeHash = rawApprovedMutation['expectedBaseTreeHash']
+  const approvedBy = rawApprovedMutation['approvedBy']
+  const approvedAt = rawApprovedMutation['approvedAt']
+  return {
+    actuatorSplit,
+    approvedMutation: {
+      approvalRecordHash,
+      artifactContentHash,
+      targetPaths: targetPaths.map(String),
+      ...(typeof expectedBaseRevision === 'string' ? { expectedBaseRevision } : {}),
+      ...(typeof expectedBaseTreeHash === 'string' ? { expectedBaseTreeHash } : {}),
+      ...(typeof approvedBy === 'string' ? { approvedBy } : {}),
+      ...(typeof approvedAt === 'string' ? { approvedAt } : {}),
+    },
   }
 }

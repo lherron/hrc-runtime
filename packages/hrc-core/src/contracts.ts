@@ -133,6 +133,21 @@ export type HrcActuatorSplitPolicy = {
   approval?: HrcApprovedMutationRef | undefined
 }
 
+export type HrcActuatorSplitAuthorityView = {
+  actuatorSplit: Omit<HrcActuatorSplitPolicy, 'approval'>
+  approvedMutation?:
+    | {
+        approvalRecordHash: string
+        artifactContentHash: string
+        targetPaths: string[]
+        expectedBaseRevision?: string | undefined
+        expectedBaseTreeHash?: string | undefined
+        approvedBy?: string | undefined
+        approvedAt?: string | undefined
+      }
+    | undefined
+}
+
 export type HrcExecutionIntent = {
   preferredMode?: HrcExecutionMode | undefined
   autoLaunchInteractive?: boolean | undefined
