@@ -2,7 +2,7 @@ import { test } from 'bun:test'
 import { appendFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type { FederationConfig, PeerEntry } from '../../federation/federation-config.js'
 import {
@@ -24,6 +24,7 @@ export const LOOPBACK_FEDERATION_CASE_MARKER = 'HRC_FEDERATION_LOOPBACK_CASE'
 const LOOPBACK_TEST_HOST = '127.0.0.1'
 const VALIDATION_TAILNET_HOST = '100.64.0.1'
 const LOOPBACK_FETCH_PATCH = Symbol.for('hrc.test.federation-loopback-fetch-patch')
+const FEDERATION_TEST_PROJECT_ROOT = resolve(import.meta.dir, '../../../../..')
 
 export type LiveTailnetDisposition = 'run' | 'skip' | 'fail'
 
@@ -250,7 +251,27 @@ export async function createFederationTestServer(
   fixture: HrcServerTestFixture,
   overrides: Partial<HrcServerOptions> = {}
 ): Promise<HrcServer> {
-  if (!isLoopbackMode()) return createHrcServer(fixture.serverOpts(overrides))
-  const federationConfig = await resolveLoopbackFederationTestConfig(fixture.stateRoot)
-  return createHrcServer(fixture.serverOpts({ ...overrides, federationConfig }))
+  const server = await (isLoopbackMode()
+    ? createHrcServer(
+        fixture.serverOpts({
+          ...overrides,
+          federationConfig: await resolveLoopbackFederationTestConfig(fixture.stateRoot),
+        })
+      )
+    : createHrcServer(fixture.serverOpts(overrides)))
+
+  // The verification envelope supplies an isolated ASP_AGENTS_ROOT. Give
+  // federation fixtures an equally explicit checkout root so a linked
+  // worktree whose directory has a task suffix does not fail project-id
+  // matching and fabricate `<package cwd>/<project id>` as a sibling.
+  Object.assign(server, {
+    runtimeIntentLocalizationOptions: {
+      cwd: FEDERATION_TEST_PROJECT_ROOT,
+      env: {
+        ...process.env,
+        ASP_PROJECT_ROOT_OVERRIDE: FEDERATION_TEST_PROJECT_ROOT,
+      },
+    },
+  })
+  return server
 }
