@@ -233,6 +233,8 @@ export type HrcServerOptions = {
   federationOutboxRetryPolicy?: FederationOutboxRetryPolicy | undefined
   /** Test/embedded polling override; production polls once per second. */
   federationOutboxPollIntervalMs?: number | undefined
+  /** Test/embedded collective-history replication polling override. */
+  collectiveHistoryPollIntervalMs?: number | undefined
   tmuxSocketPath?: string | undefined
   /**
    * Auto-rotation policy: a session whose `createdAt` exceeds this age (in

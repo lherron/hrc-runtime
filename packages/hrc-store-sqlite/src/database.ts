@@ -2,6 +2,10 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import {
+  CollectiveHistoryReplicationRepository,
+  CollectiveHistoryRepository,
+} from './collective-history-repository.js'
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
 import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
@@ -62,6 +66,8 @@ export type HrcDatabase = {
   runtimeBuffers: RuntimeBufferRepository
   activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
+  collectiveHistory: CollectiveHistoryRepository
+  collectiveHistoryReplications: CollectiveHistoryReplicationRepository
   mailEnvelopes: HrcMailEnvelopeRepository
   mailFederatedOrigins: HrcMailFederatedOriginRepository
   mailDrives: HrcMailDriveRepository
@@ -122,6 +128,8 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
     activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
+    collectiveHistory: new CollectiveHistoryRepository(sqlite),
+    collectiveHistoryReplications: new CollectiveHistoryReplicationRepository(sqlite),
     mailEnvelopes: new HrcMailEnvelopeRepository(sqlite),
     mailFederatedOrigins: new HrcMailFederatedOriginRepository(sqlite),
     mailDrives: new HrcMailDriveRepository(sqlite),

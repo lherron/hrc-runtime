@@ -1207,6 +1207,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcCollectiveHistoryObservation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcCollectiveHistoryObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCollectiveMessageRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcCollectiveMessageRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcCommandLaunchSpec",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1731,6 +1747,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|HrcMessageFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageHistoryStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageHistoryStatus|type",
       "count": 1
     },
     {

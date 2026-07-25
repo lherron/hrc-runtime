@@ -2,11 +2,11 @@
  * Federation v1's dedicated peer HTTP surface (§2/§6).
  *
  * This handler is intentionally independent from HrcServer's Unix-socket
- * router. Its entire network-visible route table is establish, accept, locate,
- * and health.
+ * router. Its entire network-visible route table is the explicit set documented
+ * in docs/federation-peer-protocol.md.
  */
 
-import type { FederationPlacementBinding, HrcRuntimeSnapshot } from 'hrc-core'
+import type { FederationPlacementBinding, HrcRuntimeSnapshot, ListMessagesResponse } from 'hrc-core'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
@@ -29,6 +29,7 @@ export type PeerProtocolHealth = {
     readonly locate: true
     readonly health: true
     readonly runtimeProjection?: boolean | undefined
+    readonly collectiveHistory?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
@@ -91,6 +92,34 @@ export type PeerEstablishResult =
 
 export type PeerEstablishHandler = (request: PeerEstablishRequest) => Promise<PeerEstablishResult>
 
+export type PeerCollectiveHistoryReplicateHandler = (request: {
+  readonly authenticatedNodeId: string
+  readonly protocolVersion: string
+  readonly body: Readonly<Record<string, unknown>>
+}) =>
+  | Promise<{ readonly outcome: 'accepted'; readonly messageId: string }>
+  | {
+      readonly outcome: 'accepted'
+      readonly messageId: string
+    }
+
+export type PeerCollectiveHistoryCheckpointHandler = (request: {
+  readonly authenticatedNodeId: string
+  readonly protocolVersion: string
+  readonly body: Readonly<Record<string, unknown>>
+}) =>
+  | Promise<{ readonly outcome: 'accepted'; readonly nodeId: string }>
+  | {
+      readonly outcome: 'accepted'
+      readonly nodeId: string
+    }
+
+export type PeerCollectiveHistoryQueryHandler = (request: {
+  readonly authenticatedNodeId: string
+  readonly protocolVersion: string
+  readonly filter: Readonly<Record<string, unknown>>
+}) => Promise<ListMessagesResponse> | ListMessagesResponse
+
 export type PeerProtocolRequestHandlerOptions = {
   readonly localNodeId: string
   readonly peers: ReadonlyMap<string, PeerEntry>
@@ -100,6 +129,9 @@ export type PeerProtocolRequestHandlerOptions = {
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
   readonly accept?: PeerAcceptHandler | undefined
   readonly establish?: PeerEstablishHandler | undefined
+  readonly collectiveHistoryReplicate?: PeerCollectiveHistoryReplicateHandler | undefined
+  readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
+  readonly collectiveHistoryQuery?: PeerCollectiveHistoryQueryHandler | undefined
 }
 
 export type PeerProtocolEndpointControl = {
@@ -190,6 +222,87 @@ function requiredString(record: Record<string, unknown>, field: string): string 
     throw new InvalidPeerRequest()
   }
   return value.trim()
+}
+
+async function handleCollectiveHistoryRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+  peerNodeId: string
+  requestVersion: string
+}): Promise<Response | undefined> {
+  if (
+    input.request.method !== 'POST' ||
+    !input.url.pathname.startsWith('/v1/federation/history/')
+  ) {
+    return undefined
+  }
+
+  if (input.url.pathname === '/v1/federation/history/replicate') {
+    const body = await requestRecord(input.request)
+    if (Object.keys(body).some((key) => key !== 'record') || !isRecord(body['record'])) {
+      throw new InvalidPeerRequest()
+    }
+    if (input.options.collectiveHistoryReplicate === undefined) {
+      return refusal(404, 'collective_history_not_authoritative', { retryable: true })
+    }
+    const result = await input.options.collectiveHistoryReplicate({
+      authenticatedNodeId: input.peerNodeId,
+      protocolVersion: input.requestVersion,
+      body,
+    })
+    return responseJson(
+      {
+        ok: true,
+        protocolVersion: PEER_PROTOCOL_VERSION,
+        ack: result,
+      },
+      200
+    )
+  }
+
+  if (input.url.pathname === '/v1/federation/history/query') {
+    const body = await requestRecord(input.request)
+    if (Object.keys(body).some((key) => key !== 'filter') || !isRecord(body['filter'])) {
+      throw new InvalidPeerRequest()
+    }
+    if (input.options.collectiveHistoryQuery === undefined) {
+      return refusal(404, 'collective_history_not_authoritative', { retryable: true })
+    }
+    return responseJson(
+      await input.options.collectiveHistoryQuery({
+        authenticatedNodeId: input.peerNodeId,
+        protocolVersion: input.requestVersion,
+        filter: body['filter'],
+      }),
+      200
+    )
+  }
+
+  if (input.url.pathname === '/v1/federation/history/checkpoint') {
+    const body = await requestRecord(input.request)
+    if (Object.keys(body).some((key) => key !== 'checkpoint') || !isRecord(body['checkpoint'])) {
+      throw new InvalidPeerRequest()
+    }
+    if (input.options.collectiveHistoryCheckpoint === undefined) {
+      return refusal(404, 'collective_history_not_authoritative', { retryable: true })
+    }
+    const result = await input.options.collectiveHistoryCheckpoint({
+      authenticatedNodeId: input.peerNodeId,
+      protocolVersion: input.requestVersion,
+      body,
+    })
+    return responseJson(
+      {
+        ok: true,
+        protocolVersion: PEER_PROTOCOL_VERSION,
+        ack: result,
+      },
+      200
+    )
+  }
+
+  return undefined
 }
 
 export function createPeerProtocolRequestHandler(
@@ -334,6 +447,15 @@ export function createPeerProtocolRequestHandler(
         }
         return response
       }
+
+      const historyResponse = await handleCollectiveHistoryRequest({
+        request,
+        url,
+        options,
+        peerNodeId: peer.nodeId,
+        requestVersion,
+      })
+      if (historyResponse !== undefined) return historyResponse
 
       return refusal(404, 'not_found')
     } catch (error) {

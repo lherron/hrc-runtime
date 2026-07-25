@@ -139,6 +139,42 @@ export type HrcMessageRecord = {
   metadataJson?: Record<string, unknown> | undefined
 }
 
+export type HrcCollectiveHistoryObservation = {
+  nodeId: string
+  messageSeq: number
+  role: 'origin' | 'destination'
+  observedAt: string
+  originNodeId: string
+  acceptedDestinationNodeId?: string | undefined
+  execution: HrcMessageExecution
+}
+
+export type HrcCollectiveMessageRecord = HrcMessageRecord & {
+  /**
+   * Authority-owned ingestion cursor. This is deliberately separate from
+   * messageSeq, which remains the originating node's sequence provenance.
+   */
+  collectiveSeq?: number | undefined
+  collectiveHistory?: {
+    authorityNodeId: string
+    observations: HrcCollectiveHistoryObservation[]
+  }
+}
+
+export type HrcMessageHistoryStatus = {
+  source: 'collective' | 'local'
+  complete: boolean
+  authorityNodeId: string
+  queriedNodeId: string
+  cursorKind: 'collective' | 'node-local'
+  pendingReplicationCount: number
+  unconfirmedNodeIds?: string[] | undefined
+  degraded?: {
+    code: 'collective_unreachable' | 'collective_lagging' | 'collective_not_configured'
+    message: string
+  }
+}
+
 // -- Message filter -----------------------------------------------------------
 
 export type HrcMessageFilter = {
@@ -257,7 +293,12 @@ export type CreateMessageResponse = HrcMessageRecord
 export type ListMessagesRequest = HrcMessageFilter
 
 export type ListMessagesResponse = {
-  messages: HrcMessageRecord[]
+  messages: HrcCollectiveMessageRecord[]
+  /**
+   * Optional for compatibility with pre-collective daemons. New daemons always
+   * emit it so callers never mistake a local outage fallback for full history.
+   */
+  history?: HrcMessageHistoryStatus | undefined
 }
 
 // GET /v1/messages/watch (stream)

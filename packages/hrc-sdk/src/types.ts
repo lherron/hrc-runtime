@@ -235,6 +235,9 @@ export type {
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
   HrcTargetView,
+  HrcCollectiveHistoryObservation,
+  HrcCollectiveMessageRecord,
+  HrcMessageHistoryStatus,
   HrcMessageRecord,
   HrcMessageFilter,
 } from 'hrc-core'

@@ -22,6 +22,7 @@ import type {
 } from './broker/controller.js'
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
+import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import type { FederationOriginOutbox } from './federation/origin-outbox.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
@@ -119,6 +120,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly tmux: ServerTmuxManager
   readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext

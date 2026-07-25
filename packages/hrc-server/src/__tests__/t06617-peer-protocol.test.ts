@@ -332,7 +332,7 @@ describe('T-06617 narrow peer routes', () => {
     expect(established).toHaveLength(1)
   })
 
-  test('the TCP handler exposes exactly establish, accept, locate, and health', async () => {
+  test('the TCP handler exposes only the narrow federation verbs', async () => {
     const serve = handler()
     for (const path of ['/v1/status', '/v1/events', '/v1/federation/bindings', '/']) {
       const response = await serve(
@@ -341,6 +341,30 @@ describe('T-06617 narrow peer routes', () => {
       expect(response.status).toBe(404)
       expect(await response.json()).toMatchObject({ ok: false, error: { code: 'not_found' } })
     }
+    const history = await serve(
+      request('/v1/federation/history/query', {
+        token: CURRENT_TOKEN,
+        version: PEER_PROTOCOL_VERSION,
+        body: { filter: {} },
+      })
+    )
+    expect(history.status).toBe(404)
+    expect(await history.json()).toMatchObject({
+      ok: false,
+      error: { code: 'collective_history_not_authoritative', retryable: true },
+    })
+    const checkpoint = await serve(
+      request('/v1/federation/history/checkpoint', {
+        token: CURRENT_TOKEN,
+        version: PEER_PROTOCOL_VERSION,
+        body: { checkpoint: { maxMessageSeq: 0, pendingReplicationCount: 0 } },
+      })
+    )
+    expect(checkpoint.status).toBe(404)
+    expect(await checkpoint.json()).toMatchObject({
+      ok: false,
+      error: { code: 'collective_history_not_authoritative', retryable: true },
+    })
   })
 
   test('wildcard, loopback, and non-tailnet binds are rejected before startup', () => {

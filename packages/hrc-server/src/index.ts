@@ -75,6 +75,7 @@ import {
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
 import { createFederationAcceptHandler } from './federation/accept.js'
+import { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import {
   deriveNodeIdFromHostname,
   resolveFederationConfig,
@@ -557,6 +558,7 @@ class HrcServerInstance implements HrcServer {
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Last successful peer answers are isolated by node and exact runtime filter. */
   readonly peerRuntimeProjectionCache = new Map<
     string,
@@ -808,6 +810,18 @@ class HrcServerInstance implements HrcServer {
             this.bindingRegistryEndpoint?.registryClient
           )
 
+    this.collectiveHistory =
+      federationConfig === undefined
+        ? undefined
+        : new CollectiveHistoryCoordinator({
+            db: this.db,
+            config: federationConfig,
+            ...(options.collectiveHistoryPollIntervalMs === undefined
+              ? {}
+              : { pollIntervalMs: options.collectiveHistoryPollIntervalMs }),
+          })
+    const collectiveHistory = this.collectiveHistory
+
     if (federationConfig === undefined || federationConfig.peerListener === undefined) {
       this.peerProtocolEndpoint = undefined
       this.federationPeerEndpoint = undefined
@@ -839,12 +853,22 @@ class HrcServerInstance implements HrcServer {
                 locate: true,
                 health: true,
                 runtimeProjection: true,
+                collectiveHistory: collectiveHistory?.isAuthority === true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
             accept: peerAcceptHandler,
+            ...(collectiveHistory?.isAuthority !== true
+              ? {}
+              : {
+                  collectiveHistoryReplicate: ({ authenticatedNodeId, body }) =>
+                    collectiveHistory.acceptReplication(authenticatedNodeId, body),
+                  collectiveHistoryCheckpoint: ({ authenticatedNodeId, body }) =>
+                    collectiveHistory.acceptCheckpoint(authenticatedNodeId, body),
+                  collectiveHistoryQuery: ({ filter }) => collectiveHistory.queryAuthority(filter),
+                }),
           },
         })
         this.federationPeerEndpoint = this.peerProtocolEndpoint.url
@@ -907,6 +931,8 @@ class HrcServerInstance implements HrcServer {
       }
       throw error
     }
+
+    this.collectiveHistory?.start()
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
@@ -1054,6 +1080,7 @@ class HrcServerInstance implements HrcServer {
     this.server.stop(true)
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
+    this.collectiveHistory?.stop()
     await this.federationOriginOutbox?.stop()
     if (this.peerProtocolEndpoint) {
       try {

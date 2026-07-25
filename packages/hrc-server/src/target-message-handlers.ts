@@ -484,8 +484,23 @@ export async function handleQueryMessages(
 ): Promise<Response> {
   const body = await parseJsonBody(request)
   const filter = parseMessageFilter(body)
+  if (this.collectiveHistory !== undefined) {
+    return json(await this.collectiveHistory.query(filter))
+  }
   return json({
     messages: this.db.messages.query(filter),
+    history: {
+      source: 'local',
+      complete: false,
+      authorityNodeId: 'svc',
+      queriedNodeId: 'unknown-node',
+      cursorKind: 'node-local',
+      pendingReplicationCount: 0,
+      degraded: {
+        code: 'collective_not_configured',
+        message: 'collective history is unavailable in this daemon mode',
+      },
+    },
   } satisfies ListMessagesResponse)
 }
 

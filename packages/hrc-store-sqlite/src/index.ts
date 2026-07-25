@@ -1,5 +1,14 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase } from './database.js'
+export {
+  CollectiveHistoryReplicationRepository,
+  CollectiveHistoryRepository,
+} from './collective-history-repository.js'
+export type {
+  CollectiveHistoryReplicationRecord,
+  CollectiveHistorySourceRole,
+  RecordCollectiveHistoryObservationInput,
+} from './collective-history-repository.js'
 export { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 export type { SessionTaskClaimAuthority } from './session-task-claim-repository.js'
 export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
@@ -95,7 +104,7 @@ export type {
   RuntimeOperationUpdatePatch,
 } from './repositories/broker-repositories.js'
 export { BrokerInvocationEventConflictError } from './repositories/broker-repositories.js'
-export type { MessageInsertInput } from './message-repository.js'
+export type { MessageChangeListener, MessageInsertInput } from './message-repository.js'
 export {
   HrcMailEnvelopeRepository,
   HrcMailRepositoryError,
