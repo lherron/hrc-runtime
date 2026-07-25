@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
-import { BrokerClient } from 'spaces-harness-broker-client'
+import type { BrokerClient } from 'spaces-harness-broker-client'
 import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
+import { connectObservedBrokerUnixClient } from '../broker/client-observability.js'
 import { type BrokerLeaseProbe, parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { extractBrokerEndpoint } from '../broker/runtime-state.js'
 import { type TmuxPaneState, createTmuxManager } from '../tmux.js'
@@ -111,7 +112,7 @@ const BROKER_HEALTH_PROBE_BUDGET_MS = 2000
 export async function probeBrokerHealth(socketPath: string): Promise<BrokerHealthState> {
   let client: BrokerClient | undefined
   try {
-    client = await BrokerClient.connectUnix({
+    client = await connectObservedBrokerUnixClient({
       socketPath,
       timeoutMs: BROKER_HEALTH_PROBE_BUDGET_MS,
     })

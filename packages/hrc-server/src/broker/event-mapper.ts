@@ -872,11 +872,14 @@ export class BrokerEventMapper {
       case 'turn.completed': {
         const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.markCompleted(runId, {
-            status: 'completed',
-            completedAt: occurredAt,
-            updatedAt: now,
-          })
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            db.runs.markCompleted(runId, {
+              status: 'completed',
+              completedAt: occurredAt,
+              updatedAt: now,
+            })
+          }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
@@ -886,12 +889,15 @@ export class BrokerEventMapper {
         const payload = envelope.payload as TurnFailedPayload
         const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.markCompleted(runId, {
-            status: 'failed',
-            completedAt: occurredAt,
-            updatedAt: now,
-            errorMessage: payload.message,
-          })
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            db.runs.markCompleted(runId, {
+              status: 'failed',
+              completedAt: occurredAt,
+              updatedAt: now,
+              errorMessage: payload.message,
+            })
+          }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
@@ -900,11 +906,14 @@ export class BrokerEventMapper {
       case 'turn.interrupted': {
         const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.markCompleted(runId, {
-            status: 'cancelled',
-            completedAt: occurredAt,
-            updatedAt: now,
-          })
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            db.runs.markCompleted(runId, {
+              status: 'cancelled',
+              completedAt: occurredAt,
+              updatedAt: now,
+            })
+          }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })

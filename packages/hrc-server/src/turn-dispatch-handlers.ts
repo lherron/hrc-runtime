@@ -19,7 +19,6 @@ import type {
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
-import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -33,6 +32,7 @@ import {
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
@@ -321,7 +321,8 @@ export async function reattachDurableBrokerSessionForOpen(
     controller: this.getHarnessBrokerController(),
     brokerUnixClientFactory:
       this.brokerUnixClientFactory ??
-      ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+      ((options) =>
+        connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
   })
 }
 

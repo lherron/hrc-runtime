@@ -6,11 +6,11 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideLegacyRuntimeStartupDisposition,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type {
   BrokerControllerAttachResult,
   BrokerUnixClientFactory,
@@ -260,7 +260,7 @@ export async function reconcileStartupState(
       },
     } as Pick<HarnessBrokerController, 'attachAndReplay'>,
     brokerUnixClientFactory: (options) =>
-      BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>,
+      connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>,
     resolveAttachToken: resolvePersistedBrokerAttachToken,
     probeBrokerLease: probePersistedBrokerLease,
     sweepOrphans: async () => undefined,
@@ -731,7 +731,7 @@ export async function warmDurableBrokerBindings(
 ): Promise<BrokerWarmupSummary> {
   const brokerUnixClientFactory: BrokerUnixClientFactory =
     deps.brokerUnixClientFactory ??
-    ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>)
+    ((options) => connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>)
 
   const summary: BrokerWarmupSummary = {
     total: 0,

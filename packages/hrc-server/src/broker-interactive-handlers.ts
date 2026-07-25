@@ -11,6 +11,7 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
@@ -19,7 +20,6 @@ import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-ru
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   decideBrokerDurableInteractiveRoute,
@@ -394,7 +394,8 @@ export async function handleHeadlessBrokerDispatchTurn(
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     })
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
@@ -605,7 +606,8 @@ export async function executeInteractiveBrokerInputTurn(
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     }))
   ) {
     result = await dispatchToBroker()

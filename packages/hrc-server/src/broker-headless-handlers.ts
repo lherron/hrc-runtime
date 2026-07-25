@@ -18,7 +18,6 @@ import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-ru
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   decideCodexAppServerPresentation,
@@ -26,6 +25,7 @@ import {
   shouldSpawnGhosttyViewer,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
@@ -643,7 +643,8 @@ export async function executeHeadlessBrokerInputTurn(
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     }))
   ) {
     writeServerLog('INFO', 'headless.durable_reattach.dispatch_recovered', {

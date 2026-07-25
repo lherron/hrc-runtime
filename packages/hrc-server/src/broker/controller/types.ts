@@ -361,6 +361,12 @@ export type HarnessBrokerControllerDeps = {
    */
   brokerAttachControlProbeTimeoutMs?: number | undefined
   /**
+   * Debounce before a detected broker-event sequence gap is re-checked and
+   * repaired from the durable ledger. Production defaults to 500ms; tests may
+   * shorten it without changing the recovery contract.
+   */
+  eventGapBackfillDelayMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.
