@@ -6,6 +6,7 @@ import { Socket } from 'node:net'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { parseScopeRef } from 'agent-scope'
 import {
   resolveControlSocketPath,
   resolveDatabasePath,
@@ -13,6 +14,7 @@ import {
   resolveSpoolDir,
   resolveStateRoot,
   resolveTmuxSocketPath,
+  splitSessionRef,
 } from 'hrc-core'
 import type { FederationPeerHealthObservation, HrcReleaseStatus, HrcStatusResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
@@ -149,8 +151,146 @@ export type ShutdownIntent = {
   action: 'stop' | 'restart'
   requestedBy: string | null
   requestedRunId: string | null
+  reason: string | null
   byPid: number
   at: string
+}
+
+export type ServerLifecycleAuthorization =
+  | {
+      allowed: true
+      callerKind: 'operator' | 'primary'
+      requestedBy: string | null
+      reason: string | null
+    }
+  | {
+      allowed: false
+      message: string
+    }
+
+const SERVER_LIFECYCLE_ENVELOPE_KEYS = [
+  'HRC_SESSION_REF',
+  'HRC_RUN_ID',
+  'HRC_BIRTH_CREDENTIAL',
+  'ASP_SCOPE_REF',
+  'ASP_TASK_ID',
+  'ASP_DEFAULT_TASK',
+  'ASP_HANDLE',
+] as const
+
+function normalizedOptionalText(value: string | undefined): string | null {
+  const normalized = value?.trim()
+  return normalized ? normalized : null
+}
+
+/**
+ * Authorize a daemon lifecycle mutation from the caller's inherited runtime
+ * envelope. A wholly absent envelope is an operator shell. Any present but
+ * unparseable or internally inconsistent envelope fails closed.
+ */
+export function evaluateServerLifecycleAuthorization(
+  env: Readonly<Record<string, string | undefined>>,
+  reason: string | undefined
+): ServerLifecycleAuthorization {
+  const requestedReason = normalizedOptionalText(reason)
+  const sessionRef = env['HRC_SESSION_REF']
+  const aspScopeRef = env['ASP_SCOPE_REF']
+  const hasEnvelope = SERVER_LIFECYCLE_ENVELOPE_KEYS.some((key) => env[key] !== undefined)
+
+  if (sessionRef === undefined && aspScopeRef === undefined) {
+    if (hasEnvelope) {
+      return {
+        allowed: false,
+        message:
+          'refusing server lifecycle mutation: partial HRC/ASP session envelope; ' +
+          'run from a clean operator shell or a recognized primary scope',
+      }
+    }
+    return {
+      allowed: true,
+      callerKind: 'operator',
+      requestedBy: null,
+      reason: requestedReason,
+    }
+  }
+
+  let scopeRef: string
+  let requestedBy: string
+  try {
+    if (sessionRef !== undefined) {
+      const parsed = splitSessionRef(sessionRef)
+      scopeRef = parsed.scopeRef
+      requestedBy = sessionRef
+    } else {
+      scopeRef = aspScopeRef as string
+      parseScopeRef(scopeRef)
+      requestedBy = scopeRef
+    }
+  } catch {
+    return {
+      allowed: false,
+      message:
+        'refusing server lifecycle mutation: malformed HRC/ASP session envelope; ' +
+        'run from a clean operator shell or a recognized primary scope',
+    }
+  }
+
+  if (aspScopeRef !== undefined && aspScopeRef !== scopeRef) {
+    return {
+      allowed: false,
+      message: 'refusing server lifecycle mutation: inconsistent HRC_SESSION_REF and ASP_SCOPE_REF',
+    }
+  }
+
+  let parsedScope: ReturnType<typeof parseScopeRef>
+  try {
+    parsedScope = parseScopeRef(scopeRef)
+  } catch {
+    return {
+      allowed: false,
+      message:
+        'refusing server lifecycle mutation: malformed HRC/ASP session envelope; ' +
+        'run from a clean operator shell or a recognized primary scope',
+    }
+  }
+
+  const taskId = parsedScope.taskId
+  for (const key of ['ASP_TASK_ID', 'ASP_DEFAULT_TASK'] as const) {
+    const envelopeTask = normalizedOptionalText(env[key])
+    if (envelopeTask !== null && envelopeTask !== taskId) {
+      return {
+        allowed: false,
+        message: `refusing server lifecycle mutation: ${key} conflicts with caller scope`,
+      }
+    }
+  }
+
+  if (taskId === 'primary') {
+    if (requestedReason === null) {
+      return {
+        allowed: false,
+        message: 'primary-scoped server lifecycle mutations require --reason <text>',
+      }
+    }
+    return {
+      allowed: true,
+      callerKind: 'primary',
+      requestedBy,
+      reason: requestedReason,
+    }
+  }
+
+  if (taskId?.startsWith('T-')) {
+    return {
+      allowed: false,
+      message: `task-scoped runtime ${scopeRef} may not stop or restart the HRC server; escalate to the project primary or an operator shell`,
+    }
+  }
+
+  return {
+    allowed: false,
+    message: `scoped runtime ${scopeRef} is not a recognized primary lifecycle authority; run from a clean operator shell or escalate to the project primary`,
+  }
 }
 
 function shutdownIntentPath(): string {
@@ -161,11 +301,21 @@ function shutdownIntentPath(): string {
  * Record who is initiating a stop/restart, just before signalling the daemon.
  * Best-effort: a failure here must never block the actual stop/restart.
  */
-export function writeShutdownIntent(action: 'stop' | 'restart'): void {
+export function writeShutdownIntent(
+  action: 'stop' | 'restart',
+  attribution?: {
+    requestedBy?: string | null | undefined
+    reason?: string | null | undefined
+  }
+): void {
   const intent: ShutdownIntent = {
     action,
-    requestedBy: process.env['HRC_SESSION_REF'] ?? null,
+    requestedBy:
+      attribution === undefined
+        ? (process.env['HRC_SESSION_REF'] ?? null)
+        : (attribution.requestedBy ?? null),
     requestedRunId: process.env['HRC_RUN_ID'] ?? null,
+    reason: attribution?.reason ?? null,
     byPid: process.pid,
     at: new Date().toISOString(),
   }

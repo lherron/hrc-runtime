@@ -9,6 +9,7 @@ import {
   consumeShutdownIntent,
   daemonizeAndWait,
   detectLaunchdOwner,
+  evaluateServerLifecycleAuthorization,
   execProcess,
   formatInFlightWork,
   formatServerRuntimeStatus,
@@ -145,7 +146,13 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
   }
 }
 
-async function closeAdmissionAndDrainForRestart(args: string[]): Promise<{
+async function closeAdmissionAndDrainForRestart(
+  args: string[],
+  attribution: {
+    requestedBy: string | null
+    reason: string | null
+  }
+): Promise<{
   operationId: string
   forceFallback: boolean
 }> {
@@ -157,9 +164,9 @@ async function closeAdmissionAndDrainForRestart(args: string[]): Promise<{
   const client = createClient()
   const closed = await client.closeTurnAdmission({
     operationId,
-    requestedBy: process.env['HRC_SESSION_REF'] ?? null,
+    requestedBy: attribution.requestedBy,
     requestedRunId: process.env['HRC_RUN_ID'] ?? null,
-    reason: 'hrc server restart --drain',
+    reason: attribution.reason ?? 'hrc server restart --drain',
   })
   process.stderr.write(
     `hrc: turn admission closed (${operationId}); active admissions=${closed.activeAdmissions}\n`
@@ -201,7 +208,22 @@ async function closeAdmissionAndDrainForRestart(args: string[]): Promise<{
   return { operationId, forceFallback: false }
 }
 
+function requireServerLifecycleAuthorization(args: string[]): {
+  requestedBy: string | null
+  reason: string | null
+} {
+  const result = evaluateServerLifecycleAuthorization(process.env, parseFlag(args, '--reason'))
+  if (!result.allowed) {
+    fatal(result.message)
+  }
+  return {
+    requestedBy: result.requestedBy,
+    reason: result.reason,
+  }
+}
+
 export async function cmdServerStop(args: string[]): Promise<void> {
+  const attribution = requireServerLifecycleAuthorization(args)
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
   const before = await collectServerRuntimeStatus({ includeTmux: false })
@@ -221,12 +243,13 @@ export async function cmdServerStop(args: string[]): Promise<void> {
     )
   }
 
-  writeShutdownIntent('stop')
+  writeShutdownIntent('stop', attribution)
   await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
   process.stderr.write('hrc: daemon stopped\n')
 }
 
 export async function cmdServerRestart(args: string[]): Promise<void> {
+  const attribution = requireServerLifecycleAuthorization(args)
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const drain = hasFlag(args, '--drain')
@@ -239,14 +262,14 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
   let force = hasFlag(args, '--force')
   try {
     if (drain) {
-      const result = await closeAdmissionAndDrainForRestart(args)
+      const result = await closeAdmissionAndDrainForRestart(args, attribution)
       admissionOperationId = result.operationId
       force ||= result.forceFallback
     } else {
       await gateOnInFlightWork(args, 'restart')
     }
 
-    writeShutdownIntent('restart')
+    writeShutdownIntent('restart', attribution)
 
     const owner = await detectLaunchdOwner()
     if (owner) {
@@ -367,6 +390,7 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
         ? {
             requestedAction: intent.action,
             requestedRunId: intent.requestedRunId,
+            requestedReason: intent.reason,
             requestedByPid: intent.byPid,
           }
         : {}),

@@ -81,12 +81,13 @@ export function registerServerSessionCommands(program: Command): void {
     .command('stop')
     .description('stop the HRC daemon')
     .option('--timeout-ms <n>', 'shutdown timeout in milliseconds')
+    .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
     .option('--force', 'force stop (skip in-flight check; SIGKILL if SIGTERM fails)')
     .option('--wait', 'wait for in-flight runs to drain before stopping')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms', 'wait-timeout-ms'],
+        strings: ['timeout-ms', 'wait-timeout-ms', 'reason'],
         booleans: ['force', 'wait'],
       })
       await cmdServerStop(args)
@@ -96,6 +97,7 @@ export function registerServerSessionCommands(program: Command): void {
     .command('restart')
     .description('restart the HRC daemon')
     .option('--timeout-ms <n>', 'timeout in milliseconds')
+    .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
     .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
     .option('--wait', 'wait for in-flight runs to drain before restarting')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
@@ -108,7 +110,7 @@ export function registerServerSessionCommands(program: Command): void {
     .option('--foreground', 'restart in foreground')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms', 'wait-timeout-ms', 'drain-timeout-ms'],
+        strings: ['timeout-ms', 'wait-timeout-ms', 'drain-timeout-ms', 'reason'],
         booleans: ['force', 'wait', 'drain', 'daemon', 'foreground'],
       })
       await cmdServerRestart(args)

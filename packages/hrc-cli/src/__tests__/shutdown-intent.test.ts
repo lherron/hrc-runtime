@@ -44,7 +44,10 @@ describe('shutdown intent', () => {
     process.env['HRC_SESSION_REF'] = 'agent:larry:project:hrc-runtime:task:T-01854/lane:main'
     process.env['HRC_RUN_ID'] = 'run-5da14a6b'
 
-    writeShutdownIntent('restart')
+    writeShutdownIntent('restart', {
+      requestedBy: process.env['HRC_SESSION_REF'],
+      reason: 'coordinated maintenance',
+    })
     expect(existsSync(intentPath())).toBe(true)
 
     const intent = consumeShutdownIntent()
@@ -52,6 +55,7 @@ describe('shutdown intent', () => {
     expect(intent?.action).toBe('restart')
     expect(intent?.requestedBy).toBe('agent:larry:project:hrc-runtime:task:T-01854/lane:main')
     expect(intent?.requestedRunId).toBe('run-5da14a6b')
+    expect(intent?.reason).toBe('coordinated maintenance')
     expect(intent?.byPid).toBe(process.pid)
   })
 
@@ -69,6 +73,16 @@ describe('shutdown intent', () => {
     const intent = consumeShutdownIntent()
     expect(intent?.requestedBy).toBeNull()
     expect(intent?.requestedRunId).toBeNull()
+    expect(intent?.reason).toBeNull()
+  })
+
+  it('preserves explicit operator attribution instead of falling back to inherited env', () => {
+    process.env['HRC_SESSION_REF'] = 'agent:cody:project:hrc-runtime:task:minisvc/lane:main'
+    writeShutdownIntent('restart', { requestedBy: null, reason: 'operator maintenance' })
+
+    const intent = consumeShutdownIntent()
+    expect(intent?.requestedBy).toBeNull()
+    expect(intent?.reason).toBe('operator maintenance')
   })
 
   it('returns undefined when no intent file exists', () => {
@@ -80,6 +94,7 @@ describe('shutdown intent', () => {
       action: 'restart',
       requestedBy: 'agent:larry:project:hrc-runtime:task:T-01854',
       requestedRunId: null,
+      reason: 'old request',
       byPid: 1234,
       at: new Date(Date.now() - 60_000).toISOString(),
     }
