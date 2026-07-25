@@ -16,15 +16,20 @@ export interface ProfileAwareScopeDefaults {
   defaultTaskId?: string
 }
 
+export type ProjectOrigin = 'explicit' | 'inferred'
+
 export interface ResolveProfileAwareScopeInputOptions {
   /** Pure scope defaults applied after the authoritative profile is selected. */
   scope?: ProfileAwareScopeDefaults | undefined
   /** Placement overrides used to locate the authoritative agent profile. */
   placement?: Omit<ResolveAgentPlacementPathsOptions, 'agentId' | 'projectId'> | undefined
+  /** Whether the project came from the target itself or caller-side inference. */
+  projectOrigin?: ProjectOrigin | undefined
 }
 
 export interface ProfileAwareResolvedScopeInput extends ResolvedScopeInput {
   placement: ResolvedAgentPlacementPaths
+  projectOrigin: ProjectOrigin
   defaultRoleName?: string | undefined
 }
 
@@ -58,6 +63,9 @@ export function resolveProfileAwareScopeInput(
   // still throws with the actionable "requires a project" message, as intended.
   const scopeDefaults = options.scope ?? {}
   const initial = resolveQualifiedScopeInput(input, scopeDefaults)
+  const projectOrigin =
+    options.projectOrigin ??
+    (input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred')
   const projectId = initial.parsed.projectId ?? scopeDefaults.projectId
   const placement = resolveAgentPlacementPaths({
     ...options.placement,
@@ -73,6 +81,7 @@ export function resolveProfileAwareScopeInput(
   return {
     ...resolved,
     placement,
+    projectOrigin,
     ...(defaultRoleName !== undefined ? { defaultRoleName } : {}),
   }
 }

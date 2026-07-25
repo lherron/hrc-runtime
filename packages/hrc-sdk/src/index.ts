@@ -13,6 +13,7 @@ export { resolveProfileAwareScopeInput } from './resolve-scope.js'
 export type {
   ProfileAwareScopeDefaults,
   ProfileAwareResolvedScopeInput,
+  ProjectOrigin,
   ResolveProfileAwareScopeInputOptions,
 } from './resolve-scope.js'
 export type {
