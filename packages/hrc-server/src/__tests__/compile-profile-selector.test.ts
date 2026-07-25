@@ -268,6 +268,26 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.startRequest.spec.launch?.initialPrompt).toBe('PRIMING: hello clod')
   })
 
+  it('ADMITS an interactive tmux profile with no prompt and no broker initialInput', () => {
+    const identity = makeIdentity({
+      runtimeId: 'runtime_tmux' as ReturnType<typeof makeIdentity>['runtimeId'],
+      invocationId: 'invocation_tmux' as ReturnType<typeof makeIdentity>['invocationId'],
+    })
+    expect(identity.initialInputId).toBeDefined()
+    const { profile } = makeInteractiveTmuxProfile(identity, {
+      withInitialInput: false,
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.startRequest.initialInput).toBeUndefined()
+    expect(selection.startRequest.spec.launch).toBeUndefined()
+  })
+
   it('REJECTS a launch-primed profile that ALSO carries a mismatched initialInput', () => {
     // The relaxation is guarded on initialInput === undefined. If a profile
     // both rides the launch argv AND echoes a (stale/forged) initialInput whose

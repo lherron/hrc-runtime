@@ -287,7 +287,9 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     }): Promise<AspcCompileHarnessInvocationResponse> => {
       captured.request = request.compileRequest
       const identity = request.compileRequest.identity as RuntimeIdentityAllocation
-      const { profile } = makeInteractiveTmuxProfile(identity)
+      const { profile } = makeInteractiveTmuxProfile(identity, {
+        withInitialInput: false,
+      })
       return makeAspcCompileResponse(identity, [profile])
     }
 
