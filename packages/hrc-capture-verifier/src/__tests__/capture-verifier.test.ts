@@ -118,6 +118,51 @@ describe('provider transcript adapters', () => {
     }
   })
 
+  it('keeps a nonzero Codex command result completed and preserves its neutral exit code', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-nonzero-'))
+    const path = join(dir, 'codex.jsonl')
+    await writeFile(
+      path,
+      [
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-nonzero',
+            name: 'exec_command',
+            arguments: '{"cmd":"rg definitely_missing"}',
+          },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'function_call_output',
+            call_id: 'call-nonzero',
+            output: 'Process exited with code 1\nOutput:\nno matches',
+          },
+        }),
+      ].join('\n')
+    )
+
+    try {
+      const transcript = await parseProviderTranscript({ path })
+      expect(transcript.observations[1]).toMatchObject({
+        type: 'tool.call.completed',
+        correlationKey: 'call-nonzero',
+        normalizedPayload: {
+          toolCallId: 'call-nonzero',
+          result: { output: 'no matches', exitCode: 1 },
+        },
+      })
+      expect(transcript.observationsByType).toMatchObject({
+        'tool.call.completed': 1,
+        'tool.call.failed': 0,
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('normalizes minimized Claude JSONL user, assistant, tool_use, and tool_result records', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-claude-'))
     const path = join(dir, 'claude.jsonl')
@@ -152,6 +197,47 @@ describe('provider transcript adapters', () => {
         [2, 'tool.call.started', 'toolu-1'],
         [3, 'tool.call.completed', 'toolu-1'],
       ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a Claude domain-error result completed and records isError as payload data', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-claude-error-'))
+    const path = join(dir, 'claude.jsonl')
+    await writeFile(
+      path,
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu-error',
+              content: 'permission denied',
+              is_error: true,
+            },
+          ],
+        },
+      })
+    )
+
+    try {
+      const transcript = await parseProviderTranscript({ path })
+      expect(transcript.observations[0]).toMatchObject({
+        type: 'tool.call.completed',
+        correlationKey: 'toolu-error',
+        normalizedPayload: {
+          toolCallId: 'toolu-error',
+          result: { output: 'permission denied' },
+          isError: true,
+        },
+      })
+      expect(transcript.observationsByType).toMatchObject({
+        'tool.call.completed': 1,
+        'tool.call.failed': 0,
+      })
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -605,6 +691,133 @@ describe('capture verifier with injected stores', () => {
 
     expect(report.ok).toBe(true)
     expect(report.providerMatches[0]?.status).toBe('matched')
+  })
+
+  it('requires recorded neutral exit codes to agree even when command output matches', async () => {
+    const transcript = transcriptFixture([
+      {
+        schema: 'hrc.capture-observation/v1',
+        line: 1,
+        provider: 'codex',
+        type: 'tool.call.completed',
+        correlationKey: 'call-1',
+        normalizedPayload: {
+          toolCallId: 'call-1',
+          result: { output: 'same output', exitCode: 1 },
+        },
+        payloadHash: hashPayload({
+          toolCallId: 'call-1',
+          result: { output: 'same output', exitCode: 1 },
+        }),
+      },
+    ])
+
+    const matching = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'call-1',
+          name: 'command',
+          result: { output: 'same output', exitCode: 1 },
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(matching.ok).toBe(true)
+    expect(matching.providerMatches[0]?.status).toBe('matched')
+
+    const divergent = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'call-1',
+          name: 'command',
+          result: { output: 'same output', exitCode: 2 },
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(divergent.ok).toBe(false)
+    expect(divergent.providerMatches[0]?.status).toBe('divergent')
+
+    const unavailable = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'call-1',
+          name: 'command',
+          result: { output: 'same output' },
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(unavailable.ok).toBe(true)
+    expect(unavailable.providerMatches[0]?.status).toBe('matched')
+  })
+
+  it('requires domain isError signals to agree without changing the completed event type', async () => {
+    const transcript = transcriptFixture([
+      {
+        schema: 'hrc.capture-observation/v1',
+        line: 1,
+        provider: 'claude-code',
+        type: 'tool.call.completed',
+        correlationKey: 'toolu-1',
+        normalizedPayload: {
+          toolCallId: 'toolu-1',
+          result: { output: 'permission denied' },
+          isError: true,
+        },
+        payloadHash: hashPayload({
+          toolCallId: 'toolu-1',
+          result: { output: 'permission denied' },
+          isError: true,
+        }),
+      },
+    ])
+
+    const matching = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'toolu-1',
+          name: 'Bash',
+          result: { output: 'permission denied' },
+          isError: true,
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(matching.ok).toBe(true)
+
+    const divergent = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'toolu-1',
+          name: 'Bash',
+          result: { output: 'permission denied' },
+          isError: false,
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(divergent.ok).toBe(false)
+    expect(divergent.providerMatches[0]?.status).toBe('divergent')
+
+    const unavailable = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'tool.call.completed', {
+          toolCallId: 'toolu-1',
+          name: 'Bash',
+          result: { output: 'permission denied' },
+        }),
+      ]),
+      invocationId: INVOCATION_ID,
+      transcript,
+    })
+    expect(unavailable.ok).toBe(true)
+    expect(unavailable.providerMatches[0]?.status).toBe('matched')
   })
 })
 

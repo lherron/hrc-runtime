@@ -200,12 +200,11 @@ function adaptCodexRecord(
       return { disposition: 'ignored' }
     }
     const result = extractCodexCommandResult(output)
-    const failed = result.exitCode !== undefined ? result.exitCode !== 0 : false
     return {
       event: makeObserved({
         line,
         provider: 'codex',
-        type: failed ? 'tool.call.failed' : 'tool.call.completed',
+        type: 'tool.call.completed',
         correlationKey: callId,
         normalizedPayload: {
           toolCallId: callId,
@@ -228,16 +227,18 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
     const toolResult = firstContentBlock(content, 'tool_result')
     if (toolResult !== undefined) {
       const toolUseId = stringField(toolResult, 'tool_use_id') ?? stringField(toolResult, 'id')
-      const isError = toolResult['is_error'] === true || toolResult['isError'] === true
+      const rawIsError = toolResult['is_error'] ?? toolResult['isError']
+      const isError = rawIsError === true
       return {
         event: makeObserved({
           line,
           provider: 'claude-code',
-          type: isError ? 'tool.call.failed' : 'tool.call.completed',
+          type: 'tool.call.completed',
           correlationKey: toolUseId,
           normalizedPayload: {
             toolCallId: toolUseId,
             result: normalizeToolResult(toolResult['content']),
+            ...(typeof rawIsError === 'boolean' ? { isError } : {}),
           },
         }),
       }
@@ -359,10 +360,10 @@ function normalizeToolResult(value: unknown, exitCode?: number | undefined): unk
     return normalizeContentResult(value['content'])
   }
   const output = normalizeCommandOutputText(value === undefined ? '' : String(value))
-  if (output.length === 0 && exitCode !== undefined) {
-    return { exitCode }
+  return {
+    ...(output.length > 0 ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
   }
-  return { output }
 }
 
 function normalizeContentResult(value: unknown[]): unknown {
