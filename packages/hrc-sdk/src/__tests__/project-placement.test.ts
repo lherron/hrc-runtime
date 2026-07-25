@@ -167,4 +167,60 @@ describe('resolveHrcAgentPlacementPaths', () => {
     expect(resolved.cwd).toBe(nested)
     expect(resolved.resolution.source).toBe('inferred')
   })
+
+  it('fails closed when an explicit project root override does not exist', () => {
+    const root = temporaryRoot()
+    const missing = join(root, 'missing')
+
+    expect(() =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        projectOrigin: 'explicit',
+        projectRoot: missing,
+        registryProjects: [],
+        env: {},
+      })
+    ).toThrow(`explicit project root does not exist or is not a directory: ${missing}`)
+  })
+
+  it('rejects a linked-worktree registry root and names the canonical remediation', () => {
+    const root = temporaryRoot()
+    const linked = join(root, 'linked-taskboard')
+    mkdirSync(linked, { recursive: true })
+    writeFileSync(join(linked, '.git'), 'gitdir: elsewhere\n')
+
+    expect(() =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: linked }],
+        projectSearchRoots: [root],
+        env: {},
+      })
+    ).toThrow(
+      `registered root for taskboard ${linked} is a linked worktree; repair it with: wrkq set taskboard --root <canonical>`
+    )
+  })
+
+  it('fails an unknown explicit project with registration and task-handle remediation', () => {
+    const root = temporaryRoot()
+
+    expect(() =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard-T-06370-worktree',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: null }],
+        projectSearchRoots: [root],
+        env: {},
+      })
+    ).toThrow(
+      'project root unknown for taskboard-T-06370-worktree; register it with: wrkq set taskboard-T-06370-worktree --root <path>; did you mean @taskboard:T-06370'
+    )
+  })
 })

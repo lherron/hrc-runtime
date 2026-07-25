@@ -70,6 +70,14 @@ function isCanonicalCheckout(path: string): boolean {
   return isDirectory(join(path, '.git'))
 }
 
+function isLinkedCheckout(path: string): boolean {
+  try {
+    return statSync(join(path, '.git')).isFile()
+  } catch {
+    return false
+  }
+}
+
 function readProjectRegistry(env: Record<string, string | undefined>): ProjectRegistryEntry[] {
   const result = spawnSync('wrkq', ['projects', '--json'], {
     encoding: 'utf8',
@@ -93,6 +101,20 @@ function findRegistryEntry(
     (project) =>
       project.slug === projectId || project.path === projectId || project.title === projectId
   )
+}
+
+function didYouMeanExplicitTaskProject(
+  projects: ProjectRegistryEntry[],
+  projectId: string
+): string | undefined {
+  const taskId = taskTokens(projectId)[0]
+  if (!taskId) return undefined
+  const knownProject = projects
+    .map((project) => project.slug ?? project.path ?? project.title)
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .sort((left, right) => right.length - left.length)
+    .find((candidate) => projectId.startsWith(`${candidate}-`))
+  return knownProject ? `did you mean @${knownProject}:${taskId}` : undefined
 }
 
 function defaultProjectSearchRoots(env: Record<string, string | undefined>): string[] {
@@ -252,6 +274,9 @@ export function resolveHrcAgentPlacementPaths(
   const override = options.projectRoot ?? env['ASP_PROJECT_ROOT_OVERRIDE']
   if (override) {
     const projectRoot = resolve(expandHome(override, env))
+    if (!isDirectory(projectRoot)) {
+      throw new Error(`explicit project root does not exist or is not a directory: ${projectRoot}`)
+    }
     return withResolvedProject(options, projectRoot, {
       source: 'explicit-override',
       projectId: options.projectId,
@@ -267,6 +292,14 @@ export function resolveHrcAgentPlacementPaths(
   let canonicalSource: 'wrkq-registry' | 'marker-scan' | undefined
   if (registryEntry?.root) {
     canonicalRoot = resolve(expandHome(registryEntry.root, env))
+    if (!isCanonicalCheckout(canonicalRoot)) {
+      const kind = isLinkedCheckout(canonicalRoot)
+        ? 'is a linked worktree'
+        : 'is not a canonical git checkout'
+      throw new Error(
+        `registered root for ${options.projectId} ${canonicalRoot} ${kind}; repair it with: wrkq set ${options.projectId} --root <canonical>`
+      )
+    }
     canonicalSource = 'wrkq-registry'
   } else {
     const roots = options.projectSearchRoots ?? defaultProjectSearchRoots(env)
@@ -277,16 +310,12 @@ export function resolveHrcAgentPlacementPaths(
   }
 
   if (!canonicalRoot || !canonicalSource) {
-    const fallback = resolveAgentPlacementPaths(options)
-    return {
-      ...fallback,
-      resolution: {
-        source: 'inferred',
-        projectId: options.projectId,
-        ...(fallback.cwd ? { cwd: fallback.cwd } : {}),
-        reason: `explicit project ${options.projectId} has no canonical root yet`,
-      },
-    }
+    const suggestion = didYouMeanExplicitTaskProject(projects, options.projectId)
+    throw new Error(
+      `project root unknown for ${options.projectId}; register it with: wrkq set ${options.projectId} --root <path>${
+        suggestion ? `; ${suggestion}` : ''
+      }`
+    )
   }
 
   const worktree = refineTaskWorktree(canonicalRoot, options.taskId, env)
@@ -315,6 +344,7 @@ export function resolveHrcAgentPlacementPaths(
 
 export const projectPlacementInternals = {
   isCanonicalCheckout,
+  isLinkedCheckout,
   parseWorktreePorcelain,
   taskTokens,
 }
