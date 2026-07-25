@@ -164,6 +164,13 @@ describe('monitor role-tree selectors (T-05113)', () => {
     const one = state()
     one.sessions = one.sessions.filter((candidate) => candidate.scopeRef === VERIFY)
     one.runtimes = one.runtimes.filter((candidate) => candidate.runtimeId === 'runtime-verify')
+    one.sessions.push(
+      session(VERIFY, 'runtime-verify-old', {
+        generation: 1,
+        status: 'removed',
+      })
+    )
+    one.runtimes.push(runtime('runtime-verify-old', 'terminated'))
 
     await expect(
       createMonitorReader(one).captureStart(parseSelector('smokey@agent-spaces:T-05110'))

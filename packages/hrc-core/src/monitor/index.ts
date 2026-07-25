@@ -305,10 +305,26 @@ function roleTreeParts(
   state: HrcMonitorState,
   selector: Extract<HrcSelector, { kind: 'target' | 'scope' }>
 ): RoleTreeParts[] {
-  const candidates: RoleTreeParts[] = []
+  const latestBySessionRef = new Map<
+    string,
+    {
+      matchKind: 'exact' | 'role-child'
+      session: HrcMonitorSessionState
+    }
+  >()
   for (const session of state.sessions) {
     const matchKind = monitorSessionMatchKind(session, selector)
     if (!matchKind) continue
+    const key = `${session.scopeRef}/lane:${normalizeLaneId(session.laneRef)}`
+    const previous = latestBySessionRef.get(key)
+    const latest = selectLatestSession(previous ? [previous.session, session] : [session])
+    if (latest === session) {
+      latestBySessionRef.set(key, { matchKind, session })
+    }
+  }
+
+  const candidates: RoleTreeParts[] = []
+  for (const { matchKind, session } of latestBySessionRef.values()) {
     const parts = partsFromSession(state, session)
     if (!parts) continue
     candidates.push({
