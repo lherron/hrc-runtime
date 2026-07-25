@@ -132,6 +132,8 @@ type HrcServerInstanceDataForHandlers = {
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<unknown> | undefined
+  tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
+  tmuxAgingInFlight: Promise<unknown> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -141,6 +143,7 @@ type HrcServerInstanceDataForHandlers = {
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
+  readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean

@@ -21,7 +21,12 @@ precondition under C-10736.
 
 The command split from T-06500 is intentional:
 
-- `sweep` marks live runtimes stale and never deletes rows.
+- The daemon liveness-gates aged tmux `ready` rows on its 300-second
+  maintenance cadence and marks only fully abandoned rows `stale`. The stage
+  uses the resolved stale-generation threshold (24 hours by default),
+  explicitly skips `busy`/owned/live/ambiguous rows, and never deletes.
+- Manual `runtime sweep` uses the same liveness gate and resolved default age
+  boundary; its filters remain available for operator-directed aging.
 - `runtime prune` reaps rows, defaults to `stale`, and is gated per T-05441.
 
 `runtime prune` is the only stale-row-reaping surface.

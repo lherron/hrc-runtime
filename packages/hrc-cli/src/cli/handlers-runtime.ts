@@ -369,7 +369,7 @@ function printResultsNdjson(result: { results: readonly unknown[]; summary: unkn
 function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
   process.stdout.write(`runtime sweep${dryRun ? ' (dry-run)' : ''}\n`)
   for (const row of result.results) {
-    const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
+    const suffix = row.errorMessage ? ` ${row.errorMessage}` : row.reason ? ` ${row.reason}` : ''
     process.stdout.write(
       `  ${row.status.padEnd(10)} ${row.runtimeId} ${row.transport} dropContinuation=${
         row.droppedContinuation

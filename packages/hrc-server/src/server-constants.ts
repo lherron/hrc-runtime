@@ -37,6 +37,7 @@ export const HRC_BROKER_DURABLE_IPC_ENABLED_ENV = 'HRC_BROKER_DURABLE_IPC_ENABLE
 // T-06810 Wave 2 — mailbox orchestration stays dark until fleet burn-in.
 export const HRC_MAIL_KICKER_ENABLED_ENV = 'HRC_MAIL_KICKER_ENABLED'
 export const HRC_MAIL_MAX_ROUNDS_ENV = 'HRC_MAIL_MAX_ROUNDS'
+export const HRC_TMUX_AGING_ENABLED_ENV = 'HRC_TMUX_AGING_ENABLED'
 // T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy DEFAULT for
 // the codex-app-server headless-viewer route. Set to 'tmux-tui' to request the
 // dual-tmux viewer for codex-app-server headless runtimes; unset / any other
@@ -55,6 +56,7 @@ export const DEFAULT_HRC_MAIL_MAX_ROUNDS = 5
 
 export const HRC_ZOMBIE_SWEEP_ENABLED = true
 export const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
+export const HRC_TMUX_AGING_INTERVAL_SECONDS = 300
 export const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
 export const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
 export const HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS = 30_000

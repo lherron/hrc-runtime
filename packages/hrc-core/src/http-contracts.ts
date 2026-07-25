@@ -814,6 +814,7 @@ export type SweepRuntimeResult = {
   transport: SweepRuntimeTransport
   status: 'stale' | 'skipped' | 'error'
   droppedContinuation: boolean
+  reason?: string | undefined
   errorCode?: string | undefined
   errorMessage?: string | undefined
 }
@@ -835,7 +836,7 @@ export type SweepRuntimesResponse = {
 
 /**
  * Record-level GC for orphaned runtime STORE ROWS (T-05441). Distinct from
- * `SweepRuntimes`, which only TERMINATES live processes/tmux and leaves the row
+ * `SweepRuntimes`, which liveness-gates lifecycle aging and leaves the row
  * behind. Prune DELETES the row (plus its runtime-scoped satellite rows) for
  * genuinely orphaned records — status is unavailable (stale/dead/terminated),
  * no active run, no live process, no live tmux session.

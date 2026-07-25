@@ -198,7 +198,9 @@ export function registerRuntimeCommands(program: Command): void {
 
   runtime
     .command('sweep')
-    .description('mark aged ready,busy runtimes stale; use runtime prune to delete stale rows')
+    .description(
+      'liveness-gate aged ready,busy runtimes; stale abandoned rows, then use runtime prune'
+    )
     .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
     .option('--status <status>', 'filter by status')
     .option('--scope <scope>', 'filter by scope')

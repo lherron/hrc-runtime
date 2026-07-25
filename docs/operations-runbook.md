@@ -170,7 +170,9 @@ handoff/validation evidence.
   cannot fit a full backup, defer the prune and surface that deferral —
   never perform a bulk prune without its backup. Rolling nightly increments
   are exempt from this precondition (C-10736).
-- Command split: `sweep` marks live runtimes stale and never deletes rows;
+- Command split: the daemon's 300-second tmux-aging stage and manual
+  `runtime sweep` share the resolved stale threshold plus the same
+  fail-closed liveness gate, and only mark fully abandoned rows `stale`;
   `runtime prune` (defaults to `stale`) is the only stale-row-reaping
   surface.
 

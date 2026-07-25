@@ -251,6 +251,13 @@ export type HrcServerOptions = {
    */
   staleGenerationEnabled?: boolean | undefined
   /**
+   * Enable daemon-owned aging of abandoned tmux runtime rows. The stage is
+   * default-on and liveness-gated; it marks rows stale but never deletes them.
+   *
+   * Env override: `HRC_TMUX_AGING_ENABLED` (`0`/`false` disables).
+   */
+  tmuxAgingEnabled?: boolean | undefined
+  /**
    * Cut headless OpenAI Codex dispatch over to the Harness Broker. Default on.
    *
    * Env override: `HRC_HEADLESS_CODEX_BROKER_ENABLED` (`0`/`false` disables).

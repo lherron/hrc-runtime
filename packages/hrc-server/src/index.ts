@@ -29,6 +29,7 @@ import type {
   ResolveSessionResponse,
   RestartStyle,
   ScopeLocation,
+  SweepRuntimesResponse,
   SweepZombieRunsResponse,
 } from 'hrc-core'
 
@@ -145,6 +146,7 @@ import {
   resolvePiTuiTmuxBrokerEnabled,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
+  resolveTmuxAgingEnabled,
 } from './option-resolvers.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
@@ -570,6 +572,8 @@ class HrcServerInstance implements HrcServer {
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
+  tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
+  tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -581,6 +585,7 @@ class HrcServerInstance implements HrcServer {
   // `allowStaleGeneration: true`.
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
+  readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
@@ -903,6 +908,7 @@ class HrcServerInstance implements HrcServer {
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
+    this.tmuxAgingEnabled = resolveTmuxAgingEnabled(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
@@ -936,6 +942,7 @@ class HrcServerInstance implements HrcServer {
     })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
+      staleGenerationThresholdSec: this.staleGenerationThresholdSec,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
       notifyEvent: (event) => this.notifyEvent(event),
     })) {
@@ -943,6 +950,7 @@ class HrcServerInstance implements HrcServer {
     }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
+    this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
     this.startMailKicker()
 
@@ -1086,6 +1094,17 @@ class HrcServerInstance implements HrcServer {
         await this.activeRunReconcileInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
+      }
+    }
+    if (this.tmuxAgingTimer) {
+      clearInterval(this.tmuxAgingTimer)
+      this.tmuxAgingTimer = undefined
+    }
+    if (this.tmuxAgingInFlight) {
+      try {
+        await this.tmuxAgingInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.tmux_aging_wait_failed', { error })
       }
     }
     if (this.idleCleanupTimer) {
