@@ -3,6 +3,7 @@ import type {
   FederationMailPayload,
   FederationMessageDelivery,
   FederationMessageEnvelope,
+  FederationSemanticTurnSignal,
   HrcMailActor,
   HrcMailEnvelope,
   HrcMailPayload,
@@ -107,6 +108,13 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
   }
   const createIfMissing = optionalBoolean(value, 'createIfMissing')
   const allowStaleGeneration = optionalBoolean(value, 'allowStaleGeneration')
+  const semanticTurnHandoff = value['semanticTurnHandoff']
+  if (
+    semanticTurnHandoff !== undefined &&
+    (!isRecord(semanticTurnHandoff) || semanticTurnHandoff['version'] !== 1)
+  ) {
+    throw new InvalidFederationEnvelopeError()
+  }
   return {
     ...(runtimeIntent === undefined ? {} : { runtimeIntent: runtimeIntent as HrcRuntimeIntent }),
     ...(createIfMissing === undefined ? {} : { createIfMissing }),
@@ -114,6 +122,66 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
     ...(value['respondTo'] === undefined ? {} : { respondTo: parseAddress(value['respondTo']) }),
     ...(responseFormat === undefined ? {} : { responseFormat }),
     ...(allowStaleGeneration === undefined ? {} : { allowStaleGeneration }),
+    ...(semanticTurnHandoff === undefined ? {} : { semanticTurnHandoff: { version: 1 } }),
+  }
+}
+
+function parseSemanticTurnSignal(value: unknown): FederationSemanticTurnSignal | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value) || value['version'] !== 1) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const type = value['type']
+  if (type !== 'started' && type !== 'terminal') {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const sourceHrcSeq = value['sourceHrcSeq']
+  const identity = value['identity']
+  if (!Number.isSafeInteger(sourceHrcSeq) || (sourceHrcSeq as number) < 1 || !isRecord(identity)) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const generation = identity['generation']
+  const mode = identity['mode']
+  const transport = identity['transport']
+  if (
+    !Number.isSafeInteger(generation) ||
+    (generation as number) < 1 ||
+    (mode !== 'headless' && mode !== 'interactive' && mode !== 'nonInteractive') ||
+    (transport !== 'sdk' &&
+      transport !== 'tmux' &&
+      transport !== 'headless' &&
+      transport !== 'ghostty')
+  ) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const parsedIdentity = {
+    sessionRef: requiredString(identity, 'sessionRef'),
+    scopeRef: requiredString(identity, 'scopeRef'),
+    laneRef: requiredString(identity, 'laneRef'),
+    hostSessionId: requiredString(identity, 'hostSessionId'),
+    runtimeId: requiredString(identity, 'runtimeId'),
+    runId: requiredString(identity, 'runId'),
+    generation: generation as number,
+    mode,
+    transport,
+  } as const
+  if (type === 'started') {
+    return { version: 1, type, sourceHrcSeq: sourceHrcSeq as number, identity: parsedIdentity }
+  }
+  const outcome = value['outcome']
+  if (outcome !== 'completed' && outcome !== 'failed') {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const errorCode = optionalString(value, 'errorCode')
+  const errorMessage = optionalString(value, 'errorMessage')
+  return {
+    version: 1,
+    type,
+    sourceHrcSeq: sourceHrcSeq as number,
+    identity: parsedIdentity,
+    outcome,
+    ...(errorCode === undefined ? {} : { errorCode }),
+    ...(errorMessage === undefined ? {} : { errorMessage }),
   }
 }
 
@@ -319,8 +387,17 @@ export function parseFederationMessageEnvelope(value: unknown): FederationMessag
   }
 
   const replyToMessageId = optionalString(value, 'replyToMessageId')
+  const semanticTurnSignal = parseSemanticTurnSignal(value['semanticTurnSignal'])
   const interactiveSignal = parseInteractiveSignal(value['interactiveSignal'])
   const mail = parseFederationMailPayload(value['mail'])
+  if (
+    semanticTurnSignal !== undefined &&
+    (phase !== 'response' ||
+      (semanticTurnSignal.type === 'started' && kind !== 'system') ||
+      (semanticTurnSignal.type === 'terminal' && kind !== 'dm'))
+  ) {
+    throw new InvalidFederationEnvelopeError()
+  }
   if (interactiveSignal !== undefined && (kind !== 'system' || phase !== 'response')) {
     throw new InvalidFederationEnvelopeError()
   }
@@ -347,6 +424,7 @@ export function parseFederationMessageEnvelope(value: unknown): FederationMessag
       placementEpoch: placementEpoch as number,
     },
     ...(value['delivery'] === undefined ? {} : { delivery: parseDelivery(value['delivery']) }),
+    ...(semanticTurnSignal === undefined ? {} : { semanticTurnSignal }),
     ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
     ...(mail === undefined ? {} : { mail }),
   }
@@ -567,6 +645,16 @@ async function acceptFederationEnvelope(
             ...(envelope.interactiveSignal === undefined
               ? {}
               : { federationInteractiveSignal: envelope.interactiveSignal }),
+            ...(envelope.semanticTurnSignal === undefined
+              ? {}
+              : { federationSemanticTurnSignal: envelope.semanticTurnSignal }),
+            ...(envelope.delivery?.semanticTurnHandoff === undefined
+              ? {}
+              : {
+                  semanticTurnHandoff: {
+                    respondTo: envelope.delivery.respondTo ?? envelope.from,
+                  },
+                }),
             ...(envelope.mail === undefined ? {} : { federationMail: envelope.mail }),
           },
         })

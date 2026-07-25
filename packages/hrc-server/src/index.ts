@@ -882,6 +882,7 @@ class HrcServerInstance implements HrcServer {
                 health: true,
                 runtimeProjection: true,
                 collectiveHistory: collectiveHistory?.isAuthority === true,
+                semanticTurnHandoff: true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),

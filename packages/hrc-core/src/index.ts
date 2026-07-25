@@ -427,6 +427,8 @@ export type {
   FederationGateModeValue,
   FederationExpectedPlacement,
   FederationInteractiveLifecycleSignal,
+  FederationSemanticTurnIdentity,
+  FederationSemanticTurnSignal,
   FederationMailPayload,
   FederationMessageDelivery,
   FederationMessageEnvelope,

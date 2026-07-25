@@ -30,6 +30,7 @@ export type PeerProtocolHealth = {
     readonly health: true
     readonly runtimeProjection?: boolean | undefined
     readonly collectiveHistory?: boolean | undefined
+    readonly semanticTurnHandoff?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined

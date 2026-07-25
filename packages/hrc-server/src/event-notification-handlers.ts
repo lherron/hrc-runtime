@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { HrcDomainError } from 'hrc-core'
 import type {
   FederationInteractiveLifecycleSignal,
+  FederationSemanticTurnSignal,
   HrcEventEnvelope,
   HrcLifecycleEvent,
   HrcMessageAddress,
@@ -363,6 +364,7 @@ function recoverDurableTurnResponseFinalizer(
 ): { finalizer: TurnResponseFinalizer; request: HrcMessageRecord } | undefined {
   const request = db.messages.getLatestRequestByRunId(runId)
   if (!request) return undefined
+  if (request.metadataJson?.['federationSemanticTurnOrigin'] === true) return undefined
   const marker = isRecord(request.metadataJson)
     ? request.metadataJson['semanticTurnHandoff']
     : undefined
@@ -441,6 +443,48 @@ export function finalizeSemanticTurnResponse(
       : semanticOutput.length > 0
         ? semanticOutput
         : (run?.errorMessage ?? '')
+  const ingress = request.metadataJson?.['federationIngress']
+  const ingressDelivery = isRecord(ingress) ? ingress['delivery'] : undefined
+  const federatedSemanticTurn =
+    isRecord(ingressDelivery) && isRecord(ingressDelivery['semanticTurnHandoff'])
+  const signalMode =
+    finalizer.mode === 'headless' ||
+    finalizer.mode === 'interactive' ||
+    finalizer.mode === 'nonInteractive'
+      ? finalizer.mode
+      : undefined
+  const signalTransport =
+    transport === 'sdk' ||
+    transport === 'tmux' ||
+    transport === 'headless' ||
+    transport === 'ghostty'
+      ? transport
+      : undefined
+  const semanticTurnSignal: FederationSemanticTurnSignal | undefined =
+    federatedSemanticTurn &&
+    runtimeId !== undefined &&
+    signalMode !== undefined &&
+    signalTransport !== undefined
+      ? {
+          version: 1,
+          type: 'terminal',
+          sourceHrcSeq: event.hrcSeq,
+          identity: {
+            sessionRef: finalizer.sessionRef,
+            scopeRef: event.scopeRef,
+            laneRef: event.laneRef,
+            hostSessionId,
+            runtimeId,
+            runId,
+            generation,
+            mode: signalMode,
+            transport: signalTransport,
+          },
+          outcome: failed ? 'failed' : 'completed',
+          ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
+          ...(run?.errorMessage === undefined ? {} : { errorMessage: run.errorMessage }),
+        }
+      : undefined
 
   const response = this.insertAndNotifyMessage({
     messageId: `msg-${randomUUID()}`,
@@ -468,6 +512,9 @@ export function finalizeSemanticTurnResponse(
       ...(event.errorCode ? { errorCode: event.errorCode } : {}),
       ...(run?.errorMessage ? { errorMessage: run.errorMessage } : {}),
     },
+    ...(semanticTurnSignal === undefined
+      ? {}
+      : { metadataJson: { federationSemanticTurnSignal: semanticTurnSignal } }),
   })
 
   void this.federationOriginOutbox?.routeResponse(response).catch((error: unknown) => {
