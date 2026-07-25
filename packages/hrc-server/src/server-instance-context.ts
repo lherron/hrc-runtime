@@ -24,6 +24,7 @@ import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import type { FederationOriginOutbox } from './federation/origin-outbox.js'
+import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
@@ -121,6 +122,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
+  /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
+  readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext

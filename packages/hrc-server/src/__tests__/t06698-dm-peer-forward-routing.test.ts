@@ -14,6 +14,7 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { HttpBindingRegistryClient } from '../federation/registry-client.js'
+import { createSummonCapabilityObserver } from '../federation/summon-capability.js'
 import type { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import {
@@ -103,6 +104,8 @@ async function runCredentialStrippedDm(
     ...process.env,
     ASP_AGENTS_ROOT: join(fixture.tmpDir, 'agents'),
     ASP_PROJECT: 'hrc-runtime',
+    ANTHROPIC_API_KEY: 't06698-test-fixture',
+    ASP_CLAUDE_PATH: CLAUDE_SHIM,
     HRC_RUNTIME_DIR: fixture.runtimeRoot,
     HRC_STATE_DIR: fixture.stateRoot,
   }
@@ -125,31 +128,32 @@ async function runCredentialStrippedDm(
   return { exitCode, stdout, stderr }
 }
 
+async function prepareNodePlacement(fixture: HrcServerTestFixture): Promise<{
+  cwd: string
+  env: Record<string, string | undefined>
+}> {
+  const agentsRoot = join(fixture.tmpDir, 'agents')
+  for (const agentId of ['clod', 'cody']) {
+    const agentRoot = join(agentsRoot, agentId)
+    await mkdir(agentRoot, { recursive: true })
+    await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(join(agentRoot, 'SOUL.md'), `# ${agentId} test fixture\n`)
+  }
+  const checkoutRoot = join(fixture.tmpDir, 'checkouts')
+  await mkdir(join(checkoutRoot, 'hrc-runtime', '.git'), { recursive: true })
+  return {
+    cwd: checkoutRoot,
+    env: {
+      ASP_AGENTS_ROOT: agentsRoot,
+      ANTHROPIC_API_KEY: 't06698-test-fixture',
+      ASP_CLAUDE_PATH: CLAUDE_SHIM,
+    },
+  }
+}
+
 describe('T-06698 hrcchat DM peer forwarding', () => {
   const fixtures: HrcServerTestFixture[] = []
-  let priorAgentsRoot: string | undefined
-  let priorAnthropicApiKey: string | undefined
-  let priorAspClaudePath: string | undefined
-  let agentsRootOverridden = false
   afterEach(async () => {
-    if (agentsRootOverridden) {
-      if (priorAgentsRoot === undefined) Reflect.deleteProperty(process.env, 'ASP_AGENTS_ROOT')
-      else process.env['ASP_AGENTS_ROOT'] = priorAgentsRoot
-      if (priorAnthropicApiKey === undefined) {
-        Reflect.deleteProperty(process.env, 'ANTHROPIC_API_KEY')
-      } else {
-        process.env['ANTHROPIC_API_KEY'] = priorAnthropicApiKey
-      }
-      if (priorAspClaudePath === undefined) {
-        Reflect.deleteProperty(process.env, 'ASP_CLAUDE_PATH')
-      } else {
-        process.env['ASP_CLAUDE_PATH'] = priorAspClaudePath
-      }
-      agentsRootOverridden = false
-      priorAgentsRoot = undefined
-      priorAnthropicApiKey = undefined
-      priorAspClaudePath = undefined
-    }
     await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
   })
 
@@ -161,19 +165,8 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
     const svc = await createHrcTestFixture('h98-s-')
     const lab = await createHrcTestFixture('h98-l-')
     fixtures.push(svc, lab)
-    priorAgentsRoot = process.env['ASP_AGENTS_ROOT']
-    priorAnthropicApiKey = process.env['ANTHROPIC_API_KEY']
-    priorAspClaudePath = process.env['ASP_CLAUDE_PATH']
-    agentsRootOverridden = true
-    process.env['ASP_AGENTS_ROOT'] = join(svc.tmpDir, 'agents')
-    process.env['ANTHROPIC_API_KEY'] = 't06698-test-fixture'
-    process.env['ASP_CLAUDE_PATH'] = CLAUDE_SHIM
-    for (const agentId of ['clod', 'cody']) {
-      const agentRoot = join(svc.tmpDir, 'agents', agentId)
-      await mkdir(agentRoot, { recursive: true })
-      await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
-      await writeFile(join(agentRoot, 'SOUL.md'), `# ${agentId} test fixture\n`)
-    }
+    const svcPlacement = await prepareNodePlacement(svc)
+    const labPlacement = await prepareNodePlacement(lab)
     const [registryPort, labPeerPort] = reservePorts(host)
     const registryBind = `http://${host}:${registryPort}`
     const labPeerBind = `http://${host}:${labPeerPort}`
@@ -200,6 +193,15 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       otelListenerEnabled: false,
       federationOutboxPollIntervalMs: 10,
     })
+    Object.assign(svcServer, {
+      capabilityFor: createSummonCapabilityObserver({
+        ...svcPlacement,
+        userHome: join(svc.tmpDir, 'home'),
+        detectHarness: async () => ({ available: true }),
+      }),
+      placementPolicyOptions: { env: svcPlacement.env },
+      runtimeIntentLocalizationOptions: svcPlacement,
+    })
     let labServer: Awaited<ReturnType<typeof createHrcServer>> | undefined
     try {
       const registry = new HttpBindingRegistryClient(
@@ -224,6 +226,15 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       labServer = await createFederationTestServer(lab, {
         otelListenerEnabled: false,
         federationOutboxPollIntervalMs: 10,
+      })
+      Object.assign(labServer, {
+        capabilityFor: createSummonCapabilityObserver({
+          ...labPlacement,
+          userHome: join(lab.tmpDir, 'home'),
+          detectHarness: async () => ({ available: true }),
+        }),
+        placementPolicyOptions: { env: labPlacement.env },
+        runtimeIntentLocalizationOptions: labPlacement,
       })
       const localResolve = await lab.postJson('/v1/sessions/resolve', {
         sessionRef: SESSION,

@@ -1298,7 +1298,8 @@ export async function deliverFederationAcceptedMessage(
       ? undefined
       : localizeFederatedRuntimeIntent(
           parseSessionRef(envelope.to.sessionRef).scopeRef,
-          delivery.runtimeIntent
+          delivery.runtimeIntent,
+          this.runtimeIntentLocalizationOptions
         )
   const body: SemanticDmRequest = {
     from: envelope.from,
