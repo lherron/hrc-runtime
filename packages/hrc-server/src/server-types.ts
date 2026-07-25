@@ -78,6 +78,11 @@ export type AttachBeforeInvocationStartOption = {
   pendingStartId: string
 }
 
+export type DispatchRunPersistenceOptions = Pick<
+  HrcRunRecord,
+  'dispatchIdempotencyKey' | 'dispatchRequestHash'
+>
+
 export type PendingAttachedRunOperation = Promise<unknown>
 
 export type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>

@@ -8,7 +8,7 @@ import {
   createHrcError,
   httpStatusForErrorCode,
 } from 'hrc-core'
-import type { HrcHttpError, HrcLifecycleEvent } from 'hrc-core'
+import type { DispatchTurnResponse, HrcHttpError, HrcLifecycleEvent } from 'hrc-core'
 
 import { writeServerLog } from './server-log.js'
 
@@ -33,6 +33,17 @@ export function serializeEvent(event: HrcLifecycleEvent): string {
 
 export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status })
+}
+
+export function requireDispatchRuntimeId(
+  result: Pick<DispatchTurnResponse, 'runId' | 'runtimeId'>
+): string {
+  if (result.runtimeId === undefined) {
+    throw new HrcInternalError('dispatch completed without runtime identity', {
+      runId: result.runId,
+    })
+  }
+  return result.runtimeId
 }
 
 export function errorResponse(error: unknown, request?: Request): Response {

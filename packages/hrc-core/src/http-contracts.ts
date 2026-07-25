@@ -287,7 +287,8 @@ export type DispatchTurnResponse = {
   runId: string
   hostSessionId: string
   generation: number
-  runtimeId: string
+  /** Absent while a durably accepted turn is queued ahead of runtime allocation. */
+  runtimeId?: string | undefined
   transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
   stage: 'accepted' | 'turn_started' | 'terminal'
   status: 'accepted' | 'started' | DispatchTurnTerminalOutcome
@@ -295,12 +296,13 @@ export type DispatchTurnResponse = {
   replayed: boolean
   error?: { code?: string | undefined; message: string } | undefined
   supportsInFlightInput: boolean
-  startIdentity: { kind: 'broker'; invocationId: string } | { kind: 'sdk' }
+  /** Absent until a queued turn has been assigned to a runtime invocation. */
+  startIdentity?: { kind: 'broker'; invocationId: string } | { kind: 'sdk' } | undefined
   observation: {
     lifecycle: {
       selector: {
         runId: string
-        runtimeId: string
+        runtimeId?: string | undefined
         generation: number
       }
       fromSeq: number

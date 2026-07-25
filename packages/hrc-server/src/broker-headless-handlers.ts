@@ -51,6 +51,7 @@ import {
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import type { DispatchRunPersistenceOptions } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
@@ -116,7 +117,7 @@ export function enqueueDurableHeadlessTurnInput(
   session: HrcSessionRecord,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     source: DurableHeadlessTurnInput['source']
     runtimeId?: string | undefined
     sourceMessageId?: string | undefined
@@ -138,6 +139,8 @@ export function enqueueDurableHeadlessTurnInput(
     acceptedAt: now,
     updatedAt: now,
     dispatchedInputId: `input-${randomUUID()}`,
+    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    dispatchRequestHash: options.dispatchRequestHash,
   })
   this.db.runs.setCorrelationJson(
     runId,
@@ -159,7 +162,7 @@ export async function dispatchQueuedHeadlessTurnInput(
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
     whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
@@ -311,7 +314,7 @@ export async function startHeadlessBrokerRuntime(
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
@@ -420,6 +423,8 @@ export async function startHeadlessBrokerRuntime(
       identity: compiled.identity,
       runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      dispatchRequestHash: options.dispatchRequestHash,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
         compiled.startRequest
@@ -536,7 +541,7 @@ export async function executeHeadlessBrokerStartTurn(
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
@@ -556,6 +561,8 @@ export async function executeHeadlessBrokerStartTurn(
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
+    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    dispatchRequestHash: options.dispatchRequestHash,
     onAccepted: (runtime) => {
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedAt = timestamp()
@@ -627,7 +634,7 @@ export async function executeHeadlessBrokerInputTurn(
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
     whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
@@ -701,6 +708,8 @@ export async function executeHeadlessBrokerInputTurn(
       updatedAt: now,
       invocationId,
       operationId: runtime.activeOperationId,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      dispatchRequestHash: options.dispatchRequestHash,
       // Persist HRC's inputId on the run row so the broker event-mapper can
       // correlate a drained input.accepted envelope back to this run and flip
       // invocation.runId before turn.* events project. Set on every dispatch

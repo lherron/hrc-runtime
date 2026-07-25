@@ -139,7 +139,11 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       _intent: unknown,
       _prompt: string,
       runId: string,
-      options: { onAccepted?: (runtime: unknown) => Promise<void> | void }
+      options: {
+        dispatchIdempotencyKey?: string
+        dispatchRequestHash?: string
+        onAccepted?: (runtime: unknown) => Promise<void> | void
+      }
     ) => {
       provisions += 1
       const now = new Date().toISOString()
@@ -180,6 +184,8 @@ describe('T-06592 durable dispatch acknowledgment', () => {
           updatedAt: now,
           operationId: 'op-t06592-cold',
           invocationId,
+          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+          dispatchRequestHash: options.dispatchRequestHash,
         })
         db.brokerInvocations.insert({
           invocationId,
@@ -307,6 +313,114 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     expect(conflict.status).toBe(409)
     expect(body.error?.code).toBe('stale_context')
     expect(dispatchCalls).toBe(1)
+  })
+
+  it('persists the idempotency key atomically with run acceptance across restart', async () => {
+    const { hostSessionId } = await seedReusableBroker()
+    const key = 'idem-t06971-crash-boundary'
+    const body = dispatchBody(hostSessionId, key)
+    const runs = (server as any).db.runs
+    const update = runs.update.bind(runs)
+    let postAcceptanceKeyUpdates = 0
+    runs.update = (runId: string, patch: Record<string, unknown>) => {
+      if ('dispatchIdempotencyKey' in patch || 'dispatchRequestHash' in patch) {
+        postAcceptanceKeyUpdates += 1
+        throw new Error('simulated daemon crash at the legacy post-acceptance key update')
+      }
+      return update(runId, patch)
+    }
+
+    await postTurn(body)
+
+    let acceptedRunId: string
+    const beforeRestart = openHrcDatabase(fixture.dbPath)
+    try {
+      const acceptedRuns = beforeRestart.runs.listRuns({ hostSessionId })
+      expect(acceptedRuns).toHaveLength(1)
+      const acceptedRun = acceptedRuns[0]
+      if (acceptedRun === undefined) throw new Error('expected one accepted dispatch run')
+      acceptedRunId = acceptedRun.runId
+    } finally {
+      beforeRestart.close()
+    }
+
+    await server?.stop()
+    server = undefined
+    server = await createHrcServer(
+      fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    )
+    ;(server as any).getHarnessBrokerController = () => ({
+      dispatchInput: async () => ({
+        ok: true,
+        response: {
+          inputId: 'input-t06971-retry',
+          accepted: true,
+          disposition: 'started',
+        },
+      }),
+    })
+
+    const retryResponse = await postTurn(body)
+    const retry = (await retryResponse.json()) as any
+    expect(retryResponse.status).toBe(200)
+    expect(retry).toMatchObject({
+      runId: acceptedRunId,
+      replayed: true,
+    })
+
+    const afterRestart = openHrcDatabase(fixture.dbPath)
+    try {
+      const durableRuns = afterRestart.runs.listRuns({ hostSessionId })
+      expect(durableRuns).toHaveLength(1)
+      expect(durableRuns[0]).toMatchObject({
+        dispatchIdempotencyKey: key,
+        dispatchRequestHash: expect.any(String),
+      })
+    } finally {
+      afterRestart.close()
+    }
+    expect(postAcceptanceKeyUpdates).toBe(0)
+  })
+
+  it('replays durable acceptance for a queued run with no runtime yet', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const key = 'idem-t06971-queued-no-runtime'
+    const runId = 'run-t06971-queued-no-runtime'
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runs.insert({
+        runId,
+        hostSessionId,
+        scopeRef: SCOPE_REF,
+        laneRef: 'main',
+        generation,
+        transport: 'headless',
+        status: 'queued',
+        acceptedAt: now,
+        updatedAt: now,
+        dispatchIdempotencyKey: key,
+      })
+    } finally {
+      db.close()
+    }
+
+    const response = await postTurn(dispatchBody(hostSessionId, key))
+    const replay = (await response.json()) as any
+
+    expect(response.status).toBe(202)
+    expect(replay).toMatchObject({
+      runId,
+      hostSessionId,
+      generation,
+      transport: 'headless',
+      stage: 'accepted',
+      status: 'accepted',
+      replayed: true,
+      supportsInFlightInput: false,
+    })
+    expect(replay.runtimeId).toBeUndefined()
+    expect(replay.startIdentity).toBeUndefined()
   })
 
   it('wait-to-start advances only on persisted turn.started evidence', async () => {

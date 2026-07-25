@@ -58,7 +58,10 @@ import {
 } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import type { AttachBeforeInvocationStartOption } from './server-types.js'
+import type {
+  AttachBeforeInvocationStartOption,
+  DispatchRunPersistenceOptions,
+} from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { createTmuxManager } from './tmux.js'
@@ -152,7 +155,7 @@ export async function handleHeadlessDispatchTurn(
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
   } = {}
 ): Promise<Response> {
@@ -180,6 +183,8 @@ export async function handleHeadlessDispatchTurn(
     status: 'accepted',
     acceptedAt: now,
     updatedAt: now,
+    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    dispatchRequestHash: options.dispatchRequestHash,
   })
 
   this.db.runtimes.update(runtime.runtimeId, {
@@ -304,7 +309,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
     whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
@@ -336,6 +341,8 @@ export async function handleHeadlessBrokerDispatchTurn(
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
         responseFormat: options.responseFormat,
+        dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+        dispatchRequestHash: options.dispatchRequestHash,
       })
     }
     const bootedRuntime = await bootOperation
@@ -344,6 +351,8 @@ export async function handleHeadlessBrokerDispatchTurn(
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
         responseFormat: options.responseFormat,
+        dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+        dispatchRequestHash: options.dispatchRequestHash,
       })
     }
     return await this.dispatchQueuedHeadlessTurnInput(
@@ -482,7 +491,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   intent: HrcRuntimeIntent,
   prompt: string,
   runId: string,
-  flagOptions: {
+  flagOptions: DispatchRunPersistenceOptions & {
     flagEnvName: string
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
@@ -509,6 +518,8 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
+    dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
+    dispatchRequestHash: flagOptions.dispatchRequestHash,
     onAccepted: (runtime) => {
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedAt = timestamp()
@@ -587,7 +598,7 @@ export async function executeInteractiveBrokerInputTurn(
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
-  options: {
+  options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
@@ -633,6 +644,8 @@ export async function executeInteractiveBrokerInputTurn(
     invocationId,
     operationId: runtime.activeOperationId,
     dispatchedInputId: inputId,
+    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    dispatchRequestHash: options.dispatchRequestHash,
   })
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
@@ -956,7 +969,7 @@ export async function startInteractiveTmuxBrokerRuntime(
   session: HrcSessionRecord,
   turnIntent: HrcRuntimeIntent,
   diagnosticRunId: string,
-  flagOptions: {
+  flagOptions: DispatchRunPersistenceOptions & {
     flagEnvName: string
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
@@ -1112,6 +1125,8 @@ export async function startInteractiveTmuxBrokerRuntime(
       identity: compiled.identity,
       runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
+      dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
+      dispatchRequestHash: flagOptions.dispatchRequestHash,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
         compiled.startRequest

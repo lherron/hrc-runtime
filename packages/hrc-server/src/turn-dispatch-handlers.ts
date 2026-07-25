@@ -70,8 +70,16 @@ import {
   parseResumeAttachedRunRequest,
   parseStartRuntimeRequest,
 } from './server-parsers.js'
-import type { AttachBeforeInvocationStartOption } from './server-types.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import type {
+  AttachBeforeInvocationStartOption,
+  DispatchRunPersistenceOptions,
+} from './server-types.js'
+import {
+  isRuntimeUnavailableStatus,
+  json,
+  requireDispatchRuntimeId,
+  timestamp,
+} from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
 
@@ -181,14 +189,7 @@ function replayDispatchBody(
 ): DispatchTurnResponse {
   const runtime =
     run.runtimeId !== undefined ? server.db.runtimes.getByRuntimeId(run.runtimeId) : null
-  if (runtime === null || run.runtimeId === undefined) {
-    throw new HrcRuntimeUnavailableError('accepted dispatch runtime is unavailable', {
-      runId: run.runId,
-      hostSessionId: run.hostSessionId,
-      route: 'dispatch-idempotency-replay',
-    })
-  }
-  const invocationId = run.invocationId ?? runtime.activeInvocationId
+  const invocationId = run.invocationId ?? runtime?.activeInvocationId
   const firstLifecycleSeq =
     server.db.hrcEvents.listByRun(run.runId).map((event) => event.hrcSeq)[0] ??
     server.db.hrcEvents.maxHrcSeq() + 1
@@ -196,26 +197,28 @@ function replayDispatchBody(
     runId: run.runId,
     hostSessionId: run.hostSessionId,
     generation: run.generation,
-    runtimeId: run.runtimeId,
-    transport: runtime.transport as DispatchTurnResponse['transport'],
+    ...(run.runtimeId !== undefined ? { runtimeId: run.runtimeId } : {}),
+    transport: (runtime?.transport ?? run.transport) as DispatchTurnResponse['transport'],
     // Broker-headless runtime rows remain queue-capable internally, but the
     // public in-flight endpoint is SDK-only. Preserve the same truthful
     // capability projection on idempotent replay as on the original response.
-    supportsInFlightInput: runtime.transport === 'headless' ? false : runtime.supportsInflightInput,
-    startIdentity:
-      invocationId !== undefined
-        ? ({ kind: 'broker', invocationId } as const)
-        : ({ kind: 'sdk' } as const),
+    supportsInFlightInput:
+      runtime === null || runtime.transport === 'headless' ? false : runtime.supportsInflightInput,
+    ...(invocationId !== undefined
+      ? { startIdentity: { kind: 'broker', invocationId } as const }
+      : runtime !== null
+        ? { startIdentity: { kind: 'sdk' } as const }
+        : {}),
     observation: {
       lifecycle: {
         selector: {
           runId: run.runId,
-          runtimeId: run.runtimeId,
+          ...(run.runtimeId !== undefined ? { runtimeId: run.runtimeId } : {}),
           generation: run.generation,
         },
         fromSeq: firstLifecycleSeq,
       },
-      ...(invocationId !== undefined
+      ...(invocationId !== undefined && run.runtimeId !== undefined
         ? {
             broker: {
               selector: {
@@ -495,17 +498,17 @@ export async function handleDispatchTurn(
       waitForCompletion: false,
       whenBusy: body.whenBusy,
       responseFormat: body.responseFormat,
+      ...(idempotencyKey !== undefined
+        ? {
+            dispatchIdempotencyKey: idempotencyKey,
+            dispatchRequestHash: requestHash,
+          }
+        : {}),
       ...(body.repair !== undefined
         ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
         : {}),
     })
     const legacy = (await response.json()) as DispatchTurnResponse
-    if (idempotencyKey !== undefined) {
-      this.db.runs.update(runId, {
-        dispatchIdempotencyKey: idempotencyKey,
-        dispatchRequestHash: requestHash,
-      })
-    }
     const run = this.db.runs.getByRunId(runId)
     const outcome = run ? terminalOutcome(run.status) : undefined
     return publicDispatchBody(legacy, outcome === undefined ? 'accepted' : 'terminal', {
@@ -739,6 +742,9 @@ async function dispatchTurnResponseJson(response: Response) {
 }
 
 function runtimeIdFromAttachedRunResult(result: AttachedRunResult): string {
+  if ('runId' in result) {
+    return requireDispatchRuntimeId(result)
+  }
   return result.runtimeId
 }
 
@@ -802,6 +808,7 @@ async function enrichDispatchTurnResponse(
     Partial<Pick<DispatchTurnResponse, 'startIdentity' | 'observation'>>
   const run = server.db.runs.getByRunId(body.runId)
   const invocationId = run?.invocationId
+  const runtimeId = requireDispatchRuntimeId(body)
 
   const enriched = {
     ...body,
@@ -813,7 +820,7 @@ async function enrichDispatchTurnResponse(
       lifecycle: {
         selector: {
           runId: body.runId,
-          runtimeId: body.runtimeId,
+          runtimeId,
           generation: body.generation,
         },
         fromSeq: context.lifecycleFromSeq,
@@ -824,7 +831,7 @@ async function enrichDispatchTurnResponse(
               selector: {
                 invocationId,
                 runId: body.runId,
-                runtimeId: body.runtimeId,
+                runtimeId,
                 generation: body.generation,
               },
               afterSeq: context.brokerAfterSeqByInvocation.get(invocationId) ?? 0,
@@ -944,7 +951,7 @@ export async function handleResumeAttachedRun(
   } satisfies ResumeAttachedRunResponse)
 }
 
-type DispatchTurnForSessionOptions = {
+type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   runId?: string | undefined
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
@@ -1053,6 +1060,8 @@ async function dispatchAdmittedTurnForSession(
           whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
+          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+          dispatchRequestHash: options.dispatchRequestHash,
         })
       )
     }
@@ -1065,6 +1074,8 @@ async function dispatchAdmittedTurnForSession(
       return await withObservation(
         await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
+          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+          dispatchRequestHash: options.dispatchRequestHash,
         })
       )
     }
@@ -1166,6 +1177,8 @@ async function dispatchAdmittedTurnForSession(
             : options.waitForCompletion,
         repairCorrelation: options.repairCorrelation,
         responseFormat: options.responseFormat,
+        dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+        dispatchRequestHash: options.dispatchRequestHash,
       })
     )
   }
@@ -1199,6 +1212,8 @@ async function dispatchAdmittedTurnForSession(
               ? false
               : options.waitForCompletion,
           responseFormat: options.responseFormat,
+          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+          dispatchRequestHash: options.dispatchRequestHash,
         }),
     })
   )

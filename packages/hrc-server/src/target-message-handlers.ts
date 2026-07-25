@@ -69,7 +69,12 @@ import {
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody, parseSessionRef } from './server-parsers.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import {
+  isRuntimeUnavailableStatus,
+  json,
+  requireDispatchRuntimeId,
+  timestamp,
+} from './server-util.js'
 import { selectResumeContinuationCandidate } from './session-resume-continuation.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import {
@@ -1003,7 +1008,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       sessionRef,
       hostSessionId: turnBody.hostSessionId,
       generation: turnBody.generation,
-      runtimeId: turnBody.runtimeId,
+      runtimeId: requireDispatchRuntimeId(turnBody),
       runId: turnBody.runId,
       transport,
     })
@@ -1014,7 +1019,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       hostSessionId: turnBody.hostSessionId,
-      runtimeId: turnBody.runtimeId,
+      runtimeId: requireDispatchRuntimeId(turnBody),
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
@@ -1082,7 +1087,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       sessionRef,
       hostSessionId: turnBody.hostSessionId,
       generation: turnBody.generation,
-      runtimeId: turnBody.runtimeId,
+      runtimeId: requireDispatchRuntimeId(turnBody),
       runId: turnBody.runId,
       transport: brokerTransport,
     })
@@ -1100,7 +1105,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       hostSessionId: turnBody.hostSessionId,
-      runtimeId: turnBody.runtimeId,
+      runtimeId: requireDispatchRuntimeId(turnBody),
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
@@ -2045,7 +2050,7 @@ export async function executeSemanticTurn(
       sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
       hostSessionId: turnBody.hostSessionId,
       generation: turnBody.generation,
-      runtimeId: turnBody.runtimeId,
+      runtimeId: requireDispatchRuntimeId(turnBody),
       transport,
       mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
       status: turnStatus,

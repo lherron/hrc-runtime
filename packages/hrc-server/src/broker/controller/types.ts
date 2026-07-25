@@ -408,6 +408,10 @@ export type BrokerControllerStartInput = {
    * when the compiled start request carries no initial input (T-05142).
    */
   requestedResponseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
+  /** Caller retry identity persisted atomically with the accepted run row. */
+  dispatchIdempotencyKey?: string | undefined
+  /** Canonical semantic request hash paired with dispatchIdempotencyKey. */
+  dispatchRequestHash?: string | undefined
   routeDecision?: unknown
   brokerClient?: BrokerClientLike | undefined
   attachBeforeInvocationStart?: BrokerAttachedLaunchInput | undefined

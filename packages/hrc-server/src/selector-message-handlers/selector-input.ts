@@ -31,7 +31,12 @@ import {
   parseOptionalTurnResponseFormat,
   parseSessionRef,
 } from '../server-parsers.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from '../server-util.js'
+import {
+  isRuntimeUnavailableStatus,
+  json,
+  requireDispatchRuntimeId,
+  timestamp,
+} from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import type { TmuxPaneState } from '../tmux.js'
 
@@ -479,7 +484,7 @@ export async function handleDispatchTurnBySelector(
     sessionRef: formatSelectorRef(session),
     hostSessionId: turnBody.hostSessionId,
     generation: turnBody.generation,
-    runtimeId: turnBody.runtimeId,
+    runtimeId: requireDispatchRuntimeId(turnBody),
     transport,
     mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
     status: turnStatus,
