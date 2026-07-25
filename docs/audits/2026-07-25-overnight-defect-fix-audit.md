@@ -4,7 +4,7 @@ Auditor: Cody (`cody@hrc-runtime:minisvc`)
 Inventory frozen: 2026-07-25 08:03:50 CDT
 Window: 2026-07-24 17:03:50 CDT through inventory freeze (15 hours)
 Source snapshot: `cody/handoff-00291` at `3adbe9c4a224c28f376b96c137271a843a85ef52`
-Independent second review: Clod (`clod@hrc-runtime:minisvc`), given the same frozen inventory; no findings were exchanged while either review was in progress.
+Independent second review: Clod (`clod@hrc-runtime:minisvc`), given the same frozen inventory; no findings were exchanged while either review was in progress. See [Clod's full independent report](2026-07-25-overnight-defect-fix-audit-clod.md).
 
 ## Executive grade
 
@@ -12,13 +12,34 @@ Independent second review: Clod (`clod@hrc-runtime:minisvc`), given the same fro
 
 The batch is unusually broad and generally well tested. Most changes are careful, fail closed, and have strong durable/live evidence. Build, typecheck, repository checks, the focused audit matrix, and the full `just verify` suite pass. The installed svc daemon also names the audited source SHA and reports that the running and installed releases match.
 
-That evidence does not cover five contract failures found by source review:
+That evidence does not cover the following contract failures found by source review:
 
 1. One **critical** authority-boundary failure in T-05439: an untrusted caller can mint its own “manual operator approval,” and the write lane is constrained by an agent prompt rather than an HRC-enforced write boundary.
 2. Two **high** delivery/idempotency failures: T-06592 has a crash window before the idempotency key is made durable, and T-06809 can report a remote turn failed while its durable outbox item remains eligible for later execution.
 3. Two **medium** correctness/performance gaps: T-06802 still performs unbounded/N+1 work for common limited history queries, and T-06090 cancels a scheduled event-gap repair when the gap-revealing event is terminal.
+4. Clod independently found and Cody reproduced a **high** user-facing selector split: `show/thread` use collective sequence while `trace` uses node-local sequence, so printed identifiers do not round-trip.
+5. Clod found a **medium** detached-worktree blind spot where placement fails closed but the completed-task janitor silently ignores the obstructing worktree.
 
 The critical finding controls the overall grade. Without it, the rest of the batch would grade approximately **B+**.
+
+## Independent second-eye comparison
+
+Clod independently recomputed the exact same 57 commits, 42 tasks, and 44 completion transitions before either reviewer exchanged findings. Clod graded the batch **B+**; Cody graded it **C**. The union of both reports is the release decision, while the disagreement is retained rather than averaged away.
+
+Confirmed additions from Clod:
+
+- **High:** T-06579/T-06830 message selectors are mutually inconsistent. Installed DM 1375 has collective sequence 17932: `hrcchat show 1375` fails while `show 17932` succeeds; `trace 1375` succeeds while `trace 17932` fails. `msg:` also works for show/thread but fails for trace. Cody reproduced this after both audits locked.
+- **Medium:** a detached, clean, merged, completed-task worktree is rejected by placement but silently skipped by the janitor because task tokens are read only from `worktree.branch`.
+- **Medium observability:** recurring broker lease GC emits no successful no-op tick, so a healthy no-op timer and a dead timer are indistinguishable.
+- **Traceability:** T-06576's final comment cites nonexistent `7b3afbd2f33fdd651154d8c05f1a978d6249fe87`; the real commit is `7b3afbd84d709b45a6d43755ea9136c8efcd7779`.
+- **Integration risk:** production runs the audit branch while it is five commits behind `origin/main`; the merged tree has not run the bar.
+
+Material disagreements:
+
+- Clod graded T-05439 A- and described the caller-asserted policy as an opt-in trust boundary. Cody's F-1 is narrower and remains: even after a caller opts into the policy, the caller can mint the supposed manual-operator approval file and the admitted write lane is mechanically unconstrained beyond `workspace-write`. This is an authentication and containment failure inside the declared policy, not merely absence of high-risk detection.
+- Clod graded T-06592 B+, T-06809 B, T-06802 B, and T-06090 B+. Cody identified crash, timeout, corpus-size, and terminal-gap paths not exercised in Clod's review. The exact source orderings are documented in F-2 through F-5 and keep the lower grades.
+
+The combined disposition is therefore still **C**, with six behavioral reopen/follow-up areas: T-05439, T-06592, T-06809, T-06802, T-06090, and shared selector resolution for T-06579/T-06830. T-06405 needs a bounded detached-worktree follow-up; T-05337 needs timer observability; T-06576 needs only citation correction.
 
 ## Scope and method
 
@@ -108,7 +129,7 @@ Thus the important case “terminal event arrives and reveals that preceding out
 | T-05113 | A- | Role-scoped monitor aggregation is explicit and collapses historical generations. |
 | T-05177 | A- | Interactive-surface reuse veto is threaded and regression-covered. |
 | T-05299 | A- | Same-client bounded control proof now precedes active publication; strong restart E2E. |
-| T-05337 | A | Claimed orphan lease reaping is conservative, race-aware, and live-validated. |
+| T-05337 | A- | Claimed orphan lease reaping is conservative and race-aware; recurring no-op GC lacks a liveness fact. |
 | T-05439 | F | Reopen/block: approval is caller-forgeable and mutation containment is prompt-only (F-1). |
 | T-05562 | B+ | Managed runtimes receive canonical wrkq authority; side-ref integration evidence is adequate. |
 | T-05577 | A- | Authority-correct ASP producer fix, coherent sync, N=5 100KB real concurrency proof. |
@@ -123,11 +144,11 @@ Thus the important case “terminal event arrives and reveals that preceding out
 | T-06369 | A- | Canonical project and exact task-worktree refinement fail safely on ambiguity. |
 | T-06370 | A | Unknown explicit projects fail closed with remediation. |
 | T-06371 | A | Cwd-invariance matrix covers unrelated, agent-home, and target locations. |
-| T-06405 | A | Destructive janitor is guarded, dry-run-first, and race-rechecked. |
+| T-06405 | B+ | Defensive and race-rechecked, but detached task worktrees are silently invisible. |
 | T-06457 | A- | Broker payload/status/exit semantics align with the producer contract and focused coupling tests. |
 | T-06566 | A- | Consumer receipt occurs after decode and transport accounting is durable/bounded. |
-| T-06576 | A | Server-owned drain/restart preserves closed admission across restart and rechecks quiescence. |
-| T-06579 | A- | Consult-thread reconstruction has typed, untruncated thread semantics and CLI coverage. |
+| T-06576 | A- | Behavior is strong; the final closure cites one nonexistent full SHA. |
+| T-06579 | C | Thread reconstruction works, but its printed/local sequence does not round-trip through show/thread. |
 | T-06582 | A- | Dispatch timing tests use deterministic synchronization rather than wall-clock assumptions. |
 | T-06587 | A | Monitor follow uses targeted incremental state, bounded windows, and stdout backpressure. |
 | T-06588 | A- | Correct disposition/regression: old-generation teardown behavior is now intended and guarded. |
@@ -138,7 +159,7 @@ Thus the important case “terminal event arrives and reveals that preceding out
 | T-06802 | C+ | Reopen: common limited history reads still scan/parse/query the full corpus (F-4). |
 | T-06809 | C | Reopen: timeout can report failure while durable delivery later executes (F-3). |
 | T-06825 | A- | Canonical Verdaccio cutover is operationally evidenced and dependency coherence passes. |
-| T-06830 | A- | Message-keyed cross-node trace composes outbox, ACK, authoritative readback, and stable verdicts. |
+| T-06830 | C | Trace evidence is rich, but selector resolution is incompatible with show/thread and documented prefixes. |
 | T-06846 | A | Abnormal provider terminal and broker-close fallback converge on one canonical crash; installed smoke is strong. |
 | T-06911 | A- | Reopened fixture issue was forward-fixed; literal capture no longer depends on ambient prompt width. |
 | T-06912 | N/A | Correct already-delivered closure; no duplicate code was invented. |
