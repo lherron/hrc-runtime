@@ -38,6 +38,7 @@ import {
   sweepOrphanedBrokerTmuxLeases,
   sweepOrphanedRendererControlSockets,
 } from './startup-reconcile.js'
+import { DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS } from './startup-reconcile/types.js'
 import {
   evaluatePruneDisposition,
   evaluateRuntimeAgingDisposition,
@@ -525,6 +526,54 @@ export async function runRecurringActiveRunReconcile(
   }
 }
 
+export function startBrokerLeaseGc(this: HrcServerInstanceForHandlers): void {
+  if (process.env['HRC_BROKER_LEASE_GC_ENABLED'] === '0') return
+  // Startup reconciliation already ran the same classifier. Schedule the first
+  // recurring pass one cadence later so embedded CLI startup does not emit an
+  // empty asynchronous summary after its command has begun.
+  this.brokerLeaseGcTimer = setInterval(() => {
+    void this.runRecurringBrokerLeaseGc()
+  }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
+}
+
+export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandlers): Promise<void> {
+  if (this.brokerLeaseGcInFlight) return
+  const sweep = (async () => {
+    const renderer = await sweepOrphanedRendererControlSockets(this.options.runtimeRoot, {
+      graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+      emitSummary: false,
+    })
+    const broker = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
+      graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+      removeDeadSocketFiles: true,
+      killLiveLeaseServers: true,
+    })
+    const changed =
+      renderer.removed +
+        renderer.errors +
+        broker.killedLiveLeaseServers +
+        broker.removedDeadSocketFiles +
+        broker.reapedClaimedOrphans +
+        broker.staledClaimedRuntimes +
+        broker.removedBrokerIpcDirs +
+        broker.errors >
+      0
+    if (changed) {
+      writeServerLog('INFO', 'broker.lease_gc_sweep_complete', { renderer, broker })
+    }
+  })()
+  this.brokerLeaseGcInFlight = sweep
+  try {
+    await sweep
+  } catch (error) {
+    writeServerLog('WARN', 'broker.lease_gc_sweep_failed', { error })
+  } finally {
+    if (this.brokerLeaseGcInFlight === sweep) {
+      this.brokerLeaseGcInFlight = undefined
+    }
+  }
+}
+
 export function startClaudeGhosttyIdleCleanup(this: HrcServerInstanceForHandlers): void {
   if (!isClaudeGhosttyEnabled()) return
   if (resolveClaudeGhosttyIdleCleanupMinutes() === 0) return
@@ -613,6 +662,8 @@ export const sweepHandlersMethods = {
   handleReconcileActiveRuns,
   startActiveRunReconciler,
   runRecurringActiveRunReconcile,
+  startBrokerLeaseGc,
+  runRecurringBrokerLeaseGc,
   startClaudeGhosttyIdleCleanup,
   runClaudeGhosttyIdleCleanup,
   appendSweepCompletedEvent,

@@ -40,11 +40,14 @@ import {
 } from './startup-reconcile/broker-probe.js'
 import {
   brokerTuiWindowMatches,
+  clearBrokerRecovery,
   emitBrokerTmuxReassociated,
   gcBrokerRuntimeOnRestart,
   getPersistedDurableBrokerEndpoint,
+  isBrokerRecoveryExhausted,
   markBrokerReattachStale,
   reassociateBrokerTmuxLease,
+  recordBrokerRecoveryFailure,
   sweepOrphanedBrokerTmuxLeases,
   sweepOrphanedRendererControlSockets,
 } from './startup-reconcile/lease-identity.js'
@@ -448,6 +451,7 @@ export async function reconcileDurableBrokerRuntimeReattach(
     if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
       return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
     }
+    clearBrokerRecovery(db, runtime)
 
     // Single attach authority: the pre-instance reconcile pass runs with
     // attach:false and stops here once it has confirmed the runtime is live and
@@ -492,7 +496,16 @@ export async function reconcileDurableBrokerRuntimeReattach(
         finalCategory: 'broker_attach_replay_failed',
         error: error instanceof Error ? error.message : String(error),
       })
-      return markBrokerReattachStale(db, runtime, 'broker_attach_replay_failed', error)
+      const failed = recordBrokerRecoveryFailure(db, runtime, 'broker_attach_replay_failed')
+      if (isBrokerRecoveryExhausted(failed)) {
+        return markBrokerReattachStale(db, failed, 'broker_attach_replay_failed', error)
+      }
+      return {
+        runtimeId,
+        state: 'broker-ipc-unavailable',
+        brokerAttached: false,
+        reason: 'broker_attach_replay_failed_recoverable',
+      }
     }
 
     if (!result.ok) {
@@ -526,6 +539,7 @@ export async function reconcileDurableBrokerRuntimeReattach(
       finalCategory: 'broker-attached',
       replayedThroughSeq: result.replayedThroughSeq,
     })
+    clearBrokerRecovery(db, runtime)
     return {
       runtimeId,
       state: 'broker-attached',
@@ -581,6 +595,14 @@ export async function reconcileDurableBrokerRuntimeReattach(
   // reattach-failed branch in handleHeadlessBrokerDispatchTurn.
   if (hosting?.substrate.kind === 'leased-tmux' && hosting.presentation.kind === 'none') {
     if (probe.brokerWindow) {
+      const leaseProbe = toBrokerLeaseProbe(probe)
+      if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
+        return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
+      }
+      const failed = recordBrokerRecoveryFailure(db, runtime, 'broker_ipc_unavailable')
+      if (isBrokerRecoveryExhausted(failed)) {
+        return markBrokerReattachStale(db, failed, 'broker_recovery_budget_exhausted')
+      }
       return {
         runtimeId,
         state: 'broker-ipc-unavailable',

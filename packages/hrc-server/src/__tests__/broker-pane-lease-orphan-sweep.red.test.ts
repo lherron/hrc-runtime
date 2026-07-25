@@ -295,7 +295,7 @@ server.listen(process.env.RENDERER_SOCKET_PATH, () => process.abort())`,
     }
   })
 
-  it('operator reap RPC does NOT remove a dead lease socket file claimed by a non-terminal runtime', async () => {
+  it('operator reap RPC stales and reaps a dead lease socket claimed by a non-terminal runtime', async () => {
     const server = await createHrcServer(fixture.serverOpts())
     servers.push(server)
 
@@ -311,11 +311,21 @@ server.listen(process.env.RENDERER_SOCKET_PATH, () => process.abort())`,
     const body = (await response.json()) as {
       skippedClaimed: number
       removedDeadSocketFiles: number
+      reapedClaimedOrphans: number
+      staledClaimedRuntimes: number
     }
 
-    expect(existsSync(socketPath)).toBe(true)
-    expect(body.skippedClaimed).toBe(1)
-    expect(body.removedDeadSocketFiles).toBe(0)
+    expect(existsSync(socketPath)).toBe(false)
+    expect(body.skippedClaimed).toBe(0)
+    expect(body.removedDeadSocketFiles).toBe(1)
+    expect(body.reapedClaimedOrphans).toBe(1)
+    expect(body.staledClaimedRuntimes).toBe(1)
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+    } finally {
+      db.close()
+    }
   })
 
   it('does NOT remove a fresh dead lease socket file within grace', async () => {

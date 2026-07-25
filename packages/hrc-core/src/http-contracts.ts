@@ -817,6 +817,11 @@ export type KillBrokerTmuxLeasesResponse = {
   scanned: number
   killedLiveLeaseServers: number
   removedDeadSocketFiles: number
+  preservedClaimed: number
+  reapedClaimedOrphans: number
+  staledClaimedRuntimes: number
+  removedBrokerIpcDirs: number
+  /** Compatibility alias for preservedClaimed. */
   skippedClaimed: number
   skippedWithinGrace: number
   errors: number

@@ -1072,12 +1072,15 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
    * recognized as claiming the socket. After Ph4 it must check
    * hasLeasedBrokerSubstrate(runtime) and read the socket from substrate.
    */
-  function seedHeadlessClaimingRuntime(runtimeId: string, socketPath: string): void {
+  async function seedHeadlessClaimingRuntime(runtimeId: string, socketPath: string): Promise<void> {
     const swDb = openHrcDatabase(serverFixture.dbPath)
     const now = serverFixture.now()
     const hostSessionId = `hs_${runtimeId}`
     const scopeRef = `agent:smokey:project:hrc-runtime:task:T-01875:${runtimeId}`
     const sessionName = `hrc-cc-${runtimeId}`
+    const tmux = createTmuxManager({ socketPath })
+    const leaseIdentity = await tmux.inspectWindow({ sessionName, windowName: 'broker' })
+    expect(leaseIdentity).not.toBeNull()
     try {
       swDb.sessions.insert({
         hostSessionId,
@@ -1126,9 +1129,9 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
               socketPath, // ← the lease socket this runtime claims
               sessionName, // `hrc-cc-${runtimeId}`
               windowName: 'broker',
-              sessionId: '$99',
-              windowId: '@99',
-              paneId: '%99',
+              sessionId: leaseIdentity!.sessionId,
+              windowId: leaseIdentity!.windowId,
+              paneId: leaseIdentity!.paneId,
             },
             // No tuiWindow → presentation.none
           },
@@ -1148,7 +1151,7 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
     expect(await sessionAlive(socketPath, sessionName)).toBe(true)
 
     // Seed the headless claiming runtime BEFORE server start.
-    seedHeadlessClaimingRuntime(runtimeId, socketPath) // transport='headless', claimed
+    await seedHeadlessClaimingRuntime(runtimeId, socketPath) // transport='headless', claimed
 
     // Grace=0 so any unclaimed lease WOULD be killed.
     process.env[GRACE_ENV] = '0'

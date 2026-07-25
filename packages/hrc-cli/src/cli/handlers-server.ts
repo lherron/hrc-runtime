@@ -557,8 +557,17 @@ export async function cmdTmuxKill(args: string[]): Promise<void> {
   process.stderr.write(
     `hrc: broker-tmux lease server(s) reaped: ${brokerLeaseResult.killedLiveLeaseServers} killed, ${brokerLeaseResult.removedDeadSocketFiles} dead socket file(s) removed`
   )
-  if (brokerLeaseResult.skippedClaimed > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.skippedClaimed} claimed preserved`)
+  if (brokerLeaseResult.preservedClaimed > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.preservedClaimed} claimed preserved`)
+  }
+  if (brokerLeaseResult.reapedClaimedOrphans > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.reapedClaimedOrphans} claimed orphan(s) reaped`)
+  }
+  if (brokerLeaseResult.staledClaimedRuntimes > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.staledClaimedRuntimes} runtime(s) staled`)
+  }
+  if (brokerLeaseResult.removedBrokerIpcDirs > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.removedBrokerIpcDirs} broker IPC dir(s) removed`)
   }
   if (brokerLeaseResult.errors > 0) {
     process.stderr.write(`, ${brokerLeaseResult.errors} error(s)`)

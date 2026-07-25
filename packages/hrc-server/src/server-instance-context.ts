@@ -139,6 +139,8 @@ type HrcServerInstanceDataForHandlers = {
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<unknown> | undefined
+  brokerLeaseGcTimer: ReturnType<typeof setInterval> | undefined
+  brokerLeaseGcInFlight: Promise<unknown> | undefined
   tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
   tmuxAgingInFlight: Promise<unknown> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined

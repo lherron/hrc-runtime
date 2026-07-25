@@ -594,6 +594,8 @@ class HrcServerInstance implements HrcServer {
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
+  brokerLeaseGcTimer: ReturnType<typeof setInterval> | undefined
+  brokerLeaseGcInFlight: Promise<void> | undefined
   tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
   tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
@@ -1007,6 +1009,7 @@ class HrcServerInstance implements HrcServer {
     }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
+    this.startBrokerLeaseGc()
     this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
     this.startMailKicker()
@@ -1152,6 +1155,17 @@ class HrcServerInstance implements HrcServer {
         await this.activeRunReconcileInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
+      }
+    }
+    if (this.brokerLeaseGcTimer) {
+      clearInterval(this.brokerLeaseGcTimer)
+      this.brokerLeaseGcTimer = undefined
+    }
+    if (this.brokerLeaseGcInFlight) {
+      try {
+        await this.brokerLeaseGcInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.broker_lease_gc_wait_failed', { error })
       }
     }
     if (this.tmuxAgingTimer) {
