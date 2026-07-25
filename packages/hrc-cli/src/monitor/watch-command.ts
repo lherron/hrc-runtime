@@ -203,15 +203,21 @@ async function runWatch(
   // Apply server-side-equivalent event filtering (T-04232). In live mode the
   // SQL layer already narrowed the firehose; this wrapper enforces the same
   // predicate for injected/test state and preserves the global high-water.
-  const conditionIo =
-    liveMode && untilPlan !== undefined && untilPlan.quantifier === 'exact'
-      ? withTargetedConditionSource(
-          io,
-          selectorSpecs,
-          untilPlan.conditions[0] as HrcMonitorCondition,
-          undefined
-        )
-      : io
+  // A live follow must never rebuild the daemon's complete session/message/event
+  // collections on every 100 ms poll. The targeted source holds an incremental
+  // database cursor and a compact projection for exactly the selected members.
+  // Explicit replay windows retain the legacy materializer because their
+  // operator-requested history must be present before the live boundary.
+  const useTargetedFollowSource =
+    liveMode && follow && args.fromSeq === undefined && args.last === undefined
+  const conditionIo = useTargetedFollowSource
+    ? withTargetedConditionSource(
+        io,
+        selectorSpecs,
+        (untilPlan?.conditions[0] ?? 'turn-finished') as HrcMonitorCondition,
+        undefined
+      )
+    : io
   const filteredIo = wrapWithMonitorFilters(conditionIo, args, selectorSpecs)
 
   // Build state within the same timeout budget used by follow polling.

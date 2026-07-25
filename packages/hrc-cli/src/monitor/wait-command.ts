@@ -225,6 +225,8 @@ export type LiveMonitorStateSource = {
   buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
 }
 
+export const LIVE_MONITOR_EVENT_BATCH_LIMIT = 256
+
 type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
 
 type MonitorRuntimeSource = {
@@ -364,6 +366,7 @@ export async function createLiveMonitorStateSource(
     db.close()
   }
 
+  let retainedResponseEvents = state.events.filter((event) => event.event === 'message.response')
   let pendingRefresh = Promise.resolve(state)
   const refresh = async (refreshSignal?: AbortSignal | undefined): Promise<HrcMonitorState> => {
     refreshSignal?.throwIfAborted()
@@ -371,7 +374,13 @@ export async function createLiveMonitorStateSource(
     try {
       const eventGlobalHighWaterSeq = refreshDb.hrcEvents.maxHrcSeq()
       const messageGlobalHighWaterSeq = refreshDb.messages.maxMessageSeq()
-      const rawEvents = readFilteredEvents(refreshDb, nextHrcSeq, eventGlobalHighWaterSeq, filters)
+      const eventBatch = readFilteredEventBatch(
+        refreshDb,
+        nextHrcSeq,
+        eventGlobalHighWaterSeq,
+        filters
+      )
+      const rawEvents = eventBatch.events
       const responseMessages = readCorrelatedResponses(
         refreshDb,
         targetMessages,
@@ -383,13 +392,19 @@ export async function createLiveMonitorStateSource(
       mergeEventIdentities(state, rawEvents, refreshDb)
       applyLifecycleProjection(state, rawEvents)
       mergeMessageStates(state, responseMessages)
-      state.events.push(
-        ...rawEvents.map(toMonitorEvent),
-        ...responseMessages.map(toMessageResponseEvent)
+      const responseEventsById = new Map(
+        retainedResponseEvents.map((event) => [event.messageId, event])
       )
+      for (const event of responseMessages.map(toMessageResponseEvent)) {
+        responseEventsById.set(event.messageId, event)
+      }
+      retainedResponseEvents = [...responseEventsById.values()].slice(
+        -LIVE_MONITOR_EVENT_BATCH_LIMIT
+      )
+      state.events = [...rawEvents.map(toMonitorEvent), ...retainedResponseEvents]
       state.events.sort((a, b) => a.seq - b.seq)
       state.eventGlobalHighWaterSeq = eventGlobalHighWaterSeq
-      nextHrcSeq = eventGlobalHighWaterSeq + 1
+      nextHrcSeq = eventBatch.nextHrcSeq
       nextMessageSeq = messageGlobalHighWaterSeq + 1
       return state
     } finally {
@@ -434,10 +449,45 @@ function readFilteredEvents(
   return [...bySeq.values()].sort((a, b) => a.hrcSeq - b.hrcSeq)
 }
 
+function readFilteredEventBatch(
+  db: HrcDatabase,
+  fromHrcSeq: number,
+  throughHrcSeq: number,
+  filters: readonly HrcLifecycleMonitorFilters[]
+): {
+  events: ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>
+  nextHrcSeq: number
+} {
+  const rowsByFilter = filters.map((filter) =>
+    db.hrcEvents.listFromHrcSeqFiltered(fromHrcSeq, {
+      ...filter,
+      limit: LIVE_MONITOR_EVENT_BATCH_LIMIT,
+    })
+  )
+  const safeThroughHrcSeq = rowsByFilter.reduce((safeThrough, rows) => {
+    if (rows.length < LIVE_MONITOR_EVENT_BATCH_LIMIT) return safeThrough
+    return Math.min(safeThrough, rows.at(-1)?.hrcSeq ?? safeThrough)
+  }, throughHrcSeq)
+  const bySeq = new Map<
+    number,
+    ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number]
+  >()
+  for (const rows of rowsByFilter) {
+    for (const event of rows) {
+      if (event.hrcSeq <= safeThroughHrcSeq) bySeq.set(event.hrcSeq, event)
+    }
+  }
+  return {
+    events: [...bySeq.values()].sort((a, b) => a.hrcSeq - b.hrcSeq),
+    nextHrcSeq: safeThroughHrcSeq + 1,
+  }
+}
+
 function selectorEventFilters(
   specs: readonly MonitorSelectorSpec[],
   selected: SelectorState
 ): HrcLifecycleMonitorFilters[] {
+  if (specs.length === 0) return [{}]
   return specs.map((spec) => {
     if (spec.kind === 'task') return { taskIds: [spec.taskId] }
     if (spec.kind === 'scope-prefix') return { scopeRefPrefixes: [spec.prefix] }
