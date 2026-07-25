@@ -163,6 +163,82 @@ describe('provider transcript adapters', () => {
     }
   })
 
+  it('normalizes installed Codex JSON-RPC command notifications without reclassifying exits', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-codex-jsonrpc-'))
+    const path = join(dir, 'codex.jsonl')
+    await writeFile(
+      path,
+      [
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'item/started',
+          params: {
+            item: {
+              type: 'commandExecution',
+              id: 'call-jsonrpc',
+              command: "/bin/zsh -lc 'rg definitely_missing'",
+              cwd: '/workspace',
+              status: 'inProgress',
+              aggregatedOutput: null,
+              exitCode: null,
+            },
+          },
+        }),
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'item/commandExecution/outputDelta',
+          params: { itemId: 'call-jsonrpc', delta: 'no matches' },
+        }),
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'item/completed',
+          params: {
+            item: {
+              type: 'commandExecution',
+              id: 'call-jsonrpc',
+              command: "/bin/zsh -lc 'rg definitely_missing'",
+              cwd: '/workspace',
+              status: 'failed',
+              aggregatedOutput: 'no matches',
+              exitCode: 1,
+            },
+          },
+        }),
+      ].join('\n')
+    )
+
+    try {
+      const transcript = await parseProviderTranscript({ path })
+      expect(transcript.provider).toBe('codex')
+      expect(transcript.observations).toHaveLength(2)
+      expect(transcript.ignoredRecords).toBe(1)
+      expect(transcript.observations[0]).toMatchObject({
+        type: 'tool.call.started',
+        correlationKey: 'call-jsonrpc',
+        normalizedPayload: {
+          toolCallId: 'call-jsonrpc',
+          name: 'command',
+          input: { cmd: "/bin/zsh -lc 'rg definitely_missing'", cwd: '/workspace' },
+        },
+      })
+      expect(transcript.observations[1]).toMatchObject({
+        type: 'tool.call.completed',
+        correlationKey: 'call-jsonrpc',
+        normalizedPayload: {
+          toolCallId: 'call-jsonrpc',
+          result: { output: 'no matches', exitCode: 1 },
+        },
+      })
+      expect(transcript.observationsByType).toMatchObject({
+        'tool.call.started': 1,
+        'tool.call.completed': 1,
+        'tool.call.failed': 0,
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('normalizes minimized Claude JSONL user, assistant, tool_use, and tool_result records', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-claude-'))
     const path = join(dir, 'claude.jsonl')

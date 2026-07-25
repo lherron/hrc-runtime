@@ -136,6 +136,9 @@ function adaptCodexRecord(
   line: number,
   ignoredCallIds: Set<string>
 ): AdapterResult {
+  const jsonRpc = adaptCodexJsonRpcRecord(record, line)
+  if (jsonRpc !== undefined) return jsonRpc
+
   if (record['type'] !== 'response_item') return {}
   const payload = record['payload']
   if (!isRecord(payload)) {
@@ -215,6 +218,66 @@ function adaptCodexRecord(
   }
 
   return { disposition: 'ignored' }
+}
+
+function adaptCodexJsonRpcRecord(
+  record: Record<string, unknown>,
+  line: number
+): AdapterResult | undefined {
+  if (record['jsonrpc'] !== '2.0' || typeof record['method'] !== 'string') {
+    return undefined
+  }
+  if (record['method'] !== 'item/started' && record['method'] !== 'item/completed') {
+    return { disposition: 'ignored' }
+  }
+
+  const params = record['params']
+  const item = isRecord(params) && isRecord(params['item']) ? params['item'] : undefined
+  if (item === undefined) {
+    return {
+      warning: `line ${line}: Codex ${record['method']} notification has no item`,
+      disposition: 'unknown',
+    }
+  }
+  if (item['type'] !== 'commandExecution') {
+    return { disposition: 'ignored' }
+  }
+
+  const callId = stringField(item, 'id')
+  if (record['method'] === 'item/started') {
+    const command = stringField(item, 'command') ?? ''
+    const cwd = stringField(item, 'cwd')
+    return {
+      event: makeObserved({
+        line,
+        provider: 'codex',
+        type: 'tool.call.started',
+        correlationKey: callId,
+        normalizedPayload: normalizeCodexToolStart(callId, 'exec_command', {
+          cmd: command,
+          ...(cwd !== undefined ? { workdir: cwd } : {}),
+        }),
+      }),
+    }
+  }
+
+  const output = typeof item['aggregatedOutput'] === 'string' ? item['aggregatedOutput'] : ''
+  const exitCode =
+    typeof item['exitCode'] === 'number' && Number.isFinite(item['exitCode'])
+      ? item['exitCode']
+      : undefined
+  return {
+    event: makeObserved({
+      line,
+      provider: 'codex',
+      type: 'tool.call.completed',
+      correlationKey: callId,
+      normalizedPayload: {
+        toolCallId: callId,
+        result: normalizeToolResult(output, exitCode),
+      },
+    }),
+  }
 }
 
 function adaptClaudeRecord(record: Record<string, unknown>, line: number): AdapterResult {
