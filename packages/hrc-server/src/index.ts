@@ -24,6 +24,8 @@ import type {
   HrcSessionRecord,
   HrcStatusResponse,
   HrcStatusSummaryResponse,
+  HrcTurnAdmissionCloseRequest,
+  HrcTurnAdmissionReopenRequest,
   LaunchCommandScopedRunResponse,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
@@ -249,6 +251,7 @@ import {
   type TmuxManagerOptions,
   createTmuxManager,
 } from './tmux.js'
+import { TurnAdmissionGate } from './turn-admission-gate.js'
 import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
@@ -586,6 +589,7 @@ class HrcServerInstance implements HrcServer {
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   readonly queuedTurnInputDrains = new Set<string>()
+  readonly turnAdmissionGate: TurnAdmissionGate
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
@@ -638,6 +642,12 @@ class HrcServerInstance implements HrcServer {
       Response.json(this.subscriberAdmissions.snapshot()),
     [exactRouteKey('POST', '/v1/server/subscribers/ack')]: (request) =>
       this.handleSubscriberReceiptAck(request),
+    [exactRouteKey('GET', '/v1/server/turn-admission')]: () =>
+      Response.json(this.turnAdmissionGate.snapshot()),
+    [exactRouteKey('POST', '/v1/server/turn-admission/close')]: (request) =>
+      this.handleCloseTurnAdmission(request),
+    [exactRouteKey('POST', '/v1/server/turn-admission/reopen')]: (request) =>
+      this.handleReopenTurnAdmission(request),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>
@@ -779,6 +789,7 @@ class HrcServerInstance implements HrcServer {
     readonly ghostmux: ServerGhostmuxManager,
     readonly lockHandle: ServerLockHandle
   ) {
+    this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
     this.server = Bun.serve({
       unix: options.socketPath,
       idleTimeout: 255,
@@ -1260,6 +1271,50 @@ class HrcServerInstance implements HrcServer {
       // Metrics are observational and must never alter request handling.
     }
     return response
+  }
+
+  async handleCloseTurnAdmission(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission close requires operationId'
+      )
+    }
+    const requestedBy = body['requestedBy']
+    const requestedRunId = body['requestedRunId']
+    const reason = body['reason']
+    if (
+      (requestedBy !== undefined && requestedBy !== null && typeof requestedBy !== 'string') ||
+      (requestedRunId !== undefined &&
+        requestedRunId !== null &&
+        typeof requestedRunId !== 'string') ||
+      (reason !== undefined && typeof reason !== 'string')
+    ) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission close attribution is malformed'
+      )
+    }
+    const input: HrcTurnAdmissionCloseRequest = {
+      operationId: body['operationId'],
+      ...(requestedBy === undefined ? {} : { requestedBy }),
+      ...(requestedRunId === undefined ? {} : { requestedRunId }),
+      ...(reason === undefined ? {} : { reason }),
+    }
+    return json(await this.turnAdmissionGate.close(input))
+  }
+
+  async handleReopenTurnAdmission(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission reopen requires operationId'
+      )
+    }
+    const input: HrcTurnAdmissionReopenRequest = { operationId: body['operationId'] }
+    return json(await this.turnAdmissionGate.reopen(input.operationId))
   }
 
   private async dispatchRequest(request: Request): Promise<Response> {
@@ -2198,6 +2253,15 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // ready by a late warmup completion.
     await server.brokerWarmupComplete
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
+    if (server.turnAdmissionGate.snapshot().state === 'closed') {
+      const prior = server.turnAdmissionGate.snapshot()
+      await server.turnAdmissionGate.reopen()
+      writeServerLog('INFO', 'server.turn_admission.reopened_after_warmup', {
+        operationId: prior.operationId,
+        requestedBy: prior.requestedBy,
+        closedAt: prior.closedAt,
+      })
+    }
     writeServerLog('INFO', 'server.start.ready', logCtx)
     return server
   } catch (error) {

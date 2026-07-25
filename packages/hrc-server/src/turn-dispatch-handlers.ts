@@ -944,20 +944,40 @@ export async function handleResumeAttachedRun(
   } satisfies ResumeAttachedRunResponse)
 }
 
+type DispatchTurnForSessionOptions = {
+  runId?: string | undefined
+  ensureInteractiveRuntime?: boolean | undefined
+  waitForCompletion?: boolean | undefined
+  whenBusy?: 'reject' | undefined
+  attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+  repairCorrelation?: JsonRepairRunCorrelation | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+}
+
 export async function dispatchTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   inputIntent: HrcRuntimeIntent,
   prompt: string,
-  options: {
-    runId?: string | undefined
-    ensureInteractiveRuntime?: boolean | undefined
-    waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | undefined
-    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
-    repairCorrelation?: JsonRepairRunCorrelation | undefined
-    responseFormat?: HrcTurnResponseFormat | undefined
-  } = {}
+  options: DispatchTurnForSessionOptions = {}
+): Promise<Response> {
+  const existingRun = options.runId ? this.db.runs.getByRunId(options.runId) : null
+  const releaseAdmission = this.turnAdmissionGate.admit({
+    existingAcceptedRun: existingRun?.status === 'accepted',
+  })
+  try {
+    return await dispatchAdmittedTurnForSession.call(this, session, inputIntent, prompt, options)
+  } finally {
+    releaseAdmission()
+  }
+}
+
+async function dispatchAdmittedTurnForSession(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  inputIntent: HrcRuntimeIntent,
+  prompt: string,
+  options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   const runId = options.runId ?? `run-${randomUUID()}`

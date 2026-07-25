@@ -99,12 +99,17 @@ export function registerServerSessionCommands(program: Command): void {
     .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
     .option('--wait', 'wait for in-flight runs to drain before restarting')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
+    .option('--drain', 'close daemon turn admission, drain, recheck, and restart')
+    .option(
+      '--drain-timeout-ms <n>',
+      'max closed-admission drain time before explicit force fallback (default 300000)'
+    )
     .option('--daemon', 'restart as background daemon')
     .option('--foreground', 'restart in foreground')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms', 'wait-timeout-ms'],
-        booleans: ['force', 'wait', 'daemon', 'foreground'],
+        strings: ['timeout-ms', 'wait-timeout-ms', 'drain-timeout-ms'],
+        booleans: ['force', 'wait', 'drain', 'daemon', 'foreground'],
       })
       await cmdServerRestart(args)
     })

@@ -745,6 +745,8 @@ function selfRunId(): string | undefined {
  */
 export type InFlightFilter = {
   excludeTransports?: readonly string[] | undefined
+  /** Include recent accepted rows that are queued but not yet active on a runtime. */
+  includeAcceptedRuns?: boolean | undefined
 }
 
 /**
@@ -766,34 +768,55 @@ export function listInFlightWork(dbPath?: string, filter?: InFlightFilter): InFl
   const db = new Database(path, { readonly: true })
   try {
     const cutoff = new Date(Date.now() - IN_FLIGHT_RECENCY_MS).toISOString()
-    const rows = db
-      .query<
-        {
-          run_id: string
-          scope_ref: string
-          lane_ref: string
-          status: string
-          transport: string | null
-          started_at: string | null
-        },
-        [string]
-      >(
-        `SELECT r.run_id, r.scope_ref, r.lane_ref, r.status, r.transport, r.started_at
-         FROM runtimes rt
-         INNER JOIN runs r ON r.run_id = rt.active_run_id
-         WHERE rt.status = 'busy'
-           AND rt.active_run_id IS NOT NULL
-           AND r.status IN ('accepted', 'started', 'running')
-           AND r.completed_at IS NULL
-           AND (
-             SELECT e.ts FROM hrc_events e
-             WHERE e.runtime_id = rt.runtime_id
-             ORDER BY e.hrc_seq DESC
-             LIMIT 1
-           ) > ?
-         ORDER BY r.started_at ASC`
-      )
-      .all(cutoff)
+    type InFlightRow = {
+      run_id: string
+      scope_ref: string
+      lane_ref: string
+      status: string
+      transport: string | null
+      started_at: string | null
+    }
+    const rows: InFlightRow[] = filter?.includeAcceptedRuns
+      ? db
+          .query<InFlightRow, [string, string]>(
+            `SELECT r.run_id, r.scope_ref, r.lane_ref, r.status, r.transport, r.started_at
+             FROM runs r
+             LEFT JOIN runtimes rt ON rt.active_run_id = r.run_id
+             WHERE r.status IN ('accepted', 'started', 'running')
+               AND r.completed_at IS NULL
+               AND (
+                 (
+                   rt.status = 'busy'
+                   AND (
+                     SELECT e.ts FROM hrc_events e
+                     WHERE e.runtime_id = rt.runtime_id
+                     ORDER BY e.hrc_seq DESC
+                     LIMIT 1
+                   ) > ?
+                 )
+                 OR (r.status = 'accepted' AND r.updated_at > ?)
+               )
+             ORDER BY COALESCE(r.started_at, r.updated_at) ASC`
+          )
+          .all(cutoff, cutoff)
+      : db
+          .query<InFlightRow, [string]>(
+            `SELECT r.run_id, r.scope_ref, r.lane_ref, r.status, r.transport, r.started_at
+             FROM runtimes rt
+             INNER JOIN runs r ON r.run_id = rt.active_run_id
+             WHERE rt.status = 'busy'
+               AND rt.active_run_id IS NOT NULL
+               AND r.status IN ('accepted', 'started', 'running')
+               AND r.completed_at IS NULL
+               AND (
+                 SELECT e.ts FROM hrc_events e
+                 WHERE e.runtime_id = rt.runtime_id
+                 ORDER BY e.hrc_seq DESC
+                 LIMIT 1
+               ) > ?
+             ORDER BY r.started_at ASC`
+          )
+          .all(cutoff)
     const self = selfRunId()
     const excluded = filter?.excludeTransports?.length
       ? new Set(filter.excludeTransports)

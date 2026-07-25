@@ -77,6 +77,9 @@ import type {
   HrcSubscriberAdmissionSnapshot,
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
+  HrcTurnAdmissionCloseRequest,
+  HrcTurnAdmissionReopenRequest,
+  HrcTurnAdmissionState,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvocationEventEnvelope,
@@ -356,6 +359,20 @@ export class HrcClient {
       ...request,
       idempotencyKey: request.idempotencyKey ?? `hrc-sdk-${randomUUID()}`,
     })
+  }
+
+  async getTurnAdmission(): Promise<HrcTurnAdmissionState> {
+    return this.getJson<HrcTurnAdmissionState>('/v1/server/turn-admission')
+  }
+
+  async closeTurnAdmission(request: HrcTurnAdmissionCloseRequest): Promise<HrcTurnAdmissionState> {
+    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/close', request)
+  }
+
+  async reopenTurnAdmission(
+    request: HrcTurnAdmissionReopenRequest
+  ): Promise<HrcTurnAdmissionState> {
+    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/reopen', request)
   }
 
   async prepareAttachedRun(

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
@@ -144,6 +145,62 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
   }
 }
 
+async function closeAdmissionAndDrainForRestart(args: string[]): Promise<{
+  operationId: string
+  forceFallback: boolean
+}> {
+  const timeoutMs = parseIntegerFlag(args, '--drain-timeout-ms', {
+    defaultValue: 300_000,
+    min: 1,
+  })
+  const operationId = `restart-drain-${randomUUID()}`
+  const client = createClient()
+  const closed = await client.closeTurnAdmission({
+    operationId,
+    requestedBy: process.env['HRC_SESSION_REF'] ?? null,
+    requestedRunId: process.env['HRC_RUN_ID'] ?? null,
+    reason: 'hrc server restart --drain',
+  })
+  process.stderr.write(
+    `hrc: turn admission closed (${operationId}); active admissions=${closed.activeAdmissions}\n`
+  )
+
+  const filter = {
+    excludeTransports: ['tmux'] as const,
+    includeAcceptedRuns: true,
+  }
+  let inFlight = listInFlightWork(undefined, filter)
+  if (inFlight.length > 0) {
+    process.stderr.write(
+      `hrc: waiting up to ${timeoutMs}ms for ${inFlight.length} in-flight headless run(s) under closed admission...\n`
+    )
+    let lastReportedCount = inFlight.length
+    inFlight = await waitForInFlightDrain({
+      timeoutMs,
+      filter,
+      onTick: (items) => {
+        if (items.length !== lastReportedCount) {
+          process.stderr.write(`hrc: ${items.length} headless run(s) still in flight\n`)
+          lastReportedCount = items.length
+        }
+      },
+    })
+  }
+
+  // One final registry cut while admission is still closed. No new turn can
+  // cross the daemon gate between this observation and actuation.
+  inFlight = listInFlightWork(undefined, filter)
+  if (inFlight.length > 0) {
+    process.stderr.write(
+      `hrc: drain timed out after ${timeoutMs}ms with ${inFlight.length} headless run(s) still in flight. Falling back explicitly to force restart semantics under closed admission.\n${formatInFlightWork(inFlight)}`
+    )
+    return { operationId, forceFallback: true }
+  }
+
+  process.stderr.write('hrc: drain complete; closed-admission recheck found no headless work\n')
+  return { operationId, forceFallback: false }
+}
+
 export async function cmdServerStop(args: string[]): Promise<void> {
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
@@ -172,27 +229,59 @@ export async function cmdServerStop(args: string[]): Promise<void> {
 export async function cmdServerRestart(args: string[]): Promise<void> {
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
-  const force = hasFlag(args, '--force')
-
-  await gateOnInFlightWork(args, 'restart')
-
-  writeShutdownIntent('restart')
-
-  const owner = await detectLaunchdOwner()
-  if (owner) {
-    await launchctlKickstart(owner, { kill: true })
-    process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
-    return
+  const drain = hasFlag(args, '--drain')
+  if (drain && hasFlag(args, '--wait')) {
+    fatal('--drain and --wait are mutually exclusive; --drain owns the closed-admission wait')
   }
 
-  await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
-  if (mode === 'daemon') {
-    await daemonizeAndWait(timeoutMs)
-    process.stderr.write('hrc: daemon restarted\n')
-    return
-  }
+  let admissionOperationId: string | undefined
+  let restartInitiated = false
+  let force = hasFlag(args, '--force')
+  try {
+    if (drain) {
+      const result = await closeAdmissionAndDrainForRestart(args)
+      admissionOperationId = result.operationId
+      force ||= result.forceFallback
+    } else {
+      await gateOnInFlightWork(args, 'restart')
+    }
 
-  return serverForeground()
+    writeShutdownIntent('restart')
+
+    const owner = await detectLaunchdOwner()
+    if (owner) {
+      restartInitiated = true
+      await launchctlKickstart(owner, { kill: true })
+      process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
+      return
+    }
+
+    restartInitiated = true
+    await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
+    if (mode === 'daemon') {
+      await daemonizeAndWait(timeoutMs)
+      process.stderr.write('hrc: daemon restarted\n')
+      return
+    }
+
+    return serverForeground()
+  } catch (error) {
+    if (admissionOperationId !== undefined && !restartInitiated) {
+      try {
+        await createClient().reopenTurnAdmission({ operationId: admissionOperationId })
+        process.stderr.write(
+          `hrc: restart aborted before actuation; turn admission reopened (${admissionOperationId})\n`
+        )
+      } catch (reopenError) {
+        process.stderr.write(
+          `hrc: WARNING restart aborted but turn admission could not be reopened: ${
+            reopenError instanceof Error ? reopenError.message : String(reopenError)
+          }\n`
+        )
+      }
+    }
+    throw error
+  }
 }
 
 export async function cmdServerStatus(args: string[]): Promise<void> {

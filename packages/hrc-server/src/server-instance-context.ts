@@ -46,6 +46,7 @@ import type {
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
+import type { TurnAdmissionGate } from './turn-admission-gate.js'
 import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
@@ -133,6 +134,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
   readonly queuedTurnInputDrains: Set<string>
+  readonly turnAdmissionGate: TurnAdmissionGate
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined

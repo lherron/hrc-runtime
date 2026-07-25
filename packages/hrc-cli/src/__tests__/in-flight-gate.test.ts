@@ -25,7 +25,8 @@ async function makeDb(): Promise<{ path: string; cleanup: () => Promise<void> }>
       status TEXT NOT NULL,
       transport TEXT,
       started_at TEXT,
-      completed_at TEXT
+      completed_at TEXT,
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE runtimes (
       runtime_id TEXT PRIMARY KEY,
@@ -70,8 +71,9 @@ function insertActiveRun(
   const db = new Database(path)
   const runtimeId = `rt-${row.run_id}`
   db.run(
-    `INSERT INTO runs (run_id, scope_ref, lane_ref, status, transport, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+    `INSERT INTO runs (
+       run_id, scope_ref, lane_ref, status, transport, started_at, completed_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
     [
       row.run_id,
       row.scope_ref,
@@ -79,6 +81,7 @@ function insertActiveRun(
       row.status ?? 'started',
       row.transport ?? null,
       row.started_at ?? new Date().toISOString(),
+      new Date().toISOString(),
     ]
   )
   db.run(
@@ -253,6 +256,33 @@ describe('listInFlightWork', () => {
       insertActiveRun(path, { run_id: 'run-tmux-a', scope_ref: 'agent:cody', transport: 'tmux' })
       insertActiveRun(path, { run_id: 'run-tmux-b', scope_ref: 'agent:clod', transport: 'tmux' })
       expect(listInFlightWork(path, { excludeTransports: ['tmux'] })).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('includes a recent accepted queue row only for a closed-admission drain', async () => {
+    const { path, cleanup } = await makeDb()
+    try {
+      insertActiveRun(path, {
+        run_id: 'run-queued',
+        scope_ref: 'agent:cody',
+        status: 'accepted',
+        transport: 'headless',
+        runtime_status: 'ready',
+        last_event_at: null,
+      })
+      expect(listInFlightWork(path)).toEqual([])
+      expect(listInFlightWork(path, { includeAcceptedRuns: true })).toEqual([
+        {
+          runId: 'run-queued',
+          scopeRef: 'agent:cody',
+          laneRef: 'main',
+          status: 'accepted',
+          transport: 'headless',
+          startedAt: expect.any(String),
+        },
+      ])
     } finally {
       await cleanup()
     }

@@ -32,6 +32,30 @@ import type { HrcSessionRef } from './selectors.js'
 
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 
+// -- Server turn-admission control -------------------------------------------
+
+export type HrcTurnAdmissionCloseRequest = {
+  operationId: string
+  requestedBy?: string | null | undefined
+  requestedRunId?: string | null | undefined
+  reason?: string | undefined
+}
+
+export type HrcTurnAdmissionReopenRequest = {
+  operationId: string
+}
+
+export type HrcTurnAdmissionState = {
+  state: 'open' | 'closed'
+  activeAdmissions: number
+  operationId?: string | undefined
+  requestedBy?: string | null | undefined
+  requestedRunId?: string | null | undefined
+  reason?: string | undefined
+  closedAt?: string | undefined
+  durable: boolean
+}
+
 // -- Session management -------------------------------------------------------
 
 /**
