@@ -3,6 +3,7 @@ import { runHrcPiTop } from 'hrc-pi-top'
 import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
+import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
 import {
   cmdBridgeClose,
@@ -254,6 +255,21 @@ Semantics:
   const adminRuns = admin
     .command('runs')
     .description('repair run records (sweep zombies, reconcile active)')
+
+  admin
+    .command('worktrees')
+    .description('audit and prune completed-task linked worktrees')
+    .command('prune')
+    .description('remove only completed, clean worktrees already merged into canonical HEAD')
+    .option('--project <id>', 'inspect one registered project')
+    .option('--root <path>', 'override its canonical root (requires --project)')
+    .option('--dry-run', 'preview without removing worktrees (default)')
+    .option('--yes', 'remove eligible worktrees without force; branches are preserved')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      cmdAdminWorktreesPrune(cmd.opts())
+    })
 
   adminRuns
     .command('sweep-zombies')

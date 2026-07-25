@@ -51,7 +51,7 @@ A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.
 
-Maintenance subcommands: `hrc run sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc run reconcile-active [...]`.
+Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]`. Worktree pruning defaults to dry-run and refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
 ## `monitor show | watch | wait`
 
