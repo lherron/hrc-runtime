@@ -107,6 +107,21 @@ async function run(cwd: string, args: string[]): Promise<string> {
 }
 
 describe('T-05439 direct actuator-split admission', () => {
+  it('rejects every non-off policy by default while the experimental gate is closed', async () => {
+    const runtimeIntent = intent('/tmp/t05439', verifierPolicy())
+
+    await expect(prepareActuatorSplitIntent(runtimeIntent)).rejects.toThrow(
+      'actuator-split-experimental-disabled'
+    )
+    await expect(
+      assertActuatorSplitAdmission({
+        intent: runtimeIntent,
+        route: 'broker',
+        startRequest: startRequest('read-only'),
+      })
+    ).rejects.toThrow('actuator-split-experimental-disabled')
+  })
+
   it('admits only a hash-covered read-only codex app-server for verifier lanes', async () => {
     const runtimeIntent = intent('/tmp/t05439', verifierPolicy())
 
@@ -115,6 +130,7 @@ describe('T-05439 direct actuator-split admission', () => {
         intent: runtimeIntent,
         route: 'broker',
         startRequest: startRequest('read-only'),
+        allowExperimental: true,
       })
     ).resolves.toMatchObject({
       actuatorSplit: { laneClass: 'verifier', codeMutation: 'forbidden' },
@@ -125,6 +141,7 @@ describe('T-05439 direct actuator-split admission', () => {
         intent: runtimeIntent,
         route: 'broker',
         startRequest: startRequest('workspace-write'),
+        allowExperimental: true,
       })
     ).rejects.toThrow('high-risk-verifier-requires-read-only-codex-app-server')
 
@@ -147,7 +164,8 @@ describe('T-05439 direct actuator-split admission', () => {
         SAFE_VALUE: 'kept',
         GITHUB_TOKEN: 'discarded',
         SERVICE_PASSWORD: 'discarded-too',
-      })
+      }),
+      { allowExperimental: true }
     )
 
     expect(prepared.intent.launch?.env).toEqual({ SAFE_VALUE: 'kept' })
@@ -210,6 +228,7 @@ describe('T-05439 direct actuator-split admission', () => {
         intent: intent('/tmp', policy),
         route: 'broker',
         startRequest: startRequest('workspace-write'),
+        allowExperimental: true,
       })
     ).rejects.toThrow('unresolvable-local-file-ref')
   })
@@ -272,15 +291,20 @@ describe('T-05439 direct actuator-split admission', () => {
         },
       }
 
-      const prepared = await prepareActuatorSplitIntent(intent(workspace, policy))
+      const prepared = await prepareActuatorSplitIntent(intent(workspace, policy), {
+        allowExperimental: true,
+      })
       expect(prepared.intent.initialPrompt).toContain('HRC deterministic actuator request')
       expect(prepared.intent.initialPrompt).not.toContain('free-form caller prompt')
       expect(prepared.intent.initialPrompt).toContain('packages/target.txt')
 
-      const reusedTurn = await prepareActuatorSplitIntent({
-        ...prepared.intent,
-        initialPrompt: 'second free-form prompt sent to a matching actuator runtime',
-      })
+      const reusedTurn = await prepareActuatorSplitIntent(
+        {
+          ...prepared.intent,
+          initialPrompt: 'second free-form prompt sent to a matching actuator runtime',
+        },
+        { allowExperimental: true }
+      )
       expect(reusedTurn.intent.initialPrompt).toContain('HRC deterministic actuator request')
       expect(reusedTurn.intent.initialPrompt).not.toContain('second free-form prompt')
 
@@ -289,6 +313,7 @@ describe('T-05439 direct actuator-split admission', () => {
         route: 'broker',
         startRequest: startRequest('workspace-write'),
         preparedAuthority: prepared.authority,
+        allowExperimental: true,
       })
       expect(actuatorSplitRuntimeAuthority(admitted)).toMatchObject({
         actuatorSplit: { laneClass: 'actuator' },
@@ -321,7 +346,7 @@ describe('T-05439 live /v1/turns pre-launch rejection', () => {
     await fixture.cleanup()
   })
 
-  it('rejects bogus approval evidence before any runtime or broker start graph exists', async () => {
+  it('rejects any high-risk policy at the live route while the experimental gate is closed', async () => {
     const scopeRef = 'agent:cody:project:hrc-runtime:task:T-05439'
     const { hostSessionId } = await fixture.resolveSession(scopeRef)
     const policy: HrcActuatorSplitPolicy = {
@@ -354,7 +379,7 @@ describe('T-05439 live /v1/turns pre-launch rejection', () => {
 
     expect(response.status).toBe(503)
     expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.detail?.reason).toBe('unresolvable-local-file-ref')
+    expect(body.error?.detail?.reason).toBe('actuator-split-experimental-disabled')
 
     const db = openHrcDatabase(fixture.dbPath)
     try {

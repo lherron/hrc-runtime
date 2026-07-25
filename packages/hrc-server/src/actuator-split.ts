@@ -73,6 +73,17 @@ function reject(reason: string, detail: Record<string, unknown> = {}): never {
   })
 }
 
+// T-05439 rework gate: approval records are caller-mintable and write containment is
+// prompt-only, so high-risk lanes must stay dark until approval authenticity and
+// mechanical confinement land. `allowExperimental` exists for contract tests only —
+// no server route sets it.
+function rejectExperimentalActuatorSplit(): never {
+  reject('actuator-split-experimental-disabled', {
+    remediation:
+      'actuator-split high-risk lanes are disabled pending the T-05439 approval-authenticity and write-confinement rework; omit actuatorSplit or use mode "off"',
+  })
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -613,10 +624,12 @@ function scrubReadOnlyCallerCredentials(intent: HrcRuntimeIntent): HrcRuntimeInt
 }
 
 export async function prepareActuatorSplitIntent(
-  intent: HrcRuntimeIntent
+  intent: HrcRuntimeIntent,
+  options?: { allowExperimental?: boolean }
 ): Promise<PreparedActuatorSplitIntent> {
   const policy = effectivePolicy(intent)
   if (!policy || policy.mode === 'off') return { intent }
+  if (!options?.allowExperimental) rejectExperimentalActuatorSplit()
 
   if (policy.laneClass === 'actuator') {
     const approvedMutation = await resolveApprovedMutation(intent, policy)
@@ -662,12 +675,14 @@ export async function assertActuatorSplitAdmission(input: {
   startRequest?: InvocationStartRequest | undefined
   preparedAuthority?: ActuatorSplitAuthority | undefined
   runtime?: HrcRuntimeSnapshot | undefined
+  allowExperimental?: boolean | undefined
 }): Promise<ActuatorSplitAuthority | undefined> {
   const policy = effectivePolicy(input.intent)
   if (!policy || policy.mode === 'off') {
     if (input.runtime) assertActuatorSplitRuntimeReuse(input.intent, input.runtime)
     return undefined
   }
+  if (!input.allowExperimental) rejectExperimentalActuatorSplit()
   assertActuatorSplitRouteAdmission(input.intent, input.route)
   const startRequest = input.startRequest
   if (!startRequest) reject('hash-verified-start-request-required')
