@@ -160,6 +160,78 @@ describe('completed-task worktree pruning', () => {
     expect(existsSync(worktree)).toBe(true)
   })
 
+  it('reports a task-lookup failure as an error instead of not-found', () => {
+    const { root, worktree } = fixture()
+
+    const report = pruneCompletedTaskWorktrees(
+      { projectId: 'fixture', projectRoot: root, apply: true },
+      {
+        readTask: () => {
+          throw new Error('wrkq cat T-12345 failed: rpc.initialize: remote workrpc HTTP 401')
+        },
+        listLiveRuntimeOccupancies: () => [],
+      }
+    )
+
+    expect(report.results).toEqual([
+      expect.objectContaining({
+        disposition: 'error',
+        reason:
+          'task lookup failed: wrkq cat T-12345 failed: rpc.initialize: remote workrpc HTTP 401',
+      }),
+    ])
+    expect(report.summary.errors).toBe(1)
+    expect(existsSync(worktree)).toBe(true)
+  })
+
+  it('default task reader distinguishes a genuine miss from an infrastructure failure', () => {
+    const { root, worktree } = fixture()
+    const realRun = (command: string, args: string[]): ReturnType<typeof fakeRun> => {
+      const stdout = execFileSync(command, args, { encoding: 'utf8' })
+      return { status: 0, stdout, stderr: '' }
+    }
+    const fakeRun = (command: string, args: string[]) => {
+      if (command === 'wrkq' && args[0] === 'cat') {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: 'Error: rpc.initialize: remote workrpc HTTP 401',
+        }
+      }
+      return realRun(command, args)
+    }
+
+    const infra = pruneCompletedTaskWorktrees(
+      { projectId: 'fixture', projectRoot: root, apply: true },
+      { run: fakeRun, listLiveRuntimeOccupancies: () => [] }
+    )
+    expect(infra.results).toEqual([
+      expect.objectContaining({
+        disposition: 'error',
+        reason: expect.stringContaining('task lookup failed'),
+      }),
+    ])
+    expect(existsSync(worktree)).toBe(true)
+
+    const missRun = (command: string, args: string[]) => {
+      if (command === 'wrkq' && args[0] === 'cat') {
+        return { status: 1, stdout: '', stderr: `Error: task not found: ${args[1]}` }
+      }
+      return realRun(command, args)
+    }
+    const miss = pruneCompletedTaskWorktrees(
+      { projectId: 'fixture', projectRoot: root, apply: true },
+      { run: missRun, listLiveRuntimeOccupancies: () => [] }
+    )
+    expect(miss.results).toEqual([
+      expect.objectContaining({
+        disposition: 'skipped',
+        reason: 'task not completed: T-12345=not-found',
+      }),
+    ])
+    expect(existsSync(worktree)).toBe(true)
+  })
+
   it('refuses a worktree occupied by a live runtime cwd', () => {
     const { root, worktree } = fixture()
     const runtimeCwd = join(worktree, 'packages', 'app')

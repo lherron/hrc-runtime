@@ -217,12 +217,18 @@ function defaultTaskReader(
 ): (taskId: string) => TaskRecord | undefined {
   return (taskId) => {
     const result = run('wrkq', ['cat', taskId, '--json'])
-    if (result.status !== 0) return undefined
+    if (result.status !== 0) {
+      // A genuine miss ("task not found") means the record is gone and the
+      // worktree must stay; anything else is an infrastructure failure (auth,
+      // rpc, missing binary) and must not be mistaken for task state.
+      if (/task not found/i.test(result.stderr)) return undefined
+      throw new Error(`wrkq cat ${taskId} failed: ${commandDiagnostic(result)}`)
+    }
     try {
       const value = JSON.parse(result.stdout) as unknown
       return Array.isArray(value) ? (value[0] as TaskRecord | undefined) : undefined
     } catch {
-      return undefined
+      throw new Error(`wrkq cat ${taskId} returned unparseable JSON`)
     }
   }
 }
@@ -417,10 +423,22 @@ export function pruneCompletedTaskWorktrees(
         continue
       }
 
-      const taskStates = tokens.map((taskId) => ({
-        taskId,
-        state: readTask(taskId)?.state,
-      }))
+      let taskStates: { taskId: string; state: string | undefined }[]
+      try {
+        taskStates = tokens.map((taskId) => ({
+          taskId,
+          state: readTask(taskId)?.state,
+        }))
+      } catch (lookupError) {
+        const message = lookupError instanceof Error ? lookupError.message : String(lookupError)
+        process.stderr.write(
+          `worktree-prune: task lookup failed for ${worktree.path}: ${message}\n`
+        )
+        results.push(
+          makeResult(id, root, worktree, tokens, 'error', `task lookup failed: ${message}`)
+        )
+        continue
+      }
       const incomplete = taskStates.filter((task) => task.state !== 'completed')
       if (incomplete.length > 0) {
         results.push(
