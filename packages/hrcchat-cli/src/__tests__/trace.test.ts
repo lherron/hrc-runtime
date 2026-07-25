@@ -98,7 +98,14 @@ function response(): TraceMessageResponse {
 describe('hrcchat trace', () => {
   test('uses a numeric selector and renders the complete chain and verdict', async () => {
     let request: unknown
+    let filter: unknown
     const client = {
+      // A bare numeric is a collective seq (T-06970), resolved the same way
+      // `show`/`thread` resolve it, so trace only ever traces by message id.
+      async listMessages(input: unknown) {
+        filter = input
+        return { messages: [{ ...response().message, collectiveSeq: 17_932 }] }
+      },
       async traceMessage(input: unknown) {
         request = input
         return response()
@@ -111,12 +118,13 @@ describe('hrcchat trace', () => {
       return true
     }) as typeof process.stdout.write
     try {
-      await cmdTrace(client, {}, ['12'])
+      await cmdTrace(client, {}, ['17932'])
     } finally {
       process.stdout.write = originalWrite
     }
 
-    expect(request).toEqual({ messageSeq: 12 })
+    expect(filter).toEqual({ afterSeq: 17_931, limit: 1 })
+    expect(request).toEqual({ messageId: MESSAGE_ID })
     expect(output).toContain(`message ${MESSAGE_ID} phase=request`)
     expect(output).toContain('ack accepted by=max3')
     expect(output).toContain(

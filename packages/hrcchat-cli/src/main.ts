@@ -11,6 +11,7 @@ import { assertBackchannelFollowAllowed } from './backchannel-route.js'
 import { cmdDm } from './commands/dm.js'
 import { cmdDoctor } from './commands/doctor.js'
 import { cmdInfo } from './commands/info.js'
+import { MESSAGE_SELECTOR_SYNTAX } from './commands/message-selector.js'
 import { cmdMessages } from './commands/messages.js'
 import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
@@ -314,8 +315,8 @@ sendCmd.addHelpText(
 
 program
   .command('show')
-  .description('show one message by seq:/msg: selector, bare seq, or message ID')
-  .argument('<seq-or-id>', 'message selector, seq number, or message ID')
+  .description('show one message by collective seq, node-local seq, or message ID')
+  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
   .action(async (seqOrId) => {
     const client = createClient()
     await cmdShow(client, { json: globalOpts().json }, [seqOrId])
@@ -326,7 +327,7 @@ program
 program
   .command('thread')
   .description('reconstruct one full untruncated reply thread from any member message')
-  .argument('<seq-or-id>', 'message selector, seq number, or message ID')
+  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
   .action(async (seqOrId) => {
     const client = createClient()
     await cmdThread(client, { json: globalOpts().json }, [seqOrId])
@@ -337,7 +338,7 @@ program
 program
   .command('trace')
   .description('trace one message across origin outbox, peer ACK, and destination delivery')
-  .argument('<seq-or-id>', 'local message seq number or message ID')
+  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
   .action(async (seqOrId) => {
     const client = createClient()
     await cmdTrace(client, { json: globalOpts().json }, [seqOrId])

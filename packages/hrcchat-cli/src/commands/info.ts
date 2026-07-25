@@ -51,9 +51,16 @@ COMMAND NAMES (avoid phantom commands)
   Both CLIs suggest the right name (and exit non-zero) if you mistype.
 
 SELECTORS
-  'show' and 'thread' accept seq:<number>, msg:<id>, a bare durable message
-  sequence number, or a full message ID. The
-  shared HRC selector grammar (scope:/session:/host:/runtime:/msg:/seq:/
+  'show', 'thread' and 'trace' share one message-selector grammar, so every
+  identity they print is accepted back by the same command:
+    17932            bare numeric — collective seq (the @N that 'messages' prints)
+    seq:17932        alias for the bare numeric form
+    @17932           collective seq, explicit
+    #12              node-local message seq (the #N half of '@N/#N')
+    msg-<uuid>       durable message ID
+    msg:msg-<uuid>   durable message ID, explicit
+  Pre-collective daemons print '#N' only; there a bare numeric means that seq.
+  The shared HRC selector grammar (scope:/session:/host:/runtime:/msg:/seq:/
   bare-handle) is documented in 'hrc info'; monitor waits accept it too,
   e.g. 'hrc monitor wait msg:<id> --until response'.
 

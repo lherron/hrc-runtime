@@ -2,6 +2,7 @@ import { CliUsageError } from 'cli-kit'
 import type { HrcMessageExecution, TraceMessageResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { printJson } from '../print.js'
+import { resolveMessageId } from './message-selector.js'
 
 export type TraceOptions = {
   json?: boolean | undefined
@@ -83,13 +84,8 @@ export async function cmdTrace(
 ): Promise<void> {
   const seqOrId = positionals[0]
   if (!seqOrId) throw new CliUsageError('trace requires <seq-or-id>')
-  const numeric = /^\d+$/.test(seqOrId) ? Number(seqOrId) : undefined
-  if (numeric !== undefined && (!Number.isSafeInteger(numeric) || numeric < 1)) {
-    throw new CliUsageError('message seq must be a positive integer')
-  }
-  const trace = await client.traceMessage(
-    numeric === undefined ? { messageId: seqOrId } : { messageSeq: numeric }
-  )
+  const { messageId } = await resolveMessageId(client, seqOrId)
+  const trace = await client.traceMessage({ messageId })
   if (opts.json) {
     printJson(trace)
     return
