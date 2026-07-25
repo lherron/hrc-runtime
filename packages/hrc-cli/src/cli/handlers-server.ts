@@ -224,7 +224,7 @@ export async function cmdServerSubscribers(args: string[]): Promise<void> {
   for (const entry of rows) {
     const state = entry.closedAt === null ? 'active' : 'closed'
     process.stdout.write(
-      `${state}\t${entry.route}\tenqueued=${entry.enqueuedCount}\taccepted=${entry.streamAcceptedCount}\tpending=${entry.pendingCount}\tdesiredSize=${entry.desiredSize ?? '-'}\tselector=${JSON.stringify(entry.selector)}\n`
+      `${state}\t${entry.route}\tenqueued=${entry.enqueuedCount}\taccepted=${entry.streamAcceptedCount}\tpending=${entry.pendingCount}\tdesiredSize=${entry.desiredSize ?? '-'}\treceipt=${entry.receiptState}\tack=${entry.lastConsumerAcknowledgedSeq ?? '-'}\tbehindSince=${entry.consumerReceiptBehindSince ?? '-'}\tsubscriber=${entry.subscriberId}\tselector=${JSON.stringify(entry.selector)}\n`
     )
   }
 }

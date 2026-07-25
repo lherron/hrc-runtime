@@ -618,6 +618,8 @@ class HrcServerInstance implements HrcServer {
       this.handleEventsLatestBySession(url),
     [exactRouteKey('GET', '/v1/server/subscribers')]: () =>
       Response.json(this.subscriberAdmissions.snapshot()),
+    [exactRouteKey('POST', '/v1/server/subscribers/ack')]: (request) =>
+      this.handleSubscriberReceiptAck(request),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>

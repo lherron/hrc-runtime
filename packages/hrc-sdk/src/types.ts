@@ -24,6 +24,8 @@ export type {
   EnsureRuntimeResponse,
   HealthResponse,
   HrcSubscriberAdmissionSnapshot,
+  HrcSubscriberReceiptAckRequest,
+  HrcSubscriberReceiptAckResponse,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetSelector,

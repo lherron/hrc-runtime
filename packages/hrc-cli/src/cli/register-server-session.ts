@@ -111,7 +111,7 @@ export function registerServerSessionCommands(program: Command): void {
 
   server
     .command('subscribers')
-    .description('show follow-stream response-admission accounting')
+    .description('show follow-stream admission and consumer-receipt accounting')
     .option('--json', 'output as JSON')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {

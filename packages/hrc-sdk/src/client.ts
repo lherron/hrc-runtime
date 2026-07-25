@@ -75,6 +75,8 @@ import type {
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   HrcSubscriberAdmissionSnapshot,
+  HrcSubscriberReceiptAckRequest,
+  HrcSubscriberReceiptAckResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvocationEventEnvelope,
@@ -856,6 +858,7 @@ export class HrcClient {
     const path = buildPath('/v1/events', {
       fromSeq: options?.fromSeq,
       follow: boolField(options?.follow),
+      receipt: options?.follow ? 'consumer-ack-v1' : undefined,
       ...eventFilterParams(options),
     })
 
@@ -866,7 +869,8 @@ export class HrcClient {
         ...(options?.signal ? { signal: options.signal } : {}),
       },
       options?.signal,
-      (event) => matchesWatchOptions(event, options)
+      (event) => matchesWatchOptions(event, options),
+      (event) => event.hrcSeq
     )
   }
 
@@ -880,6 +884,7 @@ export class HrcClient {
       generation: options.generation,
       afterSeq: options.afterSeq ?? 0,
       follow: boolField(options.follow),
+      receipt: options.follow ? 'consumer-ack-v1' : undefined,
     })
 
     yield* this.streamNdjson<InvocationEventEnvelope>(
@@ -888,7 +893,9 @@ export class HrcClient {
         method: 'GET',
         ...(options.signal ? { signal: options.signal } : {}),
       },
-      options.signal
+      options.signal,
+      undefined,
+      (event) => event.seq
     )
   }
 
@@ -902,7 +909,8 @@ export class HrcClient {
     path: string,
     init: BunRequestInit,
     signal?: AbortSignal,
-    predicate?: (value: T) => boolean
+    predicate?: ((value: T) => boolean) | undefined,
+    receiptSeq?: ((value: T) => number | undefined) | undefined
   ): AsyncIterable<T> {
     const res = await this.unixFetch(path, init)
 
@@ -913,22 +921,47 @@ export class HrcClient {
     const body = res.body
     if (!body) return
 
-    // Parse one NDJSON line and yield it if it survives JSON.parse and the
-    // optional predicate. Malformed lines are skipped (M-10). Shared by the
-    // per-chunk loop and the trailing-buffer flush.
-    const emit = function* (raw: string): Generator<T> {
+    const subscriberId = res.headers.get('x-hrc-subscriber-id')?.trim()
+    const receiptToken = res.headers.get('x-hrc-receipt-token')?.trim()
+    const receiptAckPath = res.headers.get('x-hrc-receipt-ack-path')?.trim()
+    const receiptEnabled =
+      subscriberId !== undefined &&
+      subscriberId.length > 0 &&
+      receiptToken !== undefined &&
+      receiptToken.length > 0 &&
+      receiptAckPath !== undefined &&
+      receiptAckPath.length > 0 &&
+      receiptSeq !== undefined
+
+    // Malformed lines are skipped (M-10). A receipt ACK is sent only after a
+    // complete NDJSON value is decoded; ACK failure leaves the daemon's receipt
+    // cursor honestly behind and a later cumulative ACK can catch it up.
+    const parse = (raw: string): T | undefined => {
       const trimmed = raw.trim()
-      if (trimmed.length === 0) return
-      let value: T
+      if (trimmed.length === 0) return undefined
       try {
-        value = JSON.parse(trimmed) as T
+        return JSON.parse(trimmed) as T
       } catch {
-        // M-10: skip malformed NDJSON lines instead of crashing the generator
+        return undefined
+      }
+    }
+    const acknowledge = async (value: T): Promise<void> => {
+      if (
+        !receiptEnabled ||
+        subscriberId === undefined ||
+        receiptToken === undefined ||
+        receiptAckPath === undefined ||
+        receiptSeq === undefined
+      ) {
         return
       }
-      if (!predicate || predicate(value)) {
-        yield value
-      }
+      const seq = receiptSeq(value)
+      if (seq === undefined || !Number.isSafeInteger(seq) || seq < 1) return
+      await this.postJson<HrcSubscriberReceiptAckResponse>(receiptAckPath, {
+        subscriberId,
+        receiptToken,
+        seq,
+      } satisfies HrcSubscriberReceiptAckRequest).catch(() => undefined)
     }
 
     const decoder = new TextDecoder()
@@ -941,13 +974,20 @@ export class HrcClient {
       // Keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        yield* emit(line)
+        const value = parse(line)
+        if (value === undefined) continue
+        await acknowledge(value)
+        if (!predicate || predicate(value)) yield value
         if (signal?.aborted) return
       }
     }
 
     // Flush any remaining content
-    yield* emit(buffer)
+    const value = parse(buffer)
+    if (value !== undefined) {
+      await acknowledge(value)
+      if (!predicate || predicate(value)) yield value
+    }
   }
 }
 

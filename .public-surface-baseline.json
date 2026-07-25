@@ -2199,6 +2199,38 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptAckRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptAckRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptAckResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptAckResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSurfaceBindingRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",

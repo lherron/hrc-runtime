@@ -5,6 +5,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcEventCategory,
   HrcLifecycleEvent,
+  HrcSubscriberReceiptAckRequest,
 } from 'hrc-core'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import {
@@ -14,7 +15,7 @@ import {
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { matchesHrcLifecycleEventFilter, parseOptionalIntegerQuery } from './server-misc.js'
-import { normalizeOptionalQuery, parseFromSeq } from './server-parsers.js'
+import { isRecord, normalizeOptionalQuery, parseFromSeq, parseJsonBody } from './server-parsers.js'
 import type { FollowSubscriber, HrcEventsRouteFilters } from './server-types.js'
 import { encodeNdjson, json, serializeEvent } from './server-util.js'
 import type { SubscriberAdmissionHandle } from './subscriber-admission-accounting.js'
@@ -26,6 +27,32 @@ type AdmissionQueueItem =
 type AdmissionQueueNode = {
   item: AdmissionQueueItem
   next: AdmissionQueueNode | null
+}
+
+const CONSUMER_RECEIPT_MODE = 'consumer-ack-v1'
+const CONSUMER_RECEIPT_ACK_PATH = '/v1/server/subscribers/ack'
+
+function parseSubscriberReceiptMode(searchParams: URLSearchParams): 'none' | 'consumer-ack-v1' {
+  const value = normalizeOptionalQuery(searchParams.get('receipt'))
+  if (value === undefined) return 'none'
+  if (value === CONSUMER_RECEIPT_MODE) return value
+  throw new HrcBadRequestError(
+    HrcErrorCode.MALFORMED_REQUEST,
+    `receipt must be ${CONSUMER_RECEIPT_MODE}`,
+    { field: 'receipt', value }
+  )
+}
+
+function streamingHeaders(admission: SubscriberAdmissionHandle): Record<string, string> {
+  if (admission.receiptMode !== CONSUMER_RECEIPT_MODE || !admission.receiptToken) {
+    return STREAMING_NDJSON_HEADERS
+  }
+  return {
+    ...STREAMING_NDJSON_HEADERS,
+    'x-hrc-subscriber-id': admission.subscriberId,
+    'x-hrc-receipt-token': admission.receiptToken,
+    'x-hrc-receipt-ack-path': CONSUMER_RECEIPT_ACK_PATH,
+  }
 }
 
 function createStreamAdmissionQueue(admission: SubscriberAdmissionHandle): {
@@ -242,9 +269,17 @@ export function handleEvents(
 ): Response {
   const fromSeq = parseFromSeq(url.searchParams.get('fromSeq'))
   const follow = url.searchParams.get('follow') === 'true'
+  const receiptMode = parseSubscriberReceiptMode(url.searchParams)
   const filters = this.parseEventsRouteFilters(url.searchParams)
 
   if (!follow) {
+    if (receiptMode !== 'none') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'consumer receipt requires follow=true',
+        { field: 'follow' }
+      )
+    }
     const events = this.db.hrcEvents.listFromHrcSeq(fromSeq, filters)
     return new Response(events.map(serializeEvent).join(''), {
       status: 200,
@@ -258,6 +293,7 @@ export function handleEvents(
     route: 'events',
     selector: { fromSeq, ...filters },
     openedAt: new Date().toISOString(),
+    receiptMode,
   })
   const admissionQueue = createStreamAdmissionQueue(admission)
   let streamStarted = false
@@ -330,7 +366,7 @@ export function handleEvents(
 
   return new Response(stream, {
     status: 200,
-    headers: STREAMING_NDJSON_HEADERS,
+    headers: streamingHeaders(admission),
   })
 }
 
@@ -341,9 +377,17 @@ export function handleBrokerEvents(
 ): Response {
   const selector = parseBrokerEventsRouteSelector(url.searchParams)
   const follow = url.searchParams.get('follow') === 'true'
+  const receiptMode = parseSubscriberReceiptMode(url.searchParams)
   this.assertBrokerEventsRuntimeFence(selector)
 
   if (!follow) {
+    if (receiptMode !== 'none') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'consumer receipt requires follow=true',
+        { field: 'follow' }
+      )
+    }
     const events = listBrokerEventsFromAfterSeq(this, selector)
     return new Response(events.map((event) => `${JSON.stringify(event)}\n`).join(''), {
       status: 200,
@@ -357,6 +401,7 @@ export function handleBrokerEvents(
     route: 'broker-events',
     selector: { ...selector },
     openedAt: new Date().toISOString(),
+    receiptMode,
   })
   const admissionQueue = createStreamAdmissionQueue(admission)
   let streamStarted = false
@@ -430,8 +475,42 @@ export function handleBrokerEvents(
 
   return new Response(stream, {
     status: 200,
-    headers: STREAMING_NDJSON_HEADERS,
+    headers: streamingHeaders(admission),
   })
+}
+
+function parseSubscriberReceiptAckRequest(value: unknown): HrcSubscriberReceiptAckRequest {
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'subscriber receipt ACK body must be an object'
+    )
+  }
+  const subscriberId = normalizeOptionalQuery(
+    typeof value['subscriberId'] === 'string' ? value['subscriberId'] : null
+  )
+  const receiptToken = normalizeOptionalQuery(
+    typeof value['receiptToken'] === 'string' ? value['receiptToken'] : null
+  )
+  if (subscriberId === undefined || receiptToken === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'subscriberId and receiptToken are required'
+    )
+  }
+  return {
+    subscriberId,
+    receiptToken,
+    seq: typeof value['seq'] === 'number' ? value['seq'] : Number.NaN,
+  }
+}
+
+export async function handleSubscriberReceiptAck(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const input = parseSubscriberReceiptAckRequest(await parseJsonBody(request))
+  return json(this.subscriberAdmissions.acknowledge(input))
 }
 
 function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensicsEvent {
@@ -561,6 +640,7 @@ export const eventHandlersMethods = {
   assertBrokerEventsRuntimeFence,
   handleEvents,
   handleBrokerEvents,
+  handleSubscriberReceiptAck,
   handleBrokerForensics,
   handleEventsLatestBySession,
 }

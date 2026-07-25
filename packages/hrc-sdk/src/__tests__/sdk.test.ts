@@ -722,7 +722,63 @@ describe('watch NDJSON parsing', () => {
       // should be empty
     }
 
-    expect(new URL(capturedUrl).searchParams.toString()).toBe('follow=true')
+    expect(new URL(capturedUrl).searchParams.toString()).toBe('follow=true&receipt=consumer-ack-v1')
+  })
+
+  it('ACKs a decoded opted-in follow event before yielding it', async () => {
+    let ackBody: Record<string, unknown> | undefined
+    const event: HrcLifecycleEvent = {
+      hrcSeq: 42,
+      streamSeq: 42,
+      ts: '2026-07-18T12:05:00.000Z',
+      hostSessionId: 'hsid-receipt',
+      scopeRef: 'agent:test',
+      laneRef: 'main',
+      generation: 1,
+      category: 'turn',
+      eventKind: 'turn.message',
+      replayed: false,
+      payload: {},
+    }
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        const url = new URL(req.url)
+        if (req.method === 'POST' && url.pathname === '/v1/server/subscribers/ack') {
+          ackBody = (await req.json()) as Record<string, unknown>
+          return Response.json({
+            ok: true,
+            subscriberId: 'sub-sdk',
+            seq: 42,
+            disposition: 'advanced',
+            lastConsumerAcknowledgedSeq: 42,
+            lastStreamAcceptedSeq: 42,
+          })
+        }
+        return new Response(`${JSON.stringify(event)}\n`, {
+          headers: {
+            'Content-Type': 'application/x-ndjson',
+            'x-hrc-subscriber-id': 'sub-sdk',
+            'x-hrc-receipt-token': 'receipt-sdk',
+            'x-hrc-receipt-ack-path': '/v1/server/subscribers/ack',
+          },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const received: HrcLifecycleEvent[] = []
+    for await (const value of client.watch({ follow: true })) {
+      received.push(value)
+    }
+
+    expect(received).toEqual([event])
+    expect(ackBody).toEqual({
+      subscriberId: 'sub-sdk',
+      receiptToken: 'receipt-sdk',
+      seq: 42,
+    })
   })
 
   it('omits follow query parameter when false', async () => {

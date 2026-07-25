@@ -99,4 +99,127 @@ describe('follow-stream subscriber admission accounting', () => {
     ])
     expect(snapshot.recentlyClosed.every((entry) => entry.closedAt !== null)).toBe(true)
   })
+
+  it('advances cumulative consumer receipts monotonically and rejects out-of-fence ACKs', () => {
+    let now = '2026-07-18T12:03:00.000Z'
+    const registry = createSubscriberAdmissionRegistry({ now: () => now })
+    const subscription = registry.open({
+      route: 'events',
+      selector: { fromSeq: 1 },
+      receiptMode: 'consumer-ack-v1',
+    })
+    if (!subscription.receiptToken) throw new Error('receipt token was not created')
+
+    subscription.recordEnqueued(10, 1)
+    subscription.recordStreamAccepted(10, 1)
+    expect(registry.snapshot().active[0]).toEqual(
+      expect.objectContaining({
+        subscriberId: subscription.subscriberId,
+        receiptMode: 'consumer-ack-v1',
+        receiptState: 'awaiting-first-ack',
+        lastConsumerAcknowledgedSeq: null,
+        consumerReceiptBehindSince: '2026-07-18T12:03:00.000Z',
+      })
+    )
+
+    now = '2026-07-18T12:03:01.000Z'
+    expect(
+      registry.acknowledge({
+        subscriberId: subscription.subscriberId,
+        receiptToken: subscription.receiptToken,
+        seq: 10,
+      })
+    ).toEqual(
+      expect.objectContaining({
+        disposition: 'advanced',
+        lastConsumerAcknowledgedSeq: 10,
+        lastStreamAcceptedSeq: 10,
+      })
+    )
+    expect(registry.snapshot().active[0]).toEqual(
+      expect.objectContaining({
+        receiptState: 'caught-up',
+        lastConsumerAcknowledgedAt: '2026-07-18T12:03:01.000Z',
+        consumerReceiptBehindSince: null,
+        consumerReceiptAckCount: 1,
+      })
+    )
+
+    expect(
+      registry.acknowledge({
+        subscriberId: subscription.subscriberId,
+        receiptToken: subscription.receiptToken,
+        seq: 10,
+      }).disposition
+    ).toBe('duplicate')
+
+    now = '2026-07-18T12:03:02.000Z'
+    subscription.recordEnqueued(20, 1)
+    subscription.recordStreamAccepted(20, 1)
+    expect(registry.snapshot().active[0]).toEqual(
+      expect.objectContaining({
+        receiptState: 'behind',
+        lastStreamAcceptedSeq: 20,
+        lastConsumerAcknowledgedSeq: 10,
+        consumerReceiptBehindSince: '2026-07-18T12:03:02.000Z',
+      })
+    )
+    expect(() =>
+      registry.acknowledge({
+        subscriberId: subscription.subscriberId,
+        receiptToken: subscription.receiptToken ?? '',
+        seq: 21,
+      })
+    ).toThrow('ahead of the stream-admission head')
+
+    registry.acknowledge({
+      subscriberId: subscription.subscriberId,
+      receiptToken: subscription.receiptToken,
+      seq: 20,
+    })
+    expect(
+      registry.acknowledge({
+        subscriberId: subscription.subscriberId,
+        receiptToken: subscription.receiptToken,
+        seq: 10,
+      }).disposition
+    ).toBe('stale')
+    expect(registry.snapshot().active[0]?.lastConsumerAcknowledgedSeq).toBe(20)
+  })
+
+  it('accepts a final ACK while retained closed and expires it with the bounded ring', () => {
+    const registry = createSubscriberAdmissionRegistry({ recentlyClosedLimit: 1 })
+    const first = registry.open({
+      route: 'events',
+      selector: { fromSeq: 1 },
+      receiptMode: 'consumer-ack-v1',
+    })
+    if (!first.receiptToken) throw new Error('receipt token was not created')
+    first.recordEnqueued(1, 1)
+    first.recordStreamAccepted(1, 1)
+    first.close()
+
+    expect(
+      registry.acknowledge({
+        subscriberId: first.subscriberId,
+        receiptToken: first.receiptToken,
+        seq: 1,
+      }).disposition
+    ).toBe('advanced')
+    expect(registry.snapshot().recentlyClosed[0]?.receiptState).toBe('caught-up')
+
+    registry
+      .open({
+        route: 'events',
+        selector: { fromSeq: 2 },
+      })
+      .close()
+    expect(() =>
+      registry.acknowledge({
+        subscriberId: first.subscriberId,
+        receiptToken: first.receiptToken ?? '',
+        seq: 1,
+      })
+    ).toThrow('unknown or expired')
+  })
 })

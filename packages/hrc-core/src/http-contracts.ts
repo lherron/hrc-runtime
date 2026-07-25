@@ -991,7 +991,16 @@ export type StatusSummaryResponse = HrcStatusSummaryResponse
 
 export type HrcSubscriberAdmissionRoute = 'events' | 'broker-events'
 
+export type HrcSubscriberReceiptMode = 'none' | 'consumer-ack-v1'
+
+export type HrcSubscriberReceiptState =
+  | 'not-requested'
+  | 'awaiting-first-ack'
+  | 'caught-up'
+  | 'behind'
+
 export type HrcSubscriberAdmissionEntry = {
+  subscriberId: string
   route: HrcSubscriberAdmissionRoute
   selector: Record<string, unknown>
   remoteInfo?: string | undefined
@@ -1005,12 +1014,33 @@ export type HrcSubscriberAdmissionEntry = {
   pendingSince: string | null
   lastStreamAcceptedAt: string | null
   keepaliveOnlySince: string | null
+  receiptMode: HrcSubscriberReceiptMode
+  receiptState: HrcSubscriberReceiptState
+  lastConsumerAcknowledgedSeq: number | null
+  lastConsumerAcknowledgedAt: string | null
+  consumerReceiptBehindSince: string | null
+  consumerReceiptAckCount: number
   closedAt: string | null
 }
 
 export type HrcSubscriberAdmissionSnapshot = {
   active: HrcSubscriberAdmissionEntry[]
   recentlyClosed: HrcSubscriberAdmissionEntry[]
+}
+
+export type HrcSubscriberReceiptAckRequest = {
+  subscriberId: string
+  receiptToken: string
+  seq: number
+}
+
+export type HrcSubscriberReceiptAckResponse = {
+  ok: true
+  subscriberId: string
+  seq: number
+  disposition: 'advanced' | 'duplicate' | 'stale'
+  lastConsumerAcknowledgedSeq: number
+  lastStreamAcceptedSeq: number
 }
 
 // -- Surface binding ----------------------------------------------------------
