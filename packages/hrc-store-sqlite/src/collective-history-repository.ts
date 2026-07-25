@@ -223,16 +223,26 @@ export class CollectiveHistoryRepository {
   }
 
   query(filter: HrcMessageFilter, authorityNodeId: string): HrcCollectiveMessageRecord[] {
+    const where: string[] = []
+    const values: Array<string | number> = []
+    if (filter.messageId !== undefined) {
+      where.push('message_id = ?')
+      values.push(filter.messageId)
+    }
+    if (filter.afterSeq !== undefined) {
+      where.push('collective_seq > ?')
+      values.push(filter.afterSeq)
+    }
+    const whereClause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`
     const rows = this.db
-      .query<CollectiveMessageRow, []>(
+      .query<CollectiveMessageRow, Array<string | number>>(
         `SELECT collective_seq, message_id, canonical_record_json,
                 canonical_source_node_id, canonical_source_role, canonical_created_at
-           FROM collective_history_messages`
+           FROM collective_history_messages${whereClause}`
       )
-      .all()
+      .all(...values)
 
     let records = rows
-      .filter((row) => filter.afterSeq === undefined || row.collective_seq > filter.afterSeq)
       .map((row): HrcCollectiveMessageRecord => {
         const record = JSON.parse(row.canonical_record_json) as HrcMessageRecord
         const observations = this.db

@@ -1,4 +1,8 @@
+import { Database } from 'bun:sqlite'
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { HrcMessageRecord } from 'hrc-core'
 import { openHrcDatabase } from '../database.js'
@@ -132,6 +136,58 @@ describe('collective message history repository', () => {
       ).toEqual([response.messageId])
     } finally {
       db.close()
+    }
+  })
+
+  test('pushes exact message and cursor filters into SQL before decoding records', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-collective-query-'))
+    const dbPath = join(root, 'state.sqlite')
+    let db = openHrcDatabase(dbPath)
+    try {
+      for (const record of [
+        message({ messageId: 'msg-target', messageSeq: 1 }),
+        message({ messageId: 'msg-unrelated', messageSeq: 2 }),
+      ]) {
+        db.collectiveHistory.recordObservation({
+          sourceNodeId: 'svc',
+          sourceRole: 'origin',
+          originNodeId: 'svc',
+          record,
+        })
+      }
+      db.close()
+
+      const sqlite = new Database(dbPath)
+      sqlite
+        .query(
+          `UPDATE collective_history_messages
+              SET canonical_record_json = '{'
+            WHERE message_id = 'msg-unrelated'`
+        )
+        .run()
+      sqlite.close()
+
+      db = openHrcDatabase(dbPath)
+      const stored = db.collectiveHistory.recordObservation({
+        sourceNodeId: 'svc',
+        sourceRole: 'origin',
+        originNodeId: 'svc',
+        record: message({
+          messageId: 'msg-target',
+          messageSeq: 1,
+          execution: { state: 'completed', runId: 'run-target' },
+        }),
+      })
+      expect(stored.messageId).toBe('msg-target')
+      expect(
+        db.collectiveHistory.query({ messageId: 'msg-target', afterSeq: 0 }, 'svc')
+      ).toHaveLength(1)
+      expect(
+        db.collectiveHistory.query({ messageId: 'msg-target', afterSeq: 1 }, 'svc')
+      ).toHaveLength(0)
+    } finally {
+      db.close()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })
