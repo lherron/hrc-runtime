@@ -1318,7 +1318,12 @@ export class HarnessBrokerController {
           updatedAt: this.now(),
         })
       }
-      this.flushPendingBrokerTmuxLeaseReap(runtimeId, 'summary_recorded')
+      // Keep the bounded reap pending until invocation.exited arrives. The tmux
+      // launch runner owns the child process exit and reports its code/signal
+      // after Claude's native SessionEnd hook returns; reaping immediately on
+      // summary would kill that runner before the process-exit envelope could
+      // reach the broker. The existing grace timer remains the fail-safe when a
+      // provider never reports child exit.
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
@@ -1399,16 +1404,6 @@ export class HarnessBrokerController {
       this.fireBrokerTmuxLeaseReap(runtimeId, `${reason}:summary_grace_elapsed`)
     }, this.brokerTmuxSummaryReapGraceMs)
     this.pendingBrokerTmuxReaps.set(runtimeId, { reason, timer })
-  }
-
-  private flushPendingBrokerTmuxLeaseReap(runtimeId: string, reason: string): void {
-    const pending = this.pendingBrokerTmuxReaps.get(runtimeId)
-    if (!pending) {
-      return
-    }
-    clearTimeout(pending.timer)
-    this.pendingBrokerTmuxReaps.delete(runtimeId)
-    this.fireBrokerTmuxLeaseReap(runtimeId, `${pending.reason}:${reason}`)
   }
 
   /**

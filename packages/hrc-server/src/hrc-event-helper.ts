@@ -32,6 +32,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.sweep_completed': 'runtime',
   'runtime.restarted': 'runtime',
   'runtime.dead': 'runtime',
+  'runtime.crashed': 'runtime',
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
   'runtime.adopted': 'runtime',

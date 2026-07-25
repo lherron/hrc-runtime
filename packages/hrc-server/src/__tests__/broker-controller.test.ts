@@ -937,8 +937,9 @@ describe('HarnessBrokerController', () => {
     ])
   })
 
-  it('marks a runtime stale when its active broker invocation exits', async () => {
+  it('marks a runtime crashed when its active broker invocation exits abnormally', async () => {
     const fake = new FakeBrokerClient()
+    fake.emitCloseOnClose = true
     const reaped: string[] = []
     const controller = new HarnessBrokerController({
       db: fixture.db,
@@ -957,7 +958,7 @@ describe('HarnessBrokerController', () => {
       envelope(
         'invocation.exited',
         9,
-        { exitCode: 0, signal: null },
+        { exitCode: 23, signal: null, reason: 'process-exit' },
         { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
       )
     )
@@ -969,7 +970,7 @@ describe('HarnessBrokerController', () => {
     expect(reaped).toEqual([])
 
     const runtime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
-    expect(runtime?.status).toBe('stale')
+    expect(runtime?.status).toBe('crashed')
     expect(runtime?.activeRunId).toBeUndefined()
     expect(runtime?.runtimeStateJson?.['terminalInvocation']).toEqual({
       invocationId: 'invocation_w2',
@@ -980,11 +981,22 @@ describe('HarnessBrokerController', () => {
     expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
       'exited'
     )
-    expect(
-      fixture.db.hrcEvents
-        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
-        .some((event) => event.eventKind === 'runtime.stale')
-    ).toBe(true)
+    const crashEvents = fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+      .filter((event) => event.eventKind === 'runtime.crashed')
+    expect(crashEvents).toHaveLength(1)
+    expect(crashEvents[0]).toMatchObject({
+      errorCode: 'runtime_unavailable',
+      payload: {
+        invocationId: 'invocation_w2',
+        providerTerminal: {
+          eventType: 'invocation.exited',
+          exitCode: 23,
+          signal: null,
+          reason: 'process-exit',
+        },
+      },
+    })
     expect(fake.callOrder).toContain('close')
   })
 
@@ -1042,7 +1054,7 @@ describe('HarnessBrokerController', () => {
     expect(reaped).toEqual(['runtime_w2'])
   })
 
-  it('records invocation.summary before reaping a user-ended broker tmux lease', async () => {
+  it('records invocation.summary and process exit before reaping a user-ended broker tmux lease', async () => {
     const fake = new FakeBrokerClient()
     const reapedWithSummary: Array<{ runtimeId: string; finalSummary: unknown }> = []
     const finalSummary = {
@@ -1090,6 +1102,16 @@ describe('HarnessBrokerController', () => {
       })
     )
     await tick()
+    expect(reapedWithSummary).toEqual([])
+
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        10,
+        { exitCode: 0, signal: null, reason: 'process-exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
     await tick()
 
     expect(reapedWithSummary).toEqual([{ runtimeId: 'runtime_w2', finalSummary }])
@@ -1202,20 +1224,52 @@ describe('HarnessBrokerController', () => {
     })
 
     await controller.start({ ...makeStartInput(), brokerClient: fake })
+    fake.events.push(
+      envelope(
+        'invocation.ready',
+        1,
+        { state: 'ready' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
     fake.emitClose(
       new Error('Broker process exited with exit code 1\nBroker stderr:\nstderr marker W3B')
     )
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 23, signal: null, reason: 'process-exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
 
-    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('terminated')
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('crashed')
     expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('failed')
     expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
-      'failed'
+      'exited'
     )
     expect(errors.some((entry) => JSON.stringify(entry).includes('stderr marker W3B'))).toBe(true)
     const brokerClosed = fixture.db.events
       .listFromSeq(1, { runtimeId: 'runtime_w2' })
       .find((event) => event.eventKind === 'broker.process.closed')
     expect(brokerClosed).toBeDefined()
+    const canonicalCrashes = fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+      .filter((event) => event.eventKind === 'runtime.crashed')
+    expect(canonicalCrashes).toHaveLength(1)
+    expect(canonicalCrashes[0]).toMatchObject({
+      errorCode: 'broker_process_closed',
+      payload: {
+        reason: 'broker_process_closed',
+        invocationId: 'invocation_w2',
+        lastBrokerEvent: {
+          type: 'invocation.ready',
+        },
+      },
+    })
   })
 
   it('reaps the lease (no crash-terminal) when the broker closes after a user /quit', async () => {
@@ -1265,6 +1319,11 @@ describe('HarnessBrokerController', () => {
       .listFromSeq(1, { runtimeId: 'runtime_w2' })
       .find((event) => event.eventKind === 'broker.process.closed')
     expect(crashEvent).toBeUndefined()
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+        .filter((event) => event.eventKind === 'runtime.crashed')
+    ).toHaveLength(0)
   })
 
   it('does NOT reap the lease on a /clear continuation clear (session keeps running)', async () => {

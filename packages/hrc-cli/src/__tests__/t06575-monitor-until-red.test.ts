@@ -521,6 +521,23 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
     expect(run.exitCode).toBe(expectedExit)
   })
 
+  test('runtime.crashed settles an idle wait as a runtime-death obstruction', async () => {
+    const busy = { agent: 'cody', status: 'busy' } satisfies Member
+    const crashed = { agent: 'cody', status: 'crashed', changedAt: ts(10) } satisfies Member
+    const selector = `scope:${scopeRef(busy)}`
+    const watch = await invokeWatch(
+      [selector, '--follow', '--until', 'idle', '--timeout', '800ms', '--format', 'ndjson'],
+      [makeState([busy]), makeState([crashed], [transitionEvent(crashed, 1, 'runtime.crashed')])]
+    )
+    const wait = await invokeWait(
+      [selector, '--until', 'idle', '--timeout', '800ms', '--json'],
+      makeState([crashed], [transitionEvent(crashed, 1, 'runtime.crashed')])
+    )
+
+    expect(watch.exitCode).toBe(12)
+    expect(wait.exitCode).toBe(12)
+  })
+
   test.each([
     ['msg:msg-cody', ['--until', 'response'], true],
     ['seq:6575', ['--until', 'response'], true],
