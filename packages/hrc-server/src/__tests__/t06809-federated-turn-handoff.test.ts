@@ -282,6 +282,122 @@ describe('T-06809 federated semantic turn handoff', () => {
             replyMessageId: settled.replies[0]?.messageId,
           },
         })
+
+        const interactiveResponse = await svc.postJson('/v1/messages/turn-handoff', {
+          from: { kind: 'session', sessionRef: ORIGIN_SESSION },
+          to: { kind: 'session', sessionRef: REMOTE_SESSION },
+          body: 'run through the remote interactive broker',
+          createIfMissing: false,
+          runtimeIntent: {
+            placement: {
+              agentRoot: '/tmp/agent',
+              projectRoot: '/tmp/project',
+              cwd: '/tmp/project',
+              runMode: 'task',
+              bundle: { kind: 'compose', compose: [] },
+              dryRun: true,
+            },
+            harness: { provider: 'openai', interactive: false },
+            execution: { preferredMode: 'headless' },
+          },
+        })
+        expect(interactiveResponse.status).toBe(200)
+        const interactiveHandoff =
+          (await interactiveResponse.json()) as SemanticTurnHandoffStartedResponse
+        const interactiveRunId = interactiveHandoff.runId
+        const interactiveNow = new Date().toISOString()
+        const interactiveDb = openHrcDatabase(lab.dbPath)
+        try {
+          interactiveDb.runtimes.insert({
+            runtimeId: remoteRuntimeId,
+            hostSessionId: remoteHostSessionId,
+            scopeRef: REMOTE_SCOPE,
+            laneRef: 'default',
+            generation: remoteGeneration,
+            transport: 'tmux',
+            harness: 'codex-cli',
+            provider: 'openai',
+            status: 'ready',
+            supportsInflightInput: true,
+            adopted: false,
+            controllerKind: 'harness-broker',
+            createdAt: interactiveNow,
+            updatedAt: interactiveNow,
+          })
+          interactiveDb.runs.insert({
+            runId: interactiveRunId,
+            hostSessionId: remoteHostSessionId,
+            runtimeId: remoteRuntimeId,
+            scopeRef: REMOTE_SCOPE,
+            laneRef: 'default',
+            generation: remoteGeneration,
+            transport: 'tmux',
+            status: 'accepted',
+            acceptedAt: interactiveNow,
+            updatedAt: interactiveNow,
+          })
+          interactiveDb.messages.updateExecution(interactiveHandoff.messageId, {
+            state: 'started',
+            mode: 'interactive',
+            sessionRef: REMOTE_SESSION,
+            hostSessionId: remoteHostSessionId,
+            generation: remoteGeneration,
+            runtimeId: remoteRuntimeId,
+            runId: interactiveRunId,
+            transport: 'tmux',
+          })
+        } finally {
+          interactiveDb.close()
+        }
+
+        const interactiveReply = await lab.postJson('/v1/messages/dm', {
+          from: { kind: 'session', sessionRef: REMOTE_SESSION },
+          to: { kind: 'session', sessionRef: ORIGIN_SESSION },
+          body: 'remote interactive final',
+          replyToMessageId: interactiveHandoff.messageId,
+        })
+        expect(interactiveReply.status).toBe(200)
+
+        const interactiveSettled = await eventually(
+          () => {
+            const db = openHrcDatabase(svc.dbPath)
+            try {
+              return {
+                request: db.messages.getById(interactiveHandoff.messageId),
+                replies: db.messages.query({
+                  replyToMessageId: interactiveHandoff.messageId,
+                  kinds: ['dm'],
+                  phases: ['response'],
+                }),
+                completed: db.hrcEvents.listByRun(interactiveRunId, {
+                  eventKind: 'turn.completed',
+                }),
+              }
+            } finally {
+              db.close()
+            }
+          },
+          ({ request, replies, completed }) =>
+            request?.execution.state === 'completed' &&
+            replies[0]?.execution.state === 'completed' &&
+            completed.length === 1
+        )
+        expect(interactiveSettled.replies[0]).toMatchObject({
+          body: 'remote interactive final',
+          execution: {
+            state: 'completed',
+            mode: 'interactive',
+            runtimeId: remoteRuntimeId,
+            runId: interactiveRunId,
+            transport: 'tmux',
+          },
+          metadataJson: {
+            federationSemanticTurnSignal: {
+              type: 'terminal',
+              outcome: 'completed',
+            },
+          },
+        } satisfies Partial<HrcMessageRecord>)
       } finally {
         await labServer.stop()
         await svcServer.stop()

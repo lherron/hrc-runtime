@@ -1319,7 +1319,15 @@ export async function handleSemanticDm(
     },
   })
 
-  const federationRoute = await this.federationOriginOutbox?.route(body, record, resolvedPlacement)
+  // Interactive broker reply correlation can terminalize the just-inserted
+  // response and attach its federated terminal signal. Route the durable fresh
+  // row so that projection metadata crosses the response fence.
+  const routableRecord = this.db.messages.getById(record.messageId) ?? record
+  const federationRoute = await this.federationOriginOutbox?.route(
+    body,
+    routableRecord,
+    resolvedPlacement
+  )
   const { execution, reply } =
     federationRoute?.outcome === 'queued'
       ? {}

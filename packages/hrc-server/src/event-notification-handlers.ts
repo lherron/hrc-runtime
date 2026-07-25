@@ -172,6 +172,35 @@ export function maybeCompleteInteractiveSemanticTurn(
     this.db.messages.updateExecution(request.messageId, {
       state: 'completed',
     })
+    if (
+      isRecord(request.metadataJson?.['federationIngress']) &&
+      request.execution.sessionRef !== undefined &&
+      request.execution.runtimeId !== undefined
+    ) {
+      const signal: FederationSemanticTurnSignal = {
+        version: 1,
+        type: 'terminal',
+        // Interactive broker finalization is response-authored: unlike the
+        // headless path there is deliberately no destination turn.completed
+        // event. The durable response sequence is its monotonic source cursor.
+        sourceHrcSeq: response.messageSeq,
+        identity: {
+          sessionRef: request.execution.sessionRef,
+          scopeRef: run.scopeRef,
+          laneRef: run.laneRef,
+          hostSessionId: request.execution.hostSessionId,
+          runtimeId: request.execution.runtimeId,
+          runId,
+          generation: request.execution.generation,
+          mode: 'interactive',
+          transport,
+        },
+        outcome: 'completed',
+      }
+      this.db.messages.updateMetadata(response.messageId, {
+        federationSemanticTurnSignal: signal,
+      })
+    }
     this.turnResponseFinalizers.delete(runId)
 
     writeServerLog('INFO', 'semantic_turn.interactive_broker_response_recorded', {
