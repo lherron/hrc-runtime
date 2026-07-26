@@ -302,11 +302,11 @@ Commands:
   runtime terminate <runtimeId> [--drop-continuation|--no-drop-continuation]
                                      Terminate a runtime session
   runtime adopt <runtimeId>           Adopt a dead/stale runtime
-  broker events <target> [--type <csv>] [--seq <a>..<b>] [--latest] [--json|--ndjson]
+  broker events <target> [--type <csv>] [--seq <a>..<b>] [--latest|--previous [n]] [--json|--ndjson]
                                      List durable broker ledger events
-  broker transcript <target> [--seq <a>..<b>] [--kinds <csv>] [--full] [--latest]
-                                     Render interleaved exec/assistant/notice history
-  broker stats <target> [--latest] [--json]
+  broker transcript <target> [--seq <a>..<b>] [--kinds <csv>] [--tail <n>] [--full] [--latest|--previous [n]]
+                                     Render interleaved user/exec/assistant/notice history
+  broker stats <target> [--latest|--previous [n]] [--json]
                                      Summarize durable broker activity
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]

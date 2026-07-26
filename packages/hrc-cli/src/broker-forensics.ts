@@ -1,15 +1,22 @@
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
-import type { BrokerForensicsEvent, BrokerForensicsResponse } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, splitSessionRef } from 'hrc-core'
+import type { BrokerForensicsEvent, BrokerForensicsResponse, HrcSelector } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 import { hasFlag, parseFlag, splitCsv } from './cli/argv.js'
 import { createClient, fatal } from './cli/shared.js'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 import { resolveRuntimeArg } from './selector-resolve.js'
 
 const HUMAN_CLIP_CHARS = 1_000
 
 type SeqRange = { from?: number | undefined; to?: number | undefined }
-type TranscriptKind = 'exec' | 'cot' | 'notice'
+type TranscriptKind = 'user' | 'exec' | 'cot' | 'notice'
+
+type RuntimeSelection = {
+  latest: boolean
+  previous?: number | undefined
+  sourceRef?: string | undefined
+}
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -68,17 +75,116 @@ function payloadText(event: BrokerForensicsEvent, full = false): string {
   return clipHuman(oneLine(rendered), full)
 }
 
+function parsePositiveInteger(flag: string, raw: string): number {
+  if (!/^\d+$/.test(raw)) fatal(`${flag} must be a positive integer`)
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1) {
+    fatal(`${flag} must be a positive integer`)
+  }
+  return value
+}
+
+function parsePrevious(args: string[]): number | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg?.startsWith('--previous=')) {
+      return parsePositiveInteger('--previous', arg.slice('--previous='.length))
+    }
+    if (arg !== '--previous') continue
+    const next = args[index + 1]
+    // Commander represents an optional argument with no supplied value as true
+    // before the legacy argv bridge serializes it.
+    if (next === undefined || next === 'true' || next.startsWith('--')) return 1
+    return parsePositiveInteger('--previous', next)
+  }
+  return undefined
+}
+
+function parseTail(args: string[]): number | undefined {
+  const raw = parseFlag(args, '--tail')
+  return raw === undefined ? undefined : parsePositiveInteger('--tail', raw)
+}
+
+async function resolvePreviousRuntimeArg(
+  rawTarget: string,
+  client: HrcClient,
+  previous: number
+): Promise<string> {
+  let selector: HrcSelector
+  try {
+    selector = parseProfileAwareSelector(
+      rawTarget.startsWith('agent:') ? `scope:${rawTarget}` : rawTarget
+    )
+  } catch {
+    fatal(`--previous requires a scope or handle target (received: ${rawTarget})`)
+  }
+
+  let scopeRef: string
+  let laneRef: string | undefined
+  switch (selector.kind) {
+    case 'scope':
+      scopeRef = selector.scopeRef
+      break
+    case 'session': {
+      const session = splitSessionRef(selector.sessionRef)
+      scopeRef = session.scopeRef
+      laneRef = session.laneRef
+      break
+    }
+    case 'target':
+      if (rawTarget.includes('~')) {
+        const session = splitSessionRef(selector.sessionRef)
+        scopeRef = session.scopeRef
+        laneRef = session.laneRef
+      } else {
+        scopeRef = selector.scopeRef
+      }
+      break
+    default:
+      fatal(`--previous requires a scope or handle target (received: ${rawTarget})`)
+  }
+
+  const matches = (await client.listRuntimes())
+    .filter(
+      (runtime) =>
+        runtime.status === 'terminated' &&
+        runtime.scopeRef === scopeRef &&
+        (laneRef === undefined || runtime.laneRef === laneRef)
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+        right.runtimeId.localeCompare(left.runtimeId)
+    )
+  const match = matches[previous - 1]
+  if (!match) {
+    fatal(
+      `--previous ${previous} requested a terminated runtime for "${rawTarget}", but only ${matches.length} exist`
+    )
+  }
+  return match.runtimeId
+}
+
 async function fetchForensics(
   rawTarget: string | undefined,
   client: HrcClient,
-  latest: boolean,
-  sourceRef?: string
+  selection: RuntimeSelection
 ): Promise<BrokerForensicsResponse> {
-  if (sourceRef !== undefined) {
+  if (selection.latest && selection.previous !== undefined) {
+    fatal('--previous and --latest are mutually exclusive')
+  }
+  if (selection.sourceRef !== undefined) {
     if (rawTarget !== undefined) fatal('<target> and --source-ref are mutually exclusive')
-    return client.brokerForensics({ sourceRef })
+    if (selection.previous !== undefined) {
+      fatal('--previous requires a scope or handle target')
+    }
+    return client.brokerForensics({ sourceRef: selection.sourceRef })
   }
   if (rawTarget === undefined) fatal('either <target> or --source-ref is required')
+  if (selection.previous !== undefined) {
+    const runtimeId = await resolvePreviousRuntimeArg(rawTarget, client, selection.previous)
+    return client.brokerForensics({ targetId: runtimeId })
+  }
   try {
     // Fast path for exact persisted runtime and invocation IDs. The daemon owns
     // this lookup so terminated invocations are not limited by a live registry.
@@ -89,7 +195,7 @@ async function fetchForensics(
     }
   }
 
-  const runtimeId = await resolveRuntimeArg(rawTarget, client, { latest })
+  const runtimeId = await resolveRuntimeArg(rawTarget, client, { latest: selection.latest })
   return client.brokerForensics({ targetId: runtimeId })
 }
 
@@ -114,12 +220,11 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
   const types = typeRaw ? new Set(splitCsv(typeRaw)) : undefined
   const range = parseSeqRange(parseFlag(args, '--seq'))
   const client = createClient()
-  const result = await fetchForensics(
-    rawTarget,
-    client,
-    hasFlag(args, '--latest'),
-    parseFlag(args, '--source-ref')
-  )
+  const result = await fetchForensics(rawTarget, client, {
+    latest: hasFlag(args, '--latest'),
+    previous: parsePrevious(args),
+    sourceRef: parseFlag(args, '--source-ref'),
+  })
   const events = filterEvents(result.events, { types, range })
 
   if (ndjsonOutput) {
@@ -136,6 +241,7 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
 }
 
 function transcriptKind(type: string): TranscriptKind | undefined {
+  if (type === 'user.message') return 'user'
   if (type === 'tool.call.started') return 'exec'
   if (type === 'assistant.message.completed') return 'cot'
   if (type === 'driver.notice') return 'notice'
@@ -144,10 +250,10 @@ function transcriptKind(type: string): TranscriptKind | undefined {
 }
 
 function parseTranscriptKinds(raw: string | undefined): Set<TranscriptKind> {
-  const values = raw ? splitCsv(raw) : ['exec', 'cot', 'notice']
-  const invalid = values.filter((value) => !['exec', 'cot', 'notice'].includes(value))
+  const values = raw ? splitCsv(raw) : ['user', 'exec', 'cot', 'notice']
+  const invalid = values.filter((value) => !['user', 'exec', 'cot', 'notice'].includes(value))
   if (invalid.length > 0) {
-    fatal(`--kinds accepts only exec,cot,notice (received: ${invalid.join(',')})`)
+    fatal(`--kinds accepts only user,exec,cot,notice (received: ${invalid.join(',')})`)
   }
   return new Set(values as TranscriptKind[])
 }
@@ -192,6 +298,12 @@ function extractText(value: unknown): string | undefined {
 }
 
 function renderTranscriptEvent(event: BrokerForensicsEvent, full: boolean): string {
+  if (event.type === 'user.message') {
+    const text = event.parseError
+      ? payloadText(event, full)
+      : (extractText(event.payload) ?? payloadText(event, full))
+    return `${event.seq} USER | ${clipHuman(oneLine(text), full)}`
+  }
   if (event.type === 'tool.call.started') {
     const tool = summarizeTool(event, full)
     return `${event.seq} EXEC ${tool.name} | ${tool.input}`
@@ -212,18 +324,19 @@ export async function cmdBrokerTranscript(args: string[]): Promise<void> {
   const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const range = parseSeqRange(parseFlag(args, '--seq'))
   const kinds = parseTranscriptKinds(parseFlag(args, '--kinds'))
+  const tail = parseTail(args)
   const full = hasFlag(args, '--full')
   const client = createClient()
-  const result = await fetchForensics(
-    rawTarget,
-    client,
-    hasFlag(args, '--latest'),
-    parseFlag(args, '--source-ref')
-  )
-  const events = result.events.filter((event) => {
+  const result = await fetchForensics(rawTarget, client, {
+    latest: hasFlag(args, '--latest'),
+    previous: parsePrevious(args),
+    sourceRef: parseFlag(args, '--source-ref'),
+  })
+  const filtered = result.events.filter((event) => {
     const kind = transcriptKind(event.type)
     return kind !== undefined && kinds.has(kind) && inSeqRange(event, range)
   })
+  const events = tail === undefined ? filtered : filtered.slice(-tail)
 
   for (const event of events) process.stdout.write(`${renderTranscriptEvent(event, full)}\n`)
 }
@@ -277,12 +390,11 @@ function buildStats(result: BrokerForensicsResponse): BrokerStats {
 export async function cmdBrokerStats(args: string[]): Promise<void> {
   const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const client = createClient()
-  const result = await fetchForensics(
-    rawTarget,
-    client,
-    hasFlag(args, '--latest'),
-    parseFlag(args, '--source-ref')
-  )
+  const result = await fetchForensics(rawTarget, client, {
+    latest: hasFlag(args, '--latest'),
+    previous: parsePrevious(args),
+    sourceRef: parseFlag(args, '--source-ref'),
+  })
   const stats = buildStats(result)
 
   if (hasFlag(args, '--json')) {

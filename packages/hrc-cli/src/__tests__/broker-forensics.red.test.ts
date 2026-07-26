@@ -453,6 +453,32 @@ describe('hrc broker events', () => {
 })
 
 describe('hrc broker transcript', () => {
+  it('renders user.message as USER by default and clips it unless --full is supplied', async () => {
+    appendEvent(fixture, {
+      seq: 13,
+      type: 'user.message',
+      turnId: 'turn-2',
+      payload: { content: LONG_MESSAGE },
+    })
+
+    const clipped = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13'],
+      cliEnv(fixture)
+    )
+    const full = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13', '--full'],
+      cliEnv(fixture)
+    )
+
+    expect(clipped.exitCode).toBe(0)
+    expect(clipped.stdout).toMatch(/^13 USER \| /m)
+    expect(clipped.stdout).not.toContain(LONG_TAIL)
+    expect(clipped.stdout).toMatch(/\[clipped(?:[^\]]*)\]/i)
+    expect(full.exitCode).toBe(0)
+    expect(full.stdout).toMatch(/^13 USER \| /m)
+    expect(full.stdout).toContain(LONG_TAIL)
+  })
+
   it('renders a seq-ordered, pipe-safe interleaving with command/file/prompt summaries', async () => {
     const result = await runCli(
       ['broker', 'transcript', RUNTIME_ID, '--seq', '2..8'],
@@ -529,7 +555,51 @@ describe('hrc broker transcript', () => {
     expect(cot.stdout).toMatch(/^3 SAYS \| nested assistant message$/m)
     expect(cot.stdout).not.toMatch(/ EXEC | NOTE /)
     expect(invalid.exitCode).not.toBe(0)
-    expect(invalid.stderr).toContain('--kinds accepts only exec,cot,notice')
+    expect(invalid.stderr).toContain('--kinds accepts only user,exec,cot,notice')
+  })
+
+  it('accepts --kinds user,cot as a narrowing filter', async () => {
+    appendEvent(fixture, {
+      seq: 13,
+      type: 'user.message',
+      turnId: 'turn-2',
+      payload: { content: 'operator follow-up' },
+    })
+
+    const result = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..13', '--kinds', 'user,cot'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/^3 SAYS \| nested assistant message$/m)
+    expect(result.stdout).toMatch(/^13 USER \| operator follow-up$/m)
+    expect(result.stdout).not.toMatch(/ EXEC | NOTE /)
+  })
+
+  it('applies --tail after seq and kind filtering', async () => {
+    const result = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..8', '--kinds', 'exec,cot', '--tail', '2'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(
+      result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => Number.parseInt(line, 10))
+    ).toEqual([6, 8])
+  })
+
+  it('rejects non-positive --tail values', async () => {
+    const result = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--tail', '0'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('--tail must be a positive integer')
   })
 
   it('drops tool.call.completed duration and outcome details from the transcript', async () => {
@@ -556,6 +626,93 @@ describe('hrc broker transcript', () => {
 })
 
 describe('hrc broker stats and selector convenience', () => {
+  it('selects terminated runtimes newest-first with --previous and never selects a live runtime', async () => {
+    const terminatedNewest = {
+      runtimeId: 'rt-forensics-terminated-newest',
+      invocationId: 'inv-forensics-terminated-newest',
+      runId: 'run-forensics-terminated-newest',
+    }
+    const terminatedSecond = {
+      runtimeId: 'rt-forensics-terminated-second',
+      invocationId: 'inv-forensics-terminated-second',
+      runId: 'run-forensics-terminated-second',
+    }
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-terminated-second',
+      runtimeId: terminatedSecond.runtimeId,
+      runId: terminatedSecond.runId,
+      invocationId: terminatedSecond.invocationId,
+      scopeRef: SCOPE_REF,
+      createdAt: '2026-07-02T00:00:00.000Z',
+    })
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-terminated-newest',
+      runtimeId: terminatedNewest.runtimeId,
+      runId: terminatedNewest.runId,
+      invocationId: terminatedNewest.invocationId,
+      scopeRef: SCOPE_REF,
+      createdAt: '2026-07-03T00:00:00.000Z',
+    })
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-live-newest',
+      runtimeId: 'rt-forensics-live-newest',
+      runId: 'run-forensics-live-newest',
+      invocationId: 'inv-forensics-live-newest',
+      scopeRef: SCOPE_REF,
+      status: 'busy',
+      createdAt: '2026-07-04T00:00:00.000Z',
+    })
+    appendEvent(fixture, {
+      runtimeId: terminatedNewest.runtimeId,
+      runId: terminatedNewest.runId,
+      invocationId: terminatedNewest.invocationId,
+      seq: 1,
+      type: 'newest.terminated',
+      payload: {},
+    })
+    appendEvent(fixture, {
+      runtimeId: terminatedSecond.runtimeId,
+      runId: terminatedSecond.runId,
+      invocationId: terminatedSecond.invocationId,
+      seq: 1,
+      type: 'second.terminated',
+      payload: {},
+    })
+
+    const previous = await runCli(
+      ['broker', 'stats', SCOPE_HANDLE, '--previous', '--json'],
+      cliEnv(fixture)
+    )
+    const previousTwo = await runCli(
+      ['broker', 'events', SCOPE_HANDLE, '--previous', '2', '--ndjson'],
+      cliEnv(fixture)
+    )
+
+    expect(previous.exitCode).toBe(0)
+    expect(previous.stdout).toContain(terminatedNewest.runtimeId)
+    expect(previous.stdout).toContain('newest.terminated')
+    expect(previous.stdout).not.toContain('rt-forensics-live-newest')
+    expect(previousTwo.exitCode).toBe(0)
+    expect(previousTwo.stdout).toContain(terminatedSecond.runtimeId)
+    expect(previousTwo.stdout).toContain('second.terminated')
+  })
+
+  it('errors when --previous over-counts terminated runtimes or is combined with --latest', async () => {
+    const overCount = await runCli(
+      ['broker', 'stats', SCOPE_HANDLE, '--previous', '2'],
+      cliEnv(fixture)
+    )
+    const conflicting = await runCli(
+      ['broker', 'stats', SCOPE_HANDLE, '--previous', '--latest'],
+      cliEnv(fixture)
+    )
+
+    expect(overCount.exitCode).not.toBe(0)
+    expect(overCount.stderr).toContain('only 1 exist')
+    expect(conflicting.exitCode).not.toBe(0)
+    expect(conflicting.stderr).toContain('--previous and --latest are mutually exclusive')
+  })
+
   it('resolves a live runtime from its scope selector', async () => {
     const liveRuntimeId = 'rt-forensics-live'
     const liveInvocationId = 'inv-forensics-live'

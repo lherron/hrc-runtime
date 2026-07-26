@@ -58,11 +58,12 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--type <types>', 'comma-separated event types')
     .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
     .option('--json', 'output as a JSON array')
     .option('--ndjson', 'output one complete event per NDJSON line')
     .action(async (target, _opts, cmd: Command) => {
       const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
-        strings: ['type', 'seq', 'source-ref'],
+        strings: ['type', 'seq', 'source-ref', 'previous'],
         booleans: ['latest', 'json', 'ndjson'],
       })
       await cmdBrokerEvents(args)
@@ -70,16 +71,18 @@ export function registerRuntimeCommands(program: Command): void {
 
   broker
     .command('transcript')
-    .description('render an interleaved broker exec, assistant, and notice stream')
+    .description('render an interleaved broker user, exec, assistant, and notice stream')
     .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
     .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
-    .option('--kinds <kinds>', 'comma-separated exec,cot,notice kinds', 'exec,cot,notice')
+    .option('--kinds <kinds>', 'comma-separated user,exec,cot,notice kinds', 'user,exec,cot,notice')
+    .option('--tail <n>', 'emit only the last n rendered events')
     .option('--full', 'do not clip long event text')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
     .action(async (target, _opts, cmd: Command) => {
       const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
-        strings: ['seq', 'kinds', 'source-ref'],
+        strings: ['seq', 'kinds', 'source-ref', 'tail', 'previous'],
         booleans: ['full', 'latest'],
       })
       await cmdBrokerTranscript(args)
@@ -91,10 +94,11 @@ export function registerRuntimeCommands(program: Command): void {
     .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
     .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
     .option('--json', 'output as JSON')
     .action(async (target, _opts, cmd: Command) => {
       const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
-        strings: ['source-ref'],
+        strings: ['source-ref', 'previous'],
         booleans: ['latest', 'json'],
       })
       await cmdBrokerStats(args)
