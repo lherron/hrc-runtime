@@ -714,6 +714,43 @@ describe('server group commander help', () => {
   })
 })
 
+describe('nested group commander help', () => {
+  const cases = [
+    {
+      args: ['admin', 'runs', '--help'],
+      usage: 'Usage: hrc admin runs',
+      child: 'sweep-zombies',
+    },
+    {
+      args: ['server', 'tmux', '--help'],
+      usage: 'Usage: hrc server tmux',
+      child: 'status',
+    },
+    {
+      args: ['federation', 'outbox', '--help'],
+      usage: 'Usage: hrc federation outbox',
+      child: 'replay',
+    },
+    {
+      args: ['broker', 'verify', '--help'],
+      usage: 'Usage: hrc broker verify',
+      child: 'candidates',
+    },
+  ] as const
+
+  for (const testCase of cases) {
+    it(`${testCase.args.slice(0, -1).join(' ')} renders its own help instead of root help`, async () => {
+      const result = await runCli([...testCase.args])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toContain(testCase.usage)
+      expect(result.stdout).toContain(testCase.child)
+      expect(result.stdout).not.toContain('HRC operator CLI')
+    })
+  }
+})
+
 describe('server tmux kill broker leases', () => {
   it('reaps unclaimed broker-tmux lease servers through the daemon and reports both counts', async () => {
     server = await createHrcServer(serverOpts())
