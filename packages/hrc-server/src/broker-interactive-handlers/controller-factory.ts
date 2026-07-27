@@ -266,7 +266,7 @@ export async function spawnBrokerHeadlessViewer(
     // The viewer window's whole lifetime is this one shell command line. HRC
     // never kills the viewer surface itself, so on `/quit` the `tmux attach`
     // exits and whatever follows runs before the window closes. We chain a
-    // `hrc session-report --wait-key` (T-01894) so the operator sees the same
+    // `hrc monitor session-report --wait-key` (T-01894) so the operator sees the same
     // shutdown report `hrc run` prints — driver/exit/duration/turns + the
     // broker-recorded finalSummary — and the window holds for a keypress instead
     // of vanishing. `hrc` is resolved off the viewer shell's PATH; if absent the
@@ -279,7 +279,7 @@ export async function spawnBrokerHeadlessViewer(
       process.env[HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV],
       DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS
     )
-    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout ${lingerSeconds}; exit`
+    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc monitor session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout ${lingerSeconds}; exit`
     // Best-effort wrkq task-slug enrichment for the status-bar center field
     // (T-04977). Cosmetic only: a missing/slow/broken wrkq read resolves to null
     // and must never delay or fail viewer creation or dispatch.

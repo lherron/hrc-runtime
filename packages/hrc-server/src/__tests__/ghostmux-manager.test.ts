@@ -381,7 +381,7 @@ describe('GhostmuxManager.ensureHeadlessViewer (consolidated window/tab/pane)', 
     const result = await manager.ensureHeadlessViewer({
       scopeRef: cloRef,
       runtimeId: 'rt-1',
-      attachCommand: 'tmux attach; hrc session-report --wait-key --wait-timeout 30; exit',
+      attachCommand: 'tmux attach; hrc monitor session-report --wait-key --wait-timeout 30; exit',
     })
 
     expect(result.status).toBe('created')
