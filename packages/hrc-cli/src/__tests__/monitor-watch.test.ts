@@ -773,9 +773,55 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(cli.events.at(-1)).toMatchObject({
       event: 'monitor.completed',
       result: 'timeout',
+      outcome: 'not_matched',
       exitCode: 20,
+      phase: 'after-arm',
       conditions: ['turn-finished'],
     })
+  })
+
+  test('initial-read timeout exits 20 with before-arm machine fields', async () => {
+    const stdoutChunks: string[] = []
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        json: true,
+        selector: SELECTOR,
+        follow: true,
+        timeoutMs: 1,
+      },
+      {
+        buildMonitorState: () => new Promise<MonitorFixtureState>(() => {}),
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: { write: () => true },
+      }
+    )
+
+    expect(exitCode).toBe(20)
+    expect(parseJsonLines(stdoutChunks.join(''))).toEqual([
+      expect.objectContaining({
+        event: 'monitor.completed',
+        result: 'timeout',
+        outcome: 'not_matched',
+        exitCode: 20,
+        phase: 'before-arm',
+        members: [],
+        reason: 'initial_read_timeout',
+      }),
+    ])
   })
 
   test('--stall-after exits 21 and emits monitor.stalled', async () => {
@@ -788,6 +834,7 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(cli.events.at(-1)).toMatchObject({
       event: 'monitor.stalled',
       result: 'stalled',
+      outcome: 'not_matched',
       exitCode: 21,
       conditions: ['turn-finished'],
     })
@@ -874,6 +921,14 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
         seq: 101,
       })
     )
+    expect(events.filter((entry) => entry['event'] === 'monitor.completed')).toEqual([
+      expect.objectContaining({
+        result: 'interrupted',
+        outcome: 'error',
+        exitCode: 130,
+        phase: 'after-arm',
+      }),
+    ])
   })
 
   test('--follow --last replays the last n events before polling live events', async () => {
@@ -951,6 +1006,50 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
     expect(events[1]).toMatchObject({ event: 'turn.tool_call', replayed: true })
     expect(events[2]).toMatchObject({ event: 'turn.tool_result', replayed: true })
     expect(events[3]).toMatchObject({ event: 'turn.message', replayed: false })
+  })
+
+  test('follow read failure exits 23 with exactly one error terminal event', async () => {
+    const stdoutChunks: string[] = []
+    let reads = 0
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      { json: true, selector: SELECTOR, follow: true, forever: true },
+      {
+        buildMonitorState: async () => {
+          reads += 1
+          if (reads === 1) return createFixtureState()
+          throw new Error('fixture monitor read failed')
+        },
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: { write: () => true },
+      }
+    )
+
+    expect(exitCode).toBe(23)
+    const terminals = parseJsonLines(stdoutChunks.join('')).filter(
+      (entry) => entry['event'] === 'monitor.completed'
+    )
+    expect(terminals).toEqual([
+      expect.objectContaining({
+        result: 'monitor_error',
+        outcome: 'error',
+        exitCode: 23,
+        phase: 'after-arm',
+      }),
+    ])
   })
 
   test('--pretty --follow --last marks replay and live boundary', async () => {
@@ -1040,9 +1139,7 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
 
   /**
    * Exercises the polling path: buildMonitorState is called multiple times and
-   * the idle event appears only on a subsequent poll cycle. Without the polling
-   * reader this would exit 3 (monitor_error) because the static reader drains
-   * immediately and never sees the new event.
+   * the idle event appears only on a subsequent poll cycle.
    */
   test('--follow --until idle with --timeout polls for new events and exits 0', async () => {
     const busyState = createFixtureState({

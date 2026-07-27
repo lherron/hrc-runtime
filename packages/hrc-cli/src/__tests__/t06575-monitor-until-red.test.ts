@@ -10,7 +10,7 @@ import {
   makeSeededFixture,
   ts,
 } from '../../../hrc-server/src/__tests__/broker-event-mapper-fixtures'
-import { MonitorWaitExit, cmdMonitorWait } from '../monitor/wait-command'
+import { MonitorWaitExit, cmdMonitorWait, writeEarlyTimeout } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
 
 const TASK_ID = 'T-06575'
@@ -193,9 +193,15 @@ async function invokeWatch(
   }
 }
 
-async function invokeWait(argv: string[], state: HrcMonitorState): Promise<MonitorRun> {
+async function invokeWait(
+  argv: string[],
+  stateOrStates: HrcMonitorState | readonly HrcMonitorState[]
+): Promise<MonitorRun> {
   const stdout: string[] = []
   const stderr: string[] = []
+  const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates]
+  const state = states[0]!
+  let readIndex = 1
   const priorFixture = process.env['HRC_MONITOR_FIXTURE_STATE_JSON']
   const originalStdout = process.stdout.write
   const originalStderr = process.stderr.write
@@ -211,7 +217,15 @@ async function invokeWait(argv: string[], state: HrcMonitorState): Promise<Monit
 
   let exitCode = 0
   try {
-    await cmdMonitorWait(argv)
+    await cmdMonitorWait(
+      argv,
+      Array.isArray(stateOrStates)
+        ? {
+            initialState: state,
+            buildMonitorState: async () => states[Math.min(readIndex++, states.length - 1)]!,
+          }
+        : undefined
+    )
   } catch (error) {
     if (error instanceof MonitorWaitExit) {
       exitCode = error.code
@@ -412,7 +426,33 @@ describe('T-06575 suite 4 — temporal truth', () => {
 })
 
 describe('T-06575 suite 5 — exit codes and grammar legality', () => {
-  test('exports the frozen nine-code table, including distinct context and observer failures', async () => {
+  test('wait initial-read timeout uses canonical 20 and before-arm machine fields', () => {
+    const stdout: string[] = []
+    const originalStdout = process.stdout.write
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+      return true
+    }) as typeof process.stdout.write
+    try {
+      expect(writeEarlyTimeout('runtime:unresolved', 'turn-finished', true)).toBe(20)
+    } finally {
+      process.stdout.write = originalStdout
+    }
+
+    expect(jsonLines(stdout.join(''))).toEqual([
+      expect.objectContaining({
+        event: 'monitor.completed',
+        result: 'timeout',
+        outcome: 'not_matched',
+        exitCode: 20,
+        phase: 'before-arm',
+        members: [],
+        reason: 'initial_read_timeout',
+      }),
+    ])
+  })
+
+  test('exports the frozen monitor code table, including observed terminal failure', async () => {
     const modulePath = '../monitor/exit-codes'
     const monitorExits = (await import(modulePath)) as {
       MONITOR_EXIT_CODES: Record<string, number>
@@ -423,6 +463,7 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
       alreadyTrueAtArm: 10,
       noSessionEver: 11,
       runtimeDeathObstruction: 12,
+      terminalFailure: 13,
       timeout: 20,
       stall: 21,
       contextChange: 22,
@@ -572,12 +613,91 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
       [`scope:${scopeRef(busy)}`, '--follow', '--timeout', '800ms', '--format', 'ndjson'],
       [makeState([busy]), makeState([dead], [transitionEvent(dead, 1, 'runtime.dead')])]
     )
-    expect(run.exitCode).toBe(0)
-    expect(lastEvent(run)).toMatchObject({ conditions: ['turn-finished', 'runtime-dead'] })
+    expect(run.exitCode).toBe(13)
+    expect(lastEvent(run)).toMatchObject({
+      conditions: ['turn-finished', 'runtime-dead'],
+      matchedCondition: 'runtime-dead',
+      result: 'runtime_dead',
+      outcome: 'observed_failure',
+      exitCode: 13,
+    })
     // T-06675: the former second half read agent-loop's C-0004 artifacts from
     // a sibling checkout. That migration is agent-loop-owned and is not a
     // portable HRC test dependency. The HRC-owned OR-pair behavior remains
     // pinned above at the actual monitor projection seam.
+  })
+
+  test.each([
+    ['requested runtime death', ['--until', 'runtime-dead'], 0, 'matched', 'success'],
+    [
+      'runtime death obstructing idle',
+      ['--until', 'idle'],
+      12,
+      'runtime_death_obstruction',
+      'not_matched',
+    ],
+    ['implicit success-seeking fence', [], 13, 'runtime_dead', 'observed_failure'],
+  ] as const)(
+    'pins the runtime-death intent matrix: %s',
+    async (_label, flags, expectedExit, expectedResult, expectedOutcome) => {
+      const busy = { agent: 'cody', status: 'busy' } satisfies Member
+      const dead = { ...busy, status: 'dead', changedAt: ts(10) } satisfies Member
+      const selector = `scope:${scopeRef(busy)}`
+      const states = [
+        makeState([busy]),
+        makeState([dead], [transitionEvent(dead, 1, 'runtime.dead')]),
+      ]
+
+      const watch = await invokeWatch(
+        [selector, '--follow', ...flags, '--timeout', '800ms', '--format', 'ndjson'],
+        states
+      )
+      const wait = await invokeWait([selector, ...flags, '--timeout', '800ms', '--json'], states)
+
+      for (const run of [watch, wait]) {
+        expect(run.exitCode).toBe(expectedExit)
+        expect(lastEvent(run)).toMatchObject({
+          result: expectedResult,
+          outcome: expectedOutcome,
+          exitCode: expectedExit,
+        })
+      }
+    }
+  )
+
+  test('classifies failed turn-finished as observed_failure/13 in watch and wait', async () => {
+    const busy = { agent: 'cody', status: 'busy' } satisfies Member
+    const selector = `scope:${scopeRef(busy)}`
+    const failed = transitionEvent(busy, 1, 'turn.failed')
+    failed['result'] = 'turn_failed'
+    const states = [makeState([busy]), makeState([busy], [failed])]
+
+    const watch = await invokeWatch(
+      [
+        selector,
+        '--follow',
+        '--until',
+        'turn-finished',
+        '--timeout',
+        '800ms',
+        '--format',
+        'ndjson',
+      ],
+      states
+    )
+    const wait = await invokeWait(
+      [selector, '--until', 'turn-finished', '--timeout', '800ms', '--json'],
+      states
+    )
+
+    for (const run of [watch, wait]) {
+      expect(run.exitCode).toBe(13)
+      expect(lastEvent(run)).toMatchObject({
+        result: 'turn_failed',
+        outcome: 'observed_failure',
+        exitCode: 13,
+      })
+    }
   })
 })
 

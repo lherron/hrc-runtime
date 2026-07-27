@@ -186,11 +186,16 @@ error-with-pointer shims. They exit nonzero and do not execute the action.
 | 10 | already true at arm | Level truth predated the wait. |
 | 11 | no session ever | No matching session appeared. |
 | 12 | runtime-death obstruction | Runtime death prevented the requested match. |
+| 13 | observed terminal failure | A failed turn or implicit runtime death/crash was positively observed. |
 | 20 | timeout | Wait window elapsed. |
 | 21 | stall | Inactivity threshold elapsed. |
 | 22 | context change | Generation/session context changed. |
 | 23 | monitor error | Internal monitor or event-stream error. |
 | 130 | SIGINT | Caller interrupted the wait. |
+
+Terminal events also carry `outcome`: `success`, `not_matched`,
+`observed_failure`, or `error`. `monitor show` uses 0 (snapshot), 2 (usage), and
+23 (daemon/read failure).
 
 ### General
 

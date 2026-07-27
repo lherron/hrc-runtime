@@ -95,7 +95,7 @@ type MonitorRuntimeIdentitySource = MonitorRuntimeSource & {
 }
 
 class MonitorInfrastructureError extends Error {
-  readonly exitCode = 3
+  readonly exitCode = 23
 }
 
 export async function cmdMonitorShow(args: string[]): Promise<void> {

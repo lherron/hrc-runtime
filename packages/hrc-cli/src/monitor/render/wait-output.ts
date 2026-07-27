@@ -1,37 +1,7 @@
-import {
-  type HrcMonitorCondition,
-  type HrcMonitorConditionOutcome,
-  type HrcMonitorEvent,
-  type HrcSelector,
-  formatSelector,
-} from 'hrc-core'
+import type { HrcMonitorConditionOutcome, HrcMonitorEvent } from 'hrc-core'
 import { stringField } from '../../monitor-fields.js'
 
 export type WaitOutputEvent = HrcMonitorEvent | Record<string, unknown>
-
-export function normalizeWaitOutcome(
-  outcome: HrcMonitorConditionOutcome,
-  selector: HrcSelector,
-  condition: HrcMonitorCondition
-): HrcMonitorConditionOutcome {
-  const monitorError = outcome.eventStream?.find(
-    (event) =>
-      stringField(event, 'event') === 'monitor.error' ||
-      stringField(event, 'result') === 'monitor_error'
-  )
-  if (monitorError && outcome.result !== 'monitor_error') {
-    const finalEvent = completedEvent(selector, condition, {
-      result: 'monitor_error',
-      exitCode: 3,
-    })
-    return {
-      result: 'monitor_error',
-      exitCode: 3,
-      eventStream: [...(outcome.eventStream ?? []), finalEvent],
-    }
-  }
-  return outcome
-}
 
 export function finalWaitOutcomeEvent(outcome: HrcMonitorConditionOutcome): WaitOutputEvent {
   return (
@@ -44,27 +14,12 @@ export function finalWaitOutcomeEvent(outcome: HrcMonitorConditionOutcome): Wait
       }) ?? {
       event: outcome.result === 'stalled' ? 'monitor.stalled' : 'monitor.completed',
       result: outcome.result,
+      outcome: outcome.outcome,
       exitCode: outcome.exitCode,
       replayed: false,
       ts: new Date().toISOString(),
     }
   )
-}
-
-function completedEvent(
-  selector: HrcSelector,
-  condition: HrcMonitorCondition,
-  outcome: Pick<HrcMonitorConditionOutcome, 'result' | 'exitCode'>
-): WaitOutputEvent {
-  return {
-    event: outcome.result === 'stalled' ? 'monitor.stalled' : 'monitor.completed',
-    selector: formatSelector(selector),
-    condition,
-    result: outcome.result,
-    exitCode: outcome.exitCode,
-    replayed: false,
-    ts: new Date().toISOString(),
-  }
 }
 
 export function writeWaitFinalEvent(event: WaitOutputEvent, json: boolean): void {
@@ -78,6 +33,8 @@ export function writeWaitFinalEvent(event: WaitOutputEvent, json: boolean): void
     'condition',
     'scopeRef',
     'result',
+    'outcome',
+    'phase',
     'reason',
     'failureKind',
     'runId',

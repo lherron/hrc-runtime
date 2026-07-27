@@ -20,6 +20,14 @@ function collectVisibleCommandNames(command: Command | undefined): string[] {
   return Array.from(new Set(names))
 }
 
+function formatCommandPath(command: Command): string {
+  const names: string[] = []
+  for (let current: Command | null = command; current; current = current.parent) {
+    names.unshift(current.name())
+  }
+  return names.join(' ')
+}
+
 function collectVisibleOptionFlags(command: Command | undefined): string[] {
   const flags: string[] = []
   let current = command
@@ -106,21 +114,69 @@ function formatUnknownCommandError(
   command: Command | undefined
 ): CliUsageError {
   const suggestion = suggestSimilarCommand(unknownName, collectVisibleCommandNames(command))
-  const hint = suggestion ? ` — did you mean '${suggestion}'?` : ''
+  const siblings = collectVisibleCommandNames(command).sort((a, b) => a.localeCompare(b))
+  const hint = suggestion
+    ? ` — did you mean '${suggestion}'?`
+    : siblings.length > 0
+      ? `. Available commands: ${siblings.join(', ')}`
+      : ''
   return new CliUsageError(`unknown command: ${unknownName}${hint}`)
 }
 
+export function validateCommandPathBeforeHelp(program: Command, args: readonly string[]): void {
+  let current = program
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (!token) continue
+    if (token === '--help' || token === '-h') return
+
+    if (token.startsWith('-')) {
+      const flag = token.split('=', 1)[0]
+      let option = current.options.find(
+        (candidate) => candidate.long === flag || candidate.short === flag
+      )
+      for (let parent = current.parent; !option && parent; parent = parent.parent) {
+        option = parent.options.find(
+          (candidate) => candidate.long === flag || candidate.short === flag
+        )
+      }
+      if (option && !token.includes('=') && (option.required || option.optional)) {
+        index += 1
+      }
+      continue
+    }
+
+    const child = current.commands.find(
+      (candidate) => candidate.name() === token || candidate.alias() === token
+    )
+    if (child) {
+      current = child
+      continue
+    }
+
+    const acceptsPositionals = current.registeredArguments.length > 0
+    if (current.commands.length > 0 && !acceptsPositionals) {
+      throw formatUnknownCommandError(token, current)
+    }
+  }
+}
+
 export function normalizeCommanderError(err: CommanderError): Error {
+  const command = commanderErrorCommands.get(err)
   const unknownCommandMatch = err.message.match(/^error: unknown command '([^']+)'/)
   if (unknownCommandMatch?.[1]) {
-    return formatUnknownCommandError(unknownCommandMatch[1], commanderErrorCommands.get(err))
+    return formatUnknownCommandError(unknownCommandMatch[1], command)
   }
   const unknownOptionMatch = err.message.match(/^error: unknown option '([^']+)'/)
   if (unknownOptionMatch?.[1]) {
     const unknownFlag = unknownOptionMatch[1]
-    const suggestion = suggestSimilarOption(unknownFlag, commanderErrorCommands.get(err))
+    const suggestion = suggestSimilarOption(unknownFlag, command)
     const hint = suggestion ? ` — did you mean '${suggestion}'?` : ''
     return new CliUsageError(`unknown option: ${unknownFlag}${hint}`)
   }
-  return new CliUsageError(err.message)
+  if (!command) return new CliUsageError(err.message)
+  return new CliUsageError(
+    `${err.message}\ncommand: ${formatCommandPath(command)}\nusage: ${command.usage()}`
+  )
 }

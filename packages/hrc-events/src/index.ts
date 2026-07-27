@@ -57,6 +57,8 @@ export {
   MonitorResultSchema,
   MonitorFailureKind,
   MonitorFailureKindSchema,
+  MonitorOutcome,
+  MonitorOutcomeSchema,
   ContextChangedReason,
   ContextChangedReasonSchema,
   MonitorEventName,

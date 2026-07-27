@@ -9,7 +9,7 @@ import {
   parseProviderFlag,
   requireArg,
 } from './argv.js'
-import { printHrcDomainErrorBody } from './errors.js'
+import { throwIfHrcDomainError } from './errors.js'
 import { createDefaultRuntimeIntent } from './scope.js'
 import { createClient, fatal } from './shared.js'
 
@@ -103,9 +103,7 @@ export async function cmdCapture(args: string[]): Promise<void> {
       process.stdout.write('\n')
     }
   } catch (err) {
-    if (printHrcDomainErrorBody(err)) {
-      return
-    }
+    throwIfHrcDomainError(err)
     throw err
   }
 }
@@ -118,9 +116,7 @@ export async function cmdInterrupt(args: string[]): Promise<void> {
     const result = await client.interrupt(runtimeId)
     printJson(result)
   } catch (err) {
-    if (printHrcDomainErrorBody(err)) {
-      return
-    }
+    throwIfHrcDomainError(err)
     throw err
   }
 }

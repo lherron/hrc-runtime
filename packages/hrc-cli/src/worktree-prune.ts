@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { CliUsageError } from 'cli-kit'
 import { resolveDatabasePath } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -9,6 +10,7 @@ type CommandResult = {
   status: number | null
   stdout: string
   stderr: string
+  error?: string
 }
 
 type RegistryProject = {
@@ -91,11 +93,17 @@ function defaultRun(command: string, args: string[]): CommandResult {
     status: result.status,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    ...(result.error ? { error: result.error.message } : {}),
   }
 }
 
 function commandDiagnostic(result: CommandResult): string {
-  return result.stderr.trim() || result.stdout.trim() || `exit ${result.status ?? 'unknown'}`
+  return (
+    result.error?.trim() ||
+    result.stderr.trim() ||
+    result.stdout.trim() ||
+    `exit ${result.status ?? 'unknown'}`
+  )
 }
 
 function parseJsonArray<T>(result: CommandResult, label: string): T[] {
@@ -348,10 +356,15 @@ export function pruneCompletedTaskWorktrees(
     : projects
 
   if (options.projectRoot && !options.projectId) {
-    throw new Error('--root requires --project')
+    throw new CliUsageError(
+      '--root requires --project. Retry with: hrc admin worktrees prune --project <id> --root <path>'
+    )
   }
   if (options.projectId && selectedProjects.length === 0) {
-    throw new Error(`unknown project: ${options.projectId}`)
+    const known = projects.map(projectId).filter((value): value is string => value !== undefined)
+    throw new CliUsageError(
+      `unknown project: ${options.projectId}. Known projects: ${known.length > 0 ? known.join(', ') : '(none)'}. List projects with: wrkq projects --json`
+    )
   }
 
   const results: WorktreePruneResult[] = []

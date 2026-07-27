@@ -4,7 +4,12 @@ import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
-import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
+import {
+  assertNoUnknownOptions,
+  rawArgvForVerb,
+  toLegacyArgv,
+  toLegacyArgvForScopeCommand,
+} from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
 import {
   cmdBridgeClose,
@@ -78,6 +83,18 @@ export function registerTopLevelCommands(program: Command): void {
       const positionals: string[] = cmd.args
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
+      assertNoUnknownOptions(rawArgv, {
+        boolean: [
+          '--force-restart',
+          '--new-session',
+          '--dry-run',
+          '--debug',
+          '--no-register',
+          '--json',
+        ],
+        value: ['--project-id', '--project-root', '--idempotency-key', '-p', '--prompt-file'],
+        optionalValue: ['--wait'],
+      })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file', 'idempotency-key', 'wait'],
         booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
@@ -127,6 +144,17 @@ export function registerTopLevelCommands(program: Command): void {
       }
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
+      assertNoUnknownOptions(rawArgv, {
+        boolean: [
+          '--force-restart',
+          '--attach-only',
+          '--dry-run',
+          '--debug',
+          '--no-register',
+          '--json',
+        ],
+        value: ['--project-id', '--project-root', '-p', '--prompt-file'],
+      })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
         booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
@@ -210,6 +238,10 @@ Semantics:
       const positionals: string[] = cmd.args
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
+      assertNoUnknownOptions(rawArgv, {
+        boolean: ['--no-attach', '--dry-run', '--debug', '--no-register', '--json'],
+        value: ['--project-id', '--project-root', '-p', '--prompt-file'],
+      })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
         booleans: ['dry-run', 'debug', 'json'],
@@ -312,7 +344,32 @@ The output always names the resolved kind and the concrete ID(s).
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .action(async (noun: string | undefined, _opts, cmd: Command) => {
-      const rest = cmd.args.slice(1)
+      const rest = rawArgvForVerb(cmd, 'ls', { offset: 2, fallback: cmd.args.slice(1) })
+      assertNoUnknownOptions(rest, {
+        boolean: [
+          '--stale',
+          '--json',
+          '--all-nodes',
+          '--porcelain',
+          '--all',
+          '--dormant',
+          '--gens',
+          '--by-project',
+        ],
+        value: [
+          '--host-session-id',
+          '--session',
+          '--transport',
+          '--status',
+          '--older-than',
+          '--scope',
+          '--agent',
+          '--task',
+          '--lane',
+          '--since',
+          '--runtime-id',
+        ],
+      })
       await cmdLs(noun, rest)
     })
 

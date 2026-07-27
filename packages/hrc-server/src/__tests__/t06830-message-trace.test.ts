@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises'
+
 import { describe, expect, test } from 'bun:test'
 
 import type {
@@ -7,6 +9,7 @@ import type {
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { createHrcServer } from '../index.js'
 import { buildMessageTrace } from '../message-trace.js'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
@@ -210,6 +213,11 @@ describe('T-06830 message delivery trace', () => {
     const fixture = await createHrcTestFixture('hrc-t06830-route-')
     let server: Awaited<ReturnType<typeof createHrcServer>> | undefined
     try {
+      await writeFile(
+        `${fixture.stateRoot}/${FEDERATION_CONFIG_BASENAME}`,
+        JSON.stringify({ nodeId: 'mini' }),
+        { mode: 0o600 }
+      )
       const db = openHrcDatabase(fixture.dbPath)
       let messageSeq: number
       try {

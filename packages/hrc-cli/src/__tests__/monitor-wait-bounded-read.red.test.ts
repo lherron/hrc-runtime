@@ -233,7 +233,9 @@ describe('Bundle 1 — monitor wait bounded live reads', () => {
     track(spyOn(HrcClient.prototype, 'getStatus').mockImplementation(() => new Promise(() => {})))
     const startedAt = performance.now()
 
-    expect(await runWait([`runtime:${RUNTIME_ID}`, '--until', 'idle', '--timeout', '20ms'])).toBe(1)
+    expect(await runWait([`runtime:${RUNTIME_ID}`, '--until', 'idle', '--timeout', '20ms'])).toBe(
+      20
+    )
     expect(performance.now() - startedAt).toBeLessThan(250)
   })
 

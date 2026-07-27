@@ -299,7 +299,7 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
         process.stderr.write(
           `hrc: WARNING restart aborted but turn admission could not be reopened: ${
             reopenError instanceof Error ? reopenError.message : String(reopenError)
-          }\n`
+          }\nhrc: recovery: run 'hrc server restart' without --drain to reopen admission during restart.\n`
         )
       }
     }

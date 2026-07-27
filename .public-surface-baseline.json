@@ -1975,6 +1975,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcMonitorOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcMonitorResolution",
       "kind": "type",
       "file": "packages/hrc-core/src/monitor/index.ts",

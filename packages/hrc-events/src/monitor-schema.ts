@@ -20,8 +20,7 @@ import { z } from 'zod'
  * All possible `result` values in a monitor final event.
  *
  * Operators match on this to decide next action. Scripts match on exit
- * code (0/1/2/3/4) for the coarse branch and inspect `result` for the
- * precise sub-case.
+ * code for the precise branch and inspect `outcome` for the coarse class.
  */
 export const MonitorResult = [
   'turn_succeeded',
@@ -29,14 +28,23 @@ export const MonitorResult = [
   'runtime_dead',
   'runtime_crashed',
   'response',
+  'idle',
+  'busy',
   'idle_no_response',
+  'turn_finished_without_response',
   'already_idle',
   'already_busy',
+  'already_dead',
   'no_active_turn',
+  'matched',
+  'already_true',
+  'no_session_ever',
+  'runtime_death_obstruction',
   'context_changed',
   'timeout',
   'stalled',
   'monitor_error',
+  'interrupted',
 ] as const
 
 export type MonitorResult = (typeof MonitorResult)[number]
@@ -68,12 +76,18 @@ export type MonitorFailureKind = (typeof MonitorFailureKind)[number]
 
 export const MonitorFailureKindSchema = z.enum(MonitorFailureKind)
 
+export const MonitorOutcome = ['success', 'not_matched', 'observed_failure', 'error'] as const
+
+export type MonitorOutcome = (typeof MonitorOutcome)[number]
+
+export const MonitorOutcomeSchema = z.enum(MonitorOutcome)
+
 // ============================================================================
 // Context-changed reason discriminator  (FROZEN Q5)
 // ============================================================================
 
 /**
- * When `result` is `context_changed` (exit code 4), the `reason` field
+ * When `result` is `context_changed` (exit code 22), the `reason` field
  * tells the operator *why* the context is no longer valid.
  */
 export const ContextChangedReason = ['session_rebound', 'generation_changed', 'cleared'] as const
@@ -143,36 +157,72 @@ const isoTimestampSchema = z.string().refine(
  * Every event includes `event`, `selector`, `replayed`, and `ts`.
  * Optional fields are present only when relevant to the event kind.
  */
-export const MonitorEventSchema = z.object({
-  /** Stable event name. */
-  event: MonitorEventNameSchema,
+export const MonitorEventSchema = z
+  .object({
+    /** Stable event name. */
+    event: MonitorEventNameSchema,
 
-  /** Canonical selector string that scoped this monitor. */
-  selector: z.string(),
+    /** Canonical selector string that scoped this monitor. */
+    selector: z.string(),
 
-  /** Runtime that emitted the underlying signal, if applicable. */
-  runtimeId: z.string().optional(),
+    /** Runtime that emitted the underlying signal, if applicable. */
+    runtimeId: z.string().optional(),
 
-  /** Turn correlated with this event, if applicable. */
-  turnId: z.string().optional(),
+    /** Turn correlated with this event, if applicable. */
+    turnId: z.string().optional(),
 
-  /** Result discriminator — present on terminal / completion events. */
-  result: MonitorResultSchema.optional(),
+    /** Result discriminator — present on terminal / completion events. */
+    result: MonitorResultSchema.optional(),
 
-  /** Failure classification — present when result indicates failure. */
-  failureKind: MonitorFailureKindSchema.optional(),
+    /** Coarse terminal class — required on completed/stalled events. */
+    outcome: MonitorOutcomeSchema.optional(),
 
-  /** Context-changed sub-reason — present when result is context_changed. */
-  reason: ContextChangedReasonSchema.optional(),
+    /** Failure classification — present when result indicates failure. */
+    failureKind: MonitorFailureKindSchema.optional(),
 
-  /** Whether this event was replayed from the event log (vs live). */
-  replayed: z.boolean(),
+    /** Stable reason or context-changed sub-reason. */
+    reason: z
+      .union([
+        ContextChangedReasonSchema,
+        z.literal('initial_read_timeout'),
+        z.literal('initial_read_unavailable'),
+      ])
+      .optional(),
 
-  /** Process exit code that will accompany this event, if applicable. */
-  exitCode: z.number().int().optional(),
+    phase: z.enum(['before-arm', 'at-arm', 'after-arm']).optional(),
+    observedAt: isoTimestampSchema.optional(),
+    members: z
+      .array(
+        z.object({
+          scopeRef: z.string(),
+          runtimeId: z.string(),
+          status: z.string(),
+          statusChangedAt: z.string(),
+          matchedCondition: z.string().optional(),
+        })
+      )
+      .optional(),
 
-  /** ISO-8601 timestamp of event emission. */
-  ts: isoTimestampSchema,
-})
+    /** Whether this event was replayed from the event log (vs live). */
+    replayed: z.boolean(),
+
+    /** Process exit code that will accompany this event, if applicable. */
+    exitCode: z.number().int().optional(),
+
+    /** ISO-8601 timestamp of event emission. */
+    ts: isoTimestampSchema,
+  })
+  .superRefine((event, context) => {
+    if (
+      (event.event === 'monitor.completed' || event.event === 'monitor.stalled') &&
+      event.outcome === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['outcome'],
+        message: 'terminal monitor events require outcome',
+      })
+    }
+  })
 
 export type MonitorEvent = z.infer<typeof MonitorEventSchema>

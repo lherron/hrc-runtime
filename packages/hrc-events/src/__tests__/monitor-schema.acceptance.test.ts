@@ -9,14 +9,23 @@ const expectedMonitorResults = [
   'runtime_dead',
   'runtime_crashed',
   'response',
+  'idle',
+  'busy',
   'idle_no_response',
+  'turn_finished_without_response',
   'already_idle',
   'already_busy',
+  'already_dead',
   'no_active_turn',
+  'matched',
+  'already_true',
+  'no_session_ever',
+  'runtime_death_obstruction',
   'context_changed',
   'timeout',
   'stalled',
   'monitor_error',
+  'interrupted',
 ] as const
 
 const expectedFailureKinds = [
@@ -111,14 +120,18 @@ describe('monitor schema acceptance', () => {
       runtimeId: 'runtime-1',
       turnId: 'turn-1',
       result: 'turn_failed',
+      outcome: 'observed_failure',
       failureKind: 'tool',
       reason: 'generation_changed',
       replayed: false,
-      exitCode: 1,
+      exitCode: 13,
       ts: '2026-04-27T12:34:56.000Z',
     }
 
     expect(schema.safeParse?.(validEvent).success).toBe(true)
+
+    const { outcome: _outcome, ...missingOutcome } = validEvent
+    expect(schema.safeParse?.(missingOutcome).success).toBe(false)
 
     expect(
       schema.safeParse?.({

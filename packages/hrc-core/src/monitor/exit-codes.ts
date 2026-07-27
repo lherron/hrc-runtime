@@ -5,6 +5,7 @@ export const MONITOR_EXIT_CODES = {
   alreadyTrueAtArm: 10,
   noSessionEver: 11,
   runtimeDeathObstruction: 12,
+  terminalFailure: 13,
   timeout: 20,
   stall: 21,
   contextChange: 22,

@@ -881,13 +881,15 @@ export async function cmdAttach(args: string[]): Promise<void> {
     const client = createClient()
     const resolved = await client.resolveSession({ sessionRef })
     if (!resolved.found) {
-      throw new Error(`no active runtime found for "${target}"`)
+      throw new Error(`no session exists for "${target}". Start one with: hrc start ${target}`)
     }
 
     const runtimes = await client.listRuntimes({ hostSessionId: resolved.hostSessionId })
     const runtime = selectLatestUsableRuntime(runtimes)
     if (!runtime) {
-      throw new Error(`no active runtime found for "${target}"`)
+      throw new Error(
+        `session exists for "${target}" but has no live runtime. Resume its continuation with: hrc resume ${target}; or start fresh with: hrc start ${target} --force-restart`
+      )
     }
 
     const descriptor: ExecAttachDescriptor = await attachWithRetry(

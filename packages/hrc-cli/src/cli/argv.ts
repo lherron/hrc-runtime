@@ -32,6 +32,41 @@ export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag)
 }
 
+export function assertNoUnknownOptions(
+  args: readonly string[],
+  schema: {
+    boolean: readonly string[]
+    value: readonly string[]
+    optionalValue?: readonly string[]
+  }
+): void {
+  const booleans = new Set(schema.boolean)
+  const values = new Set(schema.value)
+  const optionalValues = new Set(schema.optionalValue ?? [])
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--') return
+    if (!arg?.startsWith('-') || arg === '-') continue
+
+    const [flag, inlineValue] = arg.split('=', 2)
+    if (flag && (values.has(flag) || optionalValues.has(flag))) {
+      if (inlineValue === undefined && values.has(flag)) index += 1
+      if (
+        inlineValue === undefined &&
+        optionalValues.has(flag) &&
+        args[index + 1] !== undefined &&
+        !args[index + 1]?.startsWith('-')
+      ) {
+        index += 1
+      }
+      continue
+    }
+    if (booleans.has(arg)) continue
+    fatal(`unknown option: ${arg}`)
+  }
+}
+
 /**
  * Split a comma-separated list value into trimmed, non-empty entries (e.g.
  * `--status busy, dead ` → `['busy', 'dead']`). Shared by the runtime

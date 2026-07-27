@@ -27,9 +27,9 @@ import { fatal } from './shared.js'
 
 const MONITOR_CONDITIONS_HELP = [...VALID_CONDITIONS].join(', ')
 const MONITOR_EXIT_CODES_HELP =
-  'Exit codes: 0 matched after arm/replay (success); 10 already true at arm (success); 2 usage; 11 no session ever; 12 runtime-death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error (11/12/20/21/22/23 are semantic outcomes); 130 SIGINT.'
+  'Exit codes: 0 matched after arm/replay (outcome=success); 10 already true at arm (outcome=success); 2 usage (no terminal event); 11 no session ever (outcome=not_matched); 12 runtime-death obstruction (outcome=not_matched); 13 observed terminal failure (outcome=observed_failure); 20 timeout (outcome=not_matched); 21 stall (outcome=not_matched); 22 context change (outcome=not_matched); 23 monitor error (outcome=error); 130 SIGINT (outcome=error).'
 const MONITOR_AGENT_EXIT_CODES =
-  '0 matched (success); 10 already true at arm (success); 2 usage; 11 no session ever; 12 runtime death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error (11/12/20/21/22/23 are semantic outcomes); 130 SIGINT'
+  '0 matched (success); 10 already true at arm (success); 2 usage/no event; 11 no session ever (not_matched); 12 runtime death obstruction (not_matched); 13 terminal failure (observed_failure); 20 timeout (not_matched); 21 stall (not_matched); 22 context change (not_matched); 23 monitor error (error); 130 SIGINT (error)'
 
 function collectMonitorCondition(value: string, previous: string[]): string[] {
   return [...previous, value]
@@ -461,7 +461,7 @@ ${MONITOR_EXIT_CODES_HELP}\n`
     audience: 'agent',
     agentUsage: {
       example: 'hrc monitor show T-07011 --json',
-      exitCodes: '0 snapshot read; 2 usage; 1 daemon/read failure',
+      exitCodes: '0 snapshot read; 2 usage; 23 daemon/read failure',
       output: '--json is one snapshot document keyed by global hrcSeq',
     },
   })

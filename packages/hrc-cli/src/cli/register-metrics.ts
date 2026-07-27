@@ -36,11 +36,18 @@ function printNdjson(report: MetricsReport): void {
     process.stdout.write(`${JSON.stringify({ kind: 'largest-server', ...row })}\n`)
   }
   process.stdout.write(
-    `${JSON.stringify({ kind: 'summary', uncorrelatedServerCount: report.uncorrelatedServerCount })}\n`
+    `${JSON.stringify({
+      kind: 'summary',
+      uncorrelatedServerCount: report.uncorrelatedServerCount,
+      diagnostics: report.diagnostics,
+    })}\n`
   )
 }
 
 function printHuman(report: MetricsReport): void {
+  process.stdout.write(
+    `Metrics source: exists=${report.diagnostics.metricsDirExists} filesScanned=${report.diagnostics.filesScanned}\n\n`
+  )
   process.stdout.write('Commands\n')
   for (const row of report.commands) {
     process.stdout.write(

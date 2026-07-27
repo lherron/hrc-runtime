@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CliUsageError } from 'cli-kit'
 
 import {
   type WorktreePruneReport,
@@ -63,6 +64,25 @@ function run(
 }
 
 describe('completed-task worktree pruning', () => {
+  it('classifies root/project selection mistakes as actionable usage errors', () => {
+    expect(() =>
+      pruneCompletedTaskWorktrees(
+        { projectRoot: '/tmp/example' },
+        { listProjects: () => [], listLiveRuntimeOccupancies: () => [] }
+      )
+    ).toThrow(CliUsageError)
+
+    expect(() =>
+      pruneCompletedTaskWorktrees(
+        { projectId: 'missing' },
+        {
+          listProjects: () => [{ slug: 'alpha' }, { slug: 'beta' }],
+          listLiveRuntimeOccupancies: () => [],
+        }
+      )
+    ).toThrow(/Known projects: alpha, beta.*wrkq projects --json/)
+  })
+
   it('extracts exact task tokens without prefix collisions', () => {
     expect(taskTokens('work/T-12345-and-T-123456')).toEqual(['T-12345', 'T-123456'])
     expect(taskTokens('work/XT-12345Z')).toEqual(['T-12345'])
@@ -230,6 +250,29 @@ describe('completed-task worktree pruning', () => {
       }),
     ])
     expect(existsSync(worktree)).toBe(true)
+  })
+
+  it('surfaces process spawn errors instead of reporting exit unknown', () => {
+    const { root } = fixture()
+    const report = pruneCompletedTaskWorktrees(
+      { projectId: 'fixture', projectRoot: root },
+      {
+        run: (command, args) =>
+          command === 'git' && args.includes('worktree')
+            ? {
+                status: null,
+                stdout: '',
+                stderr: '',
+                error: 'spawnSync git ENOENT',
+              }
+            : { status: 0, stdout: '', stderr: '' },
+        readTask: () => ({ state: 'completed' }),
+        listLiveRuntimeOccupancies: () => [],
+      }
+    )
+
+    expect(report.results[0]?.reason).toContain('spawnSync git ENOENT')
+    expect(report.results[0]?.reason).not.toContain('exit unknown')
   })
 
   it('refuses a worktree occupied by a live runtime cwd', () => {

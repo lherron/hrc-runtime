@@ -17,13 +17,16 @@ export function resolveOtelPreferredPortFromEnv(env: EnvMap = process.env): numb
   if (raw === undefined) return undefined
 
   if (!/^\d+$/.test(raw)) {
-    throw new Error(
+    throw new CliUsageError(
       `${HRC_OTLP_PREFERRED_PORT_ENV} must be an integer port, got ${JSON.stringify(raw)}`
     )
   }
   const port = Number.parseInt(raw, 10)
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
-    throw new Error(`${HRC_OTLP_PREFERRED_PORT_ENV} must be between 0 and 65535, got ${raw}`)
+    throw new CliUsageError(
+      `${HRC_OTLP_PREFERRED_PORT_ENV} must be between 0 and 65535, got ${raw}`
+    )
   }
   return port
 }
+import { CliUsageError } from 'cli-kit'

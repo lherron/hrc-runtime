@@ -122,6 +122,7 @@ export function toMonitorJsonEvent(
     'runtimeId',
     'turnId',
     'result',
+    'outcome',
     'failureKind',
     'reason',
     'condition',
@@ -663,6 +664,7 @@ function payloadFrom(event: MonitorRenderableEvent): unknown {
         'matchedCondition',
         'members',
         'result',
+        'outcome',
         'exitCode',
       ].includes(key)
     ) {

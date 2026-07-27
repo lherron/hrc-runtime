@@ -1,3 +1,4 @@
+import { CliUsageError } from 'cli-kit'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcRuntimeSnapshot, HrcSelector, HrcSessionRecord } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -33,7 +34,7 @@ export type SelectorResolutionErrorCode =
   | 'not-found'
   | 'parse-error'
 
-export class SelectorResolutionError extends Error {
+export class SelectorResolutionError extends CliUsageError {
   constructor(
     readonly code: SelectorResolutionErrorCode,
     message: string
@@ -69,10 +70,36 @@ function typeMismatch(rawArg: string, expect: SelectorTargetKind, received: stri
   )
 }
 
-function notFound(rawArg: string, expect: SelectorTargetKind): never {
+function listingCommand(expect: SelectorTargetKind): string {
+  switch (expect) {
+    case 'runtime':
+      return 'hrc runtime list --json'
+    case 'host-session':
+      return 'hrc session list --json'
+    case 'message':
+      return 'hrc ls messages'
+    case 'bridge':
+      return 'hrc admin bridge list --json'
+  }
+}
+
+function candidateCount(expect: SelectorTargetKind, snapshot: SelectorSnapshot): number {
+  switch (expect) {
+    case 'runtime':
+      return snapshot.runtimes.length
+    case 'host-session':
+      return snapshot.sessions.length
+    case 'message':
+    case 'bridge':
+      return 0
+  }
+}
+
+function notFound(rawArg: string, expect: SelectorTargetKind, snapshot: SelectorSnapshot): never {
+  const count = candidateCount(expect, snapshot)
   throw new SelectorResolutionError(
     'not-found',
-    `selector "${rawArg}" did not match any ${expect}. Accepted ${acceptedForms(expect)}`
+    `selector "${rawArg}" did not match any ${expect} among ${count} known candidate${count === 1 ? '' : 's'}. Accepted ${acceptedForms(expect)}. List candidates with: ${listingCommand(expect)}`
   )
 }
 
@@ -81,14 +108,17 @@ function ambiguous(
   expect: SelectorTargetKind,
   matches: readonly SnapshotEntry[]
 ): never {
-  const ids = matches.map((entry) =>
-    'runtimeId' in entry
-      ? `${entry.runtimeId} (${entry.laneRef})`
-      : `${entry.hostSessionId} (${entry.laneRef})`
-  )
+  const ids = matches
+    .slice(0, 10)
+    .map((entry) =>
+      'runtimeId' in entry
+        ? `${entry.runtimeId} (${entry.laneRef})`
+        : `${entry.hostSessionId} (${entry.laneRef})`
+    )
+  const omitted = matches.length - ids.length
   throw new SelectorResolutionError(
     'ambiguous',
-    `selector "${rawArg}" matched multiple ${expect} targets: ${ids.join(', ')}`
+    `selector "${rawArg}" is ambiguous: matched ${matches.length} ${expect} targets: ${ids.join(', ')}${omitted > 0 ? `, … (${omitted} more)` : ''}. Retry with an explicit ID from: ${listingCommand(expect)}`
   )
 }
 
@@ -156,7 +186,7 @@ function resolveUniqueRuntime(
     )
     .filter(predicate)
   if (matches.length === 0) {
-    notFound(rawArg, expect)
+    notFound(rawArg, expect, snapshot)
   }
   if (matches.length > 1 && !latest) {
     ambiguous(rawArg, expect, matches)
@@ -169,7 +199,7 @@ function resolveUniqueRuntime(
       )[0]
     : matches[0]
   if (!match) {
-    notFound(rawArg, expect)
+    notFound(rawArg, expect, snapshot)
   }
   return { kind: 'runtime', runtimeId: match.runtimeId }
 }
@@ -186,14 +216,14 @@ function resolveUniqueSession(
 
   const matches = snapshot.sessions.filter(predicate)
   if (matches.length === 0) {
-    notFound(rawArg, expect)
+    notFound(rawArg, expect, snapshot)
   }
   if (matches.length > 1) {
     ambiguous(rawArg, expect, matches)
   }
   const match = matches[0]
   if (!match) {
-    notFound(rawArg, expect)
+    notFound(rawArg, expect, snapshot)
   }
   return { kind: 'host-session', hostSessionId: match.hostSessionId }
 }

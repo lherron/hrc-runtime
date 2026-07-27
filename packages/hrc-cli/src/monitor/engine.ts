@@ -2,25 +2,21 @@ import {
   HrcBadRequestError,
   HrcErrorCode,
   type HrcMonitorCondition,
-  type HrcMonitorConditionEngineReader,
-  type HrcMonitorConditionOutcome,
-  type HrcMonitorConditionWaitRequest,
+  type HrcMonitorOutcome,
   type HrcMonitorState,
   type HrcSelector,
   MONITOR_EXIT_CODES,
   RUNTIME_STATUS_LEVEL_BY_STATUS,
-  createMonitorConditionEngine,
   createMonitorReader,
   isResolutionError,
 } from 'hrc-core'
 import { POLL_MS } from '../monitor-conditions.js'
-import type { TerminalFence } from '../monitor-terminal-fence.js'
 import {
   type MonitorConditionEvent,
   type MonitorConditionMember,
   monitorMember,
 } from './aggregate-render.js'
-import { type MonitorStateBuilder, createArmPhaseReader } from './arm-phase.js'
+import type { MonitorStateBuilder } from './arm-phase.js'
 import {
   writeAllAlreadyTrueReport,
   writeExactAlreadyTrueReport,
@@ -28,27 +24,11 @@ import {
 } from './arm-report.js'
 import {
   type MonitorSelectorSpec,
-  type SelectorConditionCandidate,
   runtimeSelector,
   selectorConditionCandidates,
 } from './selector-shape.js'
 import { eventMatchesSelectorSet, scopeRefForSelector, selectorSetLabel } from './selector-shape.js'
 import { type MonitorUntilPlan, isLevelCondition } from './until-args.js'
-
-export type MonitorConditionArgs = {
-  until?: string | undefined
-  timeoutMs?: number | undefined
-  stallAfterMs?: number | undefined
-  signal?: AbortSignal | undefined
-  since?: string | undefined
-  terminalFence?: TerminalFence | undefined
-}
-
-export type AnyMonitorConditionResult = {
-  outcome: HrcMonitorConditionOutcome
-  selector: HrcSelector
-  scopeRef: string
-}
 
 export type MonitorPlanRunResult = {
   exitCode: number
@@ -102,6 +82,19 @@ export async function runMonitorUntilPlan(
       armEvaluation,
       'no_session_ever',
       MONITOR_EXIT_CODES.noSessionEver,
+      'at-arm'
+    )
+  }
+  const implicitFailure = plan.implicit
+    ? armEvaluation.members.find((member) => runtimeLevel(member.status) === 'runtime-dead')
+    : undefined
+  if (implicitFailure) {
+    return completed(
+      plan,
+      selector,
+      armEvaluation,
+      implicitFailure.status === 'crashed' ? 'runtime_crashed' : 'runtime_dead',
+      MONITOR_EXIT_CODES.terminalFailure,
       'at-arm'
     )
   }
@@ -184,6 +177,18 @@ export async function runMonitorUntilPlan(
     if (edgeMatch) {
       if (edgeMatch.contextChanged) {
         evaluation.contextChanged = true
+      } else if (edgeMatch.failureResult) {
+        evaluation.matchedCondition = edgeMatch.condition
+        evaluation.scopeRef = edgeMatch.scopeRef
+        evaluation.runtimeId = edgeMatch.runtimeId
+        return completed(
+          plan,
+          selector,
+          evaluation,
+          edgeMatch.failureResult,
+          MONITOR_EXIT_CODES.terminalFailure,
+          'after-arm'
+        )
       } else {
         evaluation.satisfied = true
         evaluation.matchedCondition = edgeMatch.condition
@@ -224,7 +229,7 @@ export async function runMonitorUntilPlan(
   }
 
   const evaluation = evaluateState(state, plan, specs, frozenRuntimeIds)
-  return completed(plan, selector, evaluation, 'monitor_error', 130, 'after-arm')
+  return completed(plan, selector, evaluation, 'interrupted', 130, 'after-arm')
 }
 
 async function bindRoleTreeConditionSelector(
@@ -287,7 +292,7 @@ function evaluateState(
     plan.quantifier === 'all'
       ? members.length > 0 && matched.length === members.length
       : matched.length > 0
-  const deadIsNamed = plan.conditions.includes('runtime-dead')
+  const deadIsNamed = !plan.implicit && plan.conditions.includes('runtime-dead')
   const deadMembers = members.filter((member) => runtimeLevel(member.status) === 'runtime-dead')
   const obstructed = !deadIsNamed && plan.quantifier !== 'any' && deadMembers.length > 0
   const frozenMemberMissing =
@@ -395,6 +400,7 @@ function matchEdgeAfterArm(
       scopeRef?: string | undefined
       runtimeId?: string | undefined
       contextChanged?: boolean | undefined
+      failureResult?: 'turn_failed' | 'runtime_dead' | 'runtime_crashed' | undefined
     }
   | undefined {
   for (const event of state.events) {
@@ -404,7 +410,29 @@ function matchEdgeAfterArm(
       plan.conditions.includes('turn-finished') &&
       (name === 'turn.finished' || name === 'turn.completed' || name === 'turn.failed')
     ) {
-      return { condition: 'turn-finished', scopeRef: event.scopeRef, runtimeId: event.runtimeId }
+      const rawResult = String(event['result'] ?? '')
+      const failureResult =
+        name === 'turn.failed'
+          ? 'turn_failed'
+          : rawResult === 'turn_failed' ||
+              rawResult === 'runtime_dead' ||
+              rawResult === 'runtime_crashed'
+            ? rawResult
+            : undefined
+      return {
+        condition: 'turn-finished',
+        scopeRef: event.scopeRef,
+        runtimeId: event.runtimeId,
+        ...(failureResult ? { failureResult } : {}),
+      }
+    }
+    if (plan.implicit && (name === 'runtime.dead' || name === 'runtime.crashed')) {
+      return {
+        condition: 'runtime-dead',
+        scopeRef: event.scopeRef,
+        runtimeId: event.runtimeId,
+        failureResult: name === 'runtime.crashed' ? 'runtime_crashed' : 'runtime_dead',
+      }
     }
     if (plan.conditions.includes('response') && name === 'message.response') {
       return { condition: 'response', scopeRef: event.scopeRef, runtimeId: event.runtimeId }
@@ -431,6 +459,7 @@ function completed(
     observedAt: evaluation.observedAt,
     members: evaluation.members,
     result,
+    outcome: monitorOutcome(exitCode),
     exitCode,
     ...(evaluation.matchedCondition ? { matchedCondition: evaluation.matchedCondition } : {}),
     ...(evaluation.scopeRef ? { scopeRef: evaluation.scopeRef } : {}),
@@ -441,141 +470,23 @@ function completed(
   return { exitCode, event }
 }
 
+function monitorOutcome(exitCode: number): HrcMonitorOutcome {
+  if (
+    exitCode === MONITOR_EXIT_CODES.matchedAfterArm ||
+    exitCode === MONITOR_EXIT_CODES.alreadyTrueAtArm
+  ) {
+    return 'success'
+  }
+  if (exitCode === MONITOR_EXIT_CODES.terminalFailure) return 'observed_failure'
+  if (exitCode === MONITOR_EXIT_CODES.monitorError || exitCode === 130) return 'error'
+  return 'not_matched'
+}
+
 function monitorHighWater(state: HrcMonitorState): number {
   return (
     state.eventGlobalHighWaterSeq ??
     state.events.reduce((max, event) => Math.max(max, event.seq), 0)
   )
-}
-
-/** The single condition-engine invocation path used by both monitor verbs. */
-export function waitForMonitorCondition(
-  reader: HrcMonitorConditionEngineReader,
-  request: HrcMonitorConditionWaitRequest
-): Promise<HrcMonitorConditionOutcome> {
-  return createMonitorConditionEngine(reader).wait(request)
-}
-
-function isDecisiveConditionOutcome(outcome: HrcMonitorConditionOutcome): boolean {
-  return (
-    outcome.result !== 'timeout' &&
-    outcome.result !== 'stalled' &&
-    outcome.result !== 'monitor_error'
-  )
-}
-
-export async function waitForAnyMonitorCondition(
-  initialState: HrcMonitorState,
-  args: MonitorConditionArgs,
-  specs: readonly MonitorSelectorSpec[],
-  io: { buildMonitorState: MonitorStateBuilder }
-): Promise<AnyMonitorConditionResult> {
-  const condition = args.until as HrcMonitorCondition
-  const terminalFence = args.terminalFence
-  const startedAt = Date.now()
-  const deadline = args.timeoutMs === undefined ? undefined : startedAt + args.timeoutMs
-  const controller = new AbortController()
-  const seen = new Set<string>()
-  let fallback: AnyMonitorConditionResult | undefined
-
-  return await new Promise<AnyMonitorConditionResult>((resolve) => {
-    let settled = false
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
-    const onAbort = (): void => {
-      finish({
-        outcome: { result: 'monitor_error', exitCode: 130 },
-        selector: runtimeSelector('aborted'),
-        scopeRef: '',
-      })
-    }
-    const finish = (result: AnyMonitorConditionResult): void => {
-      if (settled) return
-      settled = true
-      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
-      args.signal?.removeEventListener('abort', onAbort)
-      controller.abort()
-      resolve(result)
-    }
-    if (deadline !== undefined) {
-      deadlineTimer = setTimeout(
-        () => {
-          finish(
-            fallback ?? {
-              outcome: { result: 'timeout', exitCode: 1 },
-              selector: runtimeSelector('unresolved'),
-              scopeRef: '',
-            }
-          )
-        },
-        Math.max(0, deadline - Date.now())
-      )
-    }
-    args.signal?.addEventListener('abort', onAbort, { once: true })
-    if (args.signal?.aborted) onAbort()
-    const startCandidate = (
-      candidate: SelectorConditionCandidate,
-      state: HrcMonitorState
-    ): void => {
-      if (seen.has(candidate.key)) return
-      seen.add(candidate.key)
-      const remaining = deadline === undefined ? undefined : Math.max(1, deadline - Date.now())
-      void waitForMonitorCondition(
-        createArmPhaseReader(state, io.buildMonitorState, {
-          firstRead: 'refresh',
-          signal: controller.signal,
-        }),
-        {
-          selector: candidate.selector,
-          condition,
-          timeoutMs: remaining,
-          stallAfterMs: args.stallAfterMs,
-          ...(terminalFence ? { terminalFence } : {}),
-        }
-      ).then((outcome) => {
-        const result = { outcome, selector: candidate.selector, scopeRef: candidate.scopeRef }
-        fallback ??= result
-        if (isDecisiveConditionOutcome(outcome)) finish(result)
-      })
-    }
-
-    void (async () => {
-      let state = initialState
-      while (!settled && !controller.signal.aborted) {
-        for (const candidate of selectorConditionCandidates(state, specs)) {
-          startCandidate(candidate, state)
-        }
-        if (args.signal?.aborted) {
-          finish({
-            outcome: { result: 'monitor_error', exitCode: 130 },
-            selector: runtimeSelector('aborted'),
-            scopeRef: '',
-          })
-          return
-        }
-        if (deadline !== undefined && Date.now() >= deadline) {
-          finish(
-            fallback ?? {
-              outcome: { result: 'timeout', exitCode: 1 },
-              selector: runtimeSelector('unresolved'),
-              scopeRef: '',
-            }
-          )
-          return
-        }
-        await delay(POLL_MS)
-        if (settled || controller.signal.aborted) return
-        state = await io.buildMonitorState(controller.signal)
-      }
-    })().catch((error: unknown) => {
-      if (settled || controller.signal.aborted) return
-      finish({
-        outcome: { result: 'monitor_error', exitCode: 3 },
-        selector: runtimeSelector('unresolved'),
-        scopeRef: '',
-      })
-      void error
-    })
-  })
 }
 
 function delay(ms: number): Promise<void> {

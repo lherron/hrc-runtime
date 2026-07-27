@@ -433,9 +433,9 @@ describe('hrc monitor show acceptance (T-01289)', () => {
     expect(result.stderr).toMatch(/invalid selector|invalid scope input|usage/i)
   })
 
-  it('exits 3 when the daemon is down or snapshot cannot be read', async () => {
+  it('exits 23 when the daemon is down or snapshot cannot be read', async () => {
     const result = await runCliSubprocess(['monitor', 'show', '--json'], cliEnv())
-    expect(result.exitCode).toBe(3)
+    expect(result.exitCode).toBe(23)
     expect(result.stdout).toBe('')
     expect(result.stderr).toMatch(/daemon|snapshot|socket|connect/i)
   })

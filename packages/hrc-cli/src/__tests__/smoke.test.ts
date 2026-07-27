@@ -175,8 +175,6 @@ describe('hrc-cli commander migration smoke fixtures', () => {
       'start',
       'run',
       'turn',
-      'surface',
-      'bridge',
     ]) {
       expect(output).toContain(command)
     }

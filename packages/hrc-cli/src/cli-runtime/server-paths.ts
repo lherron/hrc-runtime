@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { CliUsageError } from 'cli-kit'
 import {
   resolveControlSocketPath,
   resolveDatabasePath,
@@ -67,7 +68,9 @@ export function validateDiagnosticRoot(path: string, label: string): void {
   if (!existsSync(path)) return
   const stat = statSync(path)
   if (!stat.isDirectory()) {
-    throw new Error(`${label} is not a directory: ${path}`)
+    throw new CliUsageError(
+      `${label} is not a directory: ${path}. Set the corresponding HRC path environment variable to a directory or remove the conflicting file.`
+    )
   }
 }
 

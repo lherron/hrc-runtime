@@ -3,6 +3,7 @@ import { parseScopeRef } from 'agent-scope'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import {
   HrcDomainError,
+  HrcErrorCode,
   type HrcMessageRecord,
   type HrcMonitorCondition,
   type HrcMonitorEvent,
@@ -50,11 +51,16 @@ export class MonitorWaitExit extends Error {
   }
 }
 
-export async function cmdMonitorWait(args: string[]): Promise<void> {
+export type MonitorWaitDeps = {
+  initialState: HrcMonitorState
+  buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
+}
+
+export async function cmdMonitorWait(args: string[], deps?: MonitorWaitDeps): Promise<void> {
   const options = parseWaitArgs(args)
 
   try {
-    const exitCode = await runMonitorWait(options)
+    const exitCode = await runMonitorWait(options, deps)
     throw new MonitorWaitExit(exitCode)
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -62,14 +68,29 @@ export async function cmdMonitorWait(args: string[]): Promise<void> {
       throw new MonitorWaitExit(2)
     }
     if (error instanceof HrcDomainError) {
-      writeWaitUsageError(error.message, options.json)
-      throw new MonitorWaitExit(2)
+      if (
+        error.code === HrcErrorCode.MALFORMED_REQUEST ||
+        error.code === HrcErrorCode.INVALID_SELECTOR ||
+        error.code === HrcErrorCode.INVALID_FENCE
+      ) {
+        writeWaitUsageError(error.message, options.json)
+        throw new MonitorWaitExit(2)
+      }
+      const exitCode = writeEarlyMonitorError(
+        options.selectorRaws.join(','),
+        error.message,
+        options.json
+      )
+      throw new MonitorWaitExit(exitCode)
     }
     throw error
   }
 }
 
-async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
+async function runMonitorWait(
+  options: MonitorWaitOptions,
+  deps?: MonitorWaitDeps
+): Promise<number> {
   validateOptions(options)
   const timeoutMs = options.timeout ? parseDuration(options.timeout) : undefined
   const deadlineAt = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
@@ -92,7 +113,7 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   if (options.since !== undefined) {
     throw new CliUsageError('--since is not supported by the explicit condition grammar')
   }
-  const fixtureState = readFixtureState()
+  const fixtureState = deps?.initialState ?? readFixtureState()
   let liveSource: LiveMonitorStateSource | undefined
   if (!fixtureState) {
     try {
@@ -108,14 +129,23 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
     }
   }
   const initialState = fixtureState ?? liveSource?.initialState
-  if (!initialState) throw new Error('monitor wait failed to build initial state')
+  if (!initialState) {
+    return writeEarlyMonitorError(
+      selectorSetLabel(selectorSpecs),
+      'initial monitor state unavailable',
+      options.json
+    )
+  }
   const result = await runMonitorUntilPlan(
     initialState,
     plan,
     selectorSpecs,
     {
       buildMonitorState: async (signal) =>
-        fixtureState ?? liveSource?.buildMonitorState(signal) ?? initialState,
+        deps?.buildMonitorState(signal) ??
+        (deps
+          ? initialState
+          : (fixtureState ?? liveSource?.buildMonitorState(signal) ?? initialState)),
       stderr: process.stderr,
     },
     {
@@ -278,24 +308,52 @@ function remainingDeadlineMs(deadlineAt: number): number {
   return Math.max(0, deadlineAt - Date.now())
 }
 
-function writeEarlyTimeout(
+export function writeEarlyTimeout(
   selectorLabel: string,
   condition: HrcMonitorCondition,
   json: boolean
 ): number {
+  const observedAt = new Date().toISOString()
   writeWaitFinalEvent(
     {
       event: 'monitor.completed',
       selector: selectorLabel,
       condition,
       result: 'timeout',
-      exitCode: 1,
+      outcome: 'not_matched',
+      exitCode: 20,
+      phase: 'before-arm',
+      observedAt,
+      members: [],
+      reason: 'initial_read_timeout',
       replayed: false,
-      ts: new Date().toISOString(),
+      ts: observedAt,
     },
     json
   )
-  return 1
+  return 20
+}
+
+function writeEarlyMonitorError(selectorLabel: string, reason: string, json: boolean): number {
+  const observedAt = new Date().toISOString()
+  writeWaitFinalEvent(
+    {
+      event: 'monitor.completed',
+      selector: selectorLabel,
+      result: 'monitor_error',
+      outcome: 'error',
+      exitCode: 23,
+      phase: 'before-arm',
+      observedAt,
+      members: [],
+      reason: 'initial_read_unavailable',
+      detail: reason,
+      replayed: false,
+      ts: observedAt,
+    },
+    json
+  )
+  return 23
 }
 
 export async function createLiveMonitorStateSource(

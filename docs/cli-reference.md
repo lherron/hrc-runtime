@@ -292,11 +292,18 @@ The exit code is the result code of the awaited condition (from the hrc-core mon
 
 | Code | Result(s) | Meaning |
 | ---: | --- | --- |
-| 0 | `response`, `idle`, `busy`, `turn_succeeded`, `no_active_turn`, `already_idle`, `already_busy`, `already_dead`, `idle_no_response` | Condition satisfied (or already true at start). |
-| 1 | `timeout`, `stalled` | Wait window elapsed (`--timeout`) or inactivity threshold hit (`--stall-after`) without a match. |
-| 2 | `runtime_dead`, `runtime_crashed`, turn-finished failure results; usage/domain errors | Runtime died/crashed, the turn finished in a failure state, or the invocation was rejected (bad selector, missing `--until`, etc.). |
-| 3 | `monitor_error` | Internal monitor/event-stream error. |
-| 4 | `context_changed` (reasons: `generation_changed`, `session_rebound`, `cleared`), `turn_finished_without_response` | The session generation/context changed out from under the wait, or the turn finished without producing the expected response. Common when a `msg:` wait targets a message whose session has rotated. |
+| 0 | matched after arm | Condition satisfied (`outcome:success`). |
+| 10 | already true at arm | Requested level truth predated the wait (`outcome:success`). |
+| 11 | no session ever | No matching session appeared (`outcome:not_matched`). |
+| 12 | runtime-death obstruction | Death prevented a different requested condition (`outcome:not_matched`). |
+| 13 | `turn_failed`, implicit `runtime_dead` / `runtime_crashed` | A failed terminal was positively observed (`outcome:observed_failure`). |
+| 20 | `timeout` | Wait window elapsed (`outcome:not_matched`). |
+| 21 | `stalled` | Inactivity threshold elapsed (`outcome:not_matched`). |
+| 22 | `context_changed`, `turn_finished_without_response` | Context changed or the expected response became impossible (`outcome:not_matched`). |
+| 23 | `monitor_error` | Internal monitor/event-stream error (`outcome:error`). |
+| 130 | `interrupted` | Caller interrupted the wait (`outcome:error`). |
+
+Usage/selector rejection exits 2 before arm and emits no terminal event.
 
 ### `hrc` general
 

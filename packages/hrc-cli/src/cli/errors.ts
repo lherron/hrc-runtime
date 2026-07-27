@@ -1,4 +1,4 @@
-import { type HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 import { printJson } from '../print.js'
 import { CliStatusExit } from './shared.js'
@@ -16,20 +16,34 @@ export function isHrcDomainErrorLike(
   )
 }
 
-export function printHrcDomainErrorBody(err: unknown): boolean {
+export function throwIfHrcDomainError(err: unknown): void {
   if (!isHrcDomainErrorLike(err)) {
-    return false
+    return
   }
 
-  throw new Error(
-    JSON.stringify({
-      error: {
-        code: err.code,
-        message: err.message,
-        detail: err.detail ?? {},
-      },
-    })
-  )
+  if (err instanceof HrcDomainError) throw err
+  throw new HrcDomainError(err.code, err.message, err.detail ?? {})
+}
+
+function stableScopeErrorCode(err: unknown): string {
+  if (isHrcDomainErrorLike(err)) return err.code
+  const message = err instanceof Error ? err.message : String(err)
+  if (/no session exists|session .*not found|unknown session/i.test(message)) {
+    return 'session_not_found'
+  }
+  if (/no live runtime|no active runtime|runtime .*not found|unknown runtime/i.test(message)) {
+    return 'runtime_not_found'
+  }
+  if (/agent .*not found|unknown agent|no agent/i.test(message)) {
+    return 'agent_not_found'
+  }
+  if (/daemon socket not found|cannot reach HRC daemon|ECONNREFUSED/i.test(message)) {
+    return 'daemon_unavailable'
+  }
+  if (/invalid|requires|must |unknown option|missing required/i.test(message)) {
+    return 'invalid_input'
+  }
+  return 'internal'
 }
 
 /**
@@ -45,10 +59,11 @@ export function emitScopeCommandErrorJson(
   scopeInput: string,
   sessionRef?: string
 ): never {
+  const stableCode = stableScopeErrorCode(err)
   const base = isHrcDomainErrorLike(err)
     ? { code: err.code, message: err.message, detail: err.detail ?? {} }
     : {
-        code: 'internal',
+        code: stableCode,
         message: err instanceof Error ? err.message : String(err),
         detail: {} as Record<string, unknown>,
       }
@@ -60,7 +75,13 @@ export function emitScopeCommandErrorJson(
       ...(sessionRef ? { sessionRef } : {}),
     },
   })
-  throw new CliStatusExit(1)
+  const usage =
+    stableCode === 'invalid_input' ||
+    (isHrcDomainErrorLike(err) &&
+      (err.code === HrcErrorCode.MALFORMED_REQUEST ||
+        err.code === HrcErrorCode.INVALID_SELECTOR ||
+        err.code === HrcErrorCode.INVALID_FENCE))
+  throw new CliStatusExit(usage ? 2 : 1)
 }
 
 /**
@@ -165,6 +186,11 @@ export function explainScopeCommandError(
       }
       if (detail.runId) {
         lines.push(`  runId: ${detail.runId}  (grep hrc-server logs for full diagnostics)`)
+      }
+      if (detail.code === 'broker_runtime_not_active') {
+        lines.push(
+          '  next: retry the same command once; the broker runtime may still be reattaching'
+        )
       }
       return new Error(lines.join('\n'))
     }

@@ -26,7 +26,7 @@ import {
 } from '../selector-resolve.js'
 import { hasFlag, parseFlag, parseTransportFlag, splitCsv } from './argv.js'
 import { requireArg } from './argv.js'
-import { printHrcDomainErrorBody } from './errors.js'
+import { throwIfHrcDomainError } from './errors.js'
 import { cmdSessionList } from './handlers-server.js'
 import { createClient, fatal } from './shared.js'
 
@@ -682,9 +682,7 @@ export async function cmdAdopt(args: string[]): Promise<void> {
     const result = await client.adoptRuntime(runtimeId)
     printJson(result)
   } catch (err) {
-    if (printHrcDomainErrorBody(err)) {
-      return
-    }
+    throwIfHrcDomainError(err)
     throw err
   }
 }

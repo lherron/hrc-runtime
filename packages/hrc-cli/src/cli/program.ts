@@ -1,15 +1,41 @@
 import { CliUsageError, exitWithError } from 'cli-kit'
 import { type Command, CommanderError } from 'commander'
 
-import { HrcDomainError } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 import { MonitorWaitExit } from '../monitor-wait.js'
 import { buildProgram } from './build-program.js'
-import { normalizeCommanderError } from './command-errors.js'
+import { normalizeCommanderError, validateCommandPathBeforeHelp } from './command-errors.js'
 import { renderRootHelp, resolveHelpView } from './help.js'
 import { CliStatusExit } from './shared.js'
 
-function handleCliError(err: unknown, program: Command): never {
+const USAGE_DOMAIN_CODES = new Set<string>([
+  HrcErrorCode.MALFORMED_REQUEST,
+  HrcErrorCode.INVALID_SELECTOR,
+  HrcErrorCode.INVALID_FENCE,
+])
+
+function domainErrorAdvice(err: HrcDomainError): string | undefined {
+  if (err.detail['code'] === 'broker_runtime_not_active') {
+    return 'Retry the same command once; the broker runtime may still be reattaching.'
+  }
+  const recommendation = err.detail['recommendation']
+  return typeof recommendation === 'string' && recommendation.length > 0
+    ? recommendation
+    : undefined
+}
+
+export function formatHrcDomainError(err: HrcDomainError): string {
+  const lines = [`[${err.code}] ${err.message}`]
+  if (Object.keys(err.detail).length > 0) {
+    lines.push(`detail: ${JSON.stringify(err.detail)}`)
+  }
+  const advice = domainErrorAdvice(err)
+  if (advice) lines.push(`next: ${advice}`)
+  return lines.join('\n')
+}
+
+export function handleCliError(err: unknown, program: Command): never {
   const rootOptions = program.opts<{ json?: boolean | undefined; output?: string | undefined }>()
   const json = rootOptions.json === true || rootOptions.output === 'json'
 
@@ -37,7 +63,27 @@ function handleCliError(err: unknown, program: Command): never {
   }
 
   if (err instanceof HrcDomainError) {
-    exitWithError(new Error(`[${err.code}] ${err.message}`), { json, binName: 'hrc' })
+    const usage = USAGE_DOMAIN_CODES.has(err.code)
+    const advice = domainErrorAdvice(err)
+    if (json) {
+      process.stderr.write(
+        `${JSON.stringify({
+          error: {
+            code: err.code,
+            message: err.message,
+            detail: err.detail,
+            ...(advice ? { advice } : {}),
+            usage,
+          },
+        })}\n`
+      )
+      process.exit(usage ? 2 : 1)
+    }
+    const rendered = formatHrcDomainError(err)
+    exitWithError(usage ? new CliUsageError(rendered) : new Error(rendered), {
+      json: false,
+      binName: 'hrc',
+    })
   }
 
   exitWithError(err, { json, binName: 'hrc' })
@@ -51,10 +97,11 @@ export async function runProgram(
   configureProgram?.(program)
   if (argv.length <= 2) {
     process.stderr.write(renderRootHelp(program, resolveHelpView()))
-    process.exit(1)
+    process.exit(2)
   }
 
   try {
+    validateCommandPathBeforeHelp(program, argv.slice(2))
     await program.parseAsync(argv)
   } catch (err) {
     handleCliError(err, program)

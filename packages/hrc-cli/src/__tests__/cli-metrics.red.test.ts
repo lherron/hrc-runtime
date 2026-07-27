@@ -257,11 +257,11 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
     const result = await runEntry(HRC_ENTRY, [], sandbox)
     const line = await readOnlyMetric(sandbox.stateRoot)
 
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expectBaseMetric(line, {
       bin: 'hrc',
       cmd: '',
-      exitCode: 1,
+      exitCode: 2,
       stdoutBytes: result.stdout.byteLength,
     })
     expect(line.record.rpc).toEqual([])

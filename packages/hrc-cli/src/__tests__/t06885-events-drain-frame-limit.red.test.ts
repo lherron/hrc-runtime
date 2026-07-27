@@ -19,7 +19,18 @@ async function runDrain(
   sourceRef: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(
-    ['bun', 'run', CLI_PATH, 'events', 'drain', dbPath, '--source-ref', sourceRef, '--json'],
+    [
+      'bun',
+      'run',
+      CLI_PATH,
+      'admin',
+      'events',
+      'drain',
+      dbPath,
+      '--source-ref',
+      sourceRef,
+      '--json',
+    ],
     {
       env: { ...process.env, HRC_RUNTIME_DIR: runtimeRoot },
       stdout: 'pipe',

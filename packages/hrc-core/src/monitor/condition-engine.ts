@@ -40,8 +40,11 @@ export type HrcMonitorFailureKind =
   | 'cancelled'
   | 'unknown'
 
+export type HrcMonitorOutcome = 'success' | 'not_matched' | 'observed_failure' | 'error'
+
 export type HrcMonitorConditionOutcome = {
   result: HrcMonitorConditionResult
+  outcome: HrcMonitorOutcome
   exitCode: number
   runId?: string | undefined
   reason?: HrcMonitorContextChangedReason | undefined
@@ -128,6 +131,7 @@ const EXIT_CODE = {
   ok: 0,
   alreadyTrue: 10,
   obstruction: 12,
+  terminalFailure: 13,
   timeout: 20,
   stalled: 21,
   contextChanged: 22,
@@ -179,14 +183,14 @@ export function createMonitorConditionEngine(
           if (next.kind === 'timeout') {
             return withCompletedEvent(
               context,
-              { result: 'timeout', exitCode: EXIT_CODE.timeout },
+              { result: 'timeout', outcome: 'not_matched', exitCode: EXIT_CODE.timeout },
               eventStream
             )
           }
           if (next.kind === 'stalled') {
             return withCompletedEvent(
               context,
-              { result: 'stalled', exitCode: EXIT_CODE.stalled },
+              { result: 'stalled', outcome: 'not_matched', exitCode: EXIT_CODE.stalled },
               eventStream
             )
           }
@@ -248,34 +252,34 @@ const CONDITION_STRATEGIES = {
   'turn-finished': {
     start: (context) =>
       context.capture.activeTurnId === null
-        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
+        ? { result: 'no_active_turn', outcome: 'success', exitCode: EXIT_CODE.ok }
         : null,
     event: (context, event) => evaluateTurnFinished(context, event),
   },
   idle: {
     start: (_context, snapshot) =>
       isIdleRuntimeStatus(snapshot.runtime?.status)
-        ? { result: 'already_idle', exitCode: EXIT_CODE.alreadyTrue }
+        ? { result: 'already_idle', outcome: 'success', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) =>
       eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
+        ? { result: resultValue(event, 'idle'), outcome: 'success', exitCode: EXIT_CODE.ok }
         : null,
   },
   busy: {
     start: (_context, snapshot) =>
       snapshot.runtime?.status === 'busy'
-        ? { result: 'already_busy', exitCode: EXIT_CODE.alreadyTrue }
+        ? { result: 'already_busy', outcome: 'success', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) =>
       eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
+        ? { result: resultValue(event, 'busy'), outcome: 'success', exitCode: EXIT_CODE.ok }
         : null,
   },
   'runtime-dead': {
     start: (_context, snapshot) =>
       isDeadRuntimeStatus(snapshot.runtime?.status)
-        ? { result: 'already_dead', exitCode: EXIT_CODE.alreadyTrue }
+        ? { result: 'already_dead', outcome: 'success', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) => runtimeDeathOutcome(context, event),
   },
@@ -321,9 +325,14 @@ function evaluateTurnFinished(
 
   const result = resultValue(event, 'turn_succeeded')
   if (result === 'turn_failed' || result === 'runtime_dead' || result === 'runtime_crashed') {
-    return { result, exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
+    return {
+      result,
+      outcome: 'observed_failure',
+      exitCode: EXIT_CODE.terminalFailure,
+      failureKind: failureKindValue(event),
+    }
   }
-  return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
+  return { result: 'turn_succeeded', outcome: 'success', exitCode: EXIT_CODE.ok }
 }
 
 function evaluateResponse(
@@ -331,10 +340,14 @@ function evaluateResponse(
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
   if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
-    return { result: 'response', exitCode: EXIT_CODE.ok }
+    return { result: 'response', outcome: 'success', exitCode: EXIT_CODE.ok }
   }
   if (isCapturedTurnIdleOrFinished(context, event)) {
-    return { result: 'turn_finished_without_response', exitCode: EXIT_CODE.contextChanged }
+    return {
+      result: 'turn_finished_without_response',
+      outcome: 'not_matched',
+      exitCode: EXIT_CODE.contextChanged,
+    }
   }
   return null
 }
@@ -346,6 +359,7 @@ function runtimeDeathOutcome(
   if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
     return {
       result: 'runtime_dead',
+      outcome: context.condition === 'runtime-dead' ? 'success' : 'not_matched',
       exitCode: context.condition === 'runtime-dead' ? EXIT_CODE.ok : EXIT_CODE.obstruction,
       failureKind: failureKindValue(event),
     }
@@ -353,6 +367,7 @@ function runtimeDeathOutcome(
   if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
     return {
       result: 'runtime_crashed',
+      outcome: context.condition === 'runtime-dead' ? 'success' : 'not_matched',
       exitCode: context.condition === 'runtime-dead' ? EXIT_CODE.ok : EXIT_CODE.obstruction,
       failureKind: failureKindValue(event),
     }
@@ -367,7 +382,12 @@ function evaluateContextChanged(
   const explicitResult = unknownString(event, 'result')
   const explicitReason = unknownString(event, 'reason')
   if (explicitResult === 'context_changed' && isContextChangedReason(explicitReason)) {
-    return { result: 'context_changed', reason: explicitReason, exitCode: EXIT_CODE.contextChanged }
+    return {
+      result: 'context_changed',
+      outcome: 'not_matched',
+      reason: explicitReason,
+      exitCode: EXIT_CODE.contextChanged,
+    }
   }
 
   const sameSession = unknownString(event, 'sessionRef') === context.capture.sessionRef
@@ -377,6 +397,7 @@ function evaluateContextChanged(
     if (eventGeneration !== undefined && eventGeneration !== context.capture.generation) {
       return {
         result: 'context_changed',
+        outcome: 'not_matched',
         reason: 'generation_changed',
         exitCode: EXIT_CODE.contextChanged,
       }
@@ -390,6 +411,7 @@ function evaluateContextChanged(
   ) {
     return {
       result: 'context_changed',
+      outcome: 'not_matched',
       reason: 'session_rebound',
       exitCode: EXIT_CODE.contextChanged,
     }
@@ -399,7 +421,12 @@ function evaluateContextChanged(
     (eventKind(event) === 'context.cleared' || eventKind(event) === 'session.cleared') &&
     sameSession
   ) {
-    return { result: 'context_changed', reason: 'cleared', exitCode: EXIT_CODE.contextChanged }
+    return {
+      result: 'context_changed',
+      outcome: 'not_matched',
+      reason: 'cleared',
+      exitCode: EXIT_CODE.contextChanged,
+    }
   }
 
   return null
@@ -465,6 +492,7 @@ function withCompletedEvent(
     scopeRef: context.capture.scopeRef,
     condition: context.condition,
     result: outcome.result,
+    outcome: outcome.outcome,
     ...(outcome.runId !== undefined ? { runId: outcome.runId } : {}),
     ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     ...(outcome.failureKind !== undefined ? { failureKind: outcome.failureKind } : {}),
@@ -489,7 +517,7 @@ async function waitForEndTimer(
   if (nextTimer === null) {
     return withCompletedEvent(
       context,
-      { result: 'monitor_error', exitCode: EXIT_CODE.monitorError },
+      { result: 'monitor_error', outcome: 'error', exitCode: EXIT_CODE.monitorError },
       eventStream
     )
   }
@@ -502,13 +530,13 @@ async function waitForEndTimer(
   if (timeoutDeadline !== null && timeoutDeadline <= (stallDeadline ?? Number.POSITIVE_INFINITY)) {
     return withCompletedEvent(
       context,
-      { result: 'timeout', exitCode: EXIT_CODE.timeout },
+      { result: 'timeout', outcome: 'not_matched', exitCode: EXIT_CODE.timeout },
       eventStream
     )
   }
   return withCompletedEvent(
     context,
-    { result: 'stalled', exitCode: EXIT_CODE.stalled },
+    { result: 'stalled', outcome: 'not_matched', exitCode: EXIT_CODE.stalled },
     eventStream
   )
 }

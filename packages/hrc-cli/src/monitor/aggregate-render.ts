@@ -1,4 +1,4 @@
-import type { HrcMonitorRuntimeState } from 'hrc-core'
+import type { HrcMonitorOutcome, HrcMonitorRuntimeState } from 'hrc-core'
 
 export type MonitorConditionMember = {
   scopeRef: string
@@ -13,10 +13,11 @@ export type MonitorConditionEvent = {
   selector: string
   quantifier: 'exact' | 'any' | 'all'
   conditions: string[]
-  phase: 'at-arm' | 'after-arm'
+  phase: 'before-arm' | 'at-arm' | 'after-arm'
   observedAt: string
   members: MonitorConditionMember[]
   result: string
+  outcome: HrcMonitorOutcome
   exitCode: number
   matchedCondition?: string | undefined
   scopeRef?: string | undefined

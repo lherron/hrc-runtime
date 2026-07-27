@@ -42,7 +42,7 @@ inner harness (Claude SDK / Codex RPC / Pi) ──emits──▶ session events
                                   monitor.{snapshot,completed,stalled} on stdout
                                                              │
                                                              ▼
-                                              exit code  (0/1/2/3/4)
+                                              exit code  (0/10/11/12/13/20/21/22/23/130)
 ```
 
 The monitor reads three things from its `HrcMonitorConditionEngineReader`:
@@ -139,16 +139,16 @@ the first member of an ambiguous role tree.
 **Per-event evaluation** (`evaluateEvent`), in order:
 
 - `monitor.snapshot` events are ignored.
-- **Context-changed wins first** (`evaluateContextChanged`): an explicit `result=context_changed` with a valid `reason`; or a `generation` mismatch on the captured `sessionRef` → `generation_changed`; or a differing `hostSessionId` on the captured `sessionRef` → `session_rebound`; or a `context.cleared`/`session.cleared` event on the captured `sessionRef` → `cleared`. All → exit 4.
+- **Context-changed wins first** (`evaluateContextChanged`): an explicit `result=context_changed` with a valid `reason`; or a `generation` mismatch on the captured `sessionRef` → `generation_changed`; or a differing `hostSessionId` on the captured `sessionRef` → `session_rebound`; or a `context.cleared`/`session.cleared` event on the captured `sessionRef` → `cleared`. All → exit 22.
 - **Runtime failure next** (`evaluateRuntimeFailure`, skipped when the condition is itself `runtime-dead`): a `runtime.dead` or `runtime.crashed` event for the captured runtime short-circuits any wait → `runtime_dead` / `runtime_crashed`, exit 2, with `failureKind` from the event (default `unknown`).
 - Then the condition-specific branch:
-  - `turn-finished` → matches `turn.finished` for the captured turn; maps `turn_failed`→exit 2 (with failureKind), `runtime_dead`/`runtime_crashed`→exit 2, anything else→`turn_succeeded` exit 0.
+  - `turn-finished` → matches `turn.finished` for the captured turn; maps `turn_failed` / `runtime_dead` / `runtime_crashed` to `outcome:observed_failure`, exit 13; success exits 0.
   - `idle` → `runtime.idle` for the captured runtime → exit 0.
   - `busy` → `runtime.busy` for the captured runtime → exit 0.
-  - `response` → `message.response` matching the msg/seq selector → `response` exit 0; if instead the captured turn finishes or the runtime goes idle first → `turn_finished_without_response` exit 4.
+  - `response` → `message.response` matching the msg/seq selector → `response` exit 0; if instead the captured turn finishes or the runtime goes idle first → `turn_finished_without_response` exit 22.
   - `response` → matching `message.response` after arm → exit 0.
-  - `runtime-dead` → `runtime.dead` → exit 2; `runtime.crashed` → exit 2.
-  - `terminal` → `turn.finished` / `turn.completed` / `turn.failed` or `runtime.dead` / `runtime.crashed` at the cursor fence → exit 0, carrying the satisfying event's `runId` when present.
+  - `runtime-dead` → requested `runtime.dead` / `runtime.crashed` is success, exit 0; death obstructing another condition is `not_matched`, exit 12.
+  - the implicit success-seeking fence treats `turn.failed`, `runtime.dead`, and `runtime.crashed` as `observed_failure`, exit 13.
 
 ### Cursor-fenced terminal waits
 
@@ -158,21 +158,22 @@ Use an exact cursor for scripts and coordinators. A duration is a human convenie
 
 Fan-in uses an explicit quantifier. `ANY` admits later members and returns on the first matching member. `ALL` freezes membership at arm and succeeds only when every member matches one requested level in a single daemon-owned observation cut.
 
-**Stall / timeout** (`nextStreamResult`, `waitForEndTimer`): each loop races the next stream event against the `timeoutMs` and `stallAfterMs` deadlines. The stall deadline resets on every event. Timeout → `timeout` exit 1; stall → `stalled` exit 1. If the stream ends with no terminal and no remaining timer, → `monitor_error` exit 3.
+**Stall / timeout**: the loop races state observation against `timeoutMs` and `stallAfterMs`. Timeout → `timeout` exit 20; stall → `stalled` exit 21; observer failure → `monitor_error` exit 23. An initial-read timeout uses exit 20 with `phase:"before-arm"`, `reason:"initial_read_timeout"`, and `members:[]`.
 
-Every wait terminates by appending a synthetic completion event via `withCompletedEvent`: `monitor.stalled` when the result is `stalled`, otherwise `monitor.completed`, carrying `condition`, `result`, optional `reason`/`failureKind`, `exitCode`, `replayed:false`, and `ts`.
+Every armed wait terminates with exactly one `monitor.completed` or `monitor.stalled` event. Its `exitCode` equals the process exit code and it carries `result`, `outcome`, `phase`, last-observed state, `replayed:false`, and `ts`. Usage rejection exits 2 before arm and emits no terminal event.
 
 ## 7. Wait / exit-code semantics
 
-`hrc monitor` exits with a coarse numeric code so scripts can branch without parsing JSON; the precise sub-case lives in `result`.
+`hrc monitor` exposes both a numeric code and coarse `outcome`: `success`, `not_matched`, `observed_failure`, or `error`. The precise sub-case lives in `result`.
 
 | Exit | Meaning                | Representative results |
 | ---- | ---------------------- | ---------------------- |
-| 0    | Condition satisfied    | `turn_succeeded`, `response`, `idle`, `busy`, `idle_no_response`, `already_idle`, `already_busy`, `already_dead`, `no_active_turn` |
-| 1    | Did not converge       | `timeout`, `stalled` |
-| 2    | Failure / death observed | `turn_failed`, `runtime_dead`, `runtime_crashed` |
-| 3    | Monitor internal error | `monitor_error` |
-| 4    | Context invalidated / no response | `context_changed`, `turn_finished_without_response` |
+| 0 / 10 | Success | matched after arm / already true at arm |
+| 11 / 12 | Not matched | no session / runtime-death obstruction |
+| 13 | Observed failure | `turn_failed`, implicit `runtime_dead`, implicit `runtime_crashed` |
+| 20 / 21 / 22 | Not matched | timeout / stall / context change |
+| 23 / 130 | Error | monitor error / interruption |
+| 2 | Usage rejection | no terminal event |
 
 ### 7.3 Exit-code mapping (authoritative)
 
@@ -180,22 +181,16 @@ The mapping is produced directly by the `exitCode` set on each `HrcMonitorCondit
 
 | Result                            | exitCode | Carries |
 | --------------------------------- | -------- | ------- |
-| `turn_succeeded`                  | 0        | — |
-| `idle` / `busy`                   | 0        | — |
-| `response`                        | 0        | — |
-| `idle_no_response`                | 0        | — |
-| `already_idle` / `already_busy` / `already_dead` | 0 | — |
-| `no_active_turn`                  | 0        | — |
-| `timeout`                         | 1        | — |
-| `stalled`                         | 1        | (emitted as `monitor.stalled`) |
-| `turn_failed`                     | 2        | `failureKind` |
-| `runtime_dead`                    | 2        | `failureKind` |
-| `runtime_crashed`                 | 2        | `failureKind` |
-| `monitor_error`                   | 3        | — |
-| `context_changed`                 | 4        | `reason` |
-| `turn_finished_without_response`  | 4        | — |
-
-Exit 2 always carries a `failureKind`, defaulting to `unknown` when the source event did not classify it (§2).
+| matched after arm                 | 0        | `outcome:success` |
+| already true at arm               | 10       | `outcome:success` |
+| no session ever                   | 11       | `outcome:not_matched` |
+| runtime-death obstruction         | 12       | `outcome:not_matched` |
+| `turn_failed` / implicit death    | 13       | `outcome:observed_failure`, optional `failureKind` |
+| `timeout`                         | 20       | `outcome:not_matched` |
+| `stalled`                         | 21       | `outcome:not_matched`, emitted as `monitor.stalled` |
+| `context_changed` / no response   | 22       | `outcome:not_matched`, optional `reason` |
+| `monitor_error`                   | 23       | `outcome:error` |
+| `interrupted`                     | 130      | `outcome:error` |
 
 ## 8. Harness signal coverage
 

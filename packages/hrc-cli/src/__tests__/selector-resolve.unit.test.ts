@@ -65,6 +65,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import { describe, expect, it } from 'bun:test'
+import { CliUsageError } from 'cli-kit'
 
 // RED GATE: this import will fail until selector-resolve.ts is implemented
 import { SelectorResolutionError, resolveSelectorTarget } from '../selector-resolve'
@@ -195,6 +196,7 @@ describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
       resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
+      expect(err).toBeInstanceOf(CliUsageError)
       const resolveErr = err as SelectorResolutionError
       expect(resolveErr.code).toBe('type-mismatch')
       // The error message MUST name the accepted forms for this command type

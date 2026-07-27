@@ -6,7 +6,7 @@
  * hrc-sdk; these tests verify the wrapper layer specifically.
  *
  * Pass conditions for Curly (T-00957):
- *   1. `hrc` with no args prints help text to stderr and exits 1
+ *   1. `hrc` with no args prints help text to stderr and exits 2
  *   2. `hrc unknowncmd` prints error to stderr and exits 2
  *   3. `hrc session rotate` validates args and dispatches through
  *      hrc-sdk; `hrc turn` is a passthrough alias for `hrcchat turn`
@@ -641,9 +641,9 @@ async function waitForContinuation(
 // 1. No args / help
 // ===========================================================================
 describe('no args / help', () => {
-  it('prints help text to stderr and exits 1 when invoked with no args', async () => {
+  it('prints help text to stderr and exits 2 when invoked with no args', async () => {
     const result = await runCli([])
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.length).toBeGreaterThan(0)
     // Should mention available commands or usage
     expect(result.stderr.toLowerCase()).toMatch(/usage|help|commands/i)
@@ -751,15 +751,13 @@ describe('nested group commander help', () => {
     })
   }
 
-  it('characterizes invalid-segment --help masking for the sequenced entry-path fix', async () => {
-    // T-07011 records this fence without changing the error contract. The argv
-    // pre-walk follow-up should invert these assertions to exit 2 + an error.
+  it('rejects an invalid segment before --help can mask it', async () => {
     const result = await runCli(['runtime', 'lst', '--help'])
 
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Usage: hrc runtime')
-    expect(result.stdout).not.toContain('unknown command')
+    expect(result.exitCode).toBe(2)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('unknown command: lst')
+    expect(result.stderr).toContain("did you mean 'list'")
   })
 })
 
@@ -2228,9 +2226,9 @@ describe('hrc session get', () => {
     expect(session.hostSessionId).toBe(resolved.hostSessionId)
   })
 
-  it('exits 1 for unknown hostSessionId', async () => {
+  it('exits 2 for unknown hostSessionId', async () => {
     const result = await runCli(['session', 'get', 'nonexistent-hsid'], cliEnv())
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 

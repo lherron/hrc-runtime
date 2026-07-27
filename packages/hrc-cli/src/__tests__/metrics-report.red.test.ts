@@ -131,6 +131,10 @@ describe.serial('metrics report reader', () => {
   test('returns a stable empty report and skips malformed NDJSON lines', async () => {
     await mkdir(join(stateRoot, 'metrics'), { recursive: true })
     expect(await readMetricsReport({ since: '7d', now: NOW })).toEqual({
+      diagnostics: {
+        metricsDirExists: true,
+        filesScanned: 0,
+      },
       commands: [],
       routes: [],
       slowest: [],
@@ -143,6 +147,16 @@ describe.serial('metrics report reader', () => {
     expect(report.commands).toHaveLength(1)
     expect(report.routes).toHaveLength(1)
     expect(JSON.stringify(report)).not.toContain('NaN')
+  })
+
+  test('distinguishes a missing metrics directory from an empty readable directory', async () => {
+    const report = await readMetricsReport({ since: '7d', now: NOW })
+
+    expect(report.diagnostics).toEqual({
+      metricsDirExists: false,
+      filesScanned: 0,
+    })
+    expect(report.commands).toEqual([])
   })
 
   test('joins rpc ids into exact server, transport, and render buckets', async () => {

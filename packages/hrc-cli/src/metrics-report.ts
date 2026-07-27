@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -69,6 +69,10 @@ export type LargestServerMetric = {
 }
 
 export type MetricsReport = {
+  diagnostics: {
+    metricsDirExists: boolean
+    filesScanned: number
+  }
   commands: CommandMetricGroup[]
   routes: RouteMetricGroup[]
   slowest: SlowInvocation[]
@@ -272,11 +276,13 @@ export async function readMetricsReport(
   const now = options.now ?? new Date()
   const cutoff = now.getTime() - parseDurationMs(options.since ?? '7d')
   const metricsDir = join(resolveStateRoot(), 'metrics')
+  const metricsDirExists = existsSync(metricsDir)
   const names = await readdir(metricsDir).catch(() => [])
   const cli: CliMetricRecord[] = []
   const server: ServerMetricRecord[] = []
 
-  for (const name of names.filter((entry) => fileCouldContainWindow(entry, cutoff)).sort()) {
+  const selectedNames = names.filter((entry) => fileCouldContainWindow(entry, cutoff)).sort()
+  for (const name of selectedNames) {
     await readMetricFile(join(metricsDir, name), cutoff, cli, server)
   }
 
@@ -337,6 +343,10 @@ export async function readMetricsReport(
     )
 
   return {
+    diagnostics: {
+      metricsDirExists,
+      filesScanned: selectedNames.length,
+    },
     commands: groupCommands(cli),
     routes: groupRoutes(server),
     slowest,

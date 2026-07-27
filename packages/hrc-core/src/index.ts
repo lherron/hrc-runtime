@@ -405,6 +405,7 @@ export type {
   HrcMonitorConditionWaitRequest,
   HrcMonitorContextChangedReason,
   HrcMonitorFailureKind,
+  HrcMonitorOutcome,
 } from './monitor/condition-engine.js'
 export type {
   HrcMonitorCapture,

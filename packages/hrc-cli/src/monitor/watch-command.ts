@@ -1,22 +1,13 @@
 /**
  * Implementation for the hrc monitor watch event-stream command (F2b).
  *
- * Consumes F1a event-source (createMonitorReader), F1b condition engine
- * (createMonitorConditionEngine), and F1c schema (MonitorEventSchema).
- *
  * Without --follow: replays matching monitor events up to current high-water;
  * exits 0 even if zero matched.
  *
- * With --follow: streams new events. If --until provided, exits when the
- * condition resolves via the F1b engine.
+ * With --follow: streams new events and resolves through the shared watch/wait
+ * condition plan unless --forever is explicit.
  *
- * Exit codes (cli-kit convention):
- *   0  condition satisfied OR finite replay completed
- *   1  timeout / stall reached without satisfying condition
- *   2  usage error / invalid selector
- *   3  monitor infrastructure failure
- *   4  condition impossible (terminal non-matching state)
- * 130  SIGINT
+ * The public exit-code table is rendered by `hrc monitor watch --help`.
  */
 
 import { parseScopeRef } from 'agent-scope'
@@ -24,11 +15,8 @@ import { CliUsageError, parseDuration } from 'cli-kit'
 import {
   HrcDomainError,
   type HrcMonitorCondition,
-  type HrcMonitorConditionOutcome,
   type HrcMonitorEvent,
   type HrcMonitorState,
-  type HrcSelector,
-  createMonitorReader,
   formatSelector,
   resolveDatabasePath,
 } from 'hrc-core'
@@ -37,13 +25,8 @@ import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqli
 import { splitCsv } from '../cli/argv.js'
 import { matchStringFlag, parseNonNegativeInteger, parsePositiveInteger } from '../monitor-args.js'
 import { numberField, stringField } from '../monitor-fields.js'
-import { resolveTerminalFence } from '../monitor-terminal-fence.js'
-import { buildMonitorStateBeforeDeadline, createArmPhaseReader } from './arm-phase.js'
-import {
-  runMonitorUntilPlan,
-  waitForAnyMonitorCondition,
-  waitForMonitorCondition,
-} from './engine.js'
+import { type MonitorStateBuildResult, buildMonitorStateBeforeDeadline } from './arm-phase.js'
+import { runMonitorUntilPlan } from './engine.js'
 import {
   type MonitorOutputFormat,
   parseMonitorOutputFormat,
@@ -57,16 +40,17 @@ import {
 import {
   type MonitorSelectorSpec,
   eventMatchesSelectorSet,
-  isFanInSelectorSet,
   parseMonitorSelectors,
-  scopeRefForSelector,
   selectorSetLabel,
 } from './selector-shape.js'
 import { appendUntilValue, resolveMonitorUntilPlan } from './until-args.js'
 import { type LiveMonitorStateSource, createLiveMonitorStateSource } from './wait-command.js'
-import { runReplayOrFollow, writeFollowTimeoutCompletion } from './watch-stream.js'
-
-export { type AnyMonitorConditionResult, waitForAnyMonitorCondition } from './engine.js'
+import {
+  runReplayOrFollow,
+  writeFollowErrorCompletion,
+  writeFollowInterruptedCompletion,
+  writeFollowTimeoutCompletion,
+} from './watch-stream.js'
 
 // -- Types -------------------------------------------------------------------
 
@@ -198,6 +182,14 @@ async function runWatch(
 
   // Handle SIGINT
   if (signal?.aborted) {
+    const writer = createMonitorEventWriter(
+      io.stdout,
+      selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs),
+      args,
+      format
+    )
+    writeFollowInterruptedCompletion(writer, args, selector, { phase: 'before-arm' })
+    writer.flush()
     return 130
   }
 
@@ -222,11 +214,30 @@ async function runWatch(
   const filteredIo = wrapWithMonitorFilters(conditionIo, args, selectorSpecs)
 
   // Build state within the same timeout budget used by follow polling.
-  const initialBuild = await buildMonitorStateBeforeDeadline(
-    filteredIo.buildMonitorState,
-    signal,
-    deadlineAt
-  )
+  let initialBuild: MonitorStateBuildResult
+  try {
+    initialBuild = await buildMonitorStateBeforeDeadline(
+      filteredIo.buildMonitorState,
+      signal,
+      deadlineAt
+    )
+  } catch (error) {
+    io.stderr.write(
+      `monitor initial read failed: ${error instanceof Error ? error.message : String(error)}\n`
+    )
+    const writer = createMonitorEventWriter(
+      io.stdout,
+      selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs),
+      args,
+      format
+    )
+    writeFollowErrorCompletion(writer, args, selector, {
+      phase: 'before-arm',
+      reason: 'initial_monitor_read_failed',
+    })
+    writer.flush()
+    return 23
+  }
   if (initialBuild.kind === 'timeout') {
     const selectorLabel = selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs)
     const writer = createMonitorEventWriter(io.stdout, selectorLabel, args, format)
@@ -234,17 +245,28 @@ async function runWatch(
       writer,
       args,
       selector,
-      until ?? (selector ? 'terminal' : undefined)
+      until ?? (selector ? 'terminal' : undefined),
+      { phase: 'before-arm', reason: 'initial_read_timeout' }
     )
     writer.flush()
-    return 1
+    return 20
   }
-  if (initialBuild.kind === 'aborted') return 130
+  if (initialBuild.kind === 'aborted') {
+    const writer = createMonitorEventWriter(
+      io.stdout,
+      selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs),
+      args,
+      format
+    )
+    writeFollowInterruptedCompletion(writer, args, selector, { phase: 'before-arm' })
+    writer.flush()
+    return 130
+  }
   const state = initialBuild.state
 
   if (untilPlan !== undefined) {
     const result = await runMonitorUntilPlan(state, untilPlan, selectorSpecs, filteredIo, {
-      timeoutMs: args.timeoutMs,
+      timeoutMs: deadlineAt === undefined ? args.timeoutMs : Math.max(0, deadlineAt - Date.now()),
       stallAfterMs: args.stallAfterMs,
       signal,
     })
@@ -259,40 +281,10 @@ async function runWatch(
     return result.exitCode
   }
 
-  const implicitTerminal =
-    follow &&
-    until === undefined &&
-    args.forever !== true &&
-    selector !== undefined &&
-    resolvesToConcreteRuntime(state, selector)
-  const terminalMode = until === 'terminal' || implicitTerminal
-  if (args.since !== undefined && !terminalMode) {
-    throw new CliUsageError('--since requires terminal monitoring')
-  }
   const armedArgs =
     deadlineAt === undefined
       ? args
       : { ...args, deadlineAt, timeoutMs: Math.max(0, deadlineAt - Date.now()) }
-  const effectiveArgs = terminalMode
-    ? { ...armedArgs, terminalFence: resolveTerminalFence(state, args.since) }
-    : armedArgs
-  if (implicitTerminal) {
-    return runReplayOrFollow(
-      state,
-      { ...effectiveArgs, implicitTerminal: true },
-      selector,
-      filteredIo,
-      format,
-      isFilterActive(args)
-    )
-  }
-
-  if (args.until && follow) {
-    if (isFanInSelectorSet(selectorSpecs)) {
-      return runSelectorSetConditionWatch(state, effectiveArgs, selectorSpecs, filteredIo, format)
-    }
-    return runConditionWatch(state, effectiveArgs, selector, filteredIo, format)
-  }
   return runReplayOrFollow(state, armedArgs, selector, filteredIo, format, isFilterActive(args))
 }
 
@@ -324,147 +316,6 @@ function withTargetedConditionSource(
 function selectorArgs(args: MonitorWatchArgs): string[] {
   if (args.selectors && args.selectors.length > 0) return args.selectors
   return args.selector ? [args.selector] : []
-}
-
-function resolvesToConcreteRuntime(state: HrcMonitorState, selector: HrcSelector): boolean {
-  if (selector.kind === 'runtime') {
-    return state.runtimes.some((runtime) => runtime.runtimeId === selector.runtimeId)
-  }
-  if (selector.kind === 'host' || selector.kind === 'concrete') {
-    return state.sessions.some(
-      (session) =>
-        session.hostSessionId === selector.hostSessionId && session.runtimeId !== undefined
-    )
-  }
-  if (selector.kind === 'scope' || selector.kind === 'target' || selector.kind === 'session') {
-    return state.sessions.some((session) => {
-      if (session.runtimeId === undefined) return false
-      if (selector.kind === 'session') return session.sessionRef === selector.sessionRef
-      return session.scopeRef === selector.scopeRef
-    })
-  }
-  return false
-}
-
-// -- Condition-based watch (--follow --until) ---------------------------------
-
-async function runConditionWatch(
-  state: HrcMonitorState,
-  args: MonitorWatchArgs,
-  selector: HrcSelector | undefined,
-  io: MonitorWatchDeps,
-  format: MonitorOutputFormat
-): Promise<number> {
-  if (!selector) {
-    throw new CliUsageError('--until requires a selector')
-  }
-
-  const condition = args.until as HrcMonitorCondition
-  const selectorStr = formatSelector(selector)
-  const selectedScopeRef = scopeRefForSelector(state, selector)
-
-  // Use polling reader only when a timeout or stall-after is set, so new events
-  // arriving after the initial snapshot can be observed. Without any deadline the
-  // static reader drains and lets the condition engine return monitor_error (exit 3).
-  const hasDeadline = args.timeoutMs !== undefined || args.stallAfterMs !== undefined
-  const reader = hasDeadline
-    ? createArmPhaseReader(state, io.buildMonitorState, { firstRead: 'refresh' })
-    : createMonitorReader(state)
-  let outcome: HrcMonitorConditionOutcome
-  try {
-    outcome = await waitForMonitorCondition(reader, {
-      selector,
-      condition,
-      timeoutMs: args.timeoutMs,
-      stallAfterMs: args.stallAfterMs,
-      terminalFence: args.terminalFence,
-    })
-  } catch (error) {
-    if (error instanceof HrcDomainError) {
-      throw new CliUsageError(error.message)
-    }
-    throw error
-  }
-
-  // Emit accumulated event stream (includes monitor.snapshot at start
-  // and monitor.completed/monitor.stalled at the end, appended by engine).
-  // In follow+condition mode:
-  //   - Override replayed to false (all events are "live" from the CLI perspective)
-  //   - Enrich the final completed/stalled event with runtimeId/turnId from context.
-  if (outcome.eventStream) {
-    const writer = createMonitorEventWriter(io.stdout, selectorStr, args, format)
-    // Extract runtimeId/turnId from the last non-terminal event
-    let lastRuntimeId: string | undefined
-    let lastTurnId: string | undefined
-    for (const event of outcome.eventStream) {
-      const evName = stringField(event, 'event')
-      if (
-        evName !== 'monitor.completed' &&
-        evName !== 'monitor.stalled' &&
-        evName !== 'monitor.snapshot'
-      ) {
-        const rid = stringField(event, 'runtimeId')
-        const tid = stringField(event, 'turnId')
-        if (rid) lastRuntimeId = rid
-        if (tid) lastTurnId = tid
-      }
-    }
-
-    for (const event of outcome.eventStream) {
-      const evName = stringField(event, 'event')
-      // All events in follow+condition mode are non-replayed from CLI perspective
-      const enriched: Record<string, unknown> = { ...event, replayed: false }
-
-      if (evName === 'monitor.completed' || evName === 'monitor.stalled') {
-        // Enrich with runtimeId/turnId if not already present
-        if (lastRuntimeId && !stringField(event, 'runtimeId')) enriched['runtimeId'] = lastRuntimeId
-        if (lastTurnId && !stringField(event, 'turnId')) enriched['turnId'] = lastTurnId
-        if (selectedScopeRef && !stringField(event, 'scopeRef')) {
-          enriched['scopeRef'] = selectedScopeRef
-        }
-      }
-      writer.write(enriched)
-    }
-    writer.flush()
-  }
-
-  return outcome.exitCode
-}
-
-async function runSelectorSetConditionWatch(
-  state: HrcMonitorState,
-  args: MonitorWatchArgs,
-  specs: readonly MonitorSelectorSpec[],
-  io: MonitorWatchDeps,
-  format: MonitorOutputFormat
-): Promise<number> {
-  const winner = await waitForAnyMonitorCondition(state, args, specs, io)
-  const writer = createMonitorEventWriter(io.stdout, selectorSetLabel(specs), args, format)
-  for (const event of winner.outcome.eventStream ?? []) {
-    const name = stringField(event, 'event')
-    const enriched: Record<string, unknown> = { ...event, replayed: false }
-    if (name === 'monitor.completed' || name === 'monitor.stalled') {
-      enriched['scopeRef'] = winner.scopeRef
-      enriched['condition'] = args.until
-      enriched['exitCode'] = winner.outcome.exitCode
-      if (winner.outcome.runId !== undefined) enriched['runId'] = winner.outcome.runId
-    }
-    writer.write(enriched)
-  }
-  if (!winner.outcome.eventStream || winner.outcome.eventStream.length === 0) {
-    writer.write({
-      event: winner.outcome.result === 'stalled' ? 'monitor.stalled' : 'monitor.completed',
-      condition: args.until,
-      scopeRef: winner.scopeRef,
-      result: winner.outcome.result,
-      exitCode: winner.outcome.exitCode,
-      ...(winner.outcome.runId !== undefined ? { runId: winner.outcome.runId } : {}),
-      replayed: false,
-      ts: new Date().toISOString(),
-    })
-  }
-  writer.flush()
-  return winner.outcome.exitCode
 }
 
 // -- Default deps (live mode) -------------------------------------------------
