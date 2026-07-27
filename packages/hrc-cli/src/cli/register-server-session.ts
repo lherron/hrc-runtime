@@ -27,7 +27,9 @@ import { fatal } from './shared.js'
 
 const MONITOR_CONDITIONS_HELP = [...VALID_CONDITIONS].join(', ')
 const MONITOR_EXIT_CODES_HELP =
-  'Exit codes: 0 matched after arm/replay; 2 usage; 10 already true at arm; 11 no session ever; 12 runtime-death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT.'
+  'Exit codes: 0 matched after arm/replay (success); 10 already true at arm (success); 2 usage; 11 no session ever; 12 runtime-death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error (11/12/20/21/22/23 are semantic outcomes); 130 SIGINT.'
+const MONITOR_AGENT_EXIT_CODES =
+  '0 matched (success); 10 already true at arm (success); 2 usage; 11 no session ever; 12 runtime death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error (11/12/20/21/22/23 are semantic outcomes); 130 SIGINT'
 
 function collectMonitorCondition(value: string, previous: string[]): string[] {
   return [...previous, value]
@@ -467,8 +469,7 @@ ${MONITOR_EXIT_CODES_HELP}\n`
     audience: 'agent',
     agentUsage: {
       example: 'hrc monitor watch T-07011 --follow --format ndjson',
-      exitCodes:
-        '0 matched; 10 already true; 11 no session; 12 runtime death; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT',
+      exitCodes: MONITOR_AGENT_EXIT_CODES,
       output: 'non-TTY defaults to NDJSON; each line is one complete normalized HRC event',
     },
   })
@@ -476,8 +477,7 @@ ${MONITOR_EXIT_CODES_HELP}\n`
     audience: 'agent',
     agentUsage: {
       example: 'hrc monitor wait T-07011 --until-all runtime-dead --timeout 5m --json',
-      exitCodes:
-        '0 matched; 10 already true; 11 no session; 12 runtime death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT',
+      exitCodes: MONITOR_AGENT_EXIT_CODES,
       output: '--json emits one condition result; timeout is semantic exit 20, not command failure',
     },
   })

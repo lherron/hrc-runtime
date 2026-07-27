@@ -750,6 +750,17 @@ describe('nested group commander help', () => {
       expect(result.stdout).not.toContain('HRC operator CLI')
     })
   }
+
+  it('characterizes invalid-segment --help masking for the sequenced entry-path fix', async () => {
+    // T-07011 records this fence without changing the error contract. The argv
+    // pre-walk follow-up should invert these assertions to exit 2 + an error.
+    const result = await runCli(['runtime', 'lst', '--help'])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Usage: hrc runtime')
+    expect(result.stdout).not.toContain('unknown command')
+  })
 })
 
 describe('server tmux kill broker leases', () => {
