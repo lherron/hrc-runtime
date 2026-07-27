@@ -119,16 +119,28 @@ function canonicalScopeFilter(raw: string): string {
 export async function cmdRuntimeInspect(args: string[]): Promise<void> {
   const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const jsonOutput = hasFlag(args, '--json')
+  const probe = hasFlag(args, '--probe')
   const client = createClient()
   const runtimeId = await resolveRuntimeArg(runtimeArg, client)
-  const result = await client.inspectRuntime({ runtimeId })
+  const [hrc, broker] = await Promise.all([
+    client.inspectRuntime({ runtimeId }),
+    client.brokerInspect({
+      runtimeId,
+      ...(probe ? { probeLiveness: true } : {}),
+    }),
+  ])
 
   if (jsonOutput) {
-    printJson(result)
+    printJson({ hrc, broker })
     return
   }
 
-  printRuntimeInspect(result)
+  process.stdout.write(
+    `runtime inspect ${runtimeId}\n\nHRC authority (source: HRC runtime store)\n`
+  )
+  printRuntimeInspect(hrc)
+  process.stdout.write(`\nBroker authority (source: ${broker.source})\n`)
+  printBrokerInspect(broker)
 }
 
 export function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
@@ -227,7 +239,7 @@ export async function cmdBrokerInspect(args: string[]): Promise<void> {
   printBrokerInspect(result)
 }
 
-function printBrokerInspect(result: BrokerInspectResponse): void {
+export function printBrokerInspect(result: BrokerInspectResponse): void {
   const lines: string[] = [
     `broker inspect ${result.runtimeId}`,
     `  source        ${result.source}`,
@@ -444,26 +456,7 @@ function printPruneHuman(result: PruneRuntimesResponse, dryRun: boolean): void {
   )
 }
 
-/**
- * Emit the deprecation guidance for the legacy `hrc run sweep-zombies` /
- * `hrc run reconcile-active` aliases. daedalus D3: keep these functional (no
- * failing pointer) but point operators at the new `hrc admin runs ...`
- * namespace via stderr so existing automation keeps working byte-for-byte on
- * stdout.
- */
-function emitRunAdminDeprecation(verb: 'sweep-zombies' | 'reconcile-active'): void {
-  process.stderr.write(
-    `hrc: 'hrc run ${verb}' is deprecated; use 'hrc admin runs ${verb}' instead\n`
-  )
-}
-
-export async function cmdRunSweepZombies(
-  args: string[],
-  opts: { deprecatedAlias?: boolean } = {}
-): Promise<void> {
-  if (opts.deprecatedAlias) {
-    emitRunAdminDeprecation('sweep-zombies')
-  }
+export async function cmdRunSweepZombies(args: string[]): Promise<void> {
   const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run sweep-zombies')
 
   const request: SweepZombieRunsRequest = {
@@ -497,13 +490,7 @@ function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean)
   )
 }
 
-export async function cmdRunReconcileActive(
-  args: string[],
-  opts: { deprecatedAlias?: boolean } = {}
-): Promise<void> {
-  if (opts.deprecatedAlias) {
-    emitRunAdminDeprecation('reconcile-active')
-  }
+export async function cmdRunReconcileActive(args: string[]): Promise<void> {
   const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run reconcile-active')
 
   const request: ReconcileActiveRunsRequest = {

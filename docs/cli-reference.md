@@ -1,12 +1,19 @@
 # HRC / hrcchat CLI Reference
 
 Status: CANONICAL
-Date: 2026-06-07
+Date: 2026-07-27
 Applies to: `hrc` and `hrcchat` (hrc-runtime, `apiVersion 0.1.0`)
 
 `hrc` is the local runtime control plane for agent sessions: it gives a target a stable identity, preserves continuity across launches, manages live runtimes, and lets an operator or another agent inspect/attach/start/interrupt a runtime. `hrcchat` is the semantic messaging interface (dm/turn/messages). Use `hrc` to control HRC itself; use `hrcchat` to message agents.
 
 This reference covers the common command surface. For the full flag accounting of any command, run `hrc <group> <cmd> --help` (or `hrcchat <cmd> --help`).
+
+`hrc info` and root `hrc --help` are audience projections of the live command
+graph. Selection precedence is explicit `--agent` / `--human`, then an
+agent-identity environment, then stdout TTY (human only for a TTY with no agent
+identity). Every projection labels its view; explicitly naming a command always
+shows its complete help. `hrc admin --help` always shows the full maintenance
+cellar.
 
 ---
 
@@ -93,11 +100,15 @@ Shared notable flags (`run`/`start`): `--force-restart` (replace runtime with a 
 
 A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); `hrc run` prints a session-summary block on detach and is not treated as an attach failure.
 
-Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]`. Worktree pruning defaults to dry-run and refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
+Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees audit|prune [--project <id>] [--root <path>] [--json]`. Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
-### `monitor show | watch | wait`
+### `monitor show | watch | wait | events | transcript | stats`
 
-`monitor` is the canonical surface for point-in-time state, event streaming, and condition waits.
+`monitor` is the single observation noun. `show|watch|wait` read normalized HRC
+events and use global `hrcSeq`; `events|transcript|stats` read the durable broker
+invocation ledger and use invocation-local `seq`. The selector front door is
+shared, but the cursor grammars are deliberately not unified. Monitor conditions
+**never** evaluate the broker invocation ledger.
 
 ```bash
 # Point-in-time snapshot (aggregate, or scoped to a selector):
@@ -117,11 +128,21 @@ hrc monitor watch <selector> --follow --since <pre-dispatch-cursor>
 hrc monitor wait clod@agent-spaces --until turn-finished --timeout 5s
 hrc monitor wait msg:<messageId> --until response --timeout 5m
 hrc monitor wait <selector> --until turn-finished --until runtime-dead
+
+# Durable invocation-ledger reads:
+hrc monitor events <runtimeId|invocationId|scope> --seq 20..80 --ndjson
+hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
+hrc monitor stats <runtimeId|invocationId|scope> --json
 ```
 
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
 - **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
 - **`monitor wait`** — `<selector...>` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
+- **`monitor transcript`** — an invocation activity transcript (tool starts,
+  completed assistant messages, and driver notices), not conversation readback.
+  It can include user activity and supports `--previous [n]` plus `--tail <n>`
+  for bounded recap.
+- **`monitor session-report`** — viewer-oriented runtime broker summary.
 
 Blocking/follow mode without explicit conditions uses the visible OR pair `--until turn-finished --until runtime-dead`; plain replay has no implicit conditions. Level truth that predates the arm returns exit 10. Quantified `ANY` admits later members, while `ALL` freezes membership at arm and reports one daemon-owned observation cut.
 
@@ -145,7 +166,7 @@ In-flight gating: `stop` and `restart` refuse by default when runs are still in 
 
 Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and broker-tmux leases, claimed orphans included). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
 
-### `runtime list` (and the runtime group)
+### `runtime list | inspect | capture | send | interrupt | terminate | sweep | prune`
 
 ```bash
 hrc runtime list
@@ -157,19 +178,41 @@ hrc ls runtimes --scope clod@agent-spaces:T-123 --json
 
 `runtime list` filters: `--host-session-id <id>` (or `--session <id>`), `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`, `--scope <scopeRef|handle>`, `--stale`, `--json`. The `hrc ls runtimes` orientation alias accepts the same filters.
 
-Sibling commands: `runtime ensure <hostSessionId>`, `runtime inspect <runtimeId> [--json]`, `runtime sweep [...]`, `runtime capture|interrupt|terminate|adopt <runtimeId>`. Low-level broker read model: `hrc broker inspect <runtimeId> [--probe] [--json]`.
+`runtime inspect <runtimeId> [--probe] [--json]` returns two explicitly nested
+authority views: `hrc` (the HRC runtime store) and `broker` (whose `source` stays
+`broker` or `hrc-derived`). The CLI never flattens the two authorities into one
+apparent field set.
 
-### Broker post-mortem forensics
+`runtime send <runtimeId> --run-id <id> --input <text>` sends input to an active
+run. Low-level provisioning and adoption live at `hrc admin runtime
+ensure|adopt`.
 
-The broker forensics commands read the durable event ledger through the HRC daemon and include terminated runtimes:
+### Session continuity
+
+`hrc session rotate <hostSessionId>` archives the active host session, creates
+generation+1, and copies continuation forward by default. This is distinct from
+`hrc session drop-continuation <hostSessionId>`, which removes the continuation
+key in place and records its barrier.
+
+### Migration fences
+
+Old spellings are hard error-with-pointer shims, not aliases: `broker`,
+`launch`, top-level `capture`, `inflight`, `surface`, `bridge`, `events`,
+`metrics`, `session-report`, `session clear-context`, `runtime ensure|adopt`,
+and `run sweep-zombies|reconcile-active`. They exit nonzero and name the new
+location so remaining callers are visible before shim deletion.
+
+### Invocation post-mortem forensics
+
+The monitor forensics commands read the durable invocation ledger through the HRC daemon and include terminated runtimes:
 
 ```bash
-hrc broker events <runtimeId|invocationId|scope> --type tool.call.started,driver.notice --seq 20..80 --ndjson
-hrc broker transcript <runtimeId|invocationId|scope> --kinds exec,cot,notice
-hrc broker stats <runtimeId|invocationId|scope> --json
+hrc monitor events <runtimeId|invocationId|scope> --type tool.call.started,driver.notice --seq 20..80 --ndjson
+hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
+hrc monitor stats <runtimeId|invocationId|scope> --json
 ```
 
-A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest. Human event and transcript output clips large payloads with an explicit marker. `broker events --ndjson` and `broker transcript --full` preserve complete content.
+A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest live runtime or `--previous [n]` to select terminated history newest-first. Human event and transcript output clips large payloads with an explicit marker. `monitor events --ndjson` and `monitor transcript --full` preserve complete content.
 
 ### `hrcchat dm` (and the hrcchat surface)
 

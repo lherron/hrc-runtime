@@ -4,6 +4,7 @@ import type { Command } from 'commander'
 import { readMetricsReport } from '../metrics-report.js'
 import type { MetricsReport } from '../metrics-report.js'
 import { printJson } from '../print.js'
+import { registerMovedCommandShim } from './moved-command.js'
 
 type MetricsReportFlags = {
   since: string
@@ -70,7 +71,9 @@ function printHuman(report: MetricsReport): void {
 }
 
 export function registerMetricsCommands(program: Command): void {
-  const metrics = program.command('metrics').description('inspect local HRC performance metrics')
+  const admin = program.commands.find((command) => command.name() === 'admin')
+  if (!admin) throw new Error('hrc command registration order error: missing admin')
+  const metrics = admin.command('metrics').description('inspect local HRC performance metrics')
   metrics
     .command('report')
     .description('report CLI and server latency and payload metrics')
@@ -92,4 +95,6 @@ export function registerMetricsCommands(program: Command): void {
       else if (options.ndjson) printNdjson(report)
       else printHuman(report)
     })
+
+  registerMovedCommandShim(program, 'metrics', 'hrc admin metrics report')
 }

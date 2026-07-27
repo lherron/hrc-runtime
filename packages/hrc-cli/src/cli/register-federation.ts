@@ -10,6 +10,7 @@
 import type { Command } from 'commander'
 
 import { toLegacyArgv } from './argv.js'
+import { annotateCommand } from './command-metadata.js'
 import {
   cmdDoctor,
   cmdFederationOutboxCancel,
@@ -111,7 +112,7 @@ export function registerFederationCommands(program: Command): void {
 
   const target = program.command('target').description('inspect where scopes live (placement)')
 
-  target
+  const locate = target
     .command('locate')
     .argument('<scope>', 'scope ref or target handle (e.g. clod@hrc-runtime:T-06613)')
     .description('show declared policy, established binding, and observed runtimes for a scope')
@@ -153,7 +154,7 @@ export function registerFederationCommands(program: Command): void {
       await cmdTargetBindings(toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json'] }))
     })
 
-  program
+  const doctor = program
     .command('doctor')
     .description('check daemon health, node identity, and placement skew')
     .option('--json', 'output as JSON')
@@ -176,4 +177,23 @@ export function registerFederationCommands(program: Command): void {
     .action(async (_opts, cmd: Command) => {
       await cmdDoctor(toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json', 'strict'] }))
     })
+
+  annotateCommand(federation, { audience: 'human' })
+  annotateCommand(target, { audience: 'human' })
+  annotateCommand(locate, {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc target locate cody@hrc-runtime:T-07011 --json --fail-on-skew',
+      exitCodes: '0 reported; 1 placement skew with --fail-on-skew; 2 usage/read failure',
+      output: '--json keeps declared, authority, and observed placement truths distinct',
+    },
+  })
+  annotateCommand(doctor, {
+    audience: 'both',
+    agentUsage: {
+      example: 'hrc doctor --json --strict',
+      exitCodes: '0 healthy; 1 failing check or warning under --strict; 2 usage',
+      output: '--json emits one check report',
+    },
+  })
 }

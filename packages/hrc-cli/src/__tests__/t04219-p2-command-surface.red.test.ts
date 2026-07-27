@@ -12,22 +12,19 @@
  *     • Accepts message selectors (msg:<id>, seq:<n>)
  *     • Output JSON MUST include `kind` field + concrete IDs (stable shape)
  *
- * #4  `hrc ls <noun>` — new top-level command; `list` is a hidden alias.
+ * #4  `hrc ls <noun>` — top-level polymorphic read.
  *     • Nouns: runtimes | sessions | launches | messages
- *     • JSON array output (same shape as existing runtime/session/launch list)
- *     • Existing `hrc runtime list`, `hrc session list`, `hrc launch list` UNCHANGED
+ *     • JSON array output (same shape as the noun-owned list commands)
  *
  * #5  Admin relocation.
  *     • NEW: `hrc admin runs sweep-zombies | reconcile-active` — works
- *     • OLD: `hrc run sweep-zombies | reconcile-active` — still performs the action
- *       AND emits deprecation guidance to stderr (exit 0, not a failing pointer)
+ *     • OLD: `hrc run sweep-zombies | reconcile-active` — hard nonzero pointer
  *
  * #6  Lifecycle additions.
  *     • NEW: `hrc run --attach-only` — present in --help; behaves like attach
- *     • NEW: `hrc resume` — alias of `run`; --help names start/reuse/attach semantics
- *       and points to `--attach-only` / `run --attach-only`
+ *     • NEW: `hrc resume` — continuation-only recovery; never fresh-launches
  *     • PRESERVED: `hrc start --new-session` — still accepted and still rotates session
- *     • PRESERVED: `hrc run --no-attach`, `hrc attach`, `hrc start` — unchanged
+ *     • PRESERVED: `hrc attach`, `hrc start` — unchanged
  *
  * ─── RED failure modes (before implementation) ────────────────────────────────
  *
@@ -35,7 +32,7 @@
  *  #4  `hrc ls runtimes` → exits 2, "unknown command: ls"
  *      `hrc list runtimes` → exits 2, "unknown command: list"
  *  #5  `hrc admin runs sweep-zombies --help` → exits 2, "unknown command: admin"
- *      `hrc run sweep-zombies --help` output has no deprecation guidance
+ *      `hrc run sweep-zombies --help` must fail with a replacement pointer
  *  #6  `hrc run --help` does not contain `--attach-only`
  *      `hrc resume` → exits 2, "unknown command: resume"
  *
@@ -660,8 +657,8 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
       expect(Array.isArray(JSON.parse(result.stdout.trim()))).toBe(true)
     })
 
-    it('[regression] hrc launch list still exits 0 and returns JSON array', async () => {
-      const result = await runCli(['launch', 'list'], cliEnv())
+    it('[regression] hrc ls launches exits 0 and returns JSON array', async () => {
+      const result = await runCli(['ls', 'launches'], cliEnv())
       expect(result.exitCode).toBe(0)
       expect(Array.isArray(JSON.parse(result.stdout.trim()))).toBe(true)
     })
@@ -726,19 +723,14 @@ describe('hrc admin runs — §5 (RED: command does not exist yet)', () => {
 
   it('hrc run sweep-zombies --help mentions the replacement admin path', async () => {
     const result = await runCli(['run', 'sweep-zombies', '--help'])
-    // Currently exits 0 but does NOT mention "admin runs" in help text.
-    // RED: the description/help must include deprecation guidance pointing to
-    // `hrc admin runs sweep-zombies`.
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/admin runs sweep-zombies|deprecated/i)
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc admin runs sweep-zombies')
   })
 
   it('hrc run reconcile-active --help mentions the replacement admin path', async () => {
     const result = await runCli(['run', 'reconcile-active', '--help'])
-    // RED: help must include deprecation guidance pointing to
-    // `hrc admin runs reconcile-active`.
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/admin runs reconcile-active|deprecated/i)
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc admin runs reconcile-active')
   })
 
   // ── server-required: new admin path works ──
@@ -763,45 +755,18 @@ describe('hrc admin runs — §5 (RED: command does not exist yet)', () => {
       expect(result.stdout.length).toBeGreaterThan(0)
     })
 
-    // ── Deprecation guidance in OLD `hrc run sweep-zombies` on execution ──
+    // ── Hard migration fences on old spellings ──
 
-    it('hrc run sweep-zombies --dry-run still exits 0 (backward compat)', async () => {
+    it('hrc run sweep-zombies --dry-run exits nonzero with a pointer', async () => {
       const result = await runCli(['run', 'sweep-zombies', '--dry-run'], cliEnv())
-      // OLD path must still perform the action (no failing pointer)
-      expect(result.exitCode).toBe(0)
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain('hrc admin runs sweep-zombies')
     })
 
-    it('hrc run sweep-zombies --dry-run emits deprecation guidance to stderr', async () => {
-      const result = await runCli(['run', 'sweep-zombies', '--dry-run'], cliEnv())
-      // RED: currently stderr is empty; after P2 it must contain the replacement path
-      expect(result.exitCode).toBe(0)
-      expect(result.stderr).toMatch(/admin runs sweep-zombies|deprecated/i)
-    })
-
-    it('hrc run reconcile-active --dry-run still exits 0 (backward compat)', async () => {
+    it('hrc run reconcile-active --dry-run exits nonzero with a pointer', async () => {
       const result = await runCli(['run', 'reconcile-active', '--dry-run'], cliEnv())
-      expect(result.exitCode).toBe(0)
-    })
-
-    it('hrc run reconcile-active --dry-run emits deprecation guidance to stderr', async () => {
-      const result = await runCli(['run', 'reconcile-active', '--dry-run'], cliEnv())
-      // RED: stderr currently empty; must emit replacement path after P2
-      expect(result.exitCode).toBe(0)
-      expect(result.stderr).toMatch(/admin runs reconcile-active|deprecated/i)
-    })
-
-    it('hrc run sweep-zombies --json --dry-run output is identical to admin runs equivalent', async () => {
-      // Both old and new paths must produce the same action result (deprecation is only on stderr)
-      const oldResult = await runCli(['run', 'sweep-zombies', '--json', '--dry-run'], cliEnv())
-      const newResult = await runCli(
-        ['admin', 'runs', 'sweep-zombies', '--json', '--dry-run'],
-        cliEnv()
-      )
-      // RED: new command doesn't exist yet
-      expect(oldResult.exitCode).toBe(0)
-      expect(newResult.exitCode).toBe(0)
-      // stdout should contain the same JSON result (both hit the same API)
-      expect(oldResult.stdout.trim()).toBe(newResult.stdout.trim())
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain('hrc admin runs reconcile-active')
     })
   })
 })

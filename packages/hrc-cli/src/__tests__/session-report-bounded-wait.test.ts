@@ -1,7 +1,7 @@
 /**
  * T-05237 (daedalus required test #9): the consolidated headless viewer pane must
  * NOT be able to hold a pty indefinitely. The pane's terminal command ends with
- * `hrc session-report --wait-key --wait-timeout <n>`; this proves that the bounded
+ * `hrc monitor session-report --wait-key --wait-timeout <n>`; this proves that the bounded
  * grace makes the command self-terminate even when no key is ever pressed and no
  * HRC server is reachable (the broker inspect fails fast and is swallowed).
  */

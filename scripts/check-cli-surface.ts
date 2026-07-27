@@ -25,10 +25,7 @@
 import type { Command } from 'commander'
 
 import { buildProgram as buildHrcProgram } from '../packages/hrc-cli/src/cli/build-program.ts'
-import {
-  USAGE_TEXT as HRC_USAGE_TEXT,
-  buildInfoText as buildHrcInfoText,
-} from '../packages/hrc-cli/src/cli/usage.ts'
+import { buildInfoText as buildHrcInfoText } from '../packages/hrc-cli/src/cli/help.ts'
 import { buildInfoText as buildHrcchatInfoText } from '../packages/hrcchat-cli/src/commands/info.ts'
 import { program as hrcchatProgram } from '../packages/hrcchat-cli/src/main.ts'
 import { buildProgram as buildHrcmailProgram } from '../packages/hrcmail-cli/src/main.ts'
@@ -324,18 +321,18 @@ export function collectFindings(): Finding[] {
   const hrcmail = buildRegistry('hrcmail', buildHrcmailProgram())
   const registries: Record<string, Registry> = { hrc, hrcchat, hrcmail }
 
-  const hrcInfo = buildHrcInfoText(hrc.root)
+  const hrcAgentInfo = buildHrcInfoText(hrc.root, undefined, 'agent')
+  const hrcHumanInfo = buildHrcInfoText(hrc.root, undefined, 'human')
   const hrcchatInfo = buildHrcchatInfoText(hrcchat.root)
   const hrcmailInfo = generatedRosterInfo(hrcmail)
 
   const claims: Claim[] = [
-    ...extractClaims('hrc info', hrcInfo),
+    ...extractClaims('hrc info --agent', hrcAgentInfo),
+    ...extractClaims('hrc info --human', hrcHumanInfo),
     ...extractClaims('hrcchat info', hrcchatInfo),
-    ...extractUsageClaims('hrc usage', HRC_USAGE_TEXT),
   ]
 
   return [
-    ...checkRosterCompleteness(hrc, hrcInfo),
     ...checkRosterCompleteness(hrcchat, hrcchatInfo),
     ...checkRosterCompleteness(hrcmail, hrcmailInfo),
     ...checkClaims(registries, claims),

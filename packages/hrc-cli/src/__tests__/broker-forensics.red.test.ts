@@ -306,7 +306,7 @@ function seedForensicsLedger(fixture: HrcServerTestFixture): void {
     payload: {
       toolCallId: 'tool-4',
       name: 'Bash',
-      input: { command: 'hrc broker stats rt-forensics-main' },
+      input: { command: 'hrc monitor stats rt-forensics-main' },
     },
   })
   appendEvent(fixture, {
@@ -381,11 +381,11 @@ afterEach(async () => {
   await fixture.cleanup()
 })
 
-describe('hrc broker events', () => {
+describe('hrc monitor events', () => {
   it('applies CSV type and inclusive seq-range filters and emits only matching NDJSON rows', async () => {
     const result = await runCli(
       [
-        'broker',
+        'monitor',
         'events',
         RUNTIME_ID,
         '--type',
@@ -416,7 +416,7 @@ describe('hrc broker events', () => {
 
   it('accepts an invocationId, unwraps nested payload rows, and never clips NDJSON', async () => {
     const result = await runCli(
-      ['broker', 'events', INVOCATION_ID, '--type', 'assistant.message.completed', '--ndjson'],
+      ['monitor', 'events', INVOCATION_ID, '--type', 'assistant.message.completed', '--ndjson'],
       cliEnv(fixture)
     )
 
@@ -431,7 +431,7 @@ describe('hrc broker events', () => {
   })
 
   it('prints an explicit marker for an unparseable payload row and continues', async () => {
-    const result = await runCli(['broker', 'events', RUNTIME_ID, '--seq', '6..8'], cliEnv(fixture))
+    const result = await runCli(['monitor', 'events', RUNTIME_ID, '--seq', '6..8'], cliEnv(fixture))
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/^6\s/m)
@@ -442,7 +442,7 @@ describe('hrc broker events', () => {
 
   it('emits no NDJSON lines for an empty filter result', async () => {
     const result = await runCli(
-      ['broker', 'events', RUNTIME_ID, '--type', 'permission.requested', '--ndjson'],
+      ['monitor', 'events', RUNTIME_ID, '--type', 'permission.requested', '--ndjson'],
       cliEnv(fixture)
     )
 
@@ -452,7 +452,7 @@ describe('hrc broker events', () => {
   })
 })
 
-describe('hrc broker transcript', () => {
+describe('hrc monitor transcript', () => {
   it('renders user.message as USER by default and clips it unless --full is supplied', async () => {
     appendEvent(fixture, {
       seq: 13,
@@ -462,11 +462,11 @@ describe('hrc broker transcript', () => {
     })
 
     const clipped = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '13..13'],
       cliEnv(fixture)
     )
     const full = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13', '--full'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '13..13', '--full'],
       cliEnv(fixture)
     )
 
@@ -481,7 +481,7 @@ describe('hrc broker transcript', () => {
 
   it('renders a seq-ordered, pipe-safe interleaving with command/file/prompt summaries', async () => {
     const result = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..8'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '2..8'],
       cliEnv(fixture)
     )
 
@@ -505,11 +505,11 @@ describe('hrc broker transcript', () => {
 
   it('clips large human messages with a stable marker unless --full is supplied', async () => {
     const clipped = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '6..6'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '6..6'],
       cliEnv(fixture)
     )
     const full = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '6..6', '--full'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '6..6', '--full'],
       cliEnv(fixture)
     )
 
@@ -523,11 +523,11 @@ describe('hrc broker transcript', () => {
 
   it('honors --kinds and returns an empty stream when no selected rows match', async () => {
     const filtered = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..4', '--kinds', 'exec,notice'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '2..4', '--kinds', 'exec,notice'],
       cliEnv(fixture)
     )
     const empty = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '1..1', '--kinds', 'exec'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '1..1', '--kinds', 'exec'],
       cliEnv(fixture)
     )
 
@@ -542,11 +542,11 @@ describe('hrc broker transcript', () => {
 
   it('selects SAYS rows for --kinds cot and rejects unadvertised kinds', async () => {
     const cot = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..4', '--kinds', 'cot'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '2..4', '--kinds', 'cot'],
       cliEnv(fixture)
     )
     const invalid = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--kinds', 'reasoning'],
+      ['monitor', 'transcript', RUNTIME_ID, '--kinds', 'reasoning'],
       cliEnv(fixture)
     )
 
@@ -567,7 +567,7 @@ describe('hrc broker transcript', () => {
     })
 
     const result = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..13', '--kinds', 'user,cot'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '2..13', '--kinds', 'user,cot'],
       cliEnv(fixture)
     )
 
@@ -579,7 +579,7 @@ describe('hrc broker transcript', () => {
 
   it('applies --tail after seq and kind filtering', async () => {
     const result = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..8', '--kinds', 'exec,cot', '--tail', '2'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '2..8', '--kinds', 'exec,cot', '--tail', '2'],
       cliEnv(fixture)
     )
 
@@ -594,7 +594,7 @@ describe('hrc broker transcript', () => {
 
   it('rejects non-positive --tail values', async () => {
     const result = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--tail', '0'],
+      ['monitor', 'transcript', RUNTIME_ID, '--tail', '0'],
       cliEnv(fixture)
     )
 
@@ -615,7 +615,7 @@ describe('hrc broker transcript', () => {
     })
 
     const result = await runCli(
-      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13'],
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '13..13'],
       cliEnv(fixture)
     )
 
@@ -625,7 +625,7 @@ describe('hrc broker transcript', () => {
   })
 })
 
-describe('hrc broker stats and selector convenience', () => {
+describe('hrc monitor stats and selector convenience', () => {
   it('selects terminated runtimes newest-first with --previous and never selects a live runtime', async () => {
     const terminatedNewest = {
       runtimeId: 'rt-forensics-terminated-newest',
@@ -680,11 +680,11 @@ describe('hrc broker stats and selector convenience', () => {
     })
 
     const previous = await runCli(
-      ['broker', 'stats', SCOPE_HANDLE, '--previous', '--json'],
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '--json'],
       cliEnv(fixture)
     )
     const previousTwo = await runCli(
-      ['broker', 'events', SCOPE_HANDLE, '--previous', '2', '--ndjson'],
+      ['monitor', 'events', SCOPE_HANDLE, '--previous', '2', '--ndjson'],
       cliEnv(fixture)
     )
 
@@ -699,11 +699,11 @@ describe('hrc broker stats and selector convenience', () => {
 
   it('errors when --previous over-counts terminated runtimes or is combined with --latest', async () => {
     const overCount = await runCli(
-      ['broker', 'stats', SCOPE_HANDLE, '--previous', '2'],
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '2'],
       cliEnv(fixture)
     )
     const conflicting = await runCli(
-      ['broker', 'stats', SCOPE_HANDLE, '--previous', '--latest'],
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '--latest'],
       cliEnv(fixture)
     )
 
@@ -735,7 +735,7 @@ describe('hrc broker stats and selector convenience', () => {
       payload: {},
     })
 
-    const result = await runCli(['broker', 'stats', liveScopeHandle, '--json'], cliEnv(fixture))
+    const result = await runCli(['monitor', 'stats', liveScopeHandle, '--json'], cliEnv(fixture))
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
@@ -752,7 +752,7 @@ describe('hrc broker stats and selector convenience', () => {
   it('reports histogram, turn/tool counts, activity bounds, and per-turn tool breakdown', async () => {
     // This runtime is terminated. Explicit runtime IDs preserve post-mortem
     // access without allowing unavailable history to shadow implicit selectors.
-    const result = await runCli(['broker', 'stats', RUNTIME_ID], cliEnv(fixture))
+    const result = await runCli(['monitor', 'stats', RUNTIME_ID], cliEnv(fixture))
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
@@ -794,13 +794,13 @@ describe('hrc broker stats and selector convenience', () => {
       time: '2026-07-02T00:00:01.000Z',
     })
 
-    const ambiguous = await runCli(['broker', 'stats', SCOPE_HANDLE], cliEnv(fixture))
+    const ambiguous = await runCli(['monitor', 'stats', SCOPE_HANDLE], cliEnv(fixture))
     expect(ambiguous.exitCode).not.toBe(0)
     expect(ambiguous.stderr).toContain(RUNTIME_ID)
     expect(ambiguous.stderr).toContain(latestRuntimeId)
 
     const latest = await runCli(
-      ['broker', 'stats', SCOPE_HANDLE, '--latest', '--json'],
+      ['monitor', 'stats', SCOPE_HANDLE, '--latest', '--json'],
       cliEnv(fixture)
     )
     expect(latest.exitCode).toBe(0)

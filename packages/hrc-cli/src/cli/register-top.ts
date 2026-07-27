@@ -5,6 +5,7 @@ import { runHrcTop } from 'hrc-top'
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
+import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
 import {
   cmdBridgeClose,
   cmdBridgeDeliver,
@@ -12,8 +13,6 @@ import {
   cmdBridgeList,
   cmdBridgeRegister,
   cmdBridgeTarget,
-  cmdCapture,
-  cmdInflightSend,
   cmdSurfaceBind,
   cmdSurfaceList,
   cmdSurfaceUnbind,
@@ -21,6 +20,13 @@ import {
 } from './handlers-control.js'
 import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
+import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
+
+function annotateTop(program: Command, name: string, metadata: CommandMetadataInput): void {
+  const command = program.commands.find((candidate) => candidate.name() === name)
+  if (!command) throw new Error(`missing registered command hrc ${name}`)
+  annotateCommand(command, metadata)
+}
 
 export function registerTopLevelCommands(program: Command): void {
   // -- top-level commands (commander, Phase 6 T2b) -----------------------------
@@ -114,18 +120,10 @@ export function registerTopLevelCommands(program: Command): void {
         return
       }
       if (positionals[0] === 'sweep-zombies') {
-        await cmdRunSweepZombies(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }),
-          { deprecatedAlias: true }
-        )
-        return
+        throwMovedCommand('run sweep-zombies', 'hrc admin runs sweep-zombies')
       }
       if (positionals[0] === 'reconcile-active') {
-        await cmdRunReconcileActive(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }),
-          { deprecatedAlias: true }
-        )
-        return
+        throwMovedCommand('run reconcile-active', 'hrc admin runs reconcile-active')
       }
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
@@ -172,35 +170,8 @@ export function registerTopLevelCommands(program: Command): void {
       await cmdRunAnnotate(args)
     })
 
-  run
-    .command('sweep-zombies')
-    .description(
-      'DEPRECATED: use `hrc admin runs sweep-zombies`. Sweep stale active runs into zombie terminal state (still functional)'
-    )
-    .option('--older-than <duration>', 'run inactivity threshold')
-    .option('--dry-run', 'preview without mutating')
-    .option('--yes', 'confirm mutation')
-    .option('--json', 'output as JSON')
-    .action(async (...actionArgs: unknown[]) => {
-      const cmd = actionArgs[actionArgs.length - 1] as Command
-      const rawArgv = rawArgvForVerb(cmd, 'sweep-zombies', { offset: 1, fallback: [] })
-      await cmdRunSweepZombies(rawArgv, { deprecatedAlias: true })
-    })
-
-  run
-    .command('reconcile-active')
-    .description(
-      'DEPRECATED: use `hrc admin runs reconcile-active`. Reconcile active runs whose runtime lifecycle is already terminal or idle (still functional)'
-    )
-    .option('--older-than <duration>', 'run inactivity threshold')
-    .option('--dry-run', 'preview without mutating')
-    .option('--yes', 'confirm mutation')
-    .option('--json', 'output as JSON')
-    .action(async (...actionArgs: unknown[]) => {
-      const cmd = actionArgs[actionArgs.length - 1] as Command
-      const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
-      await cmdRunReconcileActive(rawArgv, { deprecatedAlias: true })
-    })
+  registerMovedCommandShim(run, 'sweep-zombies', 'hrc admin runs sweep-zombies')
+  registerMovedCommandShim(run, 'reconcile-active', 'hrc admin runs reconcile-active')
 
   // -- resume (T-04836 Part A) -------------------------------------------------
   // `resume` is its OWN verb — force-resume the latest stored continuation for a
@@ -247,18 +218,29 @@ Semantics:
       await cmdResumeContinuation(args)
     })
 
-  // -- admin group (T-04219 P2: run-RECORD repair, distinct from runtime sweep) -
-  // daedalus D3: relocate run-record maintenance under `admin runs`. The old
-  // `run sweep-zombies` / `run reconcile-active` aliases stay functional and emit
-  // deprecation guidance to stderr.
+  // -- admin group (run-RECORD repair, distinct from runtime sweep) -----------
+  // Legacy spellings are registered below as hard moved-command shims.
   const admin = program.command('admin').description('administrative maintenance commands')
   const adminRuns = admin
     .command('runs')
     .description('repair run records (sweep zombies, reconcile active)')
 
-  admin
+  const adminWorktrees = admin
     .command('worktrees')
     .description('audit and prune completed-task linked worktrees')
+
+  adminWorktrees
+    .command('audit')
+    .description('audit completed-task linked worktrees without removing them')
+    .option('--project <id>', 'inspect one registered project')
+    .option('--root <path>', 'override its canonical root (requires --project)')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      cmdAdminWorktreesPrune({ ...cmd.opts(), dryRun: true })
+    })
+
+  adminWorktrees
     .command('prune')
     .description('remove only completed, clean worktrees already merged into canonical HEAD')
     .option('--project <id>', 'inspect one registered project')
@@ -350,39 +332,8 @@ The output always names the resolved kind and the concrete ID(s).
       await execHrcchatTurn(forwarded)
     })
 
-  // -- inflight group (commander, Phase 6 T2) ---------------------------------
-
-  const inflight = program.command('inflight').description('send in-flight runtime input')
-
-  inflight
-    .command('send')
-    .description('send input to a run')
-    .argument('<runtimeId>', 'runtime ID')
-    .option('--run-id <id>', 'run ID')
-    .option('--input <input>', 'input text')
-    .option('--input-type <type>', 'input type')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([runtimeId], cmd.opts(), {
-        strings: ['run-id', 'input', 'input-type'],
-        booleans: [],
-      })
-      await cmdInflightSend(args)
-    })
-
-  // -- top-level commands (commander, Phase 6 T2b) -----------------------------
-
-  program
-    .command('capture')
-    .description('capture live runtime output')
-    .argument('[runtimeId]', 'runtime ID to capture')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      const positionals = runtimeId !== undefined ? [runtimeId] : []
-      const args = toLegacyArgv(positionals, cmd.opts(), {
-        strings: [],
-        booleans: [],
-      })
-      await cmdCapture(args)
-    })
+  registerMovedCommandShim(program, 'inflight', 'hrc runtime send')
+  registerMovedCommandShim(program, 'capture', 'hrc runtime capture')
 
   program
     .command('attach')
@@ -399,9 +350,9 @@ The output always names the resolved kind and the concrete ID(s).
       await cmdAttach(args)
     })
 
-  // -- surface group (commander, Phase 6 T2) ----------------------------------
+  // -- admin cellar ------------------------------------------------------------
 
-  const surface = program.command('surface').description('manage surface bindings')
+  const surface = admin.command('surface').description('manage surface bindings')
 
   surface
     .command('bind')
@@ -443,9 +394,7 @@ The output always names the resolved kind and the concrete ID(s).
       await cmdSurfaceList(args)
     })
 
-  // -- bridge group (commander, Phase 6 T2) -----------------------------------
-
-  const bridge = program.command('bridge').description('manage low-level local bridge delivery')
+  const bridge = admin.command('bridge').description('manage low-level local bridge delivery')
 
   bridge
     .command('target')
@@ -559,4 +508,72 @@ The output always names the resolved kind and the concrete ID(s).
       })
       await cmdBridgeClose(args)
     })
+
+  registerMovedCommandShim(program, 'surface', 'hrc admin surface')
+  registerMovedCommandShim(program, 'bridge', 'hrc admin bridge')
+
+  annotateCommand(admin, { audience: 'human' })
+  annotateTop(program, 'top', {
+    audience: 'human',
+    humanExample: 'hrc top',
+  })
+  annotateTop(program, 'run', {
+    audience: 'both',
+    humanExample: 'hrc run <target>',
+    agentUsage: {
+      example: 'hrc run cody@hrc-runtime:T-07011',
+      exitCodes: '0 attached session ended normally; 2 usage; 1 launch/attach failure',
+      output: 'interactive TTY flow; use start for detached automation',
+    },
+  })
+  annotateTop(program, 'attach', {
+    audience: 'both',
+    humanExample: 'hrc attach <target>',
+    agentUsage: {
+      example: 'hrc attach cody@hrc-runtime:T-07011 --dry-run',
+      exitCodes: '0 attached or plan emitted; 2 usage; 1 when no live runtime exists',
+      output: '--dry-run emits the attach plan without launching or mutating',
+    },
+  })
+  annotateTop(program, 'start', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc start cody@hrc-runtime:T-07011 -p "Continue."',
+      exitCodes: '0 provisioned; 2 usage; 1 launch failure',
+      output: 'detached provision result; --json structures errors',
+    },
+  })
+  annotateTop(program, 'resume', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc resume cody@hrc-runtime:T-07011',
+      exitCodes:
+        '0 continuation resumed; 2 usage; 1 invalidated/missing continuation or launch failure',
+      output: 'continuation-only recovery; never fresh-launches and refuses --force-restart',
+    },
+  })
+  annotateTop(program, 'show', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc show scope:agent:cody:project:hrc-runtime:task:T-07011 --json',
+      exitCodes: '0 resolved; 2 usage/ambiguity; 1 read failure',
+      output: '--json names the resolved kind plus concrete IDs',
+    },
+  })
+  annotateTop(program, 'ls', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc ls runtimes --status busy --json',
+      exitCodes: '0 success; 2 invalid noun/flags; 1 read failure',
+      output: 'noun-specific structured output; narrow large runtime lists with filters',
+    },
+  })
+  annotateTop(program, 'turn', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc turn cody@hrc-runtime:T-07011 "Continue."',
+      exitCodes: 'the forwarded hrcchat turn exit code',
+      output: 'forwards arguments and streaming output verbatim to hrcchat turn',
+    },
+  })
 }

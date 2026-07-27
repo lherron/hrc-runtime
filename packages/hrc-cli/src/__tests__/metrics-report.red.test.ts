@@ -231,7 +231,7 @@ describe.serial('metrics report reader', () => {
     expect(report.largest.server.map((row) => row.bytes)).toEqual([100, 7])
   })
 
-  test('runs hrc metrics report offline and rejects conflicting output modes', async () => {
+  test('runs hrc admin metrics report offline and rejects conflicting output modes', async () => {
     await mkdir(join(stateRoot, 'metrics'), { recursive: true })
     const env = {
       ...process.env,
@@ -240,7 +240,7 @@ describe.serial('metrics report reader', () => {
       HRC_RUNTIME_DIR: join(stateRoot, 'missing-runtime'),
       NO_COLOR: '1',
     }
-    const jsonProc = Bun.spawn(['bun', HRC_ENTRY, 'metrics', 'report', '--json'], {
+    const jsonProc = Bun.spawn(['bun', HRC_ENTRY, 'admin', 'metrics', 'report', '--json'], {
       cwd: REPO_ROOT,
       env,
       stdout: 'pipe',
@@ -255,16 +255,29 @@ describe.serial('metrics report reader', () => {
     expect(jsonError).toBe('')
     expect(JSON.parse(jsonOutput)).toMatchObject({ commands: [], routes: [] })
 
-    const conflictProc = Bun.spawn(['bun', HRC_ENTRY, 'metrics', 'report', '--json', '--ndjson'], {
-      cwd: REPO_ROOT,
-      env,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
+    const conflictProc = Bun.spawn(
+      ['bun', HRC_ENTRY, 'admin', 'metrics', 'report', '--json', '--ndjson'],
+      {
+        cwd: REPO_ROOT,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
+    )
     await Promise.all([
       new Response(conflictProc.stdout).text(),
       new Response(conflictProc.stderr).text(),
     ])
     expect(await conflictProc.exited).not.toBe(0)
+
+    const movedProc = Bun.spawn(['bun', HRC_ENTRY, 'metrics', 'report'], {
+      cwd: REPO_ROOT,
+      env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const movedError = await new Response(movedProc.stderr).text()
+    expect(await movedProc.exited).toBe(2)
+    expect(movedError).toContain('hrc admin metrics report')
   })
 })

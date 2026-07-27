@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Command } from 'commander'
 
 import { buildProgram } from '../cli/build-program.js'
-import { buildInfoText } from '../cli/usage.js'
+import { buildInfoText } from '../cli/help.js'
 import { VALID_CONDITIONS } from '../monitor-conditions.js'
 import { resolveMonitorOutputFormat } from '../monitor-render.js'
 
@@ -110,21 +110,15 @@ describe('hrc monitor surface polish', () => {
     expect(documented).toMatch(/duration.*prior attempt/i)
   })
 
-  test('hrc info includes monitor supervision, completion, replay, and dialect guidance', () => {
-    const info = buildInfoText(buildProgram())
+  test('hrc info --agent includes monitor runbook, cursor, and condition guidance', () => {
+    const info = buildInfoText(buildProgram(), undefined, 'agent')
 
-    expect(info).toContain('MONITOR')
-    expect(info).toContain('hrc monitor watch T-XXXXX --follow')
-    expect(info).toContain('hrc monitor wait T-XXXXX --until-any runtime-dead')
-    expect(info).toContain('hrc monitor watch T-XXXXX --last N')
-    expect(info).toContain('hrc monitor watch T-XXXXX --from-seq N')
-    expect(info).toContain('hrc conditions are runtime-centric')
-    expect(info).not.toContain('hrc monitor wait T-XXXXX --until terminal')
-    expect(info).toContain('idle')
-    expect(info).toContain('turn-finished')
-    expect(info).toContain('wrkq conditions are task-state')
-    expect(info).toContain('state=completed')
-    expect(info).toContain('all-terminal')
+    expect(info).toContain('hrc monitor watch')
+    expect(info).toContain('hrc monitor wait')
+    expect(info).toContain('global hrcSeq')
+    expect(info).toContain('invocation-local broker seq')
+    expect(info).toContain('Monitor conditions NEVER evaluate the broker invocation ledger.')
+    expect(info).toContain('timeout is semantic exit 20')
   })
 
   test('monitor show help distinguishes its snapshot from list surfaces', () => {

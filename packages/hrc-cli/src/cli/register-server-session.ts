@@ -5,6 +5,7 @@ import { cmdMonitorShow } from '../monitor-show.js'
 import { cmdMonitorWait } from '../monitor-wait.js'
 import { cmdMonitorWatch } from '../monitor-watch.js'
 import { toLegacyArgv } from './argv.js'
+import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
 import { cmdSessionClearContext } from './handlers-control.js'
 import {
   cmdServerRestart,
@@ -20,6 +21,7 @@ import {
   cmdTmuxKill,
   cmdTmuxStatus,
 } from './handlers-server.js'
+import { registerMovedCommandShim } from './moved-command.js'
 import { cmdSessionReport } from './runtime-select.js'
 import { fatal } from './shared.js'
 
@@ -29,6 +31,12 @@ const MONITOR_EXIT_CODES_HELP =
 
 function collectMonitorCondition(value: string, previous: string[]): string[] {
   return [...previous, value]
+}
+
+function annotateChild(parent: Command, name: string, metadata: CommandMetadataInput): void {
+  const command = parent.commands.find((candidate) => candidate.name() === name)
+  if (!command) throw new Error(`missing registered command ${parent.name()} ${name}`)
+  annotateCommand(command, metadata)
 }
 
 export function registerServerSessionCommands(program: Command): void {
@@ -229,10 +237,12 @@ Exit codes:
     })
 
   session
-    .command('clear-context')
-    .description('clear session context')
+    .command('rotate')
+    .description(
+      'archive the active host session and create generation+1, copying continuation forward'
+    )
     .argument('<hostSessionId>', 'host session ID')
-    .option('--relaunch', 'relaunch after clearing')
+    .option('--relaunch', 'relaunch after rotating')
     .action(async (hostSessionId, _opts, cmd: Command) => {
       const args = toLegacyArgv([hostSessionId], cmd.opts(), {
         strings: [],
@@ -240,6 +250,8 @@ Exit codes:
       })
       await cmdSessionClearContext(args)
     })
+
+  registerMovedCommandShim(session, 'clear-context', 'hrc session rotate')
 
   session
     .command('drop-continuation')
@@ -254,7 +266,13 @@ Exit codes:
       await cmdSessionDropContinuation(args)
     })
 
-  program
+  // -- monitor group (docs/monitor-spec.md F2a) ----------------------------------
+
+  const monitor = program
+    .command('monitor')
+    .description('show, watch, and wait on HRC monitor state')
+
+  monitor
     .command('session-report')
     .description(
       "render a runtime's broker session summary, optionally holding for a keypress (viewer windows)"
@@ -274,11 +292,7 @@ Exit codes:
       await cmdSessionReport(args)
     })
 
-  // -- monitor group (docs/monitor-spec.md F2a) ----------------------------------
-
-  const monitor = program
-    .command('monitor')
-    .description('show, watch, and wait on HRC monitor state')
+  registerMovedCommandShim(program, 'session-report', 'hrc monitor session-report')
 
   monitor
     .command('show')
@@ -421,4 +435,50 @@ ${MONITOR_EXIT_CODES_HELP}\n`
       })
       await cmdMonitorWatch(args)
     })
+
+  annotateCommand(server, { audience: 'human' })
+  annotateCommand(session, { audience: 'human' })
+  annotateCommand(monitor, { audience: 'human' })
+  annotateChild(server, 'status', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc server status --json',
+      exitCodes: '0 healthy; 1 not running; 2 degraded/usage; 3 probe failure',
+      output: '--json emits one status document; human output is for terminals',
+    },
+  })
+  annotateChild(session, 'list', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc session list --scope cody@hrc-runtime:T-07011 --json',
+      exitCodes: '0 success; 2 usage; 1 read failure',
+      output: '--json is one array; --porcelain is stable tab-separated output',
+    },
+  })
+  annotateChild(monitor, 'show', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc monitor show T-07011 --json',
+      exitCodes: '0 snapshot read; 2 usage; 1 daemon/read failure',
+      output: '--json is one snapshot document keyed by global hrcSeq',
+    },
+  })
+  annotateChild(monitor, 'watch', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc monitor watch T-07011 --follow --format ndjson',
+      exitCodes:
+        '0 matched; 10 already true; 11 no session; 12 runtime death; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT',
+      output: 'non-TTY defaults to NDJSON; each line is one complete normalized HRC event',
+    },
+  })
+  annotateChild(monitor, 'wait', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc monitor wait T-07011 --until-all runtime-dead --timeout 5m --json',
+      exitCodes:
+        '0 matched; 10 already true; 11 no session; 12 runtime death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT',
+      output: '--json emits one condition result; timeout is semantic exit 20, not command failure',
+    },
+  })
 }

@@ -8,7 +8,7 @@
  * Pass conditions for Curly (T-00957):
  *   1. `hrc` with no args prints help text to stderr and exits 1
  *   2. `hrc unknowncmd` prints error to stderr and exits 2
- *   3. `hrc session clear-context` validates args and dispatches through
+ *   3. `hrc session rotate` validates args and dispatches through
  *      hrc-sdk; `hrc turn` is a passthrough alias for `hrcchat turn`
  *      to stderr and exit 2
  *   4. `hrc server` starts the daemon (tested via createHrcServer delegation)
@@ -656,26 +656,27 @@ describe('no args / help', () => {
     expect(output.toLowerCase()).toMatch(/usage|help|commands/i)
   })
 
-  it('prints first-contact orientation for info', async () => {
-    const result = await runCli(['info'])
+  it('prints the agent runbook for info in an agent environment', async () => {
+    const result = await runCli(['info', '--agent'])
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('ABOUT')
-    expect(result.stdout).toContain('ADDRESSING TARGETS')
-    expect(result.stdout).toContain('COMMON CONTROL FLOWS')
-    expect(result.stdout).toContain('Use hrcchat to semantically message agents.')
-    expect(result.stdout).toContain('cody@agent-spaces~repair')
-    expect(result.stdout).not.toContain('\n  info              ')
+    expect(result.stdout).toContain('VIEW: agent')
+    expect(result.stdout).toContain('RUNBOOK')
+    expect(result.stdout).toContain(
+      'Monitor conditions NEVER evaluate the broker invocation ledger.'
+    )
+    expect(result.stdout).toContain('continuation-only recovery')
     expect(result.stderr).toBe('')
   })
 
   it('prints parseable first-contact orientation for info --json', async () => {
-    const result = await runCli(['info', '--json'])
+    const result = await runCli(['info', '--agent', '--json'])
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
     expect(JSON.parse(result.stdout)).toMatchObject({
       command: 'hrc',
-      text: expect.stringContaining('COMMON CONTROL FLOWS'),
+      view: 'agent',
+      text: expect.stringContaining('RUNBOOK'),
     })
   })
 })
@@ -732,8 +733,8 @@ describe('nested group commander help', () => {
       child: 'replay',
     },
     {
-      args: ['broker', 'verify', '--help'],
-      usage: 'Usage: hrc broker verify',
+      args: ['admin', 'broker-verify', '--help'],
+      usage: 'Usage: hrc admin broker-verify',
       child: 'candidates',
     },
   ] as const
@@ -778,12 +779,13 @@ describe('server tmux kill broker leases', () => {
 })
 
 describe('legacy monitor command removal', () => {
-  it('top-level help lists monitor and recovery events groups while omitting removed status', async () => {
-    const result = await runCli(['--help'])
+  it('human help lists the seven noun groups while omitting moved top-level groups', async () => {
+    const result = await runCli(['--human', '--help'])
     const output = result.stdout + result.stderr
     expect(result.exitCode).toBe(0)
     expect(output).toContain('monitor')
-    expect(output).toMatch(/\n\s+events\s/)
+    expect(output).toMatch(/\n\s+admin\s/)
+    expect(output).not.toMatch(/\n\s+events\s/)
     expect(output).not.toMatch(/\n\s+status\s/)
   })
 
@@ -796,8 +798,8 @@ describe('legacy monitor command removal', () => {
     }
   })
 
-  it('events exposes only the dead-ledger drain recovery command', async () => {
-    const result = await runCli(['events', '--help'])
+  it('admin events exposes only the dead-ledger drain recovery command', async () => {
+    const result = await runCli(['admin', 'events', '--help'])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('drain')
     expect(result.stdout).not.toContain('follow')
@@ -825,7 +827,8 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(output).toContain('resolve')
     expect(output).toContain('list')
     expect(output).toContain('get')
-    expect(output).toContain('clear-context')
+    expect(output).toContain('rotate')
+    expect(output).not.toContain('clear-context')
     expect(output).toContain('drop-continuation')
   })
 
@@ -842,14 +845,15 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
-    expect(output).toContain('ensure')
     expect(output).toContain('list')
     expect(output).toContain('inspect')
     expect(output).toContain('sweep')
     expect(output).toContain('capture')
     expect(output).toContain('interrupt')
     expect(output).toContain('terminate')
-    expect(output).toContain('adopt')
+    expect(output).toContain('send')
+    expect(output).not.toContain('ensure')
+    expect(output).not.toContain('adopt')
   })
 
   it('hrc runtime sweep --help exits 0 with Usage and flags', async () => {
@@ -862,58 +866,42 @@ describe('nested group commander help (Phase 6 T2)', () => {
 
   it('describes runtime sweep as ready/busy aging and directs stale-row GC to prune', async () => {
     const help = await runCli(['runtime', 'sweep', '--help'])
-    const usage = await runCli([])
     const helpText = help.stdout.toLowerCase()
-    const usageLines = usage.stderr.split('\n')
-    const sweepUsageIndex = usageLines.findIndex((line) => line.includes('runtime sweep '))
-    const sweepUsage = usageLines
-      .slice(sweepUsageIndex, sweepUsageIndex + 2)
-      .join(' ')
-      .toLowerCase()
     const handlersSource = await readFile(
       join(import.meta.dir, '..', 'cli', 'handlers-runtime.ts'),
       'utf8'
     )
 
     expect(help.exitCode).toBe(0)
-    expect(usage.exitCode).toBe(1)
-    expect(sweepUsageIndex).toBeGreaterThanOrEqual(0)
     for (const token of ['ready', 'busy', 'stale', 'prune']) {
       expect(helpText).toContain(token)
-      expect(sweepUsage).toContain(token)
     }
     expect(handlersSource).not.toContain('terminates live processes/tmux')
   })
 
-  it('hrc run sweep-zombies --help exits 0 with Usage and flags', async () => {
+  it('hrc run sweep-zombies --help exits nonzero with the replacement pointer', async () => {
     const result = await runCli(['run', 'sweep-zombies', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
-    expect(result.stdout).toContain('--older-than')
-    expect(result.stdout).toContain('--dry-run')
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc admin runs sweep-zombies')
   })
 
-  it('hrc run reconcile-active --help exits 0 with Usage and flags', async () => {
+  it('hrc run reconcile-active --help exits nonzero with the replacement pointer', async () => {
     const result = await runCli(['run', 'reconcile-active', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
-    expect(result.stdout).toContain('--older-than')
-    expect(result.stdout).toContain('--dry-run')
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc admin runs reconcile-active')
   })
 
-  // -- launch group --
-  it('hrc launch --help exits 0 with Usage and lists subcommands', async () => {
+  // -- launch migration fence --
+  it('hrc launch --help exits nonzero with the ls pointer', async () => {
     const result = await runCli(['launch', '--help'])
-    expect(result.exitCode).toBe(0)
-    const output = result.stdout
-    expect(output).toMatch(/Usage:/)
-    expect(output).toContain('list')
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc ls launches')
   })
 
-  it('hrc launch list --help exits 0 with Usage', async () => {
+  it('hrc launch list --help exits nonzero with the ls pointer', async () => {
     const result = await runCli(['launch', 'list', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc ls launches')
   })
 
   // -- turn (alias for `hrcchat turn`) --
@@ -926,25 +914,29 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(output).toContain('--stacked')
   })
 
-  // -- inflight group --
-  it('hrc inflight --help exits 0 with Usage and lists subcommands', async () => {
-    const result = await runCli(['inflight', '--help'])
+  // -- runtime send --
+  it('hrc runtime send --help exposes active-run input flags', async () => {
+    const result = await runCli(['runtime', 'send', '--help'])
     expect(result.exitCode).toBe(0)
-    const output = result.stdout
-    expect(output).toMatch(/Usage:/)
-    expect(output).toContain('send')
-  })
-
-  it('hrc inflight send --help exits 0 with Usage', async () => {
-    const result = await runCli(['inflight', 'send', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--run-id')
+    expect(result.stdout).toContain('--input')
   })
 
-  // -- surface group --
-  it('hrc surface --help exits 0 with Usage and lists subcommands', async () => {
-    const result = await runCli(['surface', '--help'])
+  it('hrc inflight --help exits nonzero with the runtime send pointer', async () => {
+    const result = await runCli(['inflight', '--help'])
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc runtime send')
+  })
+
+  it('hrc inflight send --help exits nonzero with the runtime send pointer', async () => {
+    const result = await runCli(['inflight', 'send', '--help'])
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc runtime send')
+  })
+
+  // -- admin surface group --
+  it('hrc admin surface --help exits 0 with Usage and lists subcommands', async () => {
+    const result = await runCli(['admin', 'surface', '--help'])
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
@@ -953,16 +945,16 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(output).toContain('list')
   })
 
-  it('hrc surface bind --help exits 0 with Usage', async () => {
-    const result = await runCli(['surface', 'bind', '--help'])
+  it('hrc admin surface bind --help exits 0 with Usage', async () => {
+    const result = await runCli(['admin', 'surface', 'bind', '--help'])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--kind')
   })
 
-  // -- bridge group --
-  it('hrc bridge --help exits 0 with Usage and lists all subcommands', async () => {
-    const result = await runCli(['bridge', '--help'])
+  // -- admin bridge group --
+  it('hrc admin bridge --help exits 0 with Usage and lists all subcommands', async () => {
+    const result = await runCli(['admin', 'bridge', '--help'])
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
@@ -974,8 +966,8 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(output).toContain('close')
   })
 
-  it('hrc bridge deliver-text --help exits 0 with Usage', async () => {
-    const result = await runCli(['bridge', 'deliver-text', '--help'])
+  it('hrc admin bridge deliver-text --help exits 0 with Usage', async () => {
+    const result = await runCli(['admin', 'bridge', 'deliver-text', '--help'])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--bridge')
@@ -1035,10 +1027,10 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stdout).toContain('--pi')
   })
 
-  it('hrc capture --help exits 0 with Usage', async () => {
+  it('hrc capture --help exits nonzero with the runtime capture pointer', async () => {
     const result = await runCli(['capture', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('hrc runtime capture')
   })
 
   it('hrc attach --help exits 0 with Usage', async () => {
@@ -1095,7 +1087,7 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     runtimeId: string
   }> {
     const hostSessionId = await resolveHostSessionId(scope)
-    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
     expect(ensureResult.exitCode).toBe(0)
     const runtime = JSON.parse(ensureResult.stdout.trim()) as { runtimeId: string }
     return { hostSessionId, runtimeId: runtime.runtimeId }
@@ -1143,7 +1135,7 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     const scope = testProjectScope('codex-launch-logging')
     const hostSessionId = await resolveHostSessionId(scope)
     const ensureResult = await runCli(
-      ['runtime', 'ensure', hostSessionId, '--provider', 'openai'],
+      ['admin', 'runtime', 'ensure', hostSessionId, '--provider', 'openai'],
       env
     )
     expect(ensureResult.exitCode).toBe(0)
@@ -1264,9 +1256,9 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
 })
 
 // ===========================================================================
-// 3. session clear-context
+// 3. session rotate
 // ===========================================================================
-describe('session clear-context', () => {
+describe('session rotate', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
   })
@@ -1279,20 +1271,20 @@ describe('session clear-context', () => {
     return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
 
-  it('session clear-context exits 2 when hostSessionId is missing', async () => {
-    const result = await runCli(['session', 'clear-context'], cliEnv())
+  it('session rotate exits 2 when hostSessionId is missing', async () => {
+    const result = await runCli(['session', 'rotate'], cliEnv())
     expect(result.exitCode).toBe(2)
     expect(result.stderr.toLowerCase()).toContain('missing required argument')
   })
 
   it(
-    'session clear-context outputs rotation JSON for a known hostSessionId',
+    'session rotate outputs rotation JSON for a known hostSessionId',
     async () => {
       const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
-      const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+      const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
       expect(ensureResult.exitCode).toBe(0)
 
-      const result = await runCli(['session', 'clear-context', hostSessionId], cliEnv())
+      const result = await runCli(['session', 'rotate', hostSessionId], cliEnv())
 
       expect(result.exitCode).toBe(0)
       const body = JSON.parse(result.stdout.trim())
@@ -1323,14 +1315,14 @@ describe('runtime lifecycle commands', () => {
 
   async function ensureRuntime(scope: string): Promise<string> {
     const hostSessionId = await resolveHostSessionId(scope)
-    const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const result = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
     expect(result.exitCode).toBe(0)
     return JSON.parse(result.stdout.trim()).runtimeId as string
   }
 
-  it('runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
+  it('admin runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
     const hostSessionId = await resolveHostSessionId(testProjectScope('runtimecli'))
-    const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const result = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
@@ -1338,14 +1330,6 @@ describe('runtime lifecycle commands', () => {
     expect(body.transport).toBe('tmux')
     expect(body.status).toBe('ready')
     expect(body.runtimeId).toBeString()
-  })
-
-  it('capture prints pane text for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('capturecli'))
-    const result = await runCli(['capture', runtimeId], cliEnv())
-
-    expect(result.exitCode).toBe(0)
-    expect(typeof result.stdout).toBe('string')
   })
 
   it('runtime capture prints pane text for a runtimeId', async () => {
@@ -1375,7 +1359,7 @@ describe('runtime lifecycle commands', () => {
 
     expect(result.exitCode).toBe(0)
 
-    const listResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    const listResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
     expect(listResult.exitCode).toBe(0)
     const listed = JSON.parse(listResult.stdout.trim())
     expect(
@@ -1411,14 +1395,14 @@ describe('runtime lifecycle commands', () => {
     const runtimeId = await ensureRuntime(testProjectScope('surfacecli'))
 
     const bindResult = await runCli(
-      ['surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
+      ['admin', 'surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
       cliEnv()
     )
     expect(bindResult.exitCode).toBe(0)
     const bound = JSON.parse(bindResult.stdout.trim())
     expect(bound.surfaceId).toBe('ghostty-cli-2')
 
-    const listResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    const listResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
     expect(listResult.exitCode).toBe(0)
     const listed = JSON.parse(listResult.stdout.trim())
     expect(
@@ -1426,14 +1410,24 @@ describe('runtime lifecycle commands', () => {
     ).toBe(true)
 
     const unbindResult = await runCli(
-      ['surface', 'unbind', '--kind', 'ghostty', '--id', 'ghostty-cli-2', '--reason', 'done'],
+      [
+        'admin',
+        'surface',
+        'unbind',
+        '--kind',
+        'ghostty',
+        '--id',
+        'ghostty-cli-2',
+        '--reason',
+        'done',
+      ],
       cliEnv()
     )
     expect(unbindResult.exitCode).toBe(0)
     const unbound = JSON.parse(unbindResult.stdout.trim())
     expect(unbound.reason).toBe('done')
 
-    const emptyListResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    const emptyListResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
     expect(emptyListResult.exitCode).toBe(0)
     const afterUnbind = JSON.parse(emptyListResult.stdout.trim())
     expect(
@@ -2577,7 +2571,7 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
 
     // RED: 'runtime list' subcommand does not exist
     const result = await runCli(['runtime', 'list', '--host-session-id', hostSessionId], cliEnv())
@@ -2588,9 +2582,8 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(body[0].hostSessionId).toBe(hostSessionId)
   })
 
-  it('hrc launch list prints JSON array and exits 0', async () => {
-    // RED: 'launch' command does not exist in CLI dispatch
-    const result = await runCli(['launch', 'list'], cliEnv())
+  it('hrc ls launches prints JSON array and exits 0', async () => {
+    const result = await runCli(['ls', 'launches'], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(Array.isArray(body)).toBe(true)
@@ -2611,11 +2604,10 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
     const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
 
-    // RED: 'launch list' command does not exist
-    const result = await runCli(['launch', 'list', '--runtime-id', runtimeId], cliEnv())
+    const result = await runCli(['ls', 'launches', '--runtime-id', runtimeId], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(Array.isArray(body)).toBe(true)
@@ -2624,7 +2616,7 @@ describe('Phase 6 diagnostics CLI', () => {
     }
   })
 
-  it('hrc runtime adopt on dead runtime prints adopted JSON and exits 0', async () => {
+  it('hrc admin runtime adopt on dead runtime prints adopted JSON and exits 0', async () => {
     // Seed a dead runtime
     const resolveResult = await runCli(
       [
@@ -2666,7 +2658,7 @@ describe('Phase 6 diagnostics CLI', () => {
       updatedAt: now,
     })
 
-    const result = await runCli(['runtime', 'adopt', runtimeId], cliEnv())
+    const result = await runCli(['admin', 'runtime', 'adopt', runtimeId], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body.status).toBe('adopted')
@@ -2674,7 +2666,7 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(body.runtimeId).toBe(runtimeId)
   })
 
-  it('hrc runtime adopt on active runtime exits 1', async () => {
+  it('hrc admin runtime adopt on active runtime exits 1', async () => {
     const resolveResult = await runCli(
       [
         'session',
@@ -2688,16 +2680,16 @@ describe('Phase 6 diagnostics CLI', () => {
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
-    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const ensureResult = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
     const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
 
-    const result = await runCli(['runtime', 'adopt', runtimeId], cliEnv())
+    const result = await runCli(['admin', 'runtime', 'adopt', runtimeId], cliEnv())
     expect(result.exitCode).toBe(1)
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 
-  it('hrc runtime adopt on unknown runtime exits 1', async () => {
-    const result = await runCli(['runtime', 'adopt', 'nonexistent-runtime-id'], cliEnv())
+  it('hrc admin runtime adopt on unknown runtime exits 1', async () => {
+    const result = await runCli(['admin', 'runtime', 'adopt', 'nonexistent-runtime-id'], cliEnv())
     expect(result.exitCode).toBe(1)
     expect(result.stderr.length).toBeGreaterThan(0)
   })

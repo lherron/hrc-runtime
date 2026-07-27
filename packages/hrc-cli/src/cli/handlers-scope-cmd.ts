@@ -660,7 +660,7 @@ async function renderSpecBuildPreview(
 ): Promise<void> {
   // Build the actual argv/env that the harness would launch with, then render
   // it through the shared display module so this matches `asp run --dry-run`
-  // and `hrc launch exec` runtime output: framed system prompt + priming, then
+  // and the runtime launch output: framed system prompt + priming, then
   // metadata, env block, and a command line with `<N chars>` placeholders.
   try {
     const invocation = await buildCliInvocation(intent)

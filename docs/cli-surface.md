@@ -17,6 +17,12 @@ Installed to `~/.bun/bin/hrc`, source in `packages/hrc-cli`. This page
 covers the common command surface; run `hrc <group> <cmd> --help` for the
 complete flag set of any command.
 
+Root `hrc --help` and `hrc info` project the registered command graph for an
+agent or human audience. Selection precedence is explicit `--agent` /
+`--human`, then agent-identity environment, then stdout TTY. Each projection
+labels the selected view; named-command help is never filtered, and `hrc admin
+--help` always exposes the full cellar.
+
 For target-handle syntax used throughout this page, see
 `hrc-runtime/target-handles`. For the messaging CLI (`hrcchat`), see
 `hrc-runtime/hrcchat-messaging`.
@@ -51,12 +57,18 @@ A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.
 
-Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]`. Worktree pruning defaults to dry-run and refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
+Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`
+and `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
+bridge/surface, runtime ensure/adopt, broker verification, event-drain, and
+metrics-report commands.
 
-## `monitor show | watch | wait`
+## `monitor show | watch | wait | events | transcript | stats`
 
-`monitor` is the canonical surface for point-in-time state, event
-streaming, and condition waits.
+`monitor` is the single observation noun. `show|watch|wait` use normalized HRC
+events and global `hrcSeq`. `events|transcript|stats` read the durable broker
+invocation ledger and use invocation-local `seq`. Their selector front door is
+shared, but their cursor grammars are not. Monitor conditions **never** evaluate
+the broker invocation ledger.
 
 ```bash
 # Point-in-time snapshot (aggregate, or scoped to a selector):
@@ -75,6 +87,10 @@ hrc monitor watch <selector> --follow --until idle --timeout 10s
 hrc monitor wait clod@agent-spaces --until turn-finished --timeout 5s
 hrc monitor wait msg:<messageId> --until response --timeout 5m
 hrc monitor wait <selector> --until turn-finished --until runtime-dead
+
+hrc monitor events <runtimeId|invocationId|scope> --seq 20..80 --ndjson
+hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
+hrc monitor stats <runtimeId|invocationId|scope> --json
 ```
 
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
@@ -119,7 +135,7 @@ Related backend control: `hrc server tmux status [--json]`,
 broker-tmux leases, claimed orphans included). `hrc server restart` does **not** reload
 launchd plist `EnvironmentVariables`.
 
-## `runtime list` and the runtime group
+## `runtime list | inspect | capture | send | interrupt | terminate | sweep | prune`
 
 ```bash
 hrc runtime list
@@ -133,25 +149,23 @@ hrc ls runtimes --scope clod@agent-spaces:T-123 --json
 `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`, `--scope <scopeRef|handle>`, `--stale`, `--json`. The
 `hrc ls runtimes` orientation alias accepts the same filters.
 
-Sibling commands: `runtime ensure <hostSessionId>`, `runtime inspect <runtimeId> [--json]`, `runtime sweep [...]`, `runtime capture|interrupt| terminate|adopt <runtimeId>`. Low-level broker read model:
-`hrc broker inspect <runtimeId> [--probe] [--json]`.
+`runtime inspect <runtimeId> [--probe] [--json]` preserves nested `hrc` and
+`broker` authority views; the broker view retains its `broker` or `hrc-derived`
+source label. Low-level runtime ensure/adopt live under `hrc admin runtime`.
+`runtime send` sends input to an active run.
 
-## Broker post-mortem forensics
+## Session continuity
 
-The broker forensics commands read the durable event ledger through the HRC
-daemon and include terminated runtimes:
+`hrc session rotate <hostSessionId>` archives the current host session and
+creates generation+1, copying continuation forward. `hrc session
+drop-continuation` removes only the continuation key in place.
 
-```bash
-hrc broker events <runtimeId|invocationId|scope> --type tool.call.started,driver.notice --seq 20..80 --ndjson
-hrc broker transcript <runtimeId|invocationId|scope> --kinds exec,cot,notice
-hrc broker stats <runtimeId|invocationId|scope> --json
-```
+## Migration fences
 
-A scope ref or target handle must resolve to one runtime. When it resolves
-to several, the error lists every candidate; pass `--latest` to select the
-newest. Human event/transcript output clips large payloads with an
-explicit marker; `broker events --ndjson` and `broker transcript --full`
-preserve complete content.
+Old `broker`, `launch`, top-level `capture`, `inflight`, `surface`, `bridge`,
+`events`, `metrics`, `session-report`, `session clear-context`, `runtime
+ensure|adopt`, and `run sweep-zombies|reconcile-active` spellings are hidden
+error-with-pointer shims. They exit nonzero and do not execute the action.
 
 ## Exit codes
 
@@ -168,11 +182,15 @@ preserve complete content.
 
 | Code | Result(s) | Meaning |
 | ---: | --- | --- |
-| 0 | `response`, `idle`, `busy`, `turn_succeeded`, `no_active_turn`, `already_idle`, `already_busy`, `already_dead`, `idle_no_response` | Condition satisfied (or already true at start). |
-| 1 | `timeout`, `stalled` | Wait window elapsed or inactivity threshold hit without a match. |
-| 2 | `runtime_dead`, `runtime_crashed`, turn-finished failure results; usage/domain errors | Runtime died/crashed, the turn finished in a failure state, or the invocation was rejected. |
-| 3 | `monitor_error` | Internal monitor/event-stream error. |
-| 4 | `context_changed` (`generation_changed`, `session_rebound`, `cleared`), `turn_finished_without_response` | The session generation/context changed out from under the wait. Common when a `msg:` wait targets a message whose session has rotated. |
+| 0 | matched after arm/replay | Condition satisfied. |
+| 10 | already true at arm | Level truth predated the wait. |
+| 11 | no session ever | No matching session appeared. |
+| 12 | runtime-death obstruction | Runtime death prevented the requested match. |
+| 20 | timeout | Wait window elapsed. |
+| 21 | stall | Inactivity threshold elapsed. |
+| 22 | context change | Generation/session context changed. |
+| 23 | monitor error | Internal monitor or event-stream error. |
+| 130 | SIGINT | Caller interrupted the wait. |
 
 ### General
 

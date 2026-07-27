@@ -6,8 +6,8 @@ import { HrcDomainError } from 'hrc-core'
 import { MonitorWaitExit } from '../monitor-wait.js'
 import { buildProgram } from './build-program.js'
 import { normalizeCommanderError } from './command-errors.js'
+import { renderRootHelp, resolveHelpView } from './help.js'
 import { CliStatusExit } from './shared.js'
-import { printUsage } from './usage.js'
 
 function handleCliError(err: unknown, program: Command): never {
   const rootOptions = program.opts<{ json?: boolean | undefined; output?: string | undefined }>()
@@ -47,13 +47,13 @@ export async function runProgram(
   argv: string[],
   configureProgram?: ((program: Command) => void) | undefined
 ): Promise<void> {
+  const program = buildProgram()
+  configureProgram?.(program)
   if (argv.length <= 2) {
-    printUsage()
+    process.stderr.write(renderRootHelp(program, resolveHelpView()))
     process.exit(1)
   }
 
-  const program = buildProgram()
-  configureProgram?.(program)
   try {
     await program.parseAsync(argv)
   } catch (err) {
