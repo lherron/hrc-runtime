@@ -5,13 +5,14 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { pruneDeltaEvents } from './prune-hrc-event-deltas'
+import { parsePruneStateRetentionArgs, pruneStateRetention } from './prune-hrc-event-deltas'
 
 const SCRIPT_PATH = join(import.meta.dir, 'prune-hrc-event-deltas.ts')
 const NOW = new Date('2026-07-18T12:00:00.000Z')
-const OLD = '2026-07-11T11:59:59.999Z'
-const CUTOFF = '2026-07-11T12:00:00.000Z'
-const NEW = '2026-07-11T12:00:00.001Z'
+const OLD = '2026-07-14T11:59:59.999Z'
+const EVENT_BOUNDARY = '2026-07-15T12:00:00.000Z'
+const EVENT_NEW = '2026-07-15T12:00:00.001Z'
+const BUFFER_BOUNDARY = '2026-07-17T12:00:00.000Z'
 const tempDirs: string[] = []
 
 type ScriptResult = {
@@ -20,69 +21,162 @@ type ScriptResult = {
   stderr: string
 }
 
-function makeStore(): { path: string; db: Database } {
-  const dir = mkdtempSync(join(tmpdir(), 'hrc-prune-deltas-'))
+function makeStore(incrementalAutoVacuum = true): { path: string; db: Database } {
+  const dir = mkdtempSync(join(tmpdir(), 'hrc-state-retention-'))
   tempDirs.push(dir)
   const path = join(dir, 'state.sqlite')
   const db = new Database(path)
+  if (incrementalAutoVacuum) {
+    db.exec('PRAGMA auto_vacuum = INCREMENTAL; VACUUM;')
+  }
   db.exec(`
+    CREATE TABLE runtimes (
+      runtime_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      active_run_id TEXT
+    );
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE broker_invocations (
+      invocation_id TEXT PRIMARY KEY,
+      invocation_state TEXT NOT NULL
+    );
     CREATE TABLE events (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       ts TEXT NOT NULL,
-      source TEXT NOT NULL,
       event_kind TEXT NOT NULL,
-      event_json TEXT NOT NULL
+      run_id TEXT,
+      runtime_id TEXT
+    );
+    CREATE TABLE hrc_events (
+      hrc_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      source_ref TEXT,
+      run_id TEXT,
+      runtime_id TEXT
     );
     CREATE TABLE broker_invocation_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       invocation_id TEXT NOT NULL,
-      seq INTEGER NOT NULL,
       time TEXT NOT NULL,
-      type TEXT NOT NULL,
-      broker_event_json TEXT NOT NULL,
-      UNIQUE (invocation_id, seq)
+      run_id TEXT,
+      runtime_id TEXT,
+      source_ref TEXT
+    );
+    CREATE TABLE runtime_buffers (
+      runtime_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      chunk_seq INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, chunk_seq)
     );
   `)
   return { path, db }
 }
 
-function insertEvent(db: Database, eventKind: string, ts = OLD, payload = '{}'): number {
-  const result = db
-    .prepare('INSERT INTO events (ts, source, event_kind, event_json) VALUES (?, ?, ?, ?)')
-    .run(ts, 'broker', eventKind, payload)
-  return Number(result.lastInsertRowid)
-}
-
-function insertBrokerInvocationEvent(db: Database, type: string, time = OLD): number {
-  const seq = Number(
-    db
-      .query<{ nextSeq: number }, []>(
-        'SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM broker_invocation_events'
-      )
-      .get()?.nextSeq ?? 1
+function seedTerminalAuthority(
+  db: Database,
+  suffix = 'terminal'
+): {
+  runtimeId: string
+  runId: string
+  invocationId: string
+} {
+  const runtimeId = `runtime-${suffix}`
+  const runId = `run-${suffix}`
+  const invocationId = `invocation-${suffix}`
+  db.prepare('INSERT INTO runtimes (runtime_id, status, active_run_id) VALUES (?, ?, NULL)').run(
+    runtimeId,
+    'terminated'
   )
-  const result = db
-    .prepare(
-      `INSERT INTO broker_invocation_events
-        (invocation_id, seq, time, type, broker_event_json)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run('invocation-1', seq, time, type, '{}')
-  return Number(result.lastInsertRowid)
+  db.prepare('INSERT INTO runs (run_id, status) VALUES (?, ?)').run(runId, 'completed')
+  db.prepare('INSERT INTO broker_invocations (invocation_id, invocation_state) VALUES (?, ?)').run(
+    invocationId,
+    'exited'
+  )
+  return { runtimeId, runId, invocationId }
 }
 
-function eventSeqs(db: Database): number[] {
-  return db
-    .query<{ seq: number }, []>('SELECT seq FROM events ORDER BY seq ASC')
-    .all()
-    .map((row) => row.seq)
+function insertEvent(
+  db: Database,
+  eventKind: string,
+  options: { ts?: string; runId?: string; runtimeId?: string } = {}
+): number {
+  return Number(
+    db
+      .prepare('INSERT INTO events (ts, event_kind, run_id, runtime_id) VALUES (?, ?, ?, ?)')
+      .run(options.ts ?? OLD, eventKind, options.runId ?? null, options.runtimeId ?? null)
+      .lastInsertRowid
+  )
 }
 
-function brokerInvocationEventIds(db: Database): number[] {
+function insertHrcEvent(
+  db: Database,
+  eventKind: string,
+  options: { ts?: string; runId?: string; runtimeId?: string; sourceRef?: string } = {}
+): number {
+  return Number(
+    db
+      .prepare(
+        `INSERT INTO hrc_events
+          (ts, event_kind, source_ref, run_id, runtime_id)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(
+        options.ts ?? OLD,
+        eventKind,
+        options.sourceRef ?? null,
+        options.runId ?? null,
+        options.runtimeId ?? null
+      ).lastInsertRowid
+  )
+}
+
+function insertBrokerEvent(
+  db: Database,
+  invocationId: string,
+  options: { time?: string; runId?: string; runtimeId?: string; sourceRef?: string } = {}
+): number {
+  return Number(
+    db
+      .prepare(
+        `INSERT INTO broker_invocation_events
+          (invocation_id, time, run_id, runtime_id, source_ref)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(
+        invocationId,
+        options.time ?? OLD,
+        options.runId ?? null,
+        options.runtimeId ?? null,
+        options.sourceRef ?? null
+      ).lastInsertRowid
+  )
+}
+
+function insertBuffer(
+  db: Database,
+  runtimeId: string,
+  runId: string,
+  chunkSeq: number,
+  createdAt = OLD,
+  text = 'buffer'
+): void {
+  db.prepare(
+    `INSERT INTO runtime_buffers (runtime_id, run_id, chunk_seq, text, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(runtimeId, runId, chunkSeq, text, createdAt)
+}
+
+function ids(db: Database, table: string, key: string): number[] {
   return db
-    .query<{ id: number }, []>('SELECT id FROM broker_invocation_events ORDER BY id ASC')
+    .query<Record<string, number>, []>(`SELECT ${key} FROM ${table} ORDER BY ${key} ASC`)
     .all()
-    .map((row) => row.id)
+    .map((row) => row[key] ?? -1)
 }
 
 function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
@@ -91,7 +185,9 @@ function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
     apply,
     batchSize,
     checkpoint: false,
-    vacuum: false,
+    eventRetentionDays: 3,
+    runtimeBufferRetentionDays: 1,
+    incrementalVacuumPages: 0,
     now: NOW,
   }
 }
@@ -115,159 +211,260 @@ afterEach(() => {
   }
 })
 
-describe('prune-hrc-event-deltas', () => {
-  test('apply deletes only the two events delta kinds', () => {
+describe('prune-hrc-event-deltas bounded state retention', () => {
+  test('defaults are configurable by CLI and environment', () => {
+    const defaults = parsePruneStateRetentionArgs([], {})
+    expect(defaults.eventRetentionDays).toBe(3)
+    expect(defaults.runtimeBufferRetentionDays).toBe(1)
+    expect(defaults.incrementalVacuumPages).toBe(0)
+
+    const configured = parsePruneStateRetentionArgs(
+      ['--event-retention-days', '4.5', '--incremental-vacuum-pages=2500'],
+      { HRC_RUNTIME_BUFFER_RETENTION_DAYS: '2' }
+    )
+    expect(configured.eventRetentionDays).toBe(4.5)
+    expect(configured.runtimeBufferRetentionDays).toBe(2)
+    expect(configured.incrementalVacuumPages).toBe(2500)
+  })
+
+  test('rejects full VACUUM and invalid retention configuration', () => {
+    expect(() => parsePruneStateRetentionArgs(['--vacuum'], {})).toThrow(/offline/i)
+    expect(() => parsePruneStateRetentionArgs(['--event-retention-days', '0'], {})).toThrow(
+      /positive/
+    )
+    expect(() => parsePruneStateRetentionArgs(['--batch-size', '0'], {})).toThrow(/positive/)
+    expect(() => parsePruneStateRetentionArgs(['--incremental-vacuum-pages', '-1'], {})).toThrow(
+      /non-negative/
+    )
+  })
+
+  test('prunes all four observation tables at their parameterized boundaries', () => {
     const { path, db } = makeStore()
-    const assistantDelta = insertEvent(db, 'broker.assistant.message.delta')
-    const toolDelta = insertEvent(db, 'broker.tool.call.delta')
-    const assistantMessage = insertEvent(db, 'broker.assistant.message')
-    const misleadingSuffix = insertEvent(db, 'broker.input.delta')
-    insertBrokerInvocationEvent(db, 'assistant.message.delta', NEW)
+    const authority = seedTerminalAuthority(db)
+
+    const oldEvent = insertEvent(db, 'turn.message', authority)
+    const boundaryEvent = insertEvent(db, 'turn.message', {
+      ...authority,
+      ts: EVENT_BOUNDARY,
+    })
+    const newEvent = insertEvent(db, 'turn.message', { ...authority, ts: EVENT_NEW })
+
+    const oldHrcEvent = insertHrcEvent(db, 'turn.message', authority)
+    const boundaryHrcEvent = insertHrcEvent(db, 'turn.message', {
+      ...authority,
+      ts: EVENT_BOUNDARY,
+    })
+    const oldBrokerEvent = insertBrokerEvent(db, authority.invocationId, authority)
+    const boundaryBrokerEvent = insertBrokerEvent(db, authority.invocationId, {
+      ...authority,
+      time: EVENT_BOUNDARY,
+    })
+    insertBuffer(db, authority.runtimeId, authority.runId, 1)
+    insertBuffer(db, authority.runtimeId, authority.runId, 2, BUFFER_BOUNDARY)
     db.close()
 
-    pruneDeltaEvents(pruneOptions(path, true))
+    const result = pruneStateRetention(pruneOptions(path, true, 1))
+
+    expect(result.deleted).toBe(4)
+    expect(result.tables.events.deleted).toBe(1)
+    expect(result.tables.hrc_events.deleted).toBe(1)
+    expect(result.tables.broker_invocation_events.deleted).toBe(1)
+    expect(result.tables.runtime_buffers.deleted).toBe(1)
+    expect(result.remainingEligibleCount).toBe(0)
 
     const verify = new Database(path)
     try {
-      expect(eventSeqs(verify)).toEqual([assistantMessage, misleadingSuffix])
-      expect(eventSeqs(verify)).not.toContain(assistantDelta)
-      expect(eventSeqs(verify)).not.toContain(toolDelta)
+      expect(ids(verify, 'events', 'seq')).toEqual([boundaryEvent, newEvent])
+      expect(ids(verify, 'events', 'seq')).not.toContain(oldEvent)
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).toEqual([boundaryHrcEvent])
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).not.toContain(oldHrcEvent)
+      expect(ids(verify, 'broker_invocation_events', 'id')).toEqual([boundaryBrokerEvent])
+      expect(ids(verify, 'broker_invocation_events', 'id')).not.toContain(oldBrokerEvent)
+      expect(
+        verify.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtime_buffers').get()
+          ?.count
+      ).toBe(1)
     } finally {
       verify.close()
     }
   })
 
-  test('apply deletes only the two broker_invocation_events delta types', () => {
+  test('resume barriers remain permanently exempt at the SQL layer', () => {
     const { path, db } = makeStore()
-    const assistantDelta = insertBrokerInvocationEvent(db, 'assistant.message.delta')
-    const toolDelta = insertBrokerInvocationEvent(db, 'tool.call.delta')
-    const assistantMessage = insertBrokerInvocationEvent(db, 'assistant.message')
-    const misleadingSuffix = insertBrokerInvocationEvent(db, 'input.delta')
-    insertEvent(db, 'broker.assistant.message.delta', NEW)
+    const authority = seedTerminalAuthority(db)
+    const rawBarrier = insertEvent(db, 'broker.continuation.cleared', authority)
+    const hrcBarriers = [
+      'session.continuation_dropped',
+      'context.cleared',
+      'runtime.terminated',
+      'broker.continuation.cleared',
+    ].map((eventKind) => insertHrcEvent(db, eventKind, authority))
+    const ordinary = insertHrcEvent(db, 'turn.message', authority)
     db.close()
 
-    pruneDeltaEvents(pruneOptions(path, true))
+    pruneStateRetention({
+      ...pruneOptions(path, true),
+      now: new Date('2099-01-01T00:00:00.000Z'),
+    })
 
     const verify = new Database(path)
     try {
-      expect(brokerInvocationEventIds(verify)).toEqual([assistantMessage, misleadingSuffix])
-      expect(brokerInvocationEventIds(verify)).not.toContain(assistantDelta)
-      expect(brokerInvocationEventIds(verify)).not.toContain(toolDelta)
+      expect(ids(verify, 'events', 'seq')).toEqual([rawBarrier])
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).toEqual(hrcBarriers)
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).not.toContain(ordinary)
     } finally {
       verify.close()
     }
   })
 
-  test('seven-day cutoff deletes older rows but retains boundary and newer rows in both tables', () => {
+  test('wrong future cutoffs cannot delete active or nonterminal authority', () => {
     const { path, db } = makeStore()
-    const oldEvent = insertEvent(db, 'broker.assistant.message.delta', OLD)
-    const boundaryEvent = insertEvent(db, 'broker.assistant.message.delta', CUTOFF)
-    const newEvent = insertEvent(db, 'broker.tool.call.delta', NEW)
-    const oldBrokerEvent = insertBrokerInvocationEvent(db, 'assistant.message.delta', OLD)
-    const boundaryBrokerEvent = insertBrokerInvocationEvent(db, 'assistant.message.delta', CUTOFF)
-    const newBrokerEvent = insertBrokerInvocationEvent(db, 'tool.call.delta', NEW)
+    db.exec(`
+      INSERT INTO runtimes (runtime_id, status, active_run_id)
+        VALUES ('runtime-active', 'busy', 'run-active');
+      INSERT INTO runs (run_id, status) VALUES ('run-active', 'running');
+      INSERT INTO broker_invocations (invocation_id, invocation_state)
+        VALUES ('invocation-active', 'running');
+    `)
+    const raw = insertEvent(db, 'turn.message', {
+      runId: 'run-active',
+      runtimeId: 'runtime-active',
+    })
+    const hrc = insertHrcEvent(db, 'turn.message', {
+      runId: 'run-active',
+      runtimeId: 'runtime-active',
+    })
+    const broker = insertBrokerEvent(db, 'invocation-active', {
+      runId: 'run-active',
+      runtimeId: 'runtime-active',
+    })
+    insertBuffer(db, 'runtime-active', 'run-active', 1)
     db.close()
 
-    pruneDeltaEvents(pruneOptions(path, true))
+    const result = pruneStateRetention({
+      ...pruneOptions(path, true),
+      now: new Date('2099-01-01T00:00:00.000Z'),
+    })
+    expect(result.deleted).toBe(0)
 
     const verify = new Database(path)
     try {
-      expect(eventSeqs(verify)).toEqual([boundaryEvent, newEvent])
-      expect(eventSeqs(verify)).not.toContain(oldEvent)
-      expect(brokerInvocationEventIds(verify)).toEqual([boundaryBrokerEvent, newBrokerEvent])
-      expect(brokerInvocationEventIds(verify)).not.toContain(oldBrokerEvent)
+      expect(ids(verify, 'events', 'seq')).toEqual([raw])
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).toEqual([hrc])
+      expect(ids(verify, 'broker_invocation_events', 'id')).toEqual([broker])
+      expect(
+        verify.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtime_buffers').get()
+          ?.count
+      ).toBe(1)
     } finally {
       verify.close()
     }
   })
 
-  test('CLI warns without failing when no target delta kind exists', () => {
+  test('completed run observations can expire on a reusable runtime but its buffers cannot', () => {
     const { path, db } = makeStore()
-    insertEvent(db, 'broker.assistant.message')
-    insertBrokerInvocationEvent(db, 'assistant.message')
+    db.exec(`
+      INSERT INTO runtimes (runtime_id, status, active_run_id)
+        VALUES ('runtime-ready', 'ready', NULL);
+      INSERT INTO runs (run_id, status) VALUES ('run-old', 'completed');
+      INSERT INTO broker_invocations (invocation_id, invocation_state)
+        VALUES ('invocation-old', 'exited');
+    `)
+    insertEvent(db, 'turn.completed', { runId: 'run-old', runtimeId: 'runtime-ready' })
+    insertHrcEvent(db, 'turn.completed', { runId: 'run-old', runtimeId: 'runtime-ready' })
+    insertBrokerEvent(db, 'invocation-old', {
+      runId: 'run-old',
+      runtimeId: 'runtime-ready',
+    })
+    insertBuffer(db, 'runtime-ready', 'run-old', 1)
     db.close()
 
-    const result = runScript(path)
-
-    // An already-pruned store leaves non-delta rows and matches nothing, which
-    // is indistinguishable from a stale predicate. Warn, but do not go red on
-    // the steady state this job exists to produce.
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toMatch(/warning/i)
-    expect(result.stderr).toMatch(/predicate|delta/i)
-    expect(result.stderr).toContain('events')
-    expect(result.stderr).toContain('broker_invocation_events')
-    expect(JSON.parse(result.stdout).matchedCount).toBe(0)
+    const result = pruneStateRetention(pruneOptions(path, true))
+    expect(result.tables.events.deleted).toBe(1)
+    expect(result.tables.hrc_events.deleted).toBe(1)
+    expect(result.tables.broker_invocation_events.deleted).toBe(1)
+    expect(result.tables.runtime_buffers.deleted).toBe(0)
   })
 
-  test('a genuinely broken store still fails loudly', () => {
-    const result = runScript(join(tmpdir(), 'hrc-prune-deltas-does-not-exist', 'state.sqlite'))
-
-    expect(result.exitCode).not.toBe(0)
-    expect(result.stderr).toMatch(/does not exist/i)
-  })
-
-  test('young target rows pass the age-unfiltered drift guard while reporting zero deletions', () => {
+  test('imported observations ride the event TTL without local authority rows', () => {
     const { path, db } = makeStore()
-    insertEvent(db, 'broker.assistant.message.delta', new Date().toISOString())
-    insertBrokerInvocationEvent(db, 'tool.call.delta', new Date().toISOString())
+    const importedHrc = insertHrcEvent(db, 'turn.message', { sourceRef: 'node:lab' })
+    const importedBroker = insertBrokerEvent(db, 'remote-invocation', {
+      sourceRef: 'node:lab',
+    })
+    const importedBarrier = insertHrcEvent(db, 'runtime.terminated', {
+      sourceRef: 'node:lab',
+    })
     db.close()
 
-    const result = runScript(path, '--apply')
+    pruneStateRetention(pruneOptions(path, true))
 
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).toEqual([importedBarrier])
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).not.toContain(importedHrc)
+      expect(ids(verify, 'broker_invocation_events', 'id')).not.toContain(importedBroker)
+    } finally {
+      verify.close()
+    }
+  })
+
+  test('apply fails before deletion when incremental auto-vacuum is not installed', () => {
+    const { path, db } = makeStore(false)
+    const authority = seedTerminalAuthority(db)
+    const oldEvent = insertEvent(db, 'turn.message', authority)
+    db.close()
+
+    expect(() => pruneStateRetention(pruneOptions(path, true))).toThrow(/auto_vacuum mode is 0/)
+
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'events', 'seq')).toEqual([oldEvent])
+    } finally {
+      verify.close()
+    }
+  })
+
+  test('dry-run reports all tables without deleting and apply reclaims the freelist', () => {
+    const { path, db } = makeStore()
+    const authority = seedTerminalAuthority(db)
+    for (let index = 0; index < 40; index += 1) {
+      insertHrcEvent(db, 'turn.message', authority)
+      insertBuffer(db, authority.runtimeId, authority.runId, index + 1, OLD, 'x'.repeat(64 * 1024))
+    }
+    db.close()
+
+    const dryRun = pruneStateRetention(pruneOptions(path, false))
+    expect(dryRun.eligibleCount).toBe(80)
+    expect(dryRun.deleted).toBe(0)
+
+    const apply = pruneStateRetention(pruneOptions(path, true, 7))
+    expect(apply.deleted).toBe(80)
+    expect(apply.freelistBeforeVacuumPages).toBeGreaterThan(0)
+    expect(apply.freelistAfterPages).toBe(0)
+    expect(apply.reclaimedPages).toBeGreaterThan(0)
+  })
+
+  test('CLI reports configured cutoffs and fails loudly for a missing store', () => {
+    const { path, db } = makeStore()
+    db.close()
+    const result = runScript(
+      path,
+      '--event-retention-days',
+      '5',
+      '--runtime-buffer-retention-days',
+      '2'
+    )
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
     const report = JSON.parse(result.stdout)
-    expect(report.matchedCount).toBe(2)
-    expect(report.eligibleCount).toBe(0)
-    expect(report.deleted).toBe(0)
+    expect(report.eventRetentionDays).toBe(5)
+    expect(report.runtimeBufferRetentionDays).toBe(2)
+    expect(report.tables).toHaveProperty('hrc_events')
+    expect(report.tables).toHaveProperty('runtime_buffers')
 
-    const verify = new Database(path)
-    try {
-      expect(eventSeqs(verify)).toHaveLength(1)
-      expect(brokerInvocationEventIds(verify)).toHaveLength(1)
-    } finally {
-      verify.close()
-    }
-  })
-
-  test('dry-run reports both tables without deletion and apply loops batches without vacuuming', () => {
-    const { path, db } = makeStore()
-    const cliOld = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
-    for (let index = 0; index < 3; index += 1) {
-      insertEvent(db, 'broker.tool.call.delta', cliOld, 'x'.repeat(64 * 1024))
-      insertBrokerInvocationEvent(db, 'tool.call.delta', cliOld)
-    }
-    db.close()
-
-    const dryRun = runScript(path)
-    expect(dryRun.exitCode).toBe(0)
-    const report = JSON.parse(dryRun.stdout)
-    expect(report.tables.events.eligibleCount).toBe(3)
-    expect(report.tables.broker_invocation_events.eligibleCount).toBe(3)
-    expect(report.deleted).toBe(0)
-
-    const afterDryRun = new Database(path)
-    try {
-      expect(eventSeqs(afterDryRun)).toHaveLength(3)
-      expect(brokerInvocationEventIds(afterDryRun)).toHaveLength(3)
-    } finally {
-      afterDryRun.close()
-    }
-
-    const apply = runScript(path, '--apply', '--batch-size', '1')
-    expect(apply.exitCode).toBe(0)
-
-    const afterApply = new Database(path)
-    try {
-      expect(eventSeqs(afterApply)).toEqual([])
-      expect(brokerInvocationEventIds(afterApply)).toEqual([])
-      const freelist = afterApply
-        .query<{ pages: number }, []>('SELECT freelist_count AS pages FROM pragma_freelist_count')
-        .get()
-      expect(freelist?.pages ?? 0).toBeGreaterThan(0)
-    } finally {
-      afterApply.close()
-    }
+    const missing = runScript(join(tmpdir(), 'hrc-retention-missing', 'state.sqlite'))
+    expect(missing.exitCode).not.toBe(0)
+    expect(missing.stderr).toMatch(/does not exist/i)
   })
 })

@@ -22,6 +22,12 @@
 		<string>/Users/lherron/.bun/bin/bun</string>
 		<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>
 		<string>--apply</string>
+		<string>--event-retention-days</string>
+		<string>3</string>
+		<string>--runtime-buffer-retention-days</string>
+		<string>1</string>
+		<string>--incremental-vacuum-pages</string>
+		<string>0</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log</string>

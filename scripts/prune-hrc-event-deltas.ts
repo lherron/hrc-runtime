@@ -5,54 +5,223 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 
 const DEFAULT_HRC_STORE_PATH = '/Users/lherron/praesidium/var/state/hrc/state.sqlite'
-const RETENTION_MILLISECONDS = 7 * 24 * 60 * 60 * 1000
+const DEFAULT_EVENT_RETENTION_DAYS = 3
+const DEFAULT_RUNTIME_BUFFER_RETENTION_DAYS = 1
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
 
-const EVENTS_DELTA_WHERE_SQL = `
-  event_kind IN ('broker.assistant.message.delta', 'broker.tool.call.delta')
-`
-const BROKER_INVOCATION_EVENTS_DELTA_WHERE_SQL = `
-  type IN ('assistant.message.delta', 'tool.call.delta')
+const TERMINAL_RUN_STATUSES_SQL = "'completed', 'failed', 'cancelled', 'zombie'"
+const TERMINAL_RUNTIME_STATUSES_SQL = "'terminated', 'dead', 'stale', 'crashed'"
+const TERMINAL_INVOCATION_STATES_SQL = "'exited', 'failed', 'disposed'"
+
+/**
+ * These event kinds are durable resume barriers. They remain exempt even when
+ * the payload does not represent a barrier (for example stale auto-rotation);
+ * the small over-retention makes a malformed payload fail closed.
+ */
+const RESUME_BARRIER_EVENT_KINDS_SQL = `
+  'session.continuation_dropped',
+  'context.cleared',
+  'runtime.terminated',
+  'broker.continuation.cleared'
 `
 
-export type PruneDeltaEventsOptions = {
+const EVENTS_ELIGIBLE_SQL = `
+  e.ts < ?
+  AND e.event_kind NOT IN (${RESUME_BARRIER_EVENT_KINDS_SQL})
+  AND (
+    e.run_id IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM runs AS run
+      WHERE run.run_id = e.run_id
+        AND run.status IN (${TERMINAL_RUN_STATUSES_SQL})
+    )
+  )
+  AND (
+    e.runtime_id IS NULL
+    OR (
+      e.run_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM runtimes AS current_runtime
+        WHERE current_runtime.runtime_id = e.runtime_id
+          AND current_runtime.active_run_id = e.run_id
+      )
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM runtimes AS terminal_runtime
+      WHERE terminal_runtime.runtime_id = e.runtime_id
+        AND terminal_runtime.status IN (${TERMINAL_RUNTIME_STATUSES_SQL})
+        AND terminal_runtime.active_run_id IS NULL
+    )
+  )
+`
+
+const HRC_EVENTS_ELIGIBLE_SQL = `
+  e.ts < ?
+  AND e.event_kind NOT IN (${RESUME_BARRIER_EVENT_KINDS_SQL})
+  AND (
+    e.source_ref IS NOT NULL
+    OR (
+      (
+        e.run_id IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM runs AS run
+          WHERE run.run_id = e.run_id
+            AND run.status IN (${TERMINAL_RUN_STATUSES_SQL})
+        )
+      )
+      AND (
+        e.runtime_id IS NULL
+        OR (
+          e.run_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM runtimes AS current_runtime
+            WHERE current_runtime.runtime_id = e.runtime_id
+              AND current_runtime.active_run_id = e.run_id
+          )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM runtimes AS terminal_runtime
+          WHERE terminal_runtime.runtime_id = e.runtime_id
+            AND terminal_runtime.status IN (${TERMINAL_RUNTIME_STATUSES_SQL})
+            AND terminal_runtime.active_run_id IS NULL
+        )
+      )
+    )
+  )
+`
+
+const BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL = `
+  e.time < ?
+  AND (
+    e.source_ref IS NOT NULL
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM broker_invocations AS invocation
+        WHERE invocation.invocation_id = e.invocation_id
+          AND invocation.invocation_state IN (${TERMINAL_INVOCATION_STATES_SQL})
+      )
+      AND (
+        e.run_id IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM runs AS run
+          WHERE run.run_id = e.run_id
+            AND run.status IN (${TERMINAL_RUN_STATUSES_SQL})
+        )
+      )
+      AND (
+        e.runtime_id IS NULL
+        OR (
+          e.run_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM runtimes AS current_runtime
+            WHERE current_runtime.runtime_id = e.runtime_id
+              AND current_runtime.active_run_id = e.run_id
+          )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM runtimes AS terminal_runtime
+          WHERE terminal_runtime.runtime_id = e.runtime_id
+            AND terminal_runtime.status IN (${TERMINAL_RUNTIME_STATUSES_SQL})
+            AND terminal_runtime.active_run_id IS NULL
+        )
+      )
+    )
+  )
+`
+
+const RUNTIME_BUFFERS_ELIGIBLE_SQL = `
+  e.created_at < ?
+  AND EXISTS (
+    SELECT 1
+    FROM runs AS run
+    WHERE run.run_id = e.run_id
+      AND run.status IN (${TERMINAL_RUN_STATUSES_SQL})
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM runtimes AS runtime
+    WHERE runtime.runtime_id = e.runtime_id
+      AND runtime.status IN (${TERMINAL_RUNTIME_STATUSES_SQL})
+      AND runtime.active_run_id IS NULL
+  )
+`
+
+export type PruneStateRetentionOptions = {
   dbPath: string
   apply: boolean
   batchSize: number
   checkpoint: boolean
-  vacuum: boolean
+  eventRetentionDays: number
+  runtimeBufferRetentionDays: number
+  incrementalVacuumPages: number
   now: Date
 }
 
-export type PruneDeltaTableResult = {
-  matchedCount: number
+export type PruneRetentionTableResult = {
   eligibleCount: number
   deleted: number
-  remainingCount: number
+  remainingEligibleCount: number
 }
 
-export type PruneDeltaEventsResult = {
-  cutoff: string
-  matchedCount: number
+export type PruneStateRetentionResult = {
+  eventCutoff: string
+  runtimeBufferCutoff: string
   eligibleCount: number
   deleted: number
-  remainingCount: number
+  remainingEligibleCount: number
+  autoVacuumMode: number
+  freelistBeforePages: number
+  freelistBeforeVacuumPages: number
+  freelistAfterPages: number
+  reclaimedPages: number
   tables: {
-    events: PruneDeltaTableResult
-    broker_invocation_events: PruneDeltaTableResult
+    events: PruneRetentionTableResult
+    hrc_events: PruneRetentionTableResult
+    broker_invocation_events: PruneRetentionTableResult
+    runtime_buffers: PruneRetentionTableResult
   }
 }
 
-type PredicateCounts = {
-  matchedCount: number
-  eligibleCount: number
+type RetentionTable = keyof PruneStateRetentionResult['tables']
+
+type TablePlan = {
+  table: RetentionTable
+  alias: string
+  keyColumn: string
+  cutoff: string
+  eligibleSql: string
 }
 
 function usage(): string {
   return [
-    'Usage: bun scripts/prune-hrc-event-deltas.ts [--db <path>] [--apply] [--batch-size <n>] [--no-checkpoint] [--vacuum]',
+    'Usage: bun scripts/prune-hrc-event-deltas.ts [options]',
     '',
-    'Prunes broker assistant-message and tool-call delta rows older than seven days',
-    'from events and broker_invocation_events. Without --apply, reports counts only.',
+    'Applies bounded retention to HRC observation tables. Without --apply, reports',
+    'eligible counts only. Resume barriers and active/nonterminal work are always exempt.',
+    '',
+    'Options:',
+    '  --db <path>                         state.sqlite path',
+    '  --apply                             delete eligible rows',
+    '  --batch-size <n>                    rows per DELETE (default: 10000)',
+    '  --event-retention-days <n>          event history TTL (default: 3)',
+    '  --runtime-buffer-retention-days <n> terminal buffer TTL (default: 1)',
+    '  --incremental-vacuum-pages <n>      pages reclaimed after apply; 0 = all (default: 0)',
+    '  --no-checkpoint                     skip WAL checkpoint after apply',
+    '',
+    'Environment fallbacks:',
+    '  HRC_EVENT_RETENTION_DAYS',
+    '  HRC_RUNTIME_BUFFER_RETENTION_DAYS',
+    '  HRC_INCREMENTAL_VACUUM_PAGES',
   ].join('\n')
 }
 
@@ -76,17 +245,41 @@ function resolveDefaultDbPath(env: Record<string, string | undefined>): string {
   return DEFAULT_HRC_STORE_PATH
 }
 
-export function parsePruneDeltaEventsArgs(
+function parsePositiveNumber(raw: string | undefined, fallback: number, flag: string): number {
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${flag} must be a positive number`)
+  }
+  return value
+}
+
+function parseNonNegativeInteger(raw: string | undefined, fallback: number, flag: string): number {
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${flag} must be a non-negative integer`)
+  }
+  return value
+}
+
+export function parsePruneStateRetentionArgs(
   args: string[],
   env: Record<string, string | undefined> = process.env
-): PruneDeltaEventsOptions {
+): PruneStateRetentionOptions {
   if (args.includes('--help') || args.includes('-h')) {
     throw new Error(usage())
   }
+  if (args.includes('--vacuum')) {
+    throw new Error(
+      '--vacuum is not supported: full VACUUM requires a coordinated offline maintenance window'
+    )
+  }
 
-  const batchSizeRaw = readArgValue(args, '--batch-size')
-  const batchSize = batchSizeRaw === undefined ? 10_000 : Number(batchSizeRaw)
-  if (!Number.isInteger(batchSize) || batchSize < 1) {
+  const batchSize = parseNonNegativeInteger(
+    readArgValue(args, '--batch-size'),
+    10_000,
+    '--batch-size'
+  )
+  if (batchSize === 0) {
     throw new Error('--batch-size must be a positive integer')
   }
 
@@ -95,107 +288,57 @@ export function parsePruneDeltaEventsArgs(
     apply: args.includes('--apply'),
     batchSize,
     checkpoint: !args.includes('--no-checkpoint'),
-    vacuum: args.includes('--vacuum'),
+    eventRetentionDays: parsePositiveNumber(
+      readArgValue(args, '--event-retention-days') ?? env['HRC_EVENT_RETENTION_DAYS'],
+      DEFAULT_EVENT_RETENTION_DAYS,
+      '--event-retention-days'
+    ),
+    runtimeBufferRetentionDays: parsePositiveNumber(
+      readArgValue(args, '--runtime-buffer-retention-days') ??
+        env['HRC_RUNTIME_BUFFER_RETENTION_DAYS'],
+      DEFAULT_RUNTIME_BUFFER_RETENTION_DAYS,
+      '--runtime-buffer-retention-days'
+    ),
+    incrementalVacuumPages: parseNonNegativeInteger(
+      readArgValue(args, '--incremental-vacuum-pages') ?? env['HRC_INCREMENTAL_VACUUM_PAGES'],
+      0,
+      '--incremental-vacuum-pages'
+    ),
     now: new Date(),
   }
 }
 
-function countEvents(db: Database, cutoff: string): PredicateCounts {
-  const row = db
-    .query<PredicateCounts, [string]>(
-      `
-        SELECT
-          COUNT(*) AS matchedCount,
-          COALESCE(SUM(CASE WHEN ts < ? THEN 1 ELSE 0 END), 0) AS eligibleCount
-        FROM events
-        WHERE ${EVENTS_DELTA_WHERE_SQL}
-      `
-    )
-    .get(cutoff)
-  return row ?? { matchedCount: 0, eligibleCount: 0 }
-}
-
-function countBrokerInvocationEvents(db: Database, cutoff: string): PredicateCounts {
-  const row = db
-    .query<PredicateCounts, [string]>(
-      `
-        SELECT
-          COUNT(*) AS matchedCount,
-          COALESCE(SUM(CASE WHEN time < ? THEN 1 ELSE 0 END), 0) AS eligibleCount
-        FROM broker_invocation_events
-        WHERE ${BROKER_INVOCATION_EVENTS_DELTA_WHERE_SQL}
-      `
-    )
-    .get(cutoff)
-  return row ?? { matchedCount: 0, eligibleCount: 0 }
-}
-
-function countRemainingEvents(db: Database): number {
+function countEligible(db: Database, plan: TablePlan): number {
   return (
     db
-      .query<{ count: number }, []>(
-        `SELECT COUNT(*) AS count FROM events WHERE ${EVENTS_DELTA_WHERE_SQL}`
+      .query<{ count: number }, [string]>(
+        `SELECT COUNT(*) AS count
+           FROM ${plan.table} AS ${plan.alias}
+          WHERE ${plan.eligibleSql}`
       )
-      .get()?.count ?? 0
+      .get(plan.cutoff)?.count ?? 0
   )
 }
 
-function countRemainingBrokerInvocationEvents(db: Database): number {
-  return (
-    db
-      .query<{ count: number }, []>(
-        `
-          SELECT COUNT(*) AS count
-          FROM broker_invocation_events
-          WHERE ${BROKER_INVOCATION_EVENTS_DELTA_WHERE_SQL}
-        `
-      )
-      .get()?.count ?? 0
-  )
-}
-
-function deleteEventsBatch(db: Database, cutoff: string, batchSize: number): number {
+function deleteBatch(db: Database, plan: TablePlan, batchSize: number): number {
   return db
     .prepare<never, [string, number]>(
-      `
-        DELETE FROM events
-        WHERE seq IN (
-          SELECT seq
-          FROM events
-          WHERE ${EVENTS_DELTA_WHERE_SQL}
-            AND ts < ?
-          LIMIT ?
-        )
-      `
+      `DELETE FROM ${plan.table}
+        WHERE ${plan.keyColumn} IN (
+          SELECT ${plan.alias}.${plan.keyColumn}
+            FROM ${plan.table} AS ${plan.alias}
+           WHERE ${plan.eligibleSql}
+           ORDER BY ${plan.alias}.${plan.keyColumn} ASC
+           LIMIT ?
+        )`
     )
-    .run(cutoff, batchSize).changes
+    .run(plan.cutoff, batchSize).changes
 }
 
-function deleteBrokerInvocationEventsBatch(
-  db: Database,
-  cutoff: string,
-  batchSize: number
-): number {
-  return db
-    .prepare<never, [string, number]>(
-      `
-        DELETE FROM broker_invocation_events
-        WHERE id IN (
-          SELECT id
-          FROM broker_invocation_events
-          WHERE ${BROKER_INVOCATION_EVENTS_DELTA_WHERE_SQL}
-            AND time < ?
-          LIMIT ?
-        )
-      `
-    )
-    .run(cutoff, batchSize).changes
-}
-
-function deleteInBatches(deleteBatch: () => number, batchSize: number): number {
+function deleteInBatches(db: Database, plan: TablePlan, batchSize: number): number {
   let deleted = 0
   while (true) {
-    const batchDeleted = deleteBatch()
+    const batchDeleted = deleteBatch(db, plan, batchSize)
     deleted += batchDeleted
     if (batchDeleted < batchSize) {
       return deleted
@@ -203,61 +346,135 @@ function deleteInBatches(deleteBatch: () => number, batchSize: number): number {
   }
 }
 
-export function pruneDeltaEvents(options: PruneDeltaEventsOptions): PruneDeltaEventsResult {
+function readPragmaNumber(db: Database, pragma: 'auto_vacuum' | 'freelist_count'): number {
+  const row = db.query<Record<string, number>, []>(`PRAGMA ${pragma}`).get()
+  return row ? (Object.values(row)[0] ?? 0) : 0
+}
+
+function assertIncrementalAutoVacuum(db: Database): number {
+  const mode = readPragmaNumber(db, 'auto_vacuum')
+  if (mode !== 2) {
+    throw new Error(
+      `state.sqlite auto_vacuum mode is ${mode}, expected 2 (INCREMENTAL); refusing to delete rows until a coordinated full VACUUM has installed the pointer map`
+    )
+  }
+  return mode
+}
+
+function incrementalVacuum(db: Database, pages: number): void {
+  if (pages === 0) {
+    db.exec('PRAGMA incremental_vacuum;')
+    return
+  }
+  db.exec(`PRAGMA incremental_vacuum(${pages});`)
+}
+
+export function pruneStateRetention(
+  options: PruneStateRetentionOptions
+): PruneStateRetentionResult {
   if (!existsSync(options.dbPath)) {
     throw new Error(`HRC store does not exist: ${options.dbPath}`)
   }
 
-  const cutoff = new Date(options.now.getTime() - RETENTION_MILLISECONDS).toISOString()
+  const eventCutoff = new Date(
+    options.now.getTime() - options.eventRetentionDays * MILLISECONDS_PER_DAY
+  ).toISOString()
+  const runtimeBufferCutoff = new Date(
+    options.now.getTime() - options.runtimeBufferRetentionDays * MILLISECONDS_PER_DAY
+  ).toISOString()
+  const plans: TablePlan[] = [
+    {
+      table: 'events',
+      alias: 'e',
+      keyColumn: 'seq',
+      cutoff: eventCutoff,
+      eligibleSql: EVENTS_ELIGIBLE_SQL,
+    },
+    {
+      table: 'hrc_events',
+      alias: 'e',
+      keyColumn: 'hrc_seq',
+      cutoff: eventCutoff,
+      eligibleSql: HRC_EVENTS_ELIGIBLE_SQL,
+    },
+    {
+      table: 'broker_invocation_events',
+      alias: 'e',
+      keyColumn: 'id',
+      cutoff: eventCutoff,
+      eligibleSql: BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL,
+    },
+    {
+      table: 'runtime_buffers',
+      alias: 'e',
+      keyColumn: 'rowid',
+      cutoff: runtimeBufferCutoff,
+      eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
+    },
+  ]
+
   const db = new Database(options.dbPath)
   try {
-    const events = countEvents(db, cutoff)
-    const brokerInvocationEvents = countBrokerInvocationEvents(db, cutoff)
-    const matchedCount = events.matchedCount + brokerInvocationEvents.matchedCount
-
-    let eventsDeleted = 0
-    let brokerInvocationEventsDeleted = 0
+    db.exec('PRAGMA busy_timeout = 5000;')
+    const autoVacuumMode = readPragmaNumber(db, 'auto_vacuum')
     if (options.apply) {
-      eventsDeleted = deleteInBatches(
-        () => deleteEventsBatch(db, cutoff, options.batchSize),
-        options.batchSize
-      )
-      brokerInvocationEventsDeleted = deleteInBatches(
-        () => deleteBrokerInvocationEventsBatch(db, cutoff, options.batchSize),
-        options.batchSize
-      )
+      assertIncrementalAutoVacuum(db)
+    }
+    const freelistBeforePages = readPragmaNumber(db, 'freelist_count')
+    const eligible = Object.fromEntries(
+      plans.map((plan) => [plan.table, countEligible(db, plan)])
+    ) as Record<RetentionTable, number>
+    const deleted = {
+      events: 0,
+      hrc_events: 0,
+      broker_invocation_events: 0,
+      runtime_buffers: 0,
+    } satisfies Record<RetentionTable, number>
+    let freelistBeforeVacuumPages = freelistBeforePages
 
+    if (options.apply) {
+      for (const plan of plans) {
+        deleted[plan.table] = deleteInBatches(db, plan, options.batchSize)
+      }
       if (options.checkpoint) {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE);')
       }
-      if (options.vacuum) {
-        db.exec('VACUUM;')
-      }
+      freelistBeforeVacuumPages = readPragmaNumber(db, 'freelist_count')
+      incrementalVacuum(db, options.incrementalVacuumPages)
     }
 
-    const eventsRemaining = options.apply ? countRemainingEvents(db) : events.matchedCount
-    const brokerInvocationEventsRemaining = options.apply
-      ? countRemainingBrokerInvocationEvents(db)
-      : brokerInvocationEvents.matchedCount
+    const remaining = options.apply
+      ? ({
+          events: 0,
+          hrc_events: 0,
+          broker_invocation_events: 0,
+          runtime_buffers: 0,
+        } satisfies Record<RetentionTable, number>)
+      : eligible
+    const freelistAfterPages = readPragmaNumber(db, 'freelist_count')
+    const tableResult = Object.fromEntries(
+      plans.map((plan) => [
+        plan.table,
+        {
+          eligibleCount: eligible[plan.table],
+          deleted: deleted[plan.table],
+          remainingEligibleCount: remaining[plan.table],
+        },
+      ])
+    ) as PruneStateRetentionResult['tables']
 
     return {
-      cutoff,
-      matchedCount,
-      eligibleCount: events.eligibleCount + brokerInvocationEvents.eligibleCount,
-      deleted: eventsDeleted + brokerInvocationEventsDeleted,
-      remainingCount: eventsRemaining + brokerInvocationEventsRemaining,
-      tables: {
-        events: {
-          ...events,
-          deleted: eventsDeleted,
-          remainingCount: eventsRemaining,
-        },
-        broker_invocation_events: {
-          ...brokerInvocationEvents,
-          deleted: brokerInvocationEventsDeleted,
-          remainingCount: brokerInvocationEventsRemaining,
-        },
-      },
+      eventCutoff,
+      runtimeBufferCutoff,
+      eligibleCount: Object.values(eligible).reduce((sum, count) => sum + count, 0),
+      deleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+      remainingEligibleCount: Object.values(remaining).reduce((sum, count) => sum + count, 0),
+      autoVacuumMode,
+      freelistBeforePages,
+      freelistBeforeVacuumPages,
+      freelistAfterPages,
+      reclaimedPages: Math.max(0, freelistBeforeVacuumPages - freelistAfterPages),
+      tables: tableResult,
     }
   } finally {
     db.close()
@@ -266,18 +483,8 @@ export function pruneDeltaEvents(options: PruneDeltaEventsOptions): PruneDeltaEv
 
 if (import.meta.main) {
   try {
-    const options = parsePruneDeltaEventsArgs(Bun.argv.slice(2))
-    const result = pruneDeltaEvents(options)
-    if (result.matchedCount === 0) {
-      // A store whose delta rows have all been pruned is observationally
-      // identical to one whose predicate has gone stale: both leave non-delta
-      // rows behind and match nothing. Warn rather than fail, or the job goes
-      // red nightly on exactly the state it exists to produce.
-      console.error(
-        'warning: delta predicate matched no rows in events or broker_invocation_events; ' +
-          'expected if the store is already pruned, but verify the known delta kinds if this persists on an active store'
-      )
-    }
+    const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
+    const result = pruneStateRetention(options)
     console.log(
       JSON.stringify(
         {
@@ -285,7 +492,9 @@ if (import.meta.main) {
           applied: options.apply,
           batchSize: options.batchSize,
           checkpoint: options.checkpoint,
-          vacuum: options.vacuum,
+          eventRetentionDays: options.eventRetentionDays,
+          runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
+          incrementalVacuumPages: options.incrementalVacuumPages,
           ...result,
         },
         null,

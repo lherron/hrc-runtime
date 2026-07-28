@@ -11,10 +11,10 @@ test('documents the state retention policy and index adequacy evidence', () => {
   const doc = readFileSync(stateRetentionDocUrl, 'utf8')
 
   expect(doc).toMatch(
-    /(?=[\s\S]*delta events?)(?=[\s\S]*7[- ]day)(?=[\s\S]*T-06453)(?=[\s\S]*b1cbccc)(?=[\s\S]*T-06554)/i
+    /(?=[\s\S]*events)(?=[\s\S]*hrc_events)(?=[\s\S]*broker_invocation_events)(?=[\s\S]*default 3-day retention)(?=[\s\S]*runtime_buffers)(?=[\s\S]*default 1-day retention)/i
   )
   expect(doc).toMatch(
-    /(?=[\s\S]*all other history)(?=[\s\S]*keep forever)(?=[\s\S]*non-delta)(?=[\s\S]*no archive migration)(?=[\s\S]*live state db)/i
+    /(?=[\s\S]*resume barriers are permanent)(?=[\s\S]*nonterminal runs)(?=[\s\S]*current active run)(?=[\s\S]*imported federation observations)(?=[\s\S]*no archive migration)(?=[\s\S]*auto_vacuum=INCREMENTAL)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*full backup)(?=[\s\S]*state\.sqlite)(?=[\s\S]*disk)(?=[\s\S]*defer)(?=[\s\S]*rolling nightly increments)(?=[\s\S]*C-10736)/i

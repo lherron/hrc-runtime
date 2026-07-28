@@ -150,14 +150,23 @@ handoff/validation evidence.
 
 ## State retention
 
-`state.sqlite` retention policy (ruled 2026-07-18):
+`state.sqlite` retention policy (observation policy revised 2026-07-28):
 
-- Delta events: 7-day retention, enforced by the honest prune script
-  (T-06453). The scheduled nightly job and one-time backlog prune are
-  separate deliveries.
-- All other history — including `hrc_events`, finals, and messages — is
-  **not pruned** and stays in the live state DB. There is no archive
-  migration.
+- `events`, `hrc_events`, and `broker_invocation_events` observation history:
+  3 days by default. `runtime_buffers` for completed runs: 1 day by default.
+  Both TTLs are configurable by the nightly prune script's CLI flags or
+  environment variables.
+- Resume barriers and rows for active/nonterminal work are permanent
+  exemptions. Runtime buffers remain while their runtime is live.
+- The 3-day window also bounds monitor transcript, broker-forensics, capture
+  verification, and event-replay reach-back. `--previous` can select a retained
+  old runtime whose transcript has expired.
+- Imported federation observations use the same window; an offline source may
+  have an observation gap after 3 days. Federation outboxes, pending envelopes,
+  and unacknowledged deliveries are not eligible.
+- The database uses `auto_vacuum=INCREMENTAL`; the nightly job fails before
+  deletion unless mode `2` is active, then drains the freelist with
+  `incremental_vacuum`. Full `VACUUM` remains an offline coordinated operation.
 - Terminated `runtimes` rows are **keep-forever history**: no TTL, ever.
   The controlling reason is resume-path integrity — terminated rows anchor
   the `scope_ref` → `host_session_id` → `harness_session_json` chain used

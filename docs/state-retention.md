@@ -1,18 +1,61 @@
 # State retention
 
 This document is the canonical retention policy for HRC's live `state.sqlite`
-database. The policy, including registry-row retention, was ruled on 2026-07-18.
+database. The observation-table policy was revised on 2026-07-28 after sustained
+broker traffic grew the database to 33 GB and synchronous SQLite scans starved
+the HRC server main thread.
 
 ## Retention policy
 
-Delta events have a 7-day retention period. The enforcement vehicle is the
-honest prune script delivered by T-06453 in commit `b1cbccc`. The scheduled
-nightly job and one-time backlog prune are delivered separately by T-06554,
-not by this documentation task.
+Observation history in `events`, `hrc_events`, and
+`broker_invocation_events` has a default 3-day retention period. Completed-run
+rows in `runtime_buffers` have a default 1-day retention period. The launchd
+job runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label
+are retained for installation compatibility even though the script now enforces
+general state retention rather than delta-only retention.
 
-All other history must keep forever. Non-delta event kinds, including
-`hrc_events`, finals, and messages, are not pruned. There is no archive migration;
-this history stays in the live state db.
+Both periods are configuration, not constants:
+
+- `--event-retention-days` / `HRC_EVENT_RETENTION_DAYS`
+- `--runtime-buffer-retention-days` /
+  `HRC_RUNTIME_BUFFER_RETENTION_DAYS`
+
+The default 3-day observation window intentionally bounds `hrc monitor
+transcript`, broker forensics, capture verification, `/v1/events` replay, and
+monitor history. An explicit old runtime or `--previous` selection can therefore
+resolve to a retained runtime row but return no event transcript after the
+window expires.
+
+The prune has SQL-level safety invariants independent of cutoff arithmetic:
+
+- Resume barriers are permanent: `session.continuation_dropped`,
+  `context.cleared`, `runtime.terminated`, and
+  `broker.continuation.cleared`.
+- Rows belonging to nonterminal runs or invocations are never eligible.
+- A row for a runtime's current active run is never eligible.
+- Runtime buffers remain while their runtime is live, even if the individual
+  run has completed.
+- Imported federation observations use the same 3-day window. Observation
+  forwarding can have a gap when a source is offline longer than the window.
+  Delivery authority is different: federation outboxes, pending envelopes, and
+  unacknowledged deliveries are not observation tables and are never touched by
+  this job.
+
+There is no archive migration. History past the configured window is deleted
+from the live state database.
+
+## Freelist control
+
+The database must use `PRAGMA auto_vacuum=INCREMENTAL` (mode `2`). Installing
+the pointer map into an existing database requires one coordinated full
+`VACUUM`; it cannot be retrofitted by `incremental_vacuum` alone. The nightly
+job fails before deleting anything when the mode is not `INCREMENTAL`, then
+runs `PRAGMA incremental_vacuum` after its batched deletes. The reclaim limit is
+configurable with `--incremental-vacuum-pages` /
+`HRC_INCREMENTAL_VACUUM_PAGES`; `0` (the default) drains the freelist.
+
+Full `VACUUM` is deliberately not available through the nightly script. It
+requires an offline maintenance window and sufficient disk headroom.
 
 Before any bulk prune, take a full backup of `state.sqlite`. If the disk cannot
 fit a full backup, defer the prune and surface that deferral; never perform the
@@ -52,9 +95,9 @@ there is no scale pressure that outweighs that risk.
 
 The C-10743 audit measured 8571 `runtimes` rows on 2026-07-18 (about 8.5k):
 terminated 7079 / stale 1381 / dead 72 / ready 37 / busy 2. This is a tiny table,
-and non-delta history remains subject to the keep-forever policy. Its foreign
-read paths are primary-key lookups, indexed joins, or tiny scans, so no missing
-index matters at this row count:
+and registry history remains subject to the keep-forever policy. Its foreign read
+paths are primary-key lookups, indexed joins, or tiny scans, so no missing index
+matters at this row count:
 
 - `hrc-cli/src/cli-runtime.ts` (`listInFlightWork`) filters
   `rt.status = 'busy'`, which selected about two rows at audit time, and joins
