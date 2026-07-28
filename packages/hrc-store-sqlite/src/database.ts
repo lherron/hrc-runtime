@@ -44,6 +44,12 @@ import {
   SessionRepository,
 } from './repositories/session-repositories.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
+import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
+
+export type OpenHrcDatabaseOptions = {
+  slowStatementThresholdMs?: number | undefined
+  onSlowStatement?: ((statement: SqliteSlowStatement) => void) | undefined
+}
 
 export type HrcDatabase = {
   sqlite: Database
@@ -101,8 +107,15 @@ export function createHrcDatabase(path: string): Database {
   return db
 }
 
-export function openHrcDatabase(dbPath: string): HrcDatabase {
-  const sqlite = createHrcDatabase(dbPath)
+export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions = {}): HrcDatabase {
+  const rawSqlite = createHrcDatabase(dbPath)
+  const sqlite =
+    options.onSlowStatement === undefined
+      ? rawSqlite
+      : instrumentSqliteStatements(rawSqlite, {
+          slowStatementThresholdMs: options.slowStatementThresholdMs ?? 250,
+          onSlowStatement: options.onSlowStatement,
+        })
   runMigrations(sqlite)
 
   return {

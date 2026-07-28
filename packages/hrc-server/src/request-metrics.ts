@@ -8,7 +8,7 @@ import { exactRouteKey, matchLaunchSubroute } from './server-routing.js'
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const SERVER_METRICS_FILE_PATTERN = /^server-\d{4}-\d{2}-\d{2}\.ndjson$/
 
-export type ServerMetricRecord = {
+export type ServerRequestMetricRecord = {
   v: 1
   kind: 'server'
   ts: string
@@ -20,6 +20,17 @@ export type ServerMetricRecord = {
   stream?: true
   reqId?: string
 }
+
+export type SqliteSlowStatementMetricRecord = {
+  v: 1
+  kind: 'sqlite_slow_statement'
+  ts: string
+  sql: string
+  ms: number
+  callerTag: string
+}
+
+export type ServerMetricRecord = ServerRequestMetricRecord | SqliteSlowStatementMetricRecord
 
 export type ResponseByteMeasurement = { bytes: number } | { stream: true }
 

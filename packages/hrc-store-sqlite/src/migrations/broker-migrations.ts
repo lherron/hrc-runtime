@@ -618,6 +618,40 @@ const runsDispatchIdempotencyMigration: HrcMigration = {
   },
 }
 
+// T-07025: every equality predicate exposed by the event repositories must
+// select an index before SQLite steps through the multi-million-row ledgers.
+// The broker runtime index also carries the complete repository ORDER BY so
+// /v1/broker-forensics does not spill a temporary sort.
+//
+// Monitor-only payload substring / JSON predicates are intentionally absent:
+// leading-wildcard LIKE and arbitrary json_extract expressions cannot use a
+// conventional B-tree index. Their identity/scope/sequence predicates still
+// narrow the candidate range whenever callers supply one.
+const eventRepositoryQueryIndexesMigration: HrcMigration = {
+  id: '0036_event_repository_query_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_runtime_time_invocation_seq
+        ON broker_invocation_events(runtime_id, time, invocation_id, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_events_generation_seq
+        ON events(generation, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_source_ref_seq
+        ON hrc_events(source_ref, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_generation_seq
+        ON hrc_events(generation, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_lane_seq
+        ON hrc_events(lane_ref, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_category_seq
+        ON hrc_events(category, hrc_seq);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -631,4 +665,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runsBrokerInputFenceMigration,
   observationalEventProvenanceMigration,
   runsDispatchIdempotencyMigration,
+  eventRepositoryQueryIndexesMigration,
 ]

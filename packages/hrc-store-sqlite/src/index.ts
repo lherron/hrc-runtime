@@ -1,5 +1,6 @@
 export { openHrcDatabase } from './database.js'
-export type { HrcDatabase } from './database.js'
+export type { HrcDatabase, OpenHrcDatabaseOptions } from './database.js'
+export type { SqliteSlowStatement } from './statement-telemetry.js'
 export {
   CollectiveHistoryReplicationRepository,
   CollectiveHistoryRepository,

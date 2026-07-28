@@ -36,7 +36,7 @@ import type {
 } from 'hrc-core'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
-import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveWakeReason, SqliteSlowStatement } from 'hrc-store-sqlite'
 import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
@@ -264,6 +264,42 @@ const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.e
 export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
+
+const DEFAULT_SQLITE_SLOW_STATEMENT_THRESHOLD_MS = 250
+
+export function resolveSqliteSlowStatementThresholdMs(
+  value = process.env['HRC_SQLITE_SLOW_STATEMENT_MS']
+): number {
+  if (value === undefined || value.trim() === '') {
+    return DEFAULT_SQLITE_SLOW_STATEMENT_THRESHOLD_MS
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_SQLITE_SLOW_STATEMENT_THRESHOLD_MS
+}
+
+function recordSqliteSlowStatement(
+  statement: SqliteSlowStatement,
+  stateRoot: string,
+  metricsEnabled: boolean
+): void {
+  writeServerLog('WARN', 'sqlite.slow_statement', statement)
+  if (!metricsEnabled) return
+  const now = new Date()
+  writeServerMetric(
+    {
+      v: 1,
+      kind: 'sqlite_slow_statement',
+      ts: now.toISOString(),
+      sql: statement.sql,
+      ms: statement.durationMs,
+      callerTag: statement.callerTag,
+    },
+    now,
+    stateRoot
+  )
+}
 export { parseDurationMs } from './parsers/common.js'
 export {
   actuatorSplitRuntimeAuthority,
@@ -2248,7 +2284,15 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         writeServerLog('WARN', 'server.start.ghostmux_unavailable', { error })
       })
     }
-    db = openHrcDatabase(resolvedOptions.dbPath)
+    db = openHrcDatabase(resolvedOptions.dbPath, {
+      slowStatementThresholdMs: resolveSqliteSlowStatementThresholdMs(),
+      onSlowStatement: (statement) =>
+        recordSqliteSlowStatement(
+          statement,
+          resolvedOptions.stateRoot,
+          process.env['HRC_METRICS'] !== '0'
+        ),
+    })
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
     await replaySpool(resolvedOptions, db)
     await reconcileStartupState(db, tmux, ghostmux, {

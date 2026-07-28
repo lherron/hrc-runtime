@@ -7,6 +7,8 @@ import { resolveStateRoot } from 'hrc-core'
 import { parseDurationMs } from 'hrc-server'
 import type { ServerMetricRecord } from 'hrc-server'
 
+type ServerRequestMetricRecord = Extract<ServerMetricRecord, { kind: 'server' }>
+
 type CliRpcMetric = {
   id: string
   path: string
@@ -143,7 +145,7 @@ function parseCliMetric(value: unknown): CliMetricRecord | undefined {
   }
 }
 
-function parseServerMetric(value: unknown): ServerMetricRecord | undefined {
+function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefined {
   if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'server') return undefined
   if (
     typeof value['ts'] !== 'string' ||
@@ -201,7 +203,7 @@ async function readMetricFile(
   path: string,
   cutoff: number,
   cli: CliMetricRecord[],
-  server: ServerMetricRecord[]
+  server: ServerRequestMetricRecord[]
 ): Promise<void> {
   const lines = createInterface({
     input: createReadStream(path),
@@ -248,8 +250,8 @@ function groupCommands(records: CliMetricRecord[]): CommandMetricGroup[] {
     .sort((a, b) => a.command.localeCompare(b.command))
 }
 
-function groupRoutes(records: ServerMetricRecord[]): RouteMetricGroup[] {
-  const groups = new Map<string, ServerMetricRecord[]>()
+function groupRoutes(records: ServerRequestMetricRecord[]): RouteMetricGroup[] {
+  const groups = new Map<string, ServerRequestMetricRecord[]>()
   for (const record of records) {
     const key = `${record.method} ${record.route}`
     const group = groups.get(key)
@@ -279,7 +281,7 @@ export async function readMetricsReport(
   const metricsDirExists = existsSync(metricsDir)
   const names = await readdir(metricsDir).catch(() => [])
   const cli: CliMetricRecord[] = []
-  const server: ServerMetricRecord[] = []
+  const server: ServerRequestMetricRecord[] = []
 
   const selectedNames = names.filter((entry) => fileCouldContainWindow(entry, cutoff)).sort()
   for (const name of selectedNames) {
@@ -327,7 +329,7 @@ export async function readMetricsReport(
     )
   const largestServer = server
     .filter(
-      (record): record is ServerMetricRecord & { bytes: number } =>
+      (record): record is ServerRequestMetricRecord & { bytes: number } =>
         record.stream !== true && record.bytes !== undefined
     )
     .sort((a, b) => b.bytes - a.bytes)

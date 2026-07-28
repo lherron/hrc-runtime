@@ -8,6 +8,7 @@ import { join } from 'node:path'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { resolveSqliteSlowStatementThresholdMs } from '../index'
 import { measureResponseBytes, normalizeRoute, pruneServerMetricFiles } from '../request-metrics'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -29,12 +30,15 @@ type ServerMetric = {
   bytes?: number
   stream?: true
   reqId?: string
+  sql?: string
+  callerTag?: string
 }
 
 let fixture: HrcServerTestFixture | undefined
 let server: InspectableServer | undefined
 let originalMetrics: string | undefined
 let originalStateDir: string | undefined
+let originalSqliteSlowStatementMs: string | undefined
 
 async function startServer(metrics = '1'): Promise<InspectableServer> {
   fixture = await createHrcTestFixture('hrc-request-metrics-')
@@ -64,6 +68,7 @@ async function readServerMetrics(): Promise<ServerMetric[]> {
 beforeEach(() => {
   originalMetrics = process.env['HRC_METRICS']
   originalStateDir = process.env['HRC_STATE_DIR']
+  originalSqliteSlowStatementMs = process.env['HRC_SQLITE_SLOW_STATEMENT_MS']
 })
 
 afterEach(async () => {
@@ -73,9 +78,42 @@ afterEach(async () => {
   fixture = undefined
   process.env['HRC_METRICS'] = originalMetrics
   process.env['HRC_STATE_DIR'] = originalStateDir
+  process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = originalSqliteSlowStatementMs
 })
 
 describe.serial('server request metrics', () => {
+  test('uses a 250ms SQLite threshold and accepts a non-negative override', () => {
+    expect(resolveSqliteSlowStatementThresholdMs(undefined)).toBe(250)
+    expect(resolveSqliteSlowStatementThresholdMs('0')).toBe(0)
+    expect(resolveSqliteSlowStatementThresholdMs('12.5')).toBe(12.5)
+    expect(resolveSqliteSlowStatementThresholdMs('-1')).toBe(250)
+    expect(resolveSqliteSlowStatementThresholdMs('invalid')).toBe(250)
+  })
+
+  test('writes slow SQLite statements to the server log and metrics outside request timing', async () => {
+    process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = '0'
+    const originalWrite = process.stderr.write
+    const logChunks: string[] = []
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      logChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+      return true
+    }) as typeof process.stderr.write
+    try {
+      await startServer()
+    } finally {
+      process.stderr.write = originalWrite
+    }
+
+    const sqliteMetrics = (await readServerMetrics()).filter(
+      (record) => record.kind === 'sqlite_slow_statement'
+    )
+    expect(sqliteMetrics.length).toBeGreaterThan(0)
+    expect(sqliteMetrics[0]?.sql).toBeString()
+    expect(sqliteMetrics[0]?.callerTag).toBeString()
+    expect(logChunks.join('')).toContain('WARN sqlite.slow_statement')
+    expect(logChunks.join('')).toContain('"callerTag"')
+  })
+
   test('normalizes every dynamic route and never emits a concrete unknown path', () => {
     const exactKeys = new Set<string>()
     const cases = [
