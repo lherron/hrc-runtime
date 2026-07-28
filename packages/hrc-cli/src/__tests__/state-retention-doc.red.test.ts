@@ -10,11 +10,21 @@ test('documents the state retention policy and index adequacy evidence', () => {
 
   const doc = readFileSync(stateRetentionDocUrl, 'utf8')
 
+  // Non-delta observation events retain indefinitely (Lance ruling 2026-07-28);
+  // runtime_buffers is the only observation table that still ages out.
   expect(doc).toMatch(
-    /(?=[\s\S]*events)(?=[\s\S]*hrc_events)(?=[\s\S]*broker_invocation_events)(?=[\s\S]*default 3-day retention)(?=[\s\S]*runtime_buffers)(?=[\s\S]*default 1-day retention)/i
+    /(?=[\s\S]*events)(?=[\s\S]*hrc_events)(?=[\s\S]*broker_invocation_events)(?=[\s\S]*keep-forever)(?=[\s\S]*no TTL)(?=[\s\S]*runtime_buffers)(?=[\s\S]*default 1-day retention)/i
+  )
+  // The policy must be enforced by the tool's own default, not just the plist.
+  expect(doc).toMatch(
+    /(?=[\s\S]*--tables)(?=[\s\S]*defaults to\s*`?runtime_buffers)(?=[\s\S]*skipped)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*resume barriers are permanent)(?=[\s\S]*nonterminal runs)(?=[\s\S]*current active run)(?=[\s\S]*imported federation observations)(?=[\s\S]*no archive migration)(?=[\s\S]*auto_vacuum=INCREMENTAL)/i
+  )
+  // Writer-lock guards: the job shares state.sqlite with the live daemon.
+  expect(doc).toMatch(
+    /(?=[\s\S]*--deadline-minutes)(?=[\s\S]*--pace-millis)(?=[\s\S]*--max-write-hold-millis)(?=[\s\S]*--max-duty-cycle)(?=[\s\S]*--busy-max-retries)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*full backup)(?=[\s\S]*state\.sqlite)(?=[\s\S]*disk)(?=[\s\S]*defer)(?=[\s\S]*rolling nightly increments)(?=[\s\S]*C-10736)/i
