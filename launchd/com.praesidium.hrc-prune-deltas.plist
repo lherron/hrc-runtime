@@ -28,6 +28,14 @@
 		<string>1</string>
 		<string>--incremental-vacuum-pages</string>
 		<string>0</string>
+		<string>--deadline-minutes</string>
+		<string>30</string>
+		<string>--pace-millis</string>
+		<string>250</string>
+		<string>--max-write-hold-millis</string>
+		<string>500</string>
+		<string>--incremental-vacuum-chunk-pages</string>
+		<string>200</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log</string>

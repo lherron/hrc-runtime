@@ -169,6 +169,11 @@ describe('hrc delta-prune LaunchAgent', () => {
     expect(plist).toContain('<string>--event-retention-days</string>')
     expect(plist).toContain('<string>--runtime-buffer-retention-days</string>')
     expect(plist).toContain('<string>--incremental-vacuum-pages</string>')
+    // Writer-lock guards: the job shares state.sqlite with the live daemon.
+    expect(plist).toContain('<string>--deadline-minutes</string>')
+    expect(plist).toContain('<string>--pace-millis</string>')
+    expect(plist).toContain('<string>--max-write-hold-millis</string>')
+    expect(plist).toContain('<string>--incremental-vacuum-chunk-pages</string>')
     expect(plist).toContain('<key>StartCalendarInterval</key>')
     expect(plist).toContain('<key>HRC_STATE_DIR</key>')
     expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc</string>')

@@ -54,8 +54,48 @@ runs `PRAGMA incremental_vacuum` after its batched deletes. The reclaim limit is
 configurable with `--incremental-vacuum-pages` /
 `HRC_INCREMENTAL_VACUUM_PAGES`; `0` (the default) drains the freelist.
 
+Freelist reclaim is chunked, never issued as a single unbounded
+`PRAGMA incremental_vacuum`. On 2026-07-28 that unbounded form drained a
+4,971,864-page freelist inside one write transaction: measured at about 3.9 ms
+per page it held the writer lock for over four hours, every daemon write failed
+its 5 s busy timeout, and the daemon eventually crashed. The reclaim now runs in
+`--incremental-vacuum-chunk-pages` steps, adapted at runtime toward
+`--max-write-hold-millis`, with a yield between each. `--incremental-vacuum-pages`
+still selects how much total work to attempt; the deadline decides how much of it
+fits tonight.
+
 Full `VACUUM` is deliberately not available through the nightly script. It
 requires an offline maintenance window and sufficient disk headroom.
+
+## Writer-lock discipline
+
+The job writes to the same database the daemon is serving from, so it is built
+to be interruptible rather than fast. These guards are not tuning knobs of
+convenience; they are what makes the job incapable of starving the daemon as the
+database grows:
+
+- `--deadline-minutes` (default 30, `HRC_PRUNE_DEADLINE_MINUTES`, `0` disables)
+  is a hard wall-clock budget. On expiry the run finishes its current batch,
+  reports `deadlineExceeded: true` with a `stopReason` of `deadline`, and exits
+  `0`. Partial retention is the designed outcome; the next run resumes.
+- `--pace-millis` (default 250) is the minimum yield between write steps. Each
+  step actually yields for at least as long as it just held the lock, capped at
+  five seconds, so the daemon always gets a window inside its own busy timeout.
+- `--max-write-hold-millis` (default 500) is the target ceiling for one write
+  step and drives the vacuum chunk adaptation.
+- `--busy-max-retries` (default 8) backs off exponentially on `SQLITE_BUSY`
+  instead of spinning. Exhausting the ladder is not a failure: the phase stops
+  with `stopReason: "busy"` and the run still exits `0`.
+
+Deletes run before reclaim, so a tight budget always spends itself on retention
+first and leaves free pages for the following night.
+
+Counting eligible rows is a full predicate scan per table. It is the point of a
+report run and pure overhead under `--apply`, so `--apply` skips it by default;
+`--count-eligible` forces it and `--no-count-eligible` suppresses it. When the
+counts are skipped, `eligibleCount` and `remainingEligibleCount` report `null`
+rather than a fabricated `0` — a paced or deadline-bounded run genuinely does not
+know what it left behind.
 
 Before any bulk prune, take a full backup of `state.sqlite`. If the disk cannot
 fit a full backup, defer the prune and surface that deferral; never perform the

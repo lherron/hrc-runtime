@@ -8,6 +8,25 @@ const DEFAULT_HRC_STORE_PATH = '/Users/lherron/praesidium/var/state/hrc/state.sq
 const DEFAULT_EVENT_RETENTION_DAYS = 3
 const DEFAULT_RUNTIME_BUFFER_RETENTION_DAYS = 1
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
+const MILLISECONDS_PER_MINUTE = 60 * 1000
+
+/**
+ * Writer-lock discipline. This job shares `state.sqlite` with the live daemon,
+ * whose writes carry a 5s busy timeout. Every write step is therefore bounded,
+ * paced, and abandonable: the prune must never be able to starve the daemon,
+ * regardless of how large the database has grown.
+ */
+const DEFAULT_DEADLINE_MINUTES = 30
+const DEFAULT_PACE_MILLIS = 250
+const DEFAULT_MAX_WRITE_HOLD_MILLIS = 500
+const DEFAULT_INCREMENTAL_VACUUM_CHUNK_PAGES = 200
+const DEFAULT_BUSY_MAX_RETRIES = 8
+const MAX_PAUSE_MILLIS = 5_000
+const MIN_INCREMENTAL_VACUUM_CHUNK_PAGES = 25
+const MAX_INCREMENTAL_VACUUM_CHUNK_PAGES = 10_000
+const MIN_DELETE_BATCH_SIZE = 25
+const BUSY_BACKOFF_BASE_MILLIS = 500
+const BUSY_BACKOFF_MAX_MILLIS = 15_000
 
 const TERMINAL_RUN_STATUSES_SQL = "'completed', 'failed', 'cancelled', 'zombie'"
 const TERMINAL_RUNTIME_STATUSES_SQL = "'terminated', 'dead', 'stale', 'crashed'"
@@ -164,26 +183,53 @@ export type PruneStateRetentionOptions = {
   eventRetentionDays: number
   runtimeBufferRetentionDays: number
   incrementalVacuumPages: number
+  incrementalVacuumChunkPages: number
+  deadlineMillis: number
+  paceMillis: number
+  maxWriteHoldMillis: number
+  busyMaxRetries: number
+  countEligible: boolean
   now: Date
 }
 
+/**
+ * Why a phase stopped. `complete` drained the phase; `deadline` hit the
+ * wall-clock budget; `busy` gave the writer lock back to the daemon after the
+ * backoff ladder was exhausted. Only `complete` means "nothing left to do".
+ */
+export type PrunePhaseStop = 'complete' | 'deadline' | 'busy'
+
 export type PruneRetentionTableResult = {
-  eligibleCount: number
+  eligibleCount: number | null
   deleted: number
-  remainingEligibleCount: number
+  remainingEligibleCount: number | null
+  stopReason: PrunePhaseStop
+  /** Batch size this table settled on to keep each write step under the hold target. */
+  batchSize: number
 }
 
 export type PruneStateRetentionResult = {
   eventCutoff: string
   runtimeBufferCutoff: string
-  eligibleCount: number
+  eligibleCount: number | null
   deleted: number
-  remainingEligibleCount: number
+  remainingEligibleCount: number | null
   autoVacuumMode: number
   freelistBeforePages: number
   freelistBeforeVacuumPages: number
   freelistAfterPages: number
   reclaimedPages: number
+  stopReason: PrunePhaseStop
+  deadlineExceeded: boolean
+  elapsedMillis: number
+  pausedMillis: number
+  busyRetries: number
+  /** Number of write steps taken, and the longest the writer lock was held. */
+  writeSteps: number
+  maxObservedWriteHoldMillis: number
+  vacuumChunkPages: number
+  vacuumStopReason: PrunePhaseStop
+  checkpointed: boolean
   tables: {
     events: PruneRetentionTableResult
     hrc_events: PruneRetentionTableResult
@@ -209,6 +255,10 @@ function usage(): string {
     'Applies bounded retention to HRC observation tables. Without --apply, reports',
     'eligible counts only. Resume barriers and active/nonterminal work are always exempt.',
     '',
+    'The job shares the database with the live daemon, so every write step is',
+    'bounded and paced. Work that does not fit the deadline is left for the next',
+    'run: partial progress is reported and the exit code stays 0.',
+    '',
     'Options:',
     '  --db <path>                         state.sqlite path',
     '  --apply                             delete eligible rows',
@@ -216,12 +266,23 @@ function usage(): string {
     '  --event-retention-days <n>          event history TTL (default: 3)',
     '  --runtime-buffer-retention-days <n> terminal buffer TTL (default: 1)',
     '  --incremental-vacuum-pages <n>      pages reclaimed after apply; 0 = all (default: 0)',
+    '  --incremental-vacuum-chunk-pages <n> pages per reclaim step, adapted at',
+    '                                      runtime to --max-write-hold-millis (default: 200)',
     '  --no-checkpoint                     skip WAL checkpoint after apply',
+    '',
+    'Writer-lock guards:',
+    '  --deadline-minutes <n>              wall-clock budget; 0 = unlimited (default: 30)',
+    '  --pace-millis <n>                   minimum yield between write steps (default: 250)',
+    '  --max-write-hold-millis <n>         target ceiling for one write step (default: 500)',
+    '  --busy-max-retries <n>              SQLITE_BUSY backoff attempts (default: 8)',
+    '  --count-eligible                    force the pre-flight eligible counts',
+    '  --no-count-eligible                 skip them (the default under --apply)',
     '',
     'Environment fallbacks:',
     '  HRC_EVENT_RETENTION_DAYS',
     '  HRC_RUNTIME_BUFFER_RETENTION_DAYS',
     '  HRC_INCREMENTAL_VACUUM_PAGES',
+    '  HRC_PRUNE_DEADLINE_MINUTES',
   ].join('\n')
 }
 
@@ -261,6 +322,29 @@ function parseNonNegativeInteger(raw: string | undefined, fallback: number, flag
   return value
 }
 
+function parseNonNegativeNumber(raw: string | undefined, fallback: number, flag: string): number {
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${flag} must be a non-negative number`)
+  }
+  return value
+}
+
+/**
+ * Counting eligible rows is a full predicate scan per table. It is the whole
+ * point of a report run and pure overhead under --apply, where the deletes
+ * report their own counts, so --apply skips it unless asked.
+ */
+function resolveCountEligible(args: string[], apply: boolean): boolean {
+  if (args.includes('--no-count-eligible')) {
+    return false
+  }
+  if (args.includes('--count-eligible')) {
+    return true
+  }
+  return !apply
+}
+
 export function parsePruneStateRetentionArgs(
   args: string[],
   env: Record<string, string | undefined> = process.env
@@ -283,11 +367,45 @@ export function parsePruneStateRetentionArgs(
     throw new Error('--batch-size must be a positive integer')
   }
 
+  const incrementalVacuumChunkPages = parseNonNegativeInteger(
+    readArgValue(args, '--incremental-vacuum-chunk-pages'),
+    DEFAULT_INCREMENTAL_VACUUM_CHUNK_PAGES,
+    '--incremental-vacuum-chunk-pages'
+  )
+  if (incrementalVacuumChunkPages === 0) {
+    throw new Error('--incremental-vacuum-chunk-pages must be a positive integer')
+  }
+
+  const apply = args.includes('--apply')
+
   return {
     dbPath: readArgValue(args, '--db') ?? resolveDefaultDbPath(env),
-    apply: args.includes('--apply'),
+    apply,
     batchSize,
     checkpoint: !args.includes('--no-checkpoint'),
+    incrementalVacuumChunkPages,
+    deadlineMillis:
+      parseNonNegativeNumber(
+        readArgValue(args, '--deadline-minutes') ?? env['HRC_PRUNE_DEADLINE_MINUTES'],
+        DEFAULT_DEADLINE_MINUTES,
+        '--deadline-minutes'
+      ) * MILLISECONDS_PER_MINUTE,
+    paceMillis: parseNonNegativeInteger(
+      readArgValue(args, '--pace-millis'),
+      DEFAULT_PACE_MILLIS,
+      '--pace-millis'
+    ),
+    maxWriteHoldMillis: parsePositiveNumber(
+      readArgValue(args, '--max-write-hold-millis'),
+      DEFAULT_MAX_WRITE_HOLD_MILLIS,
+      '--max-write-hold-millis'
+    ),
+    busyMaxRetries: parseNonNegativeInteger(
+      readArgValue(args, '--busy-max-retries'),
+      DEFAULT_BUSY_MAX_RETRIES,
+      '--busy-max-retries'
+    ),
+    countEligible: resolveCountEligible(args, apply),
     eventRetentionDays: parsePositiveNumber(
       readArgValue(args, '--event-retention-days') ?? env['HRC_EVENT_RETENTION_DAYS'],
       DEFAULT_EVENT_RETENTION_DAYS,
@@ -305,6 +423,113 @@ export function parsePruneStateRetentionArgs(
       '--incremental-vacuum-pages'
     ),
     now: new Date(),
+  }
+}
+
+/**
+ * Shared wall-clock and yield accounting for one prune run. Every write step
+ * consults it before taking the lock and pays back into it afterwards.
+ */
+type WriteBudget = {
+  startedAtMillis: number
+  deadlineAtMillis: number | null
+  paceMillis: number
+  maxWriteHoldMillis: number
+  busyMaxRetries: number
+  pausedMillis: number
+  busyRetries: number
+  writeSteps: number
+  maxObservedWriteHoldMillis: number
+  deadlineExceeded: boolean
+}
+
+function createWriteBudget(options: PruneStateRetentionOptions): WriteBudget {
+  const startedAtMillis = Date.now()
+  return {
+    startedAtMillis,
+    deadlineAtMillis: options.deadlineMillis > 0 ? startedAtMillis + options.deadlineMillis : null,
+    paceMillis: options.paceMillis,
+    maxWriteHoldMillis: options.maxWriteHoldMillis,
+    busyMaxRetries: options.busyMaxRetries,
+    pausedMillis: 0,
+    busyRetries: 0,
+    writeSteps: 0,
+    maxObservedWriteHoldMillis: 0,
+    deadlineExceeded: false,
+  }
+}
+
+function deadlineReached(budget: WriteBudget): boolean {
+  if (budget.deadlineAtMillis === null) {
+    return false
+  }
+  if (Date.now() < budget.deadlineAtMillis) {
+    return false
+  }
+  budget.deadlineExceeded = true
+  return true
+}
+
+/**
+ * Yield the writer lock for at least as long as we just held it, so the daemon
+ * always has a window inside its 5s busy timeout.
+ */
+async function pauseAfterWrite(budget: WriteBudget, holdMillis: number): Promise<void> {
+  const pause = Math.min(MAX_PAUSE_MILLIS, Math.max(budget.paceMillis, holdMillis))
+  if (pause <= 0) {
+    return
+  }
+  budget.pausedMillis += pause
+  await Bun.sleep(pause)
+}
+
+function isBusyError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null ? String(Reflect.get(error, 'code')) : ''
+  const message = error instanceof Error ? error.message : String(error)
+  return /SQLITE_BUSY/i.test(code) || /SQLITE_BUSY|database (?:table )?is locked/i.test(message)
+}
+
+/**
+ * Run one write step, backing off instead of spinning when the daemon holds the
+ * lock. Exhausting the ladder throws the underlying busy error; callers turn
+ * that into a clean partial exit rather than a crash.
+ */
+async function runWriteStep<T>(
+  budget: WriteBudget,
+  action: () => T
+): Promise<{ value: T; holdMillis: number }> {
+  for (let attempt = 0; ; attempt += 1) {
+    const startedAt = Date.now()
+    try {
+      const value = action()
+      const holdMillis = Date.now() - startedAt
+      budget.writeSteps += 1
+      budget.maxObservedWriteHoldMillis = Math.max(budget.maxObservedWriteHoldMillis, holdMillis)
+      return { value, holdMillis }
+    } catch (error) {
+      if (!isBusyError(error) || attempt >= budget.busyMaxRetries) {
+        throw error
+      }
+      budget.busyRetries += 1
+      const backoff = Math.min(BUSY_BACKOFF_MAX_MILLIS, BUSY_BACKOFF_BASE_MILLIS * 2 ** attempt)
+      budget.pausedMillis += backoff
+      await Bun.sleep(backoff)
+    }
+  }
+}
+
+/**
+ * Contention on a read is the daemon working, not a prune failure. Degrade to a
+ * fallback and let the caller report it rather than aborting the run.
+ */
+function tolerateBusy<T>(action: () => T, fallback: T): { value: T; busy: boolean } {
+  try {
+    return { value: action(), busy: false }
+  } catch (error) {
+    if (!isBusyError(error)) {
+      throw error
+    }
+    return { value: fallback, busy: true }
   }
 }
 
@@ -335,14 +560,50 @@ function deleteBatch(db: Database, plan: TablePlan, batchSize: number): number {
     .run(plan.cutoff, batchSize).changes
 }
 
-function deleteInBatches(db: Database, plan: TablePlan, batchSize: number): number {
+/**
+ * Pacing between batches is worthless if one batch holds the lock for minutes.
+ * Row cost varies by orders of magnitude across these tables — `runtime_buffers`
+ * carries large text blobs while `events` rows are small — so the batch size
+ * tracks measured hold time instead of a single configured guess. The configured
+ * `--batch-size` is the ceiling, never exceeded.
+ */
+async function deleteInBatches(
+  db: Database,
+  plan: TablePlan,
+  maxBatchSize: number,
+  budget: WriteBudget
+): Promise<{ deleted: number; stopReason: PrunePhaseStop; batchSize: number }> {
   let deleted = 0
+  let batchSize = maxBatchSize
   while (true) {
-    const batchDeleted = deleteBatch(db, plan, batchSize)
-    deleted += batchDeleted
-    if (batchDeleted < batchSize) {
-      return deleted
+    if (deadlineReached(budget)) {
+      return { deleted, stopReason: 'deadline', batchSize }
     }
+    const requestedRows = batchSize
+    let batchDeleted: number
+    let holdMillis: number
+    try {
+      const step = await runWriteStep(budget, () => deleteBatch(db, plan, requestedRows))
+      batchDeleted = step.value
+      holdMillis = step.holdMillis
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error
+      }
+      return { deleted, stopReason: 'busy', batchSize }
+    }
+    deleted += batchDeleted
+    if (batchDeleted < requestedRows) {
+      return { deleted, stopReason: 'complete', batchSize }
+    }
+    batchSize = adaptStepSize(
+      requestedRows,
+      holdMillis,
+      budget.maxWriteHoldMillis,
+      MIN_DELETE_BATCH_SIZE,
+      maxBatchSize
+    )
+    await pauseAfterWrite(budget, holdMillis)
   }
 }
 
@@ -351,27 +612,126 @@ function readPragmaNumber(db: Database, pragma: 'auto_vacuum' | 'freelist_count'
   return row ? (Object.values(row)[0] ?? 0) : 0
 }
 
-function assertIncrementalAutoVacuum(db: Database): number {
-  const mode = readPragmaNumber(db, 'auto_vacuum')
+function assertIncrementalAutoVacuum(mode: number): void {
   if (mode !== 2) {
     throw new Error(
       `state.sqlite auto_vacuum mode is ${mode}, expected 2 (INCREMENTAL); refusing to delete rows until a coordinated full VACUUM has installed the pointer map`
     )
   }
-  return mode
 }
 
-function incrementalVacuum(db: Database, pages: number): void {
-  if (pages === 0) {
-    db.exec('PRAGMA incremental_vacuum;')
-    return
+/**
+ * Size the next write step from how long the last one held the lock. Work cost
+ * per unit varies with row size, cache state, and database size, so no fixed
+ * step size stays safe as the database grows — the measured hold does.
+ */
+function adaptStepSize(
+  requested: number,
+  holdMillis: number,
+  targetMillis: number,
+  minimum: number,
+  maximum: number
+): number {
+  const clamp = (value: number): number => Math.min(maximum, Math.max(minimum, Math.round(value)))
+  if (holdMillis <= 0) {
+    return clamp(requested * 2)
   }
-  db.exec(`PRAGMA incremental_vacuum(${pages});`)
+  if (holdMillis > targetMillis) {
+    return clamp((requested * targetMillis) / holdMillis)
+  }
+  if (holdMillis * 2 < targetMillis) {
+    return clamp(requested * 1.5)
+  }
+  return clamp(requested)
 }
 
-export function pruneStateRetention(
+/**
+ * Reclaim free pages in paced chunks. `PRAGMA incremental_vacuum` with no
+ * argument drains the whole freelist inside a single write transaction — on a
+ * multi-million-page freelist that is hours of unbroken writer lock, which is
+ * exactly how this job took the daemon down. Never issue the unbounded form.
+ */
+async function incrementalVacuum(
+  db: Database,
+  budget: WriteBudget,
+  targetPages: number,
+  initialChunkPages: number
+): Promise<{ reclaimedPages: number; chunkPages: number; stopReason: PrunePhaseStop }> {
+  const limit = targetPages === 0 ? Number.POSITIVE_INFINITY : targetPages
+  let chunkPages = Math.min(
+    MAX_INCREMENTAL_VACUUM_CHUNK_PAGES,
+    Math.max(MIN_INCREMENTAL_VACUUM_CHUNK_PAGES, initialChunkPages)
+  )
+  let reclaimedPages = 0
+
+  while (reclaimedPages < limit) {
+    const before = tolerateBusy(() => readPragmaNumber(db, 'freelist_count'), 0)
+    if (before.busy) {
+      return { reclaimedPages, chunkPages, stopReason: 'busy' }
+    }
+    const freelistBefore = before.value
+    if (freelistBefore === 0) {
+      return { reclaimedPages, chunkPages, stopReason: 'complete' }
+    }
+    if (deadlineReached(budget)) {
+      return { reclaimedPages, chunkPages, stopReason: 'deadline' }
+    }
+
+    const requestedPages = Math.min(chunkPages, freelistBefore, limit - reclaimedPages)
+    let holdMillis: number
+    try {
+      const step = await runWriteStep(budget, () =>
+        db.exec(`PRAGMA incremental_vacuum(${requestedPages});`)
+      )
+      holdMillis = step.holdMillis
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error
+      }
+      return { reclaimedPages, chunkPages, stopReason: 'busy' }
+    }
+
+    const after = tolerateBusy(() => readPragmaNumber(db, 'freelist_count'), freelistBefore)
+    if (after.busy) {
+      return { reclaimedPages, chunkPages, stopReason: 'busy' }
+    }
+    const freed = Math.max(0, freelistBefore - after.value)
+    reclaimedPages += freed
+    if (freed === 0) {
+      return { reclaimedPages, chunkPages, stopReason: 'complete' }
+    }
+    chunkPages = adaptStepSize(
+      requestedPages,
+      holdMillis,
+      budget.maxWriteHoldMillis,
+      MIN_INCREMENTAL_VACUUM_CHUNK_PAGES,
+      MAX_INCREMENTAL_VACUUM_CHUNK_PAGES
+    )
+    await pauseAfterWrite(budget, holdMillis)
+  }
+
+  return { reclaimedPages, chunkPages, stopReason: 'complete' }
+}
+
+function sumOrNull(counts: Array<number | null>): number | null {
+  return counts.some((count) => count === null)
+    ? null
+    : counts.reduce<number>((sum, count) => sum + (count ?? 0), 0)
+}
+
+function worstStopReason(reasons: PrunePhaseStop[]): PrunePhaseStop {
+  if (reasons.includes('deadline')) {
+    return 'deadline'
+  }
+  if (reasons.includes('busy')) {
+    return 'busy'
+  }
+  return 'complete'
+}
+
+export async function pruneStateRetention(
   options: PruneStateRetentionOptions
-): PruneStateRetentionResult {
+): Promise<PruneStateRetentionResult> {
   if (!existsSync(options.dbPath)) {
     throw new Error(`HRC store does not exist: ${options.dbPath}`)
   }
@@ -413,45 +773,140 @@ export function pruneStateRetention(
     },
   ]
 
+  const budget = createWriteBudget(options)
+  const emptyTableResult = (stopReason: PrunePhaseStop): PruneStateRetentionResult['tables'] =>
+    Object.fromEntries(
+      plans.map((plan) => [
+        plan.table,
+        {
+          eligibleCount: null,
+          deleted: 0,
+          remainingEligibleCount: null,
+          stopReason,
+          batchSize: options.batchSize,
+        },
+      ])
+    ) as PruneStateRetentionResult['tables']
+
   const db = new Database(options.dbPath)
   try {
     db.exec('PRAGMA busy_timeout = 5000;')
-    const autoVacuumMode = readPragmaNumber(db, 'auto_vacuum')
-    if (options.apply) {
-      assertIncrementalAutoVacuum(db)
+
+    // The auto-vacuum mode gates every delete, so it cannot fall back to a
+    // guess. If the daemon holds the lock through the backoff ladder, this run
+    // simply does not start.
+    let autoVacuumMode: number
+    try {
+      autoVacuumMode = (await runWriteStep(budget, () => readPragmaNumber(db, 'auto_vacuum'))).value
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error
+      }
+      return {
+        eventCutoff,
+        runtimeBufferCutoff,
+        eligibleCount: null,
+        deleted: 0,
+        remainingEligibleCount: null,
+        autoVacuumMode: 0,
+        freelistBeforePages: 0,
+        freelistBeforeVacuumPages: 0,
+        freelistAfterPages: 0,
+        reclaimedPages: 0,
+        stopReason: 'busy',
+        deadlineExceeded: budget.deadlineExceeded,
+        elapsedMillis: Date.now() - budget.startedAtMillis,
+        pausedMillis: budget.pausedMillis,
+        busyRetries: budget.busyRetries,
+        writeSteps: budget.writeSteps,
+        maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
+        vacuumChunkPages: options.incrementalVacuumChunkPages,
+        vacuumStopReason: 'busy',
+        checkpointed: false,
+        tables: emptyTableResult('busy'),
+      }
     }
-    const freelistBeforePages = readPragmaNumber(db, 'freelist_count')
+    if (options.apply) {
+      assertIncrementalAutoVacuum(autoVacuumMode)
+    }
+    const freelistBeforePages = tolerateBusy(() => readPragmaNumber(db, 'freelist_count'), 0).value
     const eligible = Object.fromEntries(
-      plans.map((plan) => [plan.table, countEligible(db, plan)])
-    ) as Record<RetentionTable, number>
+      plans.map((plan) => [
+        plan.table,
+        options.countEligible ? tolerateBusy(() => countEligible(db, plan), null).value : null,
+      ])
+    ) as Record<RetentionTable, number | null>
     const deleted = {
       events: 0,
       hrc_events: 0,
       broker_invocation_events: 0,
       runtime_buffers: 0,
     } satisfies Record<RetentionTable, number>
+    const stopReasons: Record<RetentionTable, PrunePhaseStop> = {
+      events: 'complete',
+      hrc_events: 'complete',
+      broker_invocation_events: 'complete',
+      runtime_buffers: 'complete',
+    }
+    const batchSizes: Record<RetentionTable, number> = {
+      events: options.batchSize,
+      hrc_events: options.batchSize,
+      broker_invocation_events: options.batchSize,
+      runtime_buffers: options.batchSize,
+    }
     let freelistBeforeVacuumPages = freelistBeforePages
+    let vacuumStopReason: PrunePhaseStop = 'complete'
+    let vacuumChunkPages = options.incrementalVacuumChunkPages
+    let checkpointed = false
 
     if (options.apply) {
       for (const plan of plans) {
-        deleted[plan.table] = deleteInBatches(db, plan, options.batchSize)
+        const outcome = await deleteInBatches(db, plan, options.batchSize, budget)
+        deleted[plan.table] = outcome.deleted
+        stopReasons[plan.table] = outcome.stopReason
+        batchSizes[plan.table] = outcome.batchSize
       }
       if (options.checkpoint) {
-        db.exec('PRAGMA wal_checkpoint(TRUNCATE);')
+        // A busy checkpoint is the daemon working; leave the WAL for next run.
+        try {
+          await runWriteStep(budget, () => db.exec('PRAGMA wal_checkpoint(TRUNCATE);'))
+          checkpointed = true
+        } catch (error) {
+          if (!isBusyError(error)) {
+            throw error
+          }
+        }
       }
-      freelistBeforeVacuumPages = readPragmaNumber(db, 'freelist_count')
-      incrementalVacuum(db, options.incrementalVacuumPages)
+      freelistBeforeVacuumPages = tolerateBusy(
+        () => readPragmaNumber(db, 'freelist_count'),
+        freelistBeforePages
+      ).value
+      const vacuum = await incrementalVacuum(
+        db,
+        budget,
+        options.incrementalVacuumPages,
+        options.incrementalVacuumChunkPages
+      )
+      vacuumStopReason = vacuum.stopReason
+      vacuumChunkPages = vacuum.chunkPages
     }
 
-    const remaining = options.apply
-      ? ({
-          events: 0,
-          hrc_events: 0,
-          broker_invocation_events: 0,
-          runtime_buffers: 0,
-        } satisfies Record<RetentionTable, number>)
-      : eligible
-    const freelistAfterPages = readPragmaNumber(db, 'freelist_count')
+    // A partial run leaves rows behind, so the remaining count is measured, not
+    // assumed. Without the pre-flight scan it is honestly unknown.
+    const remaining = Object.fromEntries(
+      plans.map((plan) => [
+        plan.table,
+        options.apply
+          ? options.countEligible
+            ? tolerateBusy(() => countEligible(db, plan), null).value
+            : null
+          : eligible[plan.table],
+      ])
+    ) as Record<RetentionTable, number | null>
+    const freelistAfterPages = tolerateBusy(
+      () => readPragmaNumber(db, 'freelist_count'),
+      freelistBeforeVacuumPages
+    ).value
     const tableResult = Object.fromEntries(
       plans.map((plan) => [
         plan.table,
@@ -459,6 +914,8 @@ export function pruneStateRetention(
           eligibleCount: eligible[plan.table],
           deleted: deleted[plan.table],
           remainingEligibleCount: remaining[plan.table],
+          stopReason: stopReasons[plan.table],
+          batchSize: batchSizes[plan.table],
         },
       ])
     ) as PruneStateRetentionResult['tables']
@@ -466,14 +923,24 @@ export function pruneStateRetention(
     return {
       eventCutoff,
       runtimeBufferCutoff,
-      eligibleCount: Object.values(eligible).reduce((sum, count) => sum + count, 0),
+      eligibleCount: sumOrNull(Object.values(eligible)),
       deleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
-      remainingEligibleCount: Object.values(remaining).reduce((sum, count) => sum + count, 0),
+      remainingEligibleCount: sumOrNull(Object.values(remaining)),
       autoVacuumMode,
       freelistBeforePages,
       freelistBeforeVacuumPages,
       freelistAfterPages,
       reclaimedPages: Math.max(0, freelistBeforeVacuumPages - freelistAfterPages),
+      stopReason: worstStopReason([...Object.values(stopReasons), vacuumStopReason]),
+      deadlineExceeded: budget.deadlineExceeded,
+      elapsedMillis: Date.now() - budget.startedAtMillis,
+      pausedMillis: budget.pausedMillis,
+      busyRetries: budget.busyRetries,
+      writeSteps: budget.writeSteps,
+      maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
+      vacuumChunkPages,
+      vacuumStopReason,
+      checkpointed,
       tables: tableResult,
     }
   } finally {
@@ -484,10 +951,11 @@ export function pruneStateRetention(
 if (import.meta.main) {
   try {
     const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
-    const result = pruneStateRetention(options)
+    const result = await pruneStateRetention(options)
     console.log(
       JSON.stringify(
         {
+          startedAt: options.now.toISOString(),
           dbPath: options.dbPath,
           applied: options.apply,
           batchSize: options.batchSize,
@@ -495,6 +963,10 @@ if (import.meta.main) {
           eventRetentionDays: options.eventRetentionDays,
           runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
           incrementalVacuumPages: options.incrementalVacuumPages,
+          deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
+          paceMillis: options.paceMillis,
+          maxWriteHoldMillis: options.maxWriteHoldMillis,
+          countedEligible: options.countEligible,
           ...result,
         },
         null,
