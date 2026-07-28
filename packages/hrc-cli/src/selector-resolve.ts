@@ -361,6 +361,17 @@ export async function resolveRuntimeArg(
   client: HrcClient,
   options: { latest?: boolean | undefined } = {}
 ): Promise<string> {
+  const raw = rawArg.trim()
+  if (raw.startsWith('rt-') || raw.startsWith('rt_')) {
+    return raw
+  }
+  if (raw.startsWith('runtime:')) {
+    const selector = parseCliSelector(raw)
+    if (selector.kind === 'runtime') {
+      return selector.runtimeId
+    }
+  }
+
   const target = resolveSelectorTarget(rawArg, {
     expect: 'runtime',
     snapshot: await fetchSelectorSnapshot(client),

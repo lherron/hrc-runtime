@@ -166,13 +166,14 @@ describe('resolveRuntimeArg — raw runtimeId (runtime inspect / terminate / bro
     expect(result).toBe('rt-raw-001')
   })
 
-  it('does not call listSessions when resolving a raw runtimeId', async () => {
-    const rt = makeRuntime({ runtimeId: 'rt-raw-002' })
-    const client = mockClient([rt], [])
+  it('does not load the bounded selector snapshot for an explicit runtimeId', async () => {
+    const client = mockClient([], [])
 
-    await resolveRuntimeArg('rt-raw-002', client as unknown as HrcClient)
-    // listRuntimes must have been called (to build the snapshot)
-    expect(client.listRuntimes).toHaveBeenCalled()
+    expect(await resolveRuntimeArg('rt-hidden-history', client as unknown as HrcClient)).toBe(
+      'rt-hidden-history'
+    )
+    expect(client.listRuntimes).not.toHaveBeenCalled()
+    expect(client.listSessions).not.toHaveBeenCalled()
   })
 })
 
@@ -182,6 +183,8 @@ describe('resolveRuntimeArg — runtime: prefix (runtime inspect / terminate / b
     const client = mockClient([], [])
     const result = await resolveRuntimeArg('runtime:rt-pfx-001', client as unknown as HrcClient)
     expect(result).toBe('rt-pfx-001')
+    expect(client.listRuntimes).not.toHaveBeenCalled()
+    expect(client.listSessions).not.toHaveBeenCalled()
   })
 
   it('resolves runtime: prefix even when runtimeId is also in the snapshot', async () => {
