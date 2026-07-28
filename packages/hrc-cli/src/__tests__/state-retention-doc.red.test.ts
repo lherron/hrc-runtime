@@ -19,6 +19,8 @@ test('documents the state retention policy and index adequacy evidence', () => {
   expect(doc).toMatch(
     /(?=[\s\S]*--tables)(?=[\s\S]*defaults to\s*`?runtime_buffers)(?=[\s\S]*skipped)/i
   )
+  // Fail loudly if the superseded 3-day event window is ever reintroduced.
+  expect(doc).not.toMatch(/default 3-day retention/i)
   expect(doc).toMatch(
     /(?=[\s\S]*resume barriers are permanent)(?=[\s\S]*nonterminal runs)(?=[\s\S]*current active run)(?=[\s\S]*imported federation observations)(?=[\s\S]*no archive migration)(?=[\s\S]*auto_vacuum=INCREMENTAL)/i
   )
