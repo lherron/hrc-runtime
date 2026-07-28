@@ -21,7 +21,10 @@ type ScriptResult = {
   stderr: string
 }
 
-function makeStore(incrementalAutoVacuum = true): { path: string; db: Database } {
+function makeStore(incrementalAutoVacuum = true): {
+  path: string
+  db: Database
+} {
   const dir = mkdtempSync(join(tmpdir(), 'hrc-state-retention-'))
   tempDirs.push(dir)
   const path = join(dir, 'state.sqlite')
@@ -62,6 +65,7 @@ function makeStore(incrementalAutoVacuum = true): { path: string; db: Database }
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       invocation_id TEXT NOT NULL,
       time TEXT NOT NULL,
+      type TEXT NOT NULL,
       run_id TEXT,
       runtime_id TEXT,
       source_ref TEXT
@@ -117,7 +121,12 @@ function insertEvent(
 function insertHrcEvent(
   db: Database,
   eventKind: string,
-  options: { ts?: string; runId?: string; runtimeId?: string; sourceRef?: string } = {}
+  options: {
+    ts?: string
+    runId?: string
+    runtimeId?: string
+    sourceRef?: string
+  } = {}
 ): number {
   return Number(
     db
@@ -139,18 +148,25 @@ function insertHrcEvent(
 function insertBrokerEvent(
   db: Database,
   invocationId: string,
-  options: { time?: string; runId?: string; runtimeId?: string; sourceRef?: string } = {}
+  options: {
+    time?: string
+    type?: string
+    runId?: string
+    runtimeId?: string
+    sourceRef?: string
+  } = {}
 ): number {
   return Number(
     db
       .prepare(
         `INSERT INTO broker_invocation_events
-          (invocation_id, time, run_id, runtime_id, source_ref)
-         VALUES (?, ?, ?, ?, ?)`
+          (invocation_id, time, type, run_id, runtime_id, source_ref)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
       .run(
         invocationId,
         options.time ?? OLD,
+        options.type ?? 'turn.message',
         options.runId ?? null,
         options.runtimeId ?? null,
         options.sourceRef ?? null
@@ -182,6 +198,8 @@ function ids(db: Database, table: string, key: string): number[] {
 function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
   return {
     dbPath: path,
+    operation: 'retention' as const,
+    expectedT07040BackfillRows: 822,
     apply,
     batchSize,
     checkpoint: false,
@@ -255,7 +273,10 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
       ...authority,
       ts: EVENT_BOUNDARY,
     })
-    const newEvent = insertEvent(db, 'turn.message', { ...authority, ts: EVENT_NEW })
+    const newEvent = insertEvent(db, 'turn.message', {
+      ...authority,
+      ts: EVENT_NEW,
+    })
 
     const oldHrcEvent = insertHrcEvent(db, 'turn.message', authority)
     const boundaryHrcEvent = insertHrcEvent(db, 'turn.message', {
@@ -378,8 +399,14 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
       INSERT INTO broker_invocations (invocation_id, invocation_state)
         VALUES ('invocation-old', 'exited');
     `)
-    insertEvent(db, 'turn.completed', { runId: 'run-old', runtimeId: 'runtime-ready' })
-    insertHrcEvent(db, 'turn.completed', { runId: 'run-old', runtimeId: 'runtime-ready' })
+    insertEvent(db, 'turn.completed', {
+      runId: 'run-old',
+      runtimeId: 'runtime-ready',
+    })
+    insertHrcEvent(db, 'turn.completed', {
+      runId: 'run-old',
+      runtimeId: 'runtime-ready',
+    })
     insertBrokerEvent(db, 'invocation-old', {
       runId: 'run-old',
       runtimeId: 'runtime-ready',
@@ -396,7 +423,9 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
 
   test('imported observations ride the event TTL without local authority rows', async () => {
     const { path, db } = makeStore()
-    const importedHrc = insertHrcEvent(db, 'turn.message', { sourceRef: 'node:lab' })
+    const importedHrc = insertHrcEvent(db, 'turn.message', {
+      sourceRef: 'node:lab',
+    })
     const importedBroker = insertBrokerEvent(db, 'remote-invocation', {
       sourceRef: 'node:lab',
     })
@@ -560,6 +589,151 @@ describe('prune-hrc-event-deltas keeps non-delta events indefinitely', () => {
     } finally {
       verify.close()
     }
+  })
+})
+
+describe('prune-hrc-event-deltas T-07045 backlog purge', () => {
+  test('selects its fixed tables and cannot be mixed with retention table selection', () => {
+    const options = parsePruneStateRetentionArgs(['--purge-delta-backlog'], {})
+    expect(options.operation).toBe('purge-delta-backlog')
+    expect(options.expectedT07040BackfillRows).toBe(822)
+    expect(options.tables).toEqual(['events', 'broker_invocation_events'])
+    expect(() =>
+      parsePruneStateRetentionArgs(
+        ['--purge-delta-backlog', '--tables', 'broker_invocation_events'],
+        {}
+      )
+    ).toThrow(/table set is fixed/i)
+  })
+
+  test('purges every raw broker mirror and only terminal invocation deltas', async () => {
+    const { path, db } = makeStore()
+    const terminal = seedTerminalAuthority(db)
+    db.prepare(
+      'INSERT INTO broker_invocations (invocation_id, invocation_state) VALUES (?, ?)'
+    ).run('invocation-live', 'turn_active')
+
+    const ordinaryRaw = insertEvent(db, 'turn.message')
+    insertEvent(db, 'broker.assistant.message.delta')
+    insertEvent(db, 'broker.continuation.cleared')
+
+    insertBrokerEvent(db, terminal.invocationId, {
+      ...terminal,
+      type: 'assistant.message.delta',
+    })
+    insertBrokerEvent(db, terminal.invocationId, {
+      ...terminal,
+      type: 'tool.call.delta',
+    })
+    const terminalSemantic = insertBrokerEvent(db, terminal.invocationId, {
+      ...terminal,
+      type: 'assistant.message.completed',
+    })
+    const liveDelta = insertBrokerEvent(db, 'invocation-live', {
+      type: 'assistant.message.delta',
+    })
+    const orphanDelta = insertBrokerEvent(db, 'invocation-orphan', {
+      type: 'tool.call.delta',
+    })
+    const backfillRows = [
+      insertBrokerEvent(db, 'backfill-a', {
+        type: 'continuation.cleared',
+        sourceRef: 'backfill-T-07040',
+      }),
+      insertBrokerEvent(db, 'backfill-b', {
+        type: 'continuation.cleared',
+        sourceRef: 'backfill-T-07040',
+      }),
+    ]
+    db.close()
+
+    const result = await pruneStateRetention({
+      ...pruneOptions(path, true),
+      operation: 'purge-delta-backlog',
+      expectedT07040BackfillRows: 2,
+      tables: ['events', 'broker_invocation_events'],
+      paceMillis: 250,
+      maxDutyCycle: 0.25,
+    })
+
+    expect(result.operation).toBe('purge-delta-backlog')
+    expect(result.tables.events.deleted).toBe(2)
+    expect(result.tables.broker_invocation_events.deleted).toBe(3)
+    expect(result.t07040BackfillRowsBefore).toBe(2)
+    expect(result.t07040BackfillRowsAfter).toBe(2)
+
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'events', 'seq')).toEqual([ordinaryRaw])
+      expect(ids(verify, 'broker_invocation_events', 'id')).toEqual([
+        terminalSemantic,
+        liveDelta,
+        ...backfillRows,
+      ])
+      expect(ids(verify, 'broker_invocation_events', 'id')).not.toContain(orphanDelta)
+    } finally {
+      verify.close()
+    }
+  })
+
+  test('refuses all deletion before an unexpected backfill count can lose authority', async () => {
+    const { path, db } = makeStore()
+    const terminal = seedTerminalAuthority(db)
+    const rawBroker = insertEvent(db, 'broker.assistant.message.delta')
+    insertBrokerEvent(db, terminal.invocationId, {
+      ...terminal,
+      type: 'assistant.message.delta',
+    })
+    insertBrokerEvent(db, 'backfill-a', {
+      type: 'continuation.cleared',
+      sourceRef: 'backfill-T-07040',
+    })
+    db.close()
+
+    await expect(
+      pruneStateRetention({
+        ...pruneOptions(path, true),
+        operation: 'purge-delta-backlog',
+        expectedT07040BackfillRows: 2,
+        tables: ['events', 'broker_invocation_events'],
+        paceMillis: 250,
+        maxDutyCycle: 0.25,
+      })
+    ).rejects.toThrow(/backfill invariant failed before purge/i)
+
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'events', 'seq')).toEqual([rawBroker])
+      expect(ids(verify, 'broker_invocation_events', 'id')).toHaveLength(2)
+    } finally {
+      verify.close()
+    }
+  })
+
+  test('refuses guard settings hotter than the armed cron', async () => {
+    const { path, db } = makeStore()
+    db.close()
+    const options = {
+      ...pruneOptions(path, false),
+      operation: 'purge-delta-backlog' as const,
+      tables: ['events', 'broker_invocation_events'] as const,
+      paceMillis: 250,
+      maxWriteHoldMillis: 500,
+      maxDutyCycle: 0.25,
+    }
+
+    await expect(pruneStateRetention({ ...options, deadlineMillis: 0 })).rejects.toThrow(
+      /bounded.*deadline/i
+    )
+    await expect(pruneStateRetention({ ...options, paceMillis: 249 })).rejects.toThrow(
+      /pace-millis >= 250/i
+    )
+    await expect(pruneStateRetention({ ...options, maxWriteHoldMillis: 501 })).rejects.toThrow(
+      /max-write-hold-millis <= 500/i
+    )
+    await expect(pruneStateRetention({ ...options, maxDutyCycle: 0.251 })).rejects.toThrow(
+      /max-duty-cycle <= 0.25/i
+    )
   })
 })
 

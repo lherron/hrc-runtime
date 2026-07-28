@@ -46,6 +46,10 @@ const BUSY_BACKOFF_MAX_MILLIS = 15_000
 const TERMINAL_RUN_STATUSES_SQL = "'completed', 'failed', 'cancelled', 'zombie'"
 const TERMINAL_RUNTIME_STATUSES_SQL = "'terminated', 'dead', 'stale', 'crashed'"
 const TERMINAL_INVOCATION_STATES_SQL = "'exited', 'failed', 'disposed'"
+const DELTA_EVENT_TYPES_SQL = "'assistant.message.delta', 'tool.call.delta'"
+const PURGE_DELTA_BACKLOG_OPERATION = 'purge-delta-backlog'
+const T07040_BACKFILL_SOURCE_REF = 'backfill-T-07040'
+const T07040_EXPECTED_BACKFILL_ROWS = 822
 
 /**
  * These event kinds are durable resume barriers. They remain exempt even when
@@ -190,8 +194,45 @@ const RUNTIME_BUFFERS_ELIGIBLE_SQL = `
   )
 `
 
+/**
+ * T-07045 one-time cleanup. T-07040 removed the last events-table consumer, so
+ * every raw broker mirror row is now disposable, not just its delta kinds.
+ * The parameter is an intentional operation token: it lets this plan share the
+ * parameterized/count/delete machinery without smuggling in a retention cutoff.
+ */
+const PURGE_EVENTS_ELIGIBLE_SQL = `
+  ? = '${PURGE_DELTA_BACKLOG_OPERATION}'
+  AND e.event_kind LIKE 'broker.%'
+`
+
+/**
+ * Delta rows attached to an invocation that is non-terminal at the moment this
+ * statement runs stay fenced. Re-evaluating the predicate inside every DELETE
+ * batch closes the race between pre-flight counting and a live invocation.
+ *
+ * The source-ref exclusion is deliberately redundant with the current
+ * continuation.cleared type of the 822 T-07040 backfill rows. The hard count
+ * assertion below catches drift; this predicate makes the rows fail closed even
+ * if their type is ever repaired or rewritten.
+ */
+const PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL = `
+  ? = '${PURGE_DELTA_BACKLOG_OPERATION}'
+  AND e.type IN (${DELTA_EVENT_TYPES_SQL})
+  AND COALESCE(e.source_ref, '') <> '${T07040_BACKFILL_SOURCE_REF}'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM broker_invocations AS invocation
+    WHERE invocation.invocation_id = e.invocation_id
+      AND invocation.invocation_state NOT IN (${TERMINAL_INVOCATION_STATES_SQL})
+  )
+`
+
+export type PruneOperation = 'retention' | 'purge-delta-backlog'
+
 export type PruneStateRetentionOptions = {
   dbPath: string
+  operation: PruneOperation
+  expectedT07040BackfillRows: number
   apply: boolean
   batchSize: number
   checkpoint: boolean
@@ -227,8 +268,11 @@ export type PruneRetentionTableResult = {
 }
 
 export type PruneStateRetentionResult = {
+  operation: PruneOperation
   eventCutoff: string
   runtimeBufferCutoff: string
+  t07040BackfillRowsBefore: number | null
+  t07040BackfillRowsAfter: number | null
   eligibleCount: number | null
   deleted: number
   remainingEligibleCount: number | null
@@ -279,7 +323,7 @@ type TablePlan = {
   table: RetentionTable
   alias: string
   keyColumn: string
-  cutoff: string
+  predicateValue: string
   eligibleSql: string
 }
 
@@ -300,6 +344,10 @@ function usage(): string {
     '',
     'Options:',
     '  --db <path>                         state.sqlite path',
+    '  --purge-delta-backlog               T-07045 one-time mode: purge all events',
+    '                                      broker.* mirrors plus terminal/orphaned',
+    '                                      broker invocation deltas; requires exactly',
+    '                                      822 backfill-T-07040 authority rows',
     '  --tables <a,b|all>                  tables to prune (default: runtime_buffers)',
     '  --apply                             delete eligible rows',
     '  --batch-size <n>                    rows per DELETE (default: 10000)',
@@ -456,9 +504,19 @@ export function parsePruneStateRetentionArgs(
   }
 
   const apply = args.includes('--apply')
+  const operation: PruneOperation = args.includes('--purge-delta-backlog')
+    ? PURGE_DELTA_BACKLOG_OPERATION
+    : 'retention'
+  if (operation === PURGE_DELTA_BACKLOG_OPERATION && readArgValue(args, '--tables') !== undefined) {
+    throw new Error(
+      '--tables cannot be combined with --purge-delta-backlog; its table set is fixed'
+    )
+  }
 
   return {
     dbPath: readArgValue(args, '--db') ?? resolveDefaultDbPath(env),
+    operation,
+    expectedT07040BackfillRows: T07040_EXPECTED_BACKFILL_ROWS,
     apply,
     batchSize,
     checkpoint: !args.includes('--no-checkpoint'),
@@ -486,7 +544,10 @@ export function parsePruneStateRetentionArgs(
       '--busy-max-retries'
     ),
     countEligible: resolveCountEligible(args, apply),
-    tables: parseRetentionTables(readArgValue(args, '--tables')),
+    tables:
+      operation === PURGE_DELTA_BACKLOG_OPERATION
+        ? ['events', 'broker_invocation_events']
+        : parseRetentionTables(readArgValue(args, '--tables')),
     eventRetentionDays: parsePositiveNumber(
       readArgValue(args, '--event-retention-days') ?? env['HRC_EVENT_RETENTION_DAYS'],
       DEFAULT_EVENT_RETENTION_DAYS,
@@ -628,7 +689,7 @@ function countEligible(db: Database, plan: TablePlan): number {
            FROM ${plan.table} AS ${plan.alias}
           WHERE ${plan.eligibleSql}`
       )
-      .get(plan.cutoff)?.count ?? 0
+      .get(plan.predicateValue)?.count ?? 0
   )
 }
 
@@ -644,7 +705,58 @@ function deleteBatch(db: Database, plan: TablePlan, batchSize: number): number {
            LIMIT ?
         )`
     )
-    .run(plan.cutoff, batchSize).changes
+    .run(plan.predicateValue, batchSize).changes
+}
+
+type T07040BackfillInvariant = {
+  total: number
+  continuationCleared: number
+}
+
+function readT07040BackfillInvariant(db: Database): T07040BackfillInvariant {
+  return (
+    db
+      .query<T07040BackfillInvariant, [string]>(
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN type = 'continuation.cleared' THEN 1 ELSE 0 END), 0)
+                  AS continuationCleared
+           FROM broker_invocation_events
+          WHERE source_ref = ?`
+      )
+      .get(T07040_BACKFILL_SOURCE_REF) ?? { total: 0, continuationCleared: 0 }
+  )
+}
+
+function assertT07040BackfillInvariant(
+  invariant: T07040BackfillInvariant,
+  expectedRows: number,
+  phase: 'before' | 'after'
+): void {
+  if (invariant.total !== expectedRows || invariant.continuationCleared !== expectedRows) {
+    throw new Error(
+      `T-07040 backfill invariant failed ${phase} purge: expected ${expectedRows} source_ref='${T07040_BACKFILL_SOURCE_REF}' continuation.cleared rows, found ${invariant.total} total and ${invariant.continuationCleared} continuation.cleared; refusing unsafe cleanup`
+    )
+  }
+}
+
+function assertPurgeDeltaBacklogGuardrails(options: PruneStateRetentionOptions): void {
+  if (options.operation !== PURGE_DELTA_BACKLOG_OPERATION) {
+    return
+  }
+  if (options.deadlineMillis <= 0) {
+    throw new Error('--purge-delta-backlog requires a bounded --deadline-minutes greater than 0')
+  }
+  if (options.paceMillis < DEFAULT_PACE_MILLIS) {
+    throw new Error(`--purge-delta-backlog requires --pace-millis >= ${DEFAULT_PACE_MILLIS}`)
+  }
+  if (options.maxWriteHoldMillis > DEFAULT_MAX_WRITE_HOLD_MILLIS) {
+    throw new Error(
+      `--purge-delta-backlog requires --max-write-hold-millis <= ${DEFAULT_MAX_WRITE_HOLD_MILLIS}`
+    )
+  }
+  if (options.maxDutyCycle > DEFAULT_MAX_DUTY_CYCLE) {
+    throw new Error(`--purge-delta-backlog requires --max-duty-cycle <= ${DEFAULT_MAX_DUTY_CYCLE}`)
+  }
 }
 
 /**
@@ -744,7 +856,11 @@ async function incrementalVacuum(
   budget: WriteBudget,
   targetPages: number,
   initialChunkPages: number
-): Promise<{ reclaimedPages: number; chunkPages: number; stopReason: PrunePhaseStop }> {
+): Promise<{
+  reclaimedPages: number
+  chunkPages: number
+  stopReason: PrunePhaseStop
+}> {
   const limit = targetPages === 0 ? Number.POSITIVE_INFINITY : targetPages
   let chunkPages = Math.min(
     MAX_INCREMENTAL_VACUUM_CHUNK_PAGES,
@@ -824,6 +940,7 @@ function worstStopReason(reasons: PrunePhaseStop[]): PrunePhaseStop {
 export async function pruneStateRetention(
   options: PruneStateRetentionOptions
 ): Promise<PruneStateRetentionResult> {
+  assertPurgeDeltaBacklogGuardrails(options)
   if (!existsSync(options.dbPath)) {
     throw new Error(`HRC store does not exist: ${options.dbPath}`)
   }
@@ -834,36 +951,53 @@ export async function pruneStateRetention(
   const runtimeBufferCutoff = new Date(
     options.now.getTime() - options.runtimeBufferRetentionDays * MILLISECONDS_PER_DAY
   ).toISOString()
-  const allPlans: TablePlan[] = [
+  const retentionPlans: TablePlan[] = [
     {
       table: 'events',
       alias: 'e',
       keyColumn: 'seq',
-      cutoff: eventCutoff,
+      predicateValue: eventCutoff,
       eligibleSql: EVENTS_ELIGIBLE_SQL,
     },
     {
       table: 'hrc_events',
       alias: 'e',
       keyColumn: 'hrc_seq',
-      cutoff: eventCutoff,
+      predicateValue: eventCutoff,
       eligibleSql: HRC_EVENTS_ELIGIBLE_SQL,
     },
     {
       table: 'broker_invocation_events',
       alias: 'e',
       keyColumn: 'id',
-      cutoff: eventCutoff,
+      predicateValue: eventCutoff,
       eligibleSql: BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL,
     },
     {
       table: 'runtime_buffers',
       alias: 'e',
       keyColumn: 'rowid',
-      cutoff: runtimeBufferCutoff,
+      predicateValue: runtimeBufferCutoff,
       eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
     },
   ]
+  const purgePlans: TablePlan[] = [
+    {
+      table: 'events',
+      alias: 'e',
+      keyColumn: 'seq',
+      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
+      eligibleSql: PURGE_EVENTS_ELIGIBLE_SQL,
+    },
+    {
+      table: 'broker_invocation_events',
+      alias: 'e',
+      keyColumn: 'id',
+      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
+      eligibleSql: PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL,
+    },
+  ]
+  const allPlans = options.operation === PURGE_DELTA_BACKLOG_OPERATION ? purgePlans : retentionPlans
   const plans = allPlans.filter((plan) => options.tables.includes(plan.table))
 
   const budget = createWriteBudget(options)
@@ -896,8 +1030,11 @@ export async function pruneStateRetention(
         throw error
       }
       return {
+        operation: options.operation,
         eventCutoff,
         runtimeBufferCutoff,
+        t07040BackfillRowsBefore: null,
+        t07040BackfillRowsAfter: null,
         eligibleCount: null,
         deleted: 0,
         remainingEligibleCount: null,
@@ -922,6 +1059,13 @@ export async function pruneStateRetention(
     }
     if (options.apply) {
       assertIncrementalAutoVacuum(autoVacuumMode)
+    }
+    let t07040BackfillRowsBefore: number | null = null
+    let t07040BackfillRowsAfter: number | null = null
+    if (options.operation === PURGE_DELTA_BACKLOG_OPERATION) {
+      const before = readT07040BackfillInvariant(db)
+      assertT07040BackfillInvariant(before, options.expectedT07040BackfillRows, 'before')
+      t07040BackfillRowsBefore = before.total
     }
     const freelistBeforePages = tolerateBusy(() => readPragmaNumber(db, 'freelist_count'), 0).value
     const eligible = Object.fromEntries(
@@ -959,6 +1103,11 @@ export async function pruneStateRetention(
         deleted[plan.table] = outcome.deleted
         stopReasons[plan.table] = outcome.stopReason
         batchSizes[plan.table] = outcome.batchSize
+      }
+      if (options.operation === PURGE_DELTA_BACKLOG_OPERATION) {
+        const afterDelete = readT07040BackfillInvariant(db)
+        assertT07040BackfillInvariant(afterDelete, options.expectedT07040BackfillRows, 'after')
+        t07040BackfillRowsAfter = afterDelete.total
       }
       if (options.checkpoint) {
         // A busy checkpoint is the daemon working; leave the WAL for next run.
@@ -1003,6 +1152,11 @@ export async function pruneStateRetention(
       () => readPragmaNumber(db, 'freelist_count'),
       freelistBeforeVacuumPages
     ).value
+    if (options.operation === PURGE_DELTA_BACKLOG_OPERATION) {
+      const after = readT07040BackfillInvariant(db)
+      assertT07040BackfillInvariant(after, options.expectedT07040BackfillRows, 'after')
+      t07040BackfillRowsAfter = after.total
+    }
     const tableResult = Object.fromEntries(
       RETENTION_TABLES.map((table) => [
         table,
@@ -1017,8 +1171,11 @@ export async function pruneStateRetention(
     ) as PruneStateRetentionResult['tables']
 
     return {
+      operation: options.operation,
       eventCutoff,
       runtimeBufferCutoff,
+      t07040BackfillRowsBefore,
+      t07040BackfillRowsAfter,
       eligibleCount: sumOrNull(Object.values(eligible)),
       deleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
       remainingEligibleCount: sumOrNull(Object.values(remaining)),
@@ -1054,6 +1211,7 @@ if (import.meta.main) {
         {
           startedAt: options.now.toISOString(),
           dbPath: options.dbPath,
+          operation: options.operation,
           applied: options.apply,
           batchSize: options.batchSize,
           checkpoint: options.checkpoint,
