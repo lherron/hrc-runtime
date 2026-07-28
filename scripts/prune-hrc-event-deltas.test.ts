@@ -192,6 +192,7 @@ function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
     deadlineMillis: 60_000,
     paceMillis: 0,
     maxWriteHoldMillis: 500,
+    maxDutyCycle: 1,
     busyMaxRetries: 8,
     countEligible: true,
     tables: ['events', 'hrc_events', 'broker_invocation_events', 'runtime_buffers'] as const,
@@ -625,6 +626,35 @@ describe('prune-hrc-event-deltas writer-lock guards', () => {
     expect(result.remainingEligibleCount).toBeNull()
     expect(result.tables.events.eligibleCount).toBeNull()
     expect(result.stopReason).toBe('complete')
+  })
+
+  test('the duty-cycle budget yields several times longer than each hold', async () => {
+    expect(parsePruneStateRetentionArgs([], {}).maxDutyCycle).toBe(0.25)
+    expect(parsePruneStateRetentionArgs(['--max-duty-cycle=0.5'], {}).maxDutyCycle).toBe(0.5)
+    expect(() => parsePruneStateRetentionArgs(['--max-duty-cycle', '0'], {})).toThrow(
+      /greater than 0/
+    )
+    expect(() => parsePruneStateRetentionArgs(['--max-duty-cycle', '1.5'], {})).toThrow(/at most 1/)
+
+    const { path, db } = makeStore()
+    const authority = seedTerminalAuthority(db)
+    // Big enough rows that each batch has a hold worth pacing against.
+    for (let index = 0; index < 8; index += 1) {
+      insertBuffer(db, authority.runtimeId, authority.runId, index + 1, OLD, 'x'.repeat(256 * 1024))
+    }
+    db.close()
+
+    const result = await pruneStateRetention({
+      ...pruneOptions(path, true, 1),
+      paceMillis: 0,
+      maxDutyCycle: 0.25,
+      tables: ['runtime_buffers'],
+    })
+    expect(result.deleted).toBe(8)
+    // At a 25% duty cycle the job must spend at least three times as long
+    // yielding as it did holding the lock.
+    expect(result.heldMillis).toBeGreaterThan(0)
+    expect(result.pausedMillis).toBeGreaterThanOrEqual(result.heldMillis * 2)
   })
 
   test('the writer lock is yielded between delete batches', async () => {

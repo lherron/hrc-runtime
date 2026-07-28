@@ -19,6 +19,14 @@ const MILLISECONDS_PER_MINUTE = 60 * 1000
 const DEFAULT_DEADLINE_MINUTES = 30
 const DEFAULT_PACE_MILLIS = 250
 const DEFAULT_MAX_WRITE_HOLD_MILLIS = 500
+/**
+ * Share of wall-clock time this job may hold the writer lock. Bounding the
+ * length of a single hold is not enough on its own: the daemon has write paths
+ * that surface SQLITE_BUSY immediately instead of waiting out their busy
+ * timeout, so what they actually see is the probability of finding the lock
+ * held. Yielding several times longer than each hold keeps that probability low.
+ */
+const DEFAULT_MAX_DUTY_CYCLE = 0.25
 const DEFAULT_INCREMENTAL_VACUUM_CHUNK_PAGES = 100
 const DEFAULT_BUSY_MAX_RETRIES = 8
 const MAX_PAUSE_MILLIS = 5_000
@@ -194,6 +202,7 @@ export type PruneStateRetentionOptions = {
   deadlineMillis: number
   paceMillis: number
   maxWriteHoldMillis: number
+  maxDutyCycle: number
   busyMaxRetries: number
   countEligible: boolean
   tables: readonly RetentionTable[]
@@ -233,8 +242,9 @@ export type PruneStateRetentionResult = {
   elapsedMillis: number
   pausedMillis: number
   busyRetries: number
-  /** Number of write steps taken, and the longest the writer lock was held. */
+  /** Write steps taken, total and longest time the writer lock was held. */
   writeSteps: number
+  heldMillis: number
   maxObservedWriteHoldMillis: number
   vacuumChunkPages: number
   vacuumStopReason: PrunePhaseStop
@@ -304,6 +314,8 @@ function usage(): string {
     '  --deadline-minutes <n>              wall-clock budget; 0 = unlimited (default: 30)',
     '  --pace-millis <n>                   minimum yield between write steps (default: 250)',
     '  --max-write-hold-millis <n>         target ceiling for one write step (default: 500)',
+    '  --max-duty-cycle <0-1>              share of wall-clock this job may hold the',
+    '                                      writer lock (default: 0.25)',
     '  --busy-max-retries <n>              SQLITE_BUSY backoff attempts (default: 8)',
     '  --count-eligible                    force the pre-flight eligible counts',
     '  --no-count-eligible                 skip them (the default under --apply)',
@@ -348,6 +360,14 @@ function parseNonNegativeInteger(raw: string | undefined, fallback: number, flag
   const value = raw === undefined ? fallback : Number(raw)
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${flag} must be a non-negative integer`)
+  }
+  return value
+}
+
+function parseDutyCycle(raw: string | undefined): number {
+  const value = raw === undefined ? DEFAULT_MAX_DUTY_CYCLE : Number(raw)
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new Error('--max-duty-cycle must be greater than 0 and at most 1')
   }
   return value
 }
@@ -458,6 +478,7 @@ export function parsePruneStateRetentionArgs(
       DEFAULT_MAX_WRITE_HOLD_MILLIS,
       '--max-write-hold-millis'
     ),
+    maxDutyCycle: parseDutyCycle(readArgValue(args, '--max-duty-cycle')),
     busyMaxRetries: parseNonNegativeInteger(
       readArgValue(args, '--busy-max-retries'),
       DEFAULT_BUSY_MAX_RETRIES,
@@ -494,10 +515,12 @@ type WriteBudget = {
   deadlineAtMillis: number | null
   paceMillis: number
   maxWriteHoldMillis: number
+  maxDutyCycle: number
   busyMaxRetries: number
   pausedMillis: number
   busyRetries: number
   writeSteps: number
+  heldMillis: number
   maxObservedWriteHoldMillis: number
   deadlineExceeded: boolean
 }
@@ -509,10 +532,12 @@ function createWriteBudget(options: PruneStateRetentionOptions): WriteBudget {
     deadlineAtMillis: options.deadlineMillis > 0 ? startedAtMillis + options.deadlineMillis : null,
     paceMillis: options.paceMillis,
     maxWriteHoldMillis: options.maxWriteHoldMillis,
+    maxDutyCycle: options.maxDutyCycle,
     busyMaxRetries: options.busyMaxRetries,
     pausedMillis: 0,
     busyRetries: 0,
     writeSteps: 0,
+    heldMillis: 0,
     maxObservedWriteHoldMillis: 0,
     deadlineExceeded: false,
   }
@@ -530,11 +555,12 @@ function deadlineReached(budget: WriteBudget): boolean {
 }
 
 /**
- * Yield the writer lock for at least as long as we just held it, so the daemon
- * always has a window inside its 5s busy timeout.
+ * Yield the writer lock long enough to keep this job's share of wall-clock time
+ * at or under the duty-cycle budget, so the daemon mostly finds the lock free.
  */
 async function pauseAfterWrite(budget: WriteBudget, holdMillis: number): Promise<void> {
-  const pause = Math.min(MAX_PAUSE_MILLIS, Math.max(budget.paceMillis, holdMillis))
+  const dutyPause = holdMillis * (1 / budget.maxDutyCycle - 1)
+  const pause = Math.min(MAX_PAUSE_MILLIS, Math.max(budget.paceMillis, dutyPause))
   if (pause <= 0) {
     return
   }
@@ -563,6 +589,7 @@ async function runWriteStep<T>(
       const value = action()
       const holdMillis = Date.now() - startedAt
       budget.writeSteps += 1
+      budget.heldMillis += holdMillis
       budget.maxObservedWriteHoldMillis = Math.max(budget.maxObservedWriteHoldMillis, holdMillis)
       return { value, holdMillis }
     } catch (error) {
@@ -884,6 +911,7 @@ export async function pruneStateRetention(
         pausedMillis: budget.pausedMillis,
         busyRetries: budget.busyRetries,
         writeSteps: budget.writeSteps,
+        heldMillis: budget.heldMillis,
         maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
         vacuumChunkPages: options.incrementalVacuumChunkPages,
         vacuumStopReason: 'busy',
@@ -1004,6 +1032,7 @@ export async function pruneStateRetention(
       pausedMillis: budget.pausedMillis,
       busyRetries: budget.busyRetries,
       writeSteps: budget.writeSteps,
+      heldMillis: budget.heldMillis,
       maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
       vacuumChunkPages,
       vacuumStopReason,
@@ -1033,6 +1062,7 @@ if (import.meta.main) {
           deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
           paceMillis: options.paceMillis,
           maxWriteHoldMillis: options.maxWriteHoldMillis,
+          maxDutyCycle: options.maxDutyCycle,
           countedEligible: options.countEligible,
           ...result,
         },

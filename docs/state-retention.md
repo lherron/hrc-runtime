@@ -99,7 +99,14 @@ database grows:
   step actually yields for at least as long as it just held the lock, capped at
   five seconds, so the daemon always gets a window inside its own busy timeout.
 - `--max-write-hold-millis` (default 500) is the target ceiling for one write
-  step and drives the vacuum chunk adaptation.
+  step and drives the vacuum and batch size adaptation.
+- `--max-duty-cycle` (default 0.25) bounds the share of wall-clock time the job
+  may hold the writer lock, by yielding several times longer than each hold.
+  Bounding a single hold is not sufficient on its own: the daemon has write
+  paths that surface `SQLITE_BUSY` immediately instead of waiting out their 5 s
+  busy timeout, so what those paths actually see is the probability of finding
+  the lock held. A 25% duty cycle keeps that probability low; the reported
+  `heldMillis` versus `pausedMillis` shows what a run actually achieved.
 - `--busy-max-retries` (default 8) backs off exponentially on `SQLITE_BUSY`
   instead of spinning. Exhausting the ladder is not a failure: the phase stops
   with `stopReason: "busy"` and the run still exits `0`.
