@@ -1,12 +1,11 @@
 /**
- * Broker-event emission + lifecycle-payload shaping for the BrokerEventMapper.
+ * Lifecycle-payload shaping for the BrokerEventMapper.
  *
  * Extracted verbatim from event-mapper.ts as a pure mechanical move. These are
- * the provenance-mirror append (`emitBrokerEvent`), the canonical lifecycle
- * append (`emitLifecycleEvent` + echo suppression), and the legacy-shaped
- * lifecycle payload builder — none mutate HRC state beyond appending events.
+ * the canonical lifecycle append (`emitLifecycleEvent` + echo suppression) and
+ * the legacy-shaped lifecycle payload builder.
  */
-import type { HrcEventEnvelope, HrcLifecycleEvent, HrcLifecycleTransport } from 'hrc-core'
+import type { HrcLifecycleEvent, HrcLifecycleTransport } from 'hrc-core'
 import type { AgentMessageEvent, ToolExecutionEndEvent, ToolExecutionStartEvent } from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
@@ -26,36 +25,6 @@ import {
   isRecord,
   toolResultFromBrokerResult,
 } from './helpers'
-
-/** Emit a single broker-sourced HRC event mirroring the broker envelope. */
-export function emitBrokerEvent(
-  db: HrcDatabase,
-  envelope: InvocationEventEnvelope,
-  ctx: ProjectionContext,
-  now: string
-): HrcEventEnvelope {
-  return db.events.append({
-    ts: now,
-    hostSessionId: ctx.hostSessionId,
-    scopeRef: ctx.scopeRef,
-    laneRef: ctx.laneRef,
-    generation: ctx.generation,
-    ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-    runtimeId: ctx.runtimeId,
-    source: 'broker',
-    eventKind: `broker.${envelope.type}`,
-    eventJson: {
-      invocationId: envelope.invocationId,
-      seq: envelope.seq,
-      type: envelope.type,
-      time: envelope.time,
-      ...(envelope.turnId !== undefined ? { turnId: envelope.turnId } : {}),
-      ...(envelope.inputId !== undefined ? { inputId: envelope.inputId } : {}),
-      ...(envelope.itemId !== undefined ? { itemId: envelope.itemId } : {}),
-      payload: envelope.payload,
-    },
-  })
-}
 
 /**
  * Project a broker event into the canonical `hrc_events` lifecycle stream that

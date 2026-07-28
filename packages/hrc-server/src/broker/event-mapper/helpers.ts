@@ -113,7 +113,7 @@ export type BrokerProjectionResult = {
   idempotent: boolean
   /** Durable raw broker row appended or idempotently found for this envelope. */
   brokerEvent: HrcBrokerInvocationEventRecord
-  /** Raw `events`-table mirror appended this call (each `source:'broker'`); empty on idempotent re-apply. */
+  /** Retired raw `events`-table mirror surface; always empty (T-07040). */
   events: HrcEventEnvelope[]
   /**
    * Canonical `hrc_events` lifecycle events appended this call (the ones the

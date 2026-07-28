@@ -12,7 +12,7 @@
  *      append repo (`BrokerInvocationEventRepository.appendEvent`);
  *   2. projects the event into HRC state (runtime / run / buffer / continuation
  *      / surface / permission audit / diagnostics);
- *   3. emits HRC events with `source: 'broker'` via `EventRepository.append`;
+ *   3. emits canonical lifecycle rows through `HrcEventRepository`;
  *   4. marks the broker event row projection_status = 'applied'.
  *
  * Contract invariants under test:
@@ -20,7 +20,7 @@
  *   - idempotent: same (invocationId, seq) + SAME payload twice => one projection;
  *   - conflict: same (invocationId, seq) + DIFFERENT payload => throws
  *     BrokerInvocationEventConflictError, NO projection;
- *   - source:'broker' on every emitted HRC event;
+ *   - the retired raw `events` mirror remains empty;
  *   - full ordered sequence projects runtime/run/message/tool/continuation;
  *   - replay of the whole sequence is a no-op.
  *
@@ -29,7 +29,7 @@
  *     constructor(deps: { db: HrcDatabase; now?: () => string })
  *     apply(envelope: InvocationEventEnvelope): {
  *       idempotent: boolean
- *       events: HrcEventEnvelope[]   // each has source: 'broker'
+ *       events: HrcEventEnvelope[]   // retired compatibility surface; always empty
  *     }
  *   }
  */
@@ -63,7 +63,6 @@ import {
   TOOL_CALL_ID,
   TOOL_NAME,
   bufferTextForRun,
-  emittedEventsMentioning,
   envelope,
   headlessSequence,
   makeSeededFixture,
@@ -87,9 +86,9 @@ function makeMapper() {
 }
 
 // ---------------------------------------------------------------------------
-// 1. source:'broker' on every emitted HRC event
+// 1. canonical lifecycle projection without the retired raw mirror
 // ---------------------------------------------------------------------------
-describe('emitted HRC events', () => {
+describe('emitted lifecycle events', () => {
   it('does not duplicate a durable acceptance when broker input.accepted arrives', () => {
     appendHrcEvent(fixture.db, 'turn.accepted', {
       ts: ts(99),
@@ -116,25 +115,19 @@ describe('emitted HRC events', () => {
     expect(fixture.db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.accepted' })).toHaveLength(1)
   })
 
-  it('stamps source:"broker" on every event emitted across the sequence', () => {
+  it('does not return raw mirror events across the sequence', () => {
     const mapper = makeMapper()
     const allEmitted = headlessSequence().flatMap((env) => mapper.apply(env).events)
 
-    expect(allEmitted.length).toBeGreaterThan(0)
-    for (const event of allEmitted) {
-      expect(event.source).toBe('broker')
-    }
+    expect(allEmitted).toEqual([])
   })
 
-  it('persists emitted events to the events table with source:"broker"', () => {
+  it('does not persist broker envelopes to the events table', () => {
     const mapper = makeMapper()
     mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
 
     const persisted = fixture.db.events.listFromSeq(1, { runtimeId: RUNTIME_ID })
-    expect(persisted.length).toBeGreaterThan(0)
-    for (const event of persisted) {
-      expect(event.source).toBe('broker')
-    }
+    expect(persisted).toEqual([])
   })
 
   it('persists provider transcript artifacts from explicit broker notifications', async () => {
@@ -227,9 +220,9 @@ describe('emitted HRC events', () => {
   })
 
   // T-01711: clients follow the canonical hrc_events lifecycle stream (/v1/events),
-  // NOT the raw `events` mirror. The mapper must project mapped broker types into
-  // hrc_events under registered turn.* kinds (carrying hrcSeq so follow-subscribers
-  // deliver them + notifyEvent finalizes the turn). The raw mirror stays broker.*.
+  // The mapper must project mapped broker types into hrc_events under registered
+  // turn.* kinds (carrying hrcSeq so follow-subscribers deliver them + notifyEvent
+  // finalizes the turn) without appending a raw events-table mirror.
   it('projects mapped broker types into the hrc_events lifecycle stream', () => {
     const mapper = makeMapper()
     const db = fixture.db
@@ -243,8 +236,7 @@ describe('emitted HRC events', () => {
       )
     )
 
-    // Raw mirror keeps the broker. prefix; lifecycle event is canonical.
-    expect(completed.events.map((e) => e.eventKind)).toEqual(['broker.turn.completed'])
+    expect(completed.events).toEqual([])
     expect(completed.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.completed'])
     // Lifecycle event carries hrcSeq + runId so the follow stream/finalize path fires.
     expect(typeof completed.lifecycleEvents[0]!.hrcSeq).toBe('number')
@@ -324,7 +316,7 @@ describe('emitted HRC events', () => {
   it('treats unmapped broker types as provenance-only (no lifecycle event)', () => {
     const mapper = makeMapper()
     const diagnostic = mapper.apply(envelope('diagnostic', 8, { level: 'info', message: 'noise' }))
-    expect(diagnostic.events.map((e) => e.eventKind)).toEqual(['broker.diagnostic'])
+    expect(diagnostic.events).toEqual([])
     expect(diagnostic.lifecycleEvents).toEqual([])
   })
 
@@ -351,7 +343,7 @@ describe('emitted HRC events', () => {
       )
     )
 
-    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.tool.call.started'])
+    expect(result.events).toEqual([])
     expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.tool_call'])
     const lifecycle = result.lifecycleEvents[0]!
     expect(lifecycle.runId).toBe(RUN_ID)
@@ -415,7 +407,7 @@ describe('emitted HRC events', () => {
       envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })
     )
 
-    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+    expect(result.events).toEqual([])
     expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.user_prompt'])
     const lifecycle = result.lifecycleEvents[0]!
     expect(lifecycle.runId).toBe(RUN_ID)
@@ -489,7 +481,7 @@ describe('idempotency', () => {
 
     const first = mapper.apply(env)
     expect(first.idempotent).toBe(false)
-    expect(first.events.length).toBeGreaterThan(0)
+    expect(first.events).toEqual([])
 
     const eventsAfterFirst = fixture.db.events.count({ runtimeId: RUNTIME_ID })
     const brokerRowsAfterFirst =
@@ -571,15 +563,15 @@ describe('transaction atomicity', () => {
     const mapper = makeMapper()
     const db = fixture.db
 
-    // Fault the HRC-event emission so projection throws mid-transaction.
-    const original = db.events.append.bind(db.events)
+    // Fault canonical lifecycle emission so projection throws mid-transaction.
+    const original = db.hrcEvents.append.bind(db.hrcEvents)
     let armed = true
-    ;(db.events as { append: typeof db.events.append }).append = ((input) => {
+    ;(db.hrcEvents as { append: typeof db.hrcEvents.append }).append = ((input) => {
       if (armed) {
         throw new Error('injected projection failure')
       }
       return original(input)
-    }) as typeof db.events.append
+    }) as typeof db.hrcEvents.append
 
     const completed = envelope(
       'turn.completed',
@@ -592,7 +584,7 @@ describe('transaction atomicity', () => {
       expect(() => mapper.apply(completed)).toThrow()
     } finally {
       armed = false
-      ;(db.events as { append: typeof db.events.append }).append = original
+      ;(db.hrcEvents as { append: typeof db.hrcEvents.append }).append = original
     }
 
     // Neither the broker event row nor the run-state projection persisted.
@@ -609,7 +601,7 @@ describe('transaction atomicity', () => {
     const stored = fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 2)
     expect(stored).not.toBeNull()
     expect(stored!.projectionStatus).toBe('applied')
-    expect(typeof stored!.hrcEventSeq).toBe('number')
+    expect(stored!.hrcEventSeq).toBeUndefined()
   })
 
   it('clears runtime activeRunId when an interactive broker turn completes', () => {
@@ -705,11 +697,12 @@ describe('projection mapping (ordered sequence)', () => {
     // assistant.message.* -> runtime buffer / message events.
     expect(bufferTextForRun(db, RUN_ID)).toContain(ASSISTANT_TEXT)
 
-    // tool.call.* -> tool events (surfaced as broker HRC events).
-    const allEmitted = seq.flatMap((env) => emittedByType.get(env.type)!.events)
-    const toolEvents = emittedEventsMentioning(allEmitted, TOOL_CALL_ID)
+    // tool.call.* -> canonical lifecycle events.
+    const toolEvents = seq
+      .flatMap((env) => emittedByType.get(env.type)!.lifecycleEvents)
+      .filter((event) => JSON.stringify(event.payload).includes(TOOL_CALL_ID))
     expect(toolEvents.length).toBeGreaterThan(0)
-    expect(JSON.stringify(toolEvents[0]!.eventJson)).toContain(TOOL_NAME)
+    expect(JSON.stringify(toolEvents[0]!.payload)).toContain(TOOL_NAME)
 
     // continuation.updated -> BOTH runtime AND session continuation.
     const expectedContinuation = { provider: 'openai', key: CONTINUATION_KEY }
@@ -725,10 +718,7 @@ describe('projection mapping (ordered sequence)', () => {
       expect(row.projectionStatus).toBe('applied')
     }
 
-    // every emitted event is sourced from the broker.
-    for (const event of allEmitted) {
-      expect(event.source).toBe('broker')
-    }
+    expect(seq.flatMap((env) => emittedByType.get(env.type)!.events)).toEqual([])
   })
 
   it('does not double-buffer completed assistant text already emitted as deltas', () => {
@@ -868,7 +858,7 @@ describe('auxiliary projections', () => {
     expect(bindings.length).toBeGreaterThan(0)
   })
 
-  it('surfaces diagnostics as broker HRC events', () => {
+  it('keeps provenance-only diagnostics durable in the broker ledger', () => {
     const mapper = makeMapper()
     const result = mapper.apply(
       envelope('diagnostic', 50, {
@@ -878,12 +868,10 @@ describe('auxiliary projections', () => {
       })
     )
 
-    expect(result.events.length).toBeGreaterThan(0)
-    const hits = emittedEventsMentioning(result.events, 'broker-diagnostic-marker')
-    expect(hits.length).toBeGreaterThan(0)
-    for (const event of result.events) {
-      expect(event.source).toBe('broker')
-    }
+    expect(result.events).toEqual([])
+    expect(result.lifecycleEvents).toEqual([])
+    const stored = fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 50)
+    expect(stored?.brokerEventJson).toContain('broker-diagnostic-marker')
   })
 
   it('projects only error/api diagnostics into non-terminal monitor lifecycle rows', () => {
@@ -900,7 +888,7 @@ describe('auxiliary projections', () => {
         data: { code: 'ordinary_warning' },
       })
     )
-    expect(warn.events.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
+    expect(warn.events).toEqual([])
     expect(warn.lifecycleEvents).toEqual([])
     expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'broker.diagnostic' })).toEqual([])
 
@@ -935,7 +923,7 @@ describe('auxiliary projections', () => {
 
     const result = mapper.apply(diagnosticEnvelope)
 
-    expect(result.events.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
+    expect(result.events).toEqual([])
     expect(result.lifecycleEvents.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
     expect(result.lifecycleEvents).toHaveLength(1)
 
@@ -1184,8 +1172,7 @@ describe('broker.user.message echo dedup (T-04215)', () => {
         turnId: 'turn_dedup_1' as TurnId,
       })
 
-      // Raw provenance event MUST still be appended to the events mirror.
-      expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+      expect(result.events).toEqual([])
 
       // Echo is suppressed — no second canonical turn.user_prompt.
       // FAILS RED against current code: current code always emits the lifecycle event.
@@ -1217,8 +1204,7 @@ describe('broker.user.message echo dedup (T-04215)', () => {
       envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })
     )
 
-    // Raw provenance mirror still appended.
-    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+    expect(result.events).toEqual([])
     // Echo suppressed — no second canonical turn.user_prompt.
     // FAILS RED: current code → lifecycleEvents=['turn.user_prompt']
     expect(result.lifecycleEvents).toEqual([])

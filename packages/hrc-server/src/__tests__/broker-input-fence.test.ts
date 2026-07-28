@@ -76,7 +76,7 @@ describe('broker input timeout fence (T-05176)', () => {
       const record = fixture.db.brokerInvocationEvents.getByInvocationAndSeq(Q_INVOCATION_ID, seq)
       expect(record?.runId).toBe(Q_RUN_B_ID)
       expect(record?.projectionStatus).toBe('skipped_fenced')
-      expect(record?.hrcEventSeq).toBeDefined()
+      expect(record?.hrcEventSeq).toBeUndefined()
     }
 
     const run = fixture.db.runs.getByRunId(Q_RUN_B_ID)

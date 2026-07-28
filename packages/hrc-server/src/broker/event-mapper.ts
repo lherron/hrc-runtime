@@ -10,7 +10,7 @@
  *      this durable row unless `HRC_PERSIST_RAW_DELTAS=1`;
  *   2. projects the event into HRC state (runtime / run / buffer / continuation
  *      / surface / permission audit / diagnostics);
- *   3. emits HRC events with `source: 'broker'` via `EventRepository.append`;
+ *   3. emits canonical lifecycle rows through `HrcEventRepository`;
  *   4. marks the broker event row `projection_status = 'applied'`.
  *
  * Contract invariants (pinned by broker-event-mapper.test.ts):
@@ -18,7 +18,7 @@
  *   - idempotent: same (invocationId, seq) + SAME payload twice => one projection;
  *   - conflict: same (invocationId, seq) + DIFFERENT payload => throws
  *     `BrokerInvocationEventConflictError`, NO projection;
- *   - `source:'broker'` on every emitted HRC event.
+ *   - the legacy raw `events` mirror is not written.
  *
  * W1A broker-path boundary: this module imports ONLY persistence
  * (`hrc-store-sqlite`), domain contracts (`hrc-core`), and broker protocol TYPES
@@ -81,7 +81,7 @@ import {
   TERMINAL_TURN_EVENT_TYPE_SQL,
   lifecycleTransportFromRuntime,
 } from './event-mapper/helpers'
-import { emitBrokerEvent, emitLifecycleEvent } from './event-mapper/lifecycle-payload'
+import { emitLifecycleEvent } from './event-mapper/lifecycle-payload'
 import { auditPermissionCancelled, auditPermissionResolved } from './event-mapper/permission-audit'
 import {
   claimRuntimeTurnOwnership,
@@ -252,10 +252,8 @@ export class BrokerEventMapper {
 
     const fencedRun = ctx.runId !== undefined ? db.runs.getByRunId(ctx.runId) : null
     if (fencedRun?.brokerInputFencedAt !== undefined) {
-      const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
       if (appended !== undefined) {
         db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
-          hrcEventSeq: emitted.seq,
           projectionStatus: 'skipped_fenced',
           projectionError:
             fencedRun.brokerInputFenceReason ??
@@ -265,13 +263,14 @@ export class BrokerEventMapper {
       return {
         idempotent: false,
         brokerEvent,
-        events: [emitted],
+        events: [],
         lifecycleEvents: [],
       }
     }
 
-    // (b) Project state into HRC, then emit the raw provenance mirror plus the
-    // canonical lifecycle event (the latter is what clients/notifyEvent see).
+    // (b) Project state into HRC, then emit the canonical lifecycle event (the
+    // stream clients and notifyEvent follow). T-07040 retired the separate raw
+    // per-envelope `events` mirror; the broker ledger remains the wire authority.
     // `derivedDescriptors` records HRC-side lifecycle events the mapper synthesizes
     // beyond the 1:1 broker mapping (T-01946 turn.awaiting_input / turn.input_resumed).
     // They are EMITTED after the canonical event so their hrcSeq is strictly greater
@@ -281,7 +280,6 @@ export class BrokerEventMapper {
     const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
     this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
-    const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
     const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
     const derived = derivedDescriptors.map((descriptor) =>
       emitDerivedTurnEvent(db, descriptor.eventKind, persistedEnvelope, ctx, now, {
@@ -295,7 +293,6 @@ export class BrokerEventMapper {
     // depends on a row existing.
     if (appended !== undefined) {
       db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
-        hrcEventSeq: emitted.seq,
         projectionStatus: 'applied',
       })
     }
@@ -303,7 +300,7 @@ export class BrokerEventMapper {
     return {
       idempotent: false,
       brokerEvent,
-      events: [emitted],
+      events: [],
       lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
     }
   }

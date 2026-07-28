@@ -461,6 +461,41 @@ describe('capture verifier with injected stores', () => {
     expect(report.analytics.rawEvents.expectedFromBroker).toBe(1)
   })
 
+  it('skips the raw-mirror cross-check with one notice when the mirror is absent', async () => {
+    const report = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'user.message', { content: 'hello' }, { skipMirror: true }),
+        brokerEvent(2, 'turn.completed', {}, { skipMirror: true }),
+      ]),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.status).toBe('pass')
+    expect(report.ok).toBe(true)
+    expect(report.rawMirror).toEqual({ checked: 0, matched: 0 })
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        severity: 'info',
+        layer: 'raw-mirror',
+        code: 'raw_mirror_unavailable',
+      })
+    )
+    expect(report.findings.filter((finding) => finding.layer === 'raw-mirror')).toHaveLength(1)
+    expect(report.analytics.rawEvents).toMatchObject({
+      expectedFromBroker: 0,
+      found: 0,
+      matched: 0,
+      missing: 0,
+      mismatched: 0,
+    })
+    expect(report.analytics.crossSink.brokerToRaw).toEqual({
+      expected: 0,
+      matched: 0,
+      missing: 0,
+      mismatched: 0,
+    })
+  })
+
   it('fails on seq holes, non-applied rows, and raw mirror mismatches', async () => {
     const report = await verifyInvocation({
       store: fakeStore([

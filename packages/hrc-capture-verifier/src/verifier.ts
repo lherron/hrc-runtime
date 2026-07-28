@@ -377,6 +377,20 @@ function checkRawMirrors(
   findings: CaptureVerificationFinding[]
 ): RawMirrorCheckResult {
   const analytics = emptyRawEventsAnalytics()
+  const hasRawMirror = Object.values(snapshot.rawMirrors).some(
+    (rawMirror) => rawMirror !== undefined
+  )
+  if (!hasRawMirror) {
+    findings.push({
+      schema: CAPTURE_VERIFIER_SCHEMA,
+      severity: 'info',
+      layer: 'raw-mirror',
+      code: 'raw_mirror_unavailable',
+      message: 'raw events mirror is absent or empty; broker-to-raw cross-check skipped',
+    })
+    return { rawMirror: { checked: 0, matched: 0 }, analytics }
+  }
+
   analytics.expectedFromBroker = snapshot.brokerEvents.length
   let matched = 0
   for (const row of snapshot.brokerEvents) {

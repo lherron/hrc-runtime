@@ -236,6 +236,7 @@ import {
   timestamp,
   unlinkIfExists,
 } from './server-util.js'
+import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
 import { toStatusSessionView } from './status-views.js'
 import { createSubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
@@ -2293,6 +2294,12 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
           process.env['HRC_METRICS'] !== '0'
         ),
     })
+    const backfilledContinuationClears = backfillLegacyContinuationClearBarriers(db)
+    if (backfilledContinuationClears > 0) {
+      writeServerLog('INFO', 'server.start.continuation_clear_barriers_backfilled', {
+        count: backfilledContinuationClears,
+      })
+    }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
     await replaySpool(resolvedOptions, db)
     await reconcileStartupState(db, tmux, ghostmux, {

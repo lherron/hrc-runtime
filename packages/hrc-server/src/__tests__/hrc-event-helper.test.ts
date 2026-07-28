@@ -281,7 +281,7 @@ describe('hrc semantic turn helpers', () => {
         updatedAt: now,
       })
 
-      const rawPrompt = db.events.append({
+      db.events.append({
         ts: now,
         hostSessionId,
         scopeRef,
@@ -289,9 +289,9 @@ describe('hrc semantic turn helpers', () => {
         generation: 1,
         runtimeId,
         runId,
-        source: 'hrc',
-        eventKind: 'codex.user_prompt',
-        eventJson: { type: 'codex.user_prompt', prompt },
+        source: 'broker',
+        eventKind: 'broker.user.message',
+        eventJson: { type: 'user.message', payload: { content: prompt } },
       })
 
       db.hrcEvents.append({
@@ -321,7 +321,6 @@ describe('hrc semantic turn helpers', () => {
           runtimeId,
           runId,
           prompt,
-          currentEventSeq: rawPrompt.seq,
         })
       ).toBe(true)
     } finally {

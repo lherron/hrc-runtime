@@ -14,7 +14,11 @@ import { join } from 'node:path'
 import type { HrcContinuationRef, HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import { selectResumeContinuationCandidate } from '../session-resume-continuation'
+import {
+  LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
+  backfillLegacyContinuationClearBarriers,
+  selectResumeContinuationCandidate,
+} from '../session-resume-continuation'
 
 type Db = ReturnType<typeof openHrcDatabase>
 
@@ -68,6 +72,59 @@ function appendContextCleared(
     transport: 'tmux',
     payload,
   })
+}
+
+function appendLegacyBrokerContinuationCleared(hostSessionId: string, generation: number): number {
+  const runtimeId = `rt-${hostSessionId}`
+  const invocationId = `inv-${hostSessionId}`
+  db.runtimes.insert({
+    runtimeId,
+    hostSessionId,
+    scopeRef: SCOPE_REF,
+    laneRef: LANE_REF,
+    generation,
+    transport: 'headless',
+    harness: 'codex-cli',
+    provider: 'openai',
+    status: 'terminated',
+    supportsInflightInput: false,
+    adopted: false,
+    controllerKind: 'harness-broker',
+    createdAt: tsAt(generation),
+    updatedAt: tsAt(generation),
+  })
+  db.brokerInvocations.insert({
+    invocationId,
+    operationId: `op-${hostSessionId}`,
+    runtimeId,
+    brokerProtocol: 'harness-broker/0.2',
+    brokerDriver: 'codex-app-server',
+    invocationState: 'exited',
+    capabilitiesJson: '{}',
+    specHash: 'sha256:spec',
+    startRequestHash: 'sha256:request',
+    selectedProfileHash: 'sha256:profile',
+    createdAt: tsAt(generation),
+    updatedAt: tsAt(generation),
+  })
+  const raw = db.events.append({
+    ts: tsAt(generation),
+    hostSessionId,
+    scopeRef: SCOPE_REF,
+    laneRef: LANE_REF,
+    generation,
+    runtimeId,
+    source: 'broker',
+    eventKind: 'broker.continuation.cleared',
+    eventJson: {
+      invocationId,
+      seq: 9,
+      type: 'continuation.cleared',
+      time: tsAt(generation),
+      payload: { reason: 'prompt_input_exit' },
+    },
+  })
+  return raw.seq
 }
 
 beforeEach(async () => {
@@ -141,16 +198,25 @@ describe('selectResumeContinuationCandidate', () => {
 
   it('blocks resume past a broker continuation.cleared (/quit) barrier', () => {
     insertSession('hs-1', 1, { status: 'active' })
-    db.events.append({
-      ts: tsAt(1),
-      hostSessionId: 'hs-1',
-      scopeRef: SCOPE_REF,
-      laneRef: LANE_REF,
-      generation: 1,
-      source: 'broker',
-      eventKind: 'broker.continuation.cleared',
-      eventJson: { reason: 'prompt_input_exit' },
+    const rawEventSeq = appendLegacyBrokerContinuationCleared('hs-1', 1)
+
+    expect(backfillLegacyContinuationClearBarriers(db)).toBe(1)
+    expect(backfillLegacyContinuationClearBarriers(db)).toBe(0)
+    const [backfilled] = db.brokerInvocationEvents.listBySourceRef(
+      LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE
+    )
+    expect(backfilled).toMatchObject({
+      invocationId: 'inv-hs-1',
+      seq: 9,
+      type: 'continuation.cleared',
+      hrcEventSeq: rawEventSeq,
+      projectionStatus: 'imported',
+      sourceRef: LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
+      originSeq: rawEventSeq,
     })
+    expect(JSON.parse(backfilled!.brokerEventJson)).toEqual({ reason: 'prompt_input_exit' })
+
+    db.sqlite.query('DELETE FROM events').run()
 
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
     expect(result.outcome).toBe('barrier')

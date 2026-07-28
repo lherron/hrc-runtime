@@ -152,7 +152,6 @@ async function handleOtlpLogs(ctx: ServerContext, request: Request): Promise<Res
         ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
         ...(eventInput.runId ? { runId: eventInput.runId } : {}),
         prompt: codexPrompt,
-        currentEventSeq: appendedEvent.seq,
       })
     ) {
       const appendedSemanticEvent = appendHrcEvent(ctx.db, semanticUserPrompt.eventKind, {

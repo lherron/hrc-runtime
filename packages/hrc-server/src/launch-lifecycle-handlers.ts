@@ -234,7 +234,6 @@ export async function handleLaunchEvent(
       ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
       ...(runId ? { runId } : {}),
       prompt: body['prompt'],
-      currentEventSeq: appendedEvent.seq,
     })
   }
   if (semanticEvent && !suppressSemanticUserPrompt) {

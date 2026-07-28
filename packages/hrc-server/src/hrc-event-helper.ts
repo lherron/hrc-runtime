@@ -676,23 +676,9 @@ export function shouldSuppressDuplicateCodexInitialUserPrompt(params: {
   runtimeId?: string | undefined
   runId?: string | undefined
   prompt: string
-  currentEventSeq: number
 }): boolean {
   const primingPrompt = extractLaunchPrimingPrompt(params.artifact)
   if (!primingPrompt || primingPrompt !== params.prompt) {
-    return false
-  }
-
-  const promptRows = params.db.events
-    .listFromSeq(1, {
-      hostSessionId: params.hostSessionId,
-      ...(params.runtimeId ? { runtimeId: params.runtimeId } : {}),
-      ...(params.runId ? { runId: params.runId } : {}),
-    })
-    .filter(
-      (event) => event.seq <= params.currentEventSeq && event.eventKind === 'codex.user_prompt'
-    )
-  if (promptRows.length !== 1) {
     return false
   }
 

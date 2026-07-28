@@ -93,11 +93,9 @@ describe('T-07039 raw broker delta persistence gate', () => {
       payload: { text: 'live tool output' },
     })
 
-    const rawMirrorKinds = [...assistantDelta.events, ...toolDelta.events].map(
-      (event) => event.eventKind
-    )
-    expect(rawMirrorKinds).toContain('broker.assistant.message.delta')
-    expect(rawMirrorKinds).toContain('broker.tool.call.delta')
+    expect(assistantDelta.events).toEqual([])
+    expect(toolDelta.events).toEqual([])
+    expect(fixture.db.events.listFromSeq(1)).toEqual([])
   })
 
   it('persists every non-delta kind by default', () => {

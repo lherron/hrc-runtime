@@ -37,6 +37,7 @@ export type ResumeContinuationSelection =
   | { outcome: 'none' }
 
 const STALE_GENERATION_AUTO_ROTATE_REASON = 'stale-generation-auto-rotate'
+export const LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE = 'backfill-T-07040'
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -53,8 +54,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  *   - `session.continuation_dropped`           (explicit in-place drop)
  *   - `context.cleared` with `dropContinuation:true` AND reason != stale-rotate
  *   - `runtime.terminated` with `droppedContinuation:true`
- *   - broker `continuation.cleared` (`/quit` / prompt-input-exit), mirrored to
- *     the raw events table as `broker.continuation.cleared`
+ *   - broker `continuation.cleared` (`/quit` / prompt-input-exit), persisted in
+ *     the invocation ledger
  *
  * A `context.cleared` whose reason IS `stale-generation-auto-rotate` is NOT a
  * barrier — it is bookkeeping rotation, and the prior continuation stays valid.
@@ -86,13 +87,106 @@ export function detectResumeInvalidationBarrier(
     }
   }
 
-  for (const event of db.events.listFromSeq(1, { hostSessionId })) {
-    if (event.eventKind === 'broker.continuation.cleared') {
-      return { kind: 'broker_continuation_cleared', hostSessionId, generation }
-    }
+  const brokerClear = db.sqlite
+    .query<{ found: number }, [string]>(
+      `SELECT 1 AS found
+         FROM broker_invocation_events bie
+         JOIN broker_invocations bi ON bi.invocation_id = bie.invocation_id
+         JOIN runtimes r ON r.runtime_id = bi.runtime_id
+        WHERE r.host_session_id = ?
+          AND bie.type = 'continuation.cleared'
+        LIMIT 1`
+    )
+    .get(hostSessionId)
+  if (brokerClear !== null) {
+    return { kind: 'broker_continuation_cleared', hostSessionId, generation }
   }
 
   return undefined
+}
+
+/**
+ * Preserve explicit `/quit` barriers that predate the durable invocation
+ * ledger. The retired raw mirror carries the original invocation id, broker
+ * seq, timestamp, payload, and local events.seq; materialize exactly one clear
+ * per affected host session with explicit backfill provenance before the mirror
+ * can be purged.
+ *
+ * The query is idempotent: once a host session has any durable
+ * `continuation.cleared` row it no longer qualifies. Original broker seqs are
+ * reused, never synthesized inside an invocation stream.
+ */
+export function backfillLegacyContinuationClearBarriers(db: HrcDatabase): number {
+  const result = db.sqlite
+    .query<never, [string]>(
+      `WITH legacy_clears AS (
+         SELECT
+           raw.*,
+           json_extract(raw.event_json, '$.invocationId') AS raw_invocation_id,
+           CAST(json_extract(raw.event_json, '$.seq') AS INTEGER) AS raw_broker_seq,
+           ROW_NUMBER() OVER (
+             PARTITION BY raw.host_session_id
+             ORDER BY raw.seq DESC
+           ) AS host_rank
+         FROM events raw
+         WHERE raw.event_kind = 'broker.continuation.cleared'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM broker_invocation_events existing
+             JOIN broker_invocations existing_invocation
+               ON existing_invocation.invocation_id = existing.invocation_id
+             JOIN runtimes existing_runtime
+               ON existing_runtime.runtime_id = existing_invocation.runtime_id
+             WHERE existing_runtime.host_session_id = raw.host_session_id
+               AND existing.type = 'continuation.cleared'
+           )
+       )
+       INSERT INTO broker_invocation_events (
+         invocation_id,
+         seq,
+         time,
+         type,
+         run_id,
+         runtime_id,
+         harness_generation,
+         turn_attempt,
+         broker_event_json,
+         broker_envelope_json,
+         hrc_event_seq,
+         projection_status,
+         projection_error,
+         source_ref,
+         origin_seq,
+         created_at
+       )
+       SELECT
+         legacy.raw_invocation_id,
+         legacy.raw_broker_seq,
+         COALESCE(json_extract(legacy.event_json, '$.time'), legacy.ts),
+         'continuation.cleared',
+         COALESCE(legacy.run_id, invocation.run_id),
+         invocation.runtime_id,
+         runtime.generation,
+         NULL,
+         COALESCE(json_extract(legacy.event_json, '$.payload'), '{}'),
+         legacy.event_json,
+         legacy.seq,
+         'imported',
+         NULL,
+         ?,
+         legacy.seq,
+         legacy.ts
+       FROM legacy_clears legacy
+       JOIN broker_invocations invocation
+         ON invocation.invocation_id = legacy.raw_invocation_id
+       JOIN runtimes runtime
+         ON runtime.runtime_id = invocation.runtime_id
+        AND runtime.host_session_id = legacy.host_session_id
+       WHERE legacy.host_rank = 1`
+    )
+    .run(LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE)
+
+  return result.changes
 }
 
 /**
