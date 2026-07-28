@@ -4375,6 +4375,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "RuntimeListPage",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|RuntimeListPage|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "RuntimeRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",

@@ -119,6 +119,51 @@ describe('runtime lifecycle client methods', () => {
     await rm(tmpDir, { recursive: true, force: true })
   })
 
+  it('listRuntimes transparently drains bounded runtime pages', async () => {
+    const capturedQueries: string[] = []
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedQueries.push(url.search)
+        if (url.searchParams.get('cursor') === null) {
+          return Response.json([{ runtimeId: 'rt-page-1' }], {
+            headers: { 'x-hrc-next-cursor': 'cursor-2' },
+          })
+        }
+        return Response.json([{ runtimeId: 'rt-page-2' }])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const runtimes = await client.listRuntimes({ all: true })
+
+    expect(runtimes.map((runtime) => runtime.runtimeId)).toEqual(['rt-page-1', 'rt-page-2'])
+    expect(capturedQueries).toEqual(['?all=true&limit=500', '?all=true&limit=500&cursor=cursor-2'])
+  })
+
+  it('listRuntimesPage preserves the array wire shape and returns cursor metadata', async () => {
+    let capturedQuery = ''
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        capturedQuery = new URL(req.url).search
+        return Response.json([{ runtimeId: 'rt-one-page' }], {
+          headers: { 'x-hrc-next-cursor': 'cursor-next' },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const page = await client.listRuntimesPage({ all: true, limit: 1 })
+
+    expect(page.runtimes.map((runtime) => runtime.runtimeId)).toEqual(['rt-one-page'])
+    expect(page.nextCursor).toBe('cursor-next')
+    expect(capturedQuery).toBe('?all=true&limit=1')
+  })
+
   it('startRuntime posts to /v1/runtimes/start and returns the typed response', async () => {
     let capturedPath = ''
     let capturedBody: unknown

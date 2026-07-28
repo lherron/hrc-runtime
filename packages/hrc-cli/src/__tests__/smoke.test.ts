@@ -217,6 +217,7 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     expect(output).toContain('--scope <scope>')
     expect(output).toContain('--agent <agent>')
     expect(output).toContain('--task <task>')
+    expect(output).toContain('--all')
     expect(output).toContain('hrc show <scope>')
     expect(output).toContain('hrc runtime inspect <runtimeId>')
   })

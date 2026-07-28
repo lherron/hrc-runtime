@@ -57,6 +57,9 @@ export type ListRuntimesFilter = {
   olderThan?: string | undefined
   olderThanMs?: number | undefined
   json?: boolean | undefined
+  all?: boolean | undefined
+  limit?: number | undefined
+  cursor?: string | undefined
 }
 
 export type ListRunsFilter = {
@@ -87,6 +90,8 @@ export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
 
   const stale = parseOptionalBooleanQuery(url.searchParams.get('stale'), 'stale')
   const json = parseOptionalBooleanQuery(url.searchParams.get('json'), 'json')
+  const all = parseOptionalBooleanQuery(url.searchParams.get('all'), 'all')
+  const limit = parseOptionalNonNegativeIntegerQuery(url.searchParams.get('limit'), 'limit')
   const olderThan = normalizeOptionalQuery(url.searchParams.get('olderThan'))
 
   return {
@@ -99,6 +104,9 @@ export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
     ...(stale !== undefined ? { stale } : {}),
     ...(olderThan !== undefined ? { olderThan, olderThanMs: parseDurationMs(olderThan) } : {}),
     ...(json !== undefined ? { json } : {}),
+    ...(all !== undefined ? { all } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...pickOptionalQuery(url, 'cursor'),
   }
 }
 

@@ -1,4 +1,4 @@
-import type { HrcEventCategory, HrcMessageFilter } from 'hrc-core'
+import type { HrcEventCategory, HrcMessageFilter, HrcRuntimeSnapshot } from 'hrc-core'
 
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
@@ -190,6 +190,17 @@ export type RuntimeListFilter = {
   agent?: string | undefined
   task?: string | undefined
   json?: boolean | undefined
+  /** Include terminal/history rows. The server defaults to live runtimes. */
+  all?: boolean | undefined
+  /** Request one bounded page instead of transparently draining all pages. */
+  limit?: number | undefined
+  /** Opaque cursor returned by listRuntimesPage. */
+  cursor?: string | undefined
+}
+
+export type RuntimeListPage = {
+  runtimes: HrcRuntimeSnapshot[]
+  nextCursor?: string | undefined
 }
 
 export type RunListFilter = {

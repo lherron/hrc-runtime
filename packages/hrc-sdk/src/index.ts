@@ -60,6 +60,7 @@ export type {
   RuntimeActionResponse,
   KillBrokerTmuxLeasesResponse,
   RuntimeListFilter,
+  RuntimeListPage,
   RunListFilter,
   SendInFlightInputRequest,
   SendInFlightInputResponse,

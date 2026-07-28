@@ -171,12 +171,20 @@ Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kil
 ```bash
 hrc runtime list
 hrc runtime list --host-session-id <id> --json
-hrc ls runtimes --session <hostSessionId> --json
+hrc ls runtimes --session <hostSessionId> --all --json
 hrc runtime list --transport tmux --status busy
 hrc ls runtimes --scope clod@agent-spaces:T-123 --json
+hrc runtime list --all
 ```
 
-`runtime list` filters: `--host-session-id <id>` (or `--session <id>`), `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`, `--scope <scopeRef|handle>`, `--stale`, `--json`. The `hrc ls runtimes` orientation alias accepts the same filters.
+`runtime list` filters: `--host-session-id <id>` (or `--session <id>`),
+`--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`,
+`--scope <scopeRef|handle>`, `--stale`, `--json`. The default view excludes
+terminal runtime history; `--all` explicitly retrieves it through bounded
+server pages. The `hrc ls runtimes` orientation alias accepts the same filters.
+At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
+`limit=1..500`, and returns an opaque continuation in
+`x-hrc-next-cursor` for the next request's `cursor` query parameter.
 
 `runtime inspect <runtimeId> [--probe] [--json]` returns two explicitly nested
 authority views: `hrc` (the HRC runtime store) and `broker` (whose `source` stays

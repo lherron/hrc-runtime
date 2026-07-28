@@ -96,10 +96,21 @@ function seedRuntime(options: SeedRuntimeOptions): void {
 }
 
 async function listRuntimes(query = ''): Promise<RuntimeListRow[]> {
+  return (await fetchRuntimePage(query)).rows
+}
+
+async function fetchRuntimePage(query = ''): Promise<{
+  rows: RuntimeListRow[]
+  nextCursor?: string | undefined
+}> {
   const path = query ? `/v1/runtimes?${query}` : '/v1/runtimes'
   const res = await fixture.fetchSocket(path)
   expect(res.status).toBe(200)
-  return (await res.json()) as RuntimeListRow[]
+  const nextCursor = res.headers.get('x-hrc-next-cursor')?.trim() || undefined
+  return {
+    rows: (await res.json()) as RuntimeListRow[],
+    ...(nextCursor !== undefined ? { nextCursor } : {}),
+  }
 }
 
 function runtimeIds(rows: RuntimeListRow[]): string[] {
@@ -130,7 +141,7 @@ describe('GET /v1/runtimes list filters', () => {
       status: 'ready',
     })
 
-    expect(runtimeIds(await listRuntimes('transport=tmux'))).toEqual(['rt-filter-tmux'])
+    expect(runtimeIds(await listRuntimes('all=1&transport=tmux'))).toEqual(['rt-filter-tmux'])
     expect(runtimeIds(await listRuntimes('transport=headless'))).toEqual(['rt-filter-headless'])
     expect(runtimeIds(await listRuntimes('transport=sdk'))).toEqual(['rt-filter-sdk'])
   })
@@ -188,6 +199,66 @@ describe('GET /v1/runtimes list filters', () => {
       'rt-status-list-ready',
       'rt-status-list-busy',
     ])
+  })
+
+  it('defaults to live runtimes and exposes terminal history only with all=1', async () => {
+    seedRuntime({
+      runtimeId: 'rt-visibility-ready',
+      hostSessionId: 'hsid-visibility-ready',
+      scopeRef: 'agent:list-visibility-ready',
+      transport: 'headless',
+      status: 'ready',
+    })
+    for (const status of ['dead', 'failed', 'stale', 'terminated']) {
+      seedRuntime({
+        runtimeId: `rt-visibility-${status}`,
+        hostSessionId: `hsid-visibility-${status}`,
+        scopeRef: `agent:list-visibility-${status}`,
+        transport: 'headless',
+        status,
+      })
+    }
+
+    expect(runtimeIds(await listRuntimes())).toEqual(['rt-visibility-ready'])
+    expect(new Set(runtimeIds(await listRuntimes('all=1')))).toEqual(
+      new Set([
+        'rt-visibility-ready',
+        'rt-visibility-dead',
+        'rt-visibility-failed',
+        'rt-visibility-stale',
+        'rt-visibility-terminated',
+      ])
+    )
+  })
+
+  it('returns bounded array pages with an opaque cursor and no overlap', async () => {
+    for (let index = 0; index < 4; index += 1) {
+      seedRuntime({
+        runtimeId: `rt-page-${index}`,
+        hostSessionId: `hsid-page-${index}`,
+        scopeRef: `agent:list-page-${index}`,
+        transport: 'headless',
+        status: 'ready',
+        createdAt: `2026-01-01T00:00:00.00${index}Z`,
+      })
+    }
+
+    const first = await fetchRuntimePage('limit=2')
+    expect(runtimeIds(first.rows)).toEqual(['rt-page-0', 'rt-page-1'])
+    expect(first.nextCursor).toBeDefined()
+
+    const second = await fetchRuntimePage(
+      `limit=2&cursor=${encodeURIComponent(first.nextCursor as string)}`
+    )
+    expect(runtimeIds(second.rows)).toEqual(['rt-page-2', 'rt-page-3'])
+    expect(second.nextCursor).toBeUndefined()
+  })
+
+  it('rejects invalid runtime page bounds and cursors', async () => {
+    for (const query of ['limit=0', 'limit=501', 'cursor=not-a-runtime-cursor']) {
+      const res = await fixture.fetchSocket(`/v1/runtimes?${query}`)
+      expect(res.status).toBe(400)
+    }
   })
 
   it('filters by scope prefix', async () => {

@@ -234,6 +234,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--older-than <duration>', 'filter by age')
     .option('--json', 'output as JSON')
     .option('--stale', 'show only stale runtimes')
+    .option('--all', 'include terminal runtime history')
     .option('--all-nodes', 'best-effort node-labeled inventory across configured peers')
     .addHelpText(
       'after',
@@ -252,7 +253,7 @@ export function registerRuntimeCommands(program: Command): void {
             'task',
             'older-than',
           ],
-          booleans: ['json', 'stale', 'all-nodes'],
+          booleans: ['json', 'stale', 'all', 'all-nodes'],
         })
       )
     })

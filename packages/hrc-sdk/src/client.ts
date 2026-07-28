@@ -110,6 +110,7 @@ import type {
   RunListFilter,
   RuntimeActionResponse,
   RuntimeListFilter,
+  RuntimeListPage,
   SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffRequest,
@@ -613,6 +614,7 @@ export class HrcClient {
       agent: emptyToUndefined(filter?.agent),
       task: emptyToUndefined(filter?.task),
       json: filter?.json,
+      all: filter?.all,
     })
     return this.getJson<FederationRuntimeProjectionReport>(path)
   }
@@ -679,7 +681,7 @@ export class HrcClient {
     return this.getJson<HrcSubscriberAdmissionSnapshot>('/v1/server/subscribers')
   }
 
-  async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
+  async listRuntimesPage(filter?: RuntimeListFilter): Promise<RuntimeListPage> {
     const path = buildPath('/v1/runtimes', {
       hostSessionId: emptyToUndefined(filter?.hostSessionId),
       transport: emptyToUndefined(filter?.transport),
@@ -690,8 +692,39 @@ export class HrcClient {
       agent: emptyToUndefined(filter?.agent),
       task: emptyToUndefined(filter?.task),
       json: filter?.json,
+      all: filter?.all,
+      limit: filter?.limit,
+      cursor: emptyToUndefined(filter?.cursor),
     })
-    return this.getJson<RuntimeRecord[]>(path)
+    const res = await this.unixFetch(path, { method: 'GET' })
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    const runtimes = (await res.json()) as RuntimeRecord[]
+    const nextCursor = res.headers.get('x-hrc-next-cursor')?.trim() || undefined
+    return {
+      runtimes,
+      ...(nextCursor !== undefined ? { nextCursor } : {}),
+    }
+  }
+
+  async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
+    if (filter?.limit !== undefined || filter?.cursor !== undefined) {
+      return (await this.listRuntimesPage(filter)).runtimes
+    }
+
+    const runtimes: RuntimeRecord[] = []
+    let cursor: string | undefined
+    do {
+      const page = await this.listRuntimesPage({
+        ...filter,
+        limit: 500,
+        ...(cursor !== undefined ? { cursor } : {}),
+      })
+      runtimes.push(...page.runtimes)
+      cursor = page.nextCursor
+    } while (cursor !== undefined)
+    return runtimes
   }
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {

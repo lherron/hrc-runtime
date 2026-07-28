@@ -56,6 +56,7 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(agent ? { agent } : {}),
     ...(task ? { task } : {}),
     ...(jsonOutput ? { json: true } : {}),
+    ...(hasFlag(args, '--all') ? { all: true } : {}),
   }
   if (hasFlag(args, '--all-nodes')) {
     const report = await client.listFederatedRuntimes(filter)

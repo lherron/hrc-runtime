@@ -825,7 +825,7 @@ describe('hrc ls runtimes post-mortem discovery filters', () => {
     seedDistractorRuntime()
 
     const result = await runCli(
-      ['ls', 'runtimes', '--session', HOST_SESSION_ID, '--json'],
+      ['ls', 'runtimes', '--session', HOST_SESSION_ID, '--all', '--json'],
       cliEnv(fixture)
     )
 
@@ -838,7 +838,7 @@ describe('hrc ls runtimes post-mortem discovery filters', () => {
     seedDistractorRuntime()
 
     const result = await runCli(
-      ['ls', 'runtimes', '--scope', SCOPE_HANDLE, '--json'],
+      ['ls', 'runtimes', '--scope', SCOPE_HANDLE, '--all', '--json'],
       cliEnv(fixture)
     )
 

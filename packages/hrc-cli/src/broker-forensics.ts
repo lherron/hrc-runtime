@@ -144,7 +144,7 @@ async function resolvePreviousRuntimeArg(
       fatal(`--previous requires a scope or handle target (received: ${rawTarget})`)
   }
 
-  const matches = (await client.listRuntimes())
+  const matches = (await client.listRuntimes({ all: true }))
     .filter(
       (runtime) =>
         runtime.status === 'terminated' &&
