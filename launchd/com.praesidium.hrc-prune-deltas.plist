@@ -22,8 +22,8 @@
 		<string>/Users/lherron/.bun/bin/bun</string>
 		<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>
 		<string>--apply</string>
-		<string>--event-retention-days</string>
-		<string>3</string>
+		<string>--tables</string>
+		<string>runtime_buffers</string>
 		<string>--runtime-buffer-retention-days</string>
 		<string>1</string>
 		<string>--incremental-vacuum-pages</string>
@@ -35,7 +35,7 @@
 		<string>--max-write-hold-millis</string>
 		<string>500</string>
 		<string>--incremental-vacuum-chunk-pages</string>
-		<string>200</string>
+		<string>100</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log</string>

@@ -19,12 +19,19 @@ const MILLISECONDS_PER_MINUTE = 60 * 1000
 const DEFAULT_DEADLINE_MINUTES = 30
 const DEFAULT_PACE_MILLIS = 250
 const DEFAULT_MAX_WRITE_HOLD_MILLIS = 500
-const DEFAULT_INCREMENTAL_VACUUM_CHUNK_PAGES = 200
+const DEFAULT_INCREMENTAL_VACUUM_CHUNK_PAGES = 100
 const DEFAULT_BUSY_MAX_RETRIES = 8
 const MAX_PAUSE_MILLIS = 5_000
 const MIN_INCREMENTAL_VACUUM_CHUNK_PAGES = 25
 const MAX_INCREMENTAL_VACUUM_CHUNK_PAGES = 10_000
 const MIN_DELETE_BATCH_SIZE = 25
+/**
+ * Every table's first batch of the night is taken blind, before any hold has
+ * been measured. Starting at the configured ceiling makes that first step
+ * unbounded — the whole table can fit in one batch and hold the lock for all of
+ * it. So each table probes small and ramps up toward the ceiling instead.
+ */
+const INITIAL_DELETE_BATCH_SIZE = 250
 const BUSY_BACKOFF_BASE_MILLIS = 500
 const BUSY_BACKOFF_MAX_MILLIS = 15_000
 
@@ -189,15 +196,17 @@ export type PruneStateRetentionOptions = {
   maxWriteHoldMillis: number
   busyMaxRetries: number
   countEligible: boolean
+  tables: readonly RetentionTable[]
   now: Date
 }
 
 /**
  * Why a phase stopped. `complete` drained the phase; `deadline` hit the
  * wall-clock budget; `busy` gave the writer lock back to the daemon after the
- * backoff ladder was exhausted. Only `complete` means "nothing left to do".
+ * backoff ladder was exhausted; `skipped` means the table was not selected for
+ * retention at all. Only `complete` means "nothing left to do".
  */
-export type PrunePhaseStop = 'complete' | 'deadline' | 'busy'
+export type PrunePhaseStop = 'complete' | 'deadline' | 'busy' | 'skipped'
 
 export type PruneRetentionTableResult = {
   eligibleCount: number | null
@@ -240,6 +249,22 @@ export type PruneStateRetentionResult = {
 
 type RetentionTable = keyof PruneStateRetentionResult['tables']
 
+const RETENTION_TABLES: readonly RetentionTable[] = [
+  'events',
+  'hrc_events',
+  'broker_invocation_events',
+  'runtime_buffers',
+]
+
+/**
+ * Lance's 2026-07-28 ruling: non-delta observation events are kept
+ * indefinitely. Only terminal runtime buffers age out, so the event tables are
+ * off the retention list unless an operator names them explicitly. Encoding the
+ * policy here rather than in the launchd arguments means an ad-hoc `--apply`
+ * cannot quietly delete semantic history.
+ */
+const DEFAULT_RETENTION_TABLES: readonly RetentionTable[] = ['runtime_buffers']
+
 type TablePlan = {
   table: RetentionTable
   alias: string
@@ -255,12 +280,17 @@ function usage(): string {
     'Applies bounded retention to HRC observation tables. Without --apply, reports',
     'eligible counts only. Resume barriers and active/nonterminal work are always exempt.',
     '',
+    'Non-delta observation events are kept indefinitely, so only runtime_buffers is',
+    'pruned by default. Naming an event table with --tables is an explicit operator',
+    'decision to delete semantic history.',
+    '',
     'The job shares the database with the live daemon, so every write step is',
     'bounded and paced. Work that does not fit the deadline is left for the next',
     'run: partial progress is reported and the exit code stays 0.',
     '',
     'Options:',
     '  --db <path>                         state.sqlite path',
+    '  --tables <a,b|all>                  tables to prune (default: runtime_buffers)',
     '  --apply                             delete eligible rows',
     '  --batch-size <n>                    rows per DELETE (default: 10000)',
     '  --event-retention-days <n>          event history TTL (default: 3)',
@@ -328,6 +358,34 @@ function parseNonNegativeNumber(raw: string | undefined, fallback: number, flag:
     throw new Error(`${flag} must be a non-negative number`)
   }
   return value
+}
+
+/**
+ * Table selection. `all` is available for deliberate one-off maintenance; the
+ * bare default deliberately excludes the event tables (see
+ * DEFAULT_RETENTION_TABLES).
+ */
+function parseRetentionTables(raw: string | undefined): readonly RetentionTable[] {
+  if (raw === undefined) {
+    return DEFAULT_RETENTION_TABLES
+  }
+  const requested = raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0)
+  if (requested.length === 0) {
+    throw new Error('--tables must name at least one table')
+  }
+  if (requested.length === 1 && requested[0] === 'all') {
+    return RETENTION_TABLES
+  }
+  const unknown = requested.filter((name) => !RETENTION_TABLES.includes(name as RetentionTable))
+  if (unknown.length > 0) {
+    throw new Error(
+      `--tables has unknown table(s): ${unknown.join(', ')}; expected any of ${RETENTION_TABLES.join(', ')} or all`
+    )
+  }
+  return RETENTION_TABLES.filter((table) => requested.includes(table))
 }
 
 /**
@@ -406,6 +464,7 @@ export function parsePruneStateRetentionArgs(
       '--busy-max-retries'
     ),
     countEligible: resolveCountEligible(args, apply),
+    tables: parseRetentionTables(readArgValue(args, '--tables')),
     eventRetentionDays: parsePositiveNumber(
       readArgValue(args, '--event-retention-days') ?? env['HRC_EVENT_RETENTION_DAYS'],
       DEFAULT_EVENT_RETENTION_DAYS,
@@ -574,7 +633,7 @@ async function deleteInBatches(
   budget: WriteBudget
 ): Promise<{ deleted: number; stopReason: PrunePhaseStop; batchSize: number }> {
   let deleted = 0
-  let batchSize = maxBatchSize
+  let batchSize = Math.min(INITIAL_DELETE_BATCH_SIZE, maxBatchSize)
   while (true) {
     if (deadlineReached(budget)) {
       return { deleted, stopReason: 'deadline', batchSize }
@@ -633,13 +692,14 @@ function adaptStepSize(
   maximum: number
 ): number {
   const clamp = (value: number): number => Math.min(maximum, Math.max(minimum, Math.round(value)))
-  if (holdMillis <= 0) {
-    return clamp(requested * 2)
+  // Holds are measured in whole milliseconds, so a step reporting 0 was merely
+  // too fast to time — not free. Floor it, or a target below the clock's
+  // resolution reads as headroom and the step grows when it should shrink.
+  const observedMillis = Math.max(holdMillis, 0.5)
+  if (observedMillis > targetMillis) {
+    return clamp((requested * targetMillis) / observedMillis)
   }
-  if (holdMillis > targetMillis) {
-    return clamp((requested * targetMillis) / holdMillis)
-  }
-  if (holdMillis * 2 < targetMillis) {
+  if (observedMillis * 2 < targetMillis) {
     return clamp(requested * 1.5)
   }
   return clamp(requested)
@@ -719,6 +779,10 @@ function sumOrNull(counts: Array<number | null>): number | null {
     : counts.reduce<number>((sum, count) => sum + (count ?? 0), 0)
 }
 
+/**
+ * A skipped table is a configuration choice, not an interruption, so it never
+ * downgrades the run's outcome.
+ */
 function worstStopReason(reasons: PrunePhaseStop[]): PrunePhaseStop {
   if (reasons.includes('deadline')) {
     return 'deadline'
@@ -742,7 +806,7 @@ export async function pruneStateRetention(
   const runtimeBufferCutoff = new Date(
     options.now.getTime() - options.runtimeBufferRetentionDays * MILLISECONDS_PER_DAY
   ).toISOString()
-  const plans: TablePlan[] = [
+  const allPlans: TablePlan[] = [
     {
       table: 'events',
       alias: 'e',
@@ -772,12 +836,13 @@ export async function pruneStateRetention(
       eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
     },
   ]
+  const plans = allPlans.filter((plan) => options.tables.includes(plan.table))
 
   const budget = createWriteBudget(options)
   const emptyTableResult = (stopReason: PrunePhaseStop): PruneStateRetentionResult['tables'] =>
     Object.fromEntries(
-      plans.map((plan) => [
-        plan.table,
+      RETENTION_TABLES.map((table) => [
+        table,
         {
           eligibleCount: null,
           deleted: 0,
@@ -842,12 +907,12 @@ export async function pruneStateRetention(
       broker_invocation_events: 0,
       runtime_buffers: 0,
     } satisfies Record<RetentionTable, number>
-    const stopReasons: Record<RetentionTable, PrunePhaseStop> = {
-      events: 'complete',
-      hrc_events: 'complete',
-      broker_invocation_events: 'complete',
-      runtime_buffers: 'complete',
-    }
+    const stopReasons = Object.fromEntries(
+      RETENTION_TABLES.map((table) => [
+        table,
+        options.tables.includes(table) ? 'complete' : 'skipped',
+      ])
+    ) as Record<RetentionTable, PrunePhaseStop>
     const batchSizes: Record<RetentionTable, number> = {
       events: options.batchSize,
       hrc_events: options.batchSize,
@@ -869,7 +934,9 @@ export async function pruneStateRetention(
       if (options.checkpoint) {
         // A busy checkpoint is the daemon working; leave the WAL for next run.
         try {
-          await runWriteStep(budget, () => db.exec('PRAGMA wal_checkpoint(TRUNCATE);'))
+          // PASSIVE, never TRUNCATE: TRUNCATE waits for readers and writers to
+          // clear, which is exactly the unbounded blocking this job must not do.
+          await runWriteStep(budget, () => db.exec('PRAGMA wal_checkpoint(PASSIVE);'))
           checkpointed = true
         } catch (error) {
           if (!isBusyError(error)) {
@@ -908,14 +975,14 @@ export async function pruneStateRetention(
       freelistBeforeVacuumPages
     ).value
     const tableResult = Object.fromEntries(
-      plans.map((plan) => [
-        plan.table,
+      RETENTION_TABLES.map((table) => [
+        table,
         {
-          eligibleCount: eligible[plan.table],
-          deleted: deleted[plan.table],
-          remainingEligibleCount: remaining[plan.table],
-          stopReason: stopReasons[plan.table],
-          batchSize: batchSizes[plan.table],
+          eligibleCount: eligible[table] ?? null,
+          deleted: deleted[table],
+          remainingEligibleCount: remaining[table] ?? null,
+          stopReason: stopReasons[table],
+          batchSize: batchSizes[table],
         },
       ])
     ) as PruneStateRetentionResult['tables']

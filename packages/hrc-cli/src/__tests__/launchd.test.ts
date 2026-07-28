@@ -166,8 +166,15 @@ describe('hrc delta-prune LaunchAgent', () => {
       '<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>'
     )
     expect(plist).toContain('<string>--apply</string>')
-    expect(plist).toContain('<string>--event-retention-days</string>')
     expect(plist).toContain('<string>--runtime-buffer-retention-days</string>')
+    // Non-delta events retain indefinitely (Lance ruling 2026-07-28): the
+    // scheduled job must prune runtime_buffers only, never age out event rows.
+    expect(plist).toContain('<string>--tables</string>')
+    expect(plist).toContain('<string>runtime_buffers</string>')
+    expect(plist).not.toContain('<string>--event-retention-days</string>')
+    expect(plist).not.toContain('<string>events</string>')
+    expect(plist).not.toContain('<string>hrc_events</string>')
+    expect(plist).not.toContain('<string>broker_invocation_events</string>')
     expect(plist).toContain('<string>--incremental-vacuum-pages</string>')
     // Writer-lock guards: the job shares state.sqlite with the live daemon.
     expect(plist).toContain('<string>--deadline-minutes</string>')

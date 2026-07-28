@@ -194,6 +194,7 @@ function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
     maxWriteHoldMillis: 500,
     busyMaxRetries: 8,
     countEligible: true,
+    tables: ['events', 'hrc_events', 'broker_invocation_events', 'runtime_buffers'] as const,
     now: NOW,
   }
 }
@@ -477,13 +478,97 @@ describe('prune-hrc-event-deltas bounded state retention', () => {
   })
 })
 
+describe('prune-hrc-event-deltas keeps non-delta events indefinitely', () => {
+  test('only runtime_buffers is selected unless event tables are named explicitly', () => {
+    // Lance ruling 2026-07-28: non-delta observation events retain forever.
+    expect(parsePruneStateRetentionArgs([], {}).tables).toEqual(['runtime_buffers'])
+    expect(parsePruneStateRetentionArgs(['--apply'], {}).tables).toEqual(['runtime_buffers'])
+
+    expect(parsePruneStateRetentionArgs(['--tables', 'all'], {}).tables).toEqual([
+      'events',
+      'hrc_events',
+      'broker_invocation_events',
+      'runtime_buffers',
+    ])
+    expect(parsePruneStateRetentionArgs(['--tables=hrc_events,events'], {}).tables).toEqual([
+      'events',
+      'hrc_events',
+    ])
+    expect(() => parsePruneStateRetentionArgs(['--tables', 'runs'], {})).toThrow(/unknown table/i)
+    expect(() => parsePruneStateRetentionArgs(['--tables', ' '], {})).toThrow(/at least one/i)
+  })
+
+  test('a default apply deletes aged buffers and leaves every event table intact', async () => {
+    const { path, db } = makeStore()
+    const authority = seedTerminalAuthority(db)
+    // All of these are past the cutoff and would have been deleted before the
+    // amendment.
+    const event = insertEvent(db, 'turn.message', authority)
+    const hrcEvent = insertHrcEvent(db, 'turn.message', authority)
+    const brokerEvent = insertBrokerEvent(db, authority.invocationId, authority)
+    insertBuffer(db, authority.runtimeId, authority.runId, 1)
+    db.close()
+
+    const result = await pruneStateRetention({
+      ...pruneOptions(path, true),
+      tables: parsePruneStateRetentionArgs(['--apply'], {}).tables,
+    })
+
+    expect(result.tables.runtime_buffers.deleted).toBe(1)
+    expect(result.deleted).toBe(1)
+    expect(result.tables.events.deleted).toBe(0)
+    expect(result.tables.events.stopReason).toBe('skipped')
+    expect(result.tables.hrc_events.stopReason).toBe('skipped')
+    expect(result.tables.broker_invocation_events.stopReason).toBe('skipped')
+    // Skipping is a configuration choice, not an interruption.
+    expect(result.stopReason).toBe('complete')
+
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'events', 'seq')).toEqual([event])
+      expect(ids(verify, 'hrc_events', 'hrc_seq')).toEqual([hrcEvent])
+      expect(ids(verify, 'broker_invocation_events', 'id')).toEqual([brokerEvent])
+      expect(
+        verify.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtime_buffers').get()
+          ?.count
+      ).toBe(0)
+    } finally {
+      verify.close()
+    }
+  })
+
+  test('CLI defaults leave event rows untouched even with a far-future cutoff', () => {
+    const { path, db } = makeStore()
+    const authority = seedTerminalAuthority(db)
+    insertEvent(db, 'turn.message', authority)
+    insertHrcEvent(db, 'turn.message', authority)
+    insertBrokerEvent(db, authority.invocationId, authority)
+    db.close()
+
+    const result = runScript(path, '--apply', '--event-retention-days', '0.0001')
+    expect(result.exitCode).toBe(0)
+    const report = JSON.parse(result.stdout)
+    expect(report.tables.events.stopReason).toBe('skipped')
+    expect(report.deleted).toBe(0)
+
+    const verify = new Database(path)
+    try {
+      expect(ids(verify, 'events', 'seq').length).toBe(1)
+      expect(ids(verify, 'hrc_events', 'hrc_seq').length).toBe(1)
+      expect(ids(verify, 'broker_invocation_events', 'id').length).toBe(1)
+    } finally {
+      verify.close()
+    }
+  })
+})
+
 describe('prune-hrc-event-deltas writer-lock guards', () => {
   test('writer-lock guards are configurable and validated', () => {
     const defaults = parsePruneStateRetentionArgs([], {})
     expect(defaults.deadlineMillis).toBe(30 * 60 * 1000)
     expect(defaults.paceMillis).toBe(250)
     expect(defaults.maxWriteHoldMillis).toBe(500)
-    expect(defaults.incrementalVacuumChunkPages).toBe(200)
+    expect(defaults.incrementalVacuumChunkPages).toBe(100)
     expect(defaults.busyMaxRetries).toBe(8)
 
     const configured = parsePruneStateRetentionArgs(
@@ -605,6 +690,27 @@ describe('prune-hrc-event-deltas writer-lock guards', () => {
     expect(roomy.tables.runtime_buffers.batchSize).toBe(100)
   })
 
+  test('the first batch of a table is a small probe, not the configured ceiling', async () => {
+    const { path, db } = makeStore()
+    const authority = seedTerminalAuthority(db)
+    // Fewer rows than --batch-size: the whole table would otherwise go in one
+    // unbounded write step, which is how the live run held the lock for 2.2s.
+    for (let index = 0; index < 4000; index += 1) {
+      insertEvent(db, 'turn.message', authority)
+    }
+    db.close()
+
+    const result = await pruneStateRetention({
+      ...pruneOptions(path, true, 10_000),
+      maxWriteHoldMillis: 600_000,
+    })
+    expect(result.deleted).toBe(4000)
+    // 4000 rows cannot have been taken in one step: the probe starts at 250 and
+    // only ramps up as measured holds stay cheap.
+    expect(result.writeSteps).toBeGreaterThan(1)
+    expect(result.tables.events.batchSize).toBeLessThanOrEqual(10_000)
+  })
+
   test('an expired deadline exits cleanly with partial progress instead of running on', async () => {
     const { path, db } = makeStore()
     const authority = seedTerminalAuthority(db)
@@ -684,7 +790,7 @@ describe('prune-hrc-event-deltas writer-lock guards', () => {
   test('CLI surfaces the guard settings and stop reason and still exits 0', () => {
     const { path, db } = makeStore()
     const authority = seedTerminalAuthority(db)
-    insertEvent(db, 'turn.message', authority)
+    insertBuffer(db, authority.runtimeId, authority.runId, 1)
     db.close()
 
     const result = runScript(path, '--apply', '--pace-millis', '0', '--deadline-minutes', '5')

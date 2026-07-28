@@ -7,24 +7,42 @@ the HRC server main thread.
 
 ## Retention policy
 
-Observation history in `events`, `hrc_events`, and
-`broker_invocation_events` has a default 3-day retention period. Completed-run
-rows in `runtime_buffers` have a default 1-day retention period. The launchd
-job runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label
-are retained for installation compatibility even though the script now enforces
+Non-delta observation events are **keep-forever**. Rows in `events`,
+`hrc_events`, and `broker_invocation_events` have no TTL and are not aged out by
+the scheduled job (Lance ruling, 2026-07-28). Only completed-run rows in
+`runtime_buffers` expire, on a default 1-day retention period. The launchd job
+runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label are
+retained for installation compatibility even though the script now enforces
 general state retention rather than delta-only retention.
 
-Both periods are configuration, not constants:
+The policy is enforced by the tool, not merely by the launchd arguments. The
+script prunes `runtime_buffers` only unless an operator names event tables
+explicitly:
 
-- `--event-retention-days` / `HRC_EVENT_RETENTION_DAYS`
+- `--tables <a,b|all>` selects which tables to prune; it defaults to
+  `runtime_buffers`. `--tables all` is available for deliberate one-off
+  maintenance.
+- Unselected tables report `stopReason: "skipped"` and delete nothing. Skipping
+  is a configuration choice, so it never downgrades the run's overall
+  `stopReason`.
+- The scheduled plist passes `--tables runtime_buffers` and carries no
+  `--event-retention-days`, so a stray edit to the retention window cannot start
+  deleting semantic history.
+
+Because there is no bare `--apply` path that deletes event rows, deleting
+observation history is always an explicit, auditable operator action.
+
+The retention periods that remain are configuration, not constants:
+
 - `--runtime-buffer-retention-days` /
   `HRC_RUNTIME_BUFFER_RETENTION_DAYS`
+- `--event-retention-days` / `HRC_EVENT_RETENTION_DAYS` applies only when event
+  tables are explicitly selected.
 
-The default 3-day observation window intentionally bounds `hrc monitor
-transcript`, broker forensics, capture verification, `/v1/events` replay, and
-monitor history. An explicit old runtime or `--previous` selection can therefore
-resolve to a retained runtime row but return no event transcript after the
-window expires.
+Because observation history is now unbounded, `hrc monitor transcript`, broker
+forensics, capture verification, `/v1/events` replay, and monitor history are no
+longer bounded by a retention window. Database growth is instead governed by what
+gets written; that is tracked separately from this job.
 
 The prune has SQL-level safety invariants independent of cutoff arithmetic:
 
@@ -35,14 +53,13 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
 - A row for a runtime's current active run is never eligible.
 - Runtime buffers remain while their runtime is live, even if the individual
   run has completed.
-- Imported federation observations use the same 3-day window. Observation
-  forwarding can have a gap when a source is offline longer than the window.
-  Delivery authority is different: federation outboxes, pending envelopes, and
+- Imported federation observations follow the same keep-forever policy as local
+  ones. Delivery authority is different: federation outboxes, pending envelopes, and
   unacknowledged deliveries are not observation tables and are never touched by
   this job.
 
-There is no archive migration. History past the configured window is deleted
-from the live state database.
+There is no archive migration. Observation history is retained in the live state
+database; only `runtime_buffers` rows past their window are deleted.
 
 ## Freelist control
 
