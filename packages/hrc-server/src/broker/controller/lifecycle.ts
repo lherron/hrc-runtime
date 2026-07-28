@@ -254,104 +254,106 @@ export function markBrokerCrashTerminal(
   error: BrokerControllerError
 ): void {
   ctx.deleteActive(runtimeId)
-  const now = ctx.now()
-  const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
-  if (runtime?.status === 'crashed') {
-    return
-  }
-  const invocation =
-    runtime?.activeInvocationId !== undefined
-      ? ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-      : ctx.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)
+  ctx.db.sqlite.transaction(() => {
+    const now = ctx.now()
+    const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime?.status === 'crashed') {
+      return
+    }
+    const invocation =
+      runtime?.activeInvocationId !== undefined
+        ? ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+        : ctx.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)
 
-  if (invocation) {
-    ctx.db.brokerInvocations.update(invocation.invocationId, {
-      invocationState: 'failed',
-      updatedAt: now,
-    })
-    if (invocation.runId !== undefined) {
-      ctx.db.runs.markCompleted(invocation.runId, {
+    if (invocation) {
+      ctx.db.brokerInvocations.update(invocation.invocationId, {
+        invocationState: 'failed',
+        updatedAt: now,
+      })
+      if (invocation.runId !== undefined) {
+        ctx.db.runs.markCompleted(invocation.runId, {
+          status: 'failed',
+          completedAt: now,
+          updatedAt: now,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: error.message,
+        })
+      }
+      ctx.db.runtimeOperations.update(invocation.operationId, {
         status: 'failed',
         completedAt: now,
         updatedAt: now,
-        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorCode: error.code,
         errorMessage: error.message,
       })
     }
-    ctx.db.runtimeOperations.update(invocation.operationId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: error.code,
-      errorMessage: error.message,
-    })
-  }
 
-  if (runtime) {
-    applyTerminalRuntimeState(ctx.db, runtime, {
-      status: 'crashed',
-      now,
-      diagnostic: {
-        brokerCrash: {
+    if (runtime) {
+      applyTerminalRuntimeState(ctx.db, runtime, {
+        status: 'crashed',
+        now,
+        diagnostic: {
+          brokerCrash: {
+            code: error.code,
+            message: error.message,
+            detail: error.detail,
+          },
+        },
+      })
+      ctx.db.events.append({
+        ts: now,
+        hostSessionId: runtime.hostSessionId,
+        scopeRef: runtime.scopeRef,
+        laneRef: runtime.laneRef,
+        generation: runtime.generation,
+        ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
+        runtimeId,
+        source: 'broker',
+        eventKind: 'broker.process.closed',
+        eventJson: {
           code: error.code,
           message: error.message,
           detail: error.detail,
         },
-      },
-    })
-    ctx.db.events.append({
-      ts: now,
-      hostSessionId: runtime.hostSessionId,
-      scopeRef: runtime.scopeRef,
-      laneRef: runtime.laneRef,
-      generation: runtime.generation,
-      ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
-      runtimeId,
-      source: 'broker',
-      eventKind: 'broker.process.closed',
-      eventJson: {
-        code: error.code,
-        message: error.message,
-        detail: error.detail,
-      },
-    })
-    const lastBrokerEvent =
-      invocation != null
-        ? ctx.db.brokerInvocationEvents.listByInvocationId(invocation.invocationId).at(-1)
-        : undefined
-    appendHrcEvent(ctx.db, 'runtime.crashed', {
-      ts: now,
-      hostSessionId: runtime.hostSessionId,
-      scopeRef: runtime.scopeRef,
-      laneRef: runtime.laneRef,
-      generation: runtime.generation,
-      runtimeId,
-      ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
-      ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
-        ? { transport: runtime.transport }
-        : {}),
-      errorCode: error.code,
-      payload: {
-        reason: 'broker_process_closed',
-        ...(invocation != null ? { invocationId: invocation.invocationId } : {}),
-        brokerError: {
-          code: error.code,
-          message: error.message,
-          detail: error.detail,
+      })
+      const lastBrokerEvent =
+        invocation != null
+          ? ctx.db.brokerInvocationEvents.listByInvocationId(invocation.invocationId).at(-1)
+          : undefined
+      appendHrcEvent(ctx.db, 'runtime.crashed', {
+        ts: now,
+        hostSessionId: runtime.hostSessionId,
+        scopeRef: runtime.scopeRef,
+        laneRef: runtime.laneRef,
+        generation: runtime.generation,
+        runtimeId,
+        ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
+        ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
+          ? { transport: runtime.transport }
+          : {}),
+        errorCode: error.code,
+        payload: {
+          reason: 'broker_process_closed',
+          ...(invocation != null ? { invocationId: invocation.invocationId } : {}),
+          brokerError: {
+            code: error.code,
+            message: error.message,
+            detail: error.detail,
+          },
+          ...(lastBrokerEvent !== undefined
+            ? {
+                lastBrokerEvent: {
+                  seq: lastBrokerEvent.seq,
+                  type: lastBrokerEvent.type,
+                  time: lastBrokerEvent.time,
+                },
+              }
+            : {}),
+          ...(runtime.runtimeStateJson?.['stalePayload'] !== undefined
+            ? { substrateEvidence: runtime.runtimeStateJson['stalePayload'] }
+            : {}),
         },
-        ...(lastBrokerEvent !== undefined
-          ? {
-              lastBrokerEvent: {
-                seq: lastBrokerEvent.seq,
-                type: lastBrokerEvent.type,
-                time: lastBrokerEvent.time,
-              },
-            }
-          : {}),
-        ...(runtime.runtimeStateJson?.['stalePayload'] !== undefined
-          ? { substrateEvidence: runtime.runtimeStateJson['stalePayload'] }
-          : {}),
-      },
-    })
-  }
+      })
+    }
+  })()
 }

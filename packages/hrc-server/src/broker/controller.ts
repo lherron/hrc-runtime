@@ -103,6 +103,8 @@ const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
 const DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS = 20_000
 export const DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS = 2_000
 const DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS = 500
+const BROKER_CRASH_TERMINAL_RETRY_BASE_DELAY_MS = 1_000
+const BROKER_CRASH_TERMINAL_MAX_ATTEMPTS = 3
 
 // T-05358: the broker socket can close mid-dispose. The durable unix/stdio
 // transport rejects the in-flight RPC with `Broker transport closed`, while a
@@ -333,6 +335,14 @@ export class HarnessBrokerController {
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
   private readonly pendingBrokerEventGapBackfills = new Map<string, PendingBrokerEventGapBackfill>()
+  private readonly pendingBrokerCrashTerminalRetries = new Map<
+    string,
+    {
+      error: BrokerControllerError
+      attempt: number
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
   // Set by `shutdown()` when the owning server is stopping. Once true, in-flight
   // event consumers stop projecting before the backing DB is closed, so a
   // late broker event cannot read a closed DB and crash teardown.
@@ -1287,6 +1297,10 @@ export class HarnessBrokerController {
       clearTimeout(pending.timer)
     }
     this.pendingBrokerEventGapBackfills.clear()
+    for (const pending of this.pendingBrokerCrashTerminalRetries.values()) {
+      clearTimeout(pending.timer)
+    }
+    this.pendingBrokerCrashTerminalRetries.clear()
   }
 
   private afterMappedEvent(
@@ -1479,11 +1493,20 @@ export class HarnessBrokerController {
     } catch (lookupError) {
       // Server teardown can close SQLite before a late broker-close callback runs.
       // Fence that teardown-only race here: live-path repository reads and every
-      // non-closed-DB lookup failure must continue surfacing normally.
-      if (isClosedDbError(lookupError)) {
+      // non-closed-DB lookup failure is deferred through the same crash-terminal
+      // retry path as write failures. No store error may escape this socket event.
+      if (this.shuttingDown || isClosedDbError(lookupError)) {
         return
       }
-      throw lookupError
+      const controllerError = toControllerError('broker_process_closed', error)
+      this.active.delete(runtimeId)
+      this.logger.error?.('harness broker close bookkeeping lookup failed', {
+        runtimeId,
+        error: lookupError instanceof Error ? lookupError.message : String(lookupError),
+        retryScheduled: true,
+      })
+      this.scheduleBrokerCrashTerminalRetry(runtimeId, controllerError, 1)
+      return
     }
     if (
       userExitReason !== undefined &&
@@ -1526,7 +1549,62 @@ export class HarnessBrokerController {
   }
 
   private markBrokerCrashTerminal(runtimeId: string, error: BrokerControllerError): void {
-    markBrokerCrashTerminal(this.lifecycleContext(), runtimeId, error)
+    this.tryMarkBrokerCrashTerminal(runtimeId, error, 1)
+  }
+
+  private tryMarkBrokerCrashTerminal(
+    runtimeId: string,
+    error: BrokerControllerError,
+    attempt: number
+  ): void {
+    if (this.shuttingDown) {
+      return
+    }
+    try {
+      markBrokerCrashTerminal(this.lifecycleContext(), runtimeId, error)
+      const pending = this.pendingBrokerCrashTerminalRetries.get(runtimeId)
+      if (pending) {
+        clearTimeout(pending.timer)
+        this.pendingBrokerCrashTerminalRetries.delete(runtimeId)
+      }
+    } catch (storeError) {
+      if (this.shuttingDown || isClosedDbError(storeError)) {
+        return
+      }
+      this.active.delete(runtimeId)
+      const retryScheduled = attempt < BROKER_CRASH_TERMINAL_MAX_ATTEMPTS
+      this.logger.error?.('harness broker crash bookkeeping failed', {
+        runtimeId,
+        brokerErrorCode: error.code,
+        error: storeError instanceof Error ? storeError.message : String(storeError),
+        attempt,
+        retryScheduled,
+      })
+      if (retryScheduled) {
+        this.scheduleBrokerCrashTerminalRetry(runtimeId, error, attempt + 1)
+      }
+    }
+  }
+
+  private scheduleBrokerCrashTerminalRetry(
+    runtimeId: string,
+    error: BrokerControllerError,
+    attempt: number
+  ): void {
+    const existing = this.pendingBrokerCrashTerminalRetries.get(runtimeId)
+    if (existing) {
+      clearTimeout(existing.timer)
+    }
+    const delayMs = BROKER_CRASH_TERMINAL_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 2)
+    const timer = setTimeout(() => {
+      this.pendingBrokerCrashTerminalRetries.delete(runtimeId)
+      this.tryMarkBrokerCrashTerminal(runtimeId, error, attempt)
+    }, delayMs)
+    this.pendingBrokerCrashTerminalRetries.set(runtimeId, {
+      error,
+      attempt,
+      timer,
+    })
   }
 
   private notActive(runtimeId: string): BrokerControllerError {
