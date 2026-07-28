@@ -4,8 +4,10 @@
  * The SOLE interpreter of broker `InvocationEventEnvelope` payloads. Given a
  * normalized broker event, it resolves projection context from the persisted
  * broker invocation and, in ONE SQLite transaction:
- *   1. appends the broker event by `(invocationId, seq)` via the W1B idempotent
- *      append repo (`BrokerInvocationEventRepository.appendEvent`);
+ *   1. appends semantic broker events by `(invocationId, seq)` via the W1B
+ *      idempotent append repo (`BrokerInvocationEventRepository.appendEvent`);
+ *      raw assistant/tool deltas retain their seqs and project live but skip
+ *      this durable row unless `HRC_PERSIST_RAW_DELTAS=1`;
  *   2. projects the event into HRC state (runtime / run / buffer / continuation
  *      / surface / permission audit / diagnostics);
  *   3. emits HRC events with `source: 'broker'` via `EventRepository.append`;
@@ -30,6 +32,7 @@ import { readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 
 import type {
+  HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcContinuationRef,
   HrcProvider,
@@ -127,6 +130,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+const RAW_DELTA_EVENT_TYPES = new Set(['assistant.message.delta', 'tool.call.delta'])
+
+function shouldPersistBrokerEvent(envelope: InvocationEventEnvelope): boolean {
+  return process.env['HRC_PERSIST_RAW_DELTAS'] === '1' || !RAW_DELTA_EVENT_TYPES.has(envelope.type)
+}
+
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
@@ -186,51 +195,76 @@ export class BrokerEventMapper {
     }
     const persistedEnvelope = this.envelopeWithWriteTimeRepairCorrelation(envelope, ctx.runId)
 
-    // (a) Idempotent append keyed by (invocationId, seq). A duplicate with the
-    // same payload short-circuits with no projection; a divergent payload throws
-    // BrokerInvocationEventConflictError, which propagates and rolls the tx back.
-    const appended = db.brokerInvocationEvents.appendEvent({
+    // (a) Idempotent append keyed by (invocationId, seq). Raw assistant/tool
+    // deltas deliberately skip this row by default (T-07039): they keep their
+    // broker seq and continue through projection + live fanout, leaving durable
+    // seq gaps. The transient record preserves the existing in-memory observer
+    // contract without writing the row. The kill switch restores the old path.
+    const brokerEnvelopeJson = JSON.stringify(persistedEnvelope)
+    const appended = shouldPersistBrokerEvent(persistedEnvelope)
+      ? db.brokerInvocationEvents.appendEvent({
+          invocationId: envelope.invocationId,
+          seq: envelope.seq,
+          time: envelope.time,
+          type: envelope.type,
+          runtimeId: ctx.runtimeId,
+          ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+          // Persist the envelope-level identity (T-01946): the durable ask-bracket
+          // identity is (invocationId, runId, harnessGeneration, turnAttempt,
+          // toolCallId), but broker_event_json holds only envelope.payload, so these
+          // two envelope fields must be persisted explicitly to survive restart.
+          ...(persistedEnvelope.harnessGeneration !== undefined
+            ? { harnessGeneration: persistedEnvelope.harnessGeneration }
+            : {}),
+          ...(persistedEnvelope.turnAttempt !== undefined
+            ? { turnAttempt: persistedEnvelope.turnAttempt }
+            : {}),
+          payload: persistedEnvelope.payload,
+          // T-05078: persist the FULL envelope verbatim as the wire authority for the
+          // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
+          // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
+          // that agent-loop's projector reconstructs.
+          envelopeJson: brokerEnvelopeJson,
+        })
+      : undefined
+    const brokerEvent: HrcBrokerInvocationEventRecord = appended?.record ?? {
       invocationId: envelope.invocationId,
       seq: envelope.seq,
       time: envelope.time,
       type: envelope.type,
       runtimeId: ctx.runtimeId,
       ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      // Persist the envelope-level identity (T-01946): the durable ask-bracket
-      // identity is (invocationId, runId, harnessGeneration, turnAttempt,
-      // toolCallId), but broker_event_json holds only envelope.payload, so these
-      // two envelope fields must be persisted explicitly to survive restart.
       ...(persistedEnvelope.harnessGeneration !== undefined
         ? { harnessGeneration: persistedEnvelope.harnessGeneration }
         : {}),
       ...(persistedEnvelope.turnAttempt !== undefined
         ? { turnAttempt: persistedEnvelope.turnAttempt }
         : {}),
-      payload: persistedEnvelope.payload,
-      // T-05078: persist the FULL envelope verbatim as the wire authority for the
-      // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
-      // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
-      // that agent-loop's projector reconstructs.
-      envelopeJson: JSON.stringify(persistedEnvelope),
-    })
+      brokerEventJson: JSON.stringify(persistedEnvelope.payload ?? null),
+      brokerEnvelopeJson,
+      projectionStatus: 'pending',
+      createdAt: envelope.time,
+    }
 
-    if (appended.idempotent) {
-      return { idempotent: true, brokerEvent: appended.record, events: [], lifecycleEvents: [] }
+    if (appended?.idempotent) {
+      return { idempotent: true, brokerEvent, events: [], lifecycleEvents: [] }
     }
 
     const fencedRun = ctx.runId !== undefined ? db.runs.getByRunId(ctx.runId) : null
     if (fencedRun?.brokerInputFencedAt !== undefined) {
       const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
-      db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
-        hrcEventSeq: emitted.seq,
-        projectionStatus: 'skipped_fenced',
-        projectionError:
-          fencedRun.brokerInputFenceReason ??
-          `broker input fenced at ${fencedRun.brokerInputFencedAt}`,
-      })
+      if (appended !== undefined) {
+        db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
+          hrcEventSeq: emitted.seq,
+          projectionStatus: 'skipped_fenced',
+          projectionError:
+            fencedRun.brokerInputFenceReason ??
+            `broker input fenced at ${fencedRun.brokerInputFencedAt}`,
+        })
+      }
       return {
         idempotent: false,
-        brokerEvent: appended.record,
+        brokerEvent,
         events: [emitted],
         lifecycleEvents: [],
       }
@@ -256,15 +290,19 @@ export class BrokerEventMapper {
       })
     )
 
-    // (c) Record projection outcome on the broker event row.
-    db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
-      hrcEventSeq: emitted.seq,
-      projectionStatus: 'applied',
-    })
+    // (c) Record projection outcome when this kind has a durable broker row.
+    // Delta projection above is driven entirely by persistedEnvelope and never
+    // depends on a row existing.
+    if (appended !== undefined) {
+      db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
+        hrcEventSeq: emitted.seq,
+        projectionStatus: 'applied',
+      })
+    }
 
     return {
       idempotent: false,
-      brokerEvent: appended.record,
+      brokerEvent,
       events: [emitted],
       lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
     }
