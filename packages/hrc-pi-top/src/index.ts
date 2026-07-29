@@ -46,12 +46,13 @@ import {
 } from 'hrc-top'
 
 type HrcPiTopClient = Pick<HrcClient, 'listTargets'> &
-  Partial<Pick<HrcClient, 'attachRuntime' | 'listMessages' | 'watch'>>
+  Partial<Pick<HrcClient, 'attachRuntime' | 'listMessages' | 'watch' | 'listLatestEventBySession'>>
 
 type EventTailPreviewState = {
   rowId: string
   handle: string
   events: HrcLifecycleEvent[]
+  nextSeq: number
   error?: string | undefined
 }
 
@@ -389,6 +390,10 @@ export class HrcPiTopApp implements Component {
         'Ambiguity resolver expired after refresh; choose the action again.'
       )
       this.expireActionDetailIfStale()
+      if (this.eventTailPreview) {
+        const row = this.rowById(this.eventTailPreview.rowId)
+        if (row) await this.refreshEventTailPreview(row)
+      }
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
     }
@@ -1333,6 +1338,7 @@ export class HrcPiTopApp implements Component {
       rowId: row.id,
       handle: handleForRow(row),
       events: [],
+      nextSeq: Number.MAX_SAFE_INTEGER,
     }
 
     if (typeof this.client.watch !== 'function') {
@@ -1346,14 +1352,12 @@ export class HrcPiTopApp implements Component {
     }
 
     try {
-      const events: HrcLifecycleEvent[] = []
-      for await (const event of this.client.watch(tailWatchOptions(row))) {
-        events.push(event)
-        if (events.length > 50) events.shift()
-      }
+      const fromSeq = await initialTailFromSeq(this.client, row)
+      const events = await readEventTail(this.client, row, fromSeq)
       this.eventTailPreview = {
         ...previewBase,
         events,
+        nextSeq: nextTailSeq(fromSeq, events),
       }
       this.notice = undefined
     } catch (error) {
@@ -1366,15 +1370,66 @@ export class HrcPiTopApp implements Component {
     this.requestRender()
   }
 
+  private async refreshEventTailPreview(row: HrcTopRow): Promise<void> {
+    const preview = this.eventTailPreview
+    if (!preview || typeof this.client.watch !== 'function') return
+    try {
+      const appended = await readEventTail(this.client, row, preview.nextSeq)
+      this.eventTailPreview = {
+        ...preview,
+        events: [...preview.events, ...appended].slice(-50),
+        nextSeq: nextTailSeq(preview.nextSeq, appended),
+        error: undefined,
+      }
+    } catch (error) {
+      this.eventTailPreview = {
+        ...preview,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
   private selectedHasMessageContext(): boolean {
     return (this.selectedRow()?.message?.messageId.trim().length ?? 0) > 0
   }
 }
 
-function tailWatchOptions(row: HrcTopRow): WatchOptions {
+async function initialTailFromSeq(client: HrcPiTopClient, row: HrcTopRow): Promise<number> {
+  if (typeof client.listLatestEventBySession !== 'function') return Number.MAX_SAFE_INTEGER
+  const target = row.target
+  const latest = await client.listLatestEventBySession({
+    hostSessionId: target.activeHostSessionId,
+    generation: target.generation,
+    scopeRef: target.scopeRef,
+    laneRef: target.laneRef,
+  })
+  const highWater = latest.reduce((max, event) => Math.max(max, event.hrcSeq), 0)
+  return highWater === 0 ? 1 : Math.max(1, highWater - 49)
+}
+
+async function readEventTail(
+  client: HrcPiTopClient,
+  row: HrcTopRow,
+  fromSeq: number
+): Promise<HrcLifecycleEvent[]> {
+  const events: HrcLifecycleEvent[] = []
+  if (typeof client.watch !== 'function') return events
+  for await (const event of client.watch(tailWatchOptions(row, fromSeq))) {
+    events.push(event)
+    if (events.length > 50) events.shift()
+  }
+  return events
+}
+
+function nextTailSeq(fromSeq: number, events: readonly HrcLifecycleEvent[]): number {
+  return events.reduce((next, event) => Math.max(next, event.hrcSeq + 1), fromSeq)
+}
+
+function tailWatchOptions(row: HrcTopRow, fromSeq: number): WatchOptions {
   const target = row.target
   return {
     follow: false,
+    fromSeq,
     hostSessionId: target.activeHostSessionId,
     generation: target.generation,
     scopeRef: target.scopeRef,

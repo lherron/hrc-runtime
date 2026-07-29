@@ -191,6 +191,8 @@ function ambiguousTargets(): HrcTargetView[] {
 
 function createTailApp(input: {
   events: HrcLifecycleEvent[]
+  refreshEvents?: HrcLifecycleEvent[] | undefined
+  latestHrcSeq?: number | undefined
   target?: HrcTargetView | undefined
 }): {
   app: HrcPiTopApp
@@ -216,9 +218,15 @@ function createTailApp(input: {
     async listTargets() {
       return [selected]
     },
+    async listLatestEventBySession() {
+      const latestHrcSeq =
+        input.latestHrcSeq ?? input.events.reduce((max, event) => Math.max(max, event.hrcSeq), 0)
+      return latestHrcSeq > 0 ? [lifecycleEvent({ hrcSeq: latestHrcSeq })] : []
+    },
     async *watch(options: unknown) {
       watchCalls.push(options)
-      for (const event of input.events) yield event
+      const events = watchCalls.length === 1 ? input.events : (input.refreshEvents ?? [])
+      for (const event of events) yield event
     },
   }
 
@@ -920,6 +928,7 @@ describe('hrc-pi-top app', () => {
     expect(watchCalls).toHaveLength(1)
     expect(watchCalls[0]).toMatchObject({
       follow: false,
+      fromSeq: 1,
       hostSessionId: 'hsid-pi-top-1',
       generation: 7,
     })
@@ -929,6 +938,25 @@ describe('hrc-pi-top app', () => {
     const boardOutput = app.render(120).join('\n')
     expect(boardOutput).toContain('HRC TOP')
     expect(boardOutput).not.toContain('EVENT TAIL')
+  })
+
+  it('holds the event-tail cursor between refresh ticks', async () => {
+    const { app, watchCalls } = createTailApp({
+      latestHrcSeq: 1_000,
+      events: [
+        lifecycleEvent({ hrcSeq: 951, streamSeq: 951 }),
+        lifecycleEvent({ hrcSeq: 1_000, streamSeq: 1_000 }),
+      ],
+      refreshEvents: [lifecycleEvent({ hrcSeq: 1_001, streamSeq: 1_001 })],
+    })
+
+    app.handleInput('e')
+    await app.whenIdle()
+    await app.refresh()
+
+    expect(watchCalls).toHaveLength(2)
+    expect(watchCalls[0]).toMatchObject({ follow: false, fromSeq: 951 })
+    expect(watchCalls[1]).toMatchObject({ follow: false, fromSeq: 1_001 })
   })
 
   it('keeps action failure detail out of the footer and opens a transient detail overlay', async () => {

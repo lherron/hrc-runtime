@@ -123,6 +123,8 @@ export async function cmdDm(
   // when that happens, self-heal by resending unthreaded (the documented
   // workaround) and warn, instead of failing the send outright.
   const startedAt = Date.now()
+  const lifecycleFromSeq =
+    waitMode === 'response' ? await captureLifecycleFromSeq(client) : undefined
   let result: SemanticDmResponse
   try {
     result = await sendWith(opts.replyTo)
@@ -180,6 +182,7 @@ export async function cmdDm(
         target: to,
         timeoutMs: waitTimeoutMs,
         startedAt,
+        fromSeq: lifecycleFromSeq,
       })
       return
     }
@@ -321,8 +324,9 @@ async function runDmSessionRunWait(args: {
   target: HrcMessageAddress
   timeoutMs: number
   startedAt: number
+  fromSeq?: number | undefined
 }): Promise<void> {
-  const { client, request, target, timeoutMs, startedAt } = args
+  const { client, request, target, timeoutMs, startedAt, fromSeq } = args
   const sentMessageId = request.messageId
   const afterSeq = request.messageSeq
   const deadlineMs = Date.now() + timeoutMs
@@ -344,6 +348,7 @@ async function runDmSessionRunWait(args: {
   try {
     for await (const event of client.watch({
       ...watchFencesForRequest(request, target),
+      ...(fromSeq !== undefined ? { fromSeq } : {}),
       follow: true,
       signal: abortController.signal,
     })) {
@@ -437,6 +442,20 @@ function canWatchLifecycle(client: HrcClient): boolean {
   return (
     typeof (client as HrcClient & { watch?: HrcClient['watch'] | undefined }).watch === 'function'
   )
+}
+
+async function captureLifecycleFromSeq(client: HrcClient): Promise<number | undefined> {
+  if (
+    typeof (
+      client as HrcClient & {
+        listLatestEventBySession?: HrcClient['listLatestEventBySession'] | undefined
+      }
+    ).listLatestEventBySession !== 'function'
+  ) {
+    return undefined
+  }
+  const latest = await client.listLatestEventBySession()
+  return latest.reduce((max, event) => Math.max(max, event.hrcSeq), 0) + 1
 }
 
 function watchFencesForRequest(

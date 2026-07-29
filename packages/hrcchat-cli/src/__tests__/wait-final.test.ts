@@ -329,6 +329,9 @@ describe('hrcchat dm --wait response', () => {
       async semanticDm(_request: SemanticDmRequest): Promise<SemanticDmResponse> {
         return { request }
       },
+      async listLatestEventBySession(): Promise<HrcLifecycleEvent[]> {
+        return [lifecycle('runtime.ready'), { ...lifecycle('turn.started'), hrcSeq: 186 }]
+      },
       async waitMessage(_request: WaitMessageRequest): Promise<WaitMessageResponse> {
         waitMessageCalls += 1
         // Regression fixture: the old first-response wait completes on the
@@ -348,6 +351,7 @@ describe('hrcchat dm --wait response', () => {
             scopeRef: 'agent:clod:project:hrc-runtime',
             laneRef: 'main',
             generation: 3,
+            fromSeq: 187,
           })
         )
         yield lifecycle('turn.completed')

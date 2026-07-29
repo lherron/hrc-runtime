@@ -52,6 +52,8 @@ import {
   writeFollowTimeoutCompletion,
 } from './watch-stream.js'
 
+const DEFAULT_LIVE_EVENT_WINDOW = 100
+
 // -- Types -------------------------------------------------------------------
 
 type FilterSpec =
@@ -323,7 +325,8 @@ function selectorArgs(args: MonitorWatchArgs): string[] {
 function defaultDeps(args: MonitorWatchArgs): MonitorWatchDeps {
   const storeFilters = deriveStoreFilters(args)
   return {
-    buildMonitorState: (signal) => buildLiveMonitorState(storeFilters, signal),
+    buildMonitorState: (signal) =>
+      buildLiveMonitorState(storeFilters, signal, args.fromSeq, args.last),
     stdout: createDrainableStdout(process.stdout),
     stderr: process.stderr,
   }
@@ -359,7 +362,9 @@ function createDrainableStdout(stream: {
 
 async function buildLiveMonitorState(
   storeFilters?: HrcLifecycleMonitorFilters | undefined,
-  signal?: AbortSignal | undefined
+  signal?: AbortSignal | undefined,
+  requestedFromSeq?: number | undefined,
+  requestedLast?: number | undefined
 ): Promise<HrcMonitorState> {
   signal?.throwIfAborted()
   const socketPath = discoverSocket()
@@ -406,12 +411,13 @@ async function buildLiveMonitorState(
   let eventGlobalHighWaterSeq: number | undefined
   try {
     signal?.throwIfAborted()
+    eventGlobalHighWaterSeq = db.hrcEvents.maxHrcSeq()
+    const initialWindow = Math.max(DEFAULT_LIVE_EVENT_WINDOW, requestedLast ?? 0)
+    const fromHrcSeq =
+      requestedFromSeq ?? Math.max(1, eventGlobalHighWaterSeq - Math.max(0, initialWindow - 1))
     const rawEvents = storeFilters
-      ? db.hrcEvents.listFromHrcSeqFiltered(1, storeFilters)
-      : db.hrcEvents.listFromHrcSeq(1)
-    if (storeFilters) {
-      eventGlobalHighWaterSeq = db.hrcEvents.maxHrcSeq()
-    }
+      ? db.hrcEvents.listFromHrcSeqFiltered(fromHrcSeq, storeFilters)
+      : db.hrcEvents.listFromHrcSeq(fromHrcSeq)
     events = rawEvents.map((e) => {
       const payload = e.payload as Record<string, unknown> | null | undefined
       return {

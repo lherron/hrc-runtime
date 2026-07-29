@@ -50,6 +50,7 @@ export async function runMonitorUntilPlan(
     timeoutMs?: number | undefined
     stallAfterMs?: number | undefined
     signal?: AbortSignal | undefined
+    edgeFromSeq?: number | undefined
   } = {}
 ): Promise<MonitorPlanRunResult> {
   const selector = selectorSetLabel(inputSpecs)
@@ -57,6 +58,7 @@ export async function runMonitorUntilPlan(
   const armedAt = Date.now()
   const deadline = options.timeoutMs === undefined ? undefined : armedAt + options.timeoutMs
   const armHighWater = monitorHighWater(initialState)
+  const edgeFromSeq = options.edgeFromSeq ?? armHighWater + 1
   const frozenRuntimeIds =
     plan.quantifier === 'all'
       ? new Set(resolveMembers(initialState, specs).map((member) => member.runtimeId))
@@ -82,6 +84,32 @@ export async function runMonitorUntilPlan(
       armEvaluation,
       'no_session_ever',
       MONITOR_EXIT_CODES.noSessionEver,
+      'at-arm'
+    )
+  }
+  const replayedEdge = matchEdgeAtOrAfter(initialState, plan, specs, edgeFromSeq)
+  if (replayedEdge) {
+    armEvaluation.matchedCondition = replayedEdge.condition
+    armEvaluation.scopeRef = replayedEdge.scopeRef
+    armEvaluation.runtimeId = replayedEdge.runtimeId
+    if (replayedEdge.contextChanged) armEvaluation.contextChanged = true
+    if (replayedEdge.failureResult) {
+      return completed(
+        plan,
+        selector,
+        armEvaluation,
+        replayedEdge.failureResult,
+        MONITOR_EXIT_CODES.terminalFailure,
+        'at-arm'
+      )
+    }
+    armEvaluation.satisfied = true
+    return completed(
+      plan,
+      selector,
+      armEvaluation,
+      'matched',
+      MONITOR_EXIT_CODES.matchedAfterArm,
       'at-arm'
     )
   }
@@ -173,7 +201,7 @@ export async function runMonitorUntilPlan(
       lastProgressAt = Date.now()
     }
     const evaluation = evaluateState(state, plan, specs, frozenRuntimeIds)
-    const edgeMatch = matchEdgeAfterArm(state, plan, specs, armHighWater)
+    const edgeMatch = matchEdgeAtOrAfter(state, plan, specs, edgeFromSeq)
     if (edgeMatch) {
       if (edgeMatch.contextChanged) {
         evaluation.contextChanged = true
@@ -389,11 +417,11 @@ function commonMatchedCondition(members: readonly MonitorConditionMember[]): str
     : undefined
 }
 
-function matchEdgeAfterArm(
+function matchEdgeAtOrAfter(
   state: HrcMonitorState,
   plan: MonitorUntilPlan,
   specs: readonly MonitorSelectorSpec[],
-  armHighWater: number
+  fromSeq: number
 ):
   | {
       condition?: string | undefined
@@ -404,7 +432,7 @@ function matchEdgeAfterArm(
     }
   | undefined {
   for (const event of state.events) {
-    if (event.seq <= armHighWater || !eventMatchesSelectorSet(state, event, specs)) continue
+    if (event.seq < fromSeq || !eventMatchesSelectorSet(state, event, specs)) continue
     const name = event['eventKind'] ?? event.event
     if (
       plan.conditions.includes('turn-finished') &&

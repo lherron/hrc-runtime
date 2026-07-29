@@ -24,6 +24,7 @@ import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 import { matchStringFlag } from '../monitor-args.js'
+import { resolveTerminalFence } from '../monitor-terminal-fence.js'
 import { runMonitorUntilPlan } from './engine.js'
 import { writeWaitFinalEvent, writeWaitUsageError } from './render/wait-output.js'
 import {
@@ -110,15 +111,19 @@ async function runMonitorWait(
   if (!plan) throw new CliUsageError('monitor wait requires a condition plan')
   const primaryCondition = plan.conditions[0]
   if (!primaryCondition) throw new CliUsageError('at least one monitor condition is required')
-  if (options.since !== undefined) {
-    throw new CliUsageError('--since is not supported by the explicit condition grammar')
+  if (options.since !== undefined && !plan.conditions.includes('turn-finished')) {
+    throw new CliUsageError('--since requires a turn-finished terminal condition')
   }
   const fixtureState = deps?.initialState ?? readFixtureState()
   let liveSource: LiveMonitorStateSource | undefined
   if (!fixtureState) {
     try {
       liveSource = await createLiveSourceBeforeDeadline(
-        { selectorSpecs, condition: primaryCondition as HrcMonitorCondition },
+        {
+          selectorSpecs,
+          condition: primaryCondition as HrcMonitorCondition,
+          ...(options.since !== undefined ? { since: options.since } : {}),
+        },
         deadlineAt
       )
     } catch (error) {
@@ -151,6 +156,12 @@ async function runMonitorWait(
     {
       ...(deadlineAt !== undefined ? { timeoutMs: remainingDeadlineMs(deadlineAt) } : {}),
       ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
+      ...(options.since !== undefined
+        ? {
+            edgeFromSeq:
+              liveSource?.eventFromSeq ?? resolveTerminalFence(initialState, options.since).seq,
+          }
+        : {}),
     }
   )
   writeWaitFinalEvent(result.event, options.json)
@@ -254,6 +265,7 @@ export type LiveMonitorSourceRequest = {
 
 export type LiveMonitorStateSource = {
   initialState: HrcMonitorState
+  eventFromSeq: number
   buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
 }
 
@@ -372,6 +384,7 @@ export async function createLiveMonitorStateSource(
   let targetMessages: HrcMonitorMessageState[]
   let nextHrcSeq: number
   let nextMessageSeq: number
+  let eventFromSeq: number
   try {
     signal?.throwIfAborted()
     const eventGlobalHighWaterSeq = db.hrcEvents.maxHrcSeq()
@@ -379,12 +392,13 @@ export async function createLiveMonitorStateSource(
     const selected = await readSelectorSetState(request.selectorSpecs, client, db)
     signal?.throwIfAborted()
     filters = selectorEventFilters(request.selectorSpecs, selected)
-    const fromHrcSeq = initialEventFromSeq(
+    eventFromSeq = initialEventFromSeq(
       request.condition,
       request.since,
-      eventGlobalHighWaterSeq
+      eventGlobalHighWaterSeq,
+      status.dbPath
     )
-    const rawEvents = readFilteredEvents(db, fromHrcSeq, eventGlobalHighWaterSeq, filters)
+    const rawEvents = readFilteredEvents(db, eventFromSeq, eventGlobalHighWaterSeq, filters)
     applyLifecycleProjection(selected, rawEvents)
     targetMessages = [...(selected.messages ?? [])]
     const responseMessages = readCorrelatedResponses(
@@ -474,6 +488,7 @@ export async function createLiveMonitorStateSource(
 
   return {
     initialState: state,
+    eventFromSeq,
     buildMonitorState(refreshSignal) {
       pendingRefresh = pendingRefresh.then(() => refresh(refreshSignal))
       return pendingRefresh
@@ -484,11 +499,36 @@ export async function createLiveMonitorStateSource(
 function initialEventFromSeq(
   condition: HrcMonitorCondition,
   since: string | undefined,
-  highWater: number
+  highWater: number,
+  dbPath?: string | undefined
 ): number {
   void condition
-  void since
-  return Math.max(1, highWater)
+  if (since === undefined) return Math.max(1, highWater)
+  if (/^\d+$/.test(since)) {
+    const seq = Number(since)
+    if (!Number.isSafeInteger(seq) || seq < 1) {
+      throw new CliUsageError('--since sequence must be a positive safe integer')
+    }
+    return seq
+  }
+
+  const cutoff = new Date(Date.now() - parseDuration(since)).toISOString()
+  if (dbPath === undefined) return Math.max(1, highWater)
+  const db = openHrcDatabase(dbPath)
+  try {
+    const row = db.sqlite
+      .query<{ hrc_seq: number }, [string, number]>(
+        `SELECT hrc_seq
+           FROM hrc_events
+          WHERE ts >= ? AND hrc_seq <= ?
+          ORDER BY hrc_seq ASC
+          LIMIT 1`
+      )
+      .get(cutoff, highWater)
+    return row?.hrc_seq ?? highWater + 1
+  } finally {
+    db.close()
+  }
 }
 
 function readFilteredEvents(

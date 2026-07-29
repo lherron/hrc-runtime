@@ -173,6 +173,26 @@ afterEach(() => {
 })
 
 describe('T-06587 monitor watch bounded memory', () => {
+  it('anchors the default replay at the global high-water instead of sequence one', async () => {
+    track(
+      spyOn(HrcClient.prototype, 'getStatus').mockImplementation(
+        async () => ({ ...baseStatus, dbPath: join(stateRoot, 'state.sqlite') }) as never
+      )
+    )
+    track(spyOn(HrcClient.prototype, 'listMessages').mockResolvedValue({ messages: [] }))
+    const db = openHrcDatabase(join(stateRoot, 'state.sqlite'))
+    const repositoryPrototype = Object.getPrototypeOf(db.hrcEvents) as typeof db.hrcEvents
+    db.close()
+    const maxHrcSeq = track(spyOn(repositoryPrototype, 'maxHrcSeq').mockReturnValue(1_000_000))
+    const listFromHrcSeq = track(spyOn(repositoryPrototype, 'listFromHrcSeq'))
+
+    expect(await invokeLiveWatch(['--format', 'ndjson'])).toBe(0)
+
+    expect(maxHrcSeq).toHaveBeenCalled()
+    expect(listFromHrcSeq).toHaveBeenCalledWith(999_901)
+    expect(listFromHrcSeq).not.toHaveBeenCalledWith(1)
+  })
+
   it('uses targeted incremental state for an idle task follow', async () => {
     const getStatus = track(
       spyOn(HrcClient.prototype, 'getStatus').mockImplementation(

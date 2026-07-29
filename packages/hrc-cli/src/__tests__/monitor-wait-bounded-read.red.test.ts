@@ -108,11 +108,15 @@ function track<T extends Restorable>(mock: T): T {
   return mock
 }
 
-function appendLifecycleEvent(eventKind: string, scopeRef = SCOPE_REF): number {
+function appendLifecycleEvent(
+  eventKind: string,
+  scopeRef = SCOPE_REF,
+  ts = '2026-07-18T12:00:01.000Z'
+): number {
   const db = openHrcDatabase(join(stateRoot, 'state.sqlite'))
   try {
     return db.hrcEvents.append({
-      ts: '2026-07-18T12:00:01.000Z',
+      ts,
       hostSessionId: HOST_SESSION_ID,
       scopeRef,
       laneRef: 'main',
@@ -313,6 +317,56 @@ describe('Bundle 1 — monitor wait bounded live reads', () => {
 })
 
 describe('Bundle 2 — wait parity and cursor fences', () => {
+  it('replays terminal evidence at an exact --since cursor', async () => {
+    installTargetedSpies()
+    const terminalSeq = appendLifecycleEvent('turn.completed')
+    const filtered = track(spyOn(lifecycleRepositoryPrototype, 'listFromHrcSeqFiltered'))
+
+    expect(
+      await runWait([
+        `runtime:${RUNTIME_ID}`,
+        '--until',
+        'turn-finished',
+        '--since',
+        String(terminalSeq),
+        '--timeout',
+        '250ms',
+      ])
+    ).toBe(0)
+
+    expect(filtered).toHaveBeenCalledWith(
+      terminalSeq,
+      expect.objectContaining({ runtimeId: RUNTIME_ID })
+    )
+  })
+
+  it('maps a duration --since fence through ledger timestamps', async () => {
+    installTargetedSpies()
+    const terminalSeq = appendLifecycleEvent(
+      'turn.completed',
+      SCOPE_REF,
+      new Date(Date.now() - 1_000).toISOString()
+    )
+    const filtered = track(spyOn(lifecycleRepositoryPrototype, 'listFromHrcSeqFiltered'))
+
+    expect(
+      await runWait([
+        `runtime:${RUNTIME_ID}`,
+        '--until',
+        'turn-finished',
+        '--since',
+        '1m',
+        '--timeout',
+        '250ms',
+      ])
+    ).toBe(0)
+
+    expect(filtered).toHaveBeenCalledWith(
+      terminalSeq,
+      expect.objectContaining({ runtimeId: RUNTIME_ID })
+    )
+  })
+
   it('preserves initial wait outcomes while filtered reads retain the global high-water fence', async () => {
     installTargetedSpies()
     const forbidden = captureForbiddenReads()
