@@ -267,6 +267,23 @@ export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 
 const DEFAULT_SQLITE_SLOW_STATEMENT_THRESHOLD_MS = 250
+const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000
+
+export function resolveSqliteBusyTimeoutMs(
+  optionValue?: number,
+  envValue = process.env['HRC_SQLITE_BUSY_TIMEOUT_MS']
+): number {
+  if (typeof optionValue === 'number' && Number.isFinite(optionValue) && optionValue >= 0) {
+    return optionValue
+  }
+  if (envValue !== undefined && envValue.trim() !== '') {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed
+    }
+  }
+  return DEFAULT_SQLITE_BUSY_TIMEOUT_MS
+}
 
 export function resolveSqliteSlowStatementThresholdMs(
   value = process.env['HRC_SQLITE_SLOW_STATEMENT_MS']
@@ -857,6 +874,7 @@ class HrcServerInstance implements HrcServer {
           peers,
           registryPath: resolveBindingRegistryPath(options.stateRoot),
           localNodeId: federationConfig.nodeId,
+          sqliteBusyTimeoutMs: options.sqliteBusyTimeoutMs,
         })
         this.federationRegistryEndpoint = this.bindingRegistryEndpoint.url
         writeServerLog('INFO', 'server.start.binding_registry_listener', {
@@ -2233,6 +2251,7 @@ Object.assign(
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
   const resolvedOptions: HrcServerOptions = {
     ...options,
+    sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
   }
@@ -2286,6 +2305,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       })
     }
     db = openHrcDatabase(resolvedOptions.dbPath, {
+      busyTimeoutMs: resolvedOptions.sqliteBusyTimeoutMs,
       slowStatementThresholdMs: resolveSqliteSlowStatementThresholdMs(),
       onSlowStatement: (statement) =>
         recordSqliteSlowStatement(

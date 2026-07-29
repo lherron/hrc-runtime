@@ -70,6 +70,7 @@ export type {
   RetireBindingResult,
   T06681F0RetirementMigrationResult,
 } from './federation-repositories.js'
+export type { OpenBindingRegistryOptions } from './federation-repositories.js'
 export {
   ScopeRetirementConflictError,
   ScopeRetirementRepository,

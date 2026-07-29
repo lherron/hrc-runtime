@@ -616,12 +616,20 @@ function createRegistryTable(db: Database): void {
   `)
 }
 
-function createRegistryDatabase(path: string): Database {
+export type OpenBindingRegistryOptions = {
+  busyTimeoutMs?: number | undefined
+}
+
+function resolveRegistryBusyTimeoutMs(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 5_000
+}
+
+function createRegistryDatabase(path: string, options: OpenBindingRegistryOptions = {}): Database {
   mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
+  db.exec(`PRAGMA busy_timeout = ${resolveRegistryBusyTimeoutMs(options.busyTimeoutMs)};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
-  db.exec('PRAGMA busy_timeout = 5000;')
 
   const schema = db
     .query<{ sql: string }, [string]>(
@@ -1051,8 +1059,11 @@ export class BindingRegistry {
   }
 }
 
-export function openBindingRegistry(path: string): BindingRegistry {
-  return new BindingRegistry(createRegistryDatabase(path))
+export function openBindingRegistry(
+  path: string,
+  options: OpenBindingRegistryOptions = {}
+): BindingRegistry {
+  return new BindingRegistry(createRegistryDatabase(path, options))
 }
 
 export function rebuildBindingRegistryFromLedgers(

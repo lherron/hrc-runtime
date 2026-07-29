@@ -47,6 +47,7 @@ import { SessionTaskClaimAuthorityRepository } from './session-task-claim-reposi
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
 
 export type OpenHrcDatabaseOptions = {
+  busyTimeoutMs?: number | undefined
   slowStatementThresholdMs?: number | undefined
   onSlowStatement?: ((statement: SqliteSlowStatement) => void) | undefined
 }
@@ -95,20 +96,31 @@ function isEphemeralPath(path: string): boolean {
   return path === '' || path === ':memory:'
 }
 
-export function createHrcDatabase(path: string): Database {
+const DEFAULT_BUSY_TIMEOUT_MS = 5_000
+
+function resolveBusyTimeoutMs(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : DEFAULT_BUSY_TIMEOUT_MS
+}
+
+export function createHrcDatabase(
+  path: string,
+  options: Pick<OpenHrcDatabaseOptions, 'busyTimeoutMs'> = {}
+): Database {
   if (!isEphemeralPath(path)) {
     mkdirSync(dirname(path), { recursive: true })
   }
 
   const db = new Database(path)
+  db.exec(`PRAGMA busy_timeout = ${resolveBusyTimeoutMs(options.busyTimeoutMs)};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
-  db.exec('PRAGMA busy_timeout = 5000;')
   return db
 }
 
 export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions = {}): HrcDatabase {
-  const rawSqlite = createHrcDatabase(dbPath)
+  const rawSqlite = createHrcDatabase(dbPath, options)
   const sqlite =
     options.onSlowStatement === undefined
       ? rawSqlite

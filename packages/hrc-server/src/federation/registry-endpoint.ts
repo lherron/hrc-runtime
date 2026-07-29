@@ -302,9 +302,12 @@ export function startBindingRegistryEndpoint(input: {
   peers: ReadonlyMap<string, RegistryAuthPeer>
   registryPath: string
   localNodeId: string
+  sqliteBusyTimeoutMs?: number | undefined
 }): BindingRegistryEndpointControl {
   const bind = new URL(input.listener.bind)
-  const registry = openBindingRegistry(input.registryPath)
+  const registry = openBindingRegistry(input.registryPath, {
+    busyTimeoutMs: input.sqliteBusyTimeoutMs,
+  })
   try {
     // A zero-peer listener is the valid single-node authority shape. The local
     // gate uses registryClient below; the request handler still authenticates

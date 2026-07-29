@@ -31,6 +31,20 @@ describe('T-06607 federation placement persistence', () => {
     }
   }
 
+  test('registry connection accepts the daemon busy_timeout override', async () => {
+    const { registry: registryPath } = await paths()
+    const registry = openBindingRegistry(registryPath, { busyTimeoutMs: 125 })
+    try {
+      const result = registry.sqlite.query('PRAGMA busy_timeout').get() as {
+        busy_timeout?: number
+        timeout?: number
+      }
+      expect(result.busy_timeout ?? result.timeout).toBe(125)
+    } finally {
+      registry.close()
+    }
+  })
+
   test('local ledger is opt-in and an ACTIVE row is durable summon authority', async () => {
     const { local } = await paths()
     const db = openHrcDatabase(local)

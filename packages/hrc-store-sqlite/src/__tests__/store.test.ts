@@ -114,6 +114,19 @@ describe('openHrcDatabase', () => {
     }
   })
 
+  it('accepts a bounded busy_timeout override', () => {
+    const db = openHrcDatabase(dbPath, { busyTimeoutMs: 125 })
+    try {
+      const result = db.sqlite.query('PRAGMA busy_timeout').get() as {
+        busy_timeout?: number
+        timeout?: number
+      }
+      expect(result.busy_timeout ?? result.timeout).toBe(125)
+    } finally {
+      db.close()
+    }
+  })
+
   it('is idempotent — opening twice on the same file succeeds', () => {
     const db1 = openHrcDatabase(dbPath)
     db1.close()

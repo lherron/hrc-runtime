@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
-import { resolveSqliteSlowStatementThresholdMs } from '../index'
+import { resolveSqliteBusyTimeoutMs, resolveSqliteSlowStatementThresholdMs } from '../index'
 import { measureResponseBytes, normalizeRoute, pruneServerMetricFiles } from '../request-metrics'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -82,6 +82,15 @@ afterEach(async () => {
 })
 
 describe.serial('server request metrics', () => {
+  test('uses a 5000ms SQLite busy timeout and accepts finite non-negative overrides', () => {
+    expect(resolveSqliteBusyTimeoutMs(undefined, undefined)).toBe(5_000)
+    expect(resolveSqliteBusyTimeoutMs(undefined, '125')).toBe(125)
+    expect(resolveSqliteBusyTimeoutMs(250, '125')).toBe(250)
+    expect(resolveSqliteBusyTimeoutMs(undefined, '0')).toBe(0)
+    expect(resolveSqliteBusyTimeoutMs(undefined, '-1')).toBe(5_000)
+    expect(resolveSqliteBusyTimeoutMs(undefined, 'invalid')).toBe(5_000)
+  })
+
   test('uses a 250ms SQLite threshold and accepts a non-negative override', () => {
     expect(resolveSqliteSlowStatementThresholdMs(undefined)).toBe(250)
     expect(resolveSqliteSlowStatementThresholdMs('0')).toBe(0)

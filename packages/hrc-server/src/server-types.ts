@@ -190,6 +190,11 @@ export type HrcServerOptions = {
   spoolDir: string
   dbPath: string
   /**
+   * SQLite lock-wait ceiling applied to every daemon-owned connection.
+   * Defaults to 5000ms and can be overridden with HRC_SQLITE_BUSY_TIMEOUT_MS.
+   */
+  sqliteBusyTimeoutMs?: number | undefined
+  /**
    * Operator-owned defense-in-depth boundary for local agent execution.
    *
    * `undefined` preserves unrestricted historical behavior. A configured list

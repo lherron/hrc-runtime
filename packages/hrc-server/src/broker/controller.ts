@@ -103,6 +103,9 @@ const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
 const DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS = 20_000
 export const DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS = 2_000
 const DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS = 500
+const DEFAULT_BROKER_DB_BUSY_RETRY_WINDOW_MS = 15_000
+const DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS = 100
+const BROKER_DB_BUSY_RETRY_MAX_DELAY_MS = 1_000
 const BROKER_CRASH_TERMINAL_RETRY_BASE_DELAY_MS = 1_000
 const BROKER_CRASH_TERMINAL_MAX_ATTEMPTS = 3
 
@@ -181,6 +184,26 @@ function resolveBrokerActiveRpcTimeoutMs(depsValue?: number, envValue?: string):
     if (Number.isFinite(parsed) && parsed >= 0) return parsed
   }
   return DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS
+}
+
+function resolveNonNegativeNumber(envValue: string | undefined, fallback: number): number {
+  if (envValue !== undefined) {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed
+    }
+  }
+  return fallback
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && code.startsWith('SQLITE_BUSY')) {
+      return true
+    }
+  }
+  return error instanceof Error && /database (?:table )?is locked/i.test(error.message)
 }
 
 /**
@@ -307,6 +330,8 @@ export class HarnessBrokerController {
   private readonly brokerActiveRpcTimeoutMs: number
   private readonly brokerAttachControlProbeTimeoutMs: number
   private readonly eventGapBackfillDelayMs: number
+  private readonly brokerDbBusyRetryWindowMs: number
+  private readonly brokerDbBusyRetryBaseDelayMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -340,6 +365,7 @@ export class HarnessBrokerController {
     {
       error: BrokerControllerError
       attempt: number
+      startedAtMs: number
       timer: ReturnType<typeof setTimeout>
     }
   >()
@@ -403,6 +429,14 @@ export class HarnessBrokerController {
       deps.eventGapBackfillDelayMs >= 0
         ? deps.eventGapBackfillDelayMs
         : DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS
+    this.brokerDbBusyRetryWindowMs = resolveNonNegativeNumber(
+      deps.env?.['HRC_BROKER_DB_BUSY_RETRY_WINDOW_MS'],
+      DEFAULT_BROKER_DB_BUSY_RETRY_WINDOW_MS
+    )
+    this.brokerDbBusyRetryBaseDelayMs = resolveNonNegativeNumber(
+      deps.env?.['HRC_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS'],
+      DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS
+    )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
@@ -1042,48 +1076,7 @@ export class HarnessBrokerController {
           if (this.shuttingDown) {
             break
           }
-          const invocation = this.db.brokerInvocations.getByInvocationId(
-            String(envelope.invocationId)
-          )
-          if (!invocation || invocation.runtimeId !== runtimeId) {
-            this.logger.warn?.('dropped broker event for non-consuming runtime', {
-              runtimeId,
-              invocationId: String(envelope.invocationId),
-              invocationRuntimeId: invocation?.runtimeId,
-              eventType: envelope.type,
-              seq: envelope.seq,
-            })
-            continue
-          }
-          const lastEventSeq = invocation.lastEventSeq ?? 0
-          if (envelope.seq > lastEventSeq + 1) {
-            const missingSeqs: number[] = []
-            for (let seq = lastEventSeq + 1; seq < envelope.seq; seq++) {
-              if (
-                !this.db.brokerInvocationEvents.getByInvocationAndSeq(
-                  String(envelope.invocationId),
-                  seq
-                )
-              ) {
-                missingSeqs.push(seq)
-              }
-            }
-            if (missingSeqs.length > 0) {
-              this.logger.warn?.('broker.event_gap_detected', {
-                runtimeId,
-                invocationId: String(envelope.invocationId),
-                missingSeqs,
-                arrivedSeq: envelope.seq,
-              })
-              this.scheduleBrokerEventGapBackfill(
-                runtimeId,
-                String(envelope.invocationId),
-                missingSeqs
-              )
-            }
-          }
-          const result = this.mapper.apply(envelope)
-          this.afterMappedEvent(runtimeId, envelope, result)
+          await this.projectBrokerEventWithBusyRetry(runtimeId, envelope)
         }
       } catch (error) {
         // Teardown race: the consumer can outlive the backing DB (server.stop
@@ -1101,6 +1094,93 @@ export class HarnessBrokerController {
         this.markBrokerCrashTerminal(runtimeId, controllerError)
       }
     })()
+  }
+
+  private async projectBrokerEventWithBusyRetry(
+    runtimeId: string,
+    envelope: InvocationEventEnvelope
+  ): Promise<void> {
+    const startedAtMs = Date.now()
+    let attempt = 1
+    while (!this.shuttingDown) {
+      try {
+        const invocation = this.db.brokerInvocations.getByInvocationId(
+          String(envelope.invocationId)
+        )
+        if (!invocation || invocation.runtimeId !== runtimeId) {
+          this.logger.warn?.('dropped broker event for non-consuming runtime', {
+            runtimeId,
+            invocationId: String(envelope.invocationId),
+            invocationRuntimeId: invocation?.runtimeId,
+            eventType: envelope.type,
+            seq: envelope.seq,
+          })
+          return
+        }
+        const lastEventSeq = invocation.lastEventSeq ?? 0
+        if (envelope.seq > lastEventSeq + 1) {
+          const missingSeqs: number[] = []
+          for (let seq = lastEventSeq + 1; seq < envelope.seq; seq++) {
+            if (
+              !this.db.brokerInvocationEvents.getByInvocationAndSeq(
+                String(envelope.invocationId),
+                seq
+              )
+            ) {
+              missingSeqs.push(seq)
+            }
+          }
+          if (missingSeqs.length > 0) {
+            this.logger.warn?.('broker.event_gap_detected', {
+              runtimeId,
+              invocationId: String(envelope.invocationId),
+              missingSeqs,
+              arrivedSeq: envelope.seq,
+            })
+            this.scheduleBrokerEventGapBackfill(
+              runtimeId,
+              String(envelope.invocationId),
+              missingSeqs
+            )
+          }
+        }
+        const result = this.mapper.apply(envelope)
+        this.afterMappedEvent(runtimeId, envelope, result)
+        return
+      } catch (error) {
+        if (this.shuttingDown || isClosedDbError(error)) {
+          return
+        }
+        if (!isSqliteBusyError(error)) {
+          throw error
+        }
+        const elapsedMs = Date.now() - startedAtMs
+        if (elapsedMs >= this.brokerDbBusyRetryWindowMs) {
+          throw error
+        }
+        const delayMs = this.brokerDbBusyRetryDelayMs(attempt, elapsedMs)
+        this.logger.warn?.('harness broker event persistence busy; retrying', {
+          runtimeId,
+          invocationId: String(envelope.invocationId),
+          eventType: envelope.type,
+          seq: envelope.seq,
+          attempt,
+          elapsedMs,
+          delayMs,
+          retryWindowMs: this.brokerDbBusyRetryWindowMs,
+        })
+        attempt++
+        await delay(delayMs)
+      }
+    }
+  }
+
+  private brokerDbBusyRetryDelayMs(attempt: number, elapsedMs: number): number {
+    const exponentialDelayMs = Math.min(
+      BROKER_DB_BUSY_RETRY_MAX_DELAY_MS,
+      this.brokerDbBusyRetryBaseDelayMs * 2 ** Math.max(0, attempt - 1)
+    )
+    return Math.max(0, Math.min(exponentialDelayMs, this.brokerDbBusyRetryWindowMs - elapsedMs))
   }
 
   private scheduleBrokerEventGapBackfill(
@@ -1549,13 +1629,14 @@ export class HarnessBrokerController {
   }
 
   private markBrokerCrashTerminal(runtimeId: string, error: BrokerControllerError): void {
-    this.tryMarkBrokerCrashTerminal(runtimeId, error, 1)
+    this.tryMarkBrokerCrashTerminal(runtimeId, error, 1, Date.now())
   }
 
   private tryMarkBrokerCrashTerminal(
     runtimeId: string,
     error: BrokerControllerError,
-    attempt: number
+    attempt: number,
+    startedAtMs: number
   ): void {
     if (this.shuttingDown) {
       return
@@ -1572,16 +1653,29 @@ export class HarnessBrokerController {
         return
       }
       this.active.delete(runtimeId)
-      const retryScheduled = attempt < BROKER_CRASH_TERMINAL_MAX_ATTEMPTS
+      const sqliteBusy = isSqliteBusyError(storeError)
+      const elapsedMs = Date.now() - startedAtMs
+      const retryScheduled = sqliteBusy
+        ? elapsedMs < this.brokerDbBusyRetryWindowMs
+        : attempt < BROKER_CRASH_TERMINAL_MAX_ATTEMPTS
       this.logger.error?.('harness broker crash bookkeeping failed', {
         runtimeId,
         brokerErrorCode: error.code,
         error: storeError instanceof Error ? storeError.message : String(storeError),
         attempt,
+        sqliteBusy,
+        elapsedMs,
+        retryWindowMs: this.brokerDbBusyRetryWindowMs,
         retryScheduled,
       })
       if (retryScheduled) {
-        this.scheduleBrokerCrashTerminalRetry(runtimeId, error, attempt + 1)
+        this.scheduleBrokerCrashTerminalRetry(
+          runtimeId,
+          error,
+          attempt + 1,
+          startedAtMs,
+          sqliteBusy
+        )
       }
     }
   }
@@ -1589,20 +1683,26 @@ export class HarnessBrokerController {
   private scheduleBrokerCrashTerminalRetry(
     runtimeId: string,
     error: BrokerControllerError,
-    attempt: number
+    attempt: number,
+    startedAtMs = Date.now(),
+    sqliteBusy = false
   ): void {
     const existing = this.pendingBrokerCrashTerminalRetries.get(runtimeId)
     if (existing) {
       clearTimeout(existing.timer)
     }
-    const delayMs = BROKER_CRASH_TERMINAL_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 2)
+    const elapsedMs = Date.now() - startedAtMs
+    const delayMs = sqliteBusy
+      ? this.brokerDbBusyRetryDelayMs(Math.max(1, attempt - 1), elapsedMs)
+      : BROKER_CRASH_TERMINAL_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 2)
     const timer = setTimeout(() => {
       this.pendingBrokerCrashTerminalRetries.delete(runtimeId)
-      this.tryMarkBrokerCrashTerminal(runtimeId, error, attempt)
+      this.tryMarkBrokerCrashTerminal(runtimeId, error, attempt, startedAtMs)
     }, delayMs)
     this.pendingBrokerCrashTerminalRetries.set(runtimeId, {
       error,
       attempt,
+      startedAtMs,
       timer,
     })
   }
