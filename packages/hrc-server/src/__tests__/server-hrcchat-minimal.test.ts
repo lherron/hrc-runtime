@@ -162,6 +162,75 @@ if (cmd === 'app-server') {
     return { binDir, logPath }
   }
 
+  it('bounds headless selector capture to the requested tail window', async () => {
+    const scopeRef = 'agent:capture-tail:project:hrc-runtime'
+    const sessionRef = `${scopeRef}/lane:default`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-capture-tail-${Date.now()}`
+    const runId = `run-capture-tail-${Date.now()}`
+    const timestamp = fixture.now()
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'headless',
+        harness: 'agent-sdk',
+        provider: 'anthropic',
+        status: 'busy',
+        supportsInflightInput: false,
+        adopted: false,
+        activeRunId: runId,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      db.runs.insert({
+        runId,
+        hostSessionId,
+        runtimeId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'headless',
+        status: 'running',
+        acceptedAt: timestamp,
+        startedAt: timestamp,
+        updatedAt: timestamp,
+      })
+      for (const [chunkSeq, text] of ['old line\n', 'middle line\n', 'tail line'].entries()) {
+        db.runtimeBuffers.append({
+          runtimeId,
+          runId,
+          chunkSeq,
+          text,
+          createdAt: new Date(Date.parse(timestamp) + chunkSeq).toISOString(),
+        })
+      }
+    } finally {
+      db.close()
+    }
+
+    const serverDb = (server as any).db as ReturnType<typeof openHrcDatabase>
+    const fullRead = serverDb.runtimeBuffers.listByRuntimeId.bind(serverDb.runtimeBuffers)
+    serverDb.runtimeBuffers.listByRuntimeId = () => {
+      throw new Error('unbounded runtime buffer capture is forbidden')
+    }
+    try {
+      const response = await fixture.postJson('/v1/capture/by-selector', {
+        selector: { sessionRef },
+        lines: 2,
+      })
+      expect(response.status).toBe(200)
+      expect((await response.json()).text).toBe('middle line\ntail line')
+    } finally {
+      serverDb.runtimeBuffers.listByRuntimeId = fullRead
+    }
+  })
+
   it('lists targets and normalizes legacy default lanes to main', async () => {
     await fixture.resolveSession('agent:cody:project:agent-spaces')
 

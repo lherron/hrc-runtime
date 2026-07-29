@@ -358,6 +358,26 @@ export class HrcLifecycleEventRepository {
     return this.runQuery({ ...filters, eventKind }, 'hrc_seq')
   }
 
+  findLatestByKind(
+    eventKind: string,
+    filters: Omit<HrcLifecycleQueryFilters, 'eventKind' | 'limit'> = {}
+  ): HrcLifecycleEvent | null {
+    const { where, values } = buildLifecycleWhere(
+      { ...filters, eventKind },
+      { includeSeqPredicates: true }
+    )
+    const row = this.db
+      .query<HrcEventRow, Array<string | number>>(
+        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+          WHERE ${where.join(' AND ')}
+          ORDER BY hrc_seq DESC
+          LIMIT 1`
+      )
+      .get(...values)
+
+    return row ? mapHrcEventRow(row) : null
+  }
+
   listByScope(
     scopeRef: string,
     filters: Omit<HrcLifecycleQueryFilters, 'scopeRef'> = {}

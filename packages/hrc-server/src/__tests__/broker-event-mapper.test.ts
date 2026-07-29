@@ -604,6 +604,41 @@ describe('transaction atomicity', () => {
     expect(stored!.hrcEventSeq).toBeUndefined()
   })
 
+  it('restores the in-memory buffer sequence after a projection rollback', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const tid = 'turn_buffer_rollback' as TurnId
+    const completedMessage = envelope(
+      'assistant.message.completed',
+      5,
+      {
+        messageId: 'msg_buffer_rollback',
+        content: [{ type: 'text', text: 'retry-safe' }],
+        final: true,
+      },
+      { turnId: tid }
+    )
+
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_buffer_rollback' }))
+    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+
+    const appendLifecycle = db.hrcEvents.append.bind(db.hrcEvents)
+    db.hrcEvents.append = () => {
+      throw new Error('injected post-buffer projection failure')
+    }
+    try {
+      expect(() => mapper.apply(completedMessage)).toThrow(
+        'injected post-buffer projection failure'
+      )
+    } finally {
+      db.hrcEvents.append = appendLifecycle
+    }
+
+    expect(db.runtimeBuffers.listByRunId(RUN_ID)).toEqual([])
+    expect(() => mapper.apply(completedMessage)).not.toThrow()
+    expect(db.runtimeBuffers.listByRunId(RUN_ID).map((chunk) => chunk.chunkSeq)).toEqual([0])
+  })
+
   it('clears runtime activeRunId when an interactive broker turn completes', () => {
     const mapper = makeMapper()
     const db = fixture.db
@@ -755,6 +790,57 @@ describe('projection mapping (ordered sequence)', () => {
 
     expect(bufferTextForRun(db, RUN_ID)).toBe(ASSISTANT_TEXT)
     expect(db.runtimeBuffers.listByRunId(RUN_ID)).toHaveLength(1)
+  })
+
+  it('does not re-read the full run buffer while appending a long streamed message', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const tid = 'turn_bounded_buffer_append' as TurnId
+    const messageId = 'msg_bounded_buffer_append'
+    const chunks = Array.from({ length: 128 }, (_, index) => `chunk-${index}\n`)
+    const listByRunId = db.runtimeBuffers.listByRunId.bind(db.runtimeBuffers)
+    const nextChunkSeqByRunId = db.runtimeBuffers.nextChunkSeqByRunId.bind(db.runtimeBuffers)
+    let nextChunkSeqQueries = 0
+
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_bounded_buffer_append' }))
+    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+
+    db.runtimeBuffers.nextChunkSeqByRunId = (runId) => {
+      nextChunkSeqQueries += 1
+      return nextChunkSeqByRunId(runId)
+    }
+    db.runtimeBuffers.listByRunId = () => {
+      throw new Error('full runtime-buffer scan is forbidden on the append hot path')
+    }
+    try {
+      for (const [index, text] of chunks.entries()) {
+        mapper.apply(
+          envelope('assistant.message.delta', 5 + index, { messageId, text }, { turnId: tid })
+        )
+      }
+      mapper.apply(
+        envelope(
+          'assistant.message.completed',
+          5 + chunks.length,
+          {
+            messageId,
+            content: [{ type: 'text', text: chunks.join('') }],
+            final: true,
+          },
+          { turnId: tid }
+        )
+      )
+    } finally {
+      db.runtimeBuffers.listByRunId = listByRunId
+      db.runtimeBuffers.nextChunkSeqByRunId = nextChunkSeqByRunId
+    }
+
+    expect(
+      listByRunId(RUN_ID)
+        .map((chunk) => chunk.text)
+        .join('')
+    ).toBe(chunks.join(''))
+    expect(nextChunkSeqQueries).toBe(1)
   })
 
   it('continuation.cleared drops BOTH runtime AND session continuation', () => {
@@ -1238,5 +1324,53 @@ describe('broker.user.message echo dedup (T-04215)', () => {
       runtimeId: RUNTIME_ID,
     })
     expect(allPrompts).toHaveLength(2)
+  })
+
+  it('finds the current prompt window without scanning lifecycle history from sequence one', () => {
+    for (let index = 0; index < 128; index += 1) {
+      fixture.db.hrcEvents.append({
+        ts: ts(index + 10),
+        hostSessionId: HOST_SESSION_ID,
+        scopeRef: SCOPE_REF,
+        laneRef: LANE_REF,
+        generation: GENERATION,
+        runtimeId: RUNTIME_ID,
+        category: 'diagnostic',
+        eventKind: 'diagnostic',
+        transport: 'headless',
+        payload: { index },
+      })
+    }
+    fixture.db.hrcEvents.append({
+      ts: ts(200),
+      hostSessionId: HOST_SESSION_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runtimeId: RUNTIME_ID,
+      category: 'turn',
+      eventKind: 'turn.completed',
+      transport: 'headless',
+      payload: { status: 'completed' },
+    })
+    seedPriorSynthUserPrompt('bounded prompt echo')
+
+    const listFromHrcSeq = fixture.db.hrcEvents.listFromHrcSeq.bind(fixture.db.hrcEvents)
+    fixture.db.hrcEvents.listFromHrcSeq = () => {
+      throw new Error('full lifecycle scan from sequence one is forbidden')
+    }
+    try {
+      const result = makeMapper().apply(
+        envelope(
+          'user.message',
+          201,
+          { content: 'bounded prompt echo' },
+          { turnId: 'turn_bounded_prompt' as never }
+        )
+      )
+      expect(result.lifecycleEvents).toEqual([])
+    } finally {
+      fixture.db.hrcEvents.listFromHrcSeq = listFromHrcSeq
+    }
   })
 })

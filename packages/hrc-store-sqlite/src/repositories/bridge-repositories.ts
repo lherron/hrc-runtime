@@ -444,6 +444,19 @@ export class RuntimeBufferRepository {
     return rows.map(mapRuntimeBufferRow)
   }
 
+  listTailByRuntimeId(runtimeId: string, limit: number): HrcRuntimeBufferRecord[] {
+    const rows = this.db
+      .query<RuntimeBufferRow, [string, number]>(
+        `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
+          WHERE runtime_id = ?
+          ORDER BY created_at DESC, chunk_seq DESC
+          LIMIT ?`
+      )
+      .all(runtimeId, limit)
+
+    return rows.reverse().map(mapRuntimeBufferRow)
+  }
+
   listByRunId(runId: string): HrcRuntimeBufferRecord[] {
     const rows = this.db
       .query<RuntimeBufferRow, [string]>(
@@ -454,5 +467,30 @@ export class RuntimeBufferRepository {
       .all(runId)
 
     return rows.map(mapRuntimeBufferRow)
+  }
+
+  listTailByRunId(runId: string, limit: number): HrcRuntimeBufferRecord[] {
+    const rows = this.db
+      .query<RuntimeBufferRow, [string, number]>(
+        `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
+          WHERE run_id = ?
+          ORDER BY chunk_seq DESC
+          LIMIT ?`
+      )
+      .all(runId, limit)
+
+    return rows.reverse().map(mapRuntimeBufferRow)
+  }
+
+  nextChunkSeqByRunId(runId: string): number {
+    const row = this.db
+      .query<{ max_chunk_seq: number | null }, [string]>(
+        `SELECT MAX(chunk_seq) AS max_chunk_seq
+           FROM runtime_buffers
+          WHERE run_id = ?`
+      )
+      .get(runId)
+
+    return (row?.max_chunk_seq ?? -1) + 1
   }
 }

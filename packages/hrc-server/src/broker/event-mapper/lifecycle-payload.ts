@@ -107,13 +107,12 @@ function isEchoedUserPrompt(
 }
 
 function currentTurnPromptWindowStart(db: HrcDatabase, ctx: ProjectionContext): number {
-  const events = db.hrcEvents.listFromHrcSeq(1, {
+  const lastTerminal = db.hrcEvents.findLatestByKind('turn.completed', {
     hostSessionId: ctx.hostSessionId,
     generation: ctx.generation,
     runtimeId: ctx.runtimeId,
   })
-  const lastTerminal = events.filter((event) => event.eventKind === 'turn.completed').at(-1)
-  return lastTerminal === undefined ? 1 : lastTerminal.hrcSeq + 1
+  return lastTerminal === null ? 1 : lastTerminal.hrcSeq + 1
 }
 
 function userPromptPayloadContent(payload: unknown): string | undefined {

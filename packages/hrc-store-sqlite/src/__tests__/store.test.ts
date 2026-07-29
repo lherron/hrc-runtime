@@ -1615,6 +1615,21 @@ describe('RuntimeBufferRepository', () => {
       const runTwoChunks = db.runtimeBuffers.listByRunId('run-buf-2')
       expect(runOneChunks.map((chunk) => chunk.text)).toEqual(['Hello '])
       expect(runTwoChunks.map((chunk) => chunk.text)).toEqual(['World'])
+
+      db.runtimeBuffers.append({
+        runtimeId: 'rt-buf-1',
+        runId: 'run-buf-1',
+        chunkSeq: 4,
+        text: 'tail',
+        createdAt: new Date(Date.parse(now) + 1_000).toISOString(),
+      })
+      expect(db.runtimeBuffers.nextChunkSeqByRunId('run-buf-1')).toBe(5)
+      expect(db.runtimeBuffers.listTailByRunId('run-buf-1', 1).map((chunk) => chunk.text)).toEqual([
+        'tail',
+      ])
+      expect(
+        db.runtimeBuffers.listTailByRuntimeId('rt-buf-1', 1).map((chunk) => chunk.text)
+      ).toEqual(['tail'])
     } finally {
       db.close()
     }

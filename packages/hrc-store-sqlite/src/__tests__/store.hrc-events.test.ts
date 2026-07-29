@@ -301,6 +301,45 @@ describe('HrcLifecycleEventRepository', () => {
     }
   })
 
+  it('finds the latest event by kind with one reverse-limit query', () => {
+    const statements: string[] = []
+    const db = openHrcDatabase(dbPath, {
+      slowStatementThresholdMs: 0,
+      onSlowStatement: (statement) => statements.push(statement.sql),
+    })
+    try {
+      seedSession(db, 'hsid-latest-kind', 'latest-kind')
+      const base = {
+        ts: ts(),
+        hostSessionId: 'hsid-latest-kind',
+        scopeRef: scopeRef('latest-kind'),
+        laneRef: 'default',
+        generation: 1,
+        runtimeId: 'rt-latest-kind',
+        category: 'turn' as const,
+        eventKind: 'turn.completed',
+        payload: {},
+      }
+      const first = db.hrcEvents.append(base)
+      const second = db.hrcEvents.append({ ...base, payload: { terminal: 'latest' } })
+
+      statements.length = 0
+      expect(
+        db.hrcEvents.findLatestByKind('turn.completed', {
+          hostSessionId: 'hsid-latest-kind',
+          generation: 1,
+          runtimeId: 'rt-latest-kind',
+        })?.hrcSeq
+      ).toBe(second.hrcSeq)
+      expect(second.hrcSeq).toBeGreaterThan(first.hrcSeq)
+      expect(statements).toHaveLength(1)
+      expect(statements[0]).toContain('ORDER BY hrc_seq DESC')
+      expect(statements[0]).toContain('LIMIT 1')
+    } finally {
+      db.close()
+    }
+  })
+
   it('roundtrips replayed flag and optional columns', () => {
     const db = openHrcDatabase(dbPath)
     try {

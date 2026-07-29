@@ -40,6 +40,22 @@ import {
 import { findTargetSession } from '../target-view.js'
 import type { TmuxPaneState } from '../tmux.js'
 
+// Broker/SDK buffers are token-stream chunks rather than terminal lines. A
+// generous fixed ratio preserves the requested line tail for normal streamed
+// output while keeping every capture query capped independently of runtime age.
+const CAPTURE_BUFFER_CHUNKS_PER_LINE = 32
+const MAX_CAPTURE_BUFFER_CHUNKS = 8_192
+
+function captureBufferChunkLimit(lines: number | undefined): number | undefined {
+  if (lines === undefined || !Number.isFinite(lines) || lines <= 0) {
+    return undefined
+  }
+  return Math.min(
+    MAX_CAPTURE_BUFFER_CHUNKS,
+    Math.max(CAPTURE_BUFFER_CHUNKS_PER_LINE, Math.ceil(lines) * CAPTURE_BUFFER_CHUNKS_PER_LINE)
+  )
+}
+
 /**
  * Parse a by-selector request body and extract the required, non-empty
  * `selector.sessionRef`. Throws the canonical `MALFORMED_REQUEST` errors used by
@@ -119,10 +135,12 @@ export async function handleCaptureBySelector(
   let text: string
 
   if (runtime.transport === 'sdk' || runtime.transport === 'headless') {
-    text = this.db.runtimeBuffers
-      .listByRuntimeId(runtime.runtimeId)
-      .map((chunk) => chunk.text)
-      .join('')
+    const chunkLimit = captureBufferChunkLimit(lines)
+    const chunks =
+      chunkLimit !== undefined
+        ? this.db.runtimeBuffers.listTailByRuntimeId(runtime.runtimeId, chunkLimit)
+        : this.db.runtimeBuffers.listByRuntimeId(runtime.runtimeId)
+    text = chunks.map((chunk) => chunk.text).join('')
   } else {
     const pane = requireTmuxPane(runtime)
     text = await this.tmuxForPane(pane).capture(pane.paneId)

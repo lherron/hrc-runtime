@@ -139,6 +139,7 @@ function shouldPersistBrokerEvent(envelope: InvocationEventEnvelope): boolean {
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
+  private readonly nextBufferChunkSeqByRunId = new Map<string, number>()
 
   constructor(deps: BrokerEventMapperDeps) {
     this.db = deps.db
@@ -151,8 +152,17 @@ export class BrokerEventMapper {
    * row + state) or roll back together.
    */
   apply(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
     const run = this.db.sqlite.transaction(() => this.project(envelope))
-    return run()
+    try {
+      return run()
+    } catch (error) {
+      this.nextBufferChunkSeqByRunId.clear()
+      for (const [runId, nextChunkSeq] of chunkSeqSnapshot) {
+        this.nextBufferChunkSeqByRunId.set(runId, nextChunkSeq)
+      }
+      throw error
+    }
   }
 
   private project(envelope: InvocationEventEnvelope): BrokerProjectionResult {
@@ -916,6 +926,7 @@ export class BrokerEventMapper {
             })
           }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
+          this.nextBufferChunkSeqByRunId.delete(runId)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -934,6 +945,7 @@ export class BrokerEventMapper {
             })
           }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
+          this.nextBufferChunkSeqByRunId.delete(runId)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -950,6 +962,7 @@ export class BrokerEventMapper {
             })
           }
           markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
+          this.nextBufferChunkSeqByRunId.delete(runId)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -1206,7 +1219,9 @@ export class BrokerEventMapper {
     if (ctx.runId === undefined || text.length === 0) {
       return
     }
-    const chunkSeq = this.db.runtimeBuffers.listByRunId(ctx.runId).length
+    const chunkSeq =
+      this.nextBufferChunkSeqByRunId.get(ctx.runId) ??
+      this.db.runtimeBuffers.nextChunkSeqByRunId(ctx.runId)
     this.db.runtimeBuffers.append({
       runtimeId: ctx.runtimeId,
       runId: ctx.runId,
@@ -1214,6 +1229,7 @@ export class BrokerEventMapper {
       text,
       createdAt: now,
     })
+    this.nextBufferChunkSeqByRunId.set(ctx.runId, chunkSeq + 1)
   }
 
   private appendCompletedMessageBuffer(ctx: ProjectionContext, text: string, now: string): void {
@@ -1221,7 +1237,7 @@ export class BrokerEventMapper {
       return
     }
     const existing = this.db.runtimeBuffers
-      .listByRunId(ctx.runId)
+      .listTailByRunId(ctx.runId, text.length)
       .map((chunk) => chunk.text)
       .join('')
     if (existing.endsWith(text)) {
