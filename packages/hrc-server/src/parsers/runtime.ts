@@ -651,6 +651,7 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
 
   const probeLiveness = readOptionalBooleanField(input, 'probeLiveness')
   const includeDisposed = readOptionalBooleanField(input, 'includeDisposed')
+  const includeInvocations = readOptionalBooleanField(input, 'includeInvocations')
   const recoverFinalSummaryRaw = input['recoverFinalSummary']
   let recoverFinalSummary: BrokerInspectRequest['recoverFinalSummary']
   if (recoverFinalSummaryRaw !== undefined) {
@@ -681,6 +682,7 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
     runtimeId: body.runtimeId,
     ...(typeof probeLiveness === 'boolean' ? { probeLiveness } : {}),
     ...(typeof includeDisposed === 'boolean' ? { includeDisposed } : {}),
+    ...(typeof includeInvocations === 'boolean' ? { includeInvocations } : {}),
     ...(recoverFinalSummary !== undefined ? { recoverFinalSummary } : {}),
   }
 }

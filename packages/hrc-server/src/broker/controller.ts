@@ -840,8 +840,30 @@ export class HarnessBrokerController {
       ...(opts?.includeDisposed !== undefined ? { includeDisposed: opts.includeDisposed } : {}),
       ...(probeLiveness ? { probeLiveness: true } : {}),
     }
-    const response = await active.client.listInvocations(request)
-    return response.invocations
+    // T-07077 — bound the read model like every mutating RPC. A reaped broker can
+    // leave this socket open with no EOF, and an unbounded await here blocked the
+    // whole HTTP handler indefinitely (observed: 524s), hanging `hrc run` after
+    // `/quit`. On timeout retire the binding so one wedged socket cannot poison
+    // every later request for this runtime.
+    try {
+      const response = await withBrokerRpcTimeout(
+        active.client.listInvocations(request),
+        this.brokerActiveRpcTimeoutMs,
+        () =>
+          new BrokerControllerError(
+            'broker_list_invocations_timeout',
+            `broker broker_list_invocations_timeout after ${this.brokerActiveRpcTimeoutMs}ms for ${runtimeId}`,
+            { runtimeId, timeoutMs: this.brokerActiveRpcTimeoutMs }
+          )
+      )
+      return response.invocations
+    } catch (error) {
+      const controllerError = toControllerError('broker_list_invocations_failed', error)
+      if (controllerError.code === 'broker_list_invocations_timeout') {
+        this.retireActiveBindingAfterTimeout(runtimeId, active, controllerError.code)
+      }
+      return { ok: false, error: controllerError }
+    }
   }
 
   /**
@@ -869,13 +891,27 @@ export class HarnessBrokerController {
     }
     try {
       const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
-      const response = await active.client.snapshot({
-        invocationId: active.invocationId as InvocationId,
-        ...(probeLiveness ? { probeLiveness: true } : {}),
-      })
+      // T-07077 — bounded for the same reason as listInvocations above.
+      const response = await withBrokerRpcTimeout(
+        active.client.snapshot({
+          invocationId: active.invocationId as InvocationId,
+          ...(probeLiveness ? { probeLiveness: true } : {}),
+        }),
+        this.brokerActiveRpcTimeoutMs,
+        () =>
+          new BrokerControllerError(
+            'broker_snapshot_timeout',
+            `broker broker_snapshot_timeout after ${this.brokerActiveRpcTimeoutMs}ms for ${runtimeId}`,
+            { runtimeId, timeoutMs: this.brokerActiveRpcTimeoutMs }
+          )
+      )
       return { ok: true, response }
     } catch (error) {
-      return { ok: false, error: toControllerError('broker_snapshot_failed', error) }
+      const controllerError = toControllerError('broker_snapshot_failed', error)
+      if (controllerError.code === 'broker_snapshot_timeout') {
+        this.retireActiveBindingAfterTimeout(runtimeId, active, controllerError.code)
+      }
+      return { ok: false, error: controllerError }
     }
   }
 

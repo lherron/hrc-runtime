@@ -654,6 +654,14 @@ export type BrokerInspectRequest = {
   /** Include disposed invocations in the broker read model. */
   includeDisposed?: boolean | undefined
   /**
+   * Query the broker read model at all (default true). Callers that only need the
+   * HRC-side facts — notably the post-`/quit` session summary, which reads only
+   * `finalSummary`/`finalSummaryRecovery` — set this false so the request never
+   * issues a broker RPC. A reaped or wedged broker then cannot stall the response
+   * (T-07077).
+   */
+  includeInvocations?: boolean | undefined
+  /**
    * Explicitly opt into bounded recovery of a missing graceful-exit summary.
    * Ordinary broker inspect remains read-only; when this is present the server may
    * attach to a durable broker, replay missed events, ack them, and update HRC

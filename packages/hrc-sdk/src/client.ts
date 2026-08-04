@@ -269,11 +269,12 @@ export class HrcClient {
     )
   }
 
-  private async postJson<T>(path: string, body: unknown): Promise<T> {
+  private async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const res = await this.unixFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     })
 
     if (!res.ok) {
@@ -458,8 +459,17 @@ export class HrcClient {
    * model for broker-backed runtimes or an HRC-derived fallback view (labeled
    * `source:'hrc-derived'`) for non-broker runtimes.
    */
-  async brokerInspect(request: BrokerInspectRequest): Promise<BrokerInspectResponse> {
-    return this.postJson<BrokerInspectResponse>('/v1/runtimes/broker/inspect', request)
+  async brokerInspect(
+    request: BrokerInspectRequest,
+    opts?: { timeoutMs?: number | undefined }
+  ): Promise<BrokerInspectResponse> {
+    // A positive `timeoutMs` ABORTS the request rather than merely abandoning it.
+    // That distinction matters for `hrc run`: a raced-but-unaborted fetch leaves the
+    // socket handle open and the CLI process still never exits (T-07077).
+    const timeoutMs = opts?.timeoutMs
+    const signal =
+      typeof timeoutMs === 'number' && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
+    return this.postJson<BrokerInspectResponse>('/v1/runtimes/broker/inspect', request, signal)
   }
 
   /** Read-only access to durable, including terminated, broker ledger rows. */

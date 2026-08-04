@@ -269,6 +269,14 @@ function formatSessionEndedFallback(
 }
 
 /**
+ * Hard ceiling on the post-detach summary fetch. The server-side recovery budget
+ * is 750ms, so this only ever fires when the daemon itself is wedged; it is the
+ * backstop that makes "never blocks the operator's return to their shell" true
+ * regardless of daemon state (T-07077).
+ */
+const SESSION_SUMMARY_FETCH_TIMEOUT_MS = 3000
+
+/**
  * After a clean `/quit` detach, render the broker-pushed session summary HRC
  * recorded at graceful exit. Best-effort: never throws and never blocks the
  * operator's return to their shell — if no summary was recorded (non-broker run,
@@ -280,10 +288,16 @@ export async function renderSessionSummary(
   scopeLabel: string
 ): Promise<void> {
   try {
-    const inspect = await client.brokerInspect({
-      runtimeId,
-      recoverFinalSummary: { timeoutMs: 750 },
-    })
+    const inspect = await client.brokerInspect(
+      {
+        runtimeId,
+        recoverFinalSummary: { timeoutMs: 750 },
+        // Only `finalSummary` is read below, so never query the broker read model
+        // here — a reaped broker must not be on this path at all (T-07077).
+        includeInvocations: false,
+      },
+      { timeoutMs: SESSION_SUMMARY_FETCH_TIMEOUT_MS }
+    )
     const block = formatSessionSummary(inspect.finalSummary, scopeLabel)
     if (block) {
       process.stdout.write(block)
@@ -381,10 +395,14 @@ export async function cmdSessionReport(args: string[]): Promise<void> {
   try {
     const client = createClient()
     const runtimeId = await resolveRuntimeArg(runtimeArg, client)
-    const inspect = await client.brokerInspect({
-      runtimeId,
-      recoverFinalSummary: { timeoutMs: 750 },
-    })
+    const inspect = await client.brokerInspect(
+      {
+        runtimeId,
+        recoverFinalSummary: { timeoutMs: 750 },
+        includeInvocations: false,
+      },
+      { timeoutMs: SESSION_SUMMARY_FETCH_TIMEOUT_MS }
+    )
     recovery = inspect.finalSummaryRecovery
     block = formatSessionSummary(inspect.finalSummary, scopeLabel)
   } catch {

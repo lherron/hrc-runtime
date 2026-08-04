@@ -1594,6 +1594,54 @@ describe('HarnessBrokerController', () => {
       // Broker must NOT be called when inspection is not advertised
       expect(fake.listInvocationsCalls).toHaveLength(0)
     })
+
+    it('times out a wedged listInvocations and retires the binding (T-07077)', async () => {
+      // A reaped broker can leave its socket open with no EOF. Before T-07077 this
+      // await was unbounded, so the HTTP handler blocked forever (observed live at
+      // 524s) and `hrc run` hung after `/quit` with no summary and no shell prompt.
+      class HangingListInvocationsBrokerClient extends FakeBrokerClient {
+        override async listInvocations(): Promise<never> {
+          this.callOrder.push('listInvocations')
+          return new Promise<never>(() => {})
+        }
+      }
+      const fake = new HangingListInvocationsBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'none',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+        serverInstanceId: 'server-test',
+        brokerActiveRpcTimeoutMs: 25,
+      } as any)
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
+
+      const startedAt = Date.now()
+      const result = await resolveWithin((controller as any).listInvocations('runtime_w2'), 200)
+
+      expect(result).not.toBe('test_watchdog_timeout')
+      if (result === 'test_watchdog_timeout') return
+      expect(Date.now() - startedAt).toBeLessThan(200)
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error.code).toBe('broker_list_invocations_timeout')
+
+      // The wedged binding is retired, so it cannot poison every later request.
+      const again = await (controller as any).listInvocations('runtime_w2')
+      expect(again.ok).toBe(false)
+      if (!again.ok) expect(again.error.code).toBe('broker_runtime_not_active')
+    })
   })
 
   describe('inspection read model — status with probeLiveness', () => {

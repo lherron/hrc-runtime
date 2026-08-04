@@ -172,6 +172,17 @@ export async function handleBrokerInspect(
   // broker truth and are NEVER re-derived or stripped here.
   const controller = this.harnessBrokerController
   if (runtime.controllerKind === 'harness-broker' && controller) {
+    // T-07077 — `includeInvocations:false` skips the broker read model entirely.
+    // The runtime is still broker-backed, so this MUST stay `source:'broker'`;
+    // falling through to the hrc-derived branch would label broker facts as
+    // synthesized. `invocations` is omitted (not []) so callers can tell "not
+    // asked for" apart from "asked for, none present".
+    if (body.includeInvocations === false) {
+      return json({
+        ...baseFacts,
+        source: 'broker',
+      } satisfies BrokerInspectResponse)
+    }
     const result = await controller.listInvocations(body.runtimeId, {
       ...(body.includeDisposed !== undefined ? { includeDisposed: body.includeDisposed } : {}),
       ...(body.probeLiveness !== undefined ? { probeLiveness: body.probeLiveness } : {}),

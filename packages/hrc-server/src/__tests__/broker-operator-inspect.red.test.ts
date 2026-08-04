@@ -891,3 +891,70 @@ describe('broker-inspect finalSummary passthrough (T-01893)', () => {
     expect(body.finalSummaryRecovery).toEqual({ state: 'not_broker' })
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════════════
+// T-07077 — `includeInvocations:false` keeps the summary path off the broker
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('[T-07077] includeInvocations gate', () => {
+  it('skips the broker read model entirely and still labels the runtime source:broker', async () => {
+    const runtimeId = 'rt-t07077-gate'
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-t07077-gate',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-07077:gate',
+      inspectionCapabilities: { listInvocations: true, liveness: 'none' },
+    })
+    const fake = new FakeBrokerController()
+    injectFakeController(fake)
+
+    const res = await postBrokerInspect(runtimeId, { includeInvocations: false })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { source?: string; invocations?: unknown[] }
+
+    // The broker is never asked — that is the whole point of the gate.
+    expect(fake.listInvocationsCalls).toHaveLength(0)
+    // Still broker-backed: mislabeling these as 'hrc-derived' would present
+    // broker facts as synthesized.
+    expect(body.source).toBe('broker')
+    // Omitted, not [] — "not asked for" must stay distinguishable from "none present".
+    expect(body.invocations).toBeUndefined()
+  })
+
+  it('returns promptly even when the broker read model would hang forever', async () => {
+    // The live failure mode: a reaped broker whose socket never EOFs. With the
+    // gate the response cannot depend on that RPC at all.
+    const runtimeId = 'rt-t07077-hang'
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-t07077-hang',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-07077:hang',
+      inspectionCapabilities: { listInvocations: true, liveness: 'none' },
+    })
+    const fake = new FakeBrokerController()
+    fake.listInvocations = (): Promise<InvocationInspectionSummary[]> =>
+      new Promise<InvocationInspectionSummary[]>(() => {})
+    injectFakeController(fake)
+
+    const startedAt = Date.now()
+    const res = await postBrokerInspect(runtimeId, { includeInvocations: false })
+    expect(res.status).toBe(200)
+    expect(Date.now() - startedAt).toBeLessThan(2000)
+  })
+
+  it('still queries the broker read model by default (no gate)', async () => {
+    const runtimeId = 'rt-t07077-default'
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-t07077-default',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-07077:default',
+      inspectionCapabilities: { listInvocations: true, liveness: 'none' },
+    })
+    const fake = new FakeBrokerController()
+    injectFakeController(fake)
+
+    const res = await postBrokerInspect(runtimeId)
+    expect(res.status).toBe(200)
+    expect(fake.listInvocationsCalls).toHaveLength(1)
+  })
+})
