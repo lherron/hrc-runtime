@@ -72,6 +72,12 @@ const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
  * INVARIANT (daedalus #10810): HRC owns this topology ONLY through Ghostty
  * metadata — never via `list-surfaces` topology, window titles, tab labels, cwd,
  * or focused state, which are presentation only.
+ *
+ * AMENDED (T-07118): tab identity is the COMPOSITE `(windowKey, tabKey)` pair.
+ * All live panes for one canonical pair share one Ghostty tab, and a given
+ * `hrc_tab_key` may appear in at most one tab PER KEYED WINDOW. Pane identity
+ * (`hrc_pane_key`) stays global, so at most one live viewer pane per HRC session
+ * still holds and reuse still wins over placement.
  */
 const HEADLESS_SESSIONS_WINDOW_TITLE = 'Headless Sessions'
 /** Window-level metadata role stamped on the global parent window. */
@@ -80,6 +86,36 @@ const HEADLESS_SESSIONS_WINDOW_ROLE = 'headless-sessions-window'
 const HEADLESS_WINDOW_ANCHOR_ROLE = 'headless-window-anchor'
 /** Surface-level role for a runtime-owned agent viewer pane. */
 const HEADLESS_AGENT_PANE_ROLE = 'headless-agent-pane'
+
+/**
+ * Implicit window key for every pane placed without a `viewerWindow` hint
+ * (T-07118). Metadata written before this change carries NO `hrc_window_key`,
+ * so an ABSENT key must read as this value — that is what makes today's live
+ * topology match without a restamp, and what makes an absent hint a byte-for-
+ * byte no-op.
+ */
+export const DEFAULT_HEADLESS_WINDOW_KEY = 'default'
+
+/** Keep a caller-supplied window key inside the safe metadata-key alphabet. */
+export function normalizeWindowKey(windowKey: string | undefined): string {
+  const trimmed = (windowKey ?? '').trim()
+  if (trimmed.length === 0) return DEFAULT_HEADLESS_WINDOW_KEY
+  return sanitizeKeyFragment(trimmed)
+}
+
+/** Read the effective window key off live metadata (absent ⇒ implicit default). */
+function metadataWindowKey(metadata: unknown): string {
+  if (!isRecord(metadata)) return DEFAULT_HEADLESS_WINDOW_KEY
+  const raw = metadata['hrc_window_key']
+  return typeof raw === 'string' && raw.length > 0 ? raw : DEFAULT_HEADLESS_WINDOW_KEY
+}
+
+/** Presentation-only window title derived from the key. */
+function headlessWindowTitle(windowKey: string): string {
+  return windowKey === DEFAULT_HEADLESS_WINDOW_KEY
+    ? HEADLESS_SESSIONS_WINDOW_TITLE
+    : `${HEADLESS_SESSIONS_WINDOW_TITLE} · ${windowKey}`
+}
 
 /** surface_bindings kind for a headless agent viewer pane (T-04439, T-05237). */
 export const HEADLESS_VIEWER_SURFACE_KIND = 'ghostty-headless-viewer'
@@ -351,19 +387,33 @@ function metadataHasClaudeTabRole(metadata: unknown, projectId?: string | undefi
   return metadataProject === undefined || metadataProject === projectId
 }
 
-function metadataIsWindowAnchor(metadata: unknown): boolean {
-  return isRecord(metadata) && metadata['hrc_role'] === HEADLESS_WINDOW_ANCHOR_ROLE
+function metadataIsWindowAnchor(metadata: unknown, windowKey: string): boolean {
+  if (!isRecord(metadata) || metadata['hrc_role'] !== HEADLESS_WINDOW_ANCHOR_ROLE) return false
+  return metadataWindowKey(metadata) === windowKey
 }
 
-function metadataIsAgentPaneForTab(metadata: unknown, tabKey: string): boolean {
+/**
+ * Window-FENCED tab membership (T-07118). Tab identity is the composite
+ * `(windowKey, tabKey)` pair: a console-keyed pane must never find (and split
+ * into) a same-tabKey pane living in the default window.
+ */
+function metadataIsAgentPaneForTab(metadata: unknown, windowKey: string, tabKey: string): boolean {
   if (!isRecord(metadata)) return false
   if (metadata['hrc_role'] !== HEADLESS_AGENT_PANE_ROLE) return false
-  return metadata['hrc_tab_key'] === tabKey
+  if (metadata['hrc_tab_key'] !== tabKey) return false
+  return metadataWindowKey(metadata) === windowKey
 }
 
+/**
+ * Pane identity stays GLOBAL (unchanged, daedalus): at most one live viewer
+ * pane per HRC session, so reuse wins over placement — a hinted respawn rebinds
+ * the existing pane rather than minting a second brain's window.
+ */
 function metadataIsAgentPaneWithKey(metadata: unknown, tabKey: string, paneKey: string): boolean {
-  if (!metadataIsAgentPaneForTab(metadata, tabKey)) return false
-  return (metadata as Record<string, unknown>)['hrc_pane_key'] === paneKey
+  if (!isRecord(metadata)) return false
+  if (metadata['hrc_role'] !== HEADLESS_AGENT_PANE_ROLE) return false
+  if (metadata['hrc_tab_key'] !== tabKey) return false
+  return metadata['hrc_pane_key'] === paneKey
 }
 
 function unwrapGhostmuxMetadata(value: unknown): unknown {
@@ -596,26 +646,36 @@ export class GhostmuxManager {
      * forget discipline as the status bar.
      */
     terminalBg?: string | undefined
+    /**
+     * Optional window placement key (T-07118). Absent/empty ⇒ the implicit
+     * default key, i.e. today's single "Headless Sessions" window.
+     */
+    windowKey?: string | undefined
   }): Promise<HeadlessViewerResult> {
     const identity = deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef)
     const tab = identity.tab
+    const windowKey = normalizeWindowKey(options.windowKey)
     const baseTitle = `${tab.label} · ${tab.agentId}`
     const paneTitle =
       options.title ?? (identity.roleName ? `${baseTitle} · ${identity.roleName}` : baseTitle)
-    // Serialize per tab key: concurrent same-task dispatches must not both
-    // miss-then-create a duplicate tab. The critical section re-checks live
-    // metadata AFTER acquiring the lock (daedalus concurrency condition). Distinct
-    // panes within one tab still serialize under this key, which is correct: the
-    // first create makes the tab, later ones split the existing tab pane.
-    return this.withHeadlessLock(`tab:${tab.tabKey}`, async () => {
+    // Serialize per COMPOSITE tab key `(windowKey, tabKey)` (T-07118): concurrent
+    // same-task dispatches must not both miss-then-create a duplicate tab, and two
+    // differently-keyed windows must not serialize against each other. The critical
+    // section re-checks live metadata AFTER acquiring the lock (daedalus concurrency
+    // condition). Distinct panes within one tab still serialize under this key, which
+    // is correct: the first create makes the tab, later ones split the existing pane.
+    return this.withHeadlessLock(`tab:${windowKey}:${tab.tabKey}`, async () => {
       try {
         const existing = await this.findAgentPaneByKey(tab.tabKey, identity.paneKey)
         if (existing) {
           // Reuse: rebind the pane to the CURRENT runtime (daedalus C5) so a stale
           // terminal event for a prior runtime cannot reap this pane, then repaint.
+          // Pane lookup is deliberately GLOBAL: reuse wins over placement, so a
+          // newly-hinted respawn adopts the live pane wherever it already lives.
           await this.stampAgentPaneMetadata(existing.surfaceId, identity, {
             scopeRef: options.scopeRef,
             runtimeId: options.runtimeId,
+            windowKey,
           }).catch(() => undefined)
           // Refresh the title on reuse too, so a reused pane always reflects the
           // current label (e.g. after a label-format change). Safe: the pane is
@@ -630,10 +690,12 @@ export class GhostmuxManager {
           }
         }
 
-        const anchor = await this.ensureHeadlessWindow()
-        // An existing pane for this tab key is a valid split target — any live
-        // pane in the tab puts the new pane in the same Ghostty tab.
-        const tabPane = await this.findTaskTab(tab.tabKey)
+        const anchor = await this.ensureHeadlessWindow(windowKey)
+        // An existing pane for this composite `(windowKey, tabKey)` identity is a
+        // valid split target — any live pane in that tab puts the new pane in the
+        // same Ghostty tab. The window fence is what keeps a console-keyed pane
+        // from splitting into a same-tabKey tab in the default window.
+        const tabPane = await this.findTaskTab(windowKey, tab.tabKey)
 
         // `ghostmux new`/`new-pane` transiently hit the libghostty surface_not_realize
         // race under load; ghostmux's guidance is bounded backoff (clears in 1-2 tries).
@@ -666,6 +728,7 @@ export class GhostmuxManager {
         await this.stampAgentPaneMetadata(created.surfaceId, identity, {
           scopeRef: options.scopeRef,
           runtimeId: options.runtimeId,
+          windowKey,
         }).catch(() => undefined)
         // Order matters (T-05237): send the (blocking) attach command FIRST, then
         // set the title as the LAST write. The pane then stays blocked inside
@@ -708,11 +771,12 @@ export class GhostmuxManager {
       }
       const tabKey =
         typeof metadata['hrc_tab_key'] === 'string' ? metadata['hrc_tab_key'] : undefined
+      const windowKey = metadataWindowKey(metadata)
       await this.terminate(surfaceId)
-      // After the kill, did any sibling agent pane for this tab survive?
+      // After the kill, did any sibling agent pane for this COMPOSITE tab survive?
       let tabCollapsed = false
       if (tabKey) {
-        const sibling = await this.findTaskTab(tabKey).catch(() => null)
+        const sibling = await this.findTaskTab(windowKey, tabKey).catch(() => null)
         tabCollapsed = sibling === null
       }
       return { status: 'reaped', surfaceId, tabCollapsed }
@@ -826,9 +890,9 @@ export class GhostmuxManager {
    * non-runtime-owned and is never reaped. Serialized on a shared window lock so
    * two concurrent first-dispatches cannot create two windows.
    */
-  private ensureHeadlessWindow(): Promise<GhostmuxSurfaceState> {
-    return this.withHeadlessLock('headless-window', async () => {
-      const existing = await this.findWindowAnchor()
+  private ensureHeadlessWindow(windowKey: string): Promise<GhostmuxSurfaceState> {
+    return this.withHeadlessLock(`window:${windowKey}`, async () => {
+      const existing = await this.findWindowAnchor(windowKey)
       if (existing) return existing
       const created = await this.withGhostmuxBackoff(async () =>
         parseGhostmuxSurfaceState(
@@ -837,43 +901,50 @@ export class GhostmuxManager {
               'new',
               '--window',
               '--title',
-              HEADLESS_SESSIONS_WINDOW_TITLE,
+              headlessWindowTitle(windowKey),
               '--json',
             ])
           ).stdout
         )
       )
       // Surface-level role identifies the anchor pane; window-level role marks the
-      // whole window. Both best-effort.
+      // whole window. Both carry the window key so a later find-or-create resolves
+      // the SAME keyed window (T-07118). Both best-effort.
       await this.setMetadata(
         created.surfaceId,
-        { hrc_role: HEADLESS_WINDOW_ANCHOR_ROLE },
+        { hrc_role: HEADLESS_WINDOW_ANCHOR_ROLE, hrc_window_key: windowKey },
         false
       ).catch(() => undefined)
       await this.setMetadata(
         created.surfaceId,
-        { hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE },
+        { hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE, hrc_window_key: windowKey },
         true
       ).catch(() => undefined)
       return created
     })
   }
 
-  private async findWindowAnchor(): Promise<GhostmuxSurfaceState | null> {
+  private async findWindowAnchor(windowKey: string): Promise<GhostmuxSurfaceState | null> {
     const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
     for (const surface of surfaces) {
       const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
-      if (metadataIsWindowAnchor(metadata)) return surface
+      if (metadataIsWindowAnchor(metadata, windowKey)) return surface
     }
     return null
   }
 
-  /** Any live agent pane sharing this tab key — a valid split target for the tab. */
-  private async findTaskTab(tabKey: string): Promise<GhostmuxSurfaceState | null> {
+  /**
+   * Any live agent pane sharing this COMPOSITE `(windowKey, tabKey)` identity — a
+   * valid split target for that tab in that window (T-07118).
+   */
+  private async findTaskTab(
+    windowKey: string,
+    tabKey: string
+  ): Promise<GhostmuxSurfaceState | null> {
     const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
     for (const surface of surfaces) {
       const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
-      if (metadataIsAgentPaneForTab(metadata, tabKey)) return surface
+      if (metadataIsAgentPaneForTab(metadata, windowKey, tabKey)) return surface
     }
     return null
   }
@@ -893,20 +964,22 @@ export class GhostmuxManager {
 
   /**
    * Stamp/refresh the canonical agent-pane metadata (surface-level). The uniqueness
-   * authority is `hrc_pane_key` (normalized `(scopeRef, laneRef)`); `hrc_agent_id`
+   * authority is `hrc_pane_key` (normalized `(scopeRef, laneRef)`); `hrc_window_key`
+   * + `hrc_tab_key` are the composite TAB grouping authority (T-07118); `hrc_agent_id`
    * and `hrc_role_name` are presentation/diagnosis metadata. Also records the exact
    * session identity (scope/lane/role) and the current runtime binding (T-06321).
    */
   private async stampAgentPaneMetadata(
     surfaceId: string,
     identity: HeadlessSessionIdentity,
-    binding: { scopeRef: string; runtimeId: string }
+    binding: { scopeRef: string; runtimeId: string; windowKey: string }
   ): Promise<void> {
     const tab = identity.tab
     await this.setMetadata(
       surfaceId,
       {
         hrc_role: HEADLESS_AGENT_PANE_ROLE,
+        hrc_window_key: binding.windowKey,
         hrc_tab_key: tab.tabKey,
         hrc_pane_key: identity.paneKey,
         hrc_agent_id: tab.agentId,

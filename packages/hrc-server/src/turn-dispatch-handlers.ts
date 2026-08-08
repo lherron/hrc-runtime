@@ -6,6 +6,7 @@ import {
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  isSuffixStartRuntimeRequest,
   validateFence,
 } from 'hrc-core'
 import type {
@@ -304,6 +305,13 @@ export async function handleStartRuntime(
   request: Request
 ): Promise<Response> {
   const body = parseStartRuntimeRequest(await parseJsonBody(request))
+  // Suffix-roster START (T-07118): the daemon picks, claims, and starts the slot
+  // inside this one request, so the caller never holds a claim it could replay
+  // against a different start. Reports the ACTUAL claimed scope back.
+  if (isSuffixStartRuntimeRequest(body)) {
+    const { runtime, claim } = await this.startSuffixRosterRuntime(body)
+    return json({ ...toStartRuntimeResponse(runtime), claim } satisfies StartRuntimeResponse)
+  }
   const requested = requireSession(this.db, body.hostSessionId)
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,

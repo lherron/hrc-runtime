@@ -40,6 +40,25 @@ export const HrcErrorCode = {
   NO_RESUMABLE_CONTINUATION: 'no_resumable_continuation',
   /** `hrc resume` selected a prior whose runtime is still live — attach/terminate first. */
   RESUME_RUNTIME_LIVE: 'resume_runtime_live',
+  /**
+   * Suffix-roster start (T-07118): every slot for the base scope is occupied by
+   * a live session. Never destructive — the caller shows "too many open
+   * sessions" rather than hijacking a live `:primary`.
+   */
+  SESSION_ROSTER_EXHAUSTED: 'session_roster_exhausted',
+  /**
+   * Suffix-roster retry (T-07118): the recorded claim's successor is no longer
+   * the slot's active session (the original start died pre-runtime-row and a
+   * newer press recycled the slot). The logical press failed; a fresh press
+   * needs a fresh idempotency key. Never starts the archived predecessor.
+   */
+  ROSTER_CLAIM_SUPERSEDED: 'roster_claim_superseded',
+  /**
+   * A durable idempotency key was replayed with a semantically different
+   * request body (T-07118). Returned BEFORE any start path runs, so a
+   * conflicting replay can never mutate the claimed session's persisted intent.
+   */
+  IDEMPOTENCY_KEY_CONFLICT: 'idempotency_key_conflict',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -90,6 +109,9 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
   [HrcErrorCode.NO_RESUMABLE_CONTINUATION]: 422,
   [HrcErrorCode.RESUME_RUNTIME_LIVE]: 409,
+  [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,
+  [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
+  [HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 409,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {
@@ -168,6 +190,9 @@ export class HrcConflictError extends HrcDomainError {
       | 'app_session_removed'
       | 'reply_to_scope_mismatch'
       | 'resume_runtime_live'
+      | 'session_roster_exhausted'
+      | 'roster_claim_superseded'
+      | 'idempotency_key_conflict'
     >,
     message: string,
     detail: Record<string, unknown> = {}

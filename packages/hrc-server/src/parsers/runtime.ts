@@ -173,6 +173,8 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
     ? parseInlineHarness(harness)
     : resolveHarnessFromPlacement(placement, execution)
 
+  const presentation = parseOptionalPresentationIntent(input['presentation'])
+
   return {
     placement: placement as import('spaces-config').RuntimePlacement,
     harness: resolvedHarness,
@@ -180,7 +182,34 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
     ...(isRecord(launch) ? { launch: launch as HrcRuntimeIntent['launch'] } : {}),
     ...(typeof initialPrompt === 'string' ? { initialPrompt } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
+    ...(presentation !== undefined ? { presentation } : {}),
   }
+}
+
+/**
+ * Viewer placement hint (T-07118). Free-form key, validated only as a non-empty
+ * string: the presentation layer normalizes it, and an absent/blank value is the
+ * implicit default key, i.e. today's behavior.
+ */
+function parseOptionalPresentationIntent(
+  value: unknown
+): HrcRuntimeIntent['presentation'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'presentation must be an object', {
+      field: 'presentation',
+    })
+  }
+  const viewerWindow = value['viewerWindow']
+  if (viewerWindow === undefined) return {}
+  if (typeof viewerWindow !== 'string' || viewerWindow.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'presentation.viewerWindow must be a non-empty string',
+      { field: 'presentation.viewerWindow' }
+    )
+  }
+  return { viewerWindow: viewerWindow.trim() }
 }
 
 function parseOptionalAttachmentRefs(
@@ -288,8 +317,79 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
   }
 }
 
+/**
+ * START accepts two shapes (T-07118):
+ *
+ *  - the canonical `{ hostSessionId, intent }` ensure-shape, and
+ *  - the suffix collision-roster shape `{ baseSessionRef, runtimeIntent,
+ *    conflictPolicy: 'suffix', idempotencyKey }`, which carries NO
+ *    `hostSessionId`: the daemon picks and claims the slot inside the request.
+ *
+ * `idempotencyKey` is REQUIRED on the suffix shape — without operation identity
+ * a lost-response retry would walk the roster and claim a second slot.
+ */
 export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
-  return parseEnsureRuntimeRequest(input)
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const conflictPolicy = input['conflictPolicy']
+  if (conflictPolicy === undefined) {
+    return parseEnsureRuntimeRequest(input)
+  }
+  if (conflictPolicy !== 'suffix') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'conflictPolicy must be "suffix" when present',
+      { field: 'conflictPolicy' }
+    )
+  }
+
+  const baseSessionRef = input['baseSessionRef']
+  if (typeof baseSessionRef !== 'string' || baseSessionRef.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'baseSessionRef is required for conflictPolicy "suffix"',
+      { field: 'baseSessionRef' }
+    )
+  }
+  if (input['hostSessionId'] !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'hostSessionId must not be supplied with conflictPolicy "suffix"',
+      { field: 'hostSessionId' }
+    )
+  }
+
+  const runtimeIntent = input['runtimeIntent']
+  if (!isRecord(runtimeIntent)) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.MISSING_RUNTIME_INTENT,
+      'runtimeIntent is required for conflictPolicy "suffix"'
+    )
+  }
+
+  const idempotencyKey = input['idempotencyKey']
+  if (typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'idempotencyKey is required for conflictPolicy "suffix"',
+      { field: 'idempotencyKey' }
+    )
+  }
+
+  const restartStyle = requireOptionalOneOf(
+    input['restartStyle'],
+    ['reuse_pty', 'fresh_pty'],
+    'restartStyle must be "reuse_pty" or "fresh_pty"'
+  )
+
+  return {
+    baseSessionRef: baseSessionRef.trim(),
+    runtimeIntent: parseRuntimeIntent(runtimeIntent),
+    conflictPolicy: 'suffix',
+    idempotencyKey: idempotencyKey.trim(),
+    ...(restartStyle !== undefined ? { restartStyle } : {}),
+  }
 }
 
 export function parseOpenBrokerSessionRequest(input: unknown): OpenBrokerSessionRequest {

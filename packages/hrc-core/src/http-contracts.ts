@@ -163,8 +163,47 @@ export type EnsureRuntimeResponse = {
  * - may launch provider-native startup work before returning
  * - duplicate calls converge on the same runtime/startup result
  */
-export type StartRuntimeRequest = EnsureRuntimeRequest
-export type StartRuntimeResponse =
+/**
+ * Alternate START shape for the suffix collision roster (T-07118).
+ *
+ * The caller names only the BASE scope and never a `hostSessionId`: the daemon
+ * picks the free roster slot, claims it, and starts it inside this one request,
+ * so a claim can never be observed (or replayed) apart from the start it
+ * authorizes. `idempotencyKey` is REQUIRED — the claim is recorded durably
+ * against it so a lost-response retry converges on the SAME slot instead of
+ * walking the roster and minting a second brain.
+ */
+export type SuffixStartRuntimeRequest = {
+  /** Base session ref (`<scopeRef>/lane:<lane>`); the roster is derived from it. */
+  baseSessionRef: string
+  runtimeIntent: HrcRuntimeIntent
+  conflictPolicy: 'suffix'
+  /** REQUIRED. One key per logical invocation; transport retries reuse it. */
+  idempotencyKey: string
+  restartStyle?: RestartStyle | undefined
+}
+
+export type StartRuntimeRequest = EnsureRuntimeRequest | SuffixStartRuntimeRequest
+
+export function isSuffixStartRuntimeRequest(
+  request: StartRuntimeRequest
+): request is SuffixStartRuntimeRequest {
+  return (request as SuffixStartRuntimeRequest).conflictPolicy === 'suffix'
+}
+
+/** The roster slot a `conflictPolicy: 'suffix'` start actually claimed. */
+export type StartRuntimeRosterClaim = {
+  /** Slot token that replaced the base task token (e.g. `primary-nova`). */
+  slot: string
+  scopeRef: string
+  sessionRef: string
+  hostSessionId: string
+  idempotencyKey: string
+  /** True when this response replayed an existing durable claim. */
+  replayed: boolean
+}
+
+export type StartRuntimeResponse = (
   | EnsureRuntimeResponse
   | {
       runtimeId: string
@@ -173,6 +212,10 @@ export type StartRuntimeResponse =
       status: string
       supportsInFlightInput: boolean
     }
+) & {
+  /** Present only for `conflictPolicy: 'suffix'` starts (T-07118). */
+  claim?: StartRuntimeRosterClaim | undefined
+}
 
 export type LaunchCommandScopedRunBinding = {
   WRKF_TASK_ID: string

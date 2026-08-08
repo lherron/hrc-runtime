@@ -98,6 +98,43 @@ hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 
 Shared notable flags (`run`/`start`): `--force-restart` (replace runtime with a fresh PTY), `--new-session` (`start` only — rotate to a fresh host session), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
+#### Viewer placement and the collision roster (`start` only)
+
+```bash
+# Land this session's viewer tab in the window stamped with key `console`:
+hrc start mable@hrc-runtime --viewer-window console
+
+# Never hijack a live `:primary` — claim the next free roster slot instead:
+hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
+```
+
+- **`--viewer-window <key>`** — free-form window key recorded on the session
+  intent, so every later viewer respawn lands in the same window. Absent ⇒
+  today's single "Headless Sessions" window. Not offered on `hrc run`, whose
+  session lives in the invoking terminal.
+- **`--on-conflict suffix`** — the daemon picks, claims, and starts a free slot
+  from the fixed roster `primary`, `primary-nova`, `primary-comet`,
+  `primary-pulsar`, `primary-quasar`, `primary-meteor`, `primary-aurora`,
+  `primary-zenith`, `primary-eclipse`, `primary-orbit`, `primary-cosmos`, all
+  inside one request. A live session is never hijacked and a claimed slot always
+  starts a fresh conversation. The response reports the actual claimed scope
+  under `claim`. Reuse the same `--idempotency-key` to retry a press without
+  burning a second slot; every slot occupied returns
+  `session_roster_exhausted`. Suffixed slots are ordinary handles —
+  `mable@hrc-runtime:primary-nova` addresses normally over hrcchat.
+
+**Adopting a window as the `console` key** is a one-time manual stamp on any
+long-lived surface in that window (HRC never reaps anchors, so adopting a real
+tab you already use is safe):
+
+```bash
+ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-window-anchor","hrc_window_key":"console"}'
+ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}' --window
+```
+
+If that window is later closed, HRC creates a fresh keyed window — degraded,
+never broken.
+
 A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); `hrc run` prints a session-summary block on detach and is not treated as an attach failure.
 
 Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees audit|prune [--project <id>] [--root <path>] [--json]`. Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.

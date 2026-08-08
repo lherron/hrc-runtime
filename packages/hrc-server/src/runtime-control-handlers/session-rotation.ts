@@ -146,6 +146,14 @@ export async function rotateSessionContext(
     managed?: AppManagedSessionRecord | undefined
     relaunchSpec?: HrcAppSessionSpec | undefined
     reason?: string | undefined
+    /**
+     * Extra statements to execute inside the SAME transaction as the successor
+     * session's insert (T-07118). The suffix-roster claim uses this so the claim
+     * row and the session it names commit — or vanish — together; a daemon death
+     * before commit can never leave a claim pointing at a session that does not
+     * exist, nor a rotated slot with no claim to converge on.
+     */
+    withinTransaction?: ((nextSession: HrcSessionRecord) => void) | undefined
   }
 ): Promise<ClearContextResponse> {
   assertLocalPersonaAllowed(this, session.scopeRef)
@@ -193,6 +201,7 @@ export async function rotateSessionContext(
       activeHostSessionId: nextSession.hostSessionId,
       updatedAt: now,
     })
+    options.withinTransaction?.(nextSession)
   })()
 
   if (options.managed) {

@@ -295,6 +295,20 @@ export async function spawnBrokerHeadlessViewer(
     // (e.g. `T-05177 · clod`), plus ` · <role>` for a role-qualified scope
     // (T-06321), and set as the LAST write after the attach command (T-05237), so
     // we no longer pass one here.
+    // Window placement hint (T-07118). Recovered from the SESSION record on
+    // every respawn rather than threaded through each call site, so a viewer
+    // that is re-created after a restart/reap lands back in the same window with
+    // zero dispatch-time plumbing. An absent hint is the implicit default key —
+    // today's "Headless Sessions" window, unchanged. Same best-effort discipline
+    // as the status bar and the wrkq slug: a placement hint is cosmetic, so a
+    // failed read degrades to the default window rather than costing the viewer.
+    let viewerWindow: string | undefined
+    try {
+      viewerWindow = this.db.sessions.getByHostSessionId(runtime.hostSessionId)
+        ?.lastAppliedIntentJson?.presentation?.viewerWindow
+    } catch {
+      viewerWindow = undefined
+    }
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       laneRef: runtime.laneRef,
@@ -302,6 +316,7 @@ export async function spawnBrokerHeadlessViewer(
       attachCommand,
       statusBar: renderStatusBar(runtime.scopeRef, 'running', slug, runtime.laneRef),
       terminalBg: viewerTerminalBg(runtime.scopeRef),
+      ...(viewerWindow !== undefined ? { windowKey: viewerWindow } : {}),
     })
     // Bind the viewer surface to the CURRENT runtime as the projector's primary
     // cache. bind() upserts on (kind, surfaceId), so a reused window rebinds to

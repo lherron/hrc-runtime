@@ -181,6 +181,23 @@ export type HrcTaskContext = {
   hintsText: string
 }
 
+/**
+ * Operator presentation hints for a provisioned session (T-07118).
+ *
+ * Purely a placement preference for the observational viewer surface: it never
+ * changes what is launched, only where the viewer tab lands. An absent
+ * `presentation` — or an absent `viewerWindow` — means the implicit default
+ * window key, i.e. today's "Headless Sessions" topology, byte for byte.
+ */
+export type HrcPresentationIntent = {
+  /**
+   * Free-form Ghostty window key. Panes are grouped into the window whose
+   * anchor carries the matching `hrc_window_key` metadata; a missing keyed
+   * window is created fresh (degraded, never broken).
+   */
+  viewerWindow?: string | undefined
+}
+
 export type HrcRuntimeIntent = {
   placement: RuntimePlacement
   harness: HrcHarnessIntent
@@ -189,6 +206,7 @@ export type HrcRuntimeIntent = {
   initialPrompt?: string | undefined
   attachments?: AttachmentRef[] | undefined
   taskContext?: HrcTaskContext | undefined
+  presentation?: HrcPresentationIntent | undefined
 }
 
 export type HrcAppSessionRef = {

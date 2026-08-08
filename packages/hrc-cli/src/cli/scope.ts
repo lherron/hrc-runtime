@@ -373,6 +373,12 @@ export function buildManagedStartIntent(
   options: {
     prompt?: string | undefined
     debug?: boolean | undefined
+    /**
+     * `--viewer-window <key>` (T-07118). Placement hint for the provisioned
+     * session's viewer tab; absent ⇒ the implicit default window. Not offered on
+     * `hrc run`, whose interactive session lives in the invoking terminal.
+     */
+    viewerWindow?: string | undefined
   } = {}
 ): HrcRuntimeIntent {
   const intent = buildManagedRuntimeIntent(scope, {
@@ -388,6 +394,9 @@ export function buildManagedStartIntent(
           ? false
           : intent.harness.interactive,
     },
+    ...(options.viewerWindow !== undefined
+      ? { presentation: { viewerWindow: options.viewerWindow } }
+      : {}),
   }
 }
 

@@ -183,6 +183,18 @@ describe('buildManagedStartIntent', () => {
   it('leaves promptless detached start classification unchanged', () => {
     expect(buildManagedStartIntent(scope()).harness.interactive).toBe(true)
   })
+
+  // T-07118: the viewer placement hint is a presentation field only — an absent
+  // flag must leave the intent byte-identical to today's.
+  it('threads --viewer-window into presentation.viewerWindow', () => {
+    expect(buildManagedStartIntent(scope(), { viewerWindow: 'console' }).presentation).toEqual({
+      viewerWindow: 'console',
+    })
+  })
+
+  it('omits presentation entirely when no viewer window is requested', () => {
+    expect(buildManagedStartIntent(scope()).presentation).toBeUndefined()
+  })
 })
 
 describe('executeManagedStart', () => {

@@ -30,6 +30,7 @@ import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
 import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { MailHandlersMethods } from './mail/mail-handlers.js'
+import type { RosterClaimHandlersMethods } from './roster-claim.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
 import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
 import type { RuntimeIoHandlersMethods } from './runtime-io-handlers.js'
@@ -73,6 +74,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   LaunchLifecycleHandlersMethods &
   MailKickerHandlersMethods &
   MailHandlersMethods &
+  RosterClaimHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &

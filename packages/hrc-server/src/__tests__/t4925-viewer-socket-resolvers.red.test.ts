@@ -266,6 +266,10 @@ describe('spawnBrokerHeadlessViewer integration', () => {
         surfaceBindings: {
           bind: (_opts: unknown) => {},
         },
+        // T-07118 reads the session's persisted viewer-window hint here.
+        sessions: {
+          getByHostSessionId: (_hostSessionId: string) => null,
+        },
       },
     }
 
@@ -295,6 +299,10 @@ describe('spawnBrokerHeadlessViewer integration', () => {
       db: {
         surfaceBindings: {
           bind: (_opts: unknown) => {},
+        },
+        // T-07118 reads the session's persisted viewer-window hint here.
+        sessions: {
+          getByHostSessionId: (_hostSessionId: string) => null,
         },
       },
     }
@@ -329,6 +337,10 @@ describe('spawnBrokerHeadlessViewer integration', () => {
       db: {
         surfaceBindings: {
           bind: (_opts: unknown) => {},
+        },
+        // T-07118 reads the session's persisted viewer-window hint here.
+        sessions: {
+          getByHostSessionId: (_hostSessionId: string) => null,
         },
       },
     }

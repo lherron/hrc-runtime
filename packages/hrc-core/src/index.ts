@@ -137,6 +137,7 @@ export type {
   HrcSurfaceBindingRecord,
   HrcTaskContext,
   HrcTurnResponseFormat,
+  HrcPresentationIntent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -208,6 +209,8 @@ export type {
   LaunchCommandScopedRunResponse,
   StartRuntimeRequest,
   StartRuntimeResponse,
+  StartRuntimeRosterClaim,
+  SuffixStartRuntimeRequest,
   EnsureWindowRequest,
   EnsureWindowResponse,
   HealthResponse,
@@ -286,7 +289,7 @@ export type {
   ClearAppSessionContextRequest,
   ClearAppSessionContextResponse,
 } from './http-contracts.js'
-export { OPERATOR_REAP_REASON } from './http-contracts.js'
+export { OPERATOR_REAP_REASON, isSuffixStartRuntimeRequest } from './http-contracts.js'
 
 export type {
   HrcMessageAddress,

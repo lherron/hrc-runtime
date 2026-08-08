@@ -167,6 +167,7 @@ import {
   requireRuntime,
   requireSession,
 } from './require-helpers.js'
+import { type RosterClaimHandlersMethods, rosterClaimHandlersMethods } from './roster-claim.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   type RuntimeControlHandlersMethods,
@@ -612,6 +613,7 @@ interface HrcServerInstance
     LaunchLifecycleHandlersMethods,
     MailKickerHandlersMethods,
     MailHandlersMethods,
+    RosterClaimHandlersMethods,
     RuntimeInspectHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
@@ -2245,7 +2247,8 @@ Object.assign(
   launchLifecycleHandlersMethods,
   mailKickerHandlersMethods,
   mailHandlersMethods,
-  runtimeInspectHandlersMethods
+  runtimeInspectHandlersMethods,
+  rosterClaimHandlersMethods
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {

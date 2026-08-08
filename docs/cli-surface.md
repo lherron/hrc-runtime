@@ -53,6 +53,12 @@ structured JSON including broker admission-rejection detail), `--no-register`.
 `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for
 non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
+`start` also takes `--viewer-window <key>` (place this session's viewer tab in
+the window stamped with that key; absent ⇒ today's "Headless Sessions" window)
+and `--on-conflict suffix` (claim the next free slot from the fixed celestial
+roster instead of ever hijacking a live `:primary`). See
+`docs/cli-reference.md` for the roster and the one-time console-window stamp.
+
 A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.

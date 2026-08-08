@@ -143,7 +143,9 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
     : ''
   const newSessionOption =
     command === 'start'
-      ? '  --new-session        Rotate to a fresh host session before starting\n'
+      ? '  --new-session        Rotate to a fresh host session before starting\n' +
+        '  --viewer-window <key> Place the session viewer tab in the keyed window\n' +
+        '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n'
       : ''
 
   process.stdout.write(`Usage: hrc ${command} <scope> [options]
@@ -487,6 +489,11 @@ export async function cmdStart(args: string[]): Promise<void> {
   const idempotencyKey = parseFlag(args, '--idempotency-key')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
+  const viewerWindow = parseFlag(args, '--viewer-window')
+  const onConflict = parseFlag(args, '--on-conflict')
+  if (onConflict !== undefined && onConflict !== 'suffix') {
+    fatal('start --on-conflict currently accepts only "suffix"')
+  }
   const prompt = await parseScopePrompt(args, {
     command: 'start',
     passthroughFlags: [
@@ -500,6 +507,8 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--idempotency-key',
       '--project-id',
       '--project-root',
+      '--viewer-window',
+      '--on-conflict',
     ],
   })
 
@@ -511,7 +520,11 @@ export async function cmdStart(args: string[]): Promise<void> {
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef
-    const intent = buildManagedStartIntent(scope, { prompt, debug })
+    const intent = buildManagedStartIntent(scope, {
+      prompt,
+      debug,
+      ...(viewerWindow !== undefined ? { viewerWindow } : {}),
+    })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
@@ -528,6 +541,31 @@ export async function cmdStart(args: string[]): Promise<void> {
     }
 
     const client = createClient()
+
+    // `--on-conflict suffix` (T-07118): the daemon picks, claims, and starts a
+    // free roster slot inside ONE request. The CLI deliberately does NOT
+    // pre-scan, resolve, or clear context — it never holds a session identifier
+    // it could race against, and learns which slot it got only from the settled
+    // start response. The idempotency key is REQUIRED by that surface, so one is
+    // generated per logical invocation when the operator did not pin one.
+    if (onConflict === 'suffix') {
+      const runtime = await client.startRuntime({
+        baseSessionRef: sessionRef,
+        runtimeIntent: intent,
+        conflictPolicy: 'suffix',
+        idempotencyKey: idempotencyKey ?? `hrc-start-suffix-${randomUUID()}`,
+        restartStyle,
+      })
+      printJson({
+        sessionRef: runtime.claim?.sessionRef ?? sessionRef,
+        hostSessionId: runtime.hostSessionId,
+        created: true,
+        ...(runtime.claim !== undefined ? { claim: runtime.claim } : {}),
+        runtime,
+      })
+      return
+    }
+
     const resolved = await client.resolveSession({
       sessionRef,
       runtimeIntent: intent,

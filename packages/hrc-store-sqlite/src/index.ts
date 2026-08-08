@@ -10,6 +10,8 @@ export type {
   CollectiveHistorySourceRole,
   RecordCollectiveHistoryObservationInput,
 } from './collective-history-repository.js'
+export { RosterClaimRepository } from './roster-claim-repository.js'
+export type { RosterClaim } from './roster-claim-repository.js'
 export { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 export type { SessionTaskClaimAuthority } from './session-task-claim-repository.js'
 export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'

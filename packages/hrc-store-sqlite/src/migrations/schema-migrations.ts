@@ -1341,6 +1341,43 @@ const collectiveHistoryFilterColumnsMigration: HrcMigration = {
   },
 }
 
+/**
+ * Durable suffix-roster claims (T-07118).
+ *
+ * A `conflictPolicy: 'suffix'` start records its claim in the SAME transaction
+ * as the successor session it claims, so a lost-response retry converges on the
+ * recorded slot instead of walking the roster and minting a second brain. The
+ * canonical `request_hash` is stored alongside the key so an identical replay
+ * and a conflicting one stay distinguishable across a daemon restart — without
+ * it, the promised same-key/different-body rejection is unenforceable once the
+ * in-memory single-flight map is gone.
+ *
+ * No foreign key to `sessions`: if the recorded successor row disappears, the
+ * supersession fence must SEE a claim whose successor is no longer active and
+ * refuse, rather than have the claim silently cascade away and let the retry
+ * walk the roster again.
+ */
+const rosterClaimsMigration: HrcMigration = {
+  id: '0036_roster_claims',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS roster_claims (
+        idempotency_key TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        base_scope TEXT NOT NULL,
+        claimed_scope TEXT NOT NULL,
+        successor_host_session_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_roster_claims_base_scope
+        ON roster_claims(base_scope, created_at);
+      CREATE INDEX IF NOT EXISTS idx_roster_claims_successor
+        ON roster_claims(successor_host_session_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1372,4 +1409,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   collectiveMessageHistoryMigration,
   federationPeerAcceptanceOutcomeMigration,
   collectiveHistoryFilterColumnsMigration,
+  rosterClaimsMigration,
 ]
