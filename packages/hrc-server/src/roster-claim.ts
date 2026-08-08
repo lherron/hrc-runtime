@@ -251,6 +251,11 @@ export async function startSuffixRosterRuntime(
     // `runtimeStartOperations` synchronously, so by the time this returns a
     // promise the slot is already occupied for predicate (b).
     const pending = this.startRuntimeForSession(session, intent, restartStyle)
+    // The real await happens after the mutex is released, so mark the rejection
+    // handled here: a start that fails inside that gap is reported through the
+    // awaited promise below, never as an unhandled rejection that could take the
+    // daemon down.
+    pending.catch(() => undefined)
     return { outcome: claimed, startPromise: pending }
   })
 
