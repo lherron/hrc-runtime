@@ -38,11 +38,16 @@ function makeFakeGhostmux() {
   const surfaces = new Map<string, Surf>()
   const calls: string[][] = []
   let counter = 0
+  let windowSeq = 0
   const alloc = (title?: string | undefined): string => {
     counter += 1
     const id = `surf-${counter}`
     surfaces.set(id, { surfaceMeta: {}, windowMeta: {}, title, columns: 120, rows: 40 })
     return id
+  }
+  const ghostmuxArgAfter = (args: string[], flag: string): string | undefined => {
+    const index = args.indexOf(flag)
+    return index >= 0 ? args[index + 1] : undefined
   }
   const runner = async (args: string[]) => {
     calls.push(args)
@@ -75,12 +80,38 @@ function makeFakeGhostmux() {
     }
     if (args[0] === 'new') {
       const titleIdx = args.indexOf('--title')
-      return {
-        stdout: JSON.stringify({ id: alloc(titleIdx >= 0 ? args[titleIdx + 1] : undefined) }),
-        stderr: '',
+      const title = titleIdx >= 0 ? args[titleIdx + 1] : undefined
+      // `new --window` answers with a WINDOW object whose `id` is a WINDOW id and
+      // whose anchor surface is `terminal_ids[0]` — the real ghostmux shape that
+      // broke fresh keyed windows in the T-07118 live smoke. `new --tab` answers
+      // with a surface. The fake models both.
+      if (args.includes('--window')) {
+        windowSeq += 1
+        return {
+          stdout: JSON.stringify({
+            id: `win-${windowSeq}`,
+            created: true,
+            terminal_ids: [alloc(title)],
+          }),
+          stderr: '',
+        }
       }
+      // Real ghostmux rejects an unknown --parent; modelling that is what makes
+      // the window-shape regression detectable at all.
+      const parentIdx = args.indexOf('--parent')
+      const parent = parentIdx >= 0 ? args[parentIdx + 1] : undefined
+      if (parent !== undefined && !surfaces.has(parent)) {
+        throw new Error(`error: Terminal not found: ${parent}`)
+      }
+      return { stdout: JSON.stringify({ id: alloc(title) }), stderr: '' }
     }
-    if (args[0] === 'new-pane') return { stdout: JSON.stringify({ id: alloc() }), stderr: '' }
+    if (args[0] === 'new-pane') {
+      const target = ghostmuxArgAfter(args, '-t')
+      if (target !== undefined && !surfaces.has(target)) {
+        throw new Error(`error: Terminal not found: ${target}`)
+      }
+      return { stdout: JSON.stringify({ id: alloc() }), stderr: '' }
+    }
     if (args[0] === 'set-title') {
       const s = surfaces.get(args[2] ?? '')
       if (s) s.title = args[3]

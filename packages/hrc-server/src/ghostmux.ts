@@ -895,7 +895,7 @@ export class GhostmuxManager {
       const existing = await this.findWindowAnchor(windowKey)
       if (existing) return existing
       const created = await this.withGhostmuxBackoff(async () =>
-        parseGhostmuxSurfaceState(
+        this.resolveCreatedWindowAnchor(
           (
             await this.exec([
               'new',
@@ -922,6 +922,34 @@ export class GhostmuxManager {
       ).catch(() => undefined)
       return created
     })
+  }
+
+  /**
+   * Resolve the anchor SURFACE of a just-created window.
+   *
+   * `ghostmux new --window --json` answers with a WINDOW object, not a surface:
+   * its `id` is a window id and the real anchor surface is `terminal_ids[0]`.
+   * (`new --tab` and `new-pane` both answer with surfaces — this shape is unique
+   * to `--window`.) Feeding that window id back as a `-t`/`--parent` target fails
+   * with "Terminal not found", so every viewer placed into a freshly created
+   * window silently failed. Latent before T-07118 because the one global window
+   * effectively always pre-existed; routine now that any new window key must
+   * create its window. Caught by the live smoke, not by any unit test.
+   *
+   * Falls back to the old surface-shaped parse so an older ghostmux that really
+   * does answer with a surface keeps working.
+   */
+  private async resolveCreatedWindowAnchor(stdout: string): Promise<GhostmuxSurfaceState> {
+    const parsed = parseJson(stdout)
+    const record = isRecord(parsed) ? parsed : {}
+    const terminalIds = record['terminal_ids']
+    const anchorId =
+      Array.isArray(terminalIds) && typeof terminalIds[0] === 'string' && terminalIds[0].length > 0
+        ? terminalIds[0]
+        : parseGhostmuxSurfaceState(stdout).surfaceId
+    // Re-read the live surface so split-direction sizing sees real dimensions.
+    const live = await this.inspectSurface(anchorId).catch(() => null)
+    return live ?? { kind: 'ghostty', surfaceId: anchorId, createdBy: 'ghostmux' }
   }
 
   private async findWindowAnchor(windowKey: string): Promise<GhostmuxSurfaceState | null> {
