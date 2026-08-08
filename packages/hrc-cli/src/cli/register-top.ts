@@ -69,6 +69,13 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
     .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
+    .option('--viewer-window <key>', 'place this session viewer tab in the keyed window')
+    .addOption(
+      new Option(
+        '--on-conflict <policy>',
+        'claim the next free roster slot instead of hijacking a live :primary'
+      ).choices(['suffix'])
+    )
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .addOption(
@@ -92,11 +99,27 @@ export function registerTopLevelCommands(program: Command): void {
           '--no-register',
           '--json',
         ],
-        value: ['--project-id', '--project-root', '--idempotency-key', '-p', '--prompt-file'],
+        value: [
+          '--project-id',
+          '--project-root',
+          '--idempotency-key',
+          '--viewer-window',
+          '--on-conflict',
+          '-p',
+          '--prompt-file',
+        ],
         optionalValue: ['--wait'],
       })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'prompt-file', 'idempotency-key', 'wait'],
+        strings: [
+          'project-id',
+          'project-root',
+          'prompt-file',
+          'idempotency-key',
+          'viewer-window',
+          'on-conflict',
+          'wait',
+        ],
         booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['register'],
       })
