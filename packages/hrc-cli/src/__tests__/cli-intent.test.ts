@@ -14,7 +14,7 @@ import { join } from 'node:path'
 
 import { harnessStringToHarnessId, resolveAgentHarness } from '../cli'
 import { executeManagedStart } from '../cli/handlers-scope-cmd'
-import { buildManagedStartIntent } from '../cli/scope'
+import { buildManagedStartIntent, parseScopePrompt } from '../cli/scope'
 
 describe('harnessStringToHarnessId', () => {
   it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
@@ -298,3 +298,42 @@ describe('executeManagedStart', () => {
 })
 
 type ManagedStartClientForTest = Parameters<typeof executeManagedStart>[0]
+
+/**
+ * T-07118 regression: a value-taking passthrough flag missing from the parser's
+ * value set does not fail loudly — its VALUE is read as a positional prompt.
+ * `hrc start <scope> --viewer-window console --on-conflict suffix` reported
+ * "start accepts at most one positional prompt", which names neither flag.
+ */
+describe('parseScopePrompt value-taking passthrough flags', () => {
+  const startFlags = [
+    '--force-restart',
+    '--new-session',
+    '--dry-run',
+    '--debug',
+    '--no-register',
+    '--json',
+    '--wait',
+    '--idempotency-key',
+    '--project-id',
+    '--project-root',
+    '--viewer-window',
+    '--on-conflict',
+  ]
+
+  it('consumes --viewer-window / --on-conflict values instead of reading them as prompts', async () => {
+    const prompt = await parseScopePrompt(
+      ['mable@hrc-runtime', '--viewer-window', 'console', '--on-conflict', 'suffix', '--dry-run'],
+      { command: 'start', passthroughFlags: startFlags }
+    )
+    expect(prompt).toBeUndefined()
+  })
+
+  it('still reads a real positional prompt alongside those flags', async () => {
+    const prompt = await parseScopePrompt(
+      ['mable@hrc-runtime', '--viewer-window', 'console', 'wake up', '--on-conflict', 'suffix'],
+      { command: 'start', passthroughFlags: startFlags }
+    )
+    expect(prompt).toBe('wake up')
+  })
+})

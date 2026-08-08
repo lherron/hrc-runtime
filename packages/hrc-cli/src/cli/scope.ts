@@ -406,6 +406,23 @@ export function buildManagedAttachIntent(scope: ManagedScopeContext): HrcRuntime
   })
 }
 
+/**
+ * Passthrough flags that consume the NEXT argv token as their value.
+ *
+ * Declared once, next to the parser that honours it. A value-taking flag missing
+ * from this set does not fail loudly — its value is silently read as a positional
+ * prompt, which surfaces as a baffling "accepts at most one positional prompt"
+ * (T-07118). Any new `--flag <value>` added to a scope command belongs here.
+ */
+const VALUE_TAKING_PASSTHROUGH_FLAGS = new Set([
+  '--project-id',
+  '--project-root',
+  '--wait',
+  '--idempotency-key',
+  '--viewer-window',
+  '--on-conflict',
+])
+
 export async function parseScopePrompt(
   args: string[],
   options: {
@@ -435,13 +452,9 @@ export async function parseScopePrompt(
     if (!arg) continue
 
     if (options.passthroughFlags.includes(arg)) {
-      // Value-taking passthrough flags must also consume their value.
-      if (
-        arg === '--project-id' ||
-        arg === '--project-root' ||
-        arg === '--wait' ||
-        arg === '--idempotency-key'
-      ) {
+      // Value-taking passthrough flags must also consume their value, or the
+      // value lands in the positional-prompt slot.
+      if (VALUE_TAKING_PASSTHROUGH_FLAGS.has(arg)) {
         if (args[i + 1] === undefined) fatal(`${arg} requires a value`)
         i += 1
       }
