@@ -37,6 +37,11 @@ function makeFakeGhostmux() {
   const runner = async (args: string[]) => {
     calls.push(args)
     const key = args.join(' ')
+    // Pinned to a PRE-windows-API build (T-07121): this suite is the legacy
+    // anchor-path regression, and the capability probe must fail closed onto it.
+    if (args[0] === 'list-windows') {
+      throw new Error('server does not support the windows API; update ScriptableGhostty')
+    }
     if (key === 'list-surfaces --json') {
       return {
         stdout: JSON.stringify({

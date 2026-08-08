@@ -42,7 +42,21 @@ export type GhostmuxSurfaceState = {
   rows?: number | undefined
   columns?: number | undefined
   anchorSurfaceId?: string | undefined
+  /**
+   * First-class managed-window id this surface CURRENTLY resides in (T-07121).
+   * Live property, never cacheable: a tab dragged between windows changes it.
+   * Absent on builds without the windows API.
+   */
+  windowId?: string | undefined
   createdBy: 'ghostmux'
+}
+
+/** A first-class managed window as answered by `new --window` / `list-windows`. */
+export type GhostmuxWindowState = {
+  windowId: string
+  /** `false` when `--find-or-create-by` matched an existing window (T-07121). */
+  created: boolean
+  terminalIds: string[]
 }
 
 type GhostmuxSplitDirection = 'right' | 'down'
@@ -78,6 +92,15 @@ const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
  * `hrc_tab_key` may appear in at most one tab PER KEYED WINDOW. Pane identity
  * (`hrc_pane_key`) stays global, so at most one live viewer pane per HRC session
  * still holds and reuse still wins over placement.
+ *
+ * AMENDED (T-07121): on a build that serves the first-class windows API, the
+ * keyed window is a real managed window found-or-created atomically by its
+ * `hrc_window_key` metadata — no anchor pane, no N+1 metadata sweep, no
+ * closeable identity carrier. Placement authority splits: pane METADATA remains
+ * logical identity, and the first-class `windowId` is physical RESIDENCY. That
+ * does not weaken the daedalus #10810 invariant — `windowId` is API topology,
+ * not presentation; titles, tab labels, cwd, and focus stay forbidden. Old
+ * builds (404 on the windows API) keep the full legacy anchor path unchanged.
  */
 const HEADLESS_SESSIONS_WINDOW_TITLE = 'Headless Sessions'
 /** Window-level metadata role stamped on the global parent window. */
@@ -279,6 +302,19 @@ export type HeadlessViewerResult =
   | { status: 'reused'; surfaceId: string; tabKey: string }
   | { status: 'failed'; error: string }
 
+/**
+ * Where a viewer tab for a window key gets created (T-07121).
+ *
+ * - `managed`: a first-class window resolved by `find-or-create-by` — new tabs
+ *   use `new --tab --window-id`, and `windowId` is the residency fence for
+ *   split-target candidates.
+ * - `anchor`: the legacy path on an old build — the window's anchor pane is the
+ *   `--parent` target and there is no residency fence to apply.
+ */
+type HeadlessWindowTarget =
+  | { kind: 'managed'; windowId: string }
+  | { kind: 'anchor'; anchor: GhostmuxSurfaceState }
+
 /** Outcome of a runtime-fenced agent-pane reap (T-05237, daedalus C4). */
 export type HeadlessReapResult =
   | { status: 'reaped'; surfaceId: string; tabCollapsed: boolean }
@@ -301,6 +337,20 @@ function isUnsupportedCommandError(message: string): boolean {
     normalized.includes('unsupported') ||
     normalized.includes('no such command') ||
     normalized.includes('404')
+  )
+}
+
+/**
+ * A ScriptableGhostty without the first-class windows API answers 404, which
+ * ghostmux renders as a distinct capability error (never `window_not_found`). An
+ * older ghostmux without the `list-windows`/`--window-id` surface at all fails as
+ * an unknown command. Both mean the same thing to HRC: stay on the legacy anchor
+ * path (T-07121).
+ */
+function isWindowsApiUnsupportedError(message: string): boolean {
+  return (
+    message.toLowerCase().includes('does not support the windows api') ||
+    isUnsupportedCommandError(message)
   )
 }
 
@@ -360,7 +410,31 @@ export function parseGhostmuxSurfaceState(stdout: string): GhostmuxSurfaceState 
     focused: getBoolean(nested, 'focused'),
     rows: getNumber(nested, 'rows'),
     columns: getNumber(nested, 'columns'),
+    windowId: getString(nested, 'window_id', 'windowId'),
     createdBy: 'ghostmux',
+  }
+}
+
+/**
+ * Parse the WINDOW object answered by `ghostmux new --window [--find-or-create-by]`
+ * (T-07121). `id` is a window id — NOT a surface id — and `created` reports
+ * whether find-or-create missed. Feeding the window id to a `-t`/`--parent`
+ * surface target fails with "Terminal not found"; it is only ever a `--window-id`.
+ */
+export function parseGhostmuxWindowState(stdout: string): GhostmuxWindowState {
+  const parsed = parseJson(stdout)
+  const record = isRecord(parsed) ? parsed : {}
+  const windowId = getString(record, 'id', 'window_id', 'windowId')
+  if (!windowId) {
+    throw new Error(`ghostmux command did not return a window id: ${stdout.trim() || '<empty>'}`)
+  }
+  const terminalIds = Array.isArray(record['terminal_ids'])
+    ? record['terminal_ids'].filter((id): id is string => typeof id === 'string')
+    : []
+  return {
+    windowId,
+    created: record['created'] === true,
+    terminalIds,
   }
 }
 
@@ -442,6 +516,15 @@ export class GhostmuxManager {
   private statusBarUnsupported = false
   /** Separate memo: set once `set-bg` is seen to be unsupported (T-04439). */
   private setBgUnsupported = false
+  /**
+   * Windows-API capability, probed at most once per daemon process (T-07121).
+   * `undefined` until a DEFINITIVE answer is seen; a transient probe failure
+   * (socket down, timeout) is never memoized, it just takes the legacy path for
+   * that call and re-probes later.
+   */
+  private windowsApiSupported: boolean | undefined
+  /** In-flight probe, so concurrent first dispatches issue exactly one. */
+  private windowsApiProbe: Promise<boolean> | undefined
   /**
    * In-process keyed serialization for headless viewer find-or-create (T-05237,
    * daedalus concurrency condition). Two concurrent dispatches for the same tab
@@ -690,12 +773,22 @@ export class GhostmuxManager {
           }
         }
 
-        const anchor = await this.ensureHeadlessWindow(windowKey)
+        // ORDER IS MANDATORY (T-07121, daedalus #17988): find-or-create the keyed
+        // window FIRST, then evaluate split-target candidates against the window it
+        // returned. Reversing it re-admits the stale-key hazard the residency fence
+        // exists to close.
+        const target = await this.ensureHeadlessWindow(windowKey)
         // An existing pane for this composite `(windowKey, tabKey)` identity is a
         // valid split target — any live pane in that tab puts the new pane in the
         // same Ghostty tab. The window fence is what keeps a console-keyed pane
-        // from splitting into a same-tabKey tab in the default window.
-        const tabPane = await this.findTaskTab(windowKey, tab.tabKey)
+        // from splitting into a same-tabKey tab in the default window; on the
+        // managed path the RESIDENCY fence additionally rejects a pane that wears
+        // the right key but physically lives in another window.
+        const tabPane = await this.findTaskTab(
+          windowKey,
+          tab.tabKey,
+          target.kind === 'managed' ? target.windowId : undefined
+        )
 
         // `ghostmux new`/`new-pane` transiently hit the libghostty surface_not_realize
         // race under load; ghostmux's guidance is bounded backoff (clears in 1-2 tries).
@@ -712,17 +805,7 @@ export class GhostmuxManager {
                     '--json',
                   ])
                 ).stdout
-              : (
-                  await this.exec([
-                    'new',
-                    '--tab',
-                    '--parent',
-                    anchor.surfaceId,
-                    '--title',
-                    paneTitle,
-                    '--json',
-                  ])
-                ).stdout
+              : (await this.exec(this.newTabArgs(target, paneTitle))).stdout
           )
         )
         await this.stampAgentPaneMetadata(created.surfaceId, identity, {
@@ -884,13 +967,99 @@ export class GhostmuxManager {
     return run
   }
 
+  /** Argv for a fresh viewer tab in the keyed window (T-07121). */
+  private newTabArgs(target: HeadlessWindowTarget, paneTitle: string): string[] {
+    const placement =
+      target.kind === 'managed'
+        ? ['--window-id', target.windowId]
+        : ['--parent', target.anchor.surfaceId]
+    return ['new', '--tab', ...placement, '--title', paneTitle, '--json']
+  }
+
   /**
-   * Find-or-create the single global "Headless Sessions" window, returning its
-   * anchor surface (the stable `--parent` target for new task tabs). The anchor is
-   * non-runtime-owned and is never reaped. Serialized on a shared window lock so
-   * two concurrent first-dispatches cannot create two windows.
+   * Whether this ScriptableGhostty serves the first-class windows API (T-07121).
+   * Probed at most once per daemon process with the cheapest read on the surface
+   * (`list-windows`); a 404 / unknown-command answer memoizes the capability OFF
+   * and every keyed-window call stays on the legacy anchor path forever after.
    */
-  private ensureHeadlessWindow(windowKey: string): Promise<GhostmuxSurfaceState> {
+  private async supportsWindowsApi(): Promise<boolean> {
+    if (this.windowsApiSupported !== undefined) return this.windowsApiSupported
+    this.windowsApiProbe ??= this.probeWindowsApi()
+    const supported = await this.windowsApiProbe
+    // A transient failure left the capability undecided — drop the memoized probe
+    // so the next dispatch asks again rather than being pinned to legacy.
+    if (this.windowsApiSupported === undefined) this.windowsApiProbe = undefined
+    return supported
+  }
+
+  private async probeWindowsApi(): Promise<boolean> {
+    try {
+      await this.exec(['list-windows', '--json'])
+      this.windowsApiSupported = true
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isWindowsApiUnsupportedError(message)) {
+        this.windowsApiSupported = false
+        return false
+      }
+      return false
+    }
+  }
+
+  /**
+   * Resolve the keyed window to place viewer tabs in.
+   *
+   * On a windows-API build this is ONE atomic call: `new --window
+   * --find-or-create-by '{"hrc_window_key": <key>}'`. A hit returns the oldest
+   * matching window with its metadata untouched; a miss creates one carrying the
+   * key. Because the server is the arbiter, no HRC-side window lock is needed —
+   * concurrent dispatches for different tab keys in one window converge on the
+   * same window id. Legacy builds keep the locked anchor find-or-create.
+   */
+  private async ensureHeadlessWindow(windowKey: string): Promise<HeadlessWindowTarget> {
+    if (await this.supportsWindowsApi()) {
+      try {
+        const window = await this.withGhostmuxBackoff(async () =>
+          parseGhostmuxWindowState(
+            (
+              await this.exec([
+                'new',
+                '--window',
+                '--find-or-create-by',
+                JSON.stringify({ hrc_window_key: windowKey }),
+                '--metadata',
+                JSON.stringify({
+                  hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE,
+                  hrc_window_key: windowKey,
+                }),
+                '--title',
+                headlessWindowTitle(windowKey),
+                '--json',
+              ])
+            ).stdout
+          )
+        )
+        return { kind: 'managed', windowId: window.windowId }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // The build changed under a live daemon (Ghostty downgraded/restarted old).
+        // Re-memoize OFF and fall through to legacy rather than failing the viewer.
+        if (!isWindowsApiUnsupportedError(message)) throw error
+        this.windowsApiSupported = false
+      }
+    }
+    return { kind: 'anchor', anchor: await this.ensureLegacyWindowAnchor(windowKey) }
+  }
+
+  /**
+   * LEGACY (pre-windows-API builds only): find-or-create the keyed "Headless
+   * Sessions" window by its anchor surface — the stable `--parent` target for new
+   * task tabs. The anchor is non-runtime-owned and is never reaped. Serialized on
+   * a shared window lock so two concurrent first-dispatches cannot create two
+   * windows; the managed path needs no such lock because find-or-create is atomic.
+   */
+  private ensureLegacyWindowAnchor(windowKey: string): Promise<GhostmuxSurfaceState> {
     return this.withHeadlessLock(`window:${windowKey}`, async () => {
       const existing = await this.findWindowAnchor(windowKey)
       if (existing) return existing
@@ -964,13 +1133,26 @@ export class GhostmuxManager {
   /**
    * Any live agent pane sharing this COMPOSITE `(windowKey, tabKey)` identity — a
    * valid split target for that tab in that window (T-07118).
+   *
+   * RESIDENCY FENCE (T-07121, daedalus #17988): when `residentWindowId` is given
+   * (the managed window find-or-create just returned), a candidate must ALSO
+   * physically live in that window. After an upstream managed+managed hand-merge
+   * the losing registry entry dissolves but its PANES survive inside the winner
+   * still wearing the old `hrc_window_key`; metadata alone would send the next
+   * hinted session splitting into that stale tab in the wrong window while the
+   * freshly created keyed window sat empty. Residency is read from the
+   * first-class `window_id`, never cached — a dragged tab changes it. A candidate
+   * whose residency cannot be read fails the fence, and the stale metadata is
+   * left in place: it is inert, because pane reuse is keyed on `hrc_pane_key`.
    */
   private async findTaskTab(
     windowKey: string,
-    tabKey: string
+    tabKey: string,
+    residentWindowId?: string | undefined
   ): Promise<GhostmuxSurfaceState | null> {
     const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
     for (const surface of surfaces) {
+      if (residentWindowId !== undefined && surface.windowId !== residentWindowId) continue
       const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
       if (metadataIsAgentPaneForTab(metadata, windowKey, tabKey)) return surface
     }

@@ -123,17 +123,30 @@ hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
   `session_roster_exhausted`. Suffixed slots are ordinary handles —
   `mable@hrc-runtime:primary-nova` addresses normally over hrcchat.
 
-**Adopting a window as the `console` key** is a one-time manual stamp on any
-long-lived surface in that window (HRC never reaps anchors, so adopting a real
-tab you already use is safe):
+**Adopting a window as the `console` key** is a one-time stamp on the WINDOW
+itself — enumerate the managed windows, then write the key onto the one you want
+(T-07121). No pane is marked and nothing in that window is ever reaped:
+
+```bash
+ghostmux list-windows --json      # pick the id of the window you want to keep
+ghostmux metadata set --window-id <windowId> \
+  '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}'
+ghostmux list-windows --meta hrc_window_key=console --json   # verify
+```
+
+HRC resolves the keyed window by that metadata alone, so closing any tab in it —
+including the one you stamped from — leaves the key intact. If the whole window
+is closed, HRC creates a fresh keyed window on the next dispatch: degraded, never
+broken. The window registry is in-memory, so the same re-adoption applies after a
+Ghostty restart.
+
+On a ScriptableGhostty without the windows API (404), HRC falls back to the older
+anchor-pane scheme, where the key rides on a long-lived surface instead:
 
 ```bash
 ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-window-anchor","hrc_window_key":"console"}'
 ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}' --window
 ```
-
-If that window is later closed, HRC creates a fresh keyed window — degraded,
-never broken.
 
 A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); `hrc run` prints a session-summary block on detach and is not treated as an attach failure.
 

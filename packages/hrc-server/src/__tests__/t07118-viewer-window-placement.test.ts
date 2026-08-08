@@ -51,6 +51,11 @@ function makeFakeGhostmux() {
   }
   const runner = async (args: string[]) => {
     calls.push(args)
+    // Pinned to a PRE-windows-API build (T-07121): these properties are the
+    // legacy anchor path, which the cutover leaves byte-for-byte unchanged.
+    if (args[0] === 'list-windows') {
+      throw new Error('server does not support the windows API; update ScriptableGhostty')
+    }
     if (args.join(' ') === 'list-surfaces --json') {
       return {
         stdout: JSON.stringify({
