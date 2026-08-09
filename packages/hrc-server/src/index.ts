@@ -76,6 +76,13 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import { scheduleExternalRegistrationCollectiveEstablishment } from './external-registration-establishment.js'
+import {
+  DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
+  type ExternalRegistrationRendezvousMethods,
+  externalRegistrationRendezvousMethods,
+  markExternalParticipantDetached,
+} from './external-registration-rendezvous.js'
 import { createFederationAcceptHandler } from './federation/accept.js'
 import { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import {
@@ -158,6 +165,15 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
+import { resolveRegistrationClasses } from './registration-classes-config.js'
+import {
+  type RegistrationGcHandlersMethods,
+  registrationGcHandlersMethods,
+} from './registration-gc-handlers.js'
+import {
+  type RegistrationHandlersMethods,
+  registrationHandlersMethods,
+} from './registration-handlers.js'
 import { captureServerRelease, projectServerRelease } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
@@ -608,12 +624,15 @@ interface HrcServerInstance
     RuntimeControlHandlersMethods,
     TargetMessageHandlersMethods,
     EventNotificationHandlersMethods,
+    ExternalRegistrationRendezvousMethods,
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
     LaunchLifecycleHandlersMethods,
     MailKickerHandlersMethods,
     MailHandlersMethods,
     RosterClaimHandlersMethods,
+    RegistrationGcHandlersMethods,
+    RegistrationHandlersMethods,
     RuntimeInspectHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
@@ -640,6 +659,12 @@ class HrcServerInstance implements HrcServer {
     { answeredAt: string; runtimes: readonly HrcRuntimeSnapshot[] }
   >()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
+  readonly externalRegistrationOperations = new Map<string, Promise<void>>()
+  readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
+  readonly externalParticipantClients = new Map<
+    string,
+    import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
+  >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
@@ -683,6 +708,12 @@ class HrcServerInstance implements HrcServer {
   eventIngestListener: EventIngestListener | undefined
   eventForwarder: EventForwarder | undefined
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
+    [exactRouteKey('GET', '/v1/admin/registrations/gc')]: () =>
+      this.handleListRegistrationGcCandidates(),
+    [exactRouteKey('POST', '/v1/admin/registrations/gc')]: (request) =>
+      this.handleRetireRegistrationScopes(request),
+    [exactRouteKey('POST', '/v1/registrations')]: (request) =>
+      this.handleCreateExternalRegistration(request),
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
     [exactRouteKey('GET', '/v1/sessions')]: (_request, url) => this.handleListSessions(url),
@@ -1070,6 +1101,22 @@ class HrcServerInstance implements HrcServer {
     this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
     this.startMailKicker()
+    for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
+      if (grant.consumed) {
+        scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
+      }
+      this.scheduleExternalRegistrationRendezvous(grant.registrationId)
+    }
+    for (const grant of this.db.externalRegistrationGrants.listEstablished()) {
+      scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
+      markExternalParticipantDetached(
+        this,
+        grant,
+        this.options.externalParticipantLingerMs ?? DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
+        { reason: 'controller_restart' }
+      )
+      this.scheduleExternalRegistrationRendezvous(grant.registrationId)
+    }
 
     // T-01996: eagerly warm the request-serving broker controller. The pre-instance
     // reconcile only classified durable runtimes (attach:false); this is the sole
@@ -1262,6 +1309,20 @@ class HrcServerInstance implements HrcServer {
     const mailTargetOperations = [...this.mailKickerTargetOperations.values()]
     if (mailTargetOperations.length > 0) {
       await Promise.allSettled(mailTargetOperations)
+    }
+    for (const client of this.externalParticipantClients.values()) {
+      await client.close().catch(() => undefined)
+    }
+    this.externalParticipantClients.clear()
+    const externalRegistrationOperations = [...this.externalRegistrationOperations.values()]
+    if (externalRegistrationOperations.length > 0) {
+      await Promise.allSettled(externalRegistrationOperations)
+    }
+    const externalRegistrationEstablishmentOperations = [
+      ...this.externalRegistrationEstablishmentOperations.values(),
+    ]
+    if (externalRegistrationEstablishmentOperations.length > 0) {
+      await Promise.allSettled(externalRegistrationEstablishmentOperations)
     }
     for (const close of [...this.activeStreamClosers]) {
       try {
@@ -2242,13 +2303,16 @@ Object.assign(
   runtimeControlHandlersMethods,
   targetMessageHandlersMethods,
   eventNotificationHandlersMethods,
+  externalRegistrationRendezvousMethods,
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
   launchLifecycleHandlersMethods,
   mailKickerHandlersMethods,
   mailHandlersMethods,
   runtimeInspectHandlersMethods,
-  rosterClaimHandlersMethods
+  rosterClaimHandlersMethods,
+  registrationGcHandlersMethods,
+  registrationHandlersMethods
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
@@ -2257,6 +2321,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
+    registrationClasses: await resolveRegistrationClasses(options.registrationClasses),
   }
   const logCtx = {
     runtimeRoot: resolvedOptions.runtimeRoot,
@@ -2376,6 +2441,43 @@ export {
   resolveCommandRunTargets,
   validateConfiguredCommandRunTarget,
 } from './command-run-targets-config.js'
+export {
+  HRC_REGISTRATION_CLASSES_FILE_ENV,
+  MAX_EXTERNAL_REGISTRATION_TTL_SECONDS,
+  loadRegistrationClassesFromEnv,
+  parseRegistrationClassesConfig,
+  resolveRegistrationClasses,
+  validateRegistrationClassConfig,
+} from './registration-classes-config.js'
+export type {
+  RegistrationClassConfig,
+  RegistrationClassScopeTemplate,
+} from './registration-classes-config.js'
+export { hashRegistrationCredential } from './registration-handlers.js'
+export type {
+  CreateExternalRegistrationRequest,
+  CreateExternalRegistrationResponse,
+} from './registration-handlers.js'
+export {
+  EPR_HELLO_ERROR_CODE,
+  EPR_PROTOCOL_VERSION,
+  EPR_REPLAY_UNAVAILABLE_CODE,
+  EprHelloError,
+  connectExternalParticipant,
+  markExternalParticipantDetached,
+  parseEprHelloResponse,
+  performExternalParticipantAttach,
+  performExternalRegistrationHello,
+  runExternalRegistrationRendezvous,
+} from './external-registration-rendezvous.js'
+export type {
+  EprEstablishedDelivery,
+  EprHelloResponse,
+  ExternalParticipantCapabilities,
+  ExternalParticipantClientFactory,
+  ExternalParticipantInfo,
+  ExternalParticipantRpcClient,
+} from './external-registration-rendezvous.js'
 export {
   EXPECTED_FEDERATION_CONFIG_MODE,
   FEDERATION_CONFIG_BASENAME,

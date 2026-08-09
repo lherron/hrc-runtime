@@ -43,6 +43,7 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
@@ -1272,7 +1273,7 @@ export function markRuntimeStaleForBrokerReprovision(
   runtime: HrcRuntimeSnapshot,
   payload: Record<string, unknown>
 ): void {
-  if (isRuntimeUnavailableStatus(runtime.status)) {
+  if (isExternalLifecycleOwner(runtime) || isRuntimeUnavailableStatus(runtime.status)) {
     return
   }
 

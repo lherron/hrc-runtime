@@ -203,7 +203,13 @@ function resolveTag(_version: string, options: Options): string {
 }
 
 function run(cmd: string, args: string[], cwd = ROOT): { status: number; out: string } {
-  const result = spawnSync(cmd, args, { cwd, encoding: 'utf8' })
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && (cmd !== 'git' || !entry[0].startsWith('GIT_'))
+    )
+  )
+  const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', env })
   return {
     status: result.status ?? -1,
     out: `${result.stdout || ''}${result.stderr || ''}`,

@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import {
+  type GitFixture,
+  createGitFixture,
+  runGit,
+  runGitResult,
+} from '../../../../test-support/git-fixture.js'
 
 import { resolveHrcAgentPlacementPaths } from '../project-placement.js'
 
@@ -22,18 +28,30 @@ function canonicalCheckout(path: string): void {
   mkdirSync(join(path, '.git'), { recursive: true })
 }
 
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim()
+function createFixtureRepo(
+  path: string,
+  inheritedEnvironment: Record<string, string | undefined> = process.env
+): GitFixture {
+  return createGitFixture(path, {
+    initialBranch: 'main',
+    inheritedEnvironment,
+    identity: { name: 'Placement Test', email: 'test@example.com' },
+  })
 }
 
-function committedRepo(path: string): void {
-  mkdirSync(path, { recursive: true })
-  execFileSync('git', ['init', '-b', 'main', path], { stdio: 'ignore' })
-  git(path, 'config', 'user.email', 'test@example.com')
-  git(path, 'config', 'user.name', 'Placement Test')
-  writeFileSync(join(path, 'README.md'), 'fixture\n')
-  git(path, 'add', 'README.md')
-  git(path, 'commit', '-m', 'fixture')
+function git(repo: GitFixture, ...args: string[]): string {
+  return runGit(repo, args)
+}
+
+function committedRepo(
+  path: string,
+  inheritedEnvironment: Record<string, string | undefined> = process.env
+): GitFixture {
+  const repo = createFixtureRepo(path, inheritedEnvironment)
+  writeFileSync(join(repo.workTree!, 'README.md'), 'fixture\n')
+  git(repo, 'add', 'README.md')
+  git(repo, 'commit', '-m', 'fixture')
+  return repo
 }
 
 describe('resolveHrcAgentPlacementPaths', () => {
@@ -83,8 +101,8 @@ describe('resolveHrcAgentPlacementPaths', () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const worktree = join(root, 'taskboard-T-06369')
-    committedRepo(projectRoot)
-    git(projectRoot, 'worktree', 'add', '-b', 'drain/T-06369-placement', worktree)
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '-b', 'drain/T-06369-placement', worktree)
 
     const resolved = resolveHrcAgentPlacementPaths({
       agentId: 'cody',
@@ -93,7 +111,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
       taskId: 'T-06369',
       projectOrigin: 'explicit',
       registryProjects: [{ slug: 'taskboard', root: projectRoot }],
-      env: {},
+      env: repo.env,
     })
 
     expect(resolved.projectRoot).toBe(realpathSync(worktree))
@@ -105,10 +123,54 @@ describe('resolveHrcAgentPlacementPaths', () => {
     })
   })
 
+  it('ignores hostile ambient Git context while preserving deliberate Git env overrides', () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const worktree = join(root, 'taskboard-T-07138')
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '-b', 'feature/T-07138-placement', worktree)
+    const poison = committedRepo(join(root, 'poison'))
+
+    const originalGitDir = process.env['GIT_DIR']
+    const originalGitWorkTree = process.env['GIT_WORK_TREE']
+    process.env['GIT_DIR'] = poison.gitDir
+    Reflect.deleteProperty(process.env, 'GIT_WORK_TREE')
+    try {
+      const ambient = resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        taskId: 'T-07138',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: projectRoot }],
+        env: {},
+      })
+      expect(ambient.cwd).toBe(realpathSync(worktree))
+      expect(ambient.resolution.source).toBe('task-worktree')
+
+      const deliberate = resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        taskId: 'T-07138',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: projectRoot }],
+        env: { GIT_DIR: poison.gitDir, GIT_WORK_TREE: poison.workTree },
+      })
+      expect(deliberate.cwd).toBe(projectRoot)
+      expect(deliberate.resolution.source).toBe('wrkq-registry')
+    } finally {
+      if (originalGitDir === undefined) Reflect.deleteProperty(process.env, 'GIT_DIR')
+      else process.env['GIT_DIR'] = originalGitDir
+      if (originalGitWorkTree === undefined) Reflect.deleteProperty(process.env, 'GIT_WORK_TREE')
+      else process.env['GIT_WORK_TREE'] = originalGitWorkTree
+    }
+  })
+
   it('keeps explicit placement identical across unrelated, agent-home, and target cwd locations', () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
-    committedRepo(projectRoot)
+    const repo = committedRepo(projectRoot)
     const senderLocations = [
       join(root, 'unrelated'),
       join(root, 'agents', 'cody'),
@@ -125,7 +187,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
         projectOrigin: 'explicit',
         registryProjects: [{ slug: 'taskboard', root: projectRoot }],
         cwd,
-        env: {},
+        env: repo.env,
       })
     )
 
@@ -135,7 +197,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
     expect(absent[0]?.resolution.source).toBe('wrkq-registry')
 
     const worktree = join(root, 'taskboard-T-06371')
-    git(projectRoot, 'worktree', 'add', '-b', 'feature/T-06371-matrix', worktree)
+    git(repo, 'worktree', 'add', '-b', 'feature/T-06371-matrix', worktree)
     const present = senderLocations.map((cwd) =>
       resolveHrcAgentPlacementPaths({
         agentId: 'cody',
@@ -145,7 +207,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
         projectOrigin: 'explicit',
         registryProjects: [{ slug: 'taskboard', root: projectRoot }],
         cwd,
-        env: {},
+        env: repo.env,
       })
     )
 
@@ -216,9 +278,9 @@ describe('resolveHrcAgentPlacementPaths', () => {
   it('fails closed when more than one worktree branch carries the exact task token', () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
-    committedRepo(projectRoot)
-    git(projectRoot, 'worktree', 'add', '-b', 'drain/T-06369-one', join(root, 'one'))
-    git(projectRoot, 'worktree', 'add', '-b', 'wf/T-06369-two', join(root, 'two'))
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '-b', 'drain/T-06369-one', join(root, 'one'))
+    git(repo, 'worktree', 'add', '-b', 'wf/T-06369-two', join(root, 'two'))
 
     expect(() =>
       resolveHrcAgentPlacementPaths({
@@ -228,7 +290,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
         taskId: 'T-06369',
         projectOrigin: 'explicit',
         registryProjects: [{ slug: 'taskboard', root: projectRoot }],
-        env: {},
+        env: repo.env,
       })
     ).toThrow(/multiple worktrees match T-06369.*one.*two/)
   })
@@ -237,8 +299,8 @@ describe('resolveHrcAgentPlacementPaths', () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
     const detached = join(root, 'taskboard-T-06369-detached')
-    committedRepo(projectRoot)
-    git(projectRoot, 'worktree', 'add', '--detach', detached)
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '--detach', detached)
 
     expect(() =>
       resolveHrcAgentPlacementPaths({
@@ -248,7 +310,7 @@ describe('resolveHrcAgentPlacementPaths', () => {
         taskId: 'T-06369',
         projectOrigin: 'explicit',
         registryProjects: [{ slug: 'taskboard', root: projectRoot }],
-        env: {},
+        env: repo.env,
       })
     ).toThrow(
       `worktree at ${realpathSync(detached)} appears associated with T-06369 but its branch detached`
@@ -330,5 +392,33 @@ describe('resolveHrcAgentPlacementPaths', () => {
     ).toThrow(
       'project root unknown for taskboard-T-06370-worktree; register it with: wrkq set taskboard-T-06370-worktree --root <path>; did you mean @taskboard:T-06370'
     )
+  })
+
+  it('keeps fixture commits isolated from hostile inherited Git repository variables', () => {
+    const root = temporaryRoot()
+    const poisonRoot = join(root, 'poison')
+    const fixtureRoot = join(root, 'fixture')
+    const poison = createFixtureRepo(poisonRoot)
+    const fixture = committedRepo(fixtureRoot, {
+      ...process.env,
+      GIT_DIR: poison.gitDir,
+      GIT_WORK_TREE: poison.workTree,
+      GIT_INDEX_FILE: join(poison.gitDir, 'index'),
+    })
+
+    expect(git(fixture, 'rev-parse', '--absolute-git-dir')).toBe(fixture.gitDir)
+    expect(git(fixture, 'rev-parse', '--show-toplevel')).toBe(fixture.workTree)
+    expect(git(fixture, 'log', '-1', '--format=%s')).toBe('fixture')
+    expect(git(fixture, 'config', '--local', '--list')).not.toContain('user.')
+    expect(runGitResult(poison, ['rev-parse', '--verify', 'HEAD']).status).not.toBe(0)
+  })
+
+  it('refuses a fixture cwd that resolves inside the real checkout', () => {
+    const unsafePath = join(process.cwd(), '.hrc-placement-test-fixture')
+
+    expect(() => createGitFixture(unsafePath)).toThrow(
+      /refusing Git fixture cwd .*: it resolves inside existing checkout/
+    )
+    expect(existsSync(unsafePath)).toBe(false)
   })
 })

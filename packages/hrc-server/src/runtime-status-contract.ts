@@ -1,3 +1,6 @@
+/** HRC-owned statuses not authored by the process-runtime substrate contract. */
+export const HRC_LOCAL_RUNTIME_STATUS_VALUES = ['detached'] as const
+
 export const HRC_RUNTIME_STATE_JSON_STATUS_VALUES = [
   'starting',
   'ready',
@@ -10,6 +13,7 @@ export const HRC_RUNTIME_STATE_JSON_STATUS_VALUES = [
   'stale',
   'terminated',
   'crashed',
+  ...HRC_LOCAL_RUNTIME_STATUS_VALUES,
 ] as const
 
 export const HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS = [
@@ -30,6 +34,10 @@ export const HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS = [
     producer: 'startup-reconcile/runtime-mutations.markRuntimeTerminatedAfterUserExit',
   },
   { status: 'crashed', producer: 'broker/controller/lifecycle.applyTerminalRuntimeState' },
+  {
+    status: 'detached',
+    producer: 'external-registration-rendezvous.markExternalParticipantDetached',
+  },
 ] as const
 
 export const HRC_RUNTIME_ROW_STATUS_VALUES = [
@@ -57,4 +65,8 @@ export const HRC_RUNTIME_ROW_STATUS_PRODUCERS = [
   },
   { status: 'dead', producer: 'startup-reconcile/runtime-mutations.markRuntimeDead' },
   { status: 'adopted', producer: 'runtime-list-adopt-handlers.handleAdoptRuntime' },
+  {
+    status: 'detached',
+    producer: 'external-registration-rendezvous.markExternalParticipantDetached',
+  },
 ] as const

@@ -12,7 +12,7 @@ import type { ExecAttachDescriptor } from './scope.js'
 import { createClient, fatal } from './shared.js'
 
 export function isRuntimeUnavailableStatus(status: string): boolean {
-  return status === 'terminated' || status === 'dead' || status === 'stale'
+  return status === 'terminated' || status === 'dead' || status === 'stale' || status === 'detached'
 }
 
 function runtimeRecency(runtime: HrcRuntimeSnapshot): number {

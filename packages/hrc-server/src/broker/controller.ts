@@ -34,6 +34,7 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 
@@ -63,6 +64,7 @@ import {
   type LifecycleContext,
   markBrokerCrashTerminal,
   markBrokerInvocationTerminal,
+  markExternalParticipantInvocationTerminal,
 } from './controller/lifecycle'
 import {
   type PersistenceContext,
@@ -953,6 +955,16 @@ export class HarnessBrokerController {
     runtimeId: string,
     opts: { reason?: string } = {}
   ): Promise<BrokerControllerRpcResult<{ disposed: true }>> {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime && isExternalLifecycleOwner(runtime)) {
+      return {
+        ok: false,
+        error: new BrokerControllerError(
+          'broker_runtime_not_active',
+          `runtime ${runtimeId} has external lifecycle ownership`
+        ),
+      }
+    }
     const active = this.active.get(runtimeId)
     if (!active) {
       return { ok: false, error: this.notActive(runtimeId) }
@@ -1132,9 +1144,24 @@ export class HarnessBrokerController {
     })()
   }
 
-  private async projectBrokerEventWithBusyRetry(
+  /**
+   * Project one validated EPR envelope through the canonical broker mapper.
+   * External participants share the mapper but own distinct process-fate law:
+   * their clean `invocation.exited` is never classified as a broker crash.
+   */
+  async projectExternalParticipantEvent(
     runtimeId: string,
     envelope: InvocationEventEnvelope
+  ): Promise<void> {
+    await this.projectBrokerEventWithBusyRetry(runtimeId, envelope, {
+      externalParticipant: true,
+    })
+  }
+
+  private async projectBrokerEventWithBusyRetry(
+    runtimeId: string,
+    envelope: InvocationEventEnvelope,
+    options: { externalParticipant?: boolean | undefined } = {}
   ): Promise<void> {
     const startedAtMs = Date.now()
     let attempt = 1
@@ -1181,7 +1208,7 @@ export class HarnessBrokerController {
           }
         }
         const result = this.mapper.apply(envelope)
-        this.afterMappedEvent(runtimeId, envelope, result)
+        this.afterMappedEvent(runtimeId, envelope, result, options)
         return
       } catch (error) {
         if (this.shuttingDown || isClosedDbError(error)) {
@@ -1422,7 +1449,8 @@ export class HarnessBrokerController {
   private afterMappedEvent(
     runtimeId: string,
     envelope: InvocationEventEnvelope,
-    result: BrokerProjectionResult
+    result: BrokerProjectionResult,
+    options: { externalParticipant?: boolean | undefined } = {}
   ): void {
     if (!result.idempotent) {
       const invocation = this.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
@@ -1460,7 +1488,20 @@ export class HarnessBrokerController {
       // provider never reports child exit.
     }
 
-    if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
+    if (options.externalParticipant) {
+      if (envelope.type === 'invocation.exited') {
+        this.flushBrokerEventGapBackfill(String(envelope.invocationId))
+        markExternalParticipantInvocationTerminal(
+          this.lifecycleContext(),
+          runtimeId,
+          envelope,
+          result
+        )
+      }
+      // `invocation.failed` describes invocation state, not externally-owned
+      // process fate. Without the required clean `invocation.exited`, transport
+      // loss is classified by the EPR owner as detached, never broker-crashed.
+    } else if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
       this.flushBrokerEventGapBackfill(String(envelope.invocationId))
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
     }

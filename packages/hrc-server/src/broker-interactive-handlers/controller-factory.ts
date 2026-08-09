@@ -16,6 +16,7 @@ import {
 import { type BrokerTmuxAllocator, HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import { canOperatorAttach, hasLeasedBrokerSubstrate } from '../broker/runtime-hosting.js'
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { renderStatusBar, viewerTerminalBg } from '../headless-viewer-status.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
@@ -179,6 +180,7 @@ export function getHarnessBrokerController(
       const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
       if (
         !runtime ||
+        isExternalLifecycleOwner(runtime) ||
         runtime.controllerKind !== 'harness-broker' ||
         (runtime.transport !== 'tmux' && !hasLeasedBrokerSubstrate(runtime))
       ) {

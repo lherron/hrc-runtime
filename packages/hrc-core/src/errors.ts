@@ -1,10 +1,14 @@
 export const HrcErrorCode = {
   MALFORMED_REQUEST: 'malformed_request',
+  /** External-participant registration request failed its wire-contract validation. */
+  MALFORMED_REGISTRATION: 'malformed',
   INVALID_SELECTOR: 'invalid_selector',
   INVALID_FENCE: 'invalid_fence',
   UNKNOWN_SESSION: 'unknown_session',
   UNKNOWN_HOST_SESSION: 'unknown_host_session',
   UNKNOWN_RUNTIME: 'unknown_runtime',
+  /** External-participant grant request named no operator-ratified registration class. */
+  UNKNOWN_REGISTRATION_CLASS: 'unknown_class',
   UNKNOWN_SURFACE: 'unknown_surface', // Phase 4 forward declaration — surfaces are resolved in phase 4
   UNKNOWN_BRIDGE: 'unknown_bridge', // Phase 5 forward declaration — bridges are resolved in phase 5
   /** @deprecated Use STALE_CONTEXT instead. Alias retained for backward compatibility with existing server/SDK references. */
@@ -59,6 +63,8 @@ export const HrcErrorCode = {
    * conflicting replay can never mutate the claimed session's persisted intent.
    */
   IDEMPOTENCY_KEY_CONFLICT: 'idempotency_key_conflict',
+  /** Every live or established slot in an external-participant class is occupied. */
+  REGISTRATION_INSTANCES_EXHAUSTED: 'instances_exhausted',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -75,11 +81,13 @@ export type HrcHttpError = {
 
 const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MALFORMED_REQUEST]: 400,
+  [HrcErrorCode.MALFORMED_REGISTRATION]: 400,
   [HrcErrorCode.INVALID_SELECTOR]: 400,
   [HrcErrorCode.INVALID_FENCE]: 400,
   [HrcErrorCode.UNKNOWN_SESSION]: 404,
   [HrcErrorCode.UNKNOWN_HOST_SESSION]: 404,
   [HrcErrorCode.UNKNOWN_RUNTIME]: 404,
+  [HrcErrorCode.UNKNOWN_REGISTRATION_CLASS]: 404,
   [HrcErrorCode.UNKNOWN_SURFACE]: 404,
   [HrcErrorCode.UNKNOWN_BRIDGE]: 404,
   [HrcErrorCode.STALE_CONTEXT]: 409,
@@ -112,6 +120,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,
   [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
   [HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 409,
+  [HrcErrorCode.REGISTRATION_INSTANCES_EXHAUSTED]: 409,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {
@@ -152,7 +161,10 @@ export class HrcDomainError extends Error {
 
 export class HrcBadRequestError extends HrcDomainError {
   constructor(
-    code: Extract<HrcErrorCode, 'malformed_request' | 'invalid_selector' | 'invalid_fence'>,
+    code: Extract<
+      HrcErrorCode,
+      'malformed_request' | 'malformed' | 'invalid_selector' | 'invalid_fence'
+    >,
     message: string,
     detail: Record<string, unknown> = {}
   ) {
@@ -168,6 +180,7 @@ export class HrcNotFoundError extends HrcDomainError {
       | 'unknown_session'
       | 'unknown_host_session'
       | 'unknown_runtime'
+      | 'unknown_class'
       | 'unknown_surface'
       | 'unknown_bridge'
       | 'unknown_app_session'
@@ -193,6 +206,7 @@ export class HrcConflictError extends HrcDomainError {
       | 'session_roster_exhausted'
       | 'roster_claim_superseded'
       | 'idempotency_key_conflict'
+      | 'instances_exhausted'
     >,
     message: string,
     detail: Record<string, unknown> = {}

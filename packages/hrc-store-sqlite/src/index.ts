@@ -1,5 +1,11 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase, OpenHrcDatabaseOptions } from './database.js'
+export { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
+export type {
+  ExternalRegistrationGrant,
+  ExternalRegistrationMint,
+  IssueExternalRegistrationGrantResult,
+} from './external-registration-grant-repository.js'
 export type { SqliteSlowStatement } from './statement-telemetry.js'
 export {
   CollectiveHistoryReplicationRepository,

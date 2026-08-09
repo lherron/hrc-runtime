@@ -494,15 +494,21 @@ function assertTargetContainment(
 }
 
 async function gitValue(workspaceRoot: string, args: string[], reason: string): Promise<string> {
-  const process = Bun.spawn(['git', '-C', workspaceRoot, ...args], {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && !entry[0].startsWith('GIT_')
+    )
+  )
+  const child = Bun.spawn(['git', '-C', workspaceRoot, ...args], {
+    env,
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: 'ignore',
   })
   const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
   ])
   if (exitCode !== 0) reject(reason, { cause: stderr.trim() })
   return stdout.trim()

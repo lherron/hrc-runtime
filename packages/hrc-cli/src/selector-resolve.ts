@@ -182,7 +182,10 @@ function resolveUniqueRuntime(
   const matches = snapshot.runtimes
     .filter(
       (runtime) =>
-        runtime.status !== 'terminated' && runtime.status !== 'dead' && runtime.status !== 'stale'
+        runtime.status !== 'terminated' &&
+        runtime.status !== 'dead' &&
+        runtime.status !== 'stale' &&
+        runtime.status !== 'detached'
     )
     .filter(predicate)
   if (matches.length === 0) {

@@ -7,6 +7,7 @@ import type {
   SweepRuntimeTransport,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { isLiveProcess } from './server-lock.js'
 import type { ListRuntimesFilter } from './server-parsers.js'
 import type { HrcServerRunRow } from './server-types.js'
@@ -179,6 +180,9 @@ export async function evaluateRuntimeAgingDisposition(
     tmuxManagerFactory: RuntimeTmuxManagerFactory
   }
 ): Promise<RuntimeAgingDisposition> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return { eligible: false, reason: 'external_lifecycle_owner' }
+  }
   if (runtime.status === 'busy') {
     return { eligible: false, reason: 'busy' }
   }
@@ -261,6 +265,9 @@ export async function evaluatePruneDisposition(
   runtime: HrcRuntimeSnapshot,
   tmux: ServerTmuxManager
 ): Promise<{ prunable: boolean; reason?: string }> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return { prunable: false, reason: 'external_lifecycle_owner' }
+  }
   if (!isRuntimeUnavailableStatus(runtime.status)) {
     return { prunable: false, reason: `status_not_prunable:${runtime.status}` }
   }

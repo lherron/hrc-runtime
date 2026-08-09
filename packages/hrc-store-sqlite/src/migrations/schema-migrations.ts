@@ -1378,6 +1378,81 @@ const rosterClaimsMigration: HrcMigration = {
   },
 }
 
+/**
+ * EPR A1: one-time-secret external participant grants. The request metadata is
+ * retained for A2 rendezvous, but only the credential hash reaches disk.
+ */
+const externalRegistrationGrantsMigration: HrcMigration = {
+  id: '0037_external_registration_grants',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS external_registration_grants (
+        registration_id TEXT PRIMARY KEY,
+        class_id TEXT NOT NULL,
+        derived_scope TEXT NOT NULL UNIQUE,
+        socket_path TEXT NOT NULL,
+        credential_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1)),
+        turns_allowed INTEGER NOT NULL CHECK (turns_allowed IN (0, 1)),
+        provisioner_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_external_registration_grants_capacity
+        ON external_registration_grants(class_id, consumed, expires_at);
+    `)
+  },
+}
+
+/**
+ * EPR A2: link a consumed grant to the one start graph it minted. The delivery
+ * marker is deliberately on the registration row: hello retry classification
+ * must survive daemon restart without inferring acknowledgement from a live
+ * socket or mutable runtime status.
+ */
+const externalRegistrationMintMigration: HrcMigration = {
+  id: '0038_external_registration_mint',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE external_registration_grants ADD COLUMN host_session_id TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN runtime_id TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN operation_id TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN invocation_id TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN attach_token_ref TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN controller_instance_id TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN establishment_state TEXT
+        CHECK (establishment_state IN ('DELIVERY_PENDING', 'ESTABLISHED'));
+      ALTER TABLE external_registration_grants ADD COLUMN capabilities_json TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN participant_info_json TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN established_at TEXT;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_external_registration_grants_runtime
+        ON external_registration_grants(runtime_id)
+        WHERE runtime_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_external_registration_grants_invocation
+        ON external_registration_grants(invocation_id)
+        WHERE invocation_id IS NOT NULL;
+    `)
+  },
+}
+
+/** EPR A6: durable registration retirement projection and capacity release. */
+const externalRegistrationRetirementMigration: HrcMigration = {
+  id: '0039_external_registration_retirement',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE external_registration_grants ADD COLUMN retired_at TEXT;
+      ALTER TABLE external_registration_grants ADD COLUMN retirement_reason TEXT
+        CHECK (retirement_reason IS NULL OR retirement_reason = 'external_registration_gc');
+
+      DROP INDEX IF EXISTS idx_external_registration_grants_capacity;
+      CREATE INDEX idx_external_registration_grants_capacity
+        ON external_registration_grants(class_id, retired_at, consumed, expires_at);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1410,4 +1485,7 @@ export const schemaMigrations: readonly HrcMigration[] = [
   federationPeerAcceptanceOutcomeMigration,
   collectiveHistoryFilterColumnsMigration,
   rosterClaimsMigration,
+  externalRegistrationGrantsMigration,
+  externalRegistrationMintMigration,
+  externalRegistrationRetirementMigration,
 ]

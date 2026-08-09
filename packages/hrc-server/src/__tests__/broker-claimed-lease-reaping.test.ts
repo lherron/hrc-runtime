@@ -83,6 +83,7 @@ function seedRuntime(
     tuiPaneId?: string
     interactive?: boolean
     endpointDir?: string
+    lifecycleOwner?: 'external'
   } = {}
 ): HrcRuntimeSnapshot {
   const now = options.updatedAt ?? new Date().toISOString()
@@ -114,6 +115,7 @@ function seedRuntime(
     controllerKind: 'harness-broker',
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
+      ...(options.lifecycleOwner === undefined ? {} : { lifecycleOwner: options.lifecycleOwner }),
       broker: {
         endpoint: {
           kind: 'unix-jsonrpc-ndjson',
@@ -206,6 +208,27 @@ describe('claimed broker lease classification', () => {
     expect(result.reapedClaimedOrphans).toBe(1)
     expect(result.staledClaimedRuntimes).toBe(1)
     expect(db.runtimes.getByRuntimeId('mismatch')?.status).toBe('stale')
+  })
+
+  it('preserves an external-owner claim without probing identity or reaping its substrate', async () => {
+    const lease = await createDurableLease('external-owner')
+    seedRuntime('external-owner', lease, {
+      paneId: '%deliberately-not-the-live-pane',
+      lifecycleOwner: 'external',
+    })
+
+    const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
+
+    expect(result.preservedClaimed).toBe(1)
+    expect(result.reapedClaimedOrphans).toBe(0)
+    expect(result.staledClaimedRuntimes).toBe(0)
+    expect(db.runtimes.getByRuntimeId('external-owner')?.status).toBe('ready')
+    expect(
+      await createTmuxManager({ socketPath: lease.socketPath }).inspectWindow({
+        sessionName: lease.sessionName,
+        windowName: 'broker',
+      })
+    ).not.toBeNull()
   })
 
   it('preserves a matching terminal substrate inside the passive-continuation TTL', async () => {
@@ -353,6 +376,32 @@ describe('broker IPC directory GC', () => {
     expect(existsSync(referenced)).toBe(true)
     expect(existsSync(argvHeld)).toBe(true)
     expect(existsSync(healthHeld)).toBe(true)
+  })
+
+  it('preserves an external-owner IPC reference after ordinary terminal TTL expiry', async () => {
+    const root = join(fixture.runtimeRoot, 'bipc')
+    const referenced = join(root, 'external-owner')
+    await mkdir(referenced, { recursive: true })
+    await writeFile(join(referenced, 'b.sock'), '')
+    const lease = await createDurableLease('external-ipc')
+    seedRuntime('external-ipc', lease, {
+      status: 'terminated',
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+      endpointDir: referenced,
+      lifecycleOwner: 'external',
+    })
+
+    const result = await sweepOrphanedBrokerTmuxLeases(
+      db,
+      fixture.runtimeRoot,
+      sweepOptions({
+        terminalLeaseTtlMs: 1,
+        probeBrokerHealth: async () => 'unreachable',
+      })
+    )
+
+    expect(result.removedBrokerIpcDirs).toBe(0)
+    expect(existsSync(referenced)).toBe(true)
   })
 })
 

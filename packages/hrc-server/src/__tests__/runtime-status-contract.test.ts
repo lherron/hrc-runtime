@@ -10,6 +10,7 @@ import {
 } from 'spaces-runtime-contracts'
 
 import {
+  HRC_LOCAL_RUNTIME_STATUS_VALUES,
   HRC_RUNTIME_ROW_STATUS_PRODUCERS,
   HRC_RUNTIME_ROW_STATUS_VALUES,
   HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS,
@@ -23,6 +24,8 @@ const SOURCE_ROOTS = [
   'packages/hrc-core/src',
   'packages/hrc-store-sqlite/src',
 ] as const
+
+const CLOSED_STATUS_VALIDATOR_ROOTS = ['packages/hrc-server/src', 'packages/hrc-core/src'] as const
 
 function collectSourceFiles(root: string): string[] {
   if (!existsSync(root)) return []
@@ -120,6 +123,7 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
       'stale',
       'terminated',
       'crashed',
+      'detached',
     ])
     expect(HRC_RUNTIME_ROW_STATUS_VALUES).toEqual([
       ...HRC_RUNTIME_STATE_JSON_STATUS_VALUES,
@@ -128,12 +132,18 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
     ])
 
     for (const producer of HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS) {
-      expect(isRuntimeStateStatus(producer.status), producer.producer).toBe(true)
-      expect(RUNTIME_STATE_STATUS_VALUES).toContain(producer.status)
+      const local = HRC_LOCAL_RUNTIME_STATUS_VALUES.includes(
+        producer.status as (typeof HRC_LOCAL_RUNTIME_STATUS_VALUES)[number]
+      )
+      expect(isRuntimeStateStatus(producer.status) || local, producer.producer).toBe(true)
+      if (!local) expect(RUNTIME_STATE_STATUS_VALUES).toContain(producer.status)
     }
     for (const producer of HRC_RUNTIME_ROW_STATUS_PRODUCERS) {
-      expect(isRuntimeStatus(producer.status), producer.producer).toBe(true)
-      expect(RUNTIME_STATUS_VALUES).toContain(producer.status)
+      const local = HRC_LOCAL_RUNTIME_STATUS_VALUES.includes(
+        producer.status as (typeof HRC_LOCAL_RUNTIME_STATUS_VALUES)[number]
+      )
+      expect(isRuntimeStatus(producer.status) || local, producer.producer).toBe(true)
+      if (!local) expect(RUNTIME_STATUS_VALUES).toContain(producer.status)
     }
 
     expect(HRC_RUNTIME_STATE_JSON_STATUS_VALUES).not.toContain('adopted')
@@ -148,5 +158,23 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
       (status) => !classified.has(status)
     )
     expect(unclassified).toEqual([])
+  })
+
+  test('keeps the HRC-local detached extension away from upstream closed validators', () => {
+    expect(isRuntimeStateStatus('detached')).toBe(false)
+    expect(isRuntimeStatus('detached')).toBe(false)
+    expect(HRC_RUNTIME_STATE_JSON_STATUS_VALUES).toContain('detached')
+    expect(HRC_RUNTIME_ROW_STATUS_VALUES).toContain('detached')
+
+    const closedValidatorReferences: string[] = []
+    for (const root of CLOSED_STATUS_VALIDATOR_ROOTS) {
+      for (const file of collectSourceFiles(join(HRC_REPO_ROOT, root))) {
+        const source = readFileSync(file, 'utf8')
+        if (/\b(?:isRuntimeStateStatus|isRuntimeStatus)\b/.test(source)) {
+          closedValidatorReferences.push(relative(HRC_REPO_ROOT, file))
+        }
+      }
+    }
+    expect(closedValidatorReferences).toEqual([])
   })
 })

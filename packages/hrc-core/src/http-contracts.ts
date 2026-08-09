@@ -667,6 +667,7 @@ export type InspectRuntimeResponse = {
     | undefined
   substrate?:
     | { kind: 'daemon-child' }
+    | { kind: 'external' }
     | {
         kind: 'leased-tmux'
         tmuxSocketPath: string
@@ -1370,4 +1371,51 @@ export type ClearAppSessionContextResponse = {
   hostSessionId: string
   generation: number
   priorHostSessionId: string
+}
+
+/** Read-only operator projection for one externally registered scope eligible for retirement. */
+export type RegistrationGcCandidate = {
+  registrationId: string
+  classId: string
+  scopeRef: string
+  hostSessionId: string
+  runtimeId: string
+  runtimeStatus: string
+  terminalReason: string
+  terminalAt: string
+  eligibleAt: string
+}
+
+export type ListRegistrationGcCandidatesResponse = {
+  generatedAt: string
+  lingerMs: number
+  candidates: RegistrationGcCandidate[]
+}
+
+/** Mutation is unreachable without an explicit, exact candidate scope list. */
+export type RetireRegistrationScopesRequest = {
+  scopeRefs: string[]
+}
+
+export type RegistrationGcResult = {
+  scopeRef: string
+  registrationId?: string | undefined
+  status:
+    | 'retired'
+    | 'idempotent'
+    | 'not_candidate'
+    | 'authority_conflict'
+    | 'authority_unavailable'
+  detail?: string | undefined
+}
+
+export type RetireRegistrationScopesResponse = {
+  results: RegistrationGcResult[]
+  summary: {
+    requested: number
+    retired: number
+    idempotent: number
+    skipped: number
+    errors: number
+  }
 }

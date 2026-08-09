@@ -12,6 +12,7 @@ import type {
   SweepRuntimesSummary,
 } from 'hrc-core'
 import { isClaudeGhosttyEnabled } from './broker-decisions.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
@@ -209,6 +210,7 @@ export function transitionRuntimeForAging(
   droppedContinuation: boolean,
   reason: 'runtime_sweep' | 'runtime_tmux_aging'
 ): ReturnType<typeof markRuntimeStale> | null {
+  if (isExternalLifecycleOwner(runtime)) return null
   const transition = this.db.sqlite.transaction(() => {
     const now = timestamp()
     const result = this.db.sqlite

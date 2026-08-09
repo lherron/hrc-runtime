@@ -22,6 +22,7 @@ import type {
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { FederationOutboxDeliveryRecord, HrcDatabase } from 'hrc-store-sqlite'
 
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
 import { sendFederationEnvelope } from './accept-client.js'
@@ -82,6 +83,46 @@ export type FederationTargetPlacement =
         { outcome: 'remote-establish' }
       >['policyProvenance']
     }
+
+/** Refuse federated envelopes from an unbound/noncanonical EPR shadow. */
+export function assertExternalParticipantFederatedEgress(
+  db: HrcDatabase,
+  localNodeId: string,
+  record: Pick<HrcMessageRecord, 'from'>
+): void {
+  if (record.from.kind !== 'session') return
+  const scopeRef = parseSessionRef(record.from.sessionRef).scopeRef
+  const runtime = db.runtimes
+    .listAll()
+    .find((candidate) => candidate.scopeRef === scopeRef && isExternalLifecycleOwner(candidate))
+  if (runtime === undefined) return
+
+  const external = runtime.runtimeStateJson?.['externalRegistration']
+  const collective = isRecord(external)
+    ? (external['collectiveEstablishment'] as unknown)
+    : undefined
+  const state = isRecord(collective) ? collective['state'] : undefined
+  const cause = isRecord(collective) ? collective['cause'] : undefined
+  const binding = createPlacementLedgerRepository(db.sqlite).activeAuthority(scopeRef)
+  if (state === 'CANONICAL' && binding !== undefined && binding.homeNodeId === localNodeId) return
+
+  const reason =
+    state === 'NONCANONICAL' && (cause === 'placement_refused' || cause === 'binding_conflict')
+      ? cause
+      : binding?.homeNodeId !== undefined && binding.homeNodeId !== localNodeId
+        ? 'binding_conflict'
+        : 'binding_unbound'
+  throw new HrcConflictError(
+    HrcErrorCode.STALE_CONTEXT,
+    `federated egress for external participant ${scopeRef} is fenced (${reason})`,
+    {
+      scopeRef,
+      reason,
+      retryable: reason === 'binding_unbound',
+      ...(binding === undefined ? {} : { homeNodeId: binding.homeNodeId }),
+    }
+  )
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -552,6 +593,11 @@ export class FederationOriginOutbox {
     }
   }
 
+  /** EPR shadows are locally observable but cannot speak for the canonical seat. */
+  private assertExternalSenderHome(record: HrcMessageRecord): void {
+    assertExternalParticipantFederatedEgress(this.options.db, this.options.config.nodeId, record)
+  }
+
   private enqueue(
     record: HrcMessageRecord,
     body: SemanticDmRequest | undefined,
@@ -563,6 +609,7 @@ export class FederationOriginOutbox {
     },
     options?: { semanticTurnHandoff?: boolean | undefined }
   ): FederationOriginRouteResult {
+    this.assertExternalSenderHome(record)
     const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
     if (existing !== undefined) return { outcome: 'queued', delivery: existing }
     const delivery = this.options.db.federationOutbox.enqueue({
@@ -598,6 +645,7 @@ export class FederationOriginOutbox {
     peerNodeId: string,
     options?: { semanticTurnHandoff?: boolean | undefined }
   ): FederationOriginRouteResult {
+    this.assertExternalSenderHome(record)
     const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
     if (existing !== undefined) return { outcome: 'queued', delivery: existing }
     const deliveryId = `delivery-${randomUUID()}`

@@ -9,6 +9,8 @@ import type { HrcActuatorSplitPolicy, HrcRuntimeIntent } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 
+import { createGitFixture, runGit } from '../../../../test-support/git-fixture.js'
+
 import {
   actuatorSplitRuntimeAuthority,
   assertActuatorSplitAdmission,
@@ -88,22 +90,6 @@ function startRequest(
       },
     },
   }
-}
-
-async function run(cwd: string, args: string[]): Promise<string> {
-  const process = Bun.spawn(args, {
-    cwd,
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const [code, stdout, stderr] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-  ])
-  if (code !== 0) throw new Error(`${args.join(' ')} failed: ${stderr}`)
-  return stdout.trim()
 }
 
 describe('T-05439 direct actuator-split admission', () => {
@@ -238,16 +224,17 @@ describe('T-05439 direct actuator-split admission', () => {
     try {
       await mkdir(join(workspace, 'packages'), { recursive: true })
       await Bun.write(join(workspace, 'packages', 'target.txt'), 'before\n')
-      await run(workspace, ['git', 'init'])
-      await run(workspace, ['git', 'config', 'user.email', 't05439@example.test'])
-      await run(workspace, ['git', 'config', 'user.name', 'T05439 Test'])
-      await run(workspace, ['git', 'add', 'packages/target.txt'])
-      await run(workspace, ['git', 'commit', '-m', 'base'])
-      const baseRevision = await run(workspace, ['git', 'rev-parse', 'HEAD'])
-      const baseTree = await run(workspace, ['git', 'rev-parse', 'HEAD^{tree}'])
+      const repo = createGitFixture(workspace, {
+        initialBranch: 'main',
+        identity: { name: 'T05439 Test', email: 't05439@example.test' },
+      })
+      runGit(repo, ['add', 'packages/target.txt'])
+      runGit(repo, ['commit', '-m', 'base'])
+      const baseRevision = runGit(repo, ['rev-parse', 'HEAD'])
+      const baseTree = runGit(repo, ['rev-parse', 'HEAD^{tree}'])
 
       await Bun.write(join(workspace, 'packages', 'target.txt'), 'after\n')
-      const patch = await run(workspace, ['git', 'diff', '--binary'])
+      const patch = runGit(repo, ['diff', '--binary'])
       await Bun.write(join(workspace, 'packages', 'target.txt'), 'before\n')
       const artifactPath = join(workspace, 'approved.patch')
       await Bun.write(artifactPath, `${patch}\n`)

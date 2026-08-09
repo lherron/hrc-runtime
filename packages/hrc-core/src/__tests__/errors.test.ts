@@ -48,6 +48,7 @@ describe('HrcErrorCode completeness (T-00949)', () => {
     expect(HrcErrorCode.UNKNOWN_SESSION).toBeDefined()
     expect(HrcErrorCode.UNKNOWN_HOST_SESSION).toBeDefined()
     expect(HrcErrorCode.UNKNOWN_RUNTIME).toBeDefined()
+    expect(HrcErrorCode.UNKNOWN_REGISTRATION_CLASS).toBe('unknown_class')
   })
 
   test('defines all required 409-class error codes', () => {
@@ -84,6 +85,8 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
     expect(HrcErrorCode.RUNTIME_BUSY).toBe('runtime_busy')
     expect(HrcErrorCode.RUN_MISMATCH).toBe('run_mismatch')
     expect(HrcErrorCode.MALFORMED_REQUEST).toBe('malformed_request')
+    expect(HrcErrorCode.MALFORMED_REGISTRATION).toBe('malformed')
+    expect(HrcErrorCode.REGISTRATION_INSTANCES_EXHAUSTED).toBe('instances_exhausted')
     expect(HrcErrorCode.INVALID_SELECTOR).toBe('invalid_selector')
     expect(HrcErrorCode.INVALID_FENCE).toBe('invalid_fence')
     expect(HrcErrorCode.UNKNOWN_SESSION).toBe('unknown_session')
@@ -107,6 +110,7 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
 describe('httpStatusForErrorCode (T-00949)', () => {
   test('400 for malformed request codes', () => {
     expect(httpStatusForErrorCode(HrcErrorCode.MALFORMED_REQUEST)).toBe(400)
+    expect(httpStatusForErrorCode(HrcErrorCode.MALFORMED_REGISTRATION)).toBe(400)
     expect(httpStatusForErrorCode(HrcErrorCode.INVALID_SELECTOR)).toBe(400)
     expect(httpStatusForErrorCode(HrcErrorCode.INVALID_FENCE)).toBe(400)
   })

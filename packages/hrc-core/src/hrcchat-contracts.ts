@@ -61,7 +61,7 @@ export type HrcTargetRuntimeView = {
    * status/inspect output. Derived from endpoint/substrate facts only — never
    * from the hatch env flag (which is route-selection state, not runtime state).
    */
-  brokerSubstrate?: 'leased-tmux' | 'daemon-child' | undefined
+  brokerSubstrate?: 'leased-tmux' | 'daemon-child' | 'external' | undefined
   headlessRoute?: 'durable-leased' | 'legacy-stdio' | undefined
   /**
    * T-01876 Ph5 — additive coarse projection of the broker hosting axes, derived

@@ -36,6 +36,7 @@ import {
   canUseDirectPaneFallback,
   hasLeasedBrokerSubstrate,
 } from './broker/runtime-hosting.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   requireGhosttySurface,
@@ -103,6 +104,9 @@ export async function reconcileTmuxRuntimeLiveness(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<HrcRuntimeSnapshot> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return runtime
+  }
   if (
     runtime.controllerKind === 'harness-broker' &&
     (runtime.transport === 'tmux' || hasLeasedBrokerSubstrate(runtime)) &&

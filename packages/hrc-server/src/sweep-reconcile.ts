@@ -22,6 +22,7 @@ import {
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireGhosttySurface, requireSession } from './require-helpers.js'
@@ -128,6 +129,9 @@ function listZombieRunCandidates(ctx: ServerContext, cutoffMs: number): ZombieRu
     // event-silence — skip it entirely (non-reapable) across the headless sweep.
     if (run.runtimeId) {
       const runtime = ctx.db.runtimes.getByRuntimeId(run.runtimeId)
+      if (runtime && isExternalLifecycleOwner(runtime)) {
+        continue
+      }
       if (runtime && runtimeHasOpenAskBracket(ctx.db, runtime, run.runId)) {
         continue
       }
@@ -293,6 +297,7 @@ export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Prom
   const cutoffMs = nowMs - cleanupMinutes * 60_000
   for (const runtime of ctx.db.runtimes.listAll()) {
     if (
+      isExternalLifecycleOwner(runtime) ||
       runtime.transport !== 'ghostty' ||
       runtime.harness !== 'claude-code' ||
       runtime.activeRunId !== undefined ||
@@ -312,6 +317,7 @@ export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Prom
     const latest = ctx.db.runtimes.getByRuntimeId(runtime.runtimeId)
     if (
       !latest ||
+      isExternalLifecycleOwner(latest) ||
       latest.activeRunId !== undefined ||
       latest.status === 'busy' ||
       latest.status === 'awaiting_input' ||
@@ -527,6 +533,7 @@ function listActiveRunReconcileCandidates(
 
     const runtime = ctx.db.runtimes.getByRuntimeId(run.runtimeId)
     if (!runtime || runtime.activeRunId !== run.runId) continue
+    if (isExternalLifecycleOwner(runtime)) continue
 
     const launch = runtime.launchId ? ctx.db.launches.getByLaunchId(runtime.launchId) : null
     if (run.transport === 'headless' && launch?.status !== 'orphaned') continue

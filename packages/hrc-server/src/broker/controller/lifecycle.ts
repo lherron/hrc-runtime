@@ -14,6 +14,7 @@ import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
+import { isExternalLifecycleOwner } from '../../external-participant-lifecycle'
 import { appendHrcEvent } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import type { BrokerProjectionResult } from '../event-mapper'
@@ -209,6 +210,64 @@ export function markBrokerInvocationTerminal(
   }
 }
 
+/** EPR clean exit: participant process fate is known only because it said so. */
+export function markExternalParticipantInvocationTerminal(
+  ctx: LifecycleContext,
+  runtimeId: string,
+  envelope: InvocationEventEnvelope,
+  result: BrokerProjectionResult
+): void {
+  const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+  if (
+    !runtime ||
+    runtime.activeInvocationId !== String(envelope.invocationId) ||
+    runtime.status === 'terminated'
+  ) {
+    return
+  }
+
+  const now = ctx.now()
+  const occurredAt = envelope.time ?? now
+  ctx.db.runtimes.update(runtimeId, {
+    status: 'terminated',
+    statusChangedAt: occurredAt,
+    lifecycleTerminalReason: 'external_participant_exit',
+    ...runtimeActivityPatch(ctx.db, runtimeId, {
+      source: 'broker-event',
+      occurredAt,
+      updatedAt: now,
+    }),
+    runtimeStateJson: {
+      ...(runtime.runtimeStateJson ?? {}),
+      status: 'terminated',
+      updatedAt: now,
+      terminalReason: 'external_participant_exit',
+      terminalInvocation: {
+        invocationId: String(envelope.invocationId),
+        eventType: envelope.type,
+        seq: envelope.seq,
+      },
+    },
+  })
+
+  if (!result.idempotent) {
+    appendHrcEvent(ctx.db, 'runtime.terminated', {
+      ts: now,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      runtimeId,
+      transport: 'headless',
+      payload: {
+        reason: 'external_participant_exit',
+        invocationId: String(envelope.invocationId),
+        seq: envelope.seq,
+      },
+    })
+  }
+}
+
 export async function failReplayStale(
   ctx: LifecycleContext,
   runtime: HrcRuntimeSnapshot,
@@ -216,6 +275,11 @@ export async function failReplayStale(
   client: DurableBrokerClientLike,
   error: BrokerControllerError
 ): Promise<void> {
+  if (isExternalLifecycleOwner(runtime)) {
+    ctx.deleteActive(runtime.runtimeId)
+    await client.close().catch(() => undefined)
+    return
+  }
   ctx.deleteActive(runtime.runtimeId)
   ctx.markBrokerClosing(runtime.runtimeId, error.code)
   const now = ctx.now()
@@ -253,6 +317,10 @@ export function markBrokerCrashTerminal(
   runtimeId: string,
   error: BrokerControllerError
 ): void {
+  const ownedRuntime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+  if (ownedRuntime && isExternalLifecycleOwner(ownedRuntime)) {
+    return
+  }
   ctx.deleteActive(runtimeId)
   ctx.db.sqlite.transaction(() => {
     const now = ctx.now()

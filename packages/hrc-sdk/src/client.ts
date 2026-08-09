@@ -91,6 +91,7 @@ import type {
   LaunchCommandScopedRunResponse,
   LaunchListFilter,
   ListMessagesResponse,
+  ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
   PrepareAttachedRunRequest,
@@ -107,6 +108,8 @@ import type {
   ResumeAttachedRunResponse,
   ResumeContinuationRequest,
   ResumeContinuationResponse,
+  RetireRegistrationScopesRequest,
+  RetireRegistrationScopesResponse,
   RunListFilter,
   RuntimeActionResponse,
   RuntimeListFilter,
@@ -487,6 +490,16 @@ export class HrcClient {
 
   async pruneRuntimes(request: PruneRuntimesRequest = {}): Promise<PruneRuntimesResponse> {
     return this.postJson<PruneRuntimesResponse>('/v1/runtimes/prune', request)
+  }
+
+  async listRegistrationGcCandidates(): Promise<ListRegistrationGcCandidatesResponse> {
+    return this.getJson<ListRegistrationGcCandidatesResponse>('/v1/admin/registrations/gc')
+  }
+
+  async retireRegistrationScopes(
+    request: RetireRegistrationScopesRequest
+  ): Promise<RetireRegistrationScopesResponse> {
+    return this.postJson<RetireRegistrationScopesResponse>('/v1/admin/registrations/gc', request)
   }
 
   async killBrokerTmuxLeases(): Promise<KillBrokerTmuxLeasesResponse> {

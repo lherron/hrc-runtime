@@ -11,6 +11,7 @@ import {
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting.js'
 import { extractBrokerEndpoint } from '../broker/runtime-state.js'
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireSession } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
@@ -256,6 +257,14 @@ export async function sweepOrphanedBrokerTmuxLeases(
       }
 
       if (claims.length > 0) {
+        // lifecycleOwner is the authority boundary. Even a malformed/legacy
+        // external row that projects leased-tmux metadata must protect the
+        // claimed namespace from HRC teardown; registration GC owns cleanup.
+        if (claims.some(isExternalLifecycleOwner)) {
+          result.preservedClaimed += 1
+          result.skippedClaimed = result.preservedClaimed
+          continue
+        }
         const matchingClaims: HrcRuntimeSnapshot[] = []
         const orphanReasons = new Map<string, string>()
         for (const claim of claims) {
@@ -573,7 +582,8 @@ async function sweepOrphanedBrokerIpcDirs(
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
-      (isRuntimeUnavailableStatus(runtime.status) &&
+      (!isExternalLifecycleOwner(runtime) &&
+        isRuntimeUnavailableStatus(runtime.status) &&
         runtimeTerminalAgeMs(runtime, now) >= terminalLeaseTtlMs)
     ) {
       continue
@@ -889,6 +899,14 @@ export function markBrokerReattachStale(
   reason: string,
   error?: unknown
 ): BrokerReattachOutcome {
+  if (isExternalLifecycleOwner(runtime)) {
+    return {
+      runtimeId: runtime.runtimeId,
+      state: 'broker-ipc-unavailable',
+      brokerAttached: false,
+      reason: 'external_lifecycle_owner',
+    }
+  }
   const session = requireSession(db, runtime.hostSessionId)
   markRuntimeStale(db, session, runtime, {
     runtimeId: runtime.runtimeId,
@@ -930,6 +948,7 @@ export function gcBrokerRuntimeOnRestart(
   runtime: HrcRuntimeSnapshot,
   reason: string
 ): void {
+  if (isExternalLifecycleOwner(runtime)) return
   const session = requireSession(db, runtime.hostSessionId)
   const now = timestamp()
   const invocationId = runtime.activeInvocationId

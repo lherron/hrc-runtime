@@ -351,7 +351,8 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     fatal(harnessGuard)
   }
 
-  const { createHrcServer, loadCommandRunTargetsFromEnv } = await import('hrc-server')
+  const { createHrcServer, loadCommandRunTargetsFromEnv, loadRegistrationClassesFromEnv } =
+    await import('hrc-server')
 
   const paths = resolveServerPaths()
 
@@ -366,6 +367,7 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     localPersonaAllowlist,
     otelPreferredPort: resolveOtelPreferredPortFromEnv(),
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
+    registrationClasses: await loadRegistrationClassesFromEnv(),
   })
 
   // Write PID file for foreground too (used by status/stop)

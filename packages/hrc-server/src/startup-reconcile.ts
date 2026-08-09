@@ -26,6 +26,7 @@ import {
   extractRuntimeControlState,
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, requireSession } from './require-helpers.js'
@@ -138,7 +139,7 @@ export async function reconcileStartupState(
           priorStatus: launch.status,
         },
       })
-      if (runtime?.transport === 'headless' && activeRunId) {
+      if (runtime?.transport === 'headless' && !isExternalLifecycleOwner(runtime) && activeRunId) {
         reapStartupHeadlessOrphan(db, session, runtime, launch, activeRunId, now)
       }
     } catch (error) {
@@ -147,6 +148,9 @@ export async function reconcileStartupState(
   }
 
   for (const runtime of db.runtimes.listAll()) {
+    if (isExternalLifecycleOwner(runtime)) {
+      continue
+    }
     const brokerTmuxLeaseRuntime =
       runtime.controllerKind === 'harness-broker' && hasLeasedBrokerSubstrate(runtime)
     if (
@@ -287,6 +291,9 @@ export async function reconcileStartupState(
   // the daemon, so on restart re-scan the LEASE socket and id-match RE-ASSOCIATE
   // (leave usable + invocation intact) or GC on mismatch. (T-01711 / T-01730)
   for (const runtime of db.runtimes.listAll()) {
+    if (isExternalLifecycleOwner(runtime)) {
+      continue
+    }
     if (runtime.controllerKind !== 'harness-broker' || isRuntimeUnavailableStatus(runtime.status)) {
       continue
     }
@@ -346,6 +353,9 @@ export async function reconcileStartupState(
   // descriptors survive. (C-03008 landmine.)
   for (const runtime of db.runtimes.listAll()) {
     try {
+      if (isExternalLifecycleOwner(runtime)) {
+        continue
+      }
       const decision = decideLegacyRuntimeStartupDisposition({
         controllerKind: runtime.controllerKind,
         transport: runtime.transport,
@@ -627,6 +637,14 @@ export async function reconcileDurableBrokerStartup(
     }
     const hosting = parseBrokerRuntimeHostingState(runtime)
 
+    // EPR owns a durable Unix endpoint but its process substrate and attach
+    // protocol are external. Registration convergence / epr.reattach own these
+    // rows; the harness-broker startup classifier must never stale or attach
+    // them with broker.attach.
+    if (isExternalLifecycleOwner(runtime)) {
+      continue
+    }
+
     // Durable runtime: unix endpoint + leased-tmux substrate → reattach over IPC.
     // Keyed off the parsed hosting state, NOT runtime.transport — headless and
     // interactive durable runtimes both flow through here (G3).
@@ -775,6 +793,7 @@ export async function warmDurableBrokerBindings(
     if (
       runtime.controllerKind !== 'harness-broker' ||
       isRuntimeUnavailableStatus(runtime.status) ||
+      isExternalLifecycleOwner(runtime) ||
       !getPersistedDurableBrokerEndpoint(runtime)
     ) {
       continue

@@ -12,6 +12,7 @@ import {
   cmdRuntimeEnsure,
   cmdTerminate,
 } from './handlers-control.js'
+import { cmdRegistrationsGc } from './handlers-registration-gc.js'
 import {
   cmdAdopt,
   cmdRuntimeInspect,
@@ -188,6 +189,27 @@ function registerAdminEvents(admin: Command): void {
     })
 }
 
+function registerAdminRegistrations(admin: Command): void {
+  const registrations = admin
+    .command('registrations')
+    .description('inspect and retire externally registered instance scopes')
+
+  registrations
+    .command('gc')
+    .description('list retirement candidates, or retire explicitly selected candidate scopes')
+    .argument('[scope...]', 'exact candidate instance scope(s) to retire')
+    .option('--yes', 'confirm retirement without an interactive prompt')
+    .option('--json', 'output as JSON')
+    .action(async (scopeRefs: string[] | undefined, _opts, cmd: Command) => {
+      await cmdRegistrationsGc(
+        toLegacyArgv(scopeRefs ?? [], cmd.opts(), {
+          strings: [],
+          booleans: ['yes', 'json'],
+        })
+      )
+    })
+}
+
 function registerLegacyBrokerShim(program: Command): void {
   const broker = program
     .command('broker', { hidden: true })
@@ -218,6 +240,7 @@ export function registerRuntimeCommands(program: Command): void {
   registerAdminRuntimeCommands(admin)
   registerAdminBrokerVerify(admin)
   registerAdminEvents(admin)
+  registerAdminRegistrations(admin)
 
   const runtime = program.command('runtime').description('list, inspect, and control runtimes')
 
@@ -227,7 +250,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--host-session-id <id>', 'filter by host session')
     .option('--session <id>', 'filter by host session (post-mortem discovery alias)')
     .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
-    .option('--status <status>', 'filter by status (busy|dead|ready|stale|terminated)')
+    .option('--status <status>', 'filter by status (busy|dead|ready|stale|terminated|detached)')
     .option('--scope <scope>', 'filter by scope ref or target handle')
     .option('--agent <agent>', 'filter by exact agent ID')
     .option('--task <task>', 'filter by exact task ID')

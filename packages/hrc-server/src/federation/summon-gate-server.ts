@@ -22,8 +22,9 @@ import type {
   SummonIntent,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
-import type { HrcDatabase, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
+import type { HrcDatabase, PlacementBinding, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
@@ -165,6 +166,147 @@ export type SummonAuthorityRequest = (
 export type SummonAuthorityResult = SummonGateResult & {
   /** Fresh authority exists only on the invocation that won wrkq claim. */
   claimAuthority?: TaskClaimAuthority | undefined
+}
+
+export type ExternalRegistrationPlacementResult =
+  | { outcome: 'pending'; reason: string; detail: string }
+  | { outcome: 'canonical'; binding: PlacementBinding }
+  | {
+      outcome: 'noncanonical'
+      cause: 'placement_refused' | 'binding_conflict'
+      detail: string
+      homeNodeId?: string | undefined
+      binding?: PlacementBinding | undefined
+    }
+
+/**
+ * Post-mint EPR placement reconciliation.
+ *
+ * The participant is already materialized, so this deliberately reuses the
+ * normal placement decision without its future-launch capability observation.
+ * Authority still goes through the exact registry-first establishment writer.
+ */
+export async function establishExternalRegistrationPlacement(
+  server: SummonGateServerContext,
+  request: { scopeRef: string; registrationId: string; classId: string }
+): Promise<ExternalRegistrationPlacementResult> {
+  const deps = gateDepsFor(server)
+  if (deps === undefined) {
+    return {
+      outcome: 'pending',
+      reason: 'federation_not_configured',
+      detail: 'collective placement is not enabled on this node',
+    }
+  }
+
+  return await withScopeSummonLock(server as object, request.scopeRef, async () => {
+    const placement = await resolvePlacementDisposition({
+      scopeRef: request.scopeRef,
+      path: 'resolve-session',
+      intent: 'explicit_local',
+      origin: 'local',
+      // Local mint already proved materialization. Capability probing here
+      // would incorrectly ask whether HRC can launch the external process.
+      deps: { ...deps, capabilityFor: undefined },
+    })
+
+    if (placement === undefined) {
+      return {
+        outcome: 'noncanonical',
+        cause: 'placement_refused',
+        detail: `placement did not resolve for ${request.scopeRef}`,
+      }
+    }
+    if (placement.outcome === 'local-bound') {
+      if (placement.source === 'registry') deps.ledger.installActive(placement.binding)
+      return { outcome: 'canonical', binding: placement.binding }
+    }
+    if (placement.outcome === 'remote-bound') {
+      return {
+        outcome: 'noncanonical',
+        cause: 'binding_conflict',
+        detail: `${request.scopeRef} is already bound on ${placement.binding.homeNodeId}`,
+        homeNodeId: placement.binding.homeNodeId,
+        binding: placement.binding,
+      }
+    }
+    if (placement.outcome === 'remote-establish') {
+      return {
+        outcome: 'noncanonical',
+        cause: 'placement_refused',
+        detail: `placement policy designates ${placement.candidateHomeNodeId} for ${request.scopeRef}`,
+        homeNodeId: placement.candidateHomeNodeId,
+      }
+    }
+    if (placement.outcome === 'refuse') {
+      if (placement.retryable) {
+        return {
+          outcome: 'pending',
+          reason: placement.reason,
+          detail: placement.diagnostic,
+        }
+      }
+      return {
+        outcome: 'noncanonical',
+        cause: 'placement_refused',
+        detail: placement.diagnostic,
+        ...(placement.homeNodeId === undefined ? {} : { homeNodeId: placement.homeNodeId }),
+      }
+    }
+    if (placement.kind !== 'virgin-policy' || typeof placement.provenance !== 'string') {
+      return {
+        outcome: 'noncanonical',
+        cause: 'placement_refused',
+        detail: `placement selected unsupported ${placement.kind} authority for external registration ${request.registrationId}`,
+        homeNodeId: placement.homeNodeId,
+      }
+    }
+
+    try {
+      const established = await establishLocalPlacement({
+        registry: deps.registry,
+        ledger: deps.ledger,
+        request: {
+          scopeRef: request.scopeRef,
+          homeNodeId: deps.localNodeId,
+          birthClass: 'mechanism-born',
+          authorityProvenance: {
+            kind: 'external-registration',
+            registrationId: request.registrationId,
+            classId: request.classId,
+          },
+          establishmentProvenance: placement.provenance,
+          now: new Date().toISOString(),
+        },
+      })
+      if (established.outcome === 'retired') {
+        return {
+          outcome: 'noncanonical',
+          cause: 'placement_refused',
+          detail: `${request.scopeRef} is retired at epoch ${established.retirement.placementEpoch}`,
+          ...(established.retirement.successorNodeId === null
+            ? {}
+            : { homeNodeId: established.retirement.successorNodeId }),
+        }
+      }
+      if (established.outcome === 'bound-elsewhere') {
+        return {
+          outcome: 'noncanonical',
+          cause: 'binding_conflict',
+          detail: `${request.scopeRef} became bound on ${established.binding.homeNodeId}`,
+          homeNodeId: established.binding.homeNodeId,
+          binding: established.binding,
+        }
+      }
+      return { outcome: 'canonical', binding: established.binding }
+    } catch (error) {
+      return {
+        outcome: 'pending',
+        reason: error instanceof RegistryRefusedError ? 'registry-refused' : 'establishment_failed',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+  })
 }
 
 /** Decision-only server seam shared by message prechecks and summon execution. */
@@ -786,6 +928,7 @@ function fenceUnresolvedRepairCandidate(
 ): void {
   for (const runtime of server.db.runtimes.listAll()) {
     if (runtime.scopeRef !== scopeRef || isRuntimeUnavailableStatus(runtime.status)) continue
+    if (isExternalLifecycleOwner(runtime)) continue
     const session = server.db.sessions.getByHostSessionId(runtime.hostSessionId)
     if (session === null) continue
     markRuntimeStale(server.db, session, runtime, {

@@ -51,12 +51,13 @@ export type BrokerRuntimeEndpoint =
       kind: 'unix-jsonrpc-ndjson'
       socketPath: string
       attachTokenRef: BrokerAttachTokenRef
-      protocolVersion: 'harness-broker/0.2'
+      protocolVersion: 'harness-broker/0.2' | 'epr/1'
     }
 
 /** WHERE the broker process lives. */
 export type BrokerRuntimeSubstrate =
   | { kind: 'daemon-child' }
+  | { kind: 'external' }
   | {
       kind: 'leased-tmux'
       tmuxSocketPath: string
@@ -161,14 +162,12 @@ function parseEndpoint(value: unknown): BrokerRuntimeEndpoint | undefined {
     if (tokenKind !== 'file' || typeof tokenPath !== 'string') {
       return undefined
     }
-    // protocolVersion may sit inside the endpoint (normalized shape) or at the
-    // broker root (flat shape); the durable unix endpoint is always 0.2 either
-    // way, so we canonicalize to the literal here.
+    const protocolVersion = value['protocolVersion'] === 'epr/1' ? 'epr/1' : 'harness-broker/0.2'
     return {
       kind: 'unix-jsonrpc-ndjson',
       socketPath,
       attachTokenRef: { kind: 'file', path: tokenPath, redacted: true },
-      protocolVersion: 'harness-broker/0.2',
+      protocolVersion,
     }
   }
   return undefined
@@ -183,6 +182,9 @@ function parseNormalizedSubstrate(value: unknown): BrokerRuntimeSubstrate | unde
   const kind = value['kind']
   if (kind === 'daemon-child') {
     return { kind: 'daemon-child' }
+  }
+  if (kind === 'external') {
+    return { kind: 'external' }
   }
   if (kind === 'leased-tmux') {
     const tmuxSocketPath = value['tmuxSocketPath']
@@ -414,6 +416,7 @@ export type BrokerHostingProjection = {
   }
   substrate:
     | { kind: 'daemon-child' }
+    | { kind: 'external' }
     | {
         kind: 'leased-tmux'
         tmuxSocketPath: string
@@ -459,7 +462,7 @@ export function projectBrokerHostingState(
           brokerWindow: hosting.substrate.brokerWindow,
           generation: hosting.substrate.generation,
         }
-      : { kind: 'daemon-child' as const }
+      : { kind: hosting.substrate.kind }
 
   const presentation =
     hosting.presentation.kind === 'tmux-tui'

@@ -152,6 +152,23 @@ A clean interactive `/quit` ends the run normally (the broker reaps the tmux lea
 
 Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees audit|prune [--project <id>] [--root <path>] [--json]`. Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
+External registration retirement is operator-only:
+
+```bash
+# Read-only: terminal instance scopes past linger with no stored continuation.
+hrc admin registrations gc [--json]
+
+# Retire only the exact listed candidates after interactive confirmation.
+hrc admin registrations gc <exact-scope-ref>...
+
+# Required when stdin/stdout is piped or otherwise non-interactive.
+hrc admin registrations gc <exact-scope-ref>... --yes [--json]
+```
+
+The command never runs from a timer or lifecycle transition. Retirement installs
+the local epoch fence before performing the exact registry CAS; an unavailable or
+conflicting authority remains visible for an explicit operator retry.
+
 ### `monitor show | watch | wait | events | transcript | stats`
 
 `monitor` is the single observation noun. `show|watch|wait` read normalized HRC

@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CliUsageError } from 'cli-kit'
+
+import {
+  type GitFixture,
+  createGitFixture,
+  runGit,
+  runGitAt,
+} from '../../../../test-support/git-fixture.js'
 
 import {
   type WorktreePruneReport,
@@ -12,15 +18,31 @@ import {
 } from '../worktree-prune.js'
 
 const roots: string[] = []
+const repositories = new Map<string, GitFixture>()
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
   }
+  repositories.clear()
 })
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim()
+  const repo = repositories.get(realpathSync(cwd))
+  if (repo) return runGit(repo, args)
+  if (repositories.size === 1) return runGitAt([...repositories.values()][0]!, cwd, args)
+  throw new Error(`Git fixture is not registered for ${cwd}`)
+}
+
+function initializeRepo(root: string): void {
+  const repo = createGitFixture(root, {
+    initialBranch: 'main',
+    identity: { name: 'Cody Test', email: 'cody@example.test' },
+  })
+  repositories.set(repo.workTree!, repo)
+  writeFileSync(join(root, 'README.md'), 'base\n')
+  git(root, 'add', 'README.md')
+  git(root, 'commit', '-m', 'base')
 }
 
 function fixture(taskId = 'T-12345'): {
@@ -32,12 +54,7 @@ function fixture(taskId = 'T-12345'): {
   roots.push(base)
   const root = join(base, 'repo')
   const worktree = join(base, 'task-worktree')
-  execFileSync('git', ['init', '--initial-branch=main', root])
-  git(root, 'config', 'user.email', 'cody@example.test')
-  git(root, 'config', 'user.name', 'Cody Test')
-  writeFileSync(join(root, 'README.md'), 'base\n')
-  git(root, 'add', 'README.md')
-  git(root, 'commit', '-m', 'base')
+  initializeRepo(root)
   const branch = `work/${taskId}`
   git(root, 'worktree', 'add', '-b', branch, worktree)
   return { root, worktree, branch }
@@ -207,8 +224,17 @@ describe('completed-task worktree pruning', () => {
   it('default task reader distinguishes a genuine miss from an infrastructure failure', () => {
     const { root, worktree } = fixture()
     const realRun = (command: string, args: string[]): ReturnType<typeof fakeRun> => {
-      const stdout = execFileSync(command, args, { encoding: 'utf8' })
-      return { status: 0, stdout, stderr: '' }
+      if (command === 'git' && args[0] === '-C' && args[1]) {
+        const repo = repositories.get(realpathSync(root))
+        if (!repo) throw new Error(`Git fixture is not registered for ${root}`)
+        const stdout = runGitAt(repo, args[1], args.slice(2))
+        return {
+          status: 0,
+          stdout,
+          stderr: '',
+        }
+      }
+      throw new Error(`unexpected fixture command: ${command} ${args.join(' ')}`)
     }
     const fakeRun = (command: string, args: string[]) => {
       if (command === 'wrkq' && args[0] === 'cat') {
@@ -384,12 +410,7 @@ describe('completed-task worktree pruning', () => {
     const root = join(base, 'repo')
     // The token lives in the PATH, deliberately not in any branch name.
     const worktree = join(base, 'hrc-runtime-T-55555')
-    execFileSync('git', ['init', '--initial-branch=main', root])
-    git(root, 'config', 'user.email', 'cody@example.test')
-    git(root, 'config', 'user.name', 'Cody Test')
-    writeFileSync(join(root, 'README.md'), 'base\n')
-    git(root, 'add', 'README.md')
-    git(root, 'commit', '-m', 'base')
+    initializeRepo(root)
     git(root, 'worktree', 'add', '--detach', worktree)
 
     const report = run(root, { 'T-55555': 'completed' })
@@ -412,12 +433,7 @@ describe('completed-task worktree pruning', () => {
     roots.push(base)
     const root = join(base, 'repo')
     const worktree = join(base, 'plain-worktree')
-    execFileSync('git', ['init', '--initial-branch=main', root])
-    git(root, 'config', 'user.email', 'cody@example.test')
-    git(root, 'config', 'user.name', 'Cody Test')
-    writeFileSync(join(root, 'README.md'), 'base\n')
-    git(root, 'add', 'README.md')
-    git(root, 'commit', '-m', 'base')
+    initializeRepo(root)
     git(root, 'worktree', 'add', '--detach', worktree)
 
     const report = run(root, {})

@@ -67,9 +67,11 @@ describe('consolidated hrc command graph', () => {
       'runtime',
       'broker-verify',
       'events',
+      'registrations',
       'metrics',
     ])
     expect(visibleChildren(child(child(program, 'admin'), 'worktrees'))).toEqual(['audit', 'prune'])
+    expect(visibleChildren(child(child(program, 'admin'), 'registrations'))).toEqual(['gc'])
   })
 
   test('removed groups and spellings are hidden migration fences', () => {

@@ -119,7 +119,13 @@ export function timestamp(): string {
 }
 
 export function isRuntimeUnavailableStatus(status: string): boolean {
-  return status === 'terminated' || status === 'dead' || status === 'stale' || status === 'crashed'
+  return (
+    status === 'terminated' ||
+    status === 'dead' ||
+    status === 'stale' ||
+    status === 'crashed' ||
+    status === 'detached'
+  )
 }
 
 export async function unlinkIfExists(path: string): Promise<void> {

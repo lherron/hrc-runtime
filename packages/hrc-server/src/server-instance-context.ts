@@ -22,14 +22,21 @@ import type {
 } from './broker/controller.js'
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
+import type {
+  ExternalParticipantRpcClient,
+  ExternalRegistrationRendezvousMethods,
+} from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import type { FederationOriginOutbox } from './federation/origin-outbox.js'
+import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
 import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { MailHandlersMethods } from './mail/mail-handlers.js'
+import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
+import type { RegistrationHandlersMethods } from './registration-handlers.js'
 import type { RosterClaimHandlersMethods } from './roster-claim.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
 import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
@@ -71,10 +78,13 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   BrokerInteractiveHandlersMethods &
   EventHandlersMethods &
   EventNotificationHandlersMethods &
+  ExternalRegistrationRendezvousMethods &
   LaunchLifecycleHandlersMethods &
   MailKickerHandlersMethods &
   MailHandlersMethods &
   RosterClaimHandlersMethods &
+  RegistrationGcHandlersMethods &
+  RegistrationHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &
@@ -124,6 +134,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly tmux: ServerTmuxManager
   readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly federationRegistryClient: BindingRegistryClient | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
@@ -131,6 +142,9 @@ type HrcServerInstanceDataForHandlers = {
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
+  readonly externalRegistrationOperations: Map<string, Promise<void>>
+  readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
+  readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
   readonly attachedRunOperations: Map<string, Promise<unknown>>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>

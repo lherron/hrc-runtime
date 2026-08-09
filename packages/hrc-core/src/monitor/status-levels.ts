@@ -20,4 +20,5 @@ export const RUNTIME_STATUS_LEVEL_BY_STATUS = {
   starting: null,
   stopping: null,
   adopted: null,
+  detached: null,
 } as const satisfies Record<string, HrcRuntimeStatusLevel | null>

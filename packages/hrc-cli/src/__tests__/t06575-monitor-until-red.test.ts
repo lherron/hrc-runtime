@@ -385,6 +385,7 @@ describe('T-06575 suite 4 — temporal truth', () => {
       starting: null,
       stopping: null,
       adopted: null,
+      detached: null,
     })
 
     const fixture = await makeSeededFixture()

@@ -5,6 +5,7 @@ import {
 } from '../broker-decisions.js'
 import { BrokerControllerError, type BrokerControllerRpcResult } from '../broker/controller.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
+import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { writeServerLog } from '../server-log.js'
 import { createTmuxManager } from '../tmux.js'
 
@@ -61,6 +62,7 @@ export async function disposeBrokerRuntime(
 
 /** Whether this broker owns a per-runtime leased tmux substrate. */
 export function hasBrokerLeasedTmux(runtime: HrcRuntimeSnapshot): boolean {
+  if (isExternalLifecycleOwner(runtime)) return false
   const hosting = parseBrokerRuntimeHostingState(runtime)
   return (
     hosting?.substrate.kind === 'leased-tmux' ||
@@ -77,6 +79,7 @@ export async function teardownBrokerLeasedTmux(
   runtime: HrcRuntimeSnapshot,
   opts: { logMessage: string }
 ): Promise<void> {
+  if (isExternalLifecycleOwner(runtime)) return
   const hosting = parseBrokerRuntimeHostingState(runtime)
   const substrate = hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
   const socketPath = substrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)

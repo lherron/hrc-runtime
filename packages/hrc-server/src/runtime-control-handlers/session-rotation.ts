@@ -7,6 +7,10 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { AppManagedSessionRecord } from 'hrc-store-sqlite'
+import {
+  evictExternalParticipant,
+  isExternalLifecycleOwner,
+} from '../external-participant-lifecycle.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import {
@@ -299,6 +303,12 @@ export async function invalidateHostContext(
   let runtimesTerminated = 0
   for (const runtime of this.db.runtimes.listByHostSessionId(hostSessionId)) {
     if (isRuntimeUnavailableStatus(runtime.status)) {
+      continue
+    }
+
+    if (isExternalLifecycleOwner(runtime)) {
+      await evictExternalParticipant(this, runtime)
+      runtimesTerminated += 1
       continue
     }
 

@@ -7,6 +7,10 @@ import {
   type TerminateRuntimeResponse,
 } from 'hrc-core'
 import { parseGhosttyViewerLingerSeconds } from '../broker-decisions.js'
+import {
+  evictExternalParticipant,
+  isExternalLifecycleOwner,
+} from '../external-participant-lifecycle.js'
 import { cleanupRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
@@ -56,6 +60,19 @@ interface BrokerInterrupter {
  */
 function headlessAuditTransport(runtime: HrcRuntimeSnapshot): 'headless' | 'sdk' {
   return runtime.transport === 'headless' ? 'headless' : 'sdk'
+}
+
+async function terminateExternalRuntime(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): Promise<Response> {
+  await evictExternalParticipant(server, runtime)
+  return json({
+    ok: true,
+    hostSessionId: runtime.hostSessionId,
+    runtimeId: runtime.runtimeId,
+    droppedContinuation: false,
+  } satisfies TerminateRuntimeResponse)
 }
 
 function cleanupTaskClaimCredential(
@@ -386,6 +403,9 @@ export async function terminateRuntime(
     actor?: string | undefined
   } = {}
 ): Promise<Response> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return await terminateExternalRuntime(this, runtime)
+  }
   if (runtime.transport === 'tmux') {
     return await this.terminateTmuxRuntime(runtime, {
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
@@ -415,6 +435,9 @@ export async function terminateTmuxRuntime(
     actor?: string | undefined
   } = {}
 ): Promise<Response> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return await terminateExternalRuntime(this, runtime)
+  }
   const session = requireSession(this.db, runtime.hostSessionId)
   const tmux = requireTmuxPane(runtime)
 
@@ -489,6 +512,9 @@ export async function terminateGhosttyRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<Response> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return await terminateExternalRuntime(this, runtime)
+  }
   const session = requireSession(this.db, runtime.hostSessionId)
   const surface = requireGhosttySurface(runtime)
 
@@ -613,6 +639,9 @@ export async function terminateHeadlessRuntime(
     actor?: string | undefined
   }
 ): Promise<Response> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return await terminateExternalRuntime(this, runtime)
+  }
   const session = requireSession(this.db, runtime.hostSessionId)
   const now = timestamp()
 

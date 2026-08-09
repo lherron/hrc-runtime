@@ -85,8 +85,15 @@ export interface WorktreePruneCommandOptions {
 }
 
 function defaultRun(command: string, args: string[]): CommandResult {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && (command !== 'git' || !entry[0].startsWith('GIT_'))
+    )
+  )
   const result = spawnSync(command, args, {
     encoding: 'utf8',
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   return {

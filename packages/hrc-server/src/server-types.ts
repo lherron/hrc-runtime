@@ -17,10 +17,12 @@ import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
 import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
+import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
 import type { FederationOutboxRetryPolicy } from './federation/outbox-delivery.js'
 import type { PeerAcceptHandler } from './federation/peer-protocol.js'
 import type { GhostmuxManagerOptions } from './ghostmux.js'
+import type { RegistrationClassConfig } from './registration-classes-config.js'
 
 export type HrcEventsRouteFilters = Omit<
   HrcLifecycleQueryFilters,
@@ -304,6 +306,19 @@ export type HrcServerOptions = {
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
   commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
+  /** Operator-ratified external-participant birth templates. No API mutates these. */
+  registrationClasses?: readonly RegistrationClassConfig[] | undefined
+  /** Test/embedded seam for the daemon-owned EPR Unix client. */
+  externalParticipantClientFactory?: ExternalParticipantClientFactory | undefined
+  /** Test/embedded retry override; production retries every 100ms until expiry. */
+  externalParticipantRendezvousRetryMs?: number | undefined
+  /** Test/embedded retry override for post-mint collective establishment. */
+  externalParticipantCollectiveEstablishmentRetryMs?: number | undefined
+  /** Test/embedded EPR liveness and linger overrides. */
+  externalParticipantProbeIntervalMs?: number | undefined
+  externalParticipantProbeDeadlineMs?: number | undefined
+  externalParticipantProbeFailureThreshold?: number | undefined
+  externalParticipantLingerMs?: number | undefined
   ghostmuxOptions?: GhostmuxManagerOptions | undefined
 }
 

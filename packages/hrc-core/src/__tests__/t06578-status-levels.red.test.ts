@@ -20,6 +20,7 @@ describe('T-06578 frozen runtime status levels', () => {
       starting: null,
       stopping: null,
       adopted: null,
+      detached: null,
     })
   })
 })

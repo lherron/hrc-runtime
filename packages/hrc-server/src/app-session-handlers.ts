@@ -24,6 +24,10 @@ import type {
   SendLiteralInputResponse,
 } from 'hrc-core'
 import { buildDispatchInvocation, normalizeDispatchIntent } from './dispatch-invocation.js'
+import {
+  evictExternalParticipant,
+  isExternalLifecycleOwner,
+} from './external-participant-lifecycle.js'
 import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -557,6 +561,11 @@ export async function removeAppSessionFromBody(
     const runtimes = this.db.runtimes.listByHostSessionId(hostSessionId)
     for (const runtime of runtimes) {
       if (!isRuntimeUnavailableStatus(runtime.status)) {
+        if (isExternalLifecycleOwner(runtime)) {
+          await evictExternalParticipant(this, runtime)
+          runtimeTerminated = true
+          continue
+        }
         if (runtime.transport === 'tmux' && runtime.tmuxJson) {
           const tmuxPane = requireTmuxPane(runtime)
           const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)

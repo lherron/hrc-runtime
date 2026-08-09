@@ -183,11 +183,16 @@ function parseWorktreePorcelain(output: string): GitWorktree[] {
 
 function listGitWorktrees(
   canonicalRoot: string,
-  env: Record<string, string | undefined>
+  explicitEnv: Record<string, string | undefined>
 ): GitWorktree[] {
+  const ambientEnv = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && !entry[0].startsWith('GIT_')
+    )
+  )
   const result = spawnSync('git', ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'], {
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    env: { ...ambientEnv, ...explicitEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   if (result.status !== 0) {
@@ -204,11 +209,11 @@ function taskTokens(value: string): string[] {
 function refineTaskWorktree(
   canonicalRoot: string,
   taskId: string | undefined,
-  env: Record<string, string | undefined>
+  explicitEnv: Record<string, string | undefined>
 ): { path: string; branch?: string | undefined } | undefined {
   if (!taskId || !/^T-\d+$/.test(taskId)) return undefined
 
-  const worktrees = listGitWorktrees(canonicalRoot, env)
+  const worktrees = listGitWorktrees(canonicalRoot, explicitEnv)
   const matches = worktrees.filter(
     (worktree) => worktree.branch && taskTokens(worktree.branch).includes(taskId)
   )
@@ -318,7 +323,7 @@ export function resolveHrcAgentPlacementPaths(
     )
   }
 
-  const worktree = refineTaskWorktree(canonicalRoot, options.taskId, env)
+  const worktree = refineTaskWorktree(canonicalRoot, options.taskId, options.env ?? {})
   if (worktree) {
     return withResolvedProject(options, worktree.path, {
       source: 'task-worktree',

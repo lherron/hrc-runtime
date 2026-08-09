@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { type GitFixture, createGitFixture, runGit } from '../test-support/git-fixture.js'
 
 import {
   assertNoCanonicalVersionReplacement,
@@ -18,30 +20,22 @@ afterEach(async () => {
   )
 })
 
-function git(args: string[], cwd: string): string {
-  const result = Bun.spawnSync(['git', ...args], { cwd })
-  if (result.exitCode !== 0) {
-    throw new Error(`${result.stderr.toString()}${result.stdout.toString()}`)
-  }
-  return result.stdout.toString().trim()
-}
-
-async function canonicalFixture(): Promise<{ root: string; remote: string }> {
+async function canonicalFixture(): Promise<{ root: string; remote: string; repo: GitFixture }> {
   const fixture = await mkdtemp(join(tmpdir(), 'hrc-canonical-publish-'))
   fixtures.push(fixture)
   const remote = join(fixture, 'remote.git')
   const root = join(fixture, 'source')
-  await mkdir(root)
-  git(['init', '--bare', remote], fixture)
-  git(['init', '-b', 'main'], root)
-  git(['config', 'user.name', 'HRC Test'], root)
-  git(['config', 'user.email', 'hrc-test@example.test'], root)
+  createGitFixture(remote, { bare: true })
+  const repo = createGitFixture(root, {
+    initialBranch: 'main',
+    identity: { name: 'HRC Test', email: 'hrc-test@example.test' },
+  })
   await writeFile(join(root, 'tracked.txt'), 'canonical\n')
-  git(['add', 'tracked.txt'], root)
-  git(['commit', '-m', 'canonical source'], root)
-  git(['remote', 'add', 'origin', remote], root)
-  git(['push', '-u', 'origin', 'main'], root)
-  return { root, remote }
+  runGit(repo, ['add', 'tracked.txt'])
+  runGit(repo, ['commit', '-m', 'canonical source'])
+  runGit(repo, ['remote', 'add', 'origin', remote])
+  runGit(repo, ['push', '-u', 'origin', 'main'])
+  return { root, remote, repo }
 }
 
 describe('publish-local-verdaccio version policy', () => {
@@ -99,7 +93,7 @@ describe('T-06958 canonical package provenance', () => {
       canonical: true,
       canonicalRef: 'origin/main',
       canonicalRemote: fixture.remote,
-      sourceCommit: git(['rev-parse', 'HEAD'], fixture.root),
+      sourceCommit: runGit(fixture.repo, ['rev-parse', 'HEAD']),
     })
   })
 
@@ -116,8 +110,8 @@ describe('T-06958 canonical package provenance', () => {
 
     const uncontained = await canonicalFixture()
     await writeFile(join(uncontained.root, 'tracked.txt'), 'local-only\n')
-    git(['add', 'tracked.txt'], uncontained.root)
-    git(['commit', '-m', 'local only'], uncontained.root)
+    runGit(uncontained.repo, ['add', 'tracked.txt'])
+    runGit(uncontained.repo, ['commit', '-m', 'local only'])
     expect(() =>
       provePublicationSource({
         canonical: true,

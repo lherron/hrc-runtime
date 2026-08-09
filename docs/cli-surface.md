@@ -63,8 +63,10 @@ A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.
 
-Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`
-and `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
+Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`,
+operator-only `hrc admin registrations gc [<exact-scope>... --yes]` (no scopes
+is a read-only candidate projection; retirement is never automated), and
+`hrc admin worktrees audit|prune`. The admin cellar also owns low-level
 bridge/surface, runtime ensure/adopt, broker verification, event-drain, and
 metrics-report commands.
 

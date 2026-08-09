@@ -2639,6 +2639,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ListRegistrationGcCandidatesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ListRegistrationGcCandidatesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ListTargetsRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -2999,6 +3007,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "RegistrationGcCandidate",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RegistrationGcCandidate|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RegistrationGcResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RegistrationGcResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "RemoveAppSessionRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3139,6 +3163,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ResumeContinuationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RetireRegistrationScopesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RetireRegistrationScopesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RetireRegistrationScopesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RetireRegistrationScopesResponse|type",
       "count": 1
     },
     {

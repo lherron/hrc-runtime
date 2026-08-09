@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 
-export type ScopeRetirementReason = 'namespace_reconciliation'
+export type ScopeRetirementReason = 'namespace_reconciliation' | 'external_registration_gc'
 
 /** Durable node-local epoch fence retained even after a later activation. */
 export type ScopeRetirementRecord = {
@@ -93,7 +93,9 @@ function createRetirementTable(db: Database): void {
       retired_node_id TEXT NOT NULL,
       retired_placement_epoch INTEGER NOT NULL CHECK (retired_placement_epoch >= 1),
       successor_node_id TEXT,
-      reason TEXT NOT NULL CHECK (reason IN ('namespace_reconciliation')),
+      reason TEXT NOT NULL CHECK (
+        reason IN ('namespace_reconciliation', 'external_registration_gc')
+      ),
       retired_at TEXT NOT NULL
     );
   `)
@@ -109,7 +111,9 @@ function ensureRetirementSchema(db: Database): void {
     createRetirementTable(db)
     return
   }
-  if (schema.includes('retired_placement_epoch')) return
+  if (schema.includes('retired_placement_epoch') && schema.includes('external_registration_gc')) {
+    return
+  }
 
   // T-06681 one-time F0 schema correction. The legacy "canonical" fields
   // paired a successor node with the retired node's epoch. Preserve that
@@ -117,32 +121,42 @@ function ensureRetirementSchema(db: Database): void {
   // historical pin-probe row terminal; this exact ScopeRef is deliberately
   // the only data correction embedded here.
   db.transaction(() => {
-    db.exec(
-      'ALTER TABLE federation_scope_retirements RENAME TO federation_scope_retirements_legacy_t06681;'
-    )
+    const legacyTable = schema.includes('retired_placement_epoch')
+      ? 'federation_scope_retirements_legacy_t07139'
+      : 'federation_scope_retirements_legacy_t06681'
+    db.exec(`ALTER TABLE federation_scope_retirements RENAME TO ${legacyTable};`)
     createRetirementTable(db)
-    db.exec(`
-      INSERT INTO federation_scope_retirements (
-        scope_ref,
-        retired_node_id,
-        retired_placement_epoch,
-        successor_node_id,
-        reason,
-        retired_at
-      )
-      SELECT
-        scope_ref,
-        retired_node_id,
-        canonical_placement_epoch,
-        CASE
-          WHEN scope_ref = 'agent:cody:project:hrc-runtime:task:pin-probe' THEN NULL
-          ELSE canonical_home_node_id
-        END,
-        reason,
-        retired_at
-      FROM federation_scope_retirements_legacy_t06681;
-      DROP TABLE federation_scope_retirements_legacy_t06681;
-    `)
+    if (schema.includes('retired_placement_epoch')) {
+      db.exec(`
+        INSERT INTO federation_scope_retirements (${RETIREMENT_COLUMNS})
+        SELECT ${RETIREMENT_COLUMNS}
+        FROM federation_scope_retirements_legacy_t07139;
+        DROP TABLE federation_scope_retirements_legacy_t07139;
+      `)
+    } else {
+      db.exec(`
+        INSERT INTO federation_scope_retirements (
+          scope_ref,
+          retired_node_id,
+          retired_placement_epoch,
+          successor_node_id,
+          reason,
+          retired_at
+        )
+        SELECT
+          scope_ref,
+          retired_node_id,
+          canonical_placement_epoch,
+          CASE
+            WHEN scope_ref = 'agent:cody:project:hrc-runtime:task:pin-probe' THEN NULL
+            ELSE canonical_home_node_id
+          END,
+          reason,
+          retired_at
+        FROM federation_scope_retirements_legacy_t06681;
+        DROP TABLE federation_scope_retirements_legacy_t06681;
+      `)
+    }
   }).immediate()
 }
 
