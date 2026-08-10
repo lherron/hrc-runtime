@@ -2,6 +2,7 @@
  * Address normalization and resolution for hrcchat CLI.
  */
 import { formatSessionHandle } from 'agent-scope'
+import { resolveQualifiedScopeInput } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { resolveProfileAwareScopeInput } from 'hrc-sdk'
@@ -32,19 +33,80 @@ function inferTaskIdFromCallerSession(): string | undefined {
  */
 export function resolveScope(
   input: string,
-  options?: { withCallerTaskId?: boolean }
+  options?: { withCallerTaskId?: boolean; worktreeAssociation?: 'strict' | 'advisory' }
 ): ProfileAwareResolvedScopeInput {
   const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
   const fallbackTaskId = options?.withCallerTaskId ? inferTaskIdFromCallerSession() : undefined
+  const scope = {
+    defaultLaneId: 'main',
+    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+    ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
+  }
+  const projectOrigin = input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred'
 
-  return resolveProfileAwareScopeInput(input, {
-    scope: {
-      defaultLaneId: 'main',
-      ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
-      ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
-    },
-    projectOrigin: input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred',
-  })
+  try {
+    return resolveProfileAwareScopeInput(input, { scope, projectOrigin })
+  } catch (error) {
+    const association = parseWorktreeAssociationError(error)
+    if (options?.worktreeAssociation !== 'advisory' || association === undefined) throw error
+
+    // Messaging is the recovery channel for a worker whose checkout drifted,
+    // so a path/branch association mismatch cannot be a delivery gate. Probe
+    // the canonical project with a non-task token (which deliberately skips
+    // task-worktree refinement), then retry the real target against that root.
+    const initial = resolveQualifiedScopeInput(input, scope)
+    const projectId = initial.parsed.projectId
+    if (projectId === undefined) throw error
+    const canonicalProbe = resolveProfileAwareScopeInput(
+      `${initial.parsed.agentId}@${projectId}:primary`,
+      { scope: { defaultLaneId: 'main' }, projectOrigin: 'explicit' }
+    )
+    const canonicalRoot =
+      canonicalProbe.placement.resolution.canonicalRoot ?? canonicalProbe.placement.projectRoot
+    if (canonicalRoot === undefined) throw error
+
+    process.stderr.write(`[hrcchat] warning: ${formatWorktreeAssociationWarning(association)}\n`)
+    return resolveProfileAwareScopeInput(input, {
+      scope,
+      projectOrigin,
+      placement: { projectRoot: canonicalRoot },
+    })
+  }
+}
+
+type WorktreeAssociationMismatch = {
+  path: string
+  taskId: string
+  branch?: string | undefined
+}
+
+function parseWorktreeAssociationError(error: unknown): WorktreeAssociationMismatch | undefined {
+  if (!(error instanceof Error)) return undefined
+  const match =
+    /^worktree at (.+) appears associated with (T-\d+) but its branch (.+) does not carry it$/.exec(
+      error.message
+    )
+  if (!match?.[1] || !match[2] || !match[3]) return undefined
+  return {
+    path: match[1],
+    taskId: match[2],
+    ...(match[3] === 'detached' ? {} : { branch: match[3] }),
+  }
+}
+
+function formatWorktreeAssociationWarning(mismatch: WorktreeAssociationMismatch): string {
+  if (mismatch.branch) {
+    return `worktree at ${mismatch.path} appears associated with ${mismatch.taskId} but branch ${mismatch.branch} does not carry ${mismatch.taskId}; using canonical checkout for messaging`
+  }
+  return `worktree at ${mismatch.path} appears associated with ${mismatch.taskId} but is detached HEAD (no branch); using canonical checkout for messaging`
+}
+
+/** Resolve a messaging target without allowing worktree drift to block delivery. */
+export function resolveMessagingScope(
+  input: string,
+  options?: { withCallerTaskId?: boolean }
+): ProfileAwareResolvedScopeInput {
+  return resolveScope(input, { ...options, worktreeAssociation: 'advisory' })
 }
 
 /**

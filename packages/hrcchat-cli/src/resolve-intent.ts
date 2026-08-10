@@ -9,12 +9,23 @@
  */
 import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
-import { buildHrcRuntimeIntent, formatAgentNotFound, writePlacementWarnings } from 'hrc-sdk'
+import {
+  type ProfileAwareResolvedScopeInput,
+  buildHrcRuntimeIntent,
+  formatAgentNotFound,
+  writePlacementWarnings,
+} from 'hrc-sdk'
 
-import { resolveScope } from './normalize.js'
+import { resolveMessagingScope, resolveScope } from './normalize.js'
 
 export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIntent {
   const resolved = resolveScope(targetInput)
+  return buildRuntimeIntentForResolvedScope(resolved)
+}
+
+function buildRuntimeIntentForResolvedScope(
+  resolved: ProfileAwareResolvedScopeInput
+): HrcRuntimeIntent {
   const scope = resolved.parsed
 
   const paths = resolved.placement
@@ -33,4 +44,21 @@ export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIn
     interactive: false,
     preferredMode: 'nonInteractive',
   })
+}
+
+/** Resolve an hrcchat messaging target once, with association drift advisory. */
+export function resolveMessagingTarget(
+  targetInput: string,
+  options?: { withCallerTaskId?: boolean }
+): {
+  resolved: ProfileAwareResolvedScopeInput
+  sessionRef: string
+  runtimeIntent: HrcRuntimeIntent
+} {
+  const resolved = resolveMessagingScope(targetInput, options)
+  return {
+    resolved,
+    sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,
+    runtimeIntent: buildRuntimeIntentForResolvedScope(resolved),
+  }
 }

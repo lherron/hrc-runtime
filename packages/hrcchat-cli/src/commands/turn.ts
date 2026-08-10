@@ -15,12 +15,7 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
-import {
-  formatAddress,
-  resolveScope,
-  resolveSenderAddress,
-  resolveTargetToSessionRef,
-} from '../normalize.js'
+import { formatAddress, type resolveScope, resolveSenderAddress } from '../normalize.js'
 import { printJson, printJsonLine } from '../print.js'
 import {
   type RenderFrameFormatInput,
@@ -28,7 +23,7 @@ import {
   resolveRenderFrameSinkFormat,
   writeRenderFrameAsNdjson,
 } from '../render-frame.js'
-import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import { resolveMessagingTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
 import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
@@ -361,9 +356,8 @@ export async function cmdTurn(
   const { waitMode, waitTimeoutMs, stackedWindowMs } = resolveTurnOutputOptions(opts)
 
   // ── Resolve scope ──
-  const resolved = resolveScope(targetInput)
-  const sessionRef = resolveTargetToSessionRef(targetInput)
-  const runtimeIntent = resolveRuntimeIntentForTarget(targetInput)
+  const target = resolveMessagingTarget(targetInput)
+  const { resolved, sessionRef, runtimeIntent } = target
 
   // ── --dry-run: print the resolved dispatch plan and exit ──
   // Purely local resolution — consults no server state, mutates nothing

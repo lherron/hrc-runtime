@@ -10,7 +10,7 @@ import type { HrcClient } from 'hrc-sdk'
 import { tryRouteBackchannelDm } from '../backchannel-route.js'
 import { formatAddress, resolveAddress, resolveSenderAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
-import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import { resolveMessagingTarget, resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 import {
   buildDmFinalResponseResult,
   buildDmWaitResult,
@@ -89,13 +89,20 @@ export async function cmdDm(
     process.stderr.write('notice: sending as human (no session envelope)\n')
   }
   const from = sender.address
-  const to = resolveAddress(targetInput, callerSessionRef)
+  const directAddress = ['human', 'system', 'me'].includes(targetInput.toLowerCase())
+  const target = directAddress
+    ? undefined
+    : resolveMessagingTarget(targetInput, { withCallerTaskId: true })
+  const to = target
+    ? { kind: 'session' as const, sessionRef: target.sessionRef }
+    : resolveAddress(targetInput, callerSessionRef)
 
   const respondTo = opts.respondTo ? resolveAddress(opts.respondTo, callerSessionRef) : undefined
 
   // Resolve runtimeIntent for session targets so auto-summon works
   const runtimeIntent =
-    to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined
+    target?.runtimeIntent ??
+    (to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined)
 
   // Final-only wait does NOT use the server's coupled `wait` option: that
   // blocks on turn completion, so its timeoutMs only bounds the post-completion
