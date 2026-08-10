@@ -32,6 +32,8 @@ type MessageRow = {
   generation: number | null
   runtime_id: string | null
   run_id: string | null
+  coalesced_into_run_id: string | null
+  coalesced_position: number | null
   transport: string | null
   error_code: string | null
   error_message: string | null
@@ -45,6 +47,7 @@ const MESSAGE_COLUMNS = `
   body, body_format,
   execution_state, execution_mode, session_ref,
   host_session_id, generation, runtime_id, run_id,
+  coalesced_into_run_id, coalesced_position,
   transport, error_code, error_message, metadata_json
 `
 
@@ -73,6 +76,8 @@ function mapMessageRow(row: MessageRow): HrcMessageRecord {
     generation: row.generation ?? undefined,
     runtimeId: row.runtime_id ?? undefined,
     runId: row.run_id ?? undefined,
+    coalescedIntoRunId: row.coalesced_into_run_id ?? undefined,
+    coalescedPosition: row.coalesced_position ?? undefined,
     transport: (row.transport ?? undefined) as HrcMessageExecution['transport'],
     errorCode: row.error_code ?? undefined,
     errorMessage: row.error_message ?? undefined,
@@ -148,6 +153,8 @@ const MESSAGE_EXECUTION_UPDATE_SPEC: ReadonlyArray<PatchColumnSpec<Partial<HrcMe
     { key: 'generation', column: 'generation' },
     { key: 'runtimeId', column: 'runtime_id' },
     { key: 'runId', column: 'run_id' },
+    { key: 'coalescedIntoRunId', column: 'coalesced_into_run_id' },
+    { key: 'coalescedPosition', column: 'coalesced_position' },
     { key: 'transport', column: 'transport' },
     { key: 'errorCode', column: 'error_code' },
     { key: 'errorMessage', column: 'error_message' },

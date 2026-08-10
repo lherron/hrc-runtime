@@ -367,6 +367,11 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'brokerInputFenceReason', column: 'broker_input_fence_reason' },
   { key: 'dispatchIdempotencyKey', column: 'dispatch_idempotency_key' },
   { key: 'dispatchRequestHash', column: 'dispatch_request_hash' },
+  { key: 'queueSnapshotId', column: 'queue_snapshot_id' },
+  { key: 'queuedInputSeq', column: 'queued_input_seq' },
+  { key: 'queueSnapshotPosition', column: 'queue_snapshot_position' },
+  { key: 'coalescedIntoRunId', column: 'coalesced_into_run_id' },
+  { key: 'coalescedPosition', column: 'coalesced_position' },
 ]
 
 export class RunRepository {
@@ -397,8 +402,13 @@ export class RunRepository {
           broker_input_fenced_at,
           broker_input_fence_reason,
           dispatch_idempotency_key,
-          dispatch_request_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          dispatch_request_hash,
+          queue_snapshot_id,
+          queued_input_seq,
+          queue_snapshot_position,
+          coalesced_into_run_id,
+          coalesced_position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -420,7 +430,12 @@ export class RunRepository {
       record.brokerInputFencedAt ?? null,
       record.brokerInputFenceReason ?? null,
       record.dispatchIdempotencyKey ?? null,
-      record.dispatchRequestHash ?? null
+      record.dispatchRequestHash ?? null,
+      record.queueSnapshotId ?? null,
+      record.queuedInputSeq ?? null,
+      record.queueSnapshotPosition ?? null,
+      record.coalescedIntoRunId ?? null,
+      record.coalescedPosition ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
@@ -504,11 +519,97 @@ export class RunRepository {
       .query<RunRow, [string]>(
         `SELECT ${RUN_COLUMNS} FROM runs
           WHERE host_session_id = ? AND status = 'queued'
-          ORDER BY accepted_at ASC, run_id ASC`
+          ORDER BY queued_input_seq ASC, rowid ASC`
       )
       .all(hostSessionId)
 
     return rows.map(mapRunRow)
+  }
+
+  /**
+   * Return the oldest durable drain snapshot, creating one from every currently
+   * pending row when no prior snapshot remains. New arrivals retain a NULL
+   * snapshot id, so they cannot splice into a partition already in flight.
+   */
+  snapshotQueuedByHostSessionId(
+    hostSessionId: string,
+    snapshotId: string,
+    updatedAt: string
+  ): HrcRunRecord[] {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .query<{ queue_snapshot_id: string }, [string]>(
+          `SELECT queue_snapshot_id FROM runs
+            WHERE host_session_id = ?
+              AND status = 'queued'
+              AND queue_snapshot_id IS NOT NULL
+            ORDER BY queued_input_seq ASC, rowid ASC
+            LIMIT 1`
+        )
+        .get(hostSessionId)
+
+      const selectedSnapshotId = existing?.queue_snapshot_id ?? snapshotId
+      if (existing === null || existing === undefined) {
+        const pending = this.db
+          .query<{ run_id: string }, [string]>(
+            `SELECT run_id FROM runs
+              WHERE host_session_id = ?
+                AND status = 'queued'
+                AND queue_snapshot_id IS NULL
+              ORDER BY queued_input_seq ASC, rowid ASC`
+          )
+          .all(hostSessionId)
+        const assign = this.db.query(
+          `UPDATE runs
+              SET queue_snapshot_id = ?,
+                  queue_snapshot_position = ?,
+                  updated_at = ?
+            WHERE run_id = ?
+              AND status = 'queued'
+              AND queue_snapshot_id IS NULL`
+        )
+        pending.forEach((row, position) => {
+          const result = assign.run(selectedSnapshotId, position, updatedAt, row.run_id) as {
+            changes?: number
+          }
+          if ((result.changes ?? 0) !== 1) {
+            throw new Error(`failed to snapshot queued run ${row.run_id}`)
+          }
+        })
+      }
+
+      const rows = this.db
+        .query<RunRow, [string, string]>(
+          `SELECT ${RUN_COLUMNS} FROM runs
+            WHERE host_session_id = ?
+              AND status = 'queued'
+              AND queue_snapshot_id = ?
+            ORDER BY queue_snapshot_position ASC`
+        )
+        .all(hostSessionId, selectedSnapshotId)
+      return rows.map(mapRunRow)
+    })()
+  }
+
+  /** Terminalize one queued run into the carrying owner run. */
+  markQueuedCoalesced(
+    runId: string,
+    updates: { ownerRunId: string; position: number; completedAt: string; updatedAt: string }
+  ): boolean {
+    const result = this.db
+      .query(
+        `UPDATE runs
+            SET status = 'coalesced',
+                completed_at = ?,
+                updated_at = ?,
+                coalesced_into_run_id = ?,
+                coalesced_position = ?
+          WHERE run_id = ? AND status = 'queued'`
+      )
+      .run(updates.completedAt, updates.updatedAt, updates.ownerRunId, updates.position, runId) as {
+      changes?: number
+    }
+    return (result.changes ?? 0) === 1
   }
 
   /** Atomically claim one queued input for broker dispatch. */

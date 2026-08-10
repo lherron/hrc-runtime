@@ -85,6 +85,12 @@ export type DispatchRunPersistenceOptions = Pick<
   'dispatchIdempotencyKey' | 'dispatchRequestHash'
 >
 
+export type CoalescedQueuedMember = {
+  runId: string
+  sourceMessageId: string
+  position: number
+}
+
 export type PendingAttachedRunOperation = Promise<unknown>
 
 export type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>

@@ -65,6 +65,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type {
   AttachBeforeInvocationStartOption,
+  CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
@@ -323,6 +324,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     whenBusy?: 'reject' | 'steer' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
   } = {}
 ): Promise<Response> {
   const requestedTurnIntent: HrcRuntimeIntent =

@@ -1453,6 +1453,58 @@ const externalRegistrationRetirementMigration: HrcMigration = {
   },
 }
 
+const dmQueueCoalescingMigration: HrcMigration = {
+  id: '0040_dm_queue_coalescing',
+  apply(db) {
+    const runColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    for (const [column, type] of [
+      ['queue_snapshot_id', 'TEXT'],
+      ['queued_input_seq', 'INTEGER'],
+      ['queue_snapshot_position', 'INTEGER'],
+      ['coalesced_into_run_id', 'TEXT'],
+      ['coalesced_position', 'INTEGER'],
+    ] as const) {
+      if (!runColumns.has(column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`)
+    }
+    db.exec(`UPDATE runs SET queued_input_seq = rowid
+      WHERE status = 'queued' AND queued_input_seq IS NULL`)
+
+    const messageColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(messages)')
+        .all()
+        .map((row) => row.name)
+    )
+    for (const [column, type] of [
+      ['coalesced_into_run_id', 'TEXT'],
+      ['coalesced_position', 'INTEGER'],
+    ] as const) {
+      if (!messageColumns.has(column)) {
+        db.exec(`ALTER TABLE messages ADD COLUMN ${column} ${type}`)
+      }
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_queued_snapshot
+        ON runs(host_session_id, status, queue_snapshot_id, queue_snapshot_position, queued_input_seq);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_queued_input_seq
+        ON runs(queued_input_seq) WHERE queued_input_seq IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_runs_coalesced_into
+        ON runs(coalesced_into_run_id, coalesced_position);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_coalesced_into
+        ON messages(coalesced_into_run_id, coalesced_position);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1488,4 +1540,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   externalRegistrationGrantsMigration,
   externalRegistrationMintMigration,
   externalRegistrationRetirementMigration,
+  dmQueueCoalescingMigration,
 ]

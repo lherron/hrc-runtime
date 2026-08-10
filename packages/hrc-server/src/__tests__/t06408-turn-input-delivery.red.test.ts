@@ -104,7 +104,10 @@ async function seedHeadlessBroker(
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
       invocationState: state === 'busy' ? 'turn_active' : 'ready',
-      capabilitiesJson: JSON.stringify({ input: { queue: options.queueCapable === true } }),
+      capabilitiesJson: JSON.stringify({
+        input: { queue: options.queueCapable === true },
+        finalResponse: { jsonSchema: true, perTurn: true },
+      }),
       specHash: `sha256:spec-t06408-${state}`,
       startRequestHash: `sha256:req-t06408-${state}`,
       selectedProfileHash: `sha256:profile-t06408-${state}`,
@@ -182,6 +185,59 @@ async function waitForCondition(
     await Bun.sleep(25)
   }
   throw new Error(`timed out waiting for ${description}`)
+}
+
+async function sendDm(
+  seeded: SeededBroker,
+  body: string,
+  responseFormat?: { kind: 'json_schema'; schema: Record<string, unknown> }
+): Promise<SemanticDmResponse> {
+  const response = await fixture.postJson('/v1/messages/dm', {
+    from: { kind: 'entity', entity: 'human' },
+    to: { kind: 'session', sessionRef: seeded.sessionRef },
+    body,
+    runtimeIntent: intent,
+    ...(responseFormat === undefined ? {} : { responseFormat }),
+  })
+  expect(response.status).toBe(200)
+  return (await response.json()) as SemanticDmResponse
+}
+
+function completeRunAndNotify(seeded: SeededBroker, runId: string): void {
+  const completedAt = fixture.now()
+  const db = openHrcDatabase(fixture.dbPath)
+  let terminalEvent: ReturnType<typeof appendHrcEvent>
+  try {
+    db.runs.markCompleted(runId, {
+      status: 'completed',
+      completedAt,
+      updatedAt: completedAt,
+    })
+    db.runtimes.updateRunId(seeded.runtimeId, undefined, completedAt)
+    db.runtimes.update(seeded.runtimeId, {
+      status: 'ready',
+      updatedAt: completedAt,
+      lastActivityAt: completedAt,
+    })
+    db.brokerInvocations.update(seeded.invocationId, {
+      invocationState: 'ready',
+      updatedAt: completedAt,
+    })
+    terminalEvent = appendHrcEvent(db, 'turn.completed', {
+      ts: completedAt,
+      hostSessionId: seeded.hostSessionId,
+      scopeRef: seeded.scopeRef,
+      laneRef: 'default',
+      generation: seeded.generation,
+      runId,
+      runtimeId: seeded.runtimeId,
+      transport: 'headless',
+      payload: { success: true, transport: 'headless' },
+    })
+  } finally {
+    db.close()
+  }
+  ;(server as any).notifyEvent(terminalEvent)
 }
 
 describe('T-06408 durable turn-input delivery', () => {
@@ -270,6 +326,147 @@ describe('T-06408 durable turn-input delivery', () => {
     } finally {
       verifyDb.close()
     }
+  })
+
+  it('coalesces an uncut default-format DM run under its highest-seq owner', async () => {
+    const seeded = await seedHeadlessBroker('busy')
+    const recorder = installDispatchRecorder(seeded.invocationId, seeded.runtimeId)
+    const bodies = Array.from(
+      { length: 50 },
+      (_, index) => `queued instruction ${String(index + 1).padStart(2, '0')} ${'x'.repeat(1_500)}`
+    )
+    const messages: SemanticDmResponse[] = []
+    for (const body of bodies) messages.push(await sendDm(seeded, body))
+
+    completeRunAndNotify(seeded, seeded.activeRunId!)
+    await waitForCondition(() => recorder.calls.length === 1, 'coalesced queued DM dispatch')
+
+    const prompt = String(recorder.calls[0].input.content[0]?.text)
+    let priorHeaderIndex = -1
+    for (const message of messages) {
+      const headerIndex = prompt.indexOf(`[DM #${message.request.messageSeq}`)
+      expect(headerIndex).toBeGreaterThan(priorHeaderIndex)
+      priorHeaderIndex = headerIndex
+    }
+    expect(prompt).toContain('truncated; hrcchat show')
+    expect(prompt).toEndWith('[queued delivery snapshot remainder count=0]')
+    expect(recorder.calls[0].input.metadata.runId).toBe(messages.at(-1)!.request.execution.runId)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const ownerRunId = messages.at(-1)!.request.execution.runId!
+      const ownerCorrelation = JSON.parse(db.runs.getCorrelationJson(ownerRunId) ?? '{}') as {
+        sourceMessageId?: string
+      }
+      expect(ownerCorrelation.sourceMessageId).toBe(messages.at(-1)!.request.messageId)
+      expect(db.runs.listQueuedByHostSessionId(seeded.hostSessionId)).toHaveLength(0)
+      messages.slice(0, -1).forEach((message, position) => {
+        const stored = db.messages.getById(message.request.messageId)
+        const run = db.runs.getByRunId(message.request.execution.runId!)
+        expect(stored?.execution).toMatchObject({
+          state: 'coalesced',
+          coalescedIntoRunId: ownerRunId,
+          coalescedPosition: position,
+        })
+        expect(run).toMatchObject({
+          status: 'coalesced',
+          coalescedIntoRunId: ownerRunId,
+          coalescedPosition: position,
+        })
+      })
+      expect(db.messages.getById(messages.at(-1)!.request.messageId)?.execution.state).toBe(
+        'started'
+      )
+      expect(db.runs.getByRunId(ownerRunId)?.status).toBe('accepted')
+    } finally {
+      db.close()
+    }
+
+    await (server as any).drainDurableHeadlessTurnInputs(seeded.hostSessionId)
+    expect(recorder.calls).toHaveLength(1)
+  })
+
+  it('partitions boot and non-default response-format barriers without content previews', async () => {
+    const seeded = await seedHeadlessBroker('busy')
+    const recorder = installDispatchRecorder(seeded.invocationId, seeded.runtimeId)
+    const work = await sendDm(seeded, 'WORK BODY UNIQUE')
+
+    const bootRunId = 'run-t06408-boot-barrier'
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const session = db.sessions.getByHostSessionId(seeded.hostSessionId)!
+      ;(server as any).enqueueDurableHeadlessTurnInput(session, 'BOOT BODY UNIQUE', bootRunId, {
+        source: 'boot',
+      })
+    } finally {
+      db.close()
+    }
+
+    const structured = await sendDm(seeded, 'STRUCTURED BODY UNIQUE', {
+      kind: 'json_schema',
+      schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+    })
+    const pause = await sendDm(seeded, 'PAUSE BODY UNIQUE')
+    const queueDb = openHrcDatabase(fixture.dbPath)
+    const structuredQueueSeq = queueDb.runs.getByRunId(
+      structured.request.execution.runId!
+    )!.queuedInputSeq
+    const pauseQueueSeq = queueDb.runs.getByRunId(pause.request.execution.runId!)!.queuedInputSeq
+    queueDb.close()
+
+    completeRunAndNotify(seeded, seeded.activeRunId!)
+    await waitForCondition(() => recorder.calls.length === 1, 'work partition')
+    const workPrompt = String(recorder.calls[0].input.content[0]?.text)
+    expect(workPrompt).toContain('WORK BODY UNIQUE')
+    expect(workPrompt).not.toContain('BOOT BODY UNIQUE')
+    expect(workPrompt).not.toContain('STRUCTURED BODY UNIQUE')
+    expect(workPrompt).not.toContain('PAUSE BODY UNIQUE')
+    expect(workPrompt).toContain('remainder count=3')
+    expect(workPrompt).toContain(`seq=${structuredQueueSeq} sender=human`)
+    expect(workPrompt).toContain(`seq=${pauseQueueSeq} sender=human`)
+    const late = await sendDm(seeded, 'LATE BODY UNIQUE')
+
+    completeRunAndNotify(seeded, work.request.execution.runId!)
+    await waitForCondition(() => recorder.calls.length === 2, 'boot partition')
+    const bootPrompt = String(recorder.calls[1].input.content[0]?.text)
+    expect(bootPrompt).toContain('BOOT BODY UNIQUE')
+    expect(bootPrompt).not.toContain('STRUCTURED BODY UNIQUE')
+    expect(bootPrompt).not.toContain('PAUSE BODY UNIQUE')
+    expect(bootPrompt).not.toContain('LATE BODY UNIQUE')
+    expect(bootPrompt).toContain('remainder count=2')
+
+    completeRunAndNotify(seeded, bootRunId)
+    await waitForCondition(() => recorder.calls.length === 3, 'structured partition')
+    const structuredCall = recorder.calls[2]
+    const structuredPrompt = String(structuredCall.input.content[0]?.text)
+    expect(structuredPrompt).toContain('STRUCTURED BODY UNIQUE')
+    expect(structuredPrompt).not.toContain('PAUSE BODY UNIQUE')
+    expect(structuredPrompt).not.toContain('LATE BODY UNIQUE')
+    expect(structuredPrompt).toContain('remainder count=1')
+    expect(structuredCall.input.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+    })
+
+    completeRunAndNotify(seeded, structured.request.execution.runId!)
+    await waitForCondition(() => recorder.calls.length === 4, 'pause partition')
+    const pausePrompt = String(recorder.calls[3].input.content[0]?.text)
+    expect(pausePrompt).toContain('PAUSE BODY UNIQUE')
+    expect(pausePrompt).not.toContain('LATE BODY UNIQUE')
+    expect(pausePrompt).toEndWith('[queued delivery snapshot remainder count=0]')
+
+    completeRunAndNotify(seeded, pause.request.execution.runId!)
+    await waitForCondition(() => recorder.calls.length === 5, 'next-snapshot late partition')
+    const latePrompt = String(recorder.calls[4].input.content[0]?.text)
+    expect(latePrompt).toContain('LATE BODY UNIQUE')
+    expect(latePrompt).toEndWith('[queued delivery snapshot remainder count=0]')
+    expect(recorder.calls.map((call) => call.input.metadata.runId)).toEqual([
+      work.request.execution.runId,
+      bootRunId,
+      structured.request.execution.runId,
+      pause.request.execution.runId,
+      late.request.execution.runId,
+    ])
   })
 
   it('keeps the idle DM path immediate and records one broker user.message', async () => {

@@ -74,6 +74,7 @@ import {
 } from './server-parsers.js'
 import type {
   AttachBeforeInvocationStartOption,
+  CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
 } from './server-types.js'
 import {
@@ -969,6 +970,7 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   repairCorrelation?: JsonRepairRunCorrelation | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
+  coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
 }
 
 export async function dispatchTurnForSession(
@@ -1071,6 +1073,7 @@ async function dispatchAdmittedTurnForSession(
           whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
+          coalescedMembers: options.coalescedMembers,
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
           dispatchRequestHash: options.dispatchRequestHash,
         })

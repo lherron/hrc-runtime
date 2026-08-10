@@ -111,6 +111,7 @@ export type HrcMessageExecutionState =
   | 'accepted'
   | 'started'
   | 'completed'
+  | 'coalesced'
   | 'failed'
 
 export type HrcMessageExecution = {
@@ -123,6 +124,10 @@ export type HrcMessageExecution = {
   generation?: number | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
+  /** Carrying run for a queued input terminalized into a coalesced batch. */
+  coalescedIntoRunId?: string | undefined
+  /** Zero-based position of this message within its carrying batch. */
+  coalescedPosition?: number | undefined
   transport?: 'sdk' | 'tmux' | 'headless' | 'ghostty' | undefined
   errorCode?: string | undefined
   errorMessage?: string | undefined

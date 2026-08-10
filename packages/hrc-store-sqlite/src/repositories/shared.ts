@@ -308,7 +308,12 @@ export const RUN_COLUMNS = `
   broker_input_fenced_at,
   broker_input_fence_reason,
   dispatch_idempotency_key,
-  dispatch_request_hash`
+  dispatch_request_hash,
+  queue_snapshot_id,
+  queued_input_seq,
+  queue_snapshot_position,
+  coalesced_into_run_id,
+  coalesced_position`
 
 export const LAUNCH_COLUMNS = `
   launch_id,
@@ -748,6 +753,11 @@ export function mapRunRow(row: RunRow): HrcRunRecord {
     brokerInputFenceReason: row.broker_input_fence_reason ?? undefined,
     dispatchIdempotencyKey: row.dispatch_idempotency_key ?? undefined,
     dispatchRequestHash: row.dispatch_request_hash ?? undefined,
+    queueSnapshotId: row.queue_snapshot_id ?? undefined,
+    queuedInputSeq: row.queued_input_seq ?? undefined,
+    queueSnapshotPosition: row.queue_snapshot_position ?? undefined,
+    coalescedIntoRunId: row.coalesced_into_run_id ?? undefined,
+    coalescedPosition: row.coalesced_position ?? undefined,
   }
 }
 

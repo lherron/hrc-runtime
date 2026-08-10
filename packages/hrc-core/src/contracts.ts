@@ -451,6 +451,16 @@ export type HrcRunRecord = {
   dispatchIdempotencyKey?: string | undefined
   /** Canonical semantic request hash used to reject conflicting key reuse. */
   dispatchRequestHash?: string | undefined
+  /** Durable snapshot fence for queued inputs awaiting ordered drain. */
+  queueSnapshotId?: string | undefined
+  /** Monotonic durable input-queue sequence assigned when the run is enqueued. */
+  queuedInputSeq?: number | undefined
+  /** Zero-based position within the durable queue snapshot. */
+  queueSnapshotPosition?: number | undefined
+  /** Carrying run when this queued run was terminalized into a coalesced batch. */
+  coalescedIntoRunId?: string | undefined
+  /** Zero-based position of this queued run within its carrying batch. */
+  coalescedPosition?: number | undefined
 }
 
 export type HrcLaunchRecord = {
