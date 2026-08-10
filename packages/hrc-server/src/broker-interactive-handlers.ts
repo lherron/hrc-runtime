@@ -261,7 +261,11 @@ export async function handleHeadlessDispatchTurn(
   this.notifyEvent(startedEvent)
 
   const execute = async (): Promise<Response> => {
-    if (shouldUseHeadlessSdkExecutor(intent.harness)) {
+    if (
+      shouldUseHeadlessSdkExecutor(intent.harness, {
+        piSdkBrokerFlagEnabled: this.piSdkBrokerEnabled,
+      })
+    ) {
       return await this.executeHeadlessSdkTurn(
         session,
         runtime,

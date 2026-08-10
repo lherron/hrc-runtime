@@ -65,4 +65,14 @@ describe('shouldUseHeadlessSdkExecutor', () => {
       expect(shouldUseHeadlessSdkExecutor(harness)).toBe(expected)
     })
   }
+
+  it('keeps pi-sdk on the SDK executor when the broker flag is OFF', () => {
+    const harness: HarnessInput = { provider: 'openai', interactive: false, id: 'pi-sdk' }
+    expect(shouldUseHeadlessSdkExecutor(harness, { piSdkBrokerFlagEnabled: false })).toBe(true)
+  })
+
+  it('drops pi-sdk from the SDK executor set only when the broker flag is ON', () => {
+    const harness: HarnessInput = { provider: 'openai', interactive: false, id: 'pi-sdk' }
+    expect(shouldUseHeadlessSdkExecutor(harness, { piSdkBrokerFlagEnabled: true })).toBe(false)
+  })
 })

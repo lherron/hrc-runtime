@@ -346,6 +346,7 @@ export async function startRuntimeForSession(
       // still hard-fails; legacy-exec still fails closed.
       const headlessRoute = decideHeadlessExecutionRoute(startIntent, {
         brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+        piSdkBrokerFlagEnabled: this.piSdkBrokerEnabled,
       })
       assertActuatorSplitRouteAdmission(startIntent, headlessRoute)
       if (headlessRoute === 'broker') {

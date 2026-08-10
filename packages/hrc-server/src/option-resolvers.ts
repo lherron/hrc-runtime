@@ -19,6 +19,7 @@ import {
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
   HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_MAIL_MAX_ROUNDS_ENV,
+  HRC_PI_SDK_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_TMUX_AGING_ENABLED_ENV,
 } from './server-constants.js'
@@ -66,8 +67,8 @@ export function resolveTmuxAgingEnabled(options: HrcServerOptions): boolean {
  * otherwise consult the env var. `defaultOn` selects the env semantics —
  * `true` means default-ON (enabled unless an explicit falsy flag), `false`
  * means default-OFF (dark unless an explicit truthy flag). The asymmetry is
- * intentional and load-bearing (broker cutover flags default ON; durable-IPC
- * dark), so each call site passes `defaultOn` explicitly.
+ * intentional and load-bearing (each cutover chooses its own rollout default),
+ * so each call site passes `defaultOn` explicitly.
  */
 function resolveBooleanFlag(
   override: boolean | undefined,
@@ -85,6 +86,14 @@ export function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): bo
     options.headlessCodexBrokerEnabled,
     process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV],
     { defaultOn: true }
+  )
+}
+
+export function resolvePiSdkBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.piSdkBrokerEnabled,
+    process.env[HRC_PI_SDK_BROKER_ENABLED_ENV],
+    { defaultOn: false }
   )
 }
 

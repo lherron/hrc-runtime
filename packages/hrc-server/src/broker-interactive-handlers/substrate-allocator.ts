@@ -123,6 +123,10 @@ export type BrokerSubstrateAllocation = {
   tuiLease?: BrokerTmuxLease | undefined
 }
 
+export function resolveBrokerBinary(driverKind: string): string {
+  return driverKind === 'pi-sdk' ? 'harness-broker-pi' : 'harness-broker'
+}
+
 export async function allocateBrokerSubstrate(
   options: Pick<HrcServerOptions, 'runtimeRoot'>,
   deps: BrokerDurableTmuxAllocatorDeps,
@@ -178,7 +182,8 @@ export async function allocateBrokerSubstrate(
   // trace. Redirecting fd2 BEFORE the shell `exec`s into the broker preserves the
   // crash/panic output across the exec into this file.
   const brokerStderrPath = join(ipcDir, 'broker.err')
-  const brokerCommand = `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
+  const brokerBinary = resolveBrokerBinary(driverKind)
+  const brokerCommand = `exec ${brokerBinary} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
   const brokerWindow = await tmux.createWindowWithCommand({
     sessionName,
     windowName: 'broker',

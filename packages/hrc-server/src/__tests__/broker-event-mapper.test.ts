@@ -709,6 +709,27 @@ describe('transaction atomicity', () => {
 // 5. Projection mapping — ordered synthetic sequence
 // ---------------------------------------------------------------------------
 describe('projection mapping (ordered sequence)', () => {
+  it('maps normalized pi-sdk driver events unchanged without requiring a terminal surface', () => {
+    const db = fixture.db
+    db.brokerInvocations.update(INVOCATION_ID, {
+      brokerDriver: 'pi-sdk',
+      updatedAt: ts(1),
+    })
+    const mapper = makeMapper()
+    const sequence = headlessSequence()
+
+    const lifecycleKinds = sequence.flatMap((event) => mapper.apply(event).lifecycleEvents)
+    const durableTypes = db.brokerInvocationEvents
+      .listByInvocationId(INVOCATION_ID)
+      .map((event) => event.type)
+
+    expect(durableTypes).toEqual(sequence.map((event) => event.type))
+    expect(lifecycleKinds.map((event) => event.eventKind)).toContain('turn.completed')
+    expect(bufferTextForRun(db, RUN_ID)).toContain(ASSISTANT_TEXT)
+    expect(db.surfaceBindings.findByRuntime(RUNTIME_ID)).toEqual([])
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.brokerDriver).toBe('pi-sdk')
+  })
+
   it('projects runtime / run / message / tool / continuation state', () => {
     const mapper = makeMapper()
     const db = fixture.db

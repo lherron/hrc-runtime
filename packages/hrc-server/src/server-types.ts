@@ -278,6 +278,12 @@ export type HrcServerOptions = {
    */
   headlessCodexBrokerEnabled?: boolean | undefined
   /**
+   * Cut headless pi-sdk dispatch over to the Harness Broker. Default off.
+   *
+   * Env override: `HRC_PI_SDK_BROKER_ENABLED` (truthy enables).
+   */
+  piSdkBrokerEnabled?: boolean | undefined
+  /**
    * Cut interactive Claude Code tmux dispatch over to the Harness Broker. Default on.
    *
    * Env override: `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` (`0`/`false` disables).

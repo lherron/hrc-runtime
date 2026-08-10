@@ -364,6 +364,7 @@ export async function handleOpenBrokerSession(
 
   const route = decideHeadlessExecutionRoute(intent, {
     brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+    piSdkBrokerFlagEnabled: this.piSdkBrokerEnabled,
   })
   assertActuatorSplitRouteAdmission(intent, route)
   if (route !== 'broker') {
@@ -1060,6 +1061,7 @@ async function dispatchAdmittedTurnForSession(
   if (shouldUseHeadlessTransport(intent) && !liveInteractiveBrokerReusable) {
     const route = decideHeadlessExecutionRoute(intent, {
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+      piSdkBrokerFlagEnabled: this.piSdkBrokerEnabled,
     })
     assertActuatorSplitRouteAdmission(intent, route)
     if (route === 'broker') {

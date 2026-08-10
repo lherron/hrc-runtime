@@ -27,8 +27,9 @@
  *   ): Promise<T>
  *
  * Routing semantics (decideHeadlessExecutionRoute):
- *   - 'sdk'         iff shouldUseHeadlessSdkExecutor(intent.harness) — flag-independent,
- *                   preserves today's SDK path (agent-sdk / pi-sdk / id-less anthropic).
+ *   - 'sdk'         iff shouldUseHeadlessSdkExecutor(intent.harness) — preserves today's
+ *                   SDK path (agent-sdk / pi-sdk / id-less anthropic) while the pi-sdk
+ *                   broker cutover flag is OFF.
  *   - 'broker'      iff brokerFlagEnabled AND the intent is a headless OpenAI Codex
  *                   candidate: NOT sdk-executor, NOT interactive, provider 'openai',
  *                   harness.id in { 'codex-cli', undefined } (codex-app-server shares the
@@ -239,6 +240,34 @@ describe('decideHeadlessExecutionRoute — flag ON', () => {
       )
     })
   }
+})
+
+describe('decideHeadlessExecutionRoute — pi-sdk broker flag', () => {
+  const piSdk = intent({ provider: 'openai', interactive: false, id: 'pi-sdk' })
+
+  it('preserves the SDK route byte-for-byte when the pi-sdk flag is OFF', () => {
+    expect(
+      decideHeadlessExecutionRoute!(piSdk, {
+        brokerFlagEnabled: false,
+        piSdkBrokerFlagEnabled: false,
+      })
+    ).toBe('sdk')
+    expect(
+      decideHeadlessExecutionRoute!(piSdk, {
+        brokerFlagEnabled: true,
+        piSdkBrokerFlagEnabled: false,
+      })
+    ).toBe('sdk')
+  })
+
+  it('selects broker when the pi-sdk flag is ON independently of the Codex flag', () => {
+    expect(
+      decideHeadlessExecutionRoute!(piSdk, {
+        brokerFlagEnabled: false,
+        piSdkBrokerFlagEnabled: true,
+      })
+    ).toBe('broker')
+  })
 })
 
 describe('decideHeadlessExecutionRoute — flag ON, interactive/tmux is NEVER broker', () => {

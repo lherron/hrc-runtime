@@ -80,17 +80,24 @@ export function deriveSdkHarness(
 
 /**
  * Decide whether a headless dispatch (or start) should select the SDK route
- * rather than the CLI route. Explicit SDK harness ids always win. Id-less Anthropic
- * intents keep the legacy SDK fallback only after the caller has already
- * selected the headless path. Normal Claude dispatch routes through Ghostty
- * only when HRC_CLAUDE_GHOSTTY=1 is set.
+ * rather than the CLI route. Explicit agent-sdk always wins; explicit pi-sdk
+ * stays on the SDK fallback unless its separate broker cutover flag is enabled.
+ * Id-less Anthropic intents keep the legacy SDK fallback only after the caller
+ * has already selected the headless path. Normal Claude dispatch routes through
+ * Ghostty only when HRC_CLAUDE_GHOSTTY=1 is set.
  *
  * Exported for unit testing — single-source predicate for dispatch routing,
  * start routing, runtime harness label (`deriveSdkHarness` vs
  * `deriveInteractiveHarness`), and reuse filtering.
  */
-export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness']): boolean {
-  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+export function shouldUseHeadlessSdkExecutor(
+  harness: HrcRuntimeIntent['harness'],
+  options: { piSdkBrokerFlagEnabled: boolean } = { piSdkBrokerFlagEnabled: false }
+): boolean {
+  if (harness.id === 'pi-sdk') {
+    return !options.piSdkBrokerFlagEnabled
+  }
+  if (harness.id === 'agent-sdk') {
     return true
   }
   if (harness.id !== undefined) {
@@ -103,10 +110,21 @@ export type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
 
 export function decideHeadlessExecutionRoute(
   intent: HrcRuntimeIntent,
-  options: { brokerFlagEnabled: boolean }
+  options: { brokerFlagEnabled: boolean; piSdkBrokerFlagEnabled?: boolean }
 ): HeadlessExecutionRoute {
-  if (shouldUseHeadlessSdkExecutor(intent.harness)) {
+  const piSdkBrokerFlagEnabled = options.piSdkBrokerFlagEnabled === true
+  if (shouldUseHeadlessSdkExecutor(intent.harness, { piSdkBrokerFlagEnabled })) {
     return 'sdk'
+  }
+
+  const isHeadlessPiSdkCandidate =
+    piSdkBrokerFlagEnabled &&
+    shouldUseHeadlessTransport(intent) &&
+    intent.harness.interactive !== true &&
+    intent.harness.id === 'pi-sdk'
+
+  if (isHeadlessPiSdkCandidate) {
+    return 'broker'
   }
 
   const isHeadlessCodexCandidate =
