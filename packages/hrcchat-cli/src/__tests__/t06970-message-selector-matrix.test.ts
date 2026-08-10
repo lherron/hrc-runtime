@@ -15,6 +15,7 @@ import type {
   TraceMessageRequest,
   TraceMessageResponse,
 } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 import { cmdShow } from '../commands/show.js'
@@ -24,6 +25,7 @@ import { cmdTrace } from '../commands/trace.js'
 const ROOT_ID = 'msg-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const REPLY_ID = 'msg-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const LEGACY_ID = 'msg-cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+const COLLIDING_ID = 'msg-dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 
 /** Node-local seq and collective seq deliberately differ, as they do on svc. */
 const ROOT_MESSAGE_SEQ = 12
@@ -54,6 +56,12 @@ function record(
 }
 
 const COLLECTIVE_CORPUS = [
+  record({
+    messageSeq: 4,
+    collectiveSeq: ROOT_MESSAGE_SEQ,
+    messageId: COLLIDING_ID,
+    rootMessageId: COLLIDING_ID,
+  }),
   record({
     messageSeq: ROOT_MESSAGE_SEQ,
     collectiveSeq: ROOT_COLLECTIVE_SEQ,
@@ -111,7 +119,11 @@ function fakeClient(corpus: HrcCollectiveMessageRecord[], recorder: Recorder): H
           ? corpus.find((candidate) => candidate.messageSeq === request.messageSeq)
           : corpus.find((candidate) => candidate.messageId === request.messageId)
       if (found === undefined) {
-        throw new Error(`message not found: ${JSON.stringify(request)}`)
+        const selector = request.messageSeq ?? request.messageId
+        throw new HrcDomainError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          `message not found: ${String(selector)}`
+        )
       }
       return {
         localNodeId: 'svc',
@@ -221,7 +233,7 @@ describe('T-06970 selector x command matrix', () => {
     const recorder: Recorder = { filters: [], traces: [] }
     const client = fakeClient(COLLECTIVE_CORPUS, recorder)
     await runCommand('trace', client, String(ROOT_COLLECTIVE_SEQ))
-    expect(recorder.traces).toEqual([{ messageId: ROOT_ID }])
+    expect(recorder.traces).toEqual([{ messageSeq: ROOT_COLLECTIVE_SEQ }, { messageId: ROOT_ID }])
   })
 
   test('collectiveSeq lookup still pushes an exact messageId filter for id selectors', async () => {
@@ -291,4 +303,17 @@ describe('T-06970 actionable rejections', () => {
       )
     })
   }
+})
+
+describe('T-07188 bare sequence namespace collision', () => {
+  test('notification seq cannot silently resolve to a different collective-seq message', async () => {
+    const recorder: Recorder = { filters: [], traces: [] }
+    const client = fakeClient(COLLECTIVE_CORPUS, recorder)
+
+    await expect(runCommand('show', client, String(ROOT_MESSAGE_SEQ))).rejects.toThrow(
+      new RegExp(
+        `ambiguous message sequence ${ROOT_MESSAGE_SEQ}: @${ROOT_MESSAGE_SEQ} \\(collective seq\\).*#${ROOT_MESSAGE_SEQ} \\(node-local message seq\\).*use @${ROOT_MESSAGE_SEQ} or '#${ROOT_MESSAGE_SEQ}'`
+      )
+    )
+  })
 })

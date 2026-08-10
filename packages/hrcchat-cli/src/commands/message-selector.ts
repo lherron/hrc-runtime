@@ -1,13 +1,13 @@
 import { CliUsageError } from 'cli-kit'
-import type { HrcCollectiveMessageRecord } from 'hrc-core'
+import { type HrcCollectiveMessageRecord, HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 /**
  * One selector grammar for every command that names a single message, so each
  * identity a command prints round-trips back into that same command (T-06970).
  *
- *   17932           bare numeric — collective seq, the `@N` half of `@N/#N`
- *   seq:17932       documented alias for the bare numeric form
+ *   17932           bare numeric — accepted only when @N and #N are unambiguous
+ *   seq:17932       collective seq, explicit
  *   @17932          collective seq, explicit
  *   #12             node-local message seq, the `#N` half of `@N/#N`
  *   msg-<uuid>      message id
@@ -17,6 +17,7 @@ import type { HrcClient } from 'hrc-sdk'
  * falls back to the node-local seq, which is the only seq such a daemon prints.
  */
 export type MessageSelector =
+  | { readonly kind: 'bareSeq'; readonly input: string; readonly seq: number }
   | { readonly kind: 'collectiveSeq'; readonly input: string; readonly seq: number }
   | { readonly kind: 'messageSeq'; readonly input: string; readonly seq: number }
   | { readonly kind: 'messageId'; readonly input: string; readonly messageId: string }
@@ -63,7 +64,7 @@ export function parseMessageSelector(input: string): MessageSelector {
   }
   if (/^\d+$/.test(normalized)) {
     return {
-      kind: 'collectiveSeq',
+      kind: 'bareSeq',
       input: normalized,
       seq: parseSeq(normalized, normalized, 'message sequence'),
     }
@@ -94,6 +95,59 @@ async function messageIdForMessageSeq(
   return trace.message.messageId
 }
 
+async function findByMessageSeq(
+  client: HrcClient,
+  selector: Extract<MessageSelector, { kind: 'bareSeq' }>
+): Promise<HrcCollectiveMessageRecord | undefined> {
+  try {
+    const trace = await client.traceMessage({ messageSeq: selector.seq })
+    return trace.message
+  } catch (error) {
+    if (
+      error instanceof HrcDomainError &&
+      error.code === HrcErrorCode.MALFORMED_REQUEST &&
+      error.message === `message not found: ${selector.seq}`
+    ) {
+      return undefined
+    }
+    throw error
+  }
+}
+
+async function findByCollectiveSeq(
+  client: HrcClient,
+  seq: number
+): Promise<HrcCollectiveMessageRecord | undefined> {
+  const result = await client.listMessages({ afterSeq: seq - 1, limit: 1 })
+  return result.messages.find(
+    (candidate) => (candidate.collectiveSeq ?? candidate.messageSeq) === seq
+  )
+}
+
+async function fetchBareSeqRecord(
+  client: HrcClient,
+  selector: Extract<MessageSelector, { kind: 'bareSeq' }>
+): Promise<HrcCollectiveMessageRecord> {
+  const [collectiveRecord, localRecord] = await Promise.all([
+    findByCollectiveSeq(client, selector.seq),
+    findByMessageSeq(client, selector),
+  ])
+
+  if (
+    collectiveRecord !== undefined &&
+    localRecord !== undefined &&
+    collectiveRecord.messageId !== localRecord.messageId
+  ) {
+    throw new CliUsageError(
+      `ambiguous message sequence ${selector.seq}: @${selector.seq} (collective seq) is ${collectiveRecord.messageId}, but #${selector.seq} (node-local message seq) is ${localRecord.messageId}; use @${selector.seq} or '#${selector.seq}'`
+    )
+  }
+
+  const record = collectiveRecord ?? localRecord
+  if (record === undefined) throw new CliUsageError(`message not found: ${selector.input}`)
+  return record
+}
+
 async function fetchRecord(
   client: HrcClient,
   selector: MessageSelector
@@ -101,14 +155,14 @@ async function fetchRecord(
   if (selector.kind === 'messageId') {
     return fetchByMessageId(client, selector.messageId, selector.input)
   }
+  if (selector.kind === 'bareSeq') {
+    return fetchBareSeqRecord(client, selector)
+  }
   if (selector.kind === 'messageSeq') {
     const messageId = await messageIdForMessageSeq(client, selector)
     return fetchByMessageId(client, messageId, selector.input)
   }
-  const result = await client.listMessages({ afterSeq: selector.seq - 1, limit: 1 })
-  const record = result.messages.find(
-    (candidate) => (candidate.collectiveSeq ?? candidate.messageSeq) === selector.seq
-  )
+  const record = await findByCollectiveSeq(client, selector.seq)
   if (record === undefined) throw new CliUsageError(`message not found: ${selector.input}`)
   return record
 }
@@ -134,6 +188,10 @@ export async function resolveMessageId(
 ): Promise<{ selector: MessageSelector; messageId: string }> {
   const selector = parseMessageSelector(input)
   if (selector.kind === 'messageId') return { selector, messageId: selector.messageId }
+  if (selector.kind === 'bareSeq') {
+    const record = await fetchBareSeqRecord(client, selector)
+    return { selector, messageId: record.messageId }
+  }
   if (selector.kind === 'messageSeq') {
     return { selector, messageId: await messageIdForMessageSeq(client, selector) }
   }

@@ -92,11 +92,12 @@ hrc monitor wait "msg:$(jq -r '.messageId' /tmp/dm-envelope.json)" \
 - `hrcchat messages` — list/query durable messages.
 - `hrcchat show <seq-or-id>` — show one message by sequence number or id.
   `show`, `thread` and `trace` share one selector grammar, so every identity
-  they print is accepted back by the same command: a bare numeric or `seq:N`
-  or `@N` is a collective seq (the `@N` in the `@N/#N` that `messages` prints),
-  `#N` is the node-local message seq, and `msg-<uuid>` / `msg:msg-<uuid>` is
-  the durable message ID. Pre-collective daemons print `#N` only; there a bare
-  numeric means that node-local seq.
+  they print is accepted back by the same command: `seq:N` or `@N` is a
+  collective seq (the `@N` in the `@N/#N` that `messages` prints), `#N` is the
+  node-local message seq, and `msg-<uuid>` / `msg:msg-<uuid>` is the durable
+  message ID. A bare numeric checks both seq namespaces: it resolves when only
+  one namespace matches (or both name the same message), and refuses with a
+  disambiguation error when `@N` and `#N` name different messages.
 - `hrcchat send` — raw keystrokes into a live tmux runtime (not a turn).
 - `hrcchat peek` — inspect a target without sending anything.
 - `hrcchat who [--discover] [--all-projects] [--json]` — list known
