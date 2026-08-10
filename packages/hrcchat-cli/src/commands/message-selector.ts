@@ -198,3 +198,21 @@ export async function resolveMessageId(
   const record = await fetchRecord(client, selector)
   return { selector, messageId: record.messageId }
 }
+
+/**
+ * Resolve the exclusive history cursor used by `messages --after`. The server
+ * cursor is collective, so explicit collective selectors pass through while
+ * node-local and bare selectors first resolve to one message identity.
+ */
+export async function resolveMessageAfterSeq(client: HrcClient, input: string): Promise<number> {
+  const selector = parseMessageSelector(input)
+  if (selector.kind === 'messageId') {
+    throw new CliUsageError(
+      `invalid --after cursor ${selector.input}: expected @<collectiveSeq>, '#<messageSeq>', seq:<collectiveSeq>, or an unambiguous bare sequence`
+    )
+  }
+  if (selector.kind === 'collectiveSeq') return selector.seq
+
+  const record = await fetchRecord(client, selector)
+  return record.collectiveSeq ?? record.messageSeq
+}

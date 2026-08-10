@@ -2,6 +2,7 @@ import type { HrcCollectiveMessageRecord, HrcMessageFilter } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress } from '../normalize.js'
 import { printJson } from '../print.js'
+import { resolveMessageAfterSeq } from './message-selector.js'
 
 export type MessagesOptions = {
   to?: string
@@ -35,7 +36,7 @@ export async function cmdMessages(
 
   if (opts.thread) filter.thread = { rootMessageId: opts.thread }
 
-  if (opts.after) filter.afterSeq = Number.parseInt(opts.after, 10)
+  if (opts.after) filter.afterSeq = await resolveMessageAfterSeq(client, opts.after)
 
   filter.limit = Number.parseInt(opts.limit ?? '50', 10)
 

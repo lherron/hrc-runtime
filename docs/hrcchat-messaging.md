@@ -89,7 +89,11 @@ hrc monitor wait "msg:$(jq -r '.messageId' /tmp/dm-envelope.json)" \
 
 ## The rest of the hrcchat surface
 
-- `hrcchat messages` — list/query durable messages.
+- `hrcchat messages` — list/query durable messages. Its `--after` cursor uses
+  the same seq namespace rules as the single-message commands: `@N` or
+  `seq:N` is an explicit collective cursor, `'#N'` resolves the node-local
+  message to its collective cursor, and bare `N` refuses when `@N` and `#N`
+  name different messages.
 - `hrcchat show <seq-or-id>` — show one message by sequence number or id.
   `show`, `thread` and `trace` share one selector grammar, so every identity
   they print is accepted back by the same command: `seq:N` or `@N` is a

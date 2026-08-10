@@ -320,7 +320,7 @@ program
   .option('--responses-to <address>', 'alias for --to')
   .option('--from <address>', 'filter by sender')
   .option('--thread <id>', 'filter by thread root message ID')
-  .option('--after <seq>', 'messages after this seq number')
+  .option('--after <cursor>', "messages after @collective seq or quoted '#node-local seq'")
   .option('--limit <n>', 'max messages to return', '50')
   .action(async (target, opts) => {
     const client = createClient()
