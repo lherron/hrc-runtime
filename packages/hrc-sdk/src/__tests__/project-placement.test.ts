@@ -313,8 +313,33 @@ describe('resolveHrcAgentPlacementPaths', () => {
         env: repo.env,
       })
     ).toThrow(
-      `worktree at ${realpathSync(detached)} appears associated with T-06369 but its branch detached`
+      `worktree at ${realpathSync(detached)} appears associated with T-06369 but is detached HEAD (no branch)`
     )
+  })
+
+  it('advisory mode warns and selects canonical for a detached task-named worktree', () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    const detached = join(root, 'taskboard-T-06369-detached')
+    const repo = committedRepo(projectRoot)
+    git(repo, 'worktree', 'add', '--detach', detached)
+
+    const resolved = resolveHrcAgentPlacementPaths({
+      agentId: 'cody',
+      agentRoot: join(root, 'agents', 'cody'),
+      projectId: 'taskboard',
+      taskId: 'T-06369',
+      projectOrigin: 'explicit',
+      taskWorktreeAssociation: 'advisory',
+      registryProjects: [{ slug: 'taskboard', root: projectRoot }],
+      env: repo.env,
+    })
+
+    expect(resolved.cwd).toBe(projectRoot)
+    expect(resolved.resolution.source).toBe('wrkq-registry')
+    expect(resolved.warnings).toEqual([
+      `worktree at ${realpathSync(detached)} appears associated with T-06369 but is detached HEAD (no branch); proceeding without task-worktree refinement`,
+    ])
   })
 
   it('leaves inferred placement on the caller cwd walk-up', () => {

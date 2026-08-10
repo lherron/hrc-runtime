@@ -1,5 +1,5 @@
 import { CliUsageError, consumeBody, parseDuration } from 'cli-kit'
-import { HrcDomainError, splitSessionRef } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, splitSessionRef } from 'hrc-core'
 import type {
   HrcMessageAddress,
   HrcMessageRecord,
@@ -100,9 +100,11 @@ export async function cmdDm(
   const respondTo = opts.respondTo ? resolveAddress(opts.respondTo, callerSessionRef) : undefined
 
   // Resolve runtimeIntent for session targets so auto-summon works
-  const runtimeIntent =
-    target?.runtimeIntent ??
-    (to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined)
+  const runtimeIntent = target
+    ? await resolveDmRuntimeIntent(client, targetInput, target.sessionRef)
+    : to.kind === 'session'
+      ? resolveRuntimeIntentForTarget(targetInput)
+      : undefined
 
   // Final-only wait does NOT use the server's coupled `wait` option: that
   // blocks on turn completion, so its timeoutMs only bounds the post-completion
@@ -248,6 +250,22 @@ export async function cmdDm(
     process.stdout.write(
       `dm sent to ${toStr} as ${formatAddress(from)} (seq: ${result.request.messageSeq})\n`
     )
+  }
+}
+
+async function resolveDmRuntimeIntent(client: HrcClient, targetInput: string, sessionRef: string) {
+  // Existing-scope delivery needs no placement intent and must remain available
+  // to correct a drifted checkout. Only an absent target crosses the launch
+  // boundary, where strict task-worktree placement remains fail-closed.
+  if (typeof client.getTarget !== 'function') return resolveRuntimeIntentForTarget(targetInput)
+  try {
+    await client.getTarget(sessionRef)
+    return undefined
+  } catch (error) {
+    if (error instanceof HrcDomainError && error.code === HrcErrorCode.UNKNOWN_SESSION) {
+      return resolveRuntimeIntentForTarget(targetInput)
+    }
+    throw error
   }
 }
 

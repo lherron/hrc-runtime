@@ -4,10 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcMessageRecord, SemanticDmRequest, SemanticDmResponse } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 import { createGitFixture, runGit } from '../../../../test-support/git-fixture.js'
 import { cmdDm } from '../commands/dm.js'
+import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
 const ENV_NAMES = [
   'ASP_AGENTS_ROOT',
@@ -59,9 +61,13 @@ describe('T-07151 messaging worktree association preflight', () => {
 
     const detached = await deliver(handle)
     expect(detached.requests).toHaveLength(1)
+    expect(detached.getTargetCalls).toBe(1)
+    expect(detached.requests[0]?.runtimeIntent).toBeUndefined()
     expect(detached.stderr.trim().split('\n')).toHaveLength(1)
     expect(detached.stderr).toContain('detached HEAD (no branch)')
     expect(detached.stderr).not.toContain('branch detached')
+    expect(() => resolveRuntimeIntentForTarget(handle)).toThrow('detached HEAD (no branch)')
+    await expect(deliver(handle, false)).rejects.toThrow('detached HEAD (no branch)')
 
     runGit(repo, ['worktree', 'remove', detachedPath])
     const wrongPath = join(root, `cody-${taskId}-wrong`)
@@ -69,6 +75,8 @@ describe('T-07151 messaging worktree association preflight', () => {
 
     const wrongBranch = await deliver(handle)
     expect(wrongBranch.requests).toHaveLength(1)
+    expect(wrongBranch.getTargetCalls).toBe(1)
+    expect(wrongBranch.requests[0]?.runtimeIntent).toBeUndefined()
     expect(wrongBranch.stderr.trim().split('\n')).toHaveLength(1)
     expect(wrongBranch.stderr).toContain('branch wrong-branch does not carry T-07151')
 
@@ -76,16 +84,35 @@ describe('T-07151 messaging worktree association preflight', () => {
 
     const absent = await deliver(handle)
     expect(absent.requests).toHaveLength(1)
+    expect(absent.getTargetCalls).toBe(1)
+    expect(absent.requests[0]?.runtimeIntent).toBeUndefined()
     expect(absent.stderr).toBe('')
+
+    const absentLaunch = await deliver(handle, false)
+    expect(absentLaunch.getTargetCalls).toBe(1)
+    expect(absentLaunch.requests).toHaveLength(1)
+    expect(absentLaunch.requests[0]?.runtimeIntent).toBeDefined()
   })
 })
 
-async function deliver(handle: string): Promise<{
+async function deliver(
+  handle: string,
+  targetExists = true
+): Promise<{
   requests: SemanticDmRequest[]
   stderr: string
+  getTargetCalls: number
 }> {
   const requests: SemanticDmRequest[] = []
+  let getTargetCalls = 0
   const client = {
+    async getTarget() {
+      getTargetCalls += 1
+      if (!targetExists) {
+        throw new HrcDomainError(HrcErrorCode.UNKNOWN_SESSION, 'fixture target is absent')
+      }
+      return {} as never
+    },
     async semanticDm(request: SemanticDmRequest): Promise<SemanticDmResponse> {
       requests.push(request)
       return { request: messageRecord(request) }
@@ -107,7 +134,7 @@ async function deliver(handle: string): Promise<{
     process.stdout.write = originalStdoutWrite
   }
 
-  return { requests, stderr: writes.join('') }
+  return { requests, stderr: writes.join(''), getTargetCalls }
 }
 
 function messageRecord(request: SemanticDmRequest): HrcMessageRecord {

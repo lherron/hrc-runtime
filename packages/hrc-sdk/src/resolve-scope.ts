@@ -2,10 +2,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { type ResolvedScopeInput, resolveQualifiedScopeInput } from 'agent-scope'
-import { type ResolveAgentPlacementPathsOptions, parseAgentProfile } from 'spaces-config'
+import { parseAgentProfile } from 'spaces-config'
 
 import {
   type HrcResolvedAgentPlacementPaths,
+  type ResolveHrcAgentPlacementPathsOptions,
   resolveHrcAgentPlacementPaths,
 } from './project-placement.js'
 
@@ -22,7 +23,12 @@ export interface ResolveProfileAwareScopeInputOptions {
   /** Pure scope defaults applied after the authoritative profile is selected. */
   scope?: ProfileAwareScopeDefaults | undefined
   /** Placement overrides used to locate the authoritative agent profile. */
-  placement?: Omit<ResolveAgentPlacementPathsOptions, 'agentId' | 'projectId'> | undefined
+  placement?:
+    | Omit<
+        ResolveHrcAgentPlacementPathsOptions,
+        'agentId' | 'projectId' | 'projectOrigin' | 'taskId'
+      >
+    | undefined
   /** Whether the project came from the target itself or caller-side inference. */
   projectOrigin?: ProjectOrigin | undefined
 }

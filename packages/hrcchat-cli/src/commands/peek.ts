@@ -1,6 +1,6 @@
 import { CliUsageError } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { resolveTargetToSessionRef } from '../normalize.js'
+import { resolveMessagingTargetToSessionRef } from '../normalize.js'
 import { printJson } from '../print.js'
 
 export type PeekOptions = {
@@ -16,7 +16,7 @@ export async function cmdPeek(
   const targetInput = positionals[0]
   if (!targetInput) throw new CliUsageError('peek requires <target>')
   const lines = Number.parseInt(opts.lines ?? '80', 10)
-  const sessionRef = resolveTargetToSessionRef(targetInput)
+  const sessionRef = resolveMessagingTargetToSessionRef(targetInput)
 
   const result = await client.captureBySelector({
     selector: { sessionRef },

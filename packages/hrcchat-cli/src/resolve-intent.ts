@@ -53,9 +53,21 @@ export function resolveMessagingTarget(
 ): {
   resolved: ProfileAwareResolvedScopeInput
   sessionRef: string
-  runtimeIntent: HrcRuntimeIntent
 } {
   const resolved = resolveMessagingScope(targetInput, options)
+  return {
+    resolved,
+    sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,
+  }
+}
+
+/** Resolve a launch/turn target once under strict task-worktree placement. */
+export function resolveLaunchTarget(targetInput: string): {
+  resolved: ProfileAwareResolvedScopeInput
+  sessionRef: string
+  runtimeIntent: HrcRuntimeIntent
+} {
+  const resolved = resolveScope(targetInput)
   return {
     resolved,
     sessionRef: `${resolved.scopeRef}/lane:${resolved.laneId}`,

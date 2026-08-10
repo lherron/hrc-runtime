@@ -41,6 +41,8 @@ export interface ProjectRegistryEntry {
 export interface ResolveHrcAgentPlacementPathsOptions extends ResolveAgentPlacementPathsOptions {
   projectOrigin: ProjectOrigin
   taskId?: string | undefined
+  /** Strict for launch placement; advisory for messaging/read selectors. */
+  taskWorktreeAssociation?: 'strict' | 'advisory' | undefined
   /** Test seam; production reads `wrkq projects --json`. */
   registryProjects?: ProjectRegistryEntry[] | undefined
   /** Test/operator seam; production scans the canonical Praesidium source root. */
@@ -228,13 +230,25 @@ function refineTaskWorktree(
 
   const suspicious = worktrees.find((worktree) => taskTokens(worktree.path).includes(taskId))
   if (suspicious) {
+    const mismatch = suspicious.branch
+      ? `branch ${suspicious.branch} does not carry ${taskId}`
+      : 'is detached HEAD (no branch)'
     throw new Error(
-      `worktree at ${suspicious.path} appears associated with ${taskId} but its branch ${
-        suspicious.branch ?? 'detached'
-      } does not carry it`
+      `worktree at ${suspicious.path} appears associated with ${taskId} but ${mismatch}`
     )
   }
   return undefined
+}
+
+function appendPlacementWarning(
+  placement: HrcResolvedAgentPlacementPaths,
+  warning: string | undefined
+): HrcResolvedAgentPlacementPaths {
+  if (warning === undefined) return placement
+  return {
+    ...placement,
+    warnings: [...(placement.warnings ?? []), warning],
+  }
 }
 
 function withResolvedProject(
@@ -323,7 +337,15 @@ export function resolveHrcAgentPlacementPaths(
     )
   }
 
-  const worktree = refineTaskWorktree(canonicalRoot, options.taskId, options.env ?? {})
+  let worktree: GitWorktree | undefined
+  let taskWorktreeWarning: string | undefined
+  try {
+    worktree = refineTaskWorktree(canonicalRoot, options.taskId, options.env ?? {})
+  } catch (error) {
+    if (options.taskWorktreeAssociation !== 'advisory') throw error
+    const message = error instanceof Error ? error.message : String(error)
+    taskWorktreeWarning = `${message}; proceeding without task-worktree refinement`
+  }
   if (worktree) {
     return withResolvedProject(options, worktree.path, {
       source: 'task-worktree',
@@ -335,16 +357,19 @@ export function resolveHrcAgentPlacementPaths(
     })
   }
 
-  return withResolvedProject(options, canonicalRoot, {
-    source: canonicalSource,
-    projectId: options.projectId,
-    canonicalRoot,
-    cwd: canonicalRoot,
-    reason:
-      canonicalSource === 'wrkq-registry'
-        ? `cwd from wrkq registry root ${canonicalRoot}`
-        : `cwd from marker scan ${canonicalRoot}`,
-  })
+  return appendPlacementWarning(
+    withResolvedProject(options, canonicalRoot, {
+      source: canonicalSource,
+      projectId: options.projectId,
+      canonicalRoot,
+      cwd: canonicalRoot,
+      reason:
+        canonicalSource === 'wrkq-registry'
+          ? `cwd from wrkq registry root ${canonicalRoot}`
+          : `cwd from marker scan ${canonicalRoot}`,
+    }),
+    taskWorktreeWarning
+  )
 }
 
 export const projectPlacementInternals = {

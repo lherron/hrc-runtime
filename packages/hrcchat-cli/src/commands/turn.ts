@@ -22,7 +22,7 @@ import {
   resolveRenderFrameSinkFormat,
   writeRenderFrameAsNdjson,
 } from '../render-frame.js'
-import { resolveMessagingTarget } from '../resolve-intent.js'
+import { resolveLaunchTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
 import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
@@ -330,7 +330,7 @@ export async function cmdTurn(
   const { waitMode, waitTimeoutMs, stackedWindowMs } = resolveTurnOutputOptions(opts)
 
   // ── Resolve scope ──
-  const target = resolveMessagingTarget(targetInput)
+  const target = resolveLaunchTarget(targetInput)
   const { resolved, sessionRef, runtimeIntent } = target
 
   // ── --dry-run: print the resolved dispatch plan and exit ──

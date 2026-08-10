@@ -1,6 +1,6 @@
 import { HrcDomainError } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { resolveTargetToSessionRef } from '../normalize.js'
+import { resolveMessagingTargetToSessionRef } from '../normalize.js'
 import { printJson } from '../print.js'
 
 export type DoctorOptions = {
@@ -78,7 +78,7 @@ export async function cmdDoctor(
 
   // Target-specific diagnostics
   if (targetInput) {
-    const sessionRef = resolveTargetToSessionRef(targetInput)
+    const sessionRef = resolveMessagingTargetToSessionRef(targetInput)
     try {
       const target = await client.getTarget(sessionRef)
       checks.push({

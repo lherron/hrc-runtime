@@ -1,6 +1,6 @@
 import { CliUsageError, consumeBody } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { resolveTargetToSessionRef } from '../normalize.js'
+import { resolveMessagingTargetToSessionRef } from '../normalize.js'
 import { printJson } from '../print.js'
 
 export type SendOptions = {
@@ -22,7 +22,7 @@ export async function cmdSend(
     throw new CliUsageError('send requires text (positional, -, or --file)')
   }
 
-  const sessionRef = resolveTargetToSessionRef(targetInput)
+  const sessionRef = resolveMessagingTargetToSessionRef(targetInput)
   // Commander's --no-enter sets opts.enter to false; default is true
   const enter = opts.enter !== false
 
