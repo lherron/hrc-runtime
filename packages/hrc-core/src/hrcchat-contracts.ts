@@ -1,4 +1,5 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
+import type { HrcDeliveryWarning } from './delivery-contracts.js'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -446,6 +447,8 @@ export type SemanticDmResponse = {
   execution?: DispatchTurnBySelectorResponse | undefined
   reply?: HrcMessageRecord | undefined
   waited?: WaitMessageResponse | undefined
+  /** Sender-visible evidence that durable acceptance did not mean delivery now. */
+  warnings?: HrcDeliveryWarning[] | undefined
 }
 
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)
@@ -461,6 +464,8 @@ export type SemanticTurnHandoffStartedResponse = {
   runId: string
   generation: number
   fromSeq: number
+  /** Sender-visible evidence that the turn is queued behind active work. */
+  warnings?: HrcDeliveryWarning[] | undefined
 }
 
 /**

@@ -14,6 +14,7 @@ import type {
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
+import { writeDeliveryWarnings } from '../delivery-warning.js'
 import { formatAddress, type resolveScope, resolveSenderAddress } from '../normalize.js'
 import { printJson, printJsonLine } from '../print.js'
 import {
@@ -402,6 +403,10 @@ export async function cmdTurn(
   if (isPendingSemanticTurnHandoff(handoff)) {
     printJsonLine(handoff)
     return
+  }
+  const quiet = waitMode !== undefined ? opts.quiet !== false : opts.quiet === true
+  if (!quiet) {
+    writeDeliveryWarnings(handoff.warnings)
   }
   const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
 

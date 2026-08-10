@@ -24,6 +24,7 @@ import type {
   HrcStatusTmuxView,
   HrcTurnResponseFormat,
 } from './contracts.js'
+import type { HrcDeliveryWarning } from './delivery-contracts.js'
 import type { HrcBirthCredential } from './federation.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
@@ -339,6 +340,8 @@ export type DispatchTurnResponse = {
   replayed: boolean
   error?: { code?: string | undefined; message: string } | undefined
   supportsInFlightInput: boolean
+  /** Present when durable admission queued the input behind an active turn. */
+  warnings?: HrcDeliveryWarning[] | undefined
   /** Absent until a queued turn has been assigned to a runtime invocation. */
   startIdentity?: { kind: 'broker'; invocationId: string } | { kind: 'sdk' } | undefined
   observation: {

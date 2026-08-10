@@ -296,6 +296,9 @@ export type {
 } from './http-contracts.js'
 export { OPERATOR_REAP_REASON, isSuffixStartRuntimeRequest } from './http-contracts.js'
 
+export { HRC_QUEUED_BEHIND_BUSY_TURN_WARNING } from './delivery-contracts.js'
+export type { HrcDeliveryWarning } from './delivery-contracts.js'
+
 export type {
   HrcMessageAddress,
   HrcTargetState,

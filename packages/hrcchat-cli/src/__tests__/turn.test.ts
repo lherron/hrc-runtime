@@ -327,6 +327,27 @@ describe('hrcchat turn — exit codes', () => {
 })
 
 describe('hrcchat turn — handoff uses correct parameters', () => {
+  it('warns the sender before watching a turn queued behind a busy worker', async () => {
+    const handoff = {
+      ...makeHandoff(),
+      warnings: [
+        {
+          code: 'queued_behind_busy_turn',
+          delivery: 'deferred',
+          message: 'target is busy; delivery deferred until the active turn completes',
+        },
+      ],
+    } as SemanticTurnHandoffStartedResponse
+    const result = await runTurnCommand(createTurnClient({ handoff }), {}, [
+      'cody@agent-spaces',
+      'stop',
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('queued_behind_busy_turn')
+    expect(result.stderr).toContain('delivery deferred')
+  })
+
   it('reports a pending/unknown federated admission without starting an invalid watch', async () => {
     let watchStarted = false
     const client = {

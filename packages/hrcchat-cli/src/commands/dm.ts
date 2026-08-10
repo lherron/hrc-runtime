@@ -8,6 +8,7 @@ import type {
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { tryRouteBackchannelDm } from '../backchannel-route.js'
+import { writeDeliveryWarnings } from '../delivery-warning.js'
 import { formatAddress, resolveAddress, resolveSenderAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveMessagingTarget, resolveRuntimeIntentForTarget } from '../resolve-intent.js'
@@ -151,6 +152,12 @@ export async function cmdDm(
     } else {
       throw err
     }
+  }
+
+  // Human sends must distinguish durable queue acceptance from presentation
+  // to the target. JSON callers receive the same typed warning in the envelope.
+  if (!quiet && !opts.json) {
+    writeDeliveryWarnings(result.warnings)
   }
 
   // Final-only wait: block quietly (client-side, hard `--timeout` ceiling) for
@@ -560,6 +567,7 @@ export type DmHandoffEnvelope = {
   request: SemanticDmResponse['request']
   execution?: SemanticDmResponse['execution']
   reply?: SemanticDmResponse['reply']
+  warnings?: SemanticDmResponse['warnings']
 }
 
 function buildHandoffEnvelope(
@@ -592,5 +600,6 @@ function buildHandoffEnvelope(
     request: result.request,
     ...(result.execution ? { execution: result.execution } : {}),
     ...(result.reply ? { reply: result.reply } : {}),
+    ...(result.warnings ? { warnings: result.warnings } : {}),
   }
 }

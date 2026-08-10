@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import {
+  HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRunRecord,
@@ -903,6 +908,7 @@ export async function executeHeadlessBrokerInputTurn(
       transport: 'headless',
       status: 'started',
       supportsInFlightInput: false,
+      ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
     } satisfies DispatchTurnResponseBase)
   }
 
@@ -915,6 +921,7 @@ export async function executeHeadlessBrokerInputTurn(
     transport: 'headless',
     status: 'completed',
     supportsInFlightInput: false,
+    ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
   } satisfies DispatchTurnResponseBase)
 }
 

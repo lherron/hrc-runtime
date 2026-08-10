@@ -148,6 +148,13 @@ done
       runtimeId: 'rt-busy-dm-json',
       transport: 'headless',
     })
+    expect(firstEnvelope['warnings']).toEqual([
+      {
+        code: 'queued_behind_busy_turn',
+        delivery: 'deferred',
+        message: 'target is busy; delivery deferred until the active turn completes',
+      },
+    ])
     expect(secondRequest.execution).toMatchObject({
       state: 'accepted',
       runtimeId: 'rt-busy-dm-json',

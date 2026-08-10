@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import {
+  HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRuntimeIntent,
@@ -831,6 +836,7 @@ export async function executeInteractiveBrokerInputTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
+      ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
     } satisfies DispatchTurnResponseBase)
   }
 
@@ -843,6 +849,7 @@ export async function executeInteractiveBrokerInputTurn(
     transport: 'tmux',
     status: 'completed',
     supportsInFlightInput: true,
+    ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
   } satisfies DispatchTurnResponseBase)
 }
 

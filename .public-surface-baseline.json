@@ -1015,6 +1015,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_QUEUED_BEHIND_BUSY_TURN_WARNING",
+      "kind": "value",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HRC_QUEUED_BEHIND_BUSY_TURN_WARNING|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV",
       "kind": "value",
       "file": "packages/hrc-core/src/federation.ts",
@@ -1307,6 +1315,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcContinuityRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcDeliveryWarning",
+      "kind": "type",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HrcDeliveryWarning|type",
       "count": 1
     },
     {

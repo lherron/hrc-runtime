@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import {
+  HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
   HrcBadRequestError,
   HrcConflictError,
   HrcDomainError,
@@ -17,6 +18,7 @@ import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
   FederationSemanticTurnSignal,
+  HrcDeliveryWarning,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -1145,6 +1147,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
+      ...(turnBody.warnings !== undefined ? { warnings: turnBody.warnings } : {}),
     } satisfies SemanticTurnHandoffStartedResponse
   } catch (err) {
     this.turnResponseFinalizers.delete(runId)
@@ -1231,6 +1234,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
+      ...(turnBody.warnings !== undefined ? { warnings: turnBody.warnings } : {}),
     }
   }
 
@@ -1347,7 +1351,7 @@ export async function handleSemanticDm(
     routableRecord,
     resolvedPlacement
   )
-  const { execution, reply } =
+  const { execution, reply, warnings } =
     federationRoute?.outcome === 'queued'
       ? {}
       : await this.deliverPersistedSemanticDm(body, record, respondTo)
@@ -1379,6 +1383,7 @@ export async function handleSemanticDm(
     ...(execution ? { execution } : {}),
     ...(reply ? { reply } : {}),
     ...(waited ? { waited } : {}),
+    ...(warnings ? { warnings } : {}),
   } satisfies SemanticDmResponse)
 }
 
@@ -1936,9 +1941,11 @@ export async function deliverPersistedSemanticDm(
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse | undefined
   reply?: HrcMessageRecord | undefined
+  warnings?: HrcDeliveryWarning[] | undefined
 }> {
   let execution: DispatchTurnBySelectorResponse | undefined
   let reply: HrcMessageRecord | undefined
+  let warnings: HrcDeliveryWarning[] | undefined
   const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
 
   // T-05161: a DM to a Codex.app-owned address (task segment `codex-<uuid7>`)
@@ -2046,6 +2053,7 @@ export async function deliverPersistedSemanticDm(
             activeRunId: busyHeadlessRuntime.activeRunId,
             queuedRunId: runId,
           })
+          warnings = [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING]
         }
       } else {
         // Semantic DMs are harness input. During broker cutover they must not
@@ -2071,11 +2079,12 @@ export async function deliverPersistedSemanticDm(
         })
         execution = result.execution
         reply = result.reply
+        warnings = result.warnings
       }
     }
   }
 
-  return { execution, reply }
+  return { execution, reply, warnings }
 }
 
 export function rejectBusyHeadlessSemanticDm(
@@ -2149,6 +2158,7 @@ export async function executeSemanticTurn(
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse
   reply?: HrcMessageRecord | undefined
+  warnings?: HrcDeliveryWarning[] | undefined
 }> {
   const baseIntent = body.runtimeIntent ?? session.lastAppliedIntentJson
   if (!baseIntent) return {}
@@ -2232,7 +2242,7 @@ export async function executeSemanticTurn(
       })
     }
 
-    return { execution, reply }
+    return { execution, reply, warnings: turnBody.warnings }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err)
     const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)

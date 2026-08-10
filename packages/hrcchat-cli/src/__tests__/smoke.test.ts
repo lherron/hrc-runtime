@@ -79,6 +79,27 @@ describe('hrcchat CLI smoke fixture', () => {
     })
   })
 
+  it('warns a human sender when a DM is queued behind a busy turn', async () => {
+    const client = createDmClient({
+      warnings: [
+        {
+          code: 'queued_behind_busy_turn',
+          delivery: 'deferred',
+          message: 'target is busy; delivery deferred until the active turn completes',
+        },
+      ],
+    })
+
+    const result = await runCommand(() =>
+      cmdDm(client.client, { as: 'human' }, ['cody@agent-spaces:T-07155', 'stop'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('dm sent to')
+    expect(result.stderr).toContain('queued_behind_busy_turn')
+    expect(result.stderr).toContain('delivery deferred')
+  })
+
   it('does not turn an ambient runtime credential into DM child-birth authority', async () => {
     process.env['HRC_BIRTH_CREDENTIAL'] = 'rt-ambient-parent'
     const client = createDmClient()
@@ -517,6 +538,11 @@ function createDmClient(
   options: {
     requestExecution?: HrcMessageRecord['execution']
     execution?: DispatchTurnBySelectorResponse
+    warnings?: Array<{
+      code: 'queued_behind_busy_turn'
+      delivery: 'deferred'
+      message: string
+    }>
   } = {}
 ): {
   client: HrcClient
@@ -536,6 +562,7 @@ function createDmClient(
             execution: options.requestExecution,
           }),
           ...(options.execution ? { execution: options.execution } : {}),
+          ...(options.warnings ? { warnings: options.warnings } : {}),
         }
       },
     } as HrcClient,

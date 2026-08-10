@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import type { HrcRuntimeIntent, SemanticDmResponse } from 'hrc-core'
+import type {
+  HrcRuntimeIntent,
+  SemanticDmResponse,
+  SemanticTurnHandoffStartedResponse,
+} from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { appendHrcEvent } from '../hrc-event-helper'
@@ -55,7 +59,10 @@ type SeededBroker = {
   activeRunId?: string | undefined
 }
 
-async function seedHeadlessBroker(state: 'ready' | 'busy'): Promise<SeededBroker> {
+async function seedHeadlessBroker(
+  state: 'ready' | 'busy',
+  options: { queueCapable?: boolean } = {}
+): Promise<SeededBroker> {
   const scopeRef = `agent:t06408-${state}:project:hrc-runtime:task:T-06408`
   const sessionRef = `${scopeRef}/lane:main`
   const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
@@ -97,7 +104,7 @@ async function seedHeadlessBroker(state: 'ready' | 'busy'): Promise<SeededBroker
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
       invocationState: state === 'busy' ? 'turn_active' : 'ready',
-      capabilitiesJson: JSON.stringify({ input: { queue: false } }),
+      capabilitiesJson: JSON.stringify({ input: { queue: options.queueCapable === true } }),
       specHash: `sha256:spec-t06408-${state}`,
       startRequestHash: `sha256:req-t06408-${state}`,
       selectedProfileHash: `sha256:profile-t06408-${state}`,
@@ -196,6 +203,13 @@ describe('T-06408 durable turn-input delivery', () => {
     // not a delivery failure and must not receive the input before turn end.
     expect(dm.request.execution.state).toBe('accepted')
     expect(dm.request.execution.errorCode).toBeUndefined()
+    expect(dm.warnings).toEqual([
+      {
+        code: 'queued_behind_busy_turn',
+        delivery: 'deferred',
+        message: 'target is busy; delivery deferred until the active turn completes',
+      },
+    ])
     expect(recorder.calls).toHaveLength(0)
 
     const completedAt = fixture.now()
@@ -273,6 +287,7 @@ describe('T-06408 durable turn-input delivery', () => {
     const dm = (await dmResponse.json()) as SemanticDmResponse
 
     expect(dm.request.execution.state).toBe('started')
+    expect(dm.warnings).toBeUndefined()
     expect(recorder.calls).toHaveLength(1)
     expect(recorder.calls[0].input.content[0]?.text).toContain(body)
 
@@ -285,5 +300,29 @@ describe('T-06408 durable turn-input delivery', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('marks a semantic turn handoff as deferred when broker admission queues it', async () => {
+    const seeded = await seedHeadlessBroker('busy', { queueCapable: true })
+    const recorder = installDispatchRecorder(seeded.invocationId, seeded.runtimeId)
+
+    const response = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body: 'urgent supervisor steer',
+      runtimeIntent: intent,
+    })
+    expect(response.status).toBe(200)
+    const handoff = (await response.json()) as SemanticTurnHandoffStartedResponse
+
+    expect(handoff.warnings).toEqual([
+      {
+        code: 'queued_behind_busy_turn',
+        delivery: 'deferred',
+        message: 'target is busy; delivery deferred until the active turn completes',
+      },
+    ])
+    expect(recorder.calls).toHaveLength(1)
+    expect(recorder.calls[0].policy).toEqual({ whenBusy: 'queue' })
   })
 })
