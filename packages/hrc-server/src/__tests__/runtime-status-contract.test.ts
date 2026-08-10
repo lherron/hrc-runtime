@@ -10,7 +10,6 @@ import {
 } from 'spaces-runtime-contracts'
 
 import {
-  HRC_LOCAL_RUNTIME_STATUS_VALUES,
   HRC_RUNTIME_ROW_STATUS_PRODUCERS,
   HRC_RUNTIME_ROW_STATUS_VALUES,
   HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS,
@@ -132,18 +131,12 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
     ])
 
     for (const producer of HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS) {
-      const local = HRC_LOCAL_RUNTIME_STATUS_VALUES.includes(
-        producer.status as (typeof HRC_LOCAL_RUNTIME_STATUS_VALUES)[number]
-      )
-      expect(isRuntimeStateStatus(producer.status) || local, producer.producer).toBe(true)
-      if (!local) expect(RUNTIME_STATE_STATUS_VALUES).toContain(producer.status)
+      expect(isRuntimeStateStatus(producer.status), producer.producer).toBe(true)
+      expect(RUNTIME_STATE_STATUS_VALUES).toContain(producer.status)
     }
     for (const producer of HRC_RUNTIME_ROW_STATUS_PRODUCERS) {
-      const local = HRC_LOCAL_RUNTIME_STATUS_VALUES.includes(
-        producer.status as (typeof HRC_LOCAL_RUNTIME_STATUS_VALUES)[number]
-      )
-      expect(isRuntimeStatus(producer.status) || local, producer.producer).toBe(true)
-      if (!local) expect(RUNTIME_STATUS_VALUES).toContain(producer.status)
+      expect(isRuntimeStatus(producer.status), producer.producer).toBe(true)
+      expect(RUNTIME_STATUS_VALUES).toContain(producer.status)
     }
 
     expect(HRC_RUNTIME_STATE_JSON_STATUS_VALUES).not.toContain('adopted')
@@ -160,9 +153,9 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
     expect(unclassified).toEqual([])
   })
 
-  test('keeps the HRC-local detached extension away from upstream closed validators', () => {
-    expect(isRuntimeStateStatus('detached')).toBe(false)
-    expect(isRuntimeStatus('detached')).toBe(false)
+  test('consumes detached from the upstream closed runtime status registry', () => {
+    expect(isRuntimeStateStatus('detached')).toBe(true)
+    expect(isRuntimeStatus('detached')).toBe(true)
     expect(HRC_RUNTIME_STATE_JSON_STATUS_VALUES).toContain('detached')
     expect(HRC_RUNTIME_ROW_STATUS_VALUES).toContain('detached')
 

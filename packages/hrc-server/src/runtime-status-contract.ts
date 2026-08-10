@@ -1,6 +1,3 @@
-/** HRC-owned statuses not authored by the process-runtime substrate contract. */
-export const HRC_LOCAL_RUNTIME_STATUS_VALUES = ['detached'] as const
-
 export const HRC_RUNTIME_STATE_JSON_STATUS_VALUES = [
   'starting',
   'ready',
@@ -13,7 +10,7 @@ export const HRC_RUNTIME_STATE_JSON_STATUS_VALUES = [
   'stale',
   'terminated',
   'crashed',
-  ...HRC_LOCAL_RUNTIME_STATUS_VALUES,
+  'detached',
 ] as const
 
 export const HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS = [
