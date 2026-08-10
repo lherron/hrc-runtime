@@ -341,6 +341,40 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(captured.request?.requested.interactionMode).toBe('headless')
   })
 
+  it('preserves nonInteractive for pi-sdk broker catalog selection only', async () => {
+    const captured: { requests: RuntimeCompileRequest[] } = { requests: [] }
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.requests.push(request.compileRequest)
+      return makeAspcFailedCompileResponse()
+    }
+
+    await compileBrokerRuntimePlan(
+      {
+        ...STANDARD_INPUT(),
+        intent: makeIntent({
+          harness: { provider: 'openai', interactive: false, id: 'pi-sdk' },
+          execution: { preferredMode: 'nonInteractive' },
+        }),
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+    await compileBrokerRuntimePlan(
+      {
+        ...STANDARD_INPUT(),
+        intent: makeIntent({
+          harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
+          execution: { preferredMode: 'nonInteractive' },
+        }),
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(captured.requests[0]?.requested.interactionMode).toBe('nonInteractive')
+    expect(captured.requests[1]?.requested.interactionMode).toBe('headless')
+  })
+
   it('threads responseFormat through materialization and compiled broker initial input', async () => {
     const schema = {
       type: 'object',

@@ -430,7 +430,12 @@ export async function compileBrokerRuntimePlan(
     placement,
     requested: {
       ...toRequestedHarnessRoute(intent.harness),
-      interactionMode: intent.harness.interactive ? 'interactive' : 'headless',
+      interactionMode:
+        intent.harness.id === 'pi-sdk' && intent.execution?.preferredMode === 'nonInteractive'
+          ? 'nonInteractive'
+          : intent.harness.interactive
+            ? 'interactive'
+            : 'headless',
       ...(intent.harness.model ? { model: intent.harness.model } : {}),
     },
     materialization: {
