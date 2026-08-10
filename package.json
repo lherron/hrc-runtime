@@ -31,5 +31,8 @@
     "lefthook": "^1.11.5",
     "smol-toml": "1.6.1",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "agent-spaces": "0.1.1-dev.20260810064720"
   }
 }
