@@ -74,7 +74,10 @@ export type FederationMessageDelivery = {
    * requires the `semanticTurnHandoff` peer-health capability so an old
    * tolerant reader cannot silently downgrade a turn into an ordinary DM.
    */
-  readonly semanticTurnHandoff?: { readonly version: 1 } | undefined
+  readonly semanticTurnHandoff?:
+    | { readonly version: 1 }
+    | { readonly version: 2; readonly freshContext: true }
+    | undefined
 }
 
 export type FederationSemanticTurnIdentity = {

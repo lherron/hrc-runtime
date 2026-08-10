@@ -492,6 +492,7 @@ describe('T-06809 federated semantic turn handoff', () => {
         to: { kind: 'session', sessionRef: REMOTE_SESSION },
         body: 'establish and run remotely',
         createIfMissing: true,
+        freshContext: true,
         runtimeIntent: {
           placement: {
             agentRoot: '/tmp/agent',
@@ -537,7 +538,7 @@ describe('T-06809 federated semantic turn handoff', () => {
         peerNodeId: 'lab-test',
         envelope: {
           expected: { homeNodeId: 'lab-test', placementEpoch: 1 },
-          delivery: { semanticTurnHandoff: { version: 1 } },
+          delivery: { semanticTurnHandoff: { version: 2, freshContext: true } },
         },
       })
       expect(db.federationOutbox.list()).toHaveLength(1)
@@ -550,7 +551,7 @@ describe('T-06809 federated semantic turn handoff', () => {
       expect(wire[3]?.body).toMatchObject({
         envelope: {
           expected: { homeNodeId: 'lab-test', placementEpoch: 1 },
-          delivery: { semanticTurnHandoff: { version: 1 } },
+          delivery: { semanticTurnHandoff: { version: 2, freshContext: true } },
         },
       })
     } finally {

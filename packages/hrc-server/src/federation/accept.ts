@@ -109,10 +109,15 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
   const createIfMissing = optionalBoolean(value, 'createIfMissing')
   const allowStaleGeneration = optionalBoolean(value, 'allowStaleGeneration')
   const semanticTurnHandoff = value['semanticTurnHandoff']
-  if (
-    semanticTurnHandoff !== undefined &&
-    (!isRecord(semanticTurnHandoff) || semanticTurnHandoff['version'] !== 1)
-  ) {
+  const semanticTurnHandoffVersion = isRecord(semanticTurnHandoff)
+    ? semanticTurnHandoff['version']
+    : undefined
+  const validSemanticTurnHandoff =
+    semanticTurnHandoff === undefined ||
+    (isRecord(semanticTurnHandoff) &&
+      ((semanticTurnHandoffVersion === 1 && semanticTurnHandoff['freshContext'] === undefined) ||
+        (semanticTurnHandoffVersion === 2 && semanticTurnHandoff['freshContext'] === true)))
+  if (!validSemanticTurnHandoff) {
     throw new InvalidFederationEnvelopeError()
   }
   return {
@@ -122,7 +127,11 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
     ...(value['respondTo'] === undefined ? {} : { respondTo: parseAddress(value['respondTo']) }),
     ...(responseFormat === undefined ? {} : { responseFormat }),
     ...(allowStaleGeneration === undefined ? {} : { allowStaleGeneration }),
-    ...(semanticTurnHandoff === undefined ? {} : { semanticTurnHandoff: { version: 1 } }),
+    ...(semanticTurnHandoff === undefined
+      ? {}
+      : semanticTurnHandoffVersion === 2
+        ? { semanticTurnHandoff: { version: 2, freshContext: true } }
+        : { semanticTurnHandoff: { version: 1 } }),
   }
 }
 

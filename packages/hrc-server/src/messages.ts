@@ -306,6 +306,7 @@ export function parseSemanticDmRequest(input: unknown): {
   birthCredential?: string | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
+  freshContext?: boolean | undefined
   allowCrossScopeReply?: boolean | undefined
 } {
   if (!isRecord(input)) {
@@ -370,6 +371,15 @@ export function parseSemanticDmRequest(input: unknown): {
       ? (input['allowStaleGeneration'] as boolean)
       : undefined
 
+  const freshContextInput = input['freshContext']
+  if (freshContextInput !== undefined && typeof freshContextInput !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'freshContext must be a boolean', {
+      field: 'freshContext',
+    })
+  }
+  const freshContext =
+    typeof freshContextInput === 'boolean' ? (freshContextInput as boolean) : undefined
+
   const allowCrossScopeReply =
     typeof input['allowCrossScopeReply'] === 'boolean'
       ? (input['allowCrossScopeReply'] as boolean)
@@ -390,6 +400,7 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(birthCredential !== undefined ? { birthCredential } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
+    ...(freshContext !== undefined ? { freshContext } : {}),
     ...(allowCrossScopeReply !== undefined ? { allowCrossScopeReply } : {}),
   }
 }

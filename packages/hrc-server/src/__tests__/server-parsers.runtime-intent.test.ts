@@ -245,6 +245,28 @@ describe('server-parsers runtime intent harness resolution', () => {
     })
   })
 
+  it('parseSemanticDmRequest preserves a boolean freshContext requirement', () => {
+    const parsed = parseSemanticDmRequest({
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime/lane:main' },
+      body: 'start clean',
+      freshContext: true,
+    })
+
+    expect(parsed.freshContext).toBe(true)
+  })
+
+  it('parseSemanticDmRequest rejects malformed freshContext instead of dropping it', () => {
+    expect(() =>
+      parseSemanticDmRequest({
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime/lane:main' },
+        body: 'start clean',
+        freshContext: 'yes',
+      })
+    ).toThrow('freshContext must be a boolean')
+  })
+
   it('rejects omitted harness when placement.agentRoot cannot resolve a profile', () => {
     expect(() =>
       parseEnsureRuntimeRequest({

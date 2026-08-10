@@ -798,7 +798,10 @@ export async function handleSemanticTurnHandoff(
     // durable request row, so turn.completed always yields a persisted
     // response. DM-path requests carry no marker and are never auto-finalized.
     metadataJson: {
-      semanticTurnHandoff: { respondTo },
+      semanticTurnHandoff: {
+        respondTo,
+        ...(body.freshContext === true ? { freshContext: true } : {}),
+      },
       ...(remoteTarget ? { federationSemanticTurnOrigin: true } : {}),
     },
   })
@@ -991,11 +994,20 @@ export async function deliverPersistedSemanticTurnHandoff(
     )
   }
 
-  const rotationResult = await this.maybeAutoRotateStaleSession(session, {
-    allowStaleGeneration: body.allowStaleGeneration,
-    trigger: 'semantic-turn-handoff',
-  })
-  session = rotationResult.session
+  if (body.freshContext === true) {
+    const rotation = await this.rotateSessionContext(session, {
+      relaunch: false,
+      dropContinuation: true,
+      reason: 'semantic-turn-fresh-context',
+    })
+    session = requireSession(this.db, rotation.hostSessionId)
+  } else {
+    const rotationResult = await this.maybeAutoRotateStaleSession(session, {
+      allowStaleGeneration: body.allowStaleGeneration,
+      trigger: 'semantic-turn-handoff',
+    })
+    session = rotationResult.session
+  }
 
   const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
   this.db.messages.updateExecution(record.messageId, {
@@ -1230,6 +1242,13 @@ export async function handleSemanticDm(
   request: Request
 ): Promise<Response> {
   const body = parseSemanticDmRequest(await parseJsonBody(request))
+  if (body.freshContext !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'freshContext is only supported by /v1/messages/turn-handoff',
+      { field: 'freshContext', route: 'semantic-dm' }
+    )
+  }
   let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
     body.replyToMessageId !== undefined
@@ -1648,6 +1667,7 @@ export async function deliverFederationAcceptedMessage(
       ...(delivery.allowStaleGeneration === undefined
         ? {}
         : { allowStaleGeneration: delivery.allowStaleGeneration }),
+      ...(delivery.semanticTurnHandoff?.version === 2 ? { freshContext: true } : {}),
     }
     const handoff = await deliverPersistedSemanticTurnHandoff.call(
       this,

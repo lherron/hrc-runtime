@@ -11,7 +11,6 @@ import type {
   SemanticTurnHandoffResponse,
   SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
@@ -317,31 +316,6 @@ function assertProjectResolved(
   )
 }
 
-async function maybeClearContextForNewTurn(
-  client: HrcClient,
-  opts: TurnOptions,
-  sessionRef: string
-): Promise<void> {
-  if (!opts.new) {
-    return
-  }
-
-  try {
-    const target = await client.getTarget(sessionRef)
-    if (target.activeHostSessionId) {
-      await client.clearContext({
-        hostSessionId: target.activeHostSessionId,
-        dropContinuation: true,
-      })
-    }
-  } catch (err) {
-    // Target doesn't exist yet — skip clearContext, let handoff create it
-    if (!(err instanceof HrcDomainError && err.code === HrcErrorCode.UNKNOWN_SESSION)) {
-      throw err
-    }
-  }
-}
-
 export async function cmdTurn(
   client: HrcClient,
   opts: TurnOptions,
@@ -399,12 +373,9 @@ export async function cmdTurn(
   // above: it intentionally prints the degenerate plan so the gap is visible.)
   assertProjectResolved(targetInput, resolved)
 
-  // ── --new: clearContext if host exists ──
-  await maybeClearContextForNewTurn(client, opts, sessionRef)
-
   // ── Dispatch turn via semanticTurnHandoff ──
-  // CRITICAL: watch filters come from handoff result (post-clearContext),
-  // not from anything resolved before clearContext.
+  // Freshness is part of this atomic destination-side handoff. A separate
+  // origin-side clear cannot enforce context rotation for federated targets.
   const sender = resolveSenderAddress(opts.as)
   if (sender.source === 'human-fallback') {
     if (!process.stdout.isTTY) {
@@ -423,6 +394,7 @@ export async function cmdTurn(
     body,
     runtimeIntent,
     createIfMissing: true,
+    ...(opts.new === true ? { freshContext: true } : {}),
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,

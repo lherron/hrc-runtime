@@ -381,6 +381,29 @@ if (cmd === 'app-server') {
     expect(listed.messages).toHaveLength(0)
   })
 
+  it('rejects freshContext on semantic DM instead of silently dropping it', async () => {
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: {
+        kind: 'session',
+        sessionRef: 'agent:dm-fresh-rejected:project:agent-spaces/lane:main',
+      },
+      body: 'must not silently reuse context',
+      freshContext: true,
+    })
+
+    expect(dmRes.status).toBe(400)
+    const errorBody = (await dmRes.json()) as {
+      error?: { code?: string; message?: string; detail?: Record<string, unknown> }
+    }
+    expect(errorBody.error?.code).toBe('malformed_request')
+    expect(errorBody.error?.message).toContain('only supported by /v1/messages/turn-handoff')
+    expect(errorBody.error?.detail).toMatchObject({
+      field: 'freshContext',
+      route: 'semantic-dm',
+    })
+  })
+
   it('threads responseFormat on session-target semantic DMs to semantic turn dispatch', async () => {
     const scopeRef = 'agent:cody:project:agent-spaces:task:T-05142'
     const sessionRef = `${scopeRef}/lane:main`
@@ -865,6 +888,144 @@ if (cmd === 'app-server') {
         runId: handoff.runId,
         transport: 'tmux',
       })
+    } finally {
+      verifyDb.close()
+    }
+  })
+
+  it('semantic turn handoff freshContext rotates a live broker before dispatch', async () => {
+    const scopeRef = 'agent:handoff-fresh-live-broker:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-handoff-fresh-live-broker-${Date.now()}`
+    const operationId = `op-handoff-fresh-live-broker-${Date.now()}`
+    const invocationId = `inv-handoff-fresh-live-broker-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sessions.updateContinuation(
+        hostSessionId,
+        { provider: 'openai', key: 'thread-prior-conversation' },
+        timestamp
+      )
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        activeOperationId: operationId,
+        activeInvocationId: invocationId,
+        continuation: { provider: 'openai', key: 'thread-prior-conversation' },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+      })
+      db.brokerInvocations.insert({
+        invocationId,
+        operationId,
+        runtimeId,
+        brokerProtocol: 'harness-broker/0.1',
+        brokerDriver: 'codex-cli-tmux',
+        invocationState: 'ready',
+        capabilitiesJson: JSON.stringify({}),
+        specHash: 'sha256:spec-handoff-fresh-live-broker',
+        startRequestHash: 'sha256:req-handoff-fresh-live-broker',
+        selectedProfileHash: 'sha256:prof-handoff-fresh-live-broker',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const reusedInputs: unknown[] = []
+    ;(server as any).getHarnessBrokerController = () => ({
+      dispatchInput: async (request: unknown) => {
+        reusedInputs.push(request)
+        return { ok: true, response: { accepted: true } }
+      },
+    })
+
+    const freshDispatches: Array<{
+      hostSessionId: string
+      generation: number
+      continuation: unknown
+    }> = []
+    ;(server as any).dispatchTurnForSession = async (
+      session: { hostSessionId: string; generation: number; continuation?: unknown },
+      _intent: unknown,
+      _prompt: string,
+      options: { runId: string }
+    ) => {
+      freshDispatches.push({
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        continuation: session.continuation,
+      })
+      return Response.json({
+        status: 'started',
+        hostSessionId: session.hostSessionId,
+        runtimeId: 'rt-fresh-context-dispatch',
+        runId: options.runId,
+        generation: session.generation,
+        transport: 'headless',
+      })
+    }
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'the prior conversation must not be visible',
+      freshContext: true,
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
+
+    expect(reusedInputs).toHaveLength(0)
+    expect(freshDispatches).toEqual([
+      {
+        hostSessionId: handoff.hostSessionId,
+        generation: generation + 1,
+        continuation: undefined,
+      },
+    ])
+    expect(handoff.hostSessionId).not.toBe(hostSessionId)
+    expect(handoff.generation).toBe(generation + 1)
+    expect(handoff.runtimeId).toBe('rt-fresh-context-dispatch')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('terminated')
+      expect(verifyDb.sessions.getByHostSessionId(hostSessionId)?.status).toBe('archived')
+      expect(
+        verifyDb.sessions.getByHostSessionId(handoff.hostSessionId)?.continuation
+      ).toBeUndefined()
     } finally {
       verifyDb.close()
     }

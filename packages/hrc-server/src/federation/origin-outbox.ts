@@ -143,7 +143,9 @@ function deliveryContext(
       ? {}
       : { allowStaleGeneration: body.allowStaleGeneration }),
     ...(options?.semanticTurnHandoff === true
-      ? { semanticTurnHandoff: { version: 1 as const } }
+      ? body.freshContext === true
+        ? { semanticTurnHandoff: { version: 2 as const, freshContext: true as const } }
+        : { semanticTurnHandoff: { version: 1 as const } }
       : {}),
   }
   return Object.keys(context).length === 0 ? undefined : context

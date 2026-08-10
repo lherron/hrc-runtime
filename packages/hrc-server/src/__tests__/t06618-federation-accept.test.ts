@@ -45,6 +45,95 @@ function installPlacement(
 }
 
 describe('T-06618 durable idempotent federation receiver', () => {
+  test('accepts the v2 fresh-context handoff discriminator without downgrade', async () => {
+    const db = openHrcDatabase(':memory:')
+    installPlacement(db)
+    let acceptedDelivery: unknown
+    const accept = createFederationAcceptHandler({
+      db,
+      localNodeId: 'lab',
+      onAccepted: async ({ envelope: acceptedEnvelope }) => {
+        acceptedDelivery = acceptedEnvelope.delivery
+      },
+    })
+
+    try {
+      const freshEnvelope = {
+        ...envelope('msg-33333333-3333-4333-8333-333333333333'),
+        delivery: { semanticTurnHandoff: { version: 2, freshContext: true } },
+      }
+      const result = await accept({
+        authenticatedNodeId: 'svc',
+        protocolVersion: '1.7',
+        envelope: freshEnvelope,
+      })
+      expect(result).toMatchObject({ outcome: 'accepted' })
+      if (result.outcome === 'accepted') await result.afterAck?.()
+      expect(acceptedDelivery).toEqual({
+        semanticTurnHandoff: { version: 2, freshContext: true },
+      })
+      expect(db.messages.getById(freshEnvelope.messageId)?.metadataJson).toMatchObject({
+        federationIngress: {
+          delivery: { semanticTurnHandoff: { version: 2, freshContext: true } },
+        },
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('rejects a v2 handoff missing the fresh-context requirement', async () => {
+    const db = openHrcDatabase(':memory:')
+    installPlacement(db)
+    const accept = createFederationAcceptHandler({ db, localNodeId: 'lab' })
+
+    try {
+      await expect(
+        accept({
+          authenticatedNodeId: 'svc',
+          protocolVersion: '1.7',
+          envelope: {
+            ...envelope('msg-44444444-4444-4444-8444-444444444444'),
+            delivery: { semanticTurnHandoff: { version: 2 } },
+          },
+        })
+      ).resolves.toEqual({
+        outcome: 'refused',
+        code: 'invalid_envelope',
+        retryable: false,
+        status: 400,
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('rejects fresh context attached to v1 instead of dropping it', async () => {
+    const db = openHrcDatabase(':memory:')
+    installPlacement(db)
+    const accept = createFederationAcceptHandler({ db, localNodeId: 'lab' })
+
+    try {
+      await expect(
+        accept({
+          authenticatedNodeId: 'svc',
+          protocolVersion: '1.7',
+          envelope: {
+            ...envelope('msg-55555555-5555-4555-8555-555555555555'),
+            delivery: { semanticTurnHandoff: { version: 1, freshContext: true } },
+          },
+        })
+      ).resolves.toEqual({
+        outcome: 'refused',
+        code: 'invalid_envelope',
+        retryable: false,
+        status: 400,
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   test('accepts a tolerant envelope once and duplicate delivery does not insert or dispatch twice', async () => {
     const db = openHrcDatabase(':memory:')
     installPlacement(db)

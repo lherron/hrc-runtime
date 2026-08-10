@@ -1,14 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import type {
-  ClearContextRequest,
-  ClearContextResponse,
   HrcLifecycleEvent,
-  HrcTargetView,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
   SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { CliUsageError } from 'cli-kit'
@@ -87,37 +83,11 @@ function makeLifecycleEvent(
 function createTurnClient(options: {
   handoff?: SemanticTurnHandoffResponse
   events?: MockWatchEvents
-  target?: HrcTargetView | null // null = target_not_found
-  clearContextCalls?: ClearContextRequest[]
   handoffCalls?: SemanticTurnHandoffRequest[]
 }): HrcClient {
-  const clearContextCalls = options.clearContextCalls ?? []
   const handoffCalls = options.handoffCalls ?? []
 
   return {
-    async getTarget(_sessionRef: string): Promise<HrcTargetView> {
-      if (options.target === null) {
-        throw new HrcDomainError(HrcErrorCode.UNKNOWN_SESSION, 'target not found')
-      }
-      return (
-        options.target ?? {
-          sessionRef: 'agent:cody:project:agent-spaces/lane:main',
-          scopeRef: 'agent:cody:project:agent-spaces',
-          laneRef: 'main',
-          state: 'active',
-          activeHostSessionId: 'hsid-existing',
-          generation: 1,
-        }
-      )
-    },
-    async clearContext(request: ClearContextRequest): Promise<ClearContextResponse> {
-      clearContextCalls.push(request)
-      return {
-        hostSessionId: request.hostSessionId,
-        generation: 2,
-        priorHostSessionId: request.hostSessionId,
-      }
-    },
     async semanticTurnHandoff(
       request: SemanticTurnHandoffRequest
     ): Promise<SemanticTurnHandoffResponse> {
@@ -260,67 +230,29 @@ describe('hrcchat turn — stall-after', () => {
 })
 
 describe('hrcchat turn — --new flag', () => {
-  it('calls clearContext with dropContinuation when target has active host', async () => {
-    const clearContextCalls: ClearContextRequest[] = []
+  it('carries freshContext on the atomic semantic turn handoff', async () => {
     const handoffCalls: SemanticTurnHandoffRequest[] = []
-    const client = createTurnClient({
-      clearContextCalls,
-      handoffCalls,
-      target: {
-        sessionRef: 'agent:cody:project:agent-spaces/lane:main',
-        scopeRef: 'agent:cody:project:agent-spaces',
-        laneRef: 'main',
-        state: 'active',
-        activeHostSessionId: 'hsid-dirty',
-        generation: 3,
-      },
-    })
+    const client = createTurnClient({ handoffCalls })
 
     const result = await runTurnCommand(client, { new: true }, ['cody@agent-spaces', 'fresh start'])
 
     expect(result.exitCode).toBe(0)
-    expect(clearContextCalls).toHaveLength(1)
-    expect(clearContextCalls[0]).toMatchObject({
-      hostSessionId: 'hsid-dirty',
-      dropContinuation: true,
-    })
     expect(handoffCalls).toHaveLength(1)
-    expect(handoffCalls[0]!.body).toBe('fresh start')
+    expect(handoffCalls[0]).toMatchObject({
+      body: 'fresh start',
+      freshContext: true,
+    })
   })
 
-  it('skips clearContext when target does not exist', async () => {
-    const clearContextCalls: ClearContextRequest[] = []
-    const client = createTurnClient({
-      clearContextCalls,
-      target: null, // → target_not_found
-    })
-
-    const result = await runTurnCommand(client, { new: true }, ['cody@agent-spaces', 'create new'])
-
-    expect(result.exitCode).toBe(0)
-    expect(clearContextCalls).toHaveLength(0)
-  })
-
-  it('skips clearContext when target has no active host session', async () => {
-    const clearContextCalls: ClearContextRequest[] = []
-    const client = createTurnClient({
-      clearContextCalls,
-      target: {
-        sessionRef: 'agent:cody:project:agent-spaces/lane:main',
-        scopeRef: 'agent:cody:project:agent-spaces',
-        laneRef: 'main',
-        state: 'inactive',
-        // No activeHostSessionId
-      },
-    })
-
-    const result = await runTurnCommand(client, { new: true }, [
+  it('omits freshContext for an ordinary turn', async () => {
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    const result = await runTurnCommand(createTurnClient({ handoffCalls }), {}, [
       'cody@agent-spaces',
-      'dormant target',
+      'continue normally',
     ])
-
     expect(result.exitCode).toBe(0)
-    expect(clearContextCalls).toHaveLength(0)
+    expect(handoffCalls).toHaveLength(1)
+    expect(handoffCalls[0]).not.toHaveProperty('freshContext')
   })
 })
 

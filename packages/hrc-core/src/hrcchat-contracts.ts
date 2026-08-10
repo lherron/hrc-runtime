@@ -427,6 +427,12 @@ export type SemanticDmRequest = {
    */
   allowStaleGeneration?: boolean | undefined
   /**
+   * Require the destination to rotate away from every prior runtime and
+   * continuation before dispatch. Only `/v1/messages/turn-handoff` accepts
+   * this field; `/v1/messages/dm` rejects it instead of silently ignoring it.
+   */
+  freshContext?: boolean | undefined
+  /**
    * Permit a `--reply-to` anchor that lives in a different conversation scope
    * than the target. Defaults to `false`: a cross-scope reply is rejected with
    * `reply_to_scope_mismatch` before the message is persisted, so a threaded
