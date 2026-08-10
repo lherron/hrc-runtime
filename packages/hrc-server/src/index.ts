@@ -974,12 +974,37 @@ class HrcServerInstance implements HrcServer {
                 runtimeProjection: true,
                 collectiveHistory: collectiveHistory?.isAuthority === true,
                 semanticTurnHandoff: true,
+                urgentDelivery: true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
             accept: peerAcceptHandler,
+            // T-07155 — urgent delivery is authorized PER PEER by this node, and
+            // defaults to deny. The sending node is the only authenticated
+            // identity on this path; `envelope.from` is caller-asserted display
+            // identity and is attribution, never authority. Refusing here happens
+            // BEFORE any durable ACK or local delivery is scheduled, so a peer
+            // that is not permitted to preempt never gets its order stored either.
+            acceptUrgent: async (input) => {
+              const peer = [...federationConfig.peers.values()].find(
+                (candidate) => String(candidate.nodeId) === String(input.authenticatedNodeId)
+              )
+              if (peer?.allowUrgentDelivery !== true) {
+                writeServerLog('WARN', 'federation.accept_urgent.peer_not_authorized', {
+                  localNodeId: federationConfig.nodeId,
+                  peerNodeId: input.authenticatedNodeId,
+                })
+                return {
+                  outcome: 'refused' as const,
+                  status: 403,
+                  code: 'urgent_delivery_not_authorized',
+                  retryable: false,
+                }
+              }
+              return await peerAcceptHandler(input)
+            },
             ...(collectiveHistory?.isAuthority !== true
               ? {}
               : {

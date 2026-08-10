@@ -329,10 +329,7 @@ export function assertBrokerRuntimeReusableAdmission(
  * parse failure, so the caller fails closed rather than attempting a steer that
  * cannot happen.
  */
-export function isBrokerRuntimeSteerCapable(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot
-): boolean {
+export function isBrokerRuntimeSteerCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
   if (runtime.controllerKind !== 'harness-broker') return false
   if (runtime.activeInvocationId === undefined) return false
   const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)

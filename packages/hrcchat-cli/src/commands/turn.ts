@@ -14,7 +14,7 @@ import type {
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
-import { writeDeliveryWarnings } from '../delivery-warning.js'
+import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
 import { formatAddress, type resolveScope, resolveSenderAddress } from '../normalize.js'
 import { printJson, printJsonLine } from '../print.js'
 import {
@@ -57,6 +57,8 @@ export type TurnOptions = {
    * `--pretty`), whose progress-stream semantics are unchanged.
    */
   wait?: string | undefined
+  /** T-07155 — preempt the target's active turn instead of queueing behind it. */
+  urgent?: boolean | undefined
   /** Wait budget for `--wait final`. Default 45m. */
   timeout?: string | undefined
   /** Suppress all progress output while `--wait` blocks (default in wait mode). */
@@ -252,6 +254,14 @@ function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyIn
 }
 
 function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
+  // T-07155: same mutex as dm — a steered order joins the active turn and has no
+  // reply of its own, so --wait would block for the full budget and report
+  // nothing.
+  if (opts.urgent === true && opts.wait !== undefined) {
+    throw new CliUsageError(
+      'urgent_wait_conflict: --urgent cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
+    )
+  }
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'final') {
     throw new CliUsageError(`unsupported --wait mode for turn: "${waitMode}" (expected: final)`)
@@ -399,6 +409,7 @@ export async function cmdTurn(
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
+    ...(opts.urgent === true ? { whenBusy: 'steer' as const } : {}),
   })
   if (isPendingSemanticTurnHandoff(handoff)) {
     printJsonLine(handoff)
@@ -407,6 +418,7 @@ export async function cmdTurn(
   const quiet = waitMode !== undefined ? opts.quiet !== false : opts.quiet === true
   if (!quiet) {
     writeDeliveryWarnings(handoff.warnings)
+    writeDeliveryOutcome(handoff.delivery)
   }
   const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
 

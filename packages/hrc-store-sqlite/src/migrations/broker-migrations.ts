@@ -652,6 +652,51 @@ const eventRepositoryQueryIndexesMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07155 — the durable ledger for urgent (`whenBusy: 'steer'`) delivery.
+ *
+ * A steered order is admitted into a turn that already exists, so it gets no run
+ * row of its own (a run would park in `accepted` forever). But "no durable
+ * record at all" would break the caller-stable `idempotencyKey` promise: replay
+ * is a run-row lookup, so with no row a retry after a lost or timed-out response
+ * re-actuates, and `expectedTurnId` still matches while the original turn runs —
+ * it is a staleness fence, not a duplicate fence.
+ *
+ * A dedicated table rather than a new run-row flavour, deliberately: run rows
+ * mean "a turn" to the event-mapper's attribution predicates, to
+ * `runtime.active_run_id`, to the reaper and to monitor. A transient steer row
+ * in `runs` would perturb all of them for the duration of the RPC.
+ */
+const steerContributionsMigration: HrcMigration = {
+  id: '0037_steer_contributions',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS steer_contributions (
+        contribution_id       TEXT PRIMARY KEY,
+        host_session_id       TEXT NOT NULL,
+        idempotency_key       TEXT,
+        request_hash          TEXT,
+        runtime_id            TEXT NOT NULL,
+        invocation_id         TEXT NOT NULL,
+        active_run_id         TEXT NOT NULL,
+        input_id              TEXT NOT NULL,
+        state                 TEXT NOT NULL,
+        outcome_code          TEXT,
+        outcome_json          TEXT,
+        created_at            TEXT NOT NULL,
+        updated_at            TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_steer_contributions_idempotency
+        ON steer_contributions(host_session_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_steer_contributions_state
+        ON steer_contributions(state);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -666,4 +711,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   observationalEventProvenanceMigration,
   runsDispatchIdempotencyMigration,
   eventRepositoryQueryIndexesMigration,
+  steerContributionsMigration,
 ]

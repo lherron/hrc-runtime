@@ -55,3 +55,33 @@ export function hrcAdmittedIntoActiveTurn(input: {
     ackSemantics: 'accepted_only',
   }
 }
+
+/**
+ * Lifecycle of a durable urgent-delivery contribution (T-07155).
+ *
+ * `attempting` exists only across the broker RPC; it is a write-ahead marker, not
+ * an admitted-pending state. Recovery seals it rather than waiting on it, so it
+ * can never become the limbo the design set out to avoid.
+ */
+export type HrcSteerContributionState =
+  | 'attempting'
+  | 'admitted'
+  | 'unsupported'
+  | 'race_lost'
+  | 'ambiguous'
+
+export type HrcSteerContributionRecord = {
+  contributionId: string
+  hostSessionId: string
+  idempotencyKey?: string | undefined
+  requestHash?: string | undefined
+  runtimeId: string
+  invocationId: string
+  activeRunId: string
+  inputId: string
+  state: HrcSteerContributionState
+  outcomeCode?: string | undefined
+  outcome?: Record<string, unknown> | undefined
+  createdAt: string
+  updatedAt: string
+}

@@ -44,6 +44,7 @@ import {
   ContinuityRepository,
   SessionRepository,
 } from './repositories/session-repositories.js'
+import { SteerContributionRepository } from './repositories/steer-contribution-repository.js'
 import { RosterClaimRepository } from './roster-claim-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
@@ -91,6 +92,7 @@ export type HrcDatabase = {
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
+  steerContributions: SteerContributionRepository
   brokerInvocationEvents: BrokerInvocationEventRepository
   runtimeArtifacts: RuntimeArtifactRepository
   permissionDecisions: PermissionDecisionRepository
@@ -173,6 +175,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
+    steerContributions: new SteerContributionRepository(sqlite),
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite),
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
     permissionDecisions: new PermissionDecisionRepository(sqlite),

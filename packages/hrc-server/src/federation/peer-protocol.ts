@@ -129,6 +129,13 @@ export type PeerProtocolRequestHandlerOptions = {
     request: PeerProtocolHealthRequest
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
   readonly accept?: PeerAcceptHandler | undefined
+  /**
+   * T-07155 — urgent (preemptive) delivery. A DISTINCT handler behind a distinct
+   * route so that routing and urgent admission are one operation: a peer without
+   * the feature never parses the envelope at all, which is what makes the
+   * fail-closed guarantee hold across version skew. See handleUrgentAccept.
+   */
+  readonly acceptUrgent?: PeerAcceptHandler | undefined
   readonly establish?: PeerEstablishHandler | undefined
   readonly collectiveHistoryReplicate?: PeerCollectiveHistoryReplicateHandler | undefined
   readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
@@ -399,6 +406,70 @@ export function createPeerProtocolRequestHandler(
           },
           200
         )
+      }
+
+      // T-07155 — urgent delivery rides its OWN route, never /v1/federation/accept.
+      //
+      // The ordinary accept path builds the durable ACK and schedules afterAck
+      // local delivery BEFORE returning, so the origin can only observe an echo
+      // after the destination has already crossed the actuation boundary. Any
+      // field-level marker on that route is therefore unsafe: a peer that
+      // silently drops it durably ACKs an ordinary DM and actuates it, and the
+      // origin learns too late.
+      //
+      // A separate route removes the window instead of shortening it. A peer
+      // without this feature falls through to the unmatched-path refusal below
+      // (404 not_found) without parsing an envelope, constructing an ACK, or
+      // scheduling afterAck; a peer with the route but the feature disabled
+      // refuses explicitly. There is no ordinary-actuation branch here in any
+      // version, so the downgrade would require a reader that cannot exist.
+      if (request.method === 'POST' && url.pathname === '/v1/federation/accept-urgent') {
+        const body = await requestRecord(request)
+        if (!isRecord(body['envelope'])) throw new InvalidPeerRequest()
+        if (options.acceptUrgent === undefined) {
+          return refusal(404, 'peer_upgrade_required', { retryable: false })
+        }
+        const result = await options.acceptUrgent({
+          authenticatedNodeId: peer.nodeId,
+          protocolVersion: requestVersion,
+          envelope: body['envelope'],
+        })
+        if (result.outcome === 'refused') {
+          return refusal(result.status ?? 409, result.code, {
+            retryable: result.retryable,
+            ...(result.redirect === undefined ? {} : { redirect: result.redirect }),
+          })
+        }
+        // Reached only after the destination has admitted the order AS URGENT:
+        // authorization, envelope validation and target steer-capability are all
+        // resolved before this point, so the ACK means "admitted as urgent and
+        // steerable" rather than merely "durably stored".
+        const response = responseJson(
+          {
+            ok: true,
+            protocolVersion: PEER_PROTOCOL_VERSION,
+            ack: { outcome: result.outcome, messageId: result.messageId, delivery: 'urgent' },
+          },
+          200
+        )
+        writeServerLog('INFO', 'federation.accept_urgent.ack', {
+          localNodeId: options.localNodeId,
+          peerNodeId: peer.nodeId,
+          messageId: result.messageId,
+          outcome: result.outcome,
+        })
+        if (result.outcome === 'accepted' && result.afterAck !== undefined) {
+          setTimeout(() => {
+            Promise.resolve(result.afterAck?.()).catch((error: unknown) => {
+              writeServerLog('WARN', 'federation.accept_urgent.post_ack_delivery_failed', {
+                messageId: result.messageId,
+                peerNodeId: peer.nodeId,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            })
+          }, 0)
+        }
+        return response
       }
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/accept') {

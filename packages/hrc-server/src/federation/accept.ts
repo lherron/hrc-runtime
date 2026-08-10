@@ -108,6 +108,13 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
   }
   const createIfMissing = optionalBoolean(value, 'createIfMissing')
   const allowStaleGeneration = optionalBoolean(value, 'allowStaleGeneration')
+  // T-07155 — strict-validated urgent marker. Unknown version is REFUSED, not
+  // ignored: a tolerant read of a delivery class we cannot honour is exactly the
+  // silent downgrade this design forbids.
+  const urgent = value['urgent']
+  if (urgent !== undefined && (!isRecord(urgent) || urgent['version'] !== 1)) {
+    throw new InvalidFederationEnvelopeError()
+  }
   const semanticTurnHandoff = value['semanticTurnHandoff']
   const semanticTurnHandoffVersion = isRecord(semanticTurnHandoff)
     ? semanticTurnHandoff['version']
@@ -132,6 +139,7 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
       : semanticTurnHandoffVersion === 2
         ? { semanticTurnHandoff: { version: 2, freshContext: true } }
         : { semanticTurnHandoff: { version: 1 } }),
+    ...(urgent === undefined ? {} : { urgent: { version: 1 as const } }),
   }
 }
 

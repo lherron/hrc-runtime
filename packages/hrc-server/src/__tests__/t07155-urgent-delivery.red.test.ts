@@ -330,3 +330,108 @@ describe('T-07155 urgent delivery', () => {
     expect(body.error.message).toContain('urgent_wait_conflict')
   })
 })
+
+describe('T-07155 urgent delivery idempotency ledger', () => {
+  const sendWithKey = async (seeded: Seeded, body: string, idempotencyKey: string) =>
+    await fixture.postJson('/v1/turns', {
+      hostSessionId: seeded.hostSessionId,
+      prompt: body,
+      whenBusy: 'steer',
+      idempotencyKey,
+      runtimeIntent: intent,
+    })
+
+  const contributions = () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      return db.steerContributions.listAttempting()
+    } finally {
+      db.close()
+    }
+  }
+
+  it('G20: a replayed idempotency key returns the recorded outcome and actuates exactly once', async () => {
+    const seeded = await seed('g20', 'busy', { steerCapable: true })
+    const broker = installBroker()
+
+    // /v1/turns acknowledges at the public 'accepted' stage (202).
+    const first = await sendWithKey(seeded, 'STOP', 'idem-g20')
+    expect(first.status).toBe(202)
+    const firstBody = (await first.json()) as { delivery?: { code: string } }
+    expect(firstBody.delivery?.code).toBe('admitted_into_active_turn')
+    expect(broker.calls).toHaveLength(1)
+
+    const second = await sendWithKey(seeded, 'STOP', 'idem-g20')
+    expect(second.status).toBe(202)
+    const secondBody = (await second.json()) as { delivery?: { code: string } }
+    expect(secondBody.delivery?.code).toBe('admitted_into_active_turn')
+    // The decisive assertion: the harness was NOT asked a second time.
+    expect(broker.calls).toHaveLength(1)
+  })
+
+  it('G21: reusing a key for a different request is a stale-context conflict', async () => {
+    const seeded = await seed('g21', 'busy', { steerCapable: true })
+    installBroker()
+
+    const first = await sendWithKey(seeded, 'STOP', 'idem-g21')
+    expect(first.status).toBe(202)
+
+    const second = await sendWithKey(seeded, 'a completely different order', 'idem-g21')
+    expect(second.status).toBe(409)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('stale_context')
+  })
+
+  it('G22: an ambiguous result replays as ambiguous and never re-actuates', async () => {
+    const seeded = await seed('g22', 'busy', { steerCapable: true })
+    const broker = installBroker(() => ({
+      ok: false,
+      error: { code: 'broker_input_timeout', message: 'broker input timed out' },
+    }))
+
+    const first = await sendWithKey(seeded, 'STOP', 'idem-g22')
+    expect(first.status).toBe(503)
+    expect(broker.calls).toHaveLength(1)
+
+    // Retrying an ambiguous urgent order must report the ambiguity, not inject
+    // it a second time — the failure daedalus rejected revision 1 over.
+    const second = await sendWithKey(seeded, 'STOP', 'idem-g22')
+    expect(second.status).toBe(503)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('urgent_delivery_ambiguous')
+    expect(broker.calls).toHaveLength(1)
+  })
+
+  it('G22b: a write-ahead record is left attempting only across the RPC, and recovery seals it', async () => {
+    const seeded = await seed('g22b', 'busy', { steerCapable: true })
+    installBroker()
+
+    await sendWithKey(seeded, 'STOP', 'idem-g22b')
+    // Sealed by the happy path: nothing is left pending after a completed call.
+    expect(contributions()).toHaveLength(0)
+
+    // Simulate a daemon death mid-RPC by writing an unsealed record directly,
+    // then prove startup recovery seals it rather than leaving it in limbo.
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.steerContributions.insertAttempting({
+        contributionId: 'steer-orphan-g22b',
+        hostSessionId: seeded.hostSessionId,
+        idempotencyKey: 'idem-orphan-g22b',
+        runtimeId: seeded.runtimeId,
+        invocationId: seeded.invocationId,
+        activeRunId: seeded.activeRunId as string,
+        inputId: 'input-orphan',
+        now: fixture.now(),
+      })
+      expect(db.steerContributions.listAttempting()).toHaveLength(1)
+
+      const sealed = db.steerContributions.sealOrphanedAsAmbiguous(fixture.now())
+      expect(sealed).toBe(1)
+      expect(db.steerContributions.listAttempting()).toHaveLength(0)
+      expect(db.steerContributions.getById('steer-orphan-g22b')?.state).toBe('ambiguous')
+    } finally {
+      db.close()
+    }
+  })
+})

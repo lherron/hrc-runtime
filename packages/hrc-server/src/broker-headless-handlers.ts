@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HrcConflictError,
   HrcDomainError,
   HrcErrorCode,
   HrcRuntimeUnavailableError,
@@ -15,6 +16,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcSteerContributionRecord,
   HrcTurnResponseFormat,
 } from 'hrc-core'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
@@ -637,6 +639,39 @@ export async function executeHeadlessBrokerStartTurn(
 }
 
 /**
+ * Return the RECORDED outcome of a previously-attempted urgent delivery. Never
+ * re-actuates: a retry after an ambiguous result must report the ambiguity, not
+ * inject the order a second time.
+ */
+function replaySteerContribution(record: HrcSteerContributionRecord): Response {
+  if (record.state === 'admitted') {
+    return json({
+      runId: record.activeRunId,
+      hostSessionId: record.hostSessionId,
+      generation: 0,
+      runtimeId: record.runtimeId,
+      transport: 'headless',
+      status: 'started',
+      supportsInFlightInput: false,
+      delivery: hrcAdmittedIntoActiveTurn({ mergedIntoRunId: record.activeRunId }),
+    } satisfies DispatchTurnResponseBase)
+  }
+  const code =
+    record.state === 'race_lost'
+      ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST
+      : record.state === 'ambiguous'
+        ? HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS
+        : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED
+  throw new HrcDomainError(code, `urgent delivery previously resolved as ${record.state}`, {
+    runtimeId: record.runtimeId,
+    invocationId: record.invocationId,
+    runId: record.activeRunId,
+    route: 'broker',
+    replayed: true,
+  })
+}
+
+/**
  * T-07155 — deliver an URGENT order into a busy headless runtime's ACTIVE turn.
  *
  * Deliberately creates no run row. The event-mapper attributes turn.* events by
@@ -658,9 +693,38 @@ export async function executeHeadlessBrokerSteer(
     activeRun: HrcRunRecord
     invocationId: string
     responseFormat?: HrcTurnResponseFormat | undefined
+    dispatchIdempotencyKey?: string | undefined
+    dispatchRequestHash?: string | undefined
   }
 ): Promise<Response> {
   const { activeRun, invocationId } = options
+
+  // Idempotent replay. A steer creates no run row, so the ordinary run-keyed
+  // replay path cannot see it; without this ledger a retry after a lost or
+  // timed-out response would re-actuate, and `expectedTurnId` would still match
+  // because the original turn is still running. It fences staleness, not
+  // duplication.
+  const idempotencyKey = options.dispatchIdempotencyKey
+  if (idempotencyKey !== undefined) {
+    const existing = this.db.steerContributions.findByIdempotencyKey(
+      session.hostSessionId,
+      idempotencyKey
+    )
+    if (existing !== null) {
+      if (
+        existing.requestHash !== undefined &&
+        options.dispatchRequestHash !== undefined &&
+        existing.requestHash !== options.dispatchRequestHash
+      ) {
+        throw new HrcConflictError(
+          HrcErrorCode.STALE_CONTEXT,
+          'dispatch idempotency key was already used for a different request',
+          { hostSessionId: session.hostSessionId, idempotencyKey }
+        )
+      }
+      return replaySteerContribution(existing)
+    }
+  }
 
   // Negotiate against the LIVE broker process, never against published code.
   if (!isBrokerRuntimeSteerCapable(this.db, runtime)) {
@@ -679,6 +743,36 @@ export async function executeHeadlessBrokerSteer(
 
   const now = timestamp()
   const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
+  const contributionId = `steer-${randomUUID()}`
+
+  // Write-ahead BEFORE actuation. If the daemon dies mid-RPC the record is left
+  // `attempting` and startup recovery seals it `ambiguous` rather than retrying,
+  // because whether the harness applied it is genuinely unknown.
+  this.db.steerContributions.insertAttempting({
+    contributionId,
+    hostSessionId: session.hostSessionId,
+    ...(options.dispatchIdempotencyKey !== undefined
+      ? { idempotencyKey: options.dispatchIdempotencyKey }
+      : {}),
+    ...(options.dispatchRequestHash !== undefined
+      ? { requestHash: options.dispatchRequestHash }
+      : {}),
+    runtimeId: runtime.runtimeId,
+    invocationId,
+    activeRunId: activeRun.runId,
+    inputId: String(inputId),
+    now,
+  })
+  const sealAs = (
+    state: 'admitted' | 'unsupported' | 'race_lost' | 'ambiguous',
+    outcomeCode?: string
+  ): void => {
+    this.db.steerContributions.seal(contributionId, {
+      state,
+      ...(outcomeCode === undefined ? {} : { outcomeCode }),
+      now: timestamp(),
+    })
+  }
 
   // Attribution against the ACTIVE run: the audit trail must show who preempted
   // whom, on which turn, and that it arrived mid-flight rather than in sequence.
@@ -714,12 +808,17 @@ export async function executeHeadlessBrokerSteer(
     const raceLost = /expectedTurnId|active turn|turn_mismatch|no active turn/i.test(message)
     const timedOut = result.error.code === 'broker_input_timeout'
     if (timedOut) {
+      sealAs('ambiguous', HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS)
       throw new HrcDomainError(
         HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS,
         'urgent delivery timed out; whether the harness applied it is unknown',
         { runtimeId: runtime.runtimeId, invocationId, runId: activeRun.runId, route: 'broker' }
       )
     }
+    sealAs(
+      raceLost ? 'race_lost' : 'unsupported',
+      raceLost ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED
+    )
     throw new HrcDomainError(
       raceLost ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
       raceLost
@@ -736,6 +835,7 @@ export async function executeHeadlessBrokerSteer(
   }
 
   if (!result.response.accepted || result.response.disposition !== 'attempted_steer') {
+    sealAs('unsupported', HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED)
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
       'the broker did not admit the urgent order into the active turn',
@@ -749,6 +849,7 @@ export async function executeHeadlessBrokerSteer(
     )
   }
 
+  sealAs('admitted')
   this.db.runtimes.update(runtime.runtimeId, {
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
@@ -823,6 +924,12 @@ export async function executeHeadlessBrokerInputTurn(
       activeRun,
       invocationId,
       responseFormat: options.responseFormat,
+      ...(options.dispatchIdempotencyKey !== undefined
+        ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
+        : {}),
+      ...(options.dispatchRequestHash !== undefined
+        ? { dispatchRequestHash: options.dispatchRequestHash }
+        : {}),
     })
   }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)

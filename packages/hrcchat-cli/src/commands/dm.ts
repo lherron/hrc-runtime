@@ -8,7 +8,7 @@ import type {
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { tryRouteBackchannelDm } from '../backchannel-route.js'
-import { writeDeliveryWarnings } from '../delivery-warning.js'
+import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
 import { formatAddress, resolveAddress, resolveSenderAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveMessagingTarget, resolveRuntimeIntentForTarget } from '../resolve-intent.js'
@@ -38,6 +38,8 @@ export type DmOptions = {
    * streams progress (handled upstream in main.ts and never reaches cmdDm).
    */
   wait?: string | undefined
+  /** T-07155 — preempt the target's active turn instead of queueing behind it. */
+  urgent?: boolean | undefined
   /** Wait budget for `--wait response`. Default 20m. */
   timeout?: string | undefined
   /** Suppress all non-terminal stdout/stderr while waiting (default in wait mode). */
@@ -68,6 +70,15 @@ export async function cmdDm(
   // one compact JSON object. Session-run targets wait for lifecycle terminal
   // evidence before selecting the durable final reply; direct/no-run targets
   // keep the legacy message-wait fallback.
+  // T-07155: an urgent order joins the target's ACTIVE turn and produces no
+  // reply of its own, so there is nothing for --wait to wait for. Refuse the
+  // combination rather than block for the full timeout and report nothing —
+  // that would recreate the invisible lag urgent delivery exists to remove.
+  if (opts.urgent === true && opts.wait !== undefined) {
+    throw new CliUsageError(
+      'urgent_wait_conflict: --urgent cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
+    )
+  }
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'response') {
     throw new CliUsageError(`unsupported --wait mode for dm: "${waitMode}" (expected: response)`)
@@ -124,6 +135,7 @@ export async function cmdDm(
       runtimeIntent,
       createIfMissing: true,
       ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
+      ...(opts.urgent === true ? { whenBusy: 'steer' as const } : {}),
     })
   }
 
@@ -158,6 +170,7 @@ export async function cmdDm(
   // to the target. JSON callers receive the same typed warning in the envelope.
   if (!quiet && !opts.json) {
     writeDeliveryWarnings(result.warnings)
+    writeDeliveryOutcome(result.delivery)
   }
 
   // Final-only wait: block quietly (client-side, hard `--timeout` ceiling) for

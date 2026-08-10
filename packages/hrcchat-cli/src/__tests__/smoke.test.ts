@@ -100,6 +100,58 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(result.stderr).toContain('delivery deferred')
   })
 
+  it('G11: --urgent reaches the wire as whenBusy steer and renders the admitted outcome', async () => {
+    const client = createDmClient({
+      delivery: {
+        code: 'admitted_into_active_turn',
+        delivery: 'admitted',
+        mergedIntoRunId: 'run-active-1',
+        deliverySemantics: 'interrupting_steer',
+        ackSemantics: 'accepted_only',
+      },
+    })
+
+    const result = await runCommand(() =>
+      cmdDm(client.client, { as: 'human', urgent: true }, [
+        'cody@agent-spaces:T-07155',
+        'STOP - do not push',
+      ])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(client.requests[0]?.whenBusy).toBe('steer')
+    expect(result.stderr).toContain('admitted_into_active_turn')
+    // The sender is told plainly that no separate reply is coming, so nobody
+    // waits for one that will never arrive.
+    expect(result.stderr).toContain('no separate reply')
+  })
+
+  it('G11: an ordinary DM still sends no whenBusy at all', async () => {
+    const client = createDmClient()
+    await runCommand(() =>
+      cmdDm(client.client, { as: 'human' }, ['cody@agent-spaces:T-07155', 'routine'])
+    )
+    expect(client.requests[0]?.whenBusy).toBeUndefined()
+  })
+
+  it('G11: --urgent with --wait is refused before anything is sent', async () => {
+    const client = createDmClient()
+    let caught: unknown
+    try {
+      await cmdDm(client.client, { as: 'human', urgent: true, wait: 'response' }, [
+        'cody@agent-spaces:T-07155',
+        'STOP',
+      ])
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(CliUsageError)
+    expect(String(caught)).toContain('urgent_wait_conflict')
+    // Refused before the send, not after: the order was never handed to the
+    // server in a form that could be silently deferred.
+    expect(client.requests).toHaveLength(0)
+  })
+
   it('does not turn an ambient runtime credential into DM child-birth authority', async () => {
     process.env['HRC_BIRTH_CREDENTIAL'] = 'rt-ambient-parent'
     const client = createDmClient()
@@ -543,6 +595,7 @@ function createDmClient(
       delivery: 'deferred'
       message: string
     }>
+    delivery?: SemanticDmResponse['delivery']
   } = {}
 ): {
   client: HrcClient
@@ -563,6 +616,7 @@ function createDmClient(
           }),
           ...(options.execution ? { execution: options.execution } : {}),
           ...(options.warnings ? { warnings: options.warnings } : {}),
+          ...(options.delivery ? { delivery: options.delivery } : {}),
         }
       },
     } as HrcClient,

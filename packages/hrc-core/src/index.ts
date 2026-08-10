@@ -301,7 +301,12 @@ export {
   HRC_STARTED_FRESH_TURN_OUTCOME,
   hrcAdmittedIntoActiveTurn,
 } from './delivery-contracts.js'
-export type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
+export type {
+  HrcDeliveryOutcome,
+  HrcDeliveryWarning,
+  HrcSteerContributionRecord,
+  HrcSteerContributionState,
+} from './delivery-contracts.js'
 
 export type {
   HrcMessageAddress,

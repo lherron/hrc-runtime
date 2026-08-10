@@ -78,6 +78,16 @@ export type FederationMessageDelivery = {
     | { readonly version: 1 }
     | { readonly version: 2; readonly freshContext: true }
     | undefined
+  /**
+   * T-07155 — urgent (preemptive) delivery marker.
+   *
+   * Versioned and strict-validated so an unknown version is refused rather than
+   * ignored. Note this member never reaches an old tolerant reader at all:
+   * urgent envelopes ride `/v1/federation/accept-urgent`, which a peer without
+   * the feature refuses at the transport before parsing anything. The marker is
+   * belt-and-braces for peers that DO have the route but an older parse.
+   */
+  readonly urgent?: { readonly version: 1 } | undefined
 }
 
 export type FederationSemanticTurnIdentity = {
@@ -280,6 +290,12 @@ export type FederationPeerCapabilities = {
   readonly runtimeProjection?: boolean | undefined
   /** Additive v1 capability; required before forwarding semantic turn handoffs. */
   readonly semanticTurnHandoff?: boolean | undefined
+  /**
+   * T-07155 — the peer exposes `/v1/federation/accept-urgent` and will honour
+   * preemptive delivery. Advisory only: the distinct route is the fail-closed
+   * fence, this just produces a clearer refusal sooner.
+   */
+  readonly urgentDelivery?: boolean | undefined
 }
 
 /** One bounded on-demand peer probe. Tokens and other transport secrets never enter this DTO. */

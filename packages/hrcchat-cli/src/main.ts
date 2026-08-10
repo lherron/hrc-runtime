@@ -197,6 +197,10 @@ const dmCmd = program
     '--cross-scope-reply',
     'allow --reply-to to thread across conversation scopes (blocked by default)'
   )
+  .option(
+    '--urgent',
+    "URGENT: preempt the target's ACTIVE turn instead of queueing behind it. Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
+  )
   .option('--mode <mode>', 'auto|headless|nonInteractive')
   .option('--file <path>', 'read body from file')
   .option(
@@ -366,6 +370,10 @@ const turnCmd = program
   .option(
     '--cross-scope-reply',
     'allow --reply-to to thread across conversation scopes (blocked by default)'
+  )
+  .option(
+    '--urgent',
+    "URGENT: preempt the target's ACTIVE turn instead of queueing behind it. Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
   )
   .option('--file <path>', 'read prompt from file')
   .option(

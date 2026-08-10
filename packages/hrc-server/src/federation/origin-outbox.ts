@@ -211,6 +211,24 @@ export class FederationOriginOutbox {
     this.registry = resolveFederationRegistryClient(options.config, options.localRegistryClient)
     const handleRedirect = createStalePlacementRedirectHandler(this.cache)
     const sendEnvelope = async (peer: PeerEntry, envelope: FederationMessageEnvelope) => {
+      // T-07155 — urgent envelopes go to the distinct urgent route and NEVER
+      // fall back to the ordinary one. The health capability below is advisory
+      // (it produces a clearer error sooner); the route itself is the
+      // fail-closed fence, because a peer without it refuses at the transport
+      // before parsing an envelope or scheduling any local delivery.
+      const urgent = envelope.delivery?.urgent !== undefined
+      if (urgent) {
+        const probe = await probePeerHealth(peer)
+        if (probe.health.capabilities?.urgentDelivery !== true) {
+          return {
+            outcome: 'refused' as const,
+            status: 409,
+            code: 'urgent_delivery_unroutable',
+            message: `peer ${peer.nodeId} does not advertise urgentDelivery`,
+            retryable: false,
+          }
+        }
+      }
       if (envelope.delivery?.semanticTurnHandoff !== undefined) {
         const probe = await probePeerHealth(peer)
         if (probe.health.state !== 'healthy') {
@@ -233,6 +251,7 @@ export class FederationOriginOutbox {
         }
       }
       return sendFederationEnvelope({
+        ...(urgent ? { urgent: true } : {}),
         db: options.db,
         peer,
         envelope,

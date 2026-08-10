@@ -79,6 +79,32 @@ export type PeerEntry = {
   readonly token: PeerToken
   /** Inbound rotation overlap; defaults to the outbound token. */
   readonly acceptedTokens?: readonly PeerToken[] | undefined
+  /**
+   * T-07155 — may this peer PREEMPT a running turn on one of our scopes?
+   *
+   * DEFAULT DENY. Authority rests on the only identity that is actually
+   * authenticated on this path — the sending node. A federated semantic DM
+   * carries `from`, but that is caller-asserted display identity persisted
+   * verbatim; gating on it would let anyone admitted to a peer's local socket
+   * preempt a worker here by naming themselves. `from` is recorded as
+   * attribution only, never as authority.
+   */
+  readonly allowUrgentDelivery?: boolean | undefined
+}
+
+/**
+ * T-07155 — whether this peer may PREEMPT a running turn on one of our scopes.
+ *
+ * Absent means deny. The only authenticated identity on the federated DM path is
+ * the sending node, so that is where the decision lives; `envelope.from` is
+ * caller-asserted display identity and is attribution, never authority.
+ */
+function parseAllowUrgentDelivery(value: unknown, where: string): boolean {
+  if (value === undefined) return false
+  if (typeof value !== 'boolean') {
+    throw new Error(`${where} field "allowUrgentDelivery" must be a boolean`)
+  }
+  return value
 }
 
 export type NodeIdProvenance = 'declared' | 'derived'
@@ -339,9 +365,12 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
         peerTokenOwners.set(rawToken, peerId)
       }
 
+      const allowUrgentDelivery = parseAllowUrgentDelivery(rawEntry['allowUrgentDelivery'], where)
+
       peers.set(peerId, {
         nodeId: peerId,
         endpoint: validatePeerEndpoint(rawEntry['endpoint'].trim(), where),
+        ...(allowUrgentDelivery ? { allowUrgentDelivery: true } : {}),
         ...(rawRegistryEndpoint === undefined
           ? {}
           : {

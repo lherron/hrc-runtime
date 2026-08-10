@@ -1023,6 +1023,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_STARTED_FRESH_TURN_OUTCOME",
+      "kind": "value",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HRC_STARTED_FRESH_TURN_OUTCOME|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV",
       "kind": "value",
       "file": "packages/hrc-core/src/federation.ts",
@@ -1067,6 +1075,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcActuatorSplitPolicy|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "hrcAdmittedIntoActiveTurn",
+      "kind": "value",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|hrcAdmittedIntoActiveTurn|value",
       "count": 1
     },
     {
@@ -1315,6 +1331,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcContinuityRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcDeliveryOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HrcDeliveryOutcome|type",
       "count": 1
     },
     {
@@ -2315,6 +2339,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcStatusTmuxView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSteerContributionRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HrcSteerContributionRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSteerContributionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HrcSteerContributionState|type",
       "count": 1
     },
     {

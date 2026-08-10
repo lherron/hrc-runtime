@@ -28,6 +28,16 @@ export type SendFederationEnvelopeOptions = {
   readonly timeoutMs?: number | undefined
   /** T-06621 routing-hint correction; invoked only for a valid stale-placement redirect. */
   readonly onStaleRedirect?: StalePlacementRedirectHandler | undefined
+  /**
+   * T-07155 — send to the URGENT accept route instead of the ordinary one.
+   *
+   * The route IS the fence. A peer that lacks the feature refuses at the
+   * transport without parsing the envelope, so it can never durably ACK an
+   * urgent order and actuate it as an ordinary DM. The caller must NOT retry
+   * against `/v1/federation/accept` on refusal — that would reintroduce the
+   * silent downgrade by hand.
+   */
+  readonly urgent?: boolean | undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,7 +71,9 @@ export async function sendFederationEnvelope(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error('federation accept timeoutMs must be a positive integer')
   }
-  const response = await fetchImpl(new URL('/v1/federation/accept', options.peer.endpoint), {
+  const acceptPath =
+    options.urgent === true ? '/v1/federation/accept-urgent' : '/v1/federation/accept'
+  const response = await fetchImpl(new URL(acceptPath, options.peer.endpoint), {
     method: 'POST',
     headers: buildPeerProtocolHeaders(options.peer, options.envelope.protocolVersion, {
       contentType: 'application/json',
