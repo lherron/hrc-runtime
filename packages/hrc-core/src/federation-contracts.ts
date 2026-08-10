@@ -476,7 +476,7 @@ export type LocatePeerResolution =
       readonly detail: string
     }
 
-/** A matched placement constraint disagreeing with an established binding. */
+/** A placement constraint disagreeing with an established binding. */
 export type LocateSkew =
   | {
       kind: 'pin-vs-binding'
@@ -491,6 +491,15 @@ export type LocateSkew =
       kind: 'task-default-vs-binding'
       taskKey: string
       taskDefaultNodeId: string
+      boundNodeId: string
+      placementEpoch: number
+      establishmentProvenance: EstablishmentProvenance
+      detail: string
+    }
+  | {
+      /** EPR scopes are mechanism-born locally but remain governed by declared placement. */
+      kind: 'default-home-vs-binding'
+      defaultHomeNodeId: string
       boundNodeId: string
       placementEpoch: number
       establishmentProvenance: EstablishmentProvenance
@@ -545,7 +554,7 @@ export type ScopeLocation = {
   observed: LocateObservation
   /** Present when authority names another node and this daemon attempts an on-demand peer locate. */
   peerResolution?: LocatePeerResolution | undefined
-  /** Present only for a pin that disagrees with an established binding. */
+  /** Present when a governing placement constraint disagrees with the binding. */
   skew?: LocateSkew | undefined
   notes: readonly LocateNote[]
   retirement?: LocateRetirement | undefined

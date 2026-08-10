@@ -1,5 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -74,6 +76,37 @@ describe('T-07134 POST /v1/registrations', () => {
     } finally {
       db.close()
     }
+  })
+
+  test('advises when declared placement designates another node without gating issuance', async () => {
+    await writeFile(
+      join(fixture.stateRoot, 'federation.json'),
+      JSON.stringify({ nodeId: 'max3', gate: { mode: 'enforce' } }),
+      { mode: 0o600 }
+    )
+    await start()
+    Object.assign(server!, {
+      policyFor: async () => ({
+        claimsTask: false,
+        placement: { defaultHomeNode: 'svc', pins: {} },
+      }),
+    })
+
+    const response = await fixture.postJson('/v1/registrations', request())
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      placementAdvisory:
+        'policy designates svc as home; this registration will be noncanonical on max3',
+    })
+
+    Object.assign(server!, { policyFor: async () => Promise.reject(new Error('unreadable')) })
+    const unreadable = await fixture.postJson(
+      '/v1/registrations',
+      request({ socketPath: '/tmp/unreadable.sock' })
+    )
+    expect(unreadable.status).toBe(200)
+    expect(await unreadable.json()).not.toHaveProperty('placementAdvisory')
   })
 
   test('returns the three typed issuance refusals', async () => {

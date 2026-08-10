@@ -274,7 +274,7 @@ describe('locate — the three truths are reported separately', () => {
   })
 })
 
-describe('skew — a PIN disagreeing with an established binding, and nothing else', () => {
+describe('skew — governing placement constraints disagreeing with a binding', () => {
   test('pin pointing away from the established binding is SKEW', async () => {
     const location = await locateScope({
       scopeRef: SCOPE,
@@ -363,6 +363,34 @@ describe('skew — a PIN disagreeing with an established binding, and nothing el
 
     expect(location.skew).toBeUndefined()
     expect(location.notes.map((note) => note.code)).toContain('task-default-honored')
+  })
+
+  test('an external-registration binding away from default_home_node is skew', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        ledger: ledgerStub(
+          ledgerRow({
+            homeNodeId: 'max3',
+            birthClass: 'mechanism-born',
+            authorityProvenance: {
+              kind: 'external-registration',
+              registrationId: 'registration-t07150',
+              classId: 'arris-svc-agent',
+            },
+            establishmentProvenance: 'explicit_local',
+          })
+        ),
+        policyFor: async () => policy({ defaultHomeNode: 'svc' }),
+      }),
+    })
+
+    expect(location.skew).toMatchObject({
+      kind: 'default-home-vs-binding',
+      defaultHomeNodeId: 'svc',
+      boundNodeId: 'max3',
+      placementEpoch: 1,
+    })
   })
 
   test('a pin on an UNBOUND scope is not skew — there is nothing to disagree with', async () => {
@@ -712,6 +740,32 @@ describe('scanLedgerForSkew — the doctor surface', () => {
     expect(scan.scanned).toBe(2)
     expect(scan.skewed).toHaveLength(1)
     expect(scan.skewed[0]?.scopeRef).toBe(SCOPE)
+  })
+
+  test('finds external-registration default_home_node skew across the ledger', async () => {
+    const report = await scanLedgerForSkew({
+      bindings: [
+        ledgerRow({
+          homeNodeId: 'max3',
+          birthClass: 'mechanism-born',
+          authorityProvenance: {
+            kind: 'external-registration',
+            registrationId: 'registration-t07150',
+            classId: 'arris-svc-agent',
+          },
+          establishmentProvenance: 'explicit_local',
+        }),
+      ],
+      localNodeId: 'max3',
+      policyFor: async () => policy({ defaultHomeNode: 'svc' }),
+    })
+
+    expect(report.skewed).toHaveLength(1)
+    expect(report.skewed[0]?.skew).toMatchObject({
+      kind: 'default-home-vs-binding',
+      defaultHomeNodeId: 'svc',
+      boundNodeId: 'max3',
+    })
   })
 
   test('revoked rows are not scanned', async () => {

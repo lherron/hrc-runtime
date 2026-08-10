@@ -93,9 +93,14 @@ function describeDeclared(declared: LocateDeclaredPolicy): string {
 }
 
 function describeSkewConstraint(skew: LocateSkew): string {
-  return skew.kind === 'pin-vs-binding'
-    ? `pin "${skew.pinKey}" = ${skew.pinnedNodeId}`
-    : `task-default "${skew.taskKey}" = ${skew.taskDefaultNodeId}`
+  switch (skew.kind) {
+    case 'pin-vs-binding':
+      return `pin "${skew.pinKey}" = ${skew.pinnedNodeId}`
+    case 'task-default-vs-binding':
+      return `task-default "${skew.taskKey}" = ${skew.taskDefaultNodeId}`
+    case 'default-home-vs-binding':
+      return `default_home_node = ${skew.defaultHomeNodeId}`
+  }
 }
 
 function describeAuthority(location: ScopeLocation): string {

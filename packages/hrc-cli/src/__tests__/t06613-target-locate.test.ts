@@ -674,6 +674,31 @@ describe('hrc doctor', () => {
     expect(out).toContain('hrc target locate')
   })
 
+  test('renders an external-registration default_home_node disagreement', async () => {
+    stubBindings(
+      report({
+        skewed: [
+          {
+            scopeRef: SCOPE,
+            skew: {
+              kind: 'default-home-vs-binding',
+              defaultHomeNodeId: 'svc',
+              boundNodeId: 'max3',
+              placementEpoch: 2,
+              establishmentProvenance: 'explicit_local',
+              detail: 'skewed',
+            },
+          },
+        ],
+      })
+    )
+    const read = captureStdout()
+
+    await cmdDoctor([])
+
+    expect(read()).toContain('default_home_node = svc')
+  })
+
   test('--strict turns a skew warning into a nonzero exit', async () => {
     stubBindings(
       report({

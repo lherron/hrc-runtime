@@ -526,6 +526,26 @@ function resolveDesignatedHome(
   return { homeNodeId: fallback, provenance: 'default_home_node' }
 }
 
+/**
+ * Resolves the named home in declared policy without consulting authority or
+ * capability. EPR grant issuance uses this projection only for its optional,
+ * non-gating advisory; reconciliation still runs the full placement resolver.
+ */
+export function resolveDeclaredPlacementHome(
+  scopeRef: string,
+  policy: SummonGatePolicy | undefined,
+  localNodeId: string
+):
+  | {
+      homeNodeId: string
+      provenance: Exclude<EstablishmentProvenance, 'rebind'>
+    }
+  | undefined {
+  const designated = resolveDesignatedHome(scopeRef, policy, localNodeId, 'implicit')
+  if (isEvaluation(designated)) return undefined
+  return { homeNodeId: designated.homeNodeId, provenance: designated.provenance }
+}
+
 function isEvaluation(value: unknown): value is SummonGateEvaluation {
   return typeof value === 'object' && value !== null && 'decision' in value
 }

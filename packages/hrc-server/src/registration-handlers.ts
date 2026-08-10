@@ -5,6 +5,7 @@ import { buildScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcConflictError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type { ExternalRegistrationGrant } from 'hrc-store-sqlite'
 
+import { externalRegistrationPlacementAdvisory } from './federation/summon-gate-server.js'
 import { MAX_EXTERNAL_REGISTRATION_TTL_SECONDS } from './registration-classes-config.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { json } from './server-util.js'
@@ -148,6 +149,8 @@ export async function handleCreateExternalRegistration(
     )
   }
 
+  const placementAdvisory = await externalRegistrationPlacementAdvisory(this, derivedScope)
+
   // The credential must reach the provisioner before the participant can answer
   // hello. Schedule (rather than await) the daemon-owned dial; its retry loop
   // bridges response delivery and participant readiness without delaying grant
@@ -159,6 +162,7 @@ export async function handleCreateExternalRegistration(
     derivedScope,
     credential,
     expiresAt,
+    ...(placementAdvisory === undefined ? {} : { placementAdvisory }),
   } satisfies CreateExternalRegistrationResponse)
 }
 

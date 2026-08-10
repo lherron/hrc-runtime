@@ -9,17 +9,14 @@
  * misplaced scope invisible: the operator would see an answer and no way to
  * tell which layer produced it.
  *
- * SKEW IS ONE THING AND ONLY ONE THING. Per §5, skew is a PIN disagreeing with
- * an established binding. It is not "the binding is somewhere other than
- * default_home_node" — an unpinned scope established away from the default is
- * EXPECTED, because `default_home_node` is a routing hint for where implicit
- * summons go, not a constraint on where a scope may live. An operator's
- * explicit start elsewhere is a legitimate declaration (`explicit_local`), and
- * flagging it would train operators to ignore the flag. That case gets an
- * explanatory NOTE instead, which is what establishment provenance is for.
+ * Ordinary explicit operator births may legitimately differ from
+ * `default_home_node`; that default is a routing hint for virgin implicit
+ * summons. EPR is the narrow exception: its mechanism-born local mint is not
+ * an explicit placement declaration, so its declared default home remains a
+ * governing placement constraint and disagreement is operational skew.
  *
  * SKEW CHANGES NOTHING. The established home keeps summon authority; the new
- * pin value is not acted on; nothing here reconciles. Locate reports and stops.
+ * policy value is not acted on; nothing here reconciles. Locate reports and stops.
  * The remedy is a deliberate manual rebuild (F3), so the diagnostic names that
  * rather than implying the next summon will fix it.
  *
@@ -306,7 +303,39 @@ function assessSkew(
     }
   }
 
-  // Everything below is EXPECTED state, per §5. It is noted, never flagged.
+  const externalRegistrationBinding =
+    bound.birthClass === 'mechanism-born' &&
+    bound.authorityProvenance.kind === 'external-registration'
+  if (
+    externalRegistrationBinding &&
+    (declared.source === 'default_home_node' || declared.source === 'default_home_node(local)')
+  ) {
+    if (declared.nodeId === bound.homeNodeId) {
+      notes.push({
+        code: 'unpinned-established-locally',
+        detail: `default_home_node "${declared.nodeId}" matches the external-registration binding.`,
+      })
+      return { notes }
+    }
+    return {
+      skew: {
+        kind: 'default-home-vs-binding',
+        defaultHomeNodeId: declared.nodeId,
+        boundNodeId: bound.homeNodeId,
+        placementEpoch: bound.placementEpoch,
+        establishmentProvenance: bound.establishmentProvenance,
+        detail: [
+          `SKEW: external registration policy designates default_home_node "${declared.nodeId}", but this scope is established on "${bound.homeNodeId}" (epoch ${bound.placementEpoch}, established by ${bound.establishmentProvenance}).`,
+          `"${bound.homeNodeId}" keeps authority. The policy value is NOT acted on and nothing reconciles automatically.`,
+          'Retire or deliberately rebuild the binding after correcting placement policy.',
+        ].join('\n'),
+      },
+      notes,
+    }
+  }
+
+  // Ordinary explicit starts may differ from the default. Note them without
+  // broadening EPR's mechanism-born placement exception to every birth class.
   const declaredHome = declaredHomeNodeId(declared)
   if (declaredHome !== undefined && declaredHome !== bound.homeNodeId) {
     notes.push({
@@ -548,7 +577,7 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
 }
 
 /**
- * Scans every binding this node's ledger knows for pin-vs-binding skew.
+ * Scans every binding this node's ledger knows for placement-policy skew.
  *
  * The doctor surface needs "is anything skewed here?" without the operator
  * naming a scope, which is the whole reason skew is worth surfacing at all: a

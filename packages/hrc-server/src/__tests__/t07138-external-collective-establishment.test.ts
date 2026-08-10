@@ -119,7 +119,10 @@ describe('T-07138 post-mint collective establishment', () => {
 
   function reconciliationServer(
     client: BindingRegistryClient,
-    policyFor: HrcServerInstanceForHandlers['policyFor'] = async () => ({ claimsTask: false })
+    policyFor: HrcServerInstanceForHandlers['policyFor'] = async () => ({
+      claimsTask: false,
+      placement: { defaultHomeNode: 'svc', pins: {} },
+    })
   ): HrcServerInstanceForHandlers {
     return {
       ...mintServer,
@@ -300,6 +303,48 @@ describe('T-07138 post-mint collective establishment', () => {
       homeNodeId: 'lab',
     })
     expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('ready')
+  })
+
+  test('projects a remote default_home_node as placement_refused instead of explicit-local canonical', async () => {
+    const server = reconciliationServer(registryClient(registry), async () => ({
+      claimsTask: false,
+      placement: { defaultHomeNode: 'lab', pins: {} },
+    }))
+
+    expect(
+      await reconcileExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    ).toBe('noncanonical')
+    expect(registry.get(SCOPE)).toBeUndefined()
+    expect(projection()).toMatchObject({
+      state: 'NONCANONICAL',
+      bindingState: 'UNBOUND',
+      cause: 'placement_refused',
+      homeNodeId: 'lab',
+    })
+    expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('ready')
+  })
+
+  test('projects noncanonical when a legacy local binding disagrees with default_home_node', async () => {
+    const local = reconciliationServer(registryClient(registry))
+    expect(await reconcileExternalRegistrationCollectiveEstablishment(local, REGISTRATION_ID)).toBe(
+      'canonical'
+    )
+
+    const remotePolicy = reconciliationServer(registryClient(registry), async () => ({
+      claimsTask: false,
+      placement: { defaultHomeNode: 'lab', pins: {} },
+    }))
+    expect(
+      await reconcileExternalRegistrationCollectiveEstablishment(remotePolicy, REGISTRATION_ID)
+    ).toBe('noncanonical')
+    expect(projection()).toMatchObject({
+      state: 'NONCANONICAL',
+      bindingState: 'BOUND',
+      cause: 'placement_refused',
+      homeNodeId: 'lab',
+      placementEpoch: 1,
+    })
+    expect(registry.get(SCOPE)?.homeNodeId).toBe('svc')
   })
 
   test('sender-home fence refuses pending and noncanonical egress, then admits canonical egress', async () => {
