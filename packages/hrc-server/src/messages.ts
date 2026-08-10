@@ -51,7 +51,7 @@ export function formatDmPayload(
   const maxChars = 1200
   let content = body
   if (content.length > maxChars) {
-    const suffix = `… (truncated; hrcchat show ${messageSeq})`
+    const suffix = `… (truncated; hrcchat show '#${messageSeq}')`
     content = content.slice(0, maxChars - suffix.length) + suffix
   }
   const replyHint = [
