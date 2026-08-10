@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,32 +9,6 @@ import {
   resolveBrokerBinary,
 } from '../broker-interactive-handlers/substrate-allocator'
 import type { BrokerWindowIdentity } from '../broker/controller'
-import { resolvePiSdkBrokerEnabled } from '../option-resolvers'
-import { HRC_PI_SDK_BROKER_ENABLED_ENV } from '../server-constants'
-
-const originalFlag = process.env[HRC_PI_SDK_BROKER_ENABLED_ENV]
-
-afterEach(() => {
-  if (originalFlag === undefined) {
-    delete process.env[HRC_PI_SDK_BROKER_ENABLED_ENV]
-  } else {
-    process.env[HRC_PI_SDK_BROKER_ENABLED_ENV] = originalFlag
-  }
-})
-
-describe('pi-sdk broker flag resolution', () => {
-  it('defaults OFF', () => {
-    delete process.env[HRC_PI_SDK_BROKER_ENABLED_ENV]
-    expect(resolvePiSdkBrokerEnabled({})).toBe(false)
-  })
-
-  it('enables only from an explicit truthy env value or option override', () => {
-    process.env[HRC_PI_SDK_BROKER_ENABLED_ENV] = '1'
-    expect(resolvePiSdkBrokerEnabled({})).toBe(true)
-    expect(resolvePiSdkBrokerEnabled({ piSdkBrokerEnabled: false })).toBe(false)
-  })
-})
-
 describe('pi-sdk broker binary mapping', () => {
   it('selects the composed pi broker binary only for pi-sdk', () => {
     expect(resolveBrokerBinary('pi-sdk')).toBe('harness-broker-pi')

@@ -101,9 +101,7 @@ export function createHeadlessRuntimeForSession(
   const now = timestamp()
   this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
-  const harness = shouldUseHeadlessSdkExecutor(intent.harness, {
-    piSdkBrokerFlagEnabled: this.piSdkBrokerEnabled,
-  })
+  const harness = shouldUseHeadlessSdkExecutor(intent.harness)
     ? deriveSdkHarness(intent.harness)
     : deriveInteractiveHarness(intent.harness)
   const runtimeId = `rt-${randomUUID()}`

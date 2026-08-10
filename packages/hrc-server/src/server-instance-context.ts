@@ -170,7 +170,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly staleGenerationThresholdSec: number
   readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
-  readonly piSdkBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean

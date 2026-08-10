@@ -19,7 +19,6 @@ import {
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
   HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_MAIL_MAX_ROUNDS_ENV,
-  HRC_PI_SDK_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_TMUX_AGING_ENABLED_ENV,
 } from './server-constants.js'
@@ -86,14 +85,6 @@ export function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): bo
     options.headlessCodexBrokerEnabled,
     process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV],
     { defaultOn: true }
-  )
-}
-
-export function resolvePiSdkBrokerEnabled(options: HrcServerOptions): boolean {
-  return resolveBooleanFlag(
-    options.piSdkBrokerEnabled,
-    process.env[HRC_PI_SDK_BROKER_ENABLED_ENV],
-    { defaultOn: false }
   )
 }
 

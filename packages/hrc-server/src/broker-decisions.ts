@@ -81,7 +81,7 @@ export function deriveSdkHarness(
 /**
  * Decide whether a headless dispatch (or start) should select the SDK route
  * rather than the CLI route. Explicit agent-sdk always wins; explicit pi-sdk
- * stays on the SDK fallback unless its separate broker cutover flag is enabled.
+ * is broker-owned and never enters the SDK fallback.
  * Id-less Anthropic intents keep the legacy SDK fallback only after the caller
  * has already selected the headless path. Normal Claude dispatch routes through
  * Ghostty only when HRC_CLAUDE_GHOSTTY=1 is set.
@@ -90,13 +90,7 @@ export function deriveSdkHarness(
  * start routing, runtime harness label (`deriveSdkHarness` vs
  * `deriveInteractiveHarness`), and reuse filtering.
  */
-export function shouldUseHeadlessSdkExecutor(
-  harness: HrcRuntimeIntent['harness'],
-  options: { piSdkBrokerFlagEnabled: boolean } = { piSdkBrokerFlagEnabled: false }
-): boolean {
-  if (harness.id === 'pi-sdk') {
-    return !options.piSdkBrokerFlagEnabled
-  }
+export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness']): boolean {
   if (harness.id === 'agent-sdk') {
     return true
   }
@@ -110,15 +104,13 @@ export type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
 
 export function decideHeadlessExecutionRoute(
   intent: HrcRuntimeIntent,
-  options: { brokerFlagEnabled: boolean; piSdkBrokerFlagEnabled?: boolean }
+  options: { brokerFlagEnabled: boolean }
 ): HeadlessExecutionRoute {
-  const piSdkBrokerFlagEnabled = options.piSdkBrokerFlagEnabled === true
-  if (shouldUseHeadlessSdkExecutor(intent.harness, { piSdkBrokerFlagEnabled })) {
+  if (shouldUseHeadlessSdkExecutor(intent.harness)) {
     return 'sdk'
   }
 
   const isHeadlessPiSdkCandidate =
-    piSdkBrokerFlagEnabled &&
     shouldUseHeadlessTransport(intent) &&
     intent.harness.interactive !== true &&
     intent.harness.id === 'pi-sdk'
