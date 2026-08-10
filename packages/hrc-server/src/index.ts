@@ -367,6 +367,7 @@ export {
   decideInteractiveTmuxBrokerStartRoute,
   decideInteractiveTmuxExecutionRoute,
   decideLegacyRuntimeStartupDisposition,
+  extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   normalizeClaudeInteractiveBrokerIntent,
   parseGhosttyViewerLingerSeconds,

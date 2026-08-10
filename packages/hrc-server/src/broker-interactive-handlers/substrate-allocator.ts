@@ -33,6 +33,7 @@ export type DurableTmuxManagerLike = {
     sessionName: string
     windowName: string
     command: string
+    env?: Record<string, string> | undefined
   }): Promise<BrokerWindowIdentity>
   createOrInspectWindow(input: {
     sessionName: string
@@ -95,6 +96,8 @@ export type AllocateBrokerSubstrateInput = {
    * ONE path for both, never two independent derivations.
    */
   observerSocketPath?: string | undefined
+  /** Process-only credential channel for the broker binary; never persisted. */
+  brokerEnv?: Record<string, string> | undefined
 }
 
 export type BrokerSubstrateAllocation = {
@@ -188,6 +191,7 @@ export async function allocateBrokerSubstrate(
     sessionName,
     windowName: 'broker',
     command: brokerCommand,
+    ...(input.brokerEnv !== undefined ? { env: input.brokerEnv } : {}),
   })
 
   // presentation='tmux-tui' adds the operator TUI window; presentation='none'
@@ -406,6 +410,7 @@ export function createBrokerDurableTmuxAllocator(
       hostSessionId,
       brokerDriver,
       generation,
+      brokerEnv,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -414,6 +419,7 @@ export function createBrokerDurableTmuxAllocator(
         driverKind: brokerDriver,
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'tmux-tui',
+        ...(brokerEnv !== undefined ? { brokerEnv } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields at runtime (fail-fast on a latent partial) rather than
@@ -458,6 +464,7 @@ export function createBrokerDurableHeadlessAllocator(
       hostSessionId,
       brokerDriver,
       generation,
+      brokerEnv,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -466,6 +473,7 @@ export function createBrokerDurableHeadlessAllocator(
         driverKind: brokerDriver,
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'none',
+        ...(brokerEnv !== undefined ? { brokerEnv } : {}),
       })
       // No lease / tuiWindow: presentation='none' has no operator pane.
       return projectBaseAllocation(sub)
@@ -500,6 +508,7 @@ export function createBrokerHeadlessViewerAllocator(
       hostSessionId,
       brokerDriver,
       generation,
+      brokerEnv,
     }): Promise<BrokerTmuxAllocation> => {
       // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
       // the broker launch command and the renderer dispatch env never derive it
@@ -513,6 +522,7 @@ export function createBrokerHeadlessViewerAllocator(
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'tmux-tui',
         observerSocketPath,
+        ...(brokerEnv !== undefined ? { brokerEnv } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields (fail-fast on a latent partial) rather than trusting

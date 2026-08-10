@@ -162,6 +162,34 @@ describe('T-01812 Phase 3 — broker + TUI as two named windows under one socket
     expect(proc?.pid).toBeGreaterThan(0)
   })
 
+  it('injects process-only environment without placing it in the broker command', async () => {
+    const { manager, socketPath } = newManager()
+    await manager.initialize()
+    const sentinel = 'tmux-process-only-credential'
+    const sessionName = 'hrc-pi-sdk-process-env'
+
+    const broker = await manager.createWindowWithCommand({
+      sessionName,
+      windowName: 'broker',
+      command: 'exec sleep 315',
+      env: { OPENAI_API_KEY: sentinel },
+    })
+    const proc = await manager.inspectPaneProcess(broker.paneId)
+    expect(proc?.pid).toBeGreaterThan(0)
+
+    const inspected = Bun.spawnSync([
+      'tmux',
+      '-S',
+      socketPath,
+      'show-environment',
+      '-t',
+      `=${sessionName}`,
+      'OPENAI_API_KEY',
+    ])
+    expect(inspected.exitCode).toBe(0)
+    expect(inspected.stdout.toString().trim()).toBe(`OPENAI_API_KEY=${sentinel}`)
+  })
+
   it('createOrInspectWindow is idempotent for the TUI window (RED)', async () => {
     const { manager } = newManager()
     await manager.initialize()

@@ -255,6 +255,8 @@ export type BrokerTmuxAllocator = {
     hostSessionId: string
     generation: number
     brokerDriver: string
+    /** Process-only environment for the broker binary; never persisted or sent on the wire. */
+    brokerEnv?: Record<string, string> | undefined
   }): Promise<BrokerTmuxAllocation>
 }
 
@@ -394,6 +396,8 @@ export type BrokerControllerStartInput = {
   startRequestHash: string
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
+  /** Credential channel injected into the per-runtime broker process; never persisted. */
+  brokerEnv?: Record<string, string> | undefined
   /**
    * HRC-resolved non-secret authority metadata. This is admission output, not
    * compiler input, and is persisted on runtimeStateJson for exact reuse checks.

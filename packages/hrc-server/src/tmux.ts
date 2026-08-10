@@ -303,9 +303,15 @@ export class TmuxManager {
     sessionName: string
     windowName: string
     command: string
+    env?: Record<string, string> | undefined
   }): Promise<TmuxPaneState> {
     await this.startServer()
-    const pane = await this.createNamedWindow(input.sessionName, input.windowName, input.command)
+    const pane = await this.createNamedWindow(
+      input.sessionName,
+      input.windowName,
+      input.command,
+      input.env
+    )
     // The pane launches via the shell, which `exec`s into the command. Wait for
     // that hand-off to land so the pane root is the launched binary (NOT the
     // transient shell) before we return — callers inspect the process identity
@@ -390,13 +396,17 @@ export class TmuxManager {
   private async createNamedWindow(
     sessionName: string,
     windowName: string,
-    command: string | undefined
+    command: string | undefined,
+    env?: Record<string, string> | undefined
   ): Promise<TmuxPaneState> {
     const exists = await this.sessionExists(sessionName)
     const args: string[] = exists ? ['new-window', '-d'] : ['new-session', '-d']
     const sanitizedPath = sanitizeTmuxServerPath(process.env['PATH'])
     if (sanitizedPath) {
       args.push('-e', `PATH=${sanitizedPath}`)
+    }
+    for (const [key, value] of Object.entries(env ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+      args.push('-e', `${key}=${value}`)
     }
     args.push('-P')
     if (exists) {

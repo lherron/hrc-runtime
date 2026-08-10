@@ -136,6 +136,7 @@ export async function allocateSubstrateVia(
     hostSessionId: String(input.identity.hostSessionId),
     generation: input.identity.generation,
     brokerDriver: input.profile.brokerDriver,
+    ...(input.brokerEnv !== undefined ? { brokerEnv: input.brokerEnv } : {}),
   })
   if (allocation.socketPath.length === 0) {
     throw new BrokerControllerError(

@@ -7,7 +7,7 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
-import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
+import { type InvocationStartRequest, isCredentialEnvKey } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runtime-contracts'
 
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
@@ -523,9 +523,38 @@ export function filterBrokerDispatchEnvForLockedEnv(
 
   const lockedEnv = startRequest.spec.process.lockedEnv ?? {}
   const filtered = Object.fromEntries(
-    Object.entries(dispatchEnv).filter(([key]) => !(key in lockedEnv))
+    Object.entries(dispatchEnv).filter(
+      ([key]) => !(key in lockedEnv) && !isPiSdkCredentialEnvKey(key, startRequest)
+    )
   )
   return Object.keys(filtered).length > 0 ? filtered : undefined
+}
+
+/**
+ * The broker protocol forbids credential keys on dispatchEnv. The in-process
+ * pi-sdk driver consumes them from the broker process's credential channel, so
+ * HRC lifts only those keys into the per-runtime broker launch environment.
+ * The returned values are never hashed, persisted, or placed on the wire.
+ */
+export function extractPiSdkBrokerCredentialEnv(
+  dispatchEnv: Record<string, string> | undefined,
+  startRequest: InvocationStartRequest
+): Record<string, string> | undefined {
+  if (dispatchEnv === undefined || brokerDriverKind(startRequest) !== 'pi-sdk') {
+    return undefined
+  }
+  const credentials = Object.fromEntries(
+    Object.entries(dispatchEnv).filter(([key]) => isCredentialEnvKey(key))
+  )
+  return Object.keys(credentials).length > 0 ? credentials : undefined
+}
+
+function isPiSdkCredentialEnvKey(key: string, startRequest: InvocationStartRequest): boolean {
+  return brokerDriverKind(startRequest) === 'pi-sdk' && isCredentialEnvKey(key)
+}
+
+function brokerDriverKind(startRequest: InvocationStartRequest): string | undefined {
+  return (startRequest.spec.driver as { kind?: string } | undefined)?.kind
 }
 
 export function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {

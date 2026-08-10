@@ -36,6 +36,7 @@ import {
   decideBrokerDurableInteractiveRoute,
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxExecutionRoute,
+  extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
@@ -1129,6 +1130,7 @@ export async function startInteractiveTmuxBrokerRuntime(
     }
 
     handedOffToController = true
+    const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
     const result = await this.getHarnessBrokerController().start({
       plan: compiled.plan,
       profile: compiled.profile,
@@ -1140,10 +1142,8 @@ export async function startInteractiveTmuxBrokerRuntime(
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
       dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
       dispatchRequestHash: flagOptions.dispatchRequestHash,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
-        { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
-        compiled.startRequest
-      ),
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
+      brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       ...(brokerClient ? { brokerClient } : {}),
       ...(flagOptions.attachBeforeInvocationStart
         ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }

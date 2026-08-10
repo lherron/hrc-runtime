@@ -140,6 +140,15 @@ const filterBrokerDispatchEnvForLockedEnv = (
   }
 ).filterBrokerDispatchEnvForLockedEnv
 
+const extractPiSdkBrokerCredentialEnv = (
+  hrc as unknown as {
+    extractPiSdkBrokerCredentialEnv?: (
+      dispatchEnv: Record<string, string> | undefined,
+      startRequest: InvocationStartRequest
+    ) => Record<string, string> | undefined
+  }
+).extractPiSdkBrokerCredentialEnv
+
 describe('W4 cutover seam — exports exist', () => {
   it('exports decideHeadlessExecutionRoute', () => {
     expect(typeof decideHeadlessExecutionRoute).toBe('function')
@@ -151,6 +160,10 @@ describe('W4 cutover seam — exports exist', () => {
 
   it('exports filterBrokerDispatchEnvForLockedEnv', () => {
     expect(typeof filterBrokerDispatchEnvForLockedEnv).toBe('function')
+  })
+
+  it('exports extractPiSdkBrokerCredentialEnv', () => {
+    expect(typeof extractPiSdkBrokerCredentialEnv).toBe('function')
   })
 
   it('exports decideInteractiveTmuxExecutionRoute', () => {
@@ -403,6 +416,28 @@ describe('filterBrokerDispatchEnvForLockedEnv — broker dispatch contract', () 
       AGENT_LANE_REF: 'main',
       AGENT_HOST_SESSION_ID: 'hostSession_w4',
       HRC_RUN_ID: 'run_w4',
+    })
+  })
+
+  it('moves pi-sdk credentials off the wire while preserving non-secret dispatch data', () => {
+    const startRequest = {
+      spec: {
+        driver: { kind: 'pi-sdk' },
+        process: { lockedEnv: {} },
+      },
+    } as InvocationStartRequest
+
+    const env = {
+      OPENAI_API_KEY: 'api-key-secret',
+      HARNESS_PI_AUTH_STORE: '/tmp/pi-auth.json',
+      HRC_RUN_ID: 'run-pi',
+    }
+    expect(filterBrokerDispatchEnvForLockedEnv!(env, startRequest)).toEqual({
+      HARNESS_PI_AUTH_STORE: '/tmp/pi-auth.json',
+      HRC_RUN_ID: 'run-pi',
+    })
+    expect(extractPiSdkBrokerCredentialEnv!(env, startRequest)).toEqual({
+      OPENAI_API_KEY: 'api-key-secret',
     })
   })
 })

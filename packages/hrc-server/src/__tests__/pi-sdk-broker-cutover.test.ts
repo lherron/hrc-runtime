@@ -49,10 +49,12 @@ describe('pi-sdk broker binary mapping', () => {
   it('places harness-broker-pi in the actual allocated broker command', async () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'hrc-pi-cutover-'))
     const commands: string[] = []
+    const environments: Array<Record<string, string> | undefined> = []
     const manager: DurableTmuxManagerLike = {
       initialize: async () => {},
       createWindowWithCommand: async (input): Promise<BrokerWindowIdentity> => {
         commands.push(input.command)
+        environments.push(input.env)
         return {
           socketPath: '/tmp/pi-sdk-btmux.sock',
           sessionId: '$1',
@@ -81,12 +83,15 @@ describe('pi-sdk broker binary mapping', () => {
           driverKind: 'pi-sdk',
           endpoint: 'unix-jsonrpc-ndjson',
           presentation: 'none',
+          brokerEnv: { OPENAI_API_KEY: 'process-only-test-key' },
         }
       )
 
       expect(commands).toHaveLength(1)
       expect(commands[0]).toStartWith('exec harness-broker-pi run ')
       expect(allocation.brokerCommand).toBe(commands[0]!)
+      expect(commands[0]).not.toContain('process-only-test-key')
+      expect(environments).toEqual([{ OPENAI_API_KEY: 'process-only-test-key' }])
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }

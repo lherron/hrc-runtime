@@ -35,6 +35,7 @@ import {
 } from './actuator-split.js'
 import {
   decideCodexAppServerPresentation,
+  extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   shouldSpawnGhosttyViewer,
   toRuntimeContinuationRef,
@@ -535,6 +536,7 @@ export async function startHeadlessBrokerRuntime(
       brokerDriver: compiled.profile.brokerDriver,
       ghosttyViewersEnabled: shouldSpawnGhosttyViewer(),
     })
+    const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
     const result = await controller.start({
       plan: compiled.plan,
       profile: compiled.profile,
@@ -546,10 +548,8 @@ export async function startHeadlessBrokerRuntime(
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       dispatchRequestHash: options.dispatchRequestHash,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
-        { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
-        compiled.startRequest
-      ),
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
+      brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       routeDecision: {
         route: 'broker',
         flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
