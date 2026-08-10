@@ -432,7 +432,11 @@ describe('restart refusal contract', () => {
       expect(thrown).toBeInstanceOf(CliStatusExit)
       expect((thrown as CliStatusExit).code).toBe(2)
       expect(stderr.join('')).toContain('[restart_drain_timeout]')
+      expect(stderr.join('')).toContain('drain timed out after 1ms')
       expect(stderr.join('')).toContain('run-busy-headless')
+      expect(stderr.join('').trimEnd().split('\n').at(-1)).toBe(
+        'hrc: [restart_drain_timeout] restart refused: 1 headless run(s) remained in flight after 1ms; no restart was attempted.'
+      )
     } finally {
       process.stderr.write = originalStderrWrite
       if (originalStateDir === undefined) Reflect.deleteProperty(process.env, 'HRC_STATE_DIR')

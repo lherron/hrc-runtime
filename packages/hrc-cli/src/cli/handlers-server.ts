@@ -122,6 +122,9 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
     process.stderr.write(
       `hrc: [${refusalCode}] refusing to ${action}: ${inFlight.length} ${noun}(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
     )
+    process.stderr.write(
+      `hrc: [${refusalCode}] ${action} refused: ${inFlight.length} ${noun}(s) remain in flight; no ${action} was attempted.\n`
+    )
     throw new CliStatusExit(2)
   }
 
@@ -144,6 +147,9 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
     const refusalCode = action === 'restart' ? 'restart_drain_timeout' : 'stop_drain_timeout'
     process.stderr.write(
       `hrc: [${refusalCode}] drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} ${noun}(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+    )
+    process.stderr.write(
+      `hrc: [${refusalCode}] ${action} refused: ${inFlight.length} ${noun}(s) remained in flight after ${waitTimeoutMs}ms; no ${action} was attempted.\n`
     )
     throw new CliStatusExit(2)
   }
