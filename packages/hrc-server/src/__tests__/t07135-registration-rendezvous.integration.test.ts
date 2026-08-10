@@ -94,11 +94,22 @@ describe('T-07135 live EPR registration rendezvous', () => {
             })
           } else if (message.method === 'epr.established') {
             establishedParams = message.params
+            const ackedThroughSeq = message.params['ackedThroughSeq']
+            if (!Number.isInteger(ackedThroughSeq) || (ackedThroughSeq as number) < 0) {
+              socket.write(
+                `${JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  error: { code: -32602, message: 'ackedThroughSeq must be nonnegative' },
+                })}\n`
+              )
+              continue
+            }
             socket.write(
               `${JSON.stringify({
                 jsonrpc: '2.0',
                 id: message.id,
-                result: { ready: true, currentSeq: -1 },
+                result: { ready: true, currentSeq: 0 },
               })}\n`
             )
           } else if (message.method === 'invocation.snapshot') {
@@ -113,17 +124,28 @@ describe('T-07135 live EPR registration rendezvous', () => {
                   pendingInputIds: [],
                   inputDispositions: {},
                   pendingPermissionRequests: [],
-                  currentSeq: -1,
-                  retentionFloorSeq: -1,
+                  currentSeq: 0,
+                  retentionFloorSeq: 0,
                 },
               })}\n`
             )
           } else if (message.method === 'invocation.eventsSince') {
+            const afterSeq = message.params['afterSeq']
+            if (!Number.isInteger(afterSeq) || (afterSeq as number) < 0) {
+              socket.write(
+                `${JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  error: { code: -32602, message: 'afterSeq must be nonnegative' },
+                })}\n`
+              )
+              continue
+            }
             socket.write(
               `${JSON.stringify({
                 jsonrpc: '2.0',
                 id: message.id,
-                result: { events: [], currentSeq: -1, retentionFloorSeq: -1 },
+                result: { events: [], currentSeq: 0, retentionFloorSeq: 0 },
               })}\n`
             )
           } else if (message.method === 'broker.health') {
@@ -198,7 +220,7 @@ describe('T-07135 live EPR registration rendezvous', () => {
         runtimeId: grant.runtimeId,
         derivedScope: registration.derivedScope,
         controllerInstanceId: grant.controllerInstanceId,
-        ackedThroughSeq: -1,
+        ackedThroughSeq: 0,
       })
       expect(establishedParams?.['attachToken']).toBeString()
       expect(runtime).toMatchObject({
@@ -206,6 +228,116 @@ describe('T-07135 live EPR registration rendezvous', () => {
         harness: 'epr-external',
         provider: 'epr-external',
       })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('real NDJSON snapshot -32013 finalizes replay_gap and stops the rendezvous loop', async () => {
+    const credential = deferred<string>()
+    const methods: string[] = []
+    let connections = 0
+
+    participant = createUnixServer((socket) => {
+      connections += 1
+      participantSockets.push(socket)
+      socket.setEncoding('utf8')
+      let buffer = ''
+      socket.on('data', (chunk) => {
+        buffer += String(chunk)
+        while (buffer.includes('\n')) {
+          const newline = buffer.indexOf('\n')
+          const line = buffer.slice(0, newline).trim()
+          buffer = buffer.slice(newline + 1)
+          if (line.length === 0) continue
+          const message = JSON.parse(line) as {
+            id?: number | undefined
+            method: string
+            params: Record<string, unknown>
+          }
+          methods.push(message.method)
+          if (message.method === 'epr.hello') {
+            void credential.promise.then((secret) => {
+              socket.write(
+                `${JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  result: {
+                    protocolVersion: 'epr/1',
+                    registrationId: message.params['registrationId'],
+                    credential: secret,
+                    capabilities: { events: true, turns: false, continuations: false },
+                    participantInfo: { name: 'arris-replay-gap' },
+                  },
+                })}\n`
+              )
+            })
+          } else if (message.method === 'epr.established') {
+            socket.write(
+              `${JSON.stringify({
+                jsonrpc: '2.0',
+                id: message.id,
+                result: { ready: true, currentSeq: 0 },
+              })}\n`
+            )
+          } else if (message.method === 'invocation.snapshot') {
+            socket.write(
+              `${JSON.stringify({
+                jsonrpc: '2.0',
+                id: message.id,
+                error: { code: -32013, message: 'event replay is unavailable' },
+              })}\n`
+            )
+          }
+        }
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      participant!.once('error', reject)
+      participant!.listen(participantSocketPath, resolve)
+    })
+
+    hrc = await createHrcServer(
+      fixture.serverOpts({
+        otelListenerEnabled: false,
+        registrationClasses: [arrisClass],
+        externalParticipantRendezvousRetryMs: 1,
+      })
+    )
+    const response = await fixture.postJson('/v1/registrations', {
+      classId: 'arris-agent',
+      socketPath: participantSocketPath,
+      provisioner: { name: 'live-replay-gap-test' },
+    })
+    expect(response.status).toBe(200)
+    const registration = (await response.json()) as {
+      registrationId: string
+      credential: string
+    }
+    credential.resolve(registration.credential)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      await waitUntil(() => {
+        const grant = db.externalRegistrationGrants.getByRegistrationId(registration.registrationId)
+        const runtime =
+          grant?.runtimeId === undefined ? null : db.runtimes.getByRuntimeId(grant.runtimeId)
+        return runtime?.lifecycleTerminalReason === 'replay_gap'
+      })
+      await Bun.sleep(25)
+
+      const grant = db.externalRegistrationGrants.getByRegistrationId(registration.registrationId)!
+      expect(db.runtimes.getByRuntimeId(grant.runtimeId!)).toMatchObject({
+        status: 'terminated',
+        lifecycleTerminalReason: 'replay_gap',
+      })
+      expect(
+        db.hrcEvents
+          .listFromHrcSeq(1, { runtimeId: grant.runtimeId })
+          .some((event) => event.payload?.['reason'] === 'replay_gap')
+      ).toBe(true)
+      expect(connections).toBe(1)
+      expect(methods).toEqual(['epr.hello', 'epr.established', 'invocation.snapshot'])
     } finally {
       db.close()
     }

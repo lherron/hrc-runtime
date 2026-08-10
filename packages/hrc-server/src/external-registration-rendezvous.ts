@@ -104,6 +104,8 @@ export type ExternalParticipantClientFactory = (input: {
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2_000
 const DEFAULT_RENDEZVOUS_RETRY_MS = 100
+const DEFAULT_RENDEZVOUS_RETRY_MAX_MS = 2_000
+const DEFAULT_RENDEZVOUS_RETRY_BUDGET = 5
 export const DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS = 10 * 60 * 1_000
 const DEFAULT_PROBE_INTERVAL_MS = 30_000
 const DEFAULT_PROBE_DEADLINE_MS = 2_000
@@ -509,7 +511,7 @@ function establishedDelivery(
     derivedScope: mint.grant.derivedScope,
     attachToken: mint.attachToken,
     controllerInstanceId: mint.grant.controllerInstanceId,
-    ackedThroughSeq: -1,
+    ackedThroughSeq: 0,
     lingerMs: options.externalParticipantLingerMs ?? DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
     probe: {
       intervalMs: options.externalParticipantProbeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS,
@@ -526,12 +528,16 @@ function validateEstablishedResponse(value: unknown): number {
     !exactKeys(value, ['ready', 'currentSeq']) ||
     value['ready'] !== true ||
     !Number.isInteger(value['currentSeq']) ||
-    (value['currentSeq'] as number) < -1
+    (value['currentSeq'] as number) < 0
   ) {
     // This is a delivery/ACK failure, not a §9.1 hello-validation refusal.
     // Keep the durable row DELIVERY_PENDING so the rendezvous controller
     // redials and re-delivers the same minted authority.
-    throw new Error('epr.established response must be {ready:true,currentSeq:integer}')
+    throw annotateRpcError(
+      new Error('epr.established response must be {ready:true,currentSeq:nonnegative integer}'),
+      'epr.established',
+      'invalid_response'
+    )
   }
   return value['currentSeq'] as number
 }
@@ -541,7 +547,7 @@ export async function performExternalRegistrationHello(
   registrationId: string,
   client: ExternalParticipantRpcClient
 ): Promise<{ branch: 'minted' | 'redelivered'; delivery: EprEstablishedDelivery }> {
-  const rawHello = await client.request('epr.hello', {
+  const rawHello = await requestExternalParticipantRpc(client, 'epr.hello', {
     protocolVersions: [EPR_PROTOCOL_VERSION],
     controllerInfo: { name: 'hrc-server' },
     registrationId,
@@ -604,7 +610,8 @@ export async function performExternalRegistrationHello(
   scheduleExternalRegistrationCollectiveEstablishment(server, registrationId)
 
   const delivery = establishedDelivery(mint, server.options)
-  const established = await client.request(
+  const established = await requestExternalParticipantRpc(
+    client,
     'epr.established',
     delivery as unknown as Record<string, unknown>
   )
@@ -661,6 +668,78 @@ function rpcErrorCode(error: unknown): number | undefined {
   return typeof code === 'number' ? code : undefined
 }
 
+type EprRpcFailureMetadata = {
+  rpcMethod?: string | undefined
+  failureCode?: string | undefined
+}
+
+function annotateRpcError(
+  error: unknown,
+  method: string,
+  failureCode = 'transport_error'
+): Error & EprRpcFailureMetadata {
+  const normalized = error instanceof Error ? error : new Error(String(error))
+  const annotated = normalized as Error & EprRpcFailureMetadata
+  annotated.rpcMethod = method
+  annotated.failureCode = failureCode
+  return annotated
+}
+
+function rpcFailureMethod(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const method = (error as EprRpcFailureMetadata).rpcMethod
+  return typeof method === 'string' ? method : undefined
+}
+
+function rpcFailureCode(error: unknown): number | string {
+  const code = rpcErrorCode(error)
+  if (code !== undefined) return code
+  if (typeof error === 'object' && error !== null) {
+    const failureCode = (error as EprRpcFailureMetadata).failureCode
+    if (typeof failureCode === 'string') return failureCode
+  }
+  return 'internal_error'
+}
+
+async function requestExternalParticipantRpc(
+  client: ExternalParticipantRpcClient,
+  method: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  try {
+    return await client.request(method, params)
+  } catch (error) {
+    throw annotateRpcError(error, method)
+  }
+}
+
+async function requestReplayPlane(
+  client: ExternalParticipantRpcClient,
+  method: 'epr.reattach' | 'invocation.snapshot' | 'invocation.eventsSince',
+  params: Record<string, unknown>
+): Promise<unknown> {
+  try {
+    return await requestExternalParticipantRpc(client, method, params)
+  } catch (error) {
+    if (rpcErrorCode(error) === EPR_REPLAY_UNAVAILABLE_CODE) {
+      throw new EprReplayGapError(`${method} reported that event replay is unavailable`)
+    }
+    throw error
+  }
+}
+
+export function externalRegistrationRetryDelayMs(
+  consecutiveFailures: number,
+  baseMs = DEFAULT_RENDEZVOUS_RETRY_MS,
+  maxMs = DEFAULT_RENDEZVOUS_RETRY_MAX_MS
+): number {
+  const cap = Number.isFinite(maxMs) ? Math.max(1, Math.trunc(maxMs)) : 1
+  const base = Number.isFinite(baseMs) ? Math.min(cap, Math.max(1, Math.trunc(baseMs))) : cap
+  const failureCount = Number.isFinite(consecutiveFailures) ? Math.trunc(consecutiveFailures) : 1
+  const exponent = Math.max(0, Math.min(30, failureCount - 1))
+  return Math.min(cap, base * 2 ** exponent)
+}
+
 async function withDeadline<T>(
   operation: Promise<T>,
   deadlineMs: number,
@@ -695,8 +774,8 @@ function parseInvocationSnapshot(value: unknown, invocationId: string): Invocati
   if (typeof value['state'] !== 'string' || !isRecord(value['capabilities'])) {
     throw new Error('invocation.snapshot has invalid state or capabilities')
   }
-  integerAtLeast(value['currentSeq'], -1, 'invocation.snapshot currentSeq')
-  integerAtLeast(value['retentionFloorSeq'], -1, 'invocation.snapshot retentionFloorSeq')
+  integerAtLeast(value['currentSeq'], 0, 'invocation.snapshot currentSeq')
+  integerAtLeast(value['retentionFloorSeq'], 0, 'invocation.snapshot retentionFloorSeq')
   if (
     !Array.isArray(value['pendingInputIds']) ||
     !isRecord(value['inputDispositions']) ||
@@ -717,10 +796,10 @@ function parseEventsSinceResponse(value: unknown): {
   }
   return {
     events: value['events'].map((event) => validateEventEnvelope(event)),
-    currentSeq: integerAtLeast(value['currentSeq'], -1, 'invocation.eventsSince currentSeq'),
+    currentSeq: integerAtLeast(value['currentSeq'], 0, 'invocation.eventsSince currentSeq'),
     retentionFloorSeq: integerAtLeast(
       value['retentionFloorSeq'],
-      -1,
+      0,
       'invocation.eventsSince retentionFloorSeq'
     ),
   }
@@ -737,7 +816,7 @@ function lastAckedExternalSeq(server: HrcServerInstanceForHandlers, runtimeId: s
   const runtime = server.db.runtimes.getByRuntimeId(runtimeId)
   const state = runtime?.runtimeStateJson?.['externalRegistration']
   const value = isRecord(state) ? state['ackedThroughSeq'] : undefined
-  return Number.isInteger(value) ? (value as number) : -1
+  return Number.isInteger(value) && (value as number) >= 0 ? (value as number) : 0
 }
 
 function writeExternalRegistrationState(
@@ -863,18 +942,10 @@ async function projectReplayAndAck(
 ): Promise<{ throughSeq: number; cleanExit: boolean }> {
   assertMintLinkage(grant)
   const lastAckedSeq = lastAckedExternalSeq(server, grant.runtimeId)
-  let rawReplay: unknown
-  try {
-    rawReplay = await client.request('invocation.eventsSince', {
-      invocationId: grant.invocationId,
-      afterSeq: lastAckedSeq,
-    })
-  } catch (error) {
-    if (rpcErrorCode(error) === EPR_REPLAY_UNAVAILABLE_CODE) {
-      throw new EprReplayGapError('participant cannot replay from HRC ACK high-water')
-    }
-    throw error
-  }
+  const rawReplay = await requestReplayPlane(client, 'invocation.eventsSince', {
+    invocationId: grant.invocationId,
+    afterSeq: lastAckedSeq,
+  })
   const replay = parseEventsSinceResponse(rawReplay)
   if (lastAckedSeq < replay.retentionFloorSeq) {
     throw new EprReplayGapError(
@@ -892,7 +963,7 @@ async function projectReplayAndAck(
     if (envelope.seq !== throughSeq + 1) {
       throw new Error(`participant replay is not contiguous at seq ${envelope.seq}`)
     }
-    if (throughSeq === -1 && envelope.type !== 'invocation.started') {
+    if (throughSeq === 0 && envelope.type !== 'invocation.started') {
       throw new Error('first external participant event must be invocation.started')
     }
     const controller = server.harnessBrokerController ?? server.getHarnessBrokerController()
@@ -906,7 +977,7 @@ async function projectReplayAndAck(
     )
   }
   if (throughSeq > lastAckedSeq) {
-    const ack = await client.request('invocation.ackEvents', {
+    const ack = await requestExternalParticipantRpc(client, 'invocation.ackEvents', {
       invocationId: grant.invocationId,
       throughSeq,
       controllerInstanceId,
@@ -927,7 +998,7 @@ async function probeAttachedControl(
 ): Promise<void> {
   if (full) {
     const health = await withDeadline(
-      client.request('broker.health', { probeDrivers: false }),
+      requestExternalParticipantRpc(client, 'broker.health', { probeDrivers: false }),
       deadlineMs,
       'broker.health'
     )
@@ -940,7 +1011,7 @@ async function probeAttachedControl(
     }
   }
   const status = await withDeadline(
-    client.request('invocation.status', { invocationId }),
+    requestExternalParticipantRpc(client, 'invocation.status', { invocationId }),
     deadlineMs,
     'invocation.status'
   )
@@ -966,10 +1037,10 @@ function parseReattachResponse(
   }
   return {
     snapshot: parseInvocationSnapshot(value['snapshot'], invocationId),
-    currentSeq: integerAtLeast(value['currentSeq'], -1, 'epr.reattach currentSeq'),
+    currentSeq: integerAtLeast(value['currentSeq'], 0, 'epr.reattach currentSeq'),
     retentionFloorSeq: integerAtLeast(
       value['retentionFloorSeq'],
-      -1,
+      0,
       'epr.reattach retentionFloorSeq'
     ),
   }
@@ -995,48 +1066,38 @@ export async function performExternalParticipantAttach(
   let controllerInstanceId = grant.controllerInstanceId
   let snapshot: InvocationSnapshot
 
-  if (mode === 'reattach') {
-    controllerInstanceId = `controller-${randomUUID()}`
-    const attachToken = (await readFile(grant.attachTokenRef, 'utf8')).trim()
-    let attached: unknown
-    try {
-      attached = await client.request('epr.reattach', {
+  try {
+    if (mode === 'reattach') {
+      controllerInstanceId = `controller-${randomUUID()}`
+      const attachToken = (await readFile(grant.attachTokenRef, 'utf8')).trim()
+      const attached = await requestReplayPlane(client, 'epr.reattach', {
         registrationId,
         invocationId: grant.invocationId,
         attachToken,
         controllerInstanceId,
         lastAckedSeq: lastAckedExternalSeq(server, grant.runtimeId),
       })
-    } catch (error) {
-      if (rpcErrorCode(error) === EPR_REPLAY_UNAVAILABLE_CODE) {
-        finalizeExternalParticipant(server, grant, 'replay_gap')
-        throw new EprReplayGapError('participant refused reattach because replay is unavailable')
+      const response = parseReattachResponse(attached, grant.invocationId)
+      if (lastAckedExternalSeq(server, grant.runtimeId) < response.retentionFloorSeq) {
+        throw new EprReplayGapError('reattach retention floor is past HRC ACK high-water')
       }
-      throw error
+      snapshot = response.snapshot
+      if (
+        !server.db.externalRegistrationGrants.updateControllerInstanceId(
+          registrationId,
+          controllerInstanceId
+        )
+      ) {
+        throw new Error(`registration ${registrationId} lost its established controller fence`)
+      }
+      writeExternalRegistrationState(server, grant.runtimeId, { controllerInstanceId })
+    } else {
+      const rawSnapshot = await requestReplayPlane(client, 'invocation.snapshot', {
+        invocationId: grant.invocationId,
+      })
+      snapshot = parseInvocationSnapshot(rawSnapshot, grant.invocationId)
     }
-    const response = parseReattachResponse(attached, grant.invocationId)
-    if (lastAckedExternalSeq(server, grant.runtimeId) < response.retentionFloorSeq) {
-      finalizeExternalParticipant(server, grant, 'replay_gap')
-      throw new EprReplayGapError('reattach retention floor is past HRC ACK high-water')
-    }
-    snapshot = response.snapshot
-    if (
-      !server.db.externalRegistrationGrants.updateControllerInstanceId(
-        registrationId,
-        controllerInstanceId
-      )
-    ) {
-      throw new Error(`registration ${registrationId} lost its established controller fence`)
-    }
-    writeExternalRegistrationState(server, grant.runtimeId, { controllerInstanceId })
-  } else {
-    const rawSnapshot = await client.request('invocation.snapshot', {
-      invocationId: grant.invocationId,
-    })
-    snapshot = parseInvocationSnapshot(rawSnapshot, grant.invocationId)
-  }
 
-  try {
     const replay = await projectReplayAndAck(server, grant, client, controllerInstanceId)
     if (replay.cleanExit) return { controllerInstanceId, snapshot, probe, lingerMs, terminal: true }
   } catch (error) {
@@ -1382,27 +1443,41 @@ export async function runExternalRegistrationRendezvous(
   registrationId: string
 ): Promise<void> {
   const factory = this.options.externalParticipantClientFactory ?? connectExternalParticipant
-  const retryMs = this.options.externalParticipantRendezvousRetryMs ?? DEFAULT_RENDEZVOUS_RETRY_MS
+  const retryBaseMs =
+    this.options.externalParticipantRendezvousRetryMs ?? DEFAULT_RENDEZVOUS_RETRY_MS
+  const retryMaxMs =
+    this.options.externalParticipantRendezvousRetryMaxMs ?? DEFAULT_RENDEZVOUS_RETRY_MAX_MS
+  const retryBudget = Math.max(
+    1,
+    Math.trunc(
+      this.options.externalParticipantRendezvousRetryBudget ?? DEFAULT_RENDEZVOUS_RETRY_BUDGET
+    )
+  )
   const lingerMs =
     this.options.externalParticipantLingerMs ?? DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS
+  let consecutiveFailures = 0
   while (!this.stopping) {
     const grant = this.db.externalRegistrationGrants.getByRegistrationId(registrationId)
     if (grant === null || (!grant.consumed && grant.expiresAt <= timestamp())) return
     if (registrationIsFinalized(this.db, grant)) return
-    if (grant.establishmentState === 'ESTABLISHED') {
+    if (grant.consumed) {
       assertMintLinkage(grant)
       const runtime = this.db.runtimes.getByRuntimeId(grant.runtimeId)
       if (runtime === null) return
-      if (runtime.status !== 'detached') return
-      const deadline = lingerDeadlineMs(this, grant, lingerMs)
-      if (deadline !== undefined && Date.now() >= deadline) {
-        finalizeExternalParticipant(this, grant, 'detached_expired')
+      if (runtime.status === 'detached') {
+        const deadline = lingerDeadlineMs(this, grant, lingerMs)
+        if (deadline !== undefined && Date.now() >= deadline) {
+          finalizeExternalParticipant(this, grant, 'detached_expired')
+          return
+        }
+      } else if (grant.establishmentState === 'ESTABLISHED') {
         return
       }
     }
     const dialMode = grant.establishmentState === 'ESTABLISHED' ? 'reattach' : 'established'
 
     let client: ExternalParticipantRpcClient | undefined
+    let activeMethod = 'connect'
     try {
       client = await factory({
         socketPath: grant.socketPath,
@@ -1413,6 +1488,7 @@ export async function runExternalRegistrationRendezvous(
       let runtimeId: string
       let invocationId: string
       if (mode === 'established') {
+        activeMethod = 'epr.hello'
         const result = await performExternalRegistrationHello(this, registrationId, client)
         runtimeId = result.delivery.runtimeId
         invocationId = result.delivery.invocationId
@@ -1423,6 +1499,7 @@ export async function runExternalRegistrationRendezvous(
           invocationId,
         })
       } else {
+        activeMethod = 'epr.reattach'
         const current = this.db.externalRegistrationGrants.getByRegistrationId(registrationId)
         if (current === null) throw new Error(`registration ${registrationId} disappeared`)
         assertMintLinkage(current)
@@ -1433,6 +1510,7 @@ export async function runExternalRegistrationRendezvous(
         this.externalParticipantClients.delete(registrationId)
         return
       }
+      activeMethod = mode === 'established' ? 'invocation.snapshot' : 'epr.reattach'
       const attachment = await performExternalParticipantAttach(this, registrationId, client, mode)
       if (attachment.terminal) {
         await client.close().catch(() => undefined)
@@ -1446,12 +1524,14 @@ export async function runExternalRegistrationRendezvous(
         mode,
         ackedThroughSeq: lastAckedExternalSeq(this, runtimeId),
       })
+      consecutiveFailures = 0
       const attachedGrant = this.db.externalRegistrationGrants.getByRegistrationId(registrationId)
       if (attachedGrant === null) {
         await client.close().catch(() => undefined)
         this.externalParticipantClients.delete(registrationId)
         return
       }
+      activeMethod = 'invocation.eventsSince'
       const maintained = await maintainExternalParticipantAttachment(
         this,
         attachedGrant,
@@ -1464,6 +1544,7 @@ export async function runExternalRegistrationRendezvous(
       }
       markExternalParticipantDetached(this, attachedGrant, attachment.lingerMs, maintained.detail)
     } catch (error) {
+      consecutiveFailures += 1
       if (client !== undefined && error instanceof EprHelloError) {
         await client
           .notify('epr.rejected', {
@@ -1481,26 +1562,50 @@ export async function runExternalRegistrationRendezvous(
       if (error instanceof EprHelloError) {
         return
       }
+      if (error instanceof EprReplayGapError) {
+        writeServerLog('WARN', 'external_registration.replay_gap', {
+          registrationId,
+          error: error.message,
+        })
+        return
+      }
       const latest = this.db.externalRegistrationGrants.getByRegistrationId(registrationId)
       if (
-        latest?.establishmentState === 'ESTABLISHED' &&
-        !registrationIsFinalized(this.db, latest)
+        latest?.consumed === true &&
+        !registrationIsFinalized(this.db, latest) &&
+        (latest.establishmentState === 'ESTABLISHED' || consecutiveFailures >= retryBudget)
       ) {
+        assertMintLinkage(latest)
         markExternalParticipantDetached(this, latest, lingerMs, {
-          reason: error instanceof EprReplayGapError ? 'replay_gap' : 'attach_failed',
+          reason:
+            latest.establishmentState === 'DELIVERY_PENDING' ? 'delivery_timeout' : 'attach_failed',
           error: error instanceof Error ? error.message : String(error),
         })
       }
+      const retryInMs = externalRegistrationRetryDelayMs(
+        consecutiveFailures,
+        retryBaseMs,
+        retryMaxMs
+      )
       writeServerLog('WARN', 'external_registration.rendezvous_retry', {
         registrationId,
+        method: rpcFailureMethod(error) ?? activeMethod,
+        code: rpcFailureCode(error),
         error: error instanceof Error ? error.message : String(error),
+        consecutiveFailures,
+        retryBudget,
+        retryInMs,
         ...(error instanceof EprHelloError ? { code: error.code, eprError: error.eprError } : {}),
       })
     }
     if (client !== undefined && this.externalParticipantClients.get(registrationId) === client) {
       this.externalParticipantClients.delete(registrationId)
     }
-    if (!this.stopping) await waitForRetry(retryMs)
+    if (!this.stopping) {
+      await waitForRetry(
+        externalRegistrationRetryDelayMs(consecutiveFailures, retryBaseMs, retryMaxMs)
+      )
+    }
   }
 }
 

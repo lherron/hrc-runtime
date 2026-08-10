@@ -51,7 +51,7 @@ class HelloClient implements ExternalParticipantRpcClient {
         participantInfo: { name: 'arris' },
       }
     }
-    if (method === 'epr.established') return { ready: true, currentSeq: -1 }
+    if (method === 'epr.established') return { ready: true, currentSeq: 0 }
     throw new Error(`unexpected ${method}`)
   }
 

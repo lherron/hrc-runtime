@@ -310,8 +310,10 @@ export type HrcServerOptions = {
   registrationClasses?: readonly RegistrationClassConfig[] | undefined
   /** Test/embedded seam for the daemon-owned EPR Unix client. */
   externalParticipantClientFactory?: ExternalParticipantClientFactory | undefined
-  /** Test/embedded retry override; production retries every 100ms until expiry. */
+  /** Test/embedded EPR retry overrides; production backs off from 100ms to a 2s cap. */
   externalParticipantRendezvousRetryMs?: number | undefined
+  externalParticipantRendezvousRetryMaxMs?: number | undefined
+  externalParticipantRendezvousRetryBudget?: number | undefined
   /** Test/embedded retry override for post-mint collective establishment. */
   externalParticipantCollectiveEstablishmentRetryMs?: number | undefined
   /** Test/embedded EPR liveness and linger overrides. */

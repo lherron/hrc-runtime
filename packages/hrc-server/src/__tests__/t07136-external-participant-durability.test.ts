@@ -53,7 +53,7 @@ function snapshot(invocationId: string, currentSeq: number) {
     inputDispositions: {},
     pendingPermissionRequests: [],
     currentSeq,
-    retentionFloorSeq: -1,
+    retentionFloorSeq: 0,
   }
 }
 
@@ -68,7 +68,12 @@ class HelloClient implements ExternalParticipantRpcClient {
         participantInfo: { name: 'arris' },
       }
     }
-    if (method === 'epr.established') return { ready: true, currentSeq: -1 }
+    if (method === 'epr.established') {
+      if (Number(params['ackedThroughSeq']) < 0) {
+        throw Object.assign(new Error('ackedThroughSeq must be nonnegative'), { code: -32602 })
+      }
+      return { ready: true, currentSeq: 0 }
+    }
     throw new Error(`unexpected ${method}`)
   }
 
@@ -84,7 +89,9 @@ class AttachClient implements ExternalParticipantRpcClient {
     readonly events: InvocationEventEnvelope[],
     readonly options: {
       reattach?: boolean | undefined
-      replayErrorCode?: number | undefined
+      reattachErrorCode?: number | undefined
+      snapshotErrorCode?: number | undefined
+      eventsSinceErrorCode?: number | undefined
       retentionFloorSeq?: number | undefined
     } = {}
   ) {}
@@ -92,30 +99,39 @@ class AttachClient implements ExternalParticipantRpcClient {
   async request(method: string, params: Record<string, unknown>): Promise<unknown> {
     this.calls.push(method)
     if (method === 'epr.reattach') {
-      if (this.options.replayErrorCode !== undefined) {
-        throw Object.assign(new Error('replay unavailable'), { code: this.options.replayErrorCode })
+      if (this.options.reattachErrorCode !== undefined) {
+        throw Object.assign(new Error('replay unavailable'), {
+          code: this.options.reattachErrorCode,
+        })
       }
       return {
         attached: true,
         participantInstanceId: 'participant-t07136',
-        currentSeq: this.events.at(-1)?.seq ?? -1,
-        retentionFloorSeq: this.options.retentionFloorSeq ?? -1,
-        snapshot: snapshot(this.invocationId, this.events.at(-1)?.seq ?? -1),
+        currentSeq: this.events.at(-1)?.seq ?? 0,
+        retentionFloorSeq: this.options.retentionFloorSeq ?? 0,
+        snapshot: snapshot(this.invocationId, this.events.at(-1)?.seq ?? 0),
       }
     }
     if (method === 'invocation.snapshot') {
-      return snapshot(this.invocationId, this.events.at(-1)?.seq ?? -1)
+      if (this.options.snapshotErrorCode !== undefined) {
+        throw Object.assign(new Error('replay unavailable'), {
+          code: this.options.snapshotErrorCode,
+        })
+      }
+      return snapshot(this.invocationId, this.events.at(-1)?.seq ?? 0)
     }
     if (method === 'invocation.eventsSince') {
-      if (this.options.replayErrorCode !== undefined) {
-        throw Object.assign(new Error('replay unavailable'), { code: this.options.replayErrorCode })
+      if (this.options.eventsSinceErrorCode !== undefined) {
+        throw Object.assign(new Error('replay unavailable'), {
+          code: this.options.eventsSinceErrorCode,
+        })
       }
       const afterSeq = Number(params['afterSeq'])
       const replay = this.events.filter((item) => item.seq > afterSeq)
       return {
         events: replay,
         currentSeq: this.events.at(-1)?.seq ?? afterSeq,
-        retentionFloorSeq: this.options.retentionFloorSeq ?? -1,
+        retentionFloorSeq: this.options.retentionFloorSeq ?? 0,
       }
     }
     if (method === 'invocation.ackEvents') {
@@ -223,12 +239,12 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
 
   test('maps the closed 0.2 registry and ACKs through currentSeq before health publishes active', async () => {
     const client = new AttachClient(delivery.invocationId, [
-      event(delivery.invocationId, 0, 'invocation.started', {
+      event(delivery.invocationId, 1, 'invocation.started', {
         command: 'arris',
         args: ['agent'],
         cwd: root,
       }),
-      event(delivery.invocationId, 1, 'driver.notice', {
+      event(delivery.invocationId, 2, 'driver.notice', {
         message: 'scene indexed',
         code: 'epr.activity',
         data: { nodeCount: 4 },
@@ -256,13 +272,13 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
     expect(db.runtimes.getByRuntimeId(delivery.runtimeId)?.runtimeStateJson).toMatchObject({
       status: 'ready',
       control: { mode: 'epr', brokerAttached: true },
-      externalRegistration: { ackedThroughSeq: 1 },
+      externalRegistration: { ackedThroughSeq: 2 },
     })
   })
 
   test('rejects an envelope outside the 0.2 closed registry before ACK', async () => {
     const client = new AttachClient(delivery.invocationId, [
-      event(delivery.invocationId, 0, 'epr.custom', { value: 1 }),
+      event(delivery.invocationId, 1, 'epr.custom', { value: 1 }),
     ])
     await expect(
       performExternalParticipantAttach(server, REGISTRATION_ID, client, 'established')
@@ -280,7 +296,7 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
     const before = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)!
     markExternalParticipantDetached(server, before, 60_000, { reason: 'socket_closed' })
     const reattach = new AttachClient(delivery.invocationId, [
-      event(delivery.invocationId, 0, 'invocation.started', {
+      event(delivery.invocationId, 1, 'invocation.started', {
         command: 'arris',
         args: ['agent'],
         cwd: root,
@@ -304,7 +320,7 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
     markExternalParticipantDetached(server, grant, 60_000)
     const client = new AttachClient(delivery.invocationId, [], {
       reattach: true,
-      replayErrorCode: EPR_REPLAY_UNAVAILABLE_CODE,
+      reattachErrorCode: EPR_REPLAY_UNAVAILABLE_CODE,
     })
 
     await expect(
@@ -322,14 +338,34 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
     ).toBe(true)
   })
 
+  test.each(['invocation.snapshot', 'invocation.eventsSince'] as const)(
+    'fails closed when %s refuses the establishment replay plane',
+    async (method) => {
+      const client = new AttachClient(delivery.invocationId, [], {
+        ...(method === 'invocation.snapshot'
+          ? { snapshotErrorCode: EPR_REPLAY_UNAVAILABLE_CODE }
+          : { eventsSinceErrorCode: EPR_REPLAY_UNAVAILABLE_CODE }),
+      })
+
+      await expect(
+        performExternalParticipantAttach(server, REGISTRATION_ID, client, 'established')
+      ).rejects.toThrow('replay')
+
+      expect(db.runtimes.getByRuntimeId(delivery.runtimeId)).toMatchObject({
+        status: 'terminated',
+        lifecycleTerminalReason: 'replay_gap',
+      })
+    }
+  )
+
   test('classifies clean invocation.exited as external_participant_exit, never crashed', async () => {
     const client = new AttachClient(delivery.invocationId, [
-      event(delivery.invocationId, 0, 'invocation.started', {
+      event(delivery.invocationId, 1, 'invocation.started', {
         command: 'arris',
         args: ['agent'],
         cwd: root,
       }),
-      event(delivery.invocationId, 1, 'invocation.exited', {
+      event(delivery.invocationId, 2, 'invocation.exited', {
         exitCode: 0,
         signal: null,
         reason: 'complete',
@@ -350,12 +386,12 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
 
   test('never infers a broker crash from an external invocation.failed event', async () => {
     const client = new AttachClient(delivery.invocationId, [
-      event(delivery.invocationId, 0, 'invocation.started', {
+      event(delivery.invocationId, 1, 'invocation.started', {
         command: 'arris',
         args: ['agent'],
         cwd: root,
       }),
-      event(delivery.invocationId, 1, 'invocation.failed', {
+      event(delivery.invocationId, 2, 'invocation.failed', {
         code: 'participant_error',
         message: 'agent loop failed',
       }),

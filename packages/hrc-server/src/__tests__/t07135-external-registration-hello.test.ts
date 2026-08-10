@@ -8,6 +8,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { ExternalRegistrationGrant, HrcDatabase } from 'hrc-store-sqlite'
 
 import { projectBrokerHostingState } from '../broker/runtime-hosting.js'
+import { externalRegistrationRetryDelayMs } from '../external-registration-rendezvous.js'
 import {
   EPR_HELLO_ERROR_CODE,
   EprHelloError,
@@ -61,7 +62,7 @@ class ScriptedClient implements ExternalParticipantRpcClient {
     if (method === 'epr.established') {
       const delivery = params as unknown as EprEstablishedDelivery
       this.deliveries.push(delivery)
-      return (await this.options.established?.(delivery)) ?? { ready: true, currentSeq: -1 }
+      return (await this.options.established?.(delivery)) ?? { ready: true, currentSeq: 0 }
     }
     throw new Error(`unexpected RPC ${method}`)
   }
@@ -135,7 +136,7 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
         expect(duringDelivery?.controllerInstanceId).toBe(delivery.controllerInstanceId)
         expect(duringDelivery?.runtimeId).toBe(delivery.runtimeId)
         expect(duringDelivery?.invocationId).toBe(delivery.invocationId)
-        return { ready: true, currentSeq: -1 }
+        return { ready: true, currentSeq: 0 }
       },
     })
 
@@ -146,7 +147,7 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
     expect(result.delivery).toMatchObject({
       derivedScope: DERIVED_SCOPE,
       attachToken: 'attach-token-t07135',
-      ackedThroughSeq: -1,
+      ackedThroughSeq: 0,
       probe: { intervalMs: 30_000, deadlineMs: 2_000, failureThreshold: 3 },
     })
 
@@ -264,6 +265,44 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
     expect(
       db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)?.establishmentState
     ).toBe('ESTABLISHED')
+  })
+
+  test('uses deterministic exponential rendezvous backoff with a hard delay cap', () => {
+    expect(
+      [1, 2, 3, 4, 5, 6].map((failures) => externalRegistrationRetryDelayMs(failures, 100, 1_000))
+    ).toEqual([100, 200, 400, 800, 1_000, 1_000])
+    expect(externalRegistrationRetryDelayMs(1, 100, 50)).toBe(50)
+  })
+
+  test('detaches DELIVERY_PENDING after its retry budget, redelivers during linger, then expires', async () => {
+    issue()
+    let attempts = 0
+    let observedDeliveryTimeout = false
+    server.options.externalParticipantRendezvousRetryMs = 1
+    server.options.externalParticipantRendezvousRetryMaxMs = 50
+    server.options.externalParticipantRendezvousRetryBudget = 2
+    server.options.externalParticipantLingerMs = 500
+    server.options.externalParticipantClientFactory = async () => {
+      attempts += 1
+      const current = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)
+      const runtime =
+        current?.runtimeId === undefined ? null : db.runtimes.getByRuntimeId(current.runtimeId)
+      observedDeliveryTimeout ||=
+        runtime?.status === 'detached' &&
+        runtime.runtimeStateJson?.['control']?.['reason'] === 'delivery_timeout'
+      return new ScriptedClient({ established: () => ({ ready: false }) })
+    }
+
+    await runExternalRegistrationRendezvous.call(server, REGISTRATION_ID)
+
+    const grant = db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)!
+    expect(observedDeliveryTimeout).toBe(true)
+    expect(attempts).toBeGreaterThan(2)
+    expect(grant.establishmentState).toBe('DELIVERY_PENDING')
+    expect(db.runtimes.getByRuntimeId(grant.runtimeId!)).toMatchObject({
+      status: 'terminated',
+      lifecycleTerminalReason: 'detached_expired',
+    })
   })
 
   test('rolls grant consumption and every start row back when mint persistence fails', async () => {
