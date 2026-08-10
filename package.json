@@ -2,7 +2,9 @@
   "name": "hrc-runtime",
   "version": "0.5.13",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "sync:asp": "bun scripts/sync-asp-from-verdaccio.ts",
     "sync:wrkq": "bun scripts/sync-wrkq-from-verdaccio.ts",
@@ -33,14 +35,14 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "agent-scope": "0.1.1-dev.20260810064720",
-    "agent-spaces": "0.1.1-dev.20260810064720",
-    "cli-kit": "0.1.1-dev.20260810064720",
-    "spaces-config": "0.1.1-dev.20260810064720",
-    "spaces-execution": "0.1.1-dev.20260810064720",
-    "spaces-harness-broker": "0.1.1-dev.20260810064720",
-    "spaces-harness-broker-client": "0.1.1-dev.20260810064720",
-    "spaces-harness-broker-protocol": "0.1.1-dev.20260810064720",
-    "spaces-runtime": "0.1.1-dev.20260810064720"
+    "agent-scope": "0.1.1-dev.20260810071053",
+    "agent-spaces": "0.1.1-dev.20260810071053",
+    "cli-kit": "0.1.1-dev.20260810071053",
+    "spaces-config": "0.1.1-dev.20260810071053",
+    "spaces-execution": "0.1.1-dev.20260810071053",
+    "spaces-harness-broker": "0.1.1-dev.20260810071053",
+    "spaces-harness-broker-client": "0.1.1-dev.20260810071053",
+    "spaces-harness-broker-protocol": "0.1.1-dev.20260810071053",
+    "spaces-runtime": "0.1.1-dev.20260810071053"
   }
 }
