@@ -76,6 +76,7 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { scheduleExternalRegistrationCollectiveEstablishment } from './external-registration-establishment.js'
 import {
   DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
@@ -1843,7 +1844,14 @@ class HrcServerInstance implements HrcServer {
 
   async handleTerminate(request: Request): Promise<Response> {
     const body = parseTerminateRuntimeRequest(await parseJsonBody(request))
-    const runtime = requireRuntime(this.db, body.runtimeId)
+    const knownRuntime = requireKnownRuntime(this.db, body.runtimeId)
+    // Detached is unavailable for selection and ordinary runtime actions, but
+    // it is an expected pre-eviction state for an externally-owned participant.
+    // Let the lifecycle-owner branch finalize it instead of rejecting it at the
+    // general availability preflight.
+    const runtime = isExternalLifecycleOwner(knownRuntime)
+      ? knownRuntime
+      : requireRuntime(this.db, body.runtimeId)
     return await this.terminateRuntime(runtime, {
       dropContinuation: body.dropContinuation,
       ...(body.reason !== undefined ? { reason: body.reason } : {}),
