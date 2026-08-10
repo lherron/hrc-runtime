@@ -35,14 +35,14 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "agent-scope": "0.1.1-dev.20260810073522",
-    "agent-spaces": "0.1.1-dev.20260810073522",
-    "cli-kit": "0.1.1-dev.20260810073522",
-    "spaces-config": "0.1.1-dev.20260810073522",
-    "spaces-execution": "0.1.1-dev.20260810073522",
-    "spaces-harness-broker": "0.1.1-dev.20260810073522",
-    "spaces-harness-broker-client": "0.1.1-dev.20260810073522",
-    "spaces-harness-broker-protocol": "0.1.1-dev.20260810073522",
-    "spaces-runtime": "0.1.1-dev.20260810073522"
+    "agent-scope": "latest",
+    "agent-spaces": "latest",
+    "cli-kit": "latest",
+    "spaces-config": "latest",
+    "spaces-execution": "latest",
+    "spaces-harness-broker": "latest",
+    "spaces-harness-broker-client": "latest",
+    "spaces-harness-broker-protocol": "latest",
+    "spaces-runtime": "latest"
   }
 }
