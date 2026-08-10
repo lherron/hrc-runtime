@@ -1100,6 +1100,10 @@ export async function deliverPersistedSemanticTurnHandoff(
       runId,
       waitForCompletion: false,
       responseFormat: body.responseFormat,
+      // T-07155: carry the urgent class down to the broker dispatch. Without
+      // this the request would parse cleanly and then deliver as an ordinary
+      // deferred DM — the exact silent downgrade the design forbids.
+      ...(body.whenBusy !== undefined ? { whenBusy: body.whenBusy } : {}),
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -1148,6 +1152,7 @@ export async function deliverPersistedSemanticTurnHandoff(
       generation: turnBody.generation,
       fromSeq,
       ...(turnBody.warnings !== undefined ? { warnings: turnBody.warnings } : {}),
+      ...(turnBody.delivery !== undefined ? { delivery: turnBody.delivery } : {}),
     } satisfies SemanticTurnHandoffStartedResponse
   } catch (err) {
     this.turnResponseFinalizers.delete(runId)
@@ -1235,6 +1240,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       generation: turnBody.generation,
       fromSeq,
       ...(turnBody.warnings !== undefined ? { warnings: turnBody.warnings } : {}),
+      ...(turnBody.delivery !== undefined ? { delivery: turnBody.delivery } : {}),
     }
   }
 

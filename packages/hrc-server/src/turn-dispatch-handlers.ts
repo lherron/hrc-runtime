@@ -116,7 +116,7 @@ function dispatchRequestHash(input: {
   runtimeIntent?: HrcRuntimeIntent | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
   attachments?: unknown
-  whenBusy?: 'reject' | undefined
+  whenBusy?: 'reject' | 'steer' | undefined
   repair?: unknown
 }): string {
   return createHash('sha256')
@@ -964,7 +964,7 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   runId?: string | undefined
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
-  whenBusy?: 'reject' | undefined
+  whenBusy?: 'reject' | 'steer' | undefined
   attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   repairCorrelation?: JsonRepairRunCorrelation | undefined
   responseFormat?: HrcTurnResponseFormat | undefined

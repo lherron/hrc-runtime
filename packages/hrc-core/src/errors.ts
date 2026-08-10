@@ -20,6 +20,19 @@ export const HrcErrorCode = {
   PROVIDER_MISMATCH: 'provider_mismatch',
   INFLIGHT_UNSUPPORTED: 'inflight_unsupported',
   UNSUPPORTED_WHEN_BUSY: 'unsupported_when_busy',
+  /**
+   * T-07155 urgent (`whenBusy: 'steer'`) delivery outcomes. Each is terminal at
+   * RPC return and none falls back to the ordinary deferred queue: a supervisor
+   * must never believe an order landed when it did not.
+   */
+  /** The live broker process cannot execute the steer policy (old process, or an unsteerable driver). */
+  URGENT_DELIVERY_UNSUPPORTED: 'urgent_delivery_unsupported',
+  /** The active turn ended between the busy check and the steer; the sender retries deliberately. */
+  URGENT_DELIVERY_RACE_LOST: 'urgent_delivery_race_lost',
+  /** The steer RPC timed out or was interrupted; whether the harness applied it is genuinely unknown. */
+  URGENT_DELIVERY_AMBIGUOUS: 'urgent_delivery_ambiguous',
+  /** The destination peer cannot accept urgent delivery, so the origin refuses before send. */
+  URGENT_DELIVERY_UNROUTABLE: 'urgent_delivery_unroutable',
   BROKER_DESCRIPTOR_ABSENT: 'broker_descriptor_absent',
   ASK_CLIENT_UNSUPPORTED: 'ask_client_unsupported',
   /** The daemon has durably closed new turn admission for a drained restart. */
@@ -97,6 +110,10 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.PROVIDER_MISMATCH]: 422,
   [HrcErrorCode.INFLIGHT_UNSUPPORTED]: 422,
   [HrcErrorCode.UNSUPPORTED_WHEN_BUSY]: 422,
+  [HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED]: 422,
+  [HrcErrorCode.URGENT_DELIVERY_RACE_LOST]: 409,
+  [HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS]: 503,
+  [HrcErrorCode.URGENT_DELIVERY_UNROUTABLE]: 409,
   [HrcErrorCode.BROKER_DESCRIPTOR_ABSENT]: 422,
   [HrcErrorCode.ASK_CLIENT_UNSUPPORTED]: 422,
   [HrcErrorCode.SERVER_DRAINING]: 503,
@@ -224,6 +241,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
       | 'provider_mismatch'
       | 'inflight_unsupported'
       | 'unsupported_when_busy'
+      | 'urgent_delivery_unsupported'
       | 'broker_descriptor_absent'
       | 'ask_client_unsupported'
       | 'session_kind_mismatch'

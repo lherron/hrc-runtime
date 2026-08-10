@@ -316,7 +316,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | undefined
+    whenBusy?: 'reject' | 'steer' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}

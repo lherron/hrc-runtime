@@ -598,13 +598,13 @@ function parseOptionalDispatchTurnWhenBusy(
   if (input === undefined) {
     return undefined
   }
-  if (input === 'reject') {
-    return 'reject'
+  if (input === 'reject' || input === 'steer') {
+    return input
   }
 
   throw new HrcUnprocessableEntityError(
     HrcErrorCode.UNSUPPORTED_WHEN_BUSY,
-    'whenBusy must be "reject"',
+    'whenBusy must be "reject" or "steer"',
     { field: 'whenBusy', value: input }
   )
 }

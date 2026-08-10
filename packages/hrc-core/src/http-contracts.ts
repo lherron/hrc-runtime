@@ -24,7 +24,7 @@ import type {
   HrcStatusTmuxView,
   HrcTurnResponseFormat,
 } from './contracts.js'
-import type { HrcDeliveryWarning } from './delivery-contracts.js'
+import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
 import type { HrcBirthCredential } from './federation.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
@@ -309,7 +309,13 @@ export type DispatchTurnRequest = {
   /** Preferred acknowledgement boundary. Supersedes waitForCompletion when set. */
   waitFor?: 'accepted' | 'turn_started' | 'terminal' | undefined
   waitForCompletion?: boolean | undefined
-  whenBusy?: 'reject' | undefined
+  /**
+   * `steer` (T-07155) preempts a BUSY target: the prompt is admitted into the
+   * active turn instead of queueing behind it. Offered only when the live broker
+   * advertises the policy; otherwise the dispatch fails typed rather than
+   * silently degrading into ordinary deferred delivery.
+   */
+  whenBusy?: 'reject' | 'steer' | undefined
   repair?:
     | {
         kind: 'json_validation' | 'json_repair'
@@ -342,6 +348,8 @@ export type DispatchTurnResponse = {
   supportsInFlightInput: boolean
   /** Present when durable admission queued the input behind an active turn. */
   warnings?: HrcDeliveryWarning[] | undefined
+  /** Present when the caller asked for urgent delivery; says how it actually landed. */
+  delivery?: HrcDeliveryOutcome | undefined
   /** Absent until a queued turn has been assigned to a runtime invocation. */
   startIdentity?: { kind: 'broker'; invocationId: string } | { kind: 'sdk' } | undefined
   observation: {

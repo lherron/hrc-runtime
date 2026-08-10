@@ -1,5 +1,5 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
-import type { HrcDeliveryWarning } from './delivery-contracts.js'
+import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -251,6 +251,14 @@ export type DispatchTurnBySelectorRequest = {
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
+  /**
+   * `steer` (T-07155) requests URGENT delivery: preempt the target's active turn
+   * rather than queueing behind it. Rejected together with `wait` — a steer joins
+   * the running turn and produces no reply of its own, so there is nothing to
+   * wait for and waiting would silently reproduce the invisible lag this exists
+   * to remove.
+   */
+  whenBusy?: 'reject' | 'steer' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   fences?: HrcFence | undefined
   birthCredential?: HrcBirthCredential | undefined
@@ -413,6 +421,14 @@ export type SemanticDmRequest = {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
+  /**
+   * `steer` (T-07155) requests URGENT delivery: preempt the target's active turn
+   * rather than queueing behind it. Rejected together with `wait` — a steer joins
+   * the running turn and produces no reply of its own, so there is nothing to
+   * wait for and waiting would silently reproduce the invisible lag this exists
+   * to remove.
+   */
+  whenBusy?: 'reject' | 'steer' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: HrcBirthCredential | undefined
   wait?:
@@ -449,6 +465,8 @@ export type SemanticDmResponse = {
   waited?: WaitMessageResponse | undefined
   /** Sender-visible evidence that durable acceptance did not mean delivery now. */
   warnings?: HrcDeliveryWarning[] | undefined
+  /** Present for urgent sends: how the order actually landed. */
+  delivery?: HrcDeliveryOutcome | undefined
 }
 
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)
@@ -466,6 +484,8 @@ export type SemanticTurnHandoffStartedResponse = {
   fromSeq: number
   /** Sender-visible evidence that the turn is queued behind active work. */
   warnings?: HrcDeliveryWarning[] | undefined
+  /** Present for urgent sends: how the order actually landed. */
+  delivery?: HrcDeliveryOutcome | undefined
 }
 
 /**

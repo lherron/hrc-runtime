@@ -169,7 +169,10 @@ describe('server-parsers runtime intent harness resolution', () => {
       name: 'HrcUnprocessableEntityError',
       status: 422,
       code: (HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY,
-      message: 'whenBusy must be "reject"',
+      // T-07155 widened the accepted set to reject|steer. 'queue' stays
+      // rejected: the raw broker queue policy is not part of HRC's public
+      // dispatch surface.
+      message: 'whenBusy must be "reject" or "steer"',
       detail: { field: 'whenBusy', value: 'queue' },
     })
   })

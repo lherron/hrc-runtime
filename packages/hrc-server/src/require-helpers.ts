@@ -295,7 +295,7 @@ export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapsho
 export function assertBrokerRuntimeReusableAdmission(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  options: { whenBusy?: 'reject' | undefined } = {}
+  options: { whenBusy?: 'reject' | 'steer' | undefined } = {}
 ): void {
   if (isCorruptAwaitingRuntime(runtime)) {
     assertRuntimeNotBusy(db, runtime)
@@ -313,6 +313,41 @@ export function assertBrokerRuntimeReusableAdmission(
 // spec.interaction.inputQueue === 'fifo'. Returns false defensively on any
 // error (missing invocation, malformed capabilities_json) so callers fall
 // back to the existing reject-if-busy behavior.
+/**
+ * T-07155 — can the LIVE broker process serving this runtime execute
+ * `whenBusy: 'steer'`?
+ *
+ * Read from the invocation's composed capabilities, which HRC refreshes from the
+ * broker on every attach/reattach. That matters: a headless runtime owns a
+ * long-lived `harness-broker run` process that survives HRC restarts (HRC
+ * reattaches rather than replacing it), so an installed upgrade does NOT change
+ * the code loaded in an existing broker. Negotiating against the process that
+ * would have to execute the policy is the only honest signal; assuming
+ * publication reached it would silently drop supervisor orders.
+ *
+ * Absent field ⇒ pre-T-07155 broker ⇒ unsupported. Defensively false on any
+ * parse failure, so the caller fails closed rather than attempting a steer that
+ * cannot happen.
+ */
+export function isBrokerRuntimeSteerCapable(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot
+): boolean {
+  if (runtime.controllerKind !== 'harness-broker') return false
+  if (runtime.activeInvocationId === undefined) return false
+  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  if (!inv?.capabilitiesJson) return false
+  try {
+    const caps = JSON.parse(inv.capabilitiesJson) as {
+      input?: { busyPolicies?: unknown }
+    }
+    const policies = caps.input?.busyPolicies
+    return Array.isArray(policies) && policies.includes('steer')
+  } catch {
+    return false
+  }
+}
+
 export function isBrokerRuntimeQueueCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
   if (runtime.controllerKind !== 'harness-broker') return false
   if (runtime.activeInvocationId === undefined) return false

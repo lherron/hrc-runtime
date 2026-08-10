@@ -1,5 +1,10 @@
 import { formatSessionHandle } from 'agent-scope'
-import { HrcBadRequestError, HrcErrorCode, normalizeSessionRef } from 'hrc-core'
+import {
+  HrcBadRequestError,
+  HrcErrorCode,
+  HrcUnprocessableEntityError,
+  normalizeSessionRef,
+} from 'hrc-core'
 import type {
   HrcMessageAddress,
   HrcMessageFilter,
@@ -302,6 +307,7 @@ export function parseSemanticDmRequest(input: unknown): {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
+  whenBusy?: 'reject' | 'steer' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: string | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
@@ -386,6 +392,27 @@ export function parseSemanticDmRequest(input: unknown): {
       : undefined
   const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
 
+  const whenBusyInput = input['whenBusy']
+  if (whenBusyInput !== undefined && whenBusyInput !== 'reject' && whenBusyInput !== 'steer') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.UNSUPPORTED_WHEN_BUSY,
+      'whenBusy must be "reject" or "steer"',
+      { field: 'whenBusy', value: whenBusyInput }
+    )
+  }
+  const whenBusy = whenBusyInput as 'reject' | 'steer' | undefined
+  // T-07155: an urgent send joins the ACTIVE turn and produces no turn or reply
+  // of its own, so `wait` has nothing to wait for. Refusing is the honest
+  // outcome: silently not-waiting would block for the full timeout and then
+  // report nothing, which is precisely the invisible lag stage 1 removed.
+  if (whenBusy === 'steer' && wait?.enabled === true) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'urgent_wait_conflict: whenBusy "steer" cannot be combined with wait; a steered order joins the active turn and has no reply of its own',
+      { field: 'wait' }
+    )
+  }
+
   return {
     from: parseMessageAddress(input['from'], 'from'),
     to: parseMessageAddress(input['to'], 'to'),
@@ -396,6 +423,7 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
     ...(runtimeIntent !== undefined ? { runtimeIntent } : {}),
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
+    ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
     ...(birthCredential !== undefined ? { birthCredential } : {}),
     ...(wait !== undefined ? { wait } : {}),

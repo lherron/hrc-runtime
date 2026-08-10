@@ -3,9 +3,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HrcDomainError,
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  hrcAdmittedIntoActiveTurn,
 } from 'hrc-core'
 import type {
   DispatchTurnResponse,
@@ -43,6 +45,7 @@ import {
   assertRuntimeNotBusy,
   classifyBrokerInputFailure,
   isBrokerRuntimeQueueCapable,
+  isBrokerRuntimeSteerCapable,
   isRunActive,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
@@ -169,7 +172,7 @@ export async function dispatchQueuedHeadlessTurnInput(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | undefined
+    whenBusy?: 'reject' | 'steer' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
@@ -633,6 +636,141 @@ export async function executeHeadlessBrokerStartTurn(
   } satisfies DispatchTurnResponseBase)
 }
 
+/**
+ * T-07155 — deliver an URGENT order into a busy headless runtime's ACTIVE turn.
+ *
+ * Deliberately creates no run row. The event-mapper attributes turn.* events by
+ * open turn bracket, so a steered input never gets a turn of its own; minting a
+ * run for it would park that run in `accepted` forever (finalizer never fires,
+ * `dm --wait` never returns, reaper eventually calls it a zombie). The response
+ * therefore reports the ACTIVE run — the turn the order actually joined.
+ *
+ * Every failure is typed and terminal. Nothing here ever falls back to the
+ * ordinary deferred queue: a supervisor must never believe an order landed when
+ * it did not.
+ */
+export async function executeHeadlessBrokerSteer(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  prompt: string,
+  options: {
+    activeRun: HrcRunRecord
+    invocationId: string
+    responseFormat?: HrcTurnResponseFormat | undefined
+  }
+): Promise<Response> {
+  const { activeRun, invocationId } = options
+
+  // Negotiate against the LIVE broker process, never against published code.
+  if (!isBrokerRuntimeSteerCapable(this.db, runtime)) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
+      'the broker serving this runtime cannot accept urgent delivery',
+      {
+        runtimeId: runtime.runtimeId,
+        invocationId,
+        route: 'broker',
+        recommendation:
+          'this runtime predates urgent delivery; rotate it so a current broker process serves it',
+      }
+    )
+  }
+
+  const now = timestamp()
+  const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
+
+  // Attribution against the ACTIVE run: the audit trail must show who preempted
+  // whom, on which turn, and that it arrived mid-flight rather than in sequence.
+  const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runId: activeRun.runId,
+    runtimeId: runtime.runtimeId,
+    transport: 'headless',
+    payload: createUserPromptPayload(prompt),
+  })
+  this.notifyEvent(userPromptEvent)
+
+  const result = await this.getHarnessBrokerController().dispatchInput({
+    runtimeId: runtime.runtimeId,
+    input: {
+      inputId,
+      kind: 'user',
+      content: [{ type: 'text', text: prompt }],
+      metadata: { runId: activeRun.runId },
+    },
+    policy: { whenBusy: 'steer' as const },
+  })
+
+  if (!result.ok) {
+    const message = result.error.message
+    // A steer that raced the turn's end is a distinct, retryable-by-the-sender
+    // condition: they must know whether their order preempted the work or merely
+    // followed it. HRC deliberately does not silently retry as a fresh turn.
+    const raceLost = /expectedTurnId|active turn|turn_mismatch|no active turn/i.test(message)
+    const timedOut = result.error.code === 'broker_input_timeout'
+    if (timedOut) {
+      throw new HrcDomainError(
+        HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS,
+        'urgent delivery timed out; whether the harness applied it is unknown',
+        { runtimeId: runtime.runtimeId, invocationId, runId: activeRun.runId, route: 'broker' }
+      )
+    }
+    throw new HrcDomainError(
+      raceLost ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
+      raceLost
+        ? 'the active turn ended before the urgent order could be applied'
+        : 'the broker refused urgent delivery',
+      {
+        runtimeId: runtime.runtimeId,
+        invocationId,
+        runId: activeRun.runId,
+        route: 'broker',
+        cause: message,
+      }
+    )
+  }
+
+  if (!result.response.accepted || result.response.disposition !== 'attempted_steer') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
+      'the broker did not admit the urgent order into the active turn',
+      {
+        runtimeId: runtime.runtimeId,
+        invocationId,
+        runId: activeRun.runId,
+        route: 'broker',
+        cause: result.response.reason ?? result.response.disposition,
+      }
+    )
+  }
+
+  this.db.runtimes.update(runtime.runtimeId, {
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
+  })
+
+  return json({
+    runId: activeRun.runId,
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    transport: 'headless',
+    status: 'started',
+    // The public in-flight ENDPOINT remains SDK-only; this projection is
+    // unchanged by urgent delivery, which rides the dispatch path instead.
+    supportsInFlightInput: false,
+    delivery: hrcAdmittedIntoActiveTurn({ mergedIntoRunId: activeRun.runId }),
+  } satisfies DispatchTurnResponseBase)
+}
+
 export async function executeHeadlessBrokerInputTurn(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -641,7 +779,7 @@ export async function executeHeadlessBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | undefined
+    whenBusy?: 'reject' | 'steer' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
@@ -676,6 +814,16 @@ export async function executeHeadlessBrokerInputTurn(
   const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
   if (options.whenBusy === 'reject' && queuedMode) {
     assertRuntimeNotBusy(this.db, runtime)
+  }
+  // T-07155 — urgent delivery. Only meaningful while the target is BUSY; an idle
+  // target falls through to the ordinary path below and simply starts a turn,
+  // which is not a downgrade because there is no queue to fall into.
+  if (options.whenBusy === 'steer' && queuedMode && activeRun !== null) {
+    return await this.executeHeadlessBrokerSteer(session, runtime, prompt, {
+      activeRun,
+      invocationId,
+      responseFormat: options.responseFormat,
+    })
   }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
 
@@ -1067,6 +1215,7 @@ export const brokerHeadlessHandlersMethods = {
   startHeadlessBrokerRuntime,
   executeHeadlessBrokerStartTurn,
   executeHeadlessBrokerInputTurn,
+  executeHeadlessBrokerSteer,
   enqueueDurableHeadlessTurnInput,
   dispatchQueuedHeadlessTurnInput,
   drainDurableHeadlessTurnInputs,
