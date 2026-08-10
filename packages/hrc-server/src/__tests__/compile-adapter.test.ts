@@ -343,10 +343,13 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
 
   it('preserves nonInteractive for pi-sdk broker catalog selection only', async () => {
     const captured: { requests: RuntimeCompileRequest[] } = { requests: [] }
+    const selectors: unknown[] = []
     const compileHarnessInvocation = async (request: {
       compileRequest: RuntimeCompileRequest
+      profileSelector?: unknown
     }): Promise<AspcCompileHarnessInvocationResponse> => {
       captured.requests.push(request.compileRequest)
+      selectors.push(request.profileSelector)
       return makeAspcFailedCompileResponse()
     }
 
@@ -373,6 +376,8 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
 
     expect(captured.requests[0]?.requested.interactionMode).toBe('nonInteractive')
     expect(captured.requests[1]?.requested.interactionMode).toBe('headless')
+    expect(selectors[0]).toEqual({ brokerDriver: 'pi-sdk' })
+    expect(selectors[1]).toEqual({ brokerDriver: 'codex-app-server' })
   })
 
   it('threads responseFormat through materialization and compiled broker initial input', async () => {

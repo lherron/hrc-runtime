@@ -2,8 +2,9 @@
  * Broker execution-profile SELECTOR (T-01695 / T-01690 Wave W2).
  *
  * Performs STATIC admission + hash verification over a compiled runtime plan.
- * For T-01690 it admits ONLY a headless codex-app-server harness-broker profile
- * and REJECTS (never silently falls back) on every other condition.
+ * It admits the explicitly supported broker-controller shapes: headless Codex,
+ * nonInteractive pi-sdk, and interactive broker-owned tmux. Every other shape
+ * is rejected without fallback.
  *
  * BOUNDARY (W1A broker-path scoped guard): this file lives at
  * `agent-spaces-adapter/compile-*.ts`, so it may import only
@@ -82,7 +83,9 @@ export function isBrokerControllerProfile(
   return (
     profile.kind === 'harness-broker' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
-    (isHeadlessCodexBrokerProfile(profile) || isInteractiveTmuxBrokerProfile(profile))
+    (isHeadlessCodexBrokerProfile(profile) ||
+      isNonInteractivePiBrokerProfile(profile) ||
+      isInteractiveTmuxBrokerProfile(profile))
   )
 }
 
@@ -94,6 +97,17 @@ function isHeadlessCodexBrokerProfile(
     profile.interactionMode === 'headless' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     profile.brokerDriver === 'codex-app-server'
+  )
+}
+
+function isNonInteractivePiBrokerProfile(
+  profile: RuntimeExecutionProfile
+): profile is BrokerExecutionProfile {
+  return (
+    profile.kind === 'harness-broker' &&
+    profile.interactionMode === 'nonInteractive' &&
+    isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
+    profile.brokerDriver === 'pi-sdk'
   )
 }
 

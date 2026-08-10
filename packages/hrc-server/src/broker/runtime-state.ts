@@ -253,6 +253,10 @@ export function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
   )
 }
 
+export function usesHeadlessBrokerSubstrate(profile: BrokerExecutionProfile): boolean {
+  return profile.interactionMode === 'headless' || profile.interactionMode === 'nonInteractive'
+}
+
 export function toDispatchRuntime(
   allocation: BrokerTmuxAllocation | undefined
 ): InvocationRuntimeContext | undefined {

@@ -233,6 +233,9 @@ function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | unde
   }
 
   const runtime = toPreferredHarnessRuntime(intent.harness.id)
+  if (runtime === 'pi-sdk') {
+    return { brokerDriver: 'pi-sdk' }
+  }
   if (runtime === 'codex-cli' || intent.harness.provider === 'openai') {
     return { brokerDriver: 'codex-app-server' }
   }

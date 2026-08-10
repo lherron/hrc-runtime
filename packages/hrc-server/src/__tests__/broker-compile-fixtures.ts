@@ -67,7 +67,7 @@ export type FixtureOpts = {
   /** Override brokerDriver (to test non-codex). */
   brokerDriver?: string
   /** Override interactionMode (to test interactive rejection). */
-  interactionMode?: 'headless' | 'interactive'
+  interactionMode?: 'headless' | 'interactive' | 'nonInteractive'
   /** Override broker terminal metadata. */
   brokerTerminal?: { host: 'tmux' | string }
 }

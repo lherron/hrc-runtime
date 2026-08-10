@@ -37,6 +37,7 @@ import {
   isBrokerTmuxProfile,
   runtimeStatusFromInvocationState,
   toDispatchRuntime,
+  usesHeadlessBrokerSubstrate,
 } from '../runtime-state'
 import {
   allocateHeadlessSubstrate,
@@ -332,7 +333,7 @@ export async function startController(
     if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
       markPhase('broker-tmux-alloc')
-    } else if (input.brokerClient === undefined && input.profile.interactionMode === 'headless') {
+    } else if (input.brokerClient === undefined && usesHeadlessBrokerSubstrate(input.profile)) {
       // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
       // with presentation='none' (broker window + Unix IPC + token + ledger, NO
       // TUI, NO operator attach) and DIAL it over Unix v0.2 instead of spawning
@@ -527,13 +528,13 @@ export async function startController(
     // which has no lease) and `terminalSurfaceRequired=true` so the codex driver
     // hard-requires the presentation pane.
     const headlessViewerRoute =
-      input.profile.interactionMode === 'headless' &&
+      usesHeadlessBrokerSubstrate(input.profile) &&
       isHeadlessViewerRoute(input) &&
       tmuxAllocation?.lease !== undefined
     let dispatchRuntime: InvocationRuntimeContext | undefined
     if (
       tmuxAllocation !== undefined &&
-      input.profile.interactionMode === 'headless' &&
+      usesHeadlessBrokerSubstrate(input.profile) &&
       !headlessViewerRoute
     ) {
       dispatchRuntime = undefined

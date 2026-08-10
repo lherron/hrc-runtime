@@ -642,4 +642,38 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
     expect(unixFactoryCalls).toHaveLength(1) // ← RED today (unix NOT called)
     expect(unixFactoryCalls[0]?.socketPath).toContain('b.sock')
   })
+
+  it('routes a nonInteractive pi-sdk profile through the same durable unix substrate', async () => {
+    const identity = makeIdentity()
+    const { profile, startRequest } = makeHeadlessDurableProfile(identity)
+    profile.interactionMode = 'nonInteractive'
+    profile.brokerDriver = 'pi-sdk'
+    const response = makeCompileResponse(identity, [profile])
+    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+
+    const stdioFactoryCalls: unknown[] = []
+    const unixFactoryCalls: Array<{ socketPath: string }> = []
+    const unixClient = new FakeUnixBrokerClient('pi-sdk')
+    const controller = makeController(fixture.db, {
+      stdioFactoryCalls,
+      unixFactoryCalls,
+      unixClient,
+      stdioClient: new FakeStdioBrokerClient(),
+      useDurableAllocator: false,
+    })
+
+    await controller.start({
+      plan: response.plan,
+      profile,
+      startRequest,
+      specHash: profile.harnessInvocation.specHash,
+      startRequestHash: profile.harnessInvocation.startRequestHash,
+      identity,
+      dispatchEnv: {},
+    })
+
+    expect(stdioFactoryCalls).toHaveLength(0)
+    expect(unixFactoryCalls).toHaveLength(1)
+    expect(unixClient.startCalls[0]?.runtime).toBeUndefined()
+  })
 })

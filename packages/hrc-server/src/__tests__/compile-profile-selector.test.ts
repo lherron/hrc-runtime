@@ -98,6 +98,25 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.startRequest).toBe(startRequest)
   })
 
+  it('admits a nonInteractive pi-sdk broker profile without a terminal', () => {
+    const identity = makeIdentity()
+    const { profile, startRequest } = makeBrokerProfile(identity, {
+      brokerDriver: 'pi-sdk',
+      interactionMode: 'nonInteractive',
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.profile.brokerDriver).toBe('pi-sdk')
+    expect(selection.profile.interactionMode).toBe('nonInteractive')
+    expect(selection.profile.brokerTerminal).toBeUndefined()
+    expect(selection.startRequest).toBe(startRequest)
+  })
+
   it('REJECTS a non-codex broker driver (does not admit other drivers)', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { brokerDriver: 'claude-code-tmux' })
