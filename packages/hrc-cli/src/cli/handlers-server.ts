@@ -117,8 +117,10 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
   if (inFlight.length === 0) return
 
   if (!wait) {
+    const refusalCode =
+      action === 'restart' ? 'restart_refused_in_flight' : 'stop_refused_in_flight'
     process.stderr.write(
-      `hrc: refusing to ${action}: ${inFlight.length} ${noun}(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+      `hrc: [${refusalCode}] refusing to ${action}: ${inFlight.length} ${noun}(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
     )
     throw new CliStatusExit(2)
   }
@@ -139,11 +141,54 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
   })
 
   if (inFlight.length > 0) {
+    const refusalCode = action === 'restart' ? 'restart_drain_timeout' : 'stop_drain_timeout'
     process.stderr.write(
-      `hrc: drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} ${noun}(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+      `hrc: [${refusalCode}] drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} ${noun}(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
     )
     throw new CliStatusExit(2)
   }
+}
+
+function processStartedAt(
+  status: Awaited<ReturnType<typeof collectServerRuntimeStatus>>
+): string | undefined {
+  return status.release?.processStartedAt ?? status.api?.startedAt
+}
+
+async function requireRestartProof(
+  before: Awaited<ReturnType<typeof collectServerRuntimeStatus>>,
+  timeoutMs: number
+): Promise<void> {
+  const beforeStartedAt = processStartedAt(before)
+  if (before.running && beforeStartedAt === undefined) {
+    process.stderr.write(
+      'hrc: [restart_refused_unobservable] daemon is healthy but its processStartedAt could not be read; refusing an unprovable restart\n'
+    )
+    throw new CliStatusExit(2)
+  }
+
+  const deadline = Date.now() + timeoutMs
+  let observed = before
+  do {
+    observed = await collectServerRuntimeStatus({ includeTmux: false })
+    const observedStartedAt = processStartedAt(observed)
+    if (
+      observed.running &&
+      observedStartedAt !== undefined &&
+      (beforeStartedAt === undefined || observedStartedAt !== beforeStartedAt)
+    ) {
+      process.stderr.write(
+        `hrc: restart proven (processStartedAt ${beforeStartedAt ?? '(not running)'} -> ${observedStartedAt})\n`
+      )
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  } while (Date.now() < deadline)
+
+  process.stderr.write(
+    `hrc: [restart_unproven] restart actuation returned, but no healthy new process answered within ${timeoutMs}ms (before processStartedAt=${beforeStartedAt ?? '(not running)'}, observed processStartedAt=${processStartedAt(observed) ?? '(unavailable)'}, observed status=${observed.status})\n`
+  )
+  throw new CliStatusExit(1)
 }
 
 async function closeAdmissionAndDrainForRestart(
@@ -269,12 +314,21 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
       await gateOnInFlightWork(args, 'restart')
     }
 
+    const before = hasFlag(args, '--wait')
+      ? await collectServerRuntimeStatus({ includeTmux: false })
+      : undefined
+
+    if (before?.running && processStartedAt(before) === undefined) {
+      await requireRestartProof(before, timeoutMs)
+    }
+
     writeShutdownIntent('restart', attribution)
 
     const owner = await detectLaunchdOwner()
     if (owner) {
       restartInitiated = true
       await launchctlKickstart(owner, { kill: true })
+      if (before !== undefined) await requireRestartProof(before, timeoutMs)
       process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
       return
     }
@@ -283,6 +337,7 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
     await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
     if (mode === 'daemon') {
       await daemonizeAndWait(timeoutMs)
+      if (before !== undefined) await requireRestartProof(before, timeoutMs)
       process.stderr.write('hrc: daemon restarted\n')
       return
     }

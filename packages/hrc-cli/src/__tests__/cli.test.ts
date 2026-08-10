@@ -1241,6 +1241,106 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(monitor.runtime?.transport).toBe('tmux')
   })
 
+  it('server restart --wait returns only after a healthy new process answers', async () => {
+    const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
+    const isolatedEnv = cliEnv({
+      HRC_LAUNCHD_LABEL: 'com.praesidium.hrc-T-07157-isolated',
+      HRC_SESSION_REF: `${primaryScope}/lane:main`,
+      ASP_SCOPE_REF: primaryScope,
+      ASP_TASK_ID: 'primary',
+      ASP_DEFAULT_TASK: 'primary',
+    })
+    try {
+      const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
+      expect(startResult.exitCode).toBe(0)
+
+      const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+      const beforeStartedAt = before.release?.processStartedAt as string | undefined
+      expect(beforeStartedAt).toBeString()
+
+      const restartResult = await runCli(
+        [
+          'server',
+          'restart',
+          '--wait',
+          '--timeout-ms',
+          '5000',
+          '--reason',
+          'T-07157 isolated restart proof',
+        ],
+        isolatedEnv
+      )
+      expect(restartResult.exitCode).toBe(0)
+      expect(restartResult.stderr).toContain('restart proven')
+
+      const after = await waitForServerStatus(
+        (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
+        isolatedEnv
+      )
+      expect(after.release?.processStartedAt).toBeString()
+      expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
+    } finally {
+      await runCli(
+        ['server', 'stop', '--force', '--reason', 'T-07157 isolated test cleanup'],
+        isolatedEnv
+      ).catch(() => undefined)
+    }
+  })
+
+  it.if(process.platform === 'darwin')(
+    'server restart --wait rejects a launchctl success that did not replace the process',
+    async () => {
+      const isolatedLabel = 'com.praesidium.hrc-T-07157-noop'
+      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
+      const isolatedEnv = cliEnv({
+        HRC_LAUNCHD_LABEL: isolatedLabel,
+        HRC_SESSION_REF: `${primaryScope}/lane:main`,
+        ASP_SCOPE_REF: primaryScope,
+        ASP_TASK_ID: 'primary',
+        ASP_DEFAULT_TASK: 'primary',
+      })
+      try {
+        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
+        expect(startResult.exitCode).toBe(0)
+
+        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        const beforeStartedAt = before.release?.processStartedAt as string | undefined
+        expect(beforeStartedAt).toBeString()
+
+        const shimDir = join(tmpDir, 'launchctl-noop')
+        await mkdir(shimDir, { recursive: true })
+        await writeFile(join(shimDir, 'launchctl'), '#!/bin/sh\nexit 0\n')
+        await chmod(join(shimDir, 'launchctl'), 0o755)
+
+        const restartResult = await runCli(
+          [
+            'server',
+            'restart',
+            '--wait',
+            '--timeout-ms',
+            '100',
+            '--reason',
+            'T-07157 launchctl no-op proof',
+          ],
+          {
+            ...isolatedEnv,
+            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          }
+        )
+        expect(restartResult.exitCode).toBe(1)
+        expect(restartResult.stderr).toContain('[restart_unproven]')
+
+        const after = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        expect(after.release?.processStartedAt).toBe(beforeStartedAt)
+      } finally {
+        await runCli(
+          ['server', 'stop', '--force', '--reason', 'T-07157 isolated test cleanup'],
+          isolatedEnv
+        ).catch(() => undefined)
+      }
+    }
+  )
+
   it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)

@@ -133,7 +133,10 @@ hrc server stop
 In-flight gating: `stop` and `restart` refuse by default when runs are
 still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`,
 default 300000) or `--force` to proceed anyway (`--force` is also the
-SIGTERM→SIGKILL escalation). For `restart`, tmux-transport runs are
+SIGTERM→SIGKILL escalation). After actuation, `restart --wait` waits up to
+`--timeout-ms` (default 5000) for a healthy daemon whose `processStartedAt`
+differs from the pre-restart process; an unproved restart exits nonzero with a
+typed refusal. For `restart`, tmux-transport runs are
 excluded from the gate — they survive a daemon restart; only
 headless/SDK runs block it. Other flags: `--timeout-ms <n>`,
 `--foreground` / `--daemon`.

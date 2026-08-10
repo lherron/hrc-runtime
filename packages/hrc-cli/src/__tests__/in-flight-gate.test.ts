@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { formatInFlightWork, listInFlightWork, waitForInFlightDrain } from '../cli-runtime'
+import { cmdServerRestart } from '../cli/handlers-server'
+import { CliStatusExit } from '../cli/shared'
 
 async function makeDb(): Promise<{ path: string; cleanup: () => Promise<void> }> {
   const dir = await mkdtemp(join(tmpdir(), 'in-flight-gate-'))
@@ -379,6 +381,66 @@ describe('waitForInFlightDrain', () => {
       })
       expect(result).toEqual([])
     } finally {
+      await cleanup()
+    }
+  })
+})
+
+describe('restart refusal contract', () => {
+  it('returns a typed nonzero drain-timeout refusal before restart actuation', async () => {
+    const { path, cleanup } = await makeDb()
+    const stateRoot = join(path, '..')
+    const envelopeKeys = [
+      'HRC_SESSION_REF',
+      'HRC_RUN_ID',
+      'HRC_BIRTH_CREDENTIAL',
+      'ASP_SCOPE_REF',
+      'ASP_TASK_ID',
+      'ASP_DEFAULT_TASK',
+      'ASP_HANDLE',
+    ] as const
+    const savedEnv = new Map<string, string | undefined>()
+    const originalStateDir = process.env['HRC_STATE_DIR']
+    const originalStderrWrite = process.stderr.write
+    const stderr: string[] = []
+
+    try {
+      insertActiveRun(path, {
+        run_id: 'run-busy-headless',
+        scope_ref: 'agent:cody:project:hrc-runtime:task:T-07155',
+        transport: 'headless',
+      })
+      for (const key of envelopeKeys) {
+        savedEnv.set(key, process.env[key])
+        Reflect.deleteProperty(process.env, key)
+      }
+      process.env['HRC_STATE_DIR'] = stateRoot
+      process.stderr.write = ((chunk: string | ArrayBufferView | ArrayBuffer) => {
+        stderr.push(
+          typeof chunk === 'string' ? chunk : Buffer.from(chunk as ArrayBufferView).toString()
+        )
+        return true
+      }) as typeof process.stderr.write
+
+      let thrown: unknown
+      try {
+        await cmdServerRestart(['--wait', '--wait-timeout-ms', '1'])
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(CliStatusExit)
+      expect((thrown as CliStatusExit).code).toBe(2)
+      expect(stderr.join('')).toContain('[restart_drain_timeout]')
+      expect(stderr.join('')).toContain('run-busy-headless')
+    } finally {
+      process.stderr.write = originalStderrWrite
+      if (originalStateDir === undefined) Reflect.deleteProperty(process.env, 'HRC_STATE_DIR')
+      else process.env['HRC_STATE_DIR'] = originalStateDir
+      for (const [key, value] of savedEnv.entries()) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key)
+        else process.env[key] = value
+      }
       await cleanup()
     }
   })

@@ -109,7 +109,7 @@ export function registerServerSessionCommands(program: Command): void {
     .option('--timeout-ms <n>', 'timeout in milliseconds')
     .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
     .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
-    .option('--wait', 'wait for in-flight runs to drain before restarting')
+    .option('--wait', 'drain in-flight runs, then prove a healthy new daemon process answers')
     .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
     .option('--drain', 'close daemon turn admission, drain, recheck, and restart')
     .option(
