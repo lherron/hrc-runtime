@@ -309,6 +309,17 @@ describe('deriveHeadlessTabIdentity', () => {
     expect(id.label).toBe('hrc · primary')
   })
 
+  it('gives a named non-task scope (roster slot) its OWN tab key (T-07142)', () => {
+    const nova = deriveHeadlessTabIdentity('agent:mable:project:hrc-runtime:task:primary-nova')
+    expect(nova.tabKey).toBe('project:hrc-runtime:primary-nova')
+    expect(nova.label).toBe('hrc · primary-nova')
+    const comet = deriveHeadlessTabIdentity('agent:mable:project:hrc-runtime:task:primary-comet')
+    expect(comet.tabKey).toBe('project:hrc-runtime:primary-comet')
+    const primary = deriveHeadlessTabIdentity('agent:mable:project:hrc-runtime:task:primary')
+    expect(nova.tabKey).not.toBe(comet.tabKey)
+    expect(nova.tabKey).not.toBe(primary.tabKey)
+  })
+
   it('does NOT collide two primary scopes from different projects', () => {
     const a = deriveHeadlessTabIdentity('agent:clod:project:hrc-runtime:task:primary')
     const b = deriveHeadlessTabIdentity('agent:smokey:project:agent-control-plane:task:primary')

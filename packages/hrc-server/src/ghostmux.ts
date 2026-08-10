@@ -201,9 +201,13 @@ function sanitizeKeyFragment(value: string): string {
  * Canonical tab grouping for a headless viewer pane (T-05237, daedalus C1).
  *
  * - Real task scope (`T-XXXXX`):  `task:<T-XXXXX>`        label `<T-XXXXX>`
- * - Non-task / `primary` scope:   `project:<proj>:primary` label `<proj> · primary`
- *   where `<proj>` is the projectId, else an agent-root qualifier, so two
- *   `primary` sessions from different projects NEVER collide.
+ * - Non-task scope with a named token (e.g. a T-07118 roster slot such as
+ *   `primary-nova`): `project:<proj>:<token>` label `<proj> · <token>` — each
+ *   named scope owns its OWN tab (T-07142), so a new widget session opens a
+ *   new tab instead of splitting a pane into the shared primary tab.
+ * - Bare `primary` / taskless scope: `project:<proj>:primary` label
+ *   `<proj> · primary`, where `<proj>` is the projectId, else an agent-root
+ *   qualifier, so two `primary` sessions from different projects NEVER collide.
  * - Unparseable ref:              `unparsed:<sanitized>`  label `<raw>`
  *
  * Matching MUST use `tabKey`, never a bare `primary` or a human label.
@@ -231,11 +235,12 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
     ? sanitizeKeyFragment(parsed.projectId)
     : `agent-root-${sanitizeKeyFragment(agentId)}`
   const prefix = parsed.projectId ? shortenProjectId(parsed.projectId) : `~${agentId}`
+  const scopeToken = parsed.taskId ? sanitizeKeyFragment(parsed.taskId) : 'primary'
   return {
-    tabKey: `project:${qualifier}:primary`,
+    tabKey: `project:${qualifier}:${scopeToken}`,
     agentId,
     ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
-    label: `${prefix} · primary`,
+    label: `${prefix} · ${scopeToken}`,
   }
 }
 
