@@ -95,14 +95,29 @@ describe('server lifecycle authorization', () => {
         'x'
       ).allowed
     ).toBe(false)
+  })
+
+  it('T-07215: a standing node-seat scope is a lifecycle authority with mandatory reason', () => {
+    const seatSession = 'agent:mable:project:agent-control-plane:task:minisvc/lane:main'
+    // Without a reason: refused at the same bar as primary.
+    const withoutReason = evaluateServerLifecycleAuthorization(
+      { HRC_SESSION_REF: seatSession },
+      undefined
+    )
+    expect(withoutReason.allowed).toBe(false)
+    if (!withoutReason.allowed) {
+      expect(withoutReason.message).toContain('seat-scoped')
+      expect(withoutReason.message).toContain('--reason')
+    }
+    // With a reason: allowed, attributed as a seat.
     expect(
-      evaluateServerLifecycleAuthorization(
-        {
-          HRC_SESSION_REF: 'agent:cody:project:hrc-runtime:task:minisvc/lane:main',
-        },
-        'x'
-      ).allowed
-    ).toBe(false)
+      evaluateServerLifecycleAuthorization({ HRC_SESSION_REF: seatSession }, 'steer stack cutover')
+    ).toEqual({
+      allowed: true,
+      callerKind: 'seat',
+      requestedBy: seatSession,
+      reason: 'steer stack cutover',
+    })
   })
 
   it('accepts a canonical primary ASP scope as clearly primary when no session ref exists', () => {

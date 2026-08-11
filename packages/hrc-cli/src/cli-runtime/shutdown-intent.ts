@@ -23,7 +23,7 @@ export type ShutdownIntent = {
 export type ServerLifecycleAuthorization =
   | {
       allowed: true
-      callerKind: 'operator' | 'primary'
+      callerKind: 'operator' | 'primary' | 'seat'
       requestedBy: string | null
       reason: string | null
     }
@@ -148,6 +148,29 @@ export function evaluateServerLifecycleAuthorization(
     return {
       allowed: false,
       message: `task-scoped runtime ${scopeRef} may not stop or restart the HRC server; escalate to the project primary or an operator shell`,
+    }
+  }
+
+  // T-07215 (Lance ruling 2026-08-11): a STANDING SEAT — a well-formed
+  // envelope whose task key is neither 'primary' nor a T-XXXXX work task
+  // (e.g. a node-operations seat like task:minisvc) — is a lifecycle
+  // authority at the same bar as primary: mandatory --reason, full
+  // shutdown-intent attribution. The T-05999/T-06007 ruled design only ever
+  // denied WORK-TASK scopes; the previous catch-all denial of standing seats
+  // was unruled, and on satellite nodes it left no in-band restart path at
+  // all (primaries are homed elsewhere and restart is local-socket only).
+  if (taskId !== undefined && taskId !== null && taskId !== '') {
+    if (requestedReason === null) {
+      return {
+        allowed: false,
+        message: 'seat-scoped server lifecycle mutations require --reason <text>',
+      }
+    }
+    return {
+      allowed: true,
+      callerKind: 'seat',
+      requestedBy,
+      reason: requestedReason,
     }
   }
 
