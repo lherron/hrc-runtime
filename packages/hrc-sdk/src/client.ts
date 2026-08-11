@@ -120,7 +120,11 @@ import type {
   SemanticTurnHandoffResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
+  SessionFacetsRequest,
+  SessionFacetsResponse,
   SessionFilter,
+  SessionPageRequest,
+  SessionPageResponse,
   StartRuntimeRequest,
   StartRuntimeResponse,
   StatusResponse,
@@ -333,6 +337,36 @@ export class HrcClient {
       laneRef: emptyToUndefined(filter?.laneRef),
     })
     return this.getJson<HrcSessionRecord[]>(path)
+  }
+
+  async listSessionsPage(request: SessionPageRequest = {}): Promise<SessionPageResponse> {
+    return this.getJson<SessionPageResponse>(
+      buildPath('/v1/sessions/page', {
+        limit: request.limit,
+        cursor: emptyToUndefined(request.cursor),
+        q: emptyToUndefined(request.q),
+        agentId: emptyToUndefined(request.agentId),
+        projectId: emptyToUndefined(request.projectId),
+        laneRef: emptyToUndefined(request.laneRef),
+        effectiveStatus: request.effectiveStatus,
+        executionMode: request.executionMode,
+        nodes: emptyToUndefined(request.nodes),
+      })
+    )
+  }
+
+  async getSessionFacets(request: SessionFacetsRequest = {}): Promise<SessionFacetsResponse> {
+    return this.getJson<SessionFacetsResponse>(
+      buildPath('/v1/sessions/facets', {
+        q: emptyToUndefined(request.q),
+        agentId: emptyToUndefined(request.agentId),
+        projectId: emptyToUndefined(request.projectId),
+        laneRef: emptyToUndefined(request.laneRef),
+        effectiveStatus: request.effectiveStatus,
+        executionMode: request.executionMode,
+        nodes: emptyToUndefined(request.nodes),
+      })
+    )
   }
 
   async getSession(hostSessionId: string): Promise<HrcSessionRecord> {

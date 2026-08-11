@@ -1505,6 +1505,353 @@ const dmQueueCoalescingMigration: HrcMigration = {
   },
 }
 
+/**
+ * Current-generation Mobile session projection (T-07221).
+ *
+ * The projection is maintained by triggers so each source write and its index
+ * effect share the caller's SQLite transaction. Recency is deliberately
+ * monotonic: only contributing timestamps use MAX(); status, intent,
+ * continuation and parsed-scope rewrites refresh derived columns without
+ * moving the traversal key.
+ */
+const sessionIndexMigration: HrcMigration = {
+  id: '0041_session_index',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE session_index (
+        scope_ref TEXT NOT NULL,
+        lane_ref TEXT NOT NULL,
+        host_session_id TEXT NOT NULL UNIQUE,
+        generation INTEGER NOT NULL,
+        agent_id TEXT NOT NULL,
+        project_id TEXT,
+        created_at TEXT NOT NULL,
+        effective_status TEXT NOT NULL
+          CHECK (effective_status IN ('active', 'detached', 'inactive', 'stale')),
+        execution_mode TEXT NOT NULL
+          CHECK (execution_mode IN ('headless', 'interactive', 'nonInteractive')),
+        last_activity_at TEXT NOT NULL,
+        PRIMARY KEY (scope_ref, lane_ref)
+      );
+
+      CREATE INDEX idx_session_index_page
+        ON session_index(
+          last_activity_at DESC,
+          host_session_id DESC,
+          scope_ref,
+          lane_ref,
+          generation,
+          agent_id,
+          project_id,
+          created_at,
+          effective_status,
+          execution_mode
+        );
+      CREATE INDEX idx_session_index_effective_status
+        ON session_index(effective_status, last_activity_at DESC, host_session_id DESC);
+      CREATE INDEX idx_session_index_execution_mode
+        ON session_index(execution_mode, last_activity_at DESC, host_session_id DESC);
+      CREATE INDEX idx_session_index_agent
+        ON session_index(agent_id, last_activity_at DESC, host_session_id DESC);
+      CREATE INDEX idx_session_index_project
+        ON session_index(project_id, last_activity_at DESC, host_session_id DESC);
+      CREATE INDEX idx_session_index_lane
+        ON session_index(lane_ref, last_activity_at DESC, host_session_id DESC);
+
+      CREATE TABLE session_index_backfill_evidence (
+        migration_id TEXT PRIMARY KEY,
+        row_count INTEGER NOT NULL,
+        changed_recency_count INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL
+      );
+
+      CREATE VIEW session_index_projection_source AS
+      SELECT
+        s.scope_ref,
+        s.lane_ref,
+        s.host_session_id,
+        s.generation,
+        CASE
+          WHEN substr(s.scope_ref, 1, 6) = 'agent:' THEN
+            CASE
+              WHEN instr(substr(s.scope_ref, 7), ':') = 0
+                   AND instr(substr(s.scope_ref, 7), '/') = 0
+                THEN substr(s.scope_ref, 7)
+              WHEN instr(substr(s.scope_ref, 7), ':') = 0
+                THEN substr(s.scope_ref, 7, instr(substr(s.scope_ref, 7), '/') - 1)
+              WHEN instr(substr(s.scope_ref, 7), '/') = 0
+                THEN substr(s.scope_ref, 7, instr(substr(s.scope_ref, 7), ':') - 1)
+              ELSE substr(
+                s.scope_ref,
+                7,
+                min(instr(substr(s.scope_ref, 7), ':'), instr(substr(s.scope_ref, 7), '/')) - 1
+              )
+            END
+          ELSE s.scope_ref
+        END AS agent_id,
+        CASE
+          WHEN instr(replace(s.scope_ref, '/project:', ':project:'), ':project:') = 0 THEN NULL
+          ELSE
+            CASE
+              WHEN instr(
+                substr(
+                  replace(s.scope_ref, '/project:', ':project:'),
+                  instr(replace(s.scope_ref, '/project:', ':project:'), ':project:') + 9
+                ),
+                ':'
+              ) = 0
+                THEN substr(
+                  replace(s.scope_ref, '/project:', ':project:'),
+                  instr(replace(s.scope_ref, '/project:', ':project:'), ':project:') + 9
+                )
+              ELSE substr(
+                substr(
+                  replace(s.scope_ref, '/project:', ':project:'),
+                  instr(replace(s.scope_ref, '/project:', ':project:'), ':project:') + 9
+                ),
+                1,
+                instr(
+                  substr(
+                    replace(s.scope_ref, '/project:', ':project:'),
+                    instr(replace(s.scope_ref, '/project:', ':project:'), ':project:') + 9
+                  ),
+                  ':'
+                ) - 1
+              )
+            END
+        END AS project_id,
+        s.created_at,
+        CASE
+          WHEN lower(s.status) LIKE '%stale%' THEN 'stale'
+          WHEN lower(s.status) LIKE '%inactive%'
+            OR lower(s.status) LIKE '%archived%'
+            OR lower(s.status) LIKE '%closed%'
+            OR lower(s.status) LIKE '%terminated%' THEN 'inactive'
+          WHEN lower(r.status) = 'detached' THEN 'detached'
+          WHEN lower(r.status) LIKE '%stale%' THEN 'stale'
+          WHEN r.runtime_id IS NULL
+            OR lower(r.status) IN ('dead', 'stopped', 'crashed', 'exited', 'terminated')
+            THEN 'inactive'
+          ELSE 'active'
+        END AS effective_status,
+        CASE
+          WHEN json_extract(s.last_applied_intent_json, '$.execution.preferredMode')
+            IN ('headless', 'interactive', 'nonInteractive')
+            THEN json_extract(s.last_applied_intent_json, '$.execution.preferredMode')
+          WHEN r.transport = 'headless' THEN 'headless'
+          WHEN r.supports_inflight_input = 1 THEN 'interactive'
+          ELSE 'nonInteractive'
+        END AS execution_mode,
+        COALESCE(
+          (
+            SELECT MAX(e.ts)
+            FROM hrc_events e
+            WHERE e.host_session_id = s.host_session_id
+              AND e.generation = s.generation
+          ),
+          r.last_activity_at,
+          s.updated_at
+        ) AS backfill_last_activity_at
+      FROM sessions s
+      INNER JOIN continuities c
+        ON c.scope_ref = s.scope_ref
+       AND c.lane_ref = s.lane_ref
+       AND c.active_host_session_id = s.host_session_id
+      LEFT JOIN runtimes r
+        ON r.runtime_id = (
+          SELECT lr.runtime_id
+          FROM runtimes lr
+          WHERE lr.host_session_id = s.host_session_id
+            AND lr.generation = s.generation
+          ORDER BY lr.updated_at DESC, lr.runtime_id DESC
+          LIMIT 1
+        );
+
+      INSERT INTO session_index (
+        scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+        created_at, effective_status, execution_mode, last_activity_at
+      )
+      SELECT
+        scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+        created_at, effective_status, execution_mode, backfill_last_activity_at
+      FROM session_index_projection_source;
+
+      INSERT INTO session_index_backfill_evidence (
+        migration_id, row_count, changed_recency_count, recorded_at
+      )
+      SELECT
+        '0041_session_index',
+        (SELECT COUNT(*) FROM session_index),
+        COUNT(*),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM sessions s
+      INNER JOIN continuities c ON c.active_host_session_id = s.host_session_id
+      WHERE (
+        SELECT MAX(e.ts)
+        FROM hrc_events e
+        WHERE e.host_session_id = s.host_session_id
+          AND e.generation = s.generation
+      ) IS NOT (
+        SELECT e.ts
+        FROM hrc_events e
+        WHERE e.host_session_id = s.host_session_id
+          AND e.generation = s.generation
+        ORDER BY e.hrc_seq DESC
+        LIMIT 1
+      );
+
+      CREATE TRIGGER session_index_continuity_insert
+      AFTER INSERT ON continuities
+      BEGIN
+        INSERT INTO session_index (
+          scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+          created_at, effective_status, execution_mode, last_activity_at
+        )
+        SELECT
+          scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+          created_at, effective_status, execution_mode, backfill_last_activity_at
+        FROM session_index_projection_source
+        WHERE scope_ref = NEW.scope_ref AND lane_ref = NEW.lane_ref
+        ON CONFLICT(scope_ref, lane_ref) DO UPDATE SET
+          host_session_id = excluded.host_session_id,
+          generation = excluded.generation,
+          agent_id = excluded.agent_id,
+          project_id = excluded.project_id,
+          created_at = excluded.created_at,
+          effective_status = excluded.effective_status,
+          execution_mode = excluded.execution_mode,
+          last_activity_at = excluded.last_activity_at;
+      END;
+
+      CREATE TRIGGER session_index_continuity_update
+      AFTER UPDATE OF active_host_session_id ON continuities
+      BEGIN
+        INSERT INTO session_index (
+          scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+          created_at, effective_status, execution_mode, last_activity_at
+        )
+        SELECT
+          scope_ref, lane_ref, host_session_id, generation, agent_id, project_id,
+          created_at, effective_status, execution_mode, backfill_last_activity_at
+        FROM session_index_projection_source
+        WHERE scope_ref = NEW.scope_ref AND lane_ref = NEW.lane_ref
+        ON CONFLICT(scope_ref, lane_ref) DO UPDATE SET
+          host_session_id = excluded.host_session_id,
+          generation = excluded.generation,
+          agent_id = excluded.agent_id,
+          project_id = excluded.project_id,
+          created_at = excluded.created_at,
+          effective_status = excluded.effective_status,
+          execution_mode = excluded.execution_mode,
+          last_activity_at = excluded.last_activity_at;
+      END;
+
+      CREATE TRIGGER session_index_session_derived_update
+      AFTER UPDATE OF status, last_applied_intent_json, continuation_json, parsed_scope_json
+      ON sessions
+      BEGIN
+        UPDATE session_index
+        SET
+          agent_id = (
+            SELECT agent_id FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          project_id = (
+            SELECT project_id FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          effective_status = (
+            SELECT effective_status FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          execution_mode = (
+            SELECT execution_mode FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          )
+        WHERE host_session_id = NEW.host_session_id;
+      END;
+
+      CREATE TRIGGER session_index_runtime_insert
+      AFTER INSERT ON runtimes
+      BEGIN
+        UPDATE session_index
+        SET
+          effective_status = (
+            SELECT effective_status FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          execution_mode = (
+            SELECT execution_mode FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          last_activity_at = max(last_activity_at, COALESCE(NEW.last_activity_at, last_activity_at))
+        WHERE host_session_id = NEW.host_session_id AND generation = NEW.generation;
+      END;
+
+      CREATE TRIGGER session_index_runtime_update
+      AFTER UPDATE ON runtimes
+      BEGIN
+        UPDATE session_index
+        SET
+          effective_status = COALESCE((
+            SELECT effective_status FROM session_index_projection_source
+            WHERE host_session_id = OLD.host_session_id
+          ), effective_status),
+          execution_mode = COALESCE((
+            SELECT execution_mode FROM session_index_projection_source
+            WHERE host_session_id = OLD.host_session_id
+          ), execution_mode)
+        WHERE host_session_id = OLD.host_session_id AND generation = OLD.generation;
+
+        UPDATE session_index
+        SET
+          effective_status = (
+            SELECT effective_status FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          execution_mode = (
+            SELECT execution_mode FROM session_index_projection_source
+            WHERE host_session_id = NEW.host_session_id
+          ),
+          last_activity_at = max(last_activity_at, COALESCE(NEW.last_activity_at, last_activity_at))
+        WHERE host_session_id = NEW.host_session_id AND generation = NEW.generation;
+      END;
+
+      CREATE TRIGGER session_index_runtime_delete
+      AFTER DELETE ON runtimes
+      BEGIN
+        UPDATE session_index
+        SET
+          effective_status = (
+            SELECT effective_status FROM session_index_projection_source
+            WHERE host_session_id = OLD.host_session_id
+          ),
+          execution_mode = (
+            SELECT execution_mode FROM session_index_projection_source
+            WHERE host_session_id = OLD.host_session_id
+          )
+        WHERE host_session_id = OLD.host_session_id AND generation = OLD.generation;
+      END;
+
+      CREATE TRIGGER session_index_hrc_event_insert
+      AFTER INSERT ON hrc_events
+      BEGIN
+        UPDATE session_index
+        SET last_activity_at = max(last_activity_at, NEW.ts)
+        WHERE host_session_id = NEW.host_session_id AND generation = NEW.generation;
+      END;
+
+      CREATE TRIGGER session_index_event_insert
+      AFTER INSERT ON events
+      BEGIN
+        UPDATE session_index
+        SET last_activity_at = max(last_activity_at, NEW.ts)
+        WHERE host_session_id = NEW.host_session_id AND generation = NEW.generation;
+      END;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1541,4 +1888,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   externalRegistrationMintMigration,
   externalRegistrationRetirementMigration,
   dmQueueCoalescingMigration,
+  sessionIndexMigration,
 ]

@@ -106,6 +106,17 @@ export type {
   ImportedHrcLifecycleEventAppendResult,
   ImportedHrcLifecycleEventInput,
 } from './repositories/event-repositories.js'
+export { SessionIndexRepository } from './session-index-repository.js'
+export type {
+  SessionIndexBackfillEvidence,
+  SessionIndexCursor,
+  SessionIndexEffectiveStatus,
+  SessionIndexExecutionMode,
+  SessionIndexFacetCounts,
+  SessionIndexFilters,
+  SessionIndexPage,
+  SessionIndexRecord,
+} from './session-index-repository.js'
 export type {
   BrokerInvocationEventAppendInput,
   BrokerInvocationEventAppendResult,

@@ -254,6 +254,10 @@ import {
   timestamp,
   unlinkIfExists,
 } from './server-util.js'
+import {
+  type SessionIndexHandlersMethods,
+  sessionIndexHandlersMethods,
+} from './session-index-handlers.js'
 import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
 import { toStatusSessionView } from './status-views.js'
@@ -625,6 +629,7 @@ interface HrcServerInstance
     BrokerHeadlessHandlersMethods,
     SteerClassDispatchMethods,
     SdkTurnHandlersMethods,
+    SessionIndexHandlersMethods,
     BridgeSurfaceHandlersMethods,
     SweepHandlersMethods,
     RuntimeIoHandlersMethods,
@@ -730,6 +735,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
     [exactRouteKey('GET', '/v1/sessions')]: (_request, url) => this.handleListSessions(url),
+    [exactRouteKey('GET', '/v1/sessions/page')]: (_request, url) => this.handleSessionPage(url),
+    [exactRouteKey('GET', '/v1/sessions/facets')]: (_request, url) => this.handleSessionFacets(url),
     [exactRouteKey('POST', '/v1/sessions/apply')]: (request) =>
       this.handleApplyAppSessions(request),
     [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) => this.handleListAppSessions(url),
@@ -993,6 +1000,16 @@ class HrcServerInstance implements HrcServer {
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
             accept: peerAcceptHandler,
+            sessionPage: ({ url }) => {
+              const localUrl = new URL(url)
+              localUrl.searchParams.set('nodes', 'local')
+              return this.handleSessionPage(localUrl)
+            },
+            sessionFacets: ({ url }) => {
+              const localUrl = new URL(url)
+              localUrl.searchParams.set('nodes', 'local')
+              return this.handleSessionFacetsLocal(localUrl)
+            },
             // T-07155 — urgent delivery is authorized PER PEER by this node, and
             // defaults to deny. The sending node is the only authenticated
             // identity on this path; `envelope.from` is caller-asserted display
@@ -2352,6 +2369,7 @@ Object.assign(
   brokerHeadlessHandlersMethods,
   steerClassDispatchMethods,
   sdkTurnHandlersMethods,
+  sessionIndexHandlersMethods,
   bridgeSurfaceHandlersMethods,
   sweepHandlersMethods,
   runtimeIoHandlersMethods,

@@ -4567,10 +4567,82 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "SessionEffectiveStatus",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionEffectiveStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionExecutionMode",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionExecutionMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionFacetsRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionFacetsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionFacetsResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionFacetsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "SessionFilter",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|SessionFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionPageFilters",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionPageFilters|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionPageItem",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionPageItem|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionPageRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionPageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionPageResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionPageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionPeerStatus",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionPeerStatus|type",
       "count": 1
     },
     {

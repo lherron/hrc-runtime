@@ -51,6 +51,7 @@ import type {
   RawBrokerSubscriber,
   TurnResponseFinalizer,
 } from './server-types.js'
+import type { SessionIndexHandlersMethods } from './session-index-handlers.js'
 import type { SteerClassDispatchMethods } from './steer-class-dispatch.js'
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
@@ -91,6 +92,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &
   SdkTurnHandlersMethods &
+  SessionIndexHandlersMethods &
   SelectorMessageHandlersMethods &
   SelectorWaitHandlersMethods &
   SweepHandlersMethods &

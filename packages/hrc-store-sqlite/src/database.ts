@@ -46,6 +46,7 @@ import {
 } from './repositories/session-repositories.js'
 import { SteerContributionRepository } from './repositories/steer-contribution-repository.js'
 import { RosterClaimRepository } from './roster-claim-repository.js'
+import { SessionIndexRepository } from './session-index-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
 
@@ -63,6 +64,7 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
+  sessionIndex: SessionIndexRepository
   sessionTaskClaimAuthorities: SessionTaskClaimAuthorityRepository
   rosterClaims: RosterClaimRepository
   externalRegistrationGrants: ExternalRegistrationGrantRepository
@@ -146,6 +148,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
+    sessionIndex: new SessionIndexRepository(sqlite),
     sessionTaskClaimAuthorities: new SessionTaskClaimAuthorityRepository(sqlite),
     rosterClaims: new RosterClaimRepository(sqlite),
     externalRegistrationGrants: new ExternalRegistrationGrantRepository(sqlite),

@@ -12,6 +12,8 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 | `POST` | `/v1/federation/history/checkpoint` | Confirm that an authenticated peer has no outstanding collective-history replication backlog. |
 | `POST` | `/v1/federation/history/query` | Query the authoritative collective message read model on `svc`. |
 | `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand; optionally include this node's filtered runtime projection. |
+| `GET` | `/v1/sessions/page` | Return one bounded node-local page from the maintained current-session index; federation callers force `nodes=local`. |
+| `GET` | `/v1/sessions/facets` | Return node-local self-excluding facet counts from the maintained current-session index. |
 
 All other paths return 404. In particular, `/v1/status`, `/v1/events`, and the
 rest of HRC's control API are never exposed by this TCP listener.
@@ -62,7 +64,8 @@ Each peer may expose two role-separated transport origins:
 - `endpoint` is the peer-protocol origin and is used only for
   `/v1/federation/establish`, `/v1/federation/accept`,
   `/v1/federation/locate`, `/v1/federation/history/*`, and
-  `/v1/federation/health`.
+  `/v1/federation/health`, plus the authenticated node-local session index
+  reads `/v1/sessions/page` and `/v1/sessions/facets`.
 - `registryEndpoint` is the optional binding-registry origin and is used only
   for `/v1/federation/registry/*`. When absent, registry clients fall back to
   `endpoint` for legacy or deliberately co-listened deployments.
@@ -118,6 +121,32 @@ that daemon has an earlier in-memory answer, the old rows remain visible with
 their original `answeredAt` timestamp so staleness cannot masquerade as live
 truth. `hrc doctor` and `hrc server status` request the same bounded health
 observations on demand.
+
+## Session index probes
+
+The Unix-socket `GET /v1/sessions/page` and `GET /v1/sessions/facets` routes
+own federation aggregation. They fan out concurrently over these authenticated
+peer routes, while each peer answers only from its local maintained
+`session_index` projection. A peer request is forced to `nodes=local`; it can
+never recursively fan out.
+
+Page order is `last_activity_at DESC, nodeId ASC, host_session_id DESC`. The
+opaque v5 cursor carries a filter fingerprint and one keyset component per node
+that has emitted a row. The aggregator advances only emitted components, so a
+row fetched beyond the global cut is served again on the next request. Exact
+node subsets are validated against the configured roster. A failed peer leaves
+its cursor frozen and makes the response incomplete, allowing recovery to
+deliver those rows late without losing them.
+
+Each page response also carries `eventHighWater`, keyed by node ID. Every node
+captures its own maximum lifecycle-event `hrc_seq` before reading its page rows;
+the aggregator omits unavailable peers instead of guessing a sequence. These
+node-local watch starting points are never merged or compared across nodes.
+
+Facet aggregation applies all filters to `total`; each facet dimension excludes
+its own filter. In particular, `byNodeId` queries every configured node even
+when the active node filter selects a subset, so the node menu remains
+reachable. Peer failures remain explicit in `complete` and `peerStatus`.
 
 `hrc target locate` first resolves authority locally. When the authoritative
 home is a configured remote node, the daemon makes exactly one authenticated

@@ -129,6 +129,8 @@ export type PeerProtocolRequestHandlerOptions = {
     request: PeerProtocolHealthRequest
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
   readonly accept?: PeerAcceptHandler | undefined
+  readonly sessionPage?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
+  readonly sessionFacets?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
   /**
    * T-07155 — urgent (preemptive) delivery. A DISTINCT handler behind a distinct
    * route so that routing and urgent admission are one operation: a peer without
@@ -313,6 +315,27 @@ async function handleCollectiveHistoryRequest(input: {
   return undefined
 }
 
+async function handleSessionIndexRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+}): Promise<Response | undefined> {
+  if (input.request.method !== 'GET') return undefined
+  if (input.url.pathname === '/v1/sessions/page') {
+    if (input.options.sessionPage === undefined) {
+      return refusal(404, 'peer_upgrade_required', { retryable: false })
+    }
+    return input.options.sessionPage({ url: input.url })
+  }
+  if (input.url.pathname === '/v1/sessions/facets') {
+    if (input.options.sessionFacets === undefined) {
+      return refusal(404, 'peer_upgrade_required', { retryable: false })
+    }
+    return input.options.sessionFacets({ url: input.url })
+  }
+  return undefined
+}
+
 export function createPeerProtocolRequestHandler(
   options: PeerProtocolRequestHandlerOptions
 ): (request: Request) => Promise<Response> {
@@ -340,6 +363,9 @@ export function createPeerProtocolRequestHandler(
           200
         )
       }
+
+      const sessionIndexResponse = await handleSessionIndexRequest({ request, url, options })
+      if (sessionIndexResponse !== undefined) return sessionIndexResponse
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/locate') {
         const body = await requestRecord(request)
