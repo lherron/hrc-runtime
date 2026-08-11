@@ -126,12 +126,46 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(result.stderr).toContain('no separate reply')
   })
 
-  it('G11: an ordinary DM still sends no whenBusy at all', async () => {
+  it('T-07214: a bare DM sends the best-effort default class', async () => {
     const client = createDmClient()
     await runCommand(() =>
       cmdDm(client.client, { as: 'human' }, ['cody@agent-spaces:T-07155', 'routine'])
     )
+    expect(client.requests[0]?.whenBusy).toBe('steer_else_queue')
+  })
+
+  it('T-07214: --queue restores the deferred floor (no whenBusy on the wire)', async () => {
+    const client = createDmClient()
+    await runCommand(() =>
+      cmdDm(client.client, { as: 'human', queue: true }, ['cody@agent-spaces:T-07155', 'routine'])
+    )
     expect(client.requests[0]?.whenBusy).toBeUndefined()
+  })
+
+  it('T-07214: --wait implies the deferred floor (a reply needs an own turn)', async () => {
+    const client = createDmClient()
+    await runCommand(() =>
+      cmdDm(client.client, { as: 'human', wait: 'response' }, [
+        'cody@agent-spaces:T-07155',
+        'routine',
+      ])
+    ).catch(() => undefined)
+    expect(client.requests[0]?.whenBusy).toBeUndefined()
+  })
+
+  it('T-07214: --steer with --queue is refused before anything is sent', async () => {
+    const client = createDmClient()
+    let caught: unknown
+    try {
+      await cmdDm(client.client, { as: 'human', steer: true, queue: true }, [
+        'cody@agent-spaces:T-07155',
+        'STOP',
+      ])
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(CliUsageError)
+    expect(client.requests).toHaveLength(0)
   })
 
   it('G11: --urgent with --wait is refused before anything is sent', async () => {
