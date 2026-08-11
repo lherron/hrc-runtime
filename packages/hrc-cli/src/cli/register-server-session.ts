@@ -106,7 +106,11 @@ export function registerServerSessionCommands(program: Command): void {
   server
     .command('restart')
     .description('restart the HRC daemon')
-    .option('--timeout-ms <n>', 'timeout in milliseconds')
+    .option('--timeout-ms <n>', 'stop/start actuation timeout in milliseconds (default 5000)')
+    .option(
+      '--proof-timeout-ms <n>',
+      'max time to prove a healthy new daemon process answers (default 30000)'
+    )
     .option('--reason <text>', 'operator reason (required from a primary-scoped runtime)')
     .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
     .option('--wait', 'drain in-flight runs, then prove a healthy new daemon process answers')
@@ -120,7 +124,13 @@ export function registerServerSessionCommands(program: Command): void {
     .option('--foreground', 'restart in foreground')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms', 'wait-timeout-ms', 'drain-timeout-ms', 'reason'],
+        strings: [
+          'timeout-ms',
+          'proof-timeout-ms',
+          'wait-timeout-ms',
+          'drain-timeout-ms',
+          'reason',
+        ],
         booleans: ['force', 'wait', 'drain', 'daemon', 'foreground'],
       })
       await cmdServerRestart(args)

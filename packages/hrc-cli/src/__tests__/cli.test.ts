@@ -1288,6 +1288,86 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
   })
 
   it.if(process.platform === 'darwin')(
+    'server restart --drain keeps proving after the actuation timeout while a new daemon starts slowly',
+    async () => {
+      const isolatedLabel = 'com.praesidium.hrc-T-07216-slow-start'
+      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
+      const isolatedEnv = cliEnv({
+        HRC_LAUNCHD_LABEL: isolatedLabel,
+        HRC_SESSION_REF: `${primaryScope}/lane:main`,
+        ASP_SCOPE_REF: primaryScope,
+        ASP_TASK_ID: 'primary',
+        ASP_DEFAULT_TASK: 'primary',
+      })
+      try {
+        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
+        expect(startResult.exitCode).toBe(0)
+
+        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        const beforeStartedAt = before.release?.processStartedAt as string | undefined
+        expect(beforeStartedAt).toBeString()
+
+        const shimDir = join(tmpDir, 'launchctl-slow-start')
+        await mkdir(shimDir, { recursive: true })
+        await writeFile(
+          join(shimDir, 'launchctl'),
+          `#!/bin/sh
+if [ "$1" = "print" ]; then
+  exit 0
+fi
+if [ "$1" = "kickstart" ]; then
+  (
+    sleep 0.25
+    if [ -f "$HRC_RUNTIME_DIR/server.pid" ]; then
+      old_pid="$(sed -n '1p' "$HRC_RUNTIME_DIR/server.pid")"
+      kill "$old_pid" 2>/dev/null || true
+      while kill -0 "$old_pid" 2>/dev/null; do sleep 0.01; done
+    fi
+    exec "$HRC_TEST_BUN_PATH" "$HRC_TEST_CLI_PATH" server serve
+  ) </dev/null >>"$HRC_RUNTIME_DIR/slow-launch.log" 2>&1 &
+  exit 0
+fi
+exit 1
+`
+        )
+        await chmod(join(shimDir, 'launchctl'), 0o755)
+
+        const restartResult = await runCli(
+          [
+            'server',
+            'restart',
+            '--drain',
+            '--timeout-ms',
+            '100',
+            '--reason',
+            'T-07216 simulated slow-start proof',
+          ],
+          {
+            ...isolatedEnv,
+            HRC_TEST_BUN_PATH: process.execPath,
+            HRC_TEST_CLI_PATH: CLI_PATH,
+            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          }
+        )
+        expect(restartResult.exitCode).toBe(0)
+        expect(restartResult.stderr).toContain('restart proven')
+
+        const after = await waitForServerStatus(
+          (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
+          isolatedEnv
+        )
+        expect(after.release?.processStartedAt).toBeString()
+        expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
+      } finally {
+        await runCli(
+          ['server', 'stop', '--force', '--reason', 'T-07216 isolated test cleanup'],
+          isolatedEnv
+        ).catch(() => undefined)
+      }
+    }
+  )
+
+  it.if(process.platform === 'darwin')(
     'server restart --wait rejects a launchctl success that did not replace the process',
     async () => {
       const isolatedLabel = 'com.praesidium.hrc-T-07157-noop'
@@ -1317,7 +1397,7 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
             'server',
             'restart',
             '--wait',
-            '--timeout-ms',
+            '--proof-timeout-ms',
             '100',
             '--reason',
             'T-07157 launchctl no-op proof',
@@ -1329,6 +1409,10 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
         )
         expect(restartResult.exitCode).toBe(1)
         expect(restartResult.stderr).toContain('[restart_unproven]')
+        expect(restartResult.stderr).toContain(`before pid=${before.pid}`)
+        expect(restartResult.stderr).toContain(`observed pid=${before.pid}`)
+        expect(restartResult.stderr).toContain('old pid alive=yes')
+        expect(restartResult.stderr).toContain('socket responsive=yes')
 
         const after = await waitForServerStatus((value) => value.running === true, isolatedEnv)
         expect(after.release?.processStartedAt).toBe(beforeStartedAt)

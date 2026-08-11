@@ -1,6 +1,7 @@
 export type { ServerPaths } from './cli-runtime/server-paths.js'
 export {
   execProcess,
+  isLiveProcess,
   resolveServerPaths,
   writeServerProcessLog,
 } from './cli-runtime/server-paths.js'

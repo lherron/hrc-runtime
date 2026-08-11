@@ -14,6 +14,7 @@ import {
   formatInFlightWork,
   formatServerRuntimeStatus,
   formatTmuxStatus,
+  isLiveProcess,
   launchctlKickstart,
   listInFlightWork,
   resolveOtelPreferredPortFromEnv,
@@ -30,6 +31,8 @@ import { resolveSessionArg } from '../selector-resolve.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
+
+const DEFAULT_RESTART_PROOF_TIMEOUT_MS = 30_000
 
 /**
  * Run the HRC server in the foreground without probing launchd. Intended
@@ -175,7 +178,7 @@ async function requireRestartProof(
 
   const deadline = Date.now() + timeoutMs
   let observed = before
-  do {
+  while (true) {
     observed = await collectServerRuntimeStatus({ includeTmux: false })
     const observedStartedAt = processStartedAt(observed)
     if (
@@ -188,11 +191,20 @@ async function requireRestartProof(
       )
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  } while (Date.now() < deadline)
+
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    const elapsedMs = timeoutMs - remainingMs
+    const pollIntervalMs = elapsedMs < 1_000 ? 50 : elapsedMs < 5_000 ? 100 : 250
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)))
+  }
+
+  const beforePid = before.pid
+  const oldPidAlive = beforePid === undefined ? 'unknown' : isLiveProcess(beforePid) ? 'yes' : 'no'
+  const apiHealth = observed.apiHealth.ok ? 'healthy' : observed.apiHealth.error
 
   process.stderr.write(
-    `hrc: [restart_unproven] restart actuation returned, but no healthy new process answered within ${timeoutMs}ms (before processStartedAt=${beforeStartedAt ?? '(not running)'}, observed processStartedAt=${processStartedAt(observed) ?? '(unavailable)'}, observed status=${observed.status})\n`
+    `hrc: [restart_unproven] restart actuation returned, but no healthy new process answered within ${timeoutMs}ms (before processStartedAt=${beforeStartedAt ?? '(not running)'}, before pid=${beforePid ?? '(none)'}, observed processStartedAt=${processStartedAt(observed) ?? '(unavailable)'}, observed pid=${observed.pid ?? '(none)'}, old pid alive=${oldPidAlive}, observed pid alive=${observed.pidAlive ? 'yes' : 'no'}, socket responsive=${observed.socketResponsive ? 'yes' : 'no'}, api health=${apiHealth}, observed status=${observed.status})\n`
   )
   throw new CliStatusExit(1)
 }
@@ -303,6 +315,10 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
   const attribution = requireServerLifecycleAuthorization(args)
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
+  const proofTimeoutMs = parseIntegerFlag(args, '--proof-timeout-ms', {
+    defaultValue: DEFAULT_RESTART_PROOF_TIMEOUT_MS,
+    min: 1,
+  })
   const drain = hasFlag(args, '--drain')
   if (drain && hasFlag(args, '--wait')) {
     fatal('--drain and --wait are mutually exclusive; --drain owns the closed-admission wait')
@@ -320,12 +336,13 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
       await gateOnInFlightWork(args, 'restart')
     }
 
-    const before = hasFlag(args, '--wait')
-      ? await collectServerRuntimeStatus({ includeTmux: false })
-      : undefined
+    const before =
+      hasFlag(args, '--wait') || drain
+        ? await collectServerRuntimeStatus({ includeTmux: false })
+        : undefined
 
     if (before?.running && processStartedAt(before) === undefined) {
-      await requireRestartProof(before, timeoutMs)
+      await requireRestartProof(before, proofTimeoutMs)
     }
 
     writeShutdownIntent('restart', attribution)
@@ -334,7 +351,7 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
     if (owner) {
       restartInitiated = true
       await launchctlKickstart(owner, { kill: true })
-      if (before !== undefined) await requireRestartProof(before, timeoutMs)
+      if (before !== undefined) await requireRestartProof(before, proofTimeoutMs)
       process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
       return
     }
@@ -343,7 +360,7 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
     await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
     if (mode === 'daemon') {
       await daemonizeAndWait(timeoutMs)
-      if (before !== undefined) await requireRestartProof(before, timeoutMs)
+      if (before !== undefined) await requireRestartProof(before, proofTimeoutMs)
       process.stderr.write('hrc: daemon restarted\n')
       return
     }
