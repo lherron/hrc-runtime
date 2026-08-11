@@ -721,6 +721,15 @@ export async function handleSemanticTurnHandoff(
   request: Request
 ): Promise<Response> {
   const body = parseSemanticDmRequest(await parseJsonBody(request))
+  // T-07214: the best-effort class is a /v1/messages/dm surface only — the
+  // own-turn handoff primitive stays unambiguous.
+  if (body.whenBusy === 'steer_else_queue') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'steer_else_queue is only supported by /v1/messages/dm',
+      { field: 'whenBusy', route: 'semantic-turn-handoff' }
+    )
+  }
   if (body.to.kind !== 'session') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -1332,6 +1341,21 @@ export async function handleSemanticDm(
       await assertLocalTargetNotRetired()
     }
     if (routingError !== undefined) throw routingError
+    // T-07214 (spec r5): STRICT steer to a remote-homed scope refuses typed
+    // BEFORE any message, envelope, ACK, or outbox entry — urgent admission
+    // cannot be proven over store-and-forward delivery, and the strict class
+    // may never be acknowledged without admission proof. The best-effort
+    // class rides ordinary carriage and floors honestly instead.
+    if (remoteTarget && body.whenBusy === 'steer') {
+      throw new HrcDomainError(
+        HrcErrorCode.URGENT_DELIVERY_UNROUTABLE,
+        "the target's scope is homed on a peer node; urgent admission cannot be proven over store-and-forward delivery. Resend without --steer for best-effort delivery, or address a locally-homed scope",
+        {
+          sessionRef: body.to.kind === 'session' ? body.to.sessionRef : undefined,
+          route: 'semantic-dm',
+        }
+      )
+    }
   }
 
   const respondTo = body.respondTo ?? body.from
@@ -1803,6 +1827,15 @@ export async function deliverFederationAcceptedMessage(
           delivery.runtimeIntent,
           this.runtimeIntentLocalizationOptions
         )
+  // T-07214: the tolerant best-effort class is honoured only for origin peers
+  // this node has authorized for urgent delivery (the same default-deny gate
+  // accept-urgent consults). Unauthorized or absent -> the ordinary floor.
+  const federatedWhenBusy =
+    delivery?.whenBusy === 'steer_else_queue' &&
+    originNodeId !== undefined &&
+    this.isPeerUrgentDeliveryAuthorized?.(originNodeId) === true
+      ? ('steer_else_queue' as const)
+      : undefined
   const body: SemanticDmRequest = {
     from: envelope.from,
     to: envelope.to,
@@ -1810,6 +1843,7 @@ export async function deliverFederationAcceptedMessage(
     ...(envelope.replyToMessageId === undefined
       ? {}
       : { replyToMessageId: envelope.replyToMessageId }),
+    ...(federatedWhenBusy === undefined ? {} : { whenBusy: federatedWhenBusy }),
     ...(runtimeIntent === undefined ? {} : { runtimeIntent }),
     ...(delivery?.createIfMissing === undefined
       ? {}
@@ -2023,21 +2057,38 @@ export async function deliverPersistedSemanticDm(
 
       const busyHeadlessRuntime = findBusyHeadlessRuntimeForSession(this.db, session.hostSessionId)
       if (busyHeadlessRuntime) {
-        if (body.whenBusy === 'steer') {
+        let bestEffortFloored = false
+        if (body.whenBusy === 'steer' || body.whenBusy === 'steer_else_queue') {
           // T-07191: an urgent DM against a busy target either joins the
           // ACTIVE turn or fails typed. It must never fall through to the
           // deferred-queue branch below — that is the silent downgrade the
-          // whenBusy contract forbids.
-          delivery = await this.steerBusyHeadlessSemanticDm(
+          // whenBusy contract forbids. T-07214: the best-effort class may
+          // fall to the floor below, but ONLY on provably non-actuated
+          // outcomes (the flow returns a floor signal instead of throwing).
+          const steered = await this.steerBusyHeadlessSemanticDm(
             session,
             record,
             busyHeadlessRuntime,
             body
           )
+          if (steered === 'floor') {
+            bestEffortFloored = true
+          } else {
+            delivery = steered
+          }
+        }
+        if (delivery !== undefined) {
+          // steered successfully; nothing further to do on this branch
         } else if (
           busyHeadlessRuntime.controllerKind !== 'harness-broker' ||
           busyHeadlessRuntime.activeInvocationId === undefined
         ) {
+          if (bestEffortFloored) {
+            writeServerLog('INFO', 'semantic_dm.best_effort_floor', {
+              messageId: record.messageId,
+              floor: 'legacy_busy_reject',
+            })
+          }
           // A legacy headless process has no durable broker endpoint HRC can
           // target after the active turn. Fail honestly instead of accepting
           // an input whose eventual delivery cannot be guaranteed.
@@ -2177,7 +2228,7 @@ export async function steerBusyHeadlessSemanticDm(
   record: HrcMessageRecord,
   runtime: HrcRuntimeSnapshot,
   body: SemanticDmRequest
-): Promise<HrcDeliveryOutcome> {
+): Promise<HrcDeliveryOutcome | 'floor'> {
   const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
   try {
     const payload = formatDmPayload(
@@ -2190,10 +2241,15 @@ export async function steerBusyHeadlessSemanticDm(
     )
     // T-07203: the shared steer-class flow owns capability gating, the
     // reject-probe, the write-ahead ledger, and the disposition mapping.
+    // T-07214: in best-effort mode the flow returns 'floor' on provably
+    // non-actuated failures instead of throwing; the caller delivers the
+    // route's ordinary floor.
     const steerResponse = await this.executeSteerClassDispatch(session, runtime, payload, {
       route: 'headless',
       responseFormat: body.responseFormat,
+      bestEffort: body.whenBusy === 'steer_else_queue',
     })
+    if (steerResponse === 'floor') return 'floor'
     const steerBody = (await steerResponse.json()) as {
       runId: string
       delivery?: HrcDeliveryOutcome | undefined
@@ -2278,7 +2334,7 @@ export async function executeSemanticTurn(
     from: HrcMessageAddress
     to: HrcMessageAddress
     responseFormat?: HrcTurnResponseFormat | undefined
-    whenBusy?: 'reject' | 'steer' | undefined
+    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   },
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress,
@@ -2415,7 +2471,7 @@ export async function executeSemanticTurn(
     // typed refusal, never be laundered into an exit-success response whose
     // only trace of failure is the persisted execution record.
     if (
-      body.whenBusy === 'steer' &&
+      (body.whenBusy === 'steer' || body.whenBusy === 'steer_else_queue') &&
       err instanceof HrcDomainError &&
       (err.code === HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED ||
         err.code === HrcErrorCode.URGENT_DELIVERY_RACE_LOST ||

@@ -203,7 +203,7 @@ export async function dispatchQueuedHeadlessTurnInput(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | undefined
+    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
@@ -752,7 +752,7 @@ export async function executeHeadlessBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | undefined
+    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
@@ -793,10 +793,16 @@ export async function executeHeadlessBrokerInputTurn(
   // regardless of HRC's busy guess — the broker's live state decides. A
   // preaccepted run is the one exception: it is a legacy durably-queued input
   // whose deferred delivery already happened; it drains as a normal dispatch.
-  if (options.whenBusy === 'steer' && !preacceptedRun) {
-    return await this.executeSteerClassDispatch(session, runtime, prompt, {
+  // T-07214: the best-effort class shares the flow; a 'floor' result falls
+  // through to the ordinary dispatch below (the route's deferred floor).
+  if (
+    (options.whenBusy === 'steer' || options.whenBusy === 'steer_else_queue') &&
+    !preacceptedRun
+  ) {
+    const steered = await this.executeSteerClassDispatch(session, runtime, prompt, {
       route: 'headless',
       responseFormat: options.responseFormat,
+      bestEffort: options.whenBusy === 'steer_else_queue',
       ...(options.dispatchIdempotencyKey !== undefined
         ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
         : {}),
@@ -804,6 +810,7 @@ export async function executeHeadlessBrokerInputTurn(
         ? { dispatchRequestHash: options.dispatchRequestHash }
         : {}),
     })
+    if (steered !== 'floor') return steered
   }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
   const inputId = (preacceptedRun?.dispatchedInputId ??

@@ -136,6 +136,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly tmux: ServerTmuxManager
   readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
+  readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly federationRegistryClient: BindingRegistryClient | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Test/embedded seam for fixture-owned accepting-node placement inputs. */

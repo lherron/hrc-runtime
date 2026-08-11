@@ -318,7 +318,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | undefined
+    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
@@ -629,7 +629,7 @@ export async function executeInteractiveBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | undefined
+    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
@@ -662,10 +662,13 @@ export async function executeInteractiveBrokerInputTurn(
   // T-07203 (spec r7): steer-class dispatches run the shared two-phase flow —
   // capability gate, reject-probe, write-ahead ledger, honest disposition map.
   // The interactive route reports presented_to_live_harness, never admission.
-  if (options.whenBusy === 'steer') {
-    return await this.executeSteerClassDispatch(session, runtime, prompt, {
+  // T-07214: the best-effort class shares the flow; a 'floor' result falls
+  // through to the ordinary dispatch below (broker queue + honest warning).
+  if (options.whenBusy === 'steer' || options.whenBusy === 'steer_else_queue') {
+    const steered = await this.executeSteerClassDispatch(session, runtime, prompt, {
       route: 'interactive',
       responseFormat: options.responseFormat,
+      bestEffort: options.whenBusy === 'steer_else_queue',
       ...(options.dispatchIdempotencyKey !== undefined
         ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
         : {}),
@@ -673,6 +676,7 @@ export async function executeInteractiveBrokerInputTurn(
         ? { dispatchRequestHash: options.dispatchRequestHash }
         : {}),
     })
+    if (steered !== 'floor') return steered
   }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
   const inputId = `input-${randomUUID()}` as InvocationInput['inputId']

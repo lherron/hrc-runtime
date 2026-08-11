@@ -87,13 +87,21 @@ export async function executeSteerClassDispatch(
     responseFormat?: HrcTurnResponseFormat | undefined
     dispatchIdempotencyKey?: string | undefined
     dispatchRequestHash?: string | undefined
+    /**
+     * T-07214 best-effort (steer_else_queue): provably NON-actuated failures
+     * return the 'floor' sentinel (caller delivers the route's ordinary
+     * floor) instead of throwing typed. AMBIGUOUS still throws — a possibly
+     * actuated order is never delivered a second time by any class.
+     */
+    bestEffort?: boolean | undefined
   }
-): Promise<Response> {
+): Promise<Response | 'floor'> {
   const route = options.route
   const transport: 'headless' | 'tmux' = route === 'headless' ? 'headless' : 'tmux'
   const invocationId = runtime.activeInvocationId
 
   if (runtime.controllerKind !== 'harness-broker' || invocationId === undefined) {
+    if (options.bestEffort === true) return 'floor'
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
       'the target runtime has no durable broker endpoint that can be steered',
@@ -128,6 +136,7 @@ export async function executeSteerClassDispatch(
   // (idle or busy) — a steer request to a non-steer-capable target fails typed
   // with zero broker calls; the sender resends without --steer.
   if (!isBrokerRuntimeSteerCapable(this.db, runtime)) {
+    if (options.bestEffort === true) return 'floor'
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
       'the broker serving this runtime cannot accept urgent delivery',
@@ -199,6 +208,7 @@ export async function executeSteerClassDispatch(
     provisionalRunId,
     inputId,
     contributionId,
+    bestEffort: options.bestEffort === true,
   })
 
   if (knownActiveRun !== null) {
@@ -242,6 +252,9 @@ export async function executeSteerClassDispatch(
     }
     // Double race: a turn began and ended entirely inside the probe window.
     // Non-actuated, honest, retryable by the sender.
+    if (options.bestEffort === true) {
+      return flow.floorFallback('race_lost')
+    }
     flow.sealFailure('race_lost', HrcErrorCode.URGENT_DELIVERY_RACE_LOST)
     throw new HrcDomainError(
       HrcErrorCode.URGENT_DELIVERY_RACE_LOST,
@@ -271,6 +284,7 @@ class SteerClassFlow {
       provisionalRunId: string
       inputId: string
       contributionId: string
+      bestEffort: boolean
     }
   ) {}
 
@@ -283,7 +297,7 @@ class SteerClassFlow {
     }
   }
 
-  async steerAgainst(activeRun: HrcRunRecord): Promise<Response> {
+  async steerAgainst(activeRun: HrcRunRecord): Promise<Response | 'floor'> {
     const { server, session, runtime, ctx } = this
     const now = timestamp()
 
@@ -443,11 +457,15 @@ class SteerClassFlow {
     })
   }
 
-  /** Map a broker failure per r7 and throw typed; UNSUPPORTED is allowlisted. */
+  /**
+   * Map a broker failure per r7 and throw typed; UNSUPPORTED is allowlisted.
+   * T-07214 best-effort: provably non-actuated states fall to the floor
+   * instead of throwing; AMBIGUOUS always throws.
+   */
   failTyped(
     result: BrokerDispatchResult,
     context: { phase: 'probe' | 'steer'; activeRunId?: string | undefined }
-  ): never {
+  ): 'floor' | never {
     const { runtime, ctx } = this
     const cause = result.ok
       ? (result.response.reason ?? result.response.disposition ?? 'rejected')
@@ -478,6 +496,12 @@ class SteerClassFlow {
       state = 'ambiguous'
     }
 
+    // Non-actuated states may floor in best-effort mode; race_lost is
+    // non-actuated by construction (turn-identity refusal), unsupported is the
+    // allowlist. Ambiguous never floors.
+    if (this.ctx.bestEffort && (state === 'unsupported' || state === 'race_lost')) {
+      return this.floorFallback(state)
+    }
     this.sealFailure(state, code)
     const message =
       state === 'ambiguous'
@@ -493,6 +517,35 @@ class SteerClassFlow {
       ...(context.activeRunId !== undefined ? { runId: context.activeRunId } : {}),
       cause,
     })
+  }
+
+  /**
+   * T-07214: best-effort fallback — the ledger row (already inserted before
+   * the first actuating call) is sealed as the audit-only 'queued_fallback'
+   * state recording the non-actuated attempt, the provisional row is
+   * terminalized, and the caller delivers the route's ordinary floor.
+   */
+  floorFallback(attempt: 'unsupported' | 'race_lost'): 'floor' {
+    const now = timestamp()
+    this.server.db.steerContributions.seal(this.ctx.contributionId, {
+      state: 'queued_fallback',
+      outcome: { attempt },
+      now,
+    })
+    this.server.db.runs.markCompleted(this.ctx.provisionalRunId, {
+      status: 'cancelled',
+      completedAt: now,
+      updatedAt: now,
+      errorMessage: 'superseded_by_floor_fallback',
+    })
+    writeServerLog('INFO', 'steer_class.best_effort_floor', {
+      runtimeId: this.runtime.runtimeId,
+      invocationId: this.ctx.invocationId,
+      contributionId: this.ctx.contributionId,
+      route: this.ctx.route,
+      attempt,
+    })
+    return 'floor'
   }
 
   sealFailure(state: 'unsupported' | 'race_lost' | 'ambiguous', code: HrcErrorCode): void {

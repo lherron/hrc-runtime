@@ -127,8 +127,14 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
   if (!validSemanticTurnHandoff) {
     throw new InvalidFederationEnvelopeError()
   }
+  // T-07214 — TOLERANT best-effort delivery class: any value other than the
+  // known one is dropped (the ordinary floor is legitimate delivery for a
+  // best-effort class). Contrast with `urgent`, which is strict-validated.
+  const whenBusy =
+    value['whenBusy'] === 'steer_else_queue' ? ('steer_else_queue' as const) : undefined
   return {
     ...(runtimeIntent === undefined ? {} : { runtimeIntent: runtimeIntent as HrcRuntimeIntent }),
+    ...(whenBusy === undefined ? {} : { whenBusy }),
     ...(createIfMissing === undefined ? {} : { createIfMissing }),
     ...(parsedScopeJson === undefined ? {} : { parsedScopeJson }),
     ...(value['respondTo'] === undefined ? {} : { respondTo: parseAddress(value['respondTo']) }),

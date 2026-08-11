@@ -4,12 +4,25 @@ Executable validation runbook for `hrcchat dm` delivery semantics against a
 BUSY target. Validates both delivery classes on both broker routes
 (T-07155 / T-07191 / T-07203, spec r7 daedalus-approved):
 
-| | Queued (default) | Steer (`--steer`; `--urgent` is a deprecated alias) |
-|---|---|---|
-| **Headless broker** (codex-class) | defers until turn end; warning `queued_behind_busy_turn` | `admitted_into_active_turn` (admission proof) or typed failure |
-| **Interactive broker** (claude-class) | queued to live harness; warning `queued_to_live_harness` (may surface mid-turn) | `presented_to_live_harness` (pane-write proof ONLY) or typed failure |
+| | Best-effort steer (DEFAULT, bare `hrcchat dm`) | Deferred (`--queue`, or implied by `--wait`) | Strict steer (`--steer`; `--urgent` deprecated alias) |
+|---|---|---|---|
+| **Headless broker** (codex-class) | steer when steer-capable; else the deferred floor | defers until turn end; warning `queued_behind_busy_turn` | `admitted_into_active_turn` (admission proof) or typed failure |
+| **Interactive broker** (claude-class) | steer when steer-capable; else the deferred floor | queued to live harness; warning `queued_to_live_harness` (may surface mid-turn) | `presented_to_live_harness` (pane-write proof ONLY) or typed failure |
+| **Busy legacy headless** (no broker endpoint) | existing typed busy rejection (identical to a bare DM before T-07214) | same typed rejection | typed `urgent_delivery_unsupported` |
 
-Contract under test: a steer reports an HONEST outcome — one of the three
+Default-class rules (T-07214, spec r5 daedalus-approved): the bare-dm class is
+`steer_else_queue` — it adds a steer attempt ON TOP of exactly the old floor
+and invents no delivery path. It falls to the floor ONLY on provably
+NON-actuated outcomes (capability gate, allowlisted refusals, double-race);
+AMBIGUOUS stays a typed 503 so no possibly-actuated order is ever delivered
+twice (`queued_fallback` audit rows record attempt-to-floor transitions).
+Federation: strict `--steer` to a REMOTE-homed scope refuses typed
+(`urgent_delivery_unroutable`) — admission cannot be proven over
+store-and-forward; the default class rides the envelope tolerantly and is
+honoured at the destination only for peers holding `allowUrgentDelivery`
+(default-deny), flooring honestly otherwise (including downlevel peers).
+
+Contract under test: every class reports an HONEST outcome — one of the three
 success shapes below, each claiming exactly what its actuator proves — or
 fails typed. It is NEVER silently downgraded to deferred delivery, and no
 possibly-actuated order is ever reported as never-landed.
@@ -61,10 +74,11 @@ possibly-actuated order is ever reported as never-landed.
    hrcchat dm <target> --steer - <<< 'STEER CHECK: acknowledge now, mid-count, with the number reached.'
    ```
 
-4. **Queued fence** — immediately after, while still busy:
+4. **Queued fence** — immediately after, while still busy (`--queue` is
+   REQUIRED here since T-07214: a bare dm best-effort-steers by default):
 
    ```
-   hrcchat dm <target> - <<< 'Fence: this one should queue.'
+   hrcchat dm <target> --queue - <<< 'Fence: this one should queue.'
    ```
 
 ## Expected results — steer

@@ -88,6 +88,15 @@ export type FederationMessageDelivery = {
    * belt-and-braces for peers that DO have the route but an older parse.
    */
   readonly urgent?: { readonly version: 1 } | undefined
+  /**
+   * T-07214 — tolerant best-effort delivery class. Deliberately TOLERANT
+   * (unlike `urgent`): a downlevel peer that ignores it delivers the ordinary
+   * floor, which is legitimate delivery for a best-effort class. Only
+   * 'steer_else_queue' ever rides ordinary carriage — the strict class is
+   * refused at the origin for remote targets and never reaches an envelope.
+   * Destination ingress honours it only for peers holding allowUrgentDelivery.
+   */
+  readonly whenBusy?: 'steer_else_queue' | undefined
 }
 
 export type FederationSemanticTurnIdentity = {

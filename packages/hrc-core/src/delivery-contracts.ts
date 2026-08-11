@@ -119,6 +119,10 @@ export type HrcSteerContributionState =
   // the recorded activeRunId IS that fresh run. Replay reconstructs a started
   // dispatch instead of re-actuating.
   | 'started_fresh'
+  // T-07214: a best-effort (steer_else_queue) attempt failed provably
+  // NON-actuated and the delivery fell to the route's ordinary floor. Keyless,
+  // audit-only: records the attempt-to-floor transition; never replayed.
+  | 'queued_fallback'
   | 'unsupported'
   | 'race_lost'
   | 'ambiguous'

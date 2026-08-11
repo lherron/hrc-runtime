@@ -295,7 +295,7 @@ export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapsho
 export function assertBrokerRuntimeReusableAdmission(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  options: { whenBusy?: 'reject' | 'steer' | undefined } = {}
+  options: { whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined } = {}
 ): void {
   if (isCorruptAwaitingRuntime(runtime)) {
     assertRuntimeNotBusy(db, runtime)

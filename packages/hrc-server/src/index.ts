@@ -659,6 +659,12 @@ class HrcServerInstance implements HrcServer {
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  /**
+   * T-07214 — per-peer remote-preemption authority, the same default-deny
+   * predicate the accept-urgent fence consults, exposed so federation ingress
+   * can gate the tolerant best-effort delivery class with one meaning.
+   */
+  readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Last successful peer answers are isolated by node and exact runtime filter. */
   readonly peerRuntimeProjectionCache = new Map<
@@ -1040,6 +1046,15 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
+    this.isPeerUrgentDeliveryAuthorized =
+      federationConfig === undefined
+        ? undefined
+        : (nodeId: string) => {
+            const peer = [...federationConfig.peers.values()].find(
+              (candidate) => String(candidate.nodeId) === String(nodeId)
+            )
+            return peer?.allowUrgentDelivery === true
+          }
     try {
       this.federationOriginOutbox =
         federationConfig === undefined

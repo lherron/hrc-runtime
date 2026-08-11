@@ -487,3 +487,125 @@ describe('T-07203 steer-class replay authority (r5)', () => {
     expect(calls).toHaveLength(1)
   })
 })
+
+/**
+ * T-07214 — steer_else_queue: the best-effort DEFAULT delivery class.
+ * Fallback-floor identity: only the steer-capable-busy cells differ from a
+ * bare DM; every other cell is byte-identical to the deferred floor, and
+ * AMBIGUOUS never falls back (no possibly-actuated order delivered twice).
+ */
+describe('T-07214 best-effort default class (interactive route)', () => {
+  const sendDefault = async (seeded: Seeded, body: string) =>
+    await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body,
+      runtimeIntent: interactiveIntent,
+      whenBusy: 'steer_else_queue',
+    })
+
+  it('steers a busy steer-capable target identically to strict steer', async () => {
+    const seeded = await seedInteractive('be-steer', 'busy')
+    const broker = installBroker()
+
+    const response = await sendDefault(seeded, 'default-class order')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as DmBody
+    expect(body.delivery).toMatchObject({
+      code: 'presented_to_live_harness',
+      presentedDuringRunId: seeded.activeRunId as string,
+    })
+    expect(body.warnings).toBeUndefined()
+    expect(broker.calls[0]?.policy?.whenBusy).toBe('steer')
+  })
+
+  it('floors to the ordinary queue against a busy NON-steer-capable target', async () => {
+    const seeded = await seedInteractive('be-floor', 'busy', { steerCapable: false })
+    const broker = installBroker(() => ({
+      ok: true,
+      response: { accepted: true, disposition: 'queued' },
+    }))
+
+    const response = await sendDefault(seeded, 'default-class routine')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as DmBody
+    // Byte-identical floor: honest route warning, no typed error, no steer call.
+    expect(body.warnings).toEqual([
+      {
+        code: 'queued_to_live_harness',
+        delivery: 'deferred',
+        message:
+          'target is busy; input queued to the live harness and may surface mid-turn or after the active turn completes',
+      },
+    ])
+    expect(body.delivery).toBeUndefined()
+    expect(broker.calls.every((call) => call.policy?.whenBusy !== 'steer')).toBe(true)
+  })
+
+  it('double-race floors with a queued_fallback audit seal, never a typed error', async () => {
+    const seeded = await seedInteractive('be-race', 'ready')
+    const broker = installBroker((_request, callIndex) =>
+      callIndex === 1
+        ? {
+            ok: false,
+            error: { code: 'broker_input_failed', message: 'input rejected: busy_rejected' },
+          }
+        : { ok: true, response: { accepted: true, disposition: 'queued' } }
+    )
+
+    const response = await sendDefault(seeded, 'default-class raced')
+    expect(response.status).toBe(200)
+    expect(broker.calls[0]?.policy?.whenBusy).toBe('reject')
+    // The write-ahead row must be sealed (queued_fallback), never left open.
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(db.steerContributions.listAttempting()).toHaveLength(0)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('AMBIGUOUS never falls back: a possibly-actuated default-class order fails typed', async () => {
+    const seeded = await seedInteractive('be-ambig', 'busy')
+    const broker = installBroker(() => ({
+      ok: true,
+      response: {
+        accepted: false,
+        disposition: 'rejected',
+        reason: 'Error: tmux send-keys Enter failed after paste',
+      },
+    }))
+
+    const response = await sendDefault(seeded, 'default-class possibly-actuated')
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('urgent_delivery_ambiguous')
+    // Exactly one steer attempt; the floor was NOT taken.
+    expect(broker.calls).toHaveLength(1)
+  })
+
+  it('is rejected typed on the turn-handoff surface', async () => {
+    const seeded = await seedInteractive('be-handoff', 'ready')
+    const response = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body: 'nope',
+      runtimeIntent: interactiveIntent,
+      whenBusy: 'steer_else_queue',
+    })
+    expect(response.status).toBe(400)
+  })
+
+  it('is rejected typed when combined with wait', async () => {
+    const seeded = await seedInteractive('be-wait', 'ready')
+    const response = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body: 'nope',
+      runtimeIntent: interactiveIntent,
+      whenBusy: 'steer_else_queue',
+      wait: { enabled: true },
+    })
+    expect(response.status).toBe(400)
+  })
+})

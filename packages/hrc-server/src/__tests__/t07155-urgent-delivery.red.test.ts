@@ -564,3 +564,76 @@ describe('T-07191 urgent delivery over /v1/messages/dm', () => {
     expect(runRows().length).toBe(before + 1)
   })
 })
+
+/**
+ * T-07214 — the best-effort default class on the HEADLESS route: fallback-
+ * floor identity with today's bare DM, including the legacy busy rejection.
+ */
+describe('T-07214 best-effort default class (headless route)', () => {
+  const sendDefaultDm = async (seeded: Seeded, body: string) =>
+    await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body,
+      runtimeIntent: intent,
+      whenBusy: 'steer_else_queue',
+    })
+
+  it('steers a busy steer-capable target identically to strict steer', async () => {
+    const seeded = await seed('be-steer', 'busy', { steerCapable: true })
+    const broker = installBroker()
+
+    const response = await sendDefaultDm(seeded, 'default-class order')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      delivery?: Record<string, unknown>
+      warnings?: unknown
+    }
+    expect(body.delivery).toMatchObject({
+      code: 'admitted_into_active_turn',
+      mergedIntoRunId: seeded.activeRunId as string,
+    })
+    expect(body.warnings).toBeUndefined()
+    expect(broker.calls[0]?.policy?.whenBusy).toBe('steer')
+  })
+
+  it('floors to the durable queue against a busy non-steer-capable target', async () => {
+    const seeded = await seed('be-floor', 'busy', { steerCapable: false })
+    const broker = installBroker()
+
+    const response = await sendDefaultDm(seeded, 'default-class routine')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      request: { execution: { state: string } }
+      delivery?: unknown
+      warnings?: unknown
+    }
+    // Byte-identical floor: durable queue, honest warning, no steer call.
+    expect(body.warnings).toEqual([
+      {
+        code: 'queued_behind_busy_turn',
+        delivery: 'deferred',
+        message: 'target is busy; delivery deferred until the active turn completes',
+      },
+    ])
+    expect(body.delivery).toBeUndefined()
+    expect(body.request.execution.state).toBe('accepted')
+    expect(broker.calls).toHaveLength(0)
+  })
+
+  it('keeps the legacy busy rejection: the floor is honest refusal, not a fictitious queue', async () => {
+    const seeded = await seed('be-legacy', 'busy', { legacy: true })
+    const broker = installBroker()
+
+    const response = await sendDefaultDm(seeded, 'default-class to legacy')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      request: { execution: { state: string; errorCode?: string } }
+      delivery?: unknown
+    }
+    // Identical to a bare DM against a busy legacy runtime today.
+    expect(body.request.execution.state).toBe('failed')
+    expect(body.delivery).toBeUndefined()
+    expect(broker.calls).toHaveLength(0)
+  })
+})

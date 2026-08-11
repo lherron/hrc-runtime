@@ -142,6 +142,10 @@ function deliveryContext(
     ...(body.allowStaleGeneration === undefined
       ? {}
       : { allowStaleGeneration: body.allowStaleGeneration }),
+    // T-07214: only the tolerant best-effort class ever rides ordinary
+    // carriage; strict steer is refused at the origin for remote targets and
+    // never reaches this envelope.
+    ...(body.whenBusy === 'steer_else_queue' ? { whenBusy: 'steer_else_queue' as const } : {}),
     ...(options?.semanticTurnHandoff === true
       ? body.freshContext === true
         ? { semanticTurnHandoff: { version: 2 as const, freshContext: true as const } }

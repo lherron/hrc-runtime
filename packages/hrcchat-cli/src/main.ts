@@ -199,7 +199,11 @@ const dmCmd = program
   )
   .option(
     '--steer',
-    "STEER: deliver into the target's ACTIVE turn instead of queueing behind it (admission-proven on headless targets; pane-presented on interactive ones). Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
+    "STRICT steer: deliver into the target's ACTIVE turn (admission-proven on headless targets; pane-presented on interactive ones) or fail typed — never downgraded, refused typed for remote-homed scopes. Mutex against --wait. NOTE: a bare dm already best-effort-steers; this flag makes failure typed instead of falling back to the queue."
+  )
+  .option(
+    '--queue',
+    'DEFERRED delivery: queue behind the active turn (the pre-T-07214 default). Use when the message must become its own turn (e.g. consult submissions expecting a reply turn).'
   )
   .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
   .option('--mode <mode>', 'auto|headless|nonInteractive')
@@ -374,7 +378,11 @@ const turnCmd = program
   )
   .option(
     '--steer',
-    "STEER: deliver into the target's ACTIVE turn instead of queueing behind it (admission-proven on headless targets; pane-presented on interactive ones). Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
+    "STRICT steer: deliver into the target's ACTIVE turn (admission-proven on headless targets; pane-presented on interactive ones) or fail typed — never downgraded, refused typed for remote-homed scopes. Mutex against --wait. NOTE: a bare dm already best-effort-steers; this flag makes failure typed instead of falling back to the queue."
+  )
+  .option(
+    '--queue',
+    'DEFERRED delivery: queue behind the active turn (the pre-T-07214 default). Use when the message must become its own turn (e.g. consult submissions expecting a reply turn).'
   )
   .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
   .option('--file <path>', 'read prompt from file')

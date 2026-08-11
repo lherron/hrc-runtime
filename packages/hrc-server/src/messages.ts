@@ -307,7 +307,7 @@ export function parseSemanticDmRequest(input: unknown): {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  whenBusy?: 'reject' | 'steer' | undefined
+  whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: string | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
@@ -393,19 +393,26 @@ export function parseSemanticDmRequest(input: unknown): {
   const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
 
   const whenBusyInput = input['whenBusy']
-  if (whenBusyInput !== undefined && whenBusyInput !== 'reject' && whenBusyInput !== 'steer') {
+  if (
+    whenBusyInput !== undefined &&
+    whenBusyInput !== 'reject' &&
+    whenBusyInput !== 'steer' &&
+    whenBusyInput !== 'steer_else_queue'
+  ) {
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.UNSUPPORTED_WHEN_BUSY,
-      'whenBusy must be "reject" or "steer"',
+      'whenBusy must be "reject", "steer", or "steer_else_queue"',
       { field: 'whenBusy', value: whenBusyInput }
     )
   }
-  const whenBusy = whenBusyInput as 'reject' | 'steer' | undefined
+  const whenBusy = whenBusyInput as 'reject' | 'steer' | 'steer_else_queue' | undefined
   // T-07155: an urgent send joins the ACTIVE turn and produces no turn or reply
   // of its own, so `wait` has nothing to wait for. Refusing is the honest
   // outcome: silently not-waiting would block for the full timeout and then
   // report nothing, which is precisely the invisible lag stage 1 removed.
-  if (whenBusy === 'steer' && wait?.enabled === true) {
+  // T-07214: the best-effort class shares the mutex — its steer arm has the
+  // same no-reply nature.
+  if ((whenBusy === 'steer' || whenBusy === 'steer_else_queue') && wait?.enabled === true) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'urgent_wait_conflict: whenBusy "steer" cannot be combined with wait; a steered order joins the active turn and has no reply of its own',

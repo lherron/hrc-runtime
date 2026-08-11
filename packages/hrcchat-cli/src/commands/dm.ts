@@ -40,6 +40,7 @@ export type DmOptions = {
   wait?: string | undefined
   /** T-07155 — preempt the target's active turn instead of queueing behind it. */
   steer?: boolean | undefined
+  queue?: boolean | undefined
   urgent?: boolean | undefined
   /** Wait budget for `--wait response`. Default 20m. */
   timeout?: string | undefined
@@ -79,6 +80,9 @@ export async function cmdDm(
   const steer = opts.steer === true || opts.urgent === true
   if (opts.urgent === true) {
     process.stderr.write('hrcchat: notice: --urgent is deprecated; use --steer\n')
+  }
+  if (steer && opts.queue === true) {
+    throw new CliUsageError('--steer and --queue are mutually exclusive')
   }
   if (steer && opts.wait !== undefined) {
     throw new CliUsageError(
@@ -141,7 +145,14 @@ export async function cmdDm(
       runtimeIntent,
       createIfMissing: true,
       ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
-      ...(steer ? { whenBusy: 'steer' as const } : {}),
+      // T-07214: best-effort steer is the DEFAULT delivery class. --queue
+      // restores the deferred floor; --wait implies it (a reply needs an own
+      // turn); --steer keeps the strict typed class.
+      ...(steer
+        ? { whenBusy: 'steer' as const }
+        : opts.queue === true || opts.wait !== undefined
+          ? {}
+          : { whenBusy: 'steer_else_queue' as const }),
     })
   }
 
