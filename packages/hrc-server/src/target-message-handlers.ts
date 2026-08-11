@@ -9,6 +9,7 @@ import {
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  hrcAdmittedIntoActiveTurn,
   isCodexAppOwnedScopeRef,
 } from 'hrc-core'
 import type {
@@ -18,6 +19,7 @@ import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
   FederationSemanticTurnSignal,
+  HrcDeliveryOutcome,
   HrcDeliveryWarning,
   HrcMessageAddress,
   HrcMessageRecord,
@@ -63,6 +65,7 @@ import {
   assertRuntimeNotBusy,
   isBrokerRuntimeInputDispatchable,
   isBrokerRuntimeQueueCapable,
+  isRunActive,
   requireSession,
 } from './require-helpers.js'
 import { findBusyHeadlessRuntimeForSession, findLatestRuntime } from './runtime-select.js'
@@ -1357,7 +1360,7 @@ export async function handleSemanticDm(
     routableRecord,
     resolvedPlacement
   )
-  const { execution, reply, warnings } =
+  const { execution, reply, warnings, delivery } =
     federationRoute?.outcome === 'queued'
       ? {}
       : await this.deliverPersistedSemanticDm(body, record, respondTo)
@@ -1390,6 +1393,7 @@ export async function handleSemanticDm(
     ...(reply ? { reply } : {}),
     ...(waited ? { waited } : {}),
     ...(warnings ? { warnings } : {}),
+    ...(delivery ? { delivery } : {}),
   } satisfies SemanticDmResponse)
 }
 
@@ -1948,10 +1952,12 @@ export async function deliverPersistedSemanticDm(
   execution?: DispatchTurnBySelectorResponse | undefined
   reply?: HrcMessageRecord | undefined
   warnings?: HrcDeliveryWarning[] | undefined
+  delivery?: HrcDeliveryOutcome | undefined
 }> {
   let execution: DispatchTurnBySelectorResponse | undefined
   let reply: HrcMessageRecord | undefined
   let warnings: HrcDeliveryWarning[] | undefined
+  let delivery: HrcDeliveryOutcome | undefined
   const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
 
   // T-05161: a DM to a Codex.app-owned address (task segment `codex-<uuid7>`)
@@ -2018,7 +2024,18 @@ export async function deliverPersistedSemanticDm(
 
       const busyHeadlessRuntime = findBusyHeadlessRuntimeForSession(this.db, session.hostSessionId)
       if (busyHeadlessRuntime) {
-        if (
+        if (body.whenBusy === 'steer') {
+          // T-07191: an urgent DM against a busy target either joins the
+          // ACTIVE turn or fails typed. It must never fall through to the
+          // deferred-queue branch below — that is the silent downgrade the
+          // whenBusy contract forbids.
+          delivery = await this.steerBusyHeadlessSemanticDm(
+            session,
+            record,
+            busyHeadlessRuntime,
+            body
+          )
+        } else if (
           busyHeadlessRuntime.controllerKind !== 'harness-broker' ||
           busyHeadlessRuntime.activeInvocationId === undefined
         ) {
@@ -2090,7 +2107,7 @@ export async function deliverPersistedSemanticDm(
     }
   }
 
-  return { execution, reply, warnings }
+  return { execution, reply, warnings, delivery }
 }
 
 export function rejectBusyHeadlessSemanticDm(
@@ -2146,6 +2163,123 @@ export function rejectBusyHeadlessSemanticDm(
   })
 }
 
+/**
+ * T-07191 — urgent (`whenBusy: 'steer'`) semantic DM against a BUSY headless
+ * runtime. Routes the order into the target's ACTIVE turn through the same
+ * steer executor the turn-handoff route uses (executeHeadlessBrokerSteer), or
+ * fails typed with the URGENT_DELIVERY_* vocabulary. Nothing here ever falls
+ * back to the deferred queue: a sender must never believe an urgent order
+ * landed when it merely queued behind the turn it was meant to preempt.
+ */
+export async function steerBusyHeadlessSemanticDm(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  record: HrcMessageRecord,
+  runtime: HrcRuntimeSnapshot,
+  body: SemanticDmRequest
+): Promise<HrcDeliveryOutcome> {
+  const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
+  try {
+    const invocationId = runtime.activeInvocationId
+    if (runtime.controllerKind !== 'harness-broker' || invocationId === undefined) {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED,
+        'the busy runtime has no durable broker endpoint that can be steered',
+        {
+          runtimeId: runtime.runtimeId,
+          route: 'semantic-dm',
+          recommendation:
+            'this runtime predates urgent delivery; rotate it so a current broker process serves it',
+        }
+      )
+    }
+    const activeRun =
+      runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
+    if (activeRun === null || !isRunActive(activeRun)) {
+      throw new HrcDomainError(
+        HrcErrorCode.URGENT_DELIVERY_RACE_LOST,
+        'the active turn ended before the urgent order could be applied',
+        { runtimeId: runtime.runtimeId, invocationId, route: 'semantic-dm' }
+      )
+    }
+    const payload = formatDmPayload(
+      body.from,
+      body.to,
+      body.body,
+      record.messageSeq,
+      record.messageId,
+      record.createdAt
+    )
+    const steerResponse = await this.executeHeadlessBrokerSteer(session, runtime, payload, {
+      activeRun,
+      invocationId,
+      responseFormat: body.responseFormat,
+    })
+    const steerBody = (await steerResponse.json()) as { delivery?: HrcDeliveryOutcome }
+    // The steered input merged into the active turn and will never have a
+    // turn or reply of its own, so delivery of THIS message is terminal here;
+    // any non-terminal state would park the record forever.
+    this.db.messages.updateExecution(record.messageId, {
+      state: 'completed',
+      mode: 'headless',
+      sessionRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      runId: activeRun.runId,
+      transport: 'headless',
+    })
+    writeServerLog('INFO', 'semantic_dm.busy_headless_steered', {
+      messageId: record.messageId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      mergedIntoRunId: activeRun.runId,
+    })
+    return steerBody.delivery ?? hrcAdmittedIntoActiveTurn({ mergedIntoRunId: activeRun.runId })
+  } catch (error) {
+    const errorCode = error instanceof HrcDomainError ? error.code : 'internal_error'
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    this.db.messages.updateExecution(record.messageId, {
+      state: 'failed',
+      mode: 'headless',
+      sessionRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      ...(runtime.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+      transport: 'headless',
+      errorCode,
+      errorMessage,
+    })
+    const event = appendHrcEvent(this.db, 'input.rejected', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      ...(runtime.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+      transport: 'headless',
+      errorCode,
+      payload: {
+        reason: 'urgent-steer-failed',
+        delivery: 'semantic-dm',
+        messageId: record.messageId,
+        sessionRef,
+        runtimeId: runtime.runtimeId,
+      },
+    })
+    this.notifyEvent(event)
+    writeServerLog('WARN', 'semantic_dm.busy_headless_steer_failed', {
+      messageId: record.messageId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      errorCode,
+    })
+    throw error
+  }
+}
+
 export async function executeSemanticTurn(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -2155,6 +2289,7 @@ export async function executeSemanticTurn(
     from: HrcMessageAddress
     to: HrcMessageAddress
     responseFormat?: HrcTurnResponseFormat | undefined
+    whenBusy?: 'reject' | 'steer' | undefined
   },
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress,
@@ -2184,6 +2319,10 @@ export async function executeSemanticTurn(
       runId,
       waitForCompletion: options.waitForCompletion,
       responseFormat: body.responseFormat,
+      // T-07191: the busy check in deliverPersistedSemanticDm races the
+      // dispatch. If the target turns busy in that window, the broker layer
+      // must still honor steer instead of silently queueing.
+      ...(body.whenBusy !== undefined ? { whenBusy: body.whenBusy } : {}),
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -2250,6 +2389,23 @@ export async function executeSemanticTurn(
 
     return { execution, reply, warnings: turnBody.warnings }
   } catch (err) {
+    // T-07191: a typed urgent-delivery failure must reach the sender as a
+    // typed refusal, never be laundered into an exit-success response whose
+    // only trace of failure is the persisted execution record.
+    if (
+      body.whenBusy === 'steer' &&
+      err instanceof HrcDomainError &&
+      (err.code === HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED ||
+        err.code === HrcErrorCode.URGENT_DELIVERY_RACE_LOST ||
+        err.code === HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS)
+    ) {
+      this.db.messages.updateExecution(record.messageId, {
+        state: 'failed',
+        errorCode: err.code,
+        errorMessage: err.message,
+      })
+      throw err
+    }
     const errorMessage = err instanceof Error ? err.message : String(err)
     const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
     writeServerLog('WARN', 'semantic_dm.execution_failed', {
@@ -2292,6 +2448,7 @@ export const targetMessageHandlersMethods = {
   deliverFederationAcceptedMessage,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,
+  steerBusyHeadlessSemanticDm,
   executeSemanticTurn,
 }
 

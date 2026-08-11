@@ -62,7 +62,7 @@ type Seeded = {
 async function seed(
   label: string,
   state: 'ready' | 'busy',
-  options: { steerCapable?: boolean } = {}
+  options: { steerCapable?: boolean; legacy?: boolean } = {}
 ): Promise<Seeded> {
   const scopeRef = `agent:t07155-${label}:project:hrc-runtime:task:T-07155`
   const sessionRef = `${scopeRef}/lane:main`
@@ -91,13 +91,34 @@ async function seed(
       adopted: false,
       controllerKind: 'harness-broker',
       activeOperationId: operationId,
-      activeInvocationId: invocationId,
+      // A legacy runtime predates durable broker endpoints: no invocation
+      // descriptor exists for HRC to steer through.
+      ...(options.legacy === true ? {} : { activeInvocationId: invocationId }),
       ...(activeRunId ? { activeRunId } : {}),
       continuation: { provider: 'openai', key: 'thread-t07155' },
       createdAt: now,
       updatedAt: now,
       lastActivityAt: now,
     })
+    if (options.legacy === true) {
+      if (activeRunId) {
+        db.runs.insert({
+          runId: activeRunId,
+          hostSessionId,
+          runtimeId,
+          scopeRef,
+          laneRef: 'default',
+          generation,
+          transport: 'headless',
+          status: 'started',
+          acceptedAt: now,
+          startedAt: now,
+          updatedAt: now,
+          operationId,
+        })
+      }
+      return { scopeRef, sessionRef, hostSessionId, runtimeId, invocationId, activeRunId }
+    }
     db.brokerInvocations.insert({
       invocationId,
       operationId,
@@ -433,5 +454,106 @@ describe('T-07155 urgent delivery idempotency ledger', () => {
     } finally {
       db.close()
     }
+  })
+})
+
+/**
+ * T-07191 — the same invariant on the route users actually call. The original
+ * suite proved busy steer through /v1/messages/turn-handoff; the busy-headless
+ * branch of /v1/messages/dm never read whenBusy and silently downgraded urgent
+ * sends into the deferred queue (reproduced live, seq 18717).
+ */
+describe('T-07191 urgent delivery over /v1/messages/dm', () => {
+  const sendDm = async (seeded: Seeded, body: string, whenBusy?: 'steer') =>
+    await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: seeded.sessionRef },
+      body,
+      runtimeIntent: intent,
+      ...(whenBusy === undefined ? {} : { whenBusy }),
+    })
+
+  type DmBody = {
+    request: { execution: { state: string; runId?: string } }
+    warnings?: unknown
+    delivery?: Record<string, unknown> | undefined
+  }
+
+  it('admits an urgent DM into the active turn without minting a run', async () => {
+    const seeded = await seed('dm-steer', 'busy', { steerCapable: true })
+    const before = runRows().length
+    const broker = installBroker()
+
+    const response = await sendDm(seeded, 'STOP - do not push', 'steer')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as DmBody
+
+    // The order joined the ACTIVE turn and the sender is told exactly that.
+    expect(body.delivery).toMatchObject({
+      code: 'admitted_into_active_turn',
+      delivery: 'admitted',
+      mergedIntoRunId: seeded.activeRunId as string,
+    })
+    // No deferred-delivery warning: nothing was deferred.
+    expect(body.warnings).toBeUndefined()
+    // Delivery of the message itself is terminal — a steered input never gets
+    // a turn of its own, so any non-terminal state would park forever.
+    expect(body.request.execution.state).toBe('completed')
+    expect(body.request.execution.runId).toBe(seeded.activeRunId as string)
+    expect(runRows().length).toBe(before)
+    expect(broker.calls).toHaveLength(1)
+    expect(broker.calls[0]?.policy?.whenBusy).toBe('steer')
+  })
+
+  it('fails typed when the live broker cannot steer, and never queues', async () => {
+    const seeded = await seed('dm-nosteer', 'busy', { steerCapable: false })
+    const before = runRows().length
+    const broker = installBroker()
+
+    const response = await sendDm(seeded, 'STOP', 'steer')
+
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('urgent_delivery_unsupported')
+    // Nothing was handed to the broker, and no run was minted: the order
+    // cannot have been parked on the deferred queue behind the turn.
+    expect(broker.calls).toHaveLength(0)
+    expect(runRows().length).toBe(before)
+  })
+
+  it('fails typed against a busy legacy runtime with no broker endpoint', async () => {
+    const seeded = await seed('dm-legacy', 'busy', { legacy: true })
+    const before = runRows().length
+    const broker = installBroker()
+
+    const response = await sendDm(seeded, 'STOP', 'steer')
+
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('urgent_delivery_unsupported')
+    expect(broker.calls).toHaveLength(0)
+    expect(runRows().length).toBe(before)
+  })
+
+  it('regression fence: a default DM to a busy target still queues with the warning', async () => {
+    const seeded = await seed('dm-default', 'busy', { steerCapable: true })
+    const before = runRows().length
+    installBroker()
+
+    const response = await sendDm(seeded, 'routine follow-up')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as DmBody
+
+    expect(body.warnings).toEqual([
+      {
+        code: 'queued_behind_busy_turn',
+        delivery: 'deferred',
+        message: 'target is busy; delivery deferred until the active turn completes',
+      },
+    ])
+    expect(body.delivery).toBeUndefined()
+    expect(body.request.execution.state).toBe('accepted')
+    // The deferred path durably mints its own run — unchanged.
+    expect(runRows().length).toBe(before + 1)
   })
 })
