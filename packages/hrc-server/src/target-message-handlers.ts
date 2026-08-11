@@ -45,6 +45,7 @@ import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import type { FederationTargetPlacement } from './federation/origin-outbox.js'
 import { FederationOutboxCancelError } from './federation/outbox-delivery.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
+import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
   assertScopeNotRetired,
   persistSessionTaskClaimAuthority,
@@ -441,6 +442,44 @@ function isPrimaryScopeRef(scopeRef: string): boolean {
   return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
 }
 
+function normalizeLocalProjectSuccessorIntent(
+  scopeRef: string,
+  intent: HrcRuntimeIntent | undefined,
+  origin: 'local' | 'federated-ingress'
+): HrcRuntimeIntent | undefined {
+  if (
+    intent === undefined ||
+    origin === 'federated-ingress' ||
+    extractProjectId(scopeRef) === undefined
+  ) {
+    return intent
+  }
+
+  const resolved = resolveNodeLocalPlacement(scopeRef, {
+    env: process.env,
+    cwd: process.cwd(),
+  })
+  if (resolved.placement === undefined) {
+    const detail = resolved.unresolvableProjectPath
+      ? `project root could not be resolved from ${resolved.unresolvableProjectPath}`
+      : `agent home could not be resolved (${resolved.missingAgentPath ?? 'unknown search path'})`
+    throw new HrcRuntimeUnavailableError(
+      `cannot create local successor for ${scopeRef}: ${detail}`,
+      {
+        scopeRef,
+        reason: resolved.unresolvableProjectPath
+          ? 'project-root-unresolvable'
+          : 'agent-home-unresolvable',
+      }
+    )
+  }
+
+  return {
+    ...intent,
+    placement: resolved.placement,
+  }
+}
+
 async function createNotifiedSessionSuccessor(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -450,7 +489,15 @@ async function createNotifiedSessionSuccessor(
   origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
-  const capabilityIntent = intent ?? session.lastAppliedIntentJson
+  // Locally inherited placement is stale evidence, not a capability. Resolve
+  // it again at this spawn boundary and persist the normalized intent on the
+  // new generation. Federated ingress remains verbatim because its placement
+  // contract is localized separately from origin-node absolute paths.
+  const capabilityIntent = normalizeLocalProjectSuccessorIntent(
+    session.scopeRef,
+    intent ?? session.lastAppliedIntentJson,
+    origin
+  )
   return await withSummonAuthority(
     server,
     {
@@ -478,7 +525,7 @@ async function createNotifiedSessionSuccessor(
       if (raced !== null && raced.hostSessionId !== session.hostSessionId) return raced
       const successor = server.db.sqlite.transaction(() => {
         const created = createSessionSuccessorFromContinuation(server.db, session, {
-          ...(intent ? { lastAppliedIntentJson: intent } : {}),
+          ...(capabilityIntent ? { lastAppliedIntentJson: capabilityIntent } : {}),
           ...(parsedScopeJson ? { parsedScopeJson } : {}),
         })
         if (claimAuthority !== undefined) {

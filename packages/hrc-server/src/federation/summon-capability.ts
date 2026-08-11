@@ -220,7 +220,10 @@ export function resolveNodeLocalPlacement(
   }
 
   const projectRoot = paths.projectRoot
-  const cwd = paths.cwd ?? projectRoot ?? paths.agentRoot
+  // A project-bearing scope always launches at the checkout root. The input
+  // cwd is only a discovery seed; preserving a nested cwd (or agent home) here
+  // would split provider session storage from the project-scoped lineage.
+  const cwd = projectRoot ?? paths.cwd ?? paths.agentRoot
   return {
     placement: {
       agentRoot: paths.agentRoot,
