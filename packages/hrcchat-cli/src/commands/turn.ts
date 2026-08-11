@@ -58,6 +58,7 @@ export type TurnOptions = {
    */
   wait?: string | undefined
   /** T-07155 — preempt the target's active turn instead of queueing behind it. */
+  steer?: boolean | undefined
   urgent?: boolean | undefined
   /** Wait budget for `--wait final`. Default 45m. */
   timeout?: string | undefined
@@ -257,9 +258,14 @@ function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
   // T-07155: same mutex as dm — a steered order joins the active turn and has no
   // reply of its own, so --wait would block for the full budget and report
   // nothing.
-  if (opts.urgent === true && opts.wait !== undefined) {
+  // --urgent is the deprecated alias for --steer (T-07203 rename).
+  const steer = opts.steer === true || opts.urgent === true
+  if (opts.urgent === true) {
+    process.stderr.write('hrcchat: notice: --urgent is deprecated; use --steer\n')
+  }
+  if (steer && opts.wait !== undefined) {
     throw new CliUsageError(
-      'urgent_wait_conflict: --urgent cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
+      'urgent_wait_conflict: --steer cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
     )
   }
   const waitMode = opts.wait
@@ -399,6 +405,7 @@ export async function cmdTurn(
   const from = sender.address
   const to = { kind: 'session' as const, sessionRef }
 
+  const steer = opts.steer === true || opts.urgent === true
   const handoff = await client.semanticTurnHandoff({
     from,
     to,
@@ -409,7 +416,7 @@ export async function cmdTurn(
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
-    ...(opts.urgent === true ? { whenBusy: 'steer' as const } : {}),
+    ...(steer ? { whenBusy: 'steer' as const } : {}),
   })
   if (isPendingSemanticTurnHandoff(handoff)) {
     printJsonLine(handoff)

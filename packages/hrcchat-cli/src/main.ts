@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { CliUsageError, attachJsonOption, exitWithError } from 'cli-kit'
-import { Command, CommanderError } from 'commander'
+import { Command, CommanderError, Option } from 'commander'
 import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
 import { HrcClient, discoverSocket, loadDotEnvLocal } from 'hrc-sdk'
 
@@ -198,9 +198,10 @@ const dmCmd = program
     'allow --reply-to to thread across conversation scopes (blocked by default)'
   )
   .option(
-    '--urgent',
-    "URGENT: preempt the target's ACTIVE turn instead of queueing behind it. Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
+    '--steer',
+    "STEER: deliver into the target's ACTIVE turn instead of queueing behind it (admission-proven on headless targets; pane-presented on interactive ones). Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
   )
+  .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
   .option('--mode <mode>', 'auto|headless|nonInteractive')
   .option('--file <path>', 'read body from file')
   .option(
@@ -372,9 +373,10 @@ const turnCmd = program
     'allow --reply-to to thread across conversation scopes (blocked by default)'
   )
   .option(
-    '--urgent',
-    "URGENT: preempt the target's ACTIVE turn instead of queueing behind it. Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
+    '--steer',
+    "STEER: deliver into the target's ACTIVE turn instead of queueing behind it (admission-proven on headless targets; pane-presented on interactive ones). Fails typed if the target cannot be steered — never silently downgraded to deferred delivery. Mutex against --wait."
   )
+  .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
   .option('--file <path>', 'read prompt from file')
   .option(
     '--response-format-json-schema <schema>',

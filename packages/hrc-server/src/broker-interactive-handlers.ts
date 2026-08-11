@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import {
-  HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HRC_QUEUED_TO_LIVE_HARNESS_WARNING,
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
@@ -629,6 +629,7 @@ export async function executeInteractiveBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
+    whenBusy?: 'reject' | 'steer' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
@@ -655,6 +656,24 @@ export async function executeInteractiveBrokerInputTurn(
   const activeRun =
     runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
   const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
+  if (options.whenBusy === 'reject' && queuedMode) {
+    assertRuntimeNotBusy(this.db, runtime)
+  }
+  // T-07203 (spec r7): steer-class dispatches run the shared two-phase flow —
+  // capability gate, reject-probe, write-ahead ledger, honest disposition map.
+  // The interactive route reports presented_to_live_harness, never admission.
+  if (options.whenBusy === 'steer') {
+    return await this.executeSteerClassDispatch(session, runtime, prompt, {
+      route: 'interactive',
+      responseFormat: options.responseFormat,
+      ...(options.dispatchIdempotencyKey !== undefined
+        ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
+        : {}),
+      ...(options.dispatchRequestHash !== undefined
+        ? { dispatchRequestHash: options.dispatchRequestHash }
+        : {}),
+    })
+  }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
   const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
   const now = timestamp()
@@ -860,7 +879,7 @@ export async function executeInteractiveBrokerInputTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
-      ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
+      ...(queuedMode ? { warnings: [HRC_QUEUED_TO_LIVE_HARNESS_WARNING] } : {}),
     } satisfies DispatchTurnResponseBase)
   }
 
@@ -873,7 +892,7 @@ export async function executeInteractiveBrokerInputTurn(
     transport: 'tmux',
     status: 'completed',
     supportsInFlightInput: true,
-    ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
+    ...(queuedMode ? { warnings: [HRC_QUEUED_TO_LIVE_HARNESS_WARNING] } : {}),
   } satisfies DispatchTurnResponseBase)
 }
 

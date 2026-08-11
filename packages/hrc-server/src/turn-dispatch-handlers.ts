@@ -1188,6 +1188,9 @@ async function dispatchAdmittedTurnForSession(
           admission.allowedBrokerDriver === 'pi-tui-tmux'
             ? false
             : options.waitForCompletion,
+        // T-07203: the caller's whenBusy must survive to the interactive
+        // executor — dropping it here was the silent-downgrade hole.
+        whenBusy: options.whenBusy,
         repairCorrelation: options.repairCorrelation,
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,

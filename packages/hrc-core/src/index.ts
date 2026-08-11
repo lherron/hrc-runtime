@@ -298,8 +298,10 @@ export { OPERATOR_REAP_REASON, isSuffixStartRuntimeRequest } from './http-contra
 
 export {
   HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
+  HRC_QUEUED_TO_LIVE_HARNESS_WARNING,
   HRC_STARTED_FRESH_TURN_OUTCOME,
   hrcAdmittedIntoActiveTurn,
+  hrcPresentedToLiveHarness,
 } from './delivery-contracts.js'
 export type {
   HrcDeliveryOutcome,

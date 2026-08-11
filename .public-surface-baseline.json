@@ -1023,6 +1023,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_QUEUED_TO_LIVE_HARNESS_WARNING",
+      "kind": "value",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|HRC_QUEUED_TO_LIVE_HARNESS_WARNING|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_STARTED_FRESH_TURN_OUTCOME",
       "kind": "value",
       "file": "packages/hrc-core/src/delivery-contracts.ts",
@@ -2115,6 +2123,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcPresentationIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "hrcPresentedToLiveHarness",
+      "kind": "value",
+      "file": "packages/hrc-core/src/delivery-contracts.ts",
+      "hash": "hrc-core|hrcPresentedToLiveHarness|value",
       "count": 1
     },
     {

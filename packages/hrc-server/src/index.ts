@@ -257,6 +257,10 @@ import {
 import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
 import { toStatusSessionView } from './status-views.js'
+import {
+  type SteerClassDispatchMethods,
+  steerClassDispatchMethods,
+} from './steer-class-dispatch.js'
 import { createSubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
@@ -619,6 +623,7 @@ interface HrcServerInstance
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
     BrokerHeadlessHandlersMethods,
+    SteerClassDispatchMethods,
     SdkTurnHandlersMethods,
     BridgeSurfaceHandlersMethods,
     SweepHandlersMethods,
@@ -2330,6 +2335,7 @@ Object.assign(
   turnDispatchHandlersMethods,
   brokerInteractiveHandlersMethods,
   brokerHeadlessHandlersMethods,
+  steerClassDispatchMethods,
   sdkTurnHandlersMethods,
   bridgeSurfaceHandlersMethods,
   sweepHandlersMethods,

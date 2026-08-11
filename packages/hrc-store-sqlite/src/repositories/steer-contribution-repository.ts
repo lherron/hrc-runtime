@@ -89,6 +89,29 @@ export class SteerContributionRepository {
     )
   }
 
+  /**
+   * T-07203: re-aim a write-ahead record's run pointer BEFORE actuation.
+   * The idle-path reject-probe inserts with the provisional runId; when the
+   * probe reveals a concurrent active turn, the pointer is re-aimed to that
+   * resolved run before the single steer attempt. Guarded to `attempting`
+   * rows only — a sealed record's identity is immutable.
+   */
+  updateAttemptingRunPointer(
+    contributionId: string,
+    patch: { activeRunId: string; runtimeId: string; invocationId: string; now: string }
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+        UPDATE steer_contributions
+           SET active_run_id = ?, runtime_id = ?, invocation_id = ?, updated_at = ?
+         WHERE contribution_id = ? AND state = 'attempting'
+      `
+      )
+      .run(patch.activeRunId, patch.runtimeId, patch.invocationId, patch.now, contributionId)
+    return result.changes > 0
+  }
+
   /** Seal the record with its terminal outcome. Idempotent by contributionId. */
   seal(
     contributionId: string,

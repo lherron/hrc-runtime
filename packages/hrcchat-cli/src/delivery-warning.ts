@@ -16,11 +16,19 @@ export function writeDeliveryOutcome(delivery: HrcDeliveryOutcome | undefined): 
   if (delivery === undefined) return
   if (delivery.code === 'admitted_into_active_turn') {
     process.stderr.write(
-      `hrcchat: urgent [${delivery.code}]: admitted into the target's active turn (run ${delivery.mergedIntoRunId}); no separate reply will follow\n`
+      `hrcchat: steer [${delivery.code}]: admitted into the target's active turn (run ${delivery.mergedIntoRunId}); no separate reply will follow\n`
+    )
+    return
+  }
+  if (delivery.code === 'presented_to_live_harness') {
+    // T-07203: pane-write proof only — never claim admission. The harness
+    // decides whether the text joins the active turn or a later prompt.
+    process.stderr.write(
+      `hrcchat: steer [${delivery.code}]: written into the target's live session mid-turn (run ${delivery.presentedDuringRunId}); the harness decides when it takes effect — this is not admission proof\n`
     )
     return
   }
   process.stderr.write(
-    `hrcchat: urgent [${delivery.code}]: target was idle; started a normal turn\n`
+    `hrcchat: steer [${delivery.code}]: target was idle; the order started its own turn\n`
   )
 }

@@ -206,7 +206,7 @@ const runRows = (): Array<{ runId: string; status: string }> => {
 describe('T-07155 urgent delivery', () => {
   it('G5: admits an urgent order into the active turn without minting a run', async () => {
     const seeded = await seed('g5', 'busy', { steerCapable: true })
-    const before = runRows().length
+    const beforeIds = new Set(runRows().map((run) => run.runId))
     const broker = installBroker()
 
     const response = await send(seeded, 'STOP - do not push', 'steer')
@@ -225,9 +225,11 @@ describe('T-07155 urgent delivery', () => {
     // No deferred-delivery warning: nothing was deferred.
     expect(body.warnings).toBeUndefined()
 
-    // No new run row — a steered input never gets a turn of its own, so a run
-    // for it would park in `accepted` forever.
-    expect(runRows().length).toBe(before)
+    // No new LIVE run — a steered input never gets a turn of its own. The
+    // T-07203 flow leaves one TERMINAL provisional row (cancelled, tagged
+    // superseded_by_steer) purely for event-mapper correlation audit.
+    const added = runRows().filter((run) => !beforeIds.has(run.runId))
+    expect(added.every((run) => run.status === 'cancelled')).toBe(true)
 
     // The broker was asked for the steer policy specifically.
     expect(broker.calls).toHaveLength(1)
@@ -481,7 +483,7 @@ describe('T-07191 urgent delivery over /v1/messages/dm', () => {
 
   it('admits an urgent DM into the active turn without minting a run', async () => {
     const seeded = await seed('dm-steer', 'busy', { steerCapable: true })
-    const before = runRows().length
+    const beforeIds = new Set(runRows().map((run) => run.runId))
     const broker = installBroker()
 
     const response = await sendDm(seeded, 'STOP - do not push', 'steer')
@@ -500,7 +502,12 @@ describe('T-07191 urgent delivery over /v1/messages/dm', () => {
     // a turn of its own, so any non-terminal state would park forever.
     expect(body.request.execution.state).toBe('completed')
     expect(body.request.execution.runId).toBe(seeded.activeRunId as string)
-    expect(runRows().length).toBe(before)
+    // Only a terminal (cancelled) provisional audit row may be added — no live run.
+    expect(
+      runRows()
+        .filter((run) => !beforeIds.has(run.runId))
+        .every((run) => run.status === 'cancelled')
+    ).toBe(true)
     expect(broker.calls).toHaveLength(1)
     expect(broker.calls[0]?.policy?.whenBusy).toBe('steer')
   })

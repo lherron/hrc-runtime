@@ -39,6 +39,7 @@ export type DmOptions = {
    */
   wait?: string | undefined
   /** T-07155 — preempt the target's active turn instead of queueing behind it. */
+  steer?: boolean | undefined
   urgent?: boolean | undefined
   /** Wait budget for `--wait response`. Default 20m. */
   timeout?: string | undefined
@@ -74,9 +75,14 @@ export async function cmdDm(
   // reply of its own, so there is nothing for --wait to wait for. Refuse the
   // combination rather than block for the full timeout and report nothing —
   // that would recreate the invisible lag urgent delivery exists to remove.
-  if (opts.urgent === true && opts.wait !== undefined) {
+  // --urgent is the deprecated alias for --steer (T-07203 rename).
+  const steer = opts.steer === true || opts.urgent === true
+  if (opts.urgent === true) {
+    process.stderr.write('hrcchat: notice: --urgent is deprecated; use --steer\n')
+  }
+  if (steer && opts.wait !== undefined) {
     throw new CliUsageError(
-      'urgent_wait_conflict: --urgent cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
+      'urgent_wait_conflict: --steer cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
     )
   }
   const waitMode = opts.wait
@@ -135,7 +141,7 @@ export async function cmdDm(
       runtimeIntent,
       createIfMissing: true,
       ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
-      ...(opts.urgent === true ? { whenBusy: 'steer' as const } : {}),
+      ...(steer ? { whenBusy: 'steer' as const } : {}),
     })
   }
 

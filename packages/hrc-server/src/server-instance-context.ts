@@ -51,6 +51,7 @@ import type {
   RawBrokerSubscriber,
   TurnResponseFinalizer,
 } from './server-types.js'
+import type { SteerClassDispatchMethods } from './steer-class-dispatch.js'
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
@@ -74,6 +75,7 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  */
 type DecomposedHandlerMethods = AppSessionHandlersMethods &
   BridgeSurfaceHandlersMethods &
+  SteerClassDispatchMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &
   EventHandlersMethods &
