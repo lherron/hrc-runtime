@@ -966,6 +966,7 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
   whenBusy?: 'reject' | 'steer' | undefined
+  joinInFlightRuntimeStart?: boolean | undefined
   attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   repairCorrelation?: JsonRepairRunCorrelation | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
@@ -1223,6 +1224,7 @@ async function dispatchAdmittedTurnForSession(
             admission.allowedBrokerDriver === 'pi-tui-tmux'
               ? false
               : options.waitForCompletion,
+          joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
           responseFormat: options.responseFormat,
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
           dispatchRequestHash: options.dispatchRequestHash,

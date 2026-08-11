@@ -503,12 +503,33 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     flagEnvName: string
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
+    joinInFlightRuntimeStart?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  // T-07202: persisted semantic DMs can enter this interactive cold-start
+  // branch concurrently. T-06313 protected only the headless broker branch;
+  // this branch published its boot but never joined an existing one, so each
+  // crossing DM started and then overwrote the same map entry. Join the
+  // already-published host-session boot and deliver this caller's own input
+  // through the winner. Keep this route opt-in so reattach and non-DM dispatch
+  // policy remain outside this cold-provision fix.
+  const existingBootOperation = flagOptions.joinInFlightRuntimeStart
+    ? this.runtimeStartOperations?.get(session.hostSessionId)
+    : undefined
+  if (existingBootOperation) {
+    const runtime = await existingBootOperation
+    assertActuatorSplitRuntimeReuse(turnIntent, runtime)
+    return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+      waitForCompletion: flagOptions.waitForCompletion,
+      responseFormat: flagOptions.responseFormat,
+      dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
+      dispatchRequestHash: flagOptions.dispatchRequestHash,
+    })
+  }
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
   let rejectAccepted!: (error: unknown) => void
   let acceptedSettled = false

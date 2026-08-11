@@ -2319,6 +2319,11 @@ export async function executeSemanticTurn(
       runId,
       waitForCompletion: options.waitForCompletion,
       responseFormat: body.responseFormat,
+      // T-07202: a semantic DM can cross another DM while an interactive
+      // broker is still cold-provisioning. Join that host-session boot and
+      // deliver this DM through its winning runtime instead of minting a
+      // second runtime. Other dispatch sources retain their current policy.
+      joinInFlightRuntimeStart: true,
       // T-07191: the busy check in deliverPersistedSemanticDm races the
       // dispatch. If the target turns busy in that window, the broker layer
       // must still honor steer instead of silently queueing.
