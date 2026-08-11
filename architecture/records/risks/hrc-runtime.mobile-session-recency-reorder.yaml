@@ -1,0 +1,25 @@
+id: hrc-runtime.mobile-session-recency-reorder
+kind: accepted_risk
+status: active
+owner_project: hrc-runtime
+accepted_by: Lance
+date: 2026-08-11
+severity: low
+blast_radius: >
+  The first deployment of the monotonic Mobile recency projection intentionally
+  reorders existing sessions whose greatest observed activity timestamp differs
+  from the former latest-by-hrc_seq event timestamp; the preflight census found
+  153 affected current sessions.
+mitigation: >
+  The migration records the exact changed-row count, ACP and iOS update their
+  recency gates in the same cross-layer effort, and the new value is thereafter
+  monotonic and authoritative.
+expiry: T-07221 migration evidence is recorded and the ACP consumer is deployed.
+review_trigger: The migration count materially exceeds 153 or the rollout exposes user-visible recency anomalies beyond the accepted one-time reorder.
+reopen_when: The migration census, rollout scope, or operator acceptance changes.
+source:
+  - hrcchat#18884
+  - hrcchat#18886
+  - wrkq:T-07221
+supersedes: []
+superseded_by: []

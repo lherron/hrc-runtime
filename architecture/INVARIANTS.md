@@ -10,6 +10,10 @@ Durable HRC architecture laws are stored as machine-checked records with explici
 
 Every canonical HRC package set is produced from one clean commit contained by a freshly fetched named canonical ref, carries the exact normative praesidiumBuild tuple, refuses same-name/version replacement, and is verified by cache-empty registry tarball reads before publication succeeds.
 
+## hrc-runtime.mobile-session-index
+
+HRC is the authoritative producer of the Mobile session index: it maintains one current-generation projection per local session lineage; defines recency as the greatest observed contributing activity timestamp; derives effective status and execution mode before reads; and exposes bounded page and facet APIs. Complete federated pages follow the strict order last_activity_at DESC, nodeId ASC, host_session_id DESC through one opaque cursor whose per-node components advance only past emitted rows. Concurrent activity may move a row only toward the head, so a walk has no duplicates or permanent loss; peer failures freeze that peer's component and surface complete:false rather than claiming a complete global interleave. ACP and iOS consume these projections and facets as authoritative and do not acquire peer-probe authority.
+
 ## hrc-runtime.observable-release
 
 Every atomic HRC release records its exact HRC build and locked ASP build in praesidium-release.json before cutover; the daemon captures that immutable identity at startup, fails closed for invalid atomic manifests, and reports on every status read whether the running release still equals the installed release. Source and worktree daemons report unmanaged explicitly.

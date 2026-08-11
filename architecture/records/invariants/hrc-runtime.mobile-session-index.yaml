@@ -1,0 +1,29 @@
+id: hrc-runtime.mobile-session-index
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC-produced federated Mobile session index
+predicate: >
+  HRC is the authoritative producer of the Mobile session index: it maintains
+  one current-generation projection per local session lineage; defines recency
+  as the greatest observed contributing activity timestamp; derives effective
+  status and execution mode before reads; and exposes bounded page and facet
+  APIs. Complete federated pages follow the strict order last_activity_at DESC,
+  nodeId ASC, host_session_id DESC through one opaque cursor whose per-node
+  components advance only past emitted rows. Concurrent activity may move a row
+  only toward the head, so a walk has no duplicates or permanent loss; peer
+  failures freeze that peer's component and surface complete:false rather than
+  claiming a complete global interleave. ACP and iOS consume these projections
+  and facets as authoritative and do not acquire peer-probe authority.
+authority: hrcchat#18884
+source:
+  - hrcchat#18884
+  - hrcchat#18886
+  - wrkq:T-07221
+required_tests:
+  - just verify
+  - wrkq:T-07221 projection, traversal, federation, and live multi-node gates
+last_verified: 2026-08-11
+reopen_when: Mobile recency semantics, projection ownership, cursor ordering, federation degradation behavior, or facet authority changes.
+supersedes: []
+superseded_by: []
