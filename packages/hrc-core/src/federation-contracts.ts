@@ -295,6 +295,8 @@ export type FederationPeerCapabilities = {
   readonly health: boolean
   /** Authority-only remote policy establishment. */
   readonly establish?: boolean | undefined
+  /** Authenticated home-node suffix-roster provisioning. */
+  readonly rosterStart?: boolean | undefined
   /** Additive v1 capability; older peers simply omit it. */
   readonly runtimeProjection?: boolean | undefined
   /** Additive v1 capability; required before forwarding semantic turn handoffs. */

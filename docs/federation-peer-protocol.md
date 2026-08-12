@@ -6,6 +6,7 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/v1/federation/establish` | Authenticated authority-only establishment of a policy-born virgin scope on its named home. |
+| `POST` | `/v1/federation/roster-start` | Synchronously provision an implicit suffix roster on its receiver-verified home node. |
 | `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
 | `POST` | `/v1/federation/history/replicate` | Idempotently project an authenticated peer's bilateral message observation into the `svc` collective read model. |
@@ -62,7 +63,7 @@ node identity, at least one configured peer, and a concrete tailnet host:
 Each peer may expose two role-separated transport origins:
 
 - `endpoint` is the peer-protocol origin and is used only for
-  `/v1/federation/establish`, `/v1/federation/accept`,
+  `/v1/federation/establish`, `/v1/federation/roster-start`, `/v1/federation/accept`,
   `/v1/federation/locate`, `/v1/federation/history/*`, and
   `/v1/federation/health`, plus the authenticated node-local session index
   reads `/v1/sessions/page` and `/v1/sessions/facets`.
@@ -112,6 +113,12 @@ authority-only establishment verb. An origin must treat an omitted capability,
 an HTTP 404, or an endpoint that otherwise cannot speak the verb as the typed
 non-retryable refusal `peer_upgrade_required`. It must never fall back to an
 unfenced accept envelope.
+
+The additive `rosterStart: true` capability advertises the dedicated mobile
+suffix-provisioning verb. Omission or HTTP 404 is the non-retryable
+`peer_upgrade_required` refusal. Peer sleep, timeout, or other transport failure
+is synchronous retryable `runtime_unavailable`; roster provisioning never uses
+the message outbox.
 
 The peer health handler never fans out. Aggregation belongs to the requesting
 node's Unix-socket API, which probes configured peers concurrently with a
@@ -253,6 +260,24 @@ overlap set and defaults to `[token]`. Rotate without an authentication gap:
 Tokens must remain unique between peer identities so authentication always
 maps to exactly one `authenticatedNodeId`. The federation config file is
 operator-managed, node-local, not git-synced, and expected to be mode `0600`.
+
+## Remote suffix-roster provisioning
+
+`POST /v1/federation/roster-start` accepts only the suffix-start shape with
+`summonIntent: "implicit"`. The origin resolves the base scope from placement
+policy and registry truth, then selects the configured peer; neither ACP nor the
+wire body asserts a destination node.
+
+Before mutation, the authenticated receiver checks every member of HRC's fixed
+11-slot family. Each member must have an exact task-default naming the receiver,
+must not be retired or bound elsewhere, and must be locally materializable. The
+receiver then rebases the runtime intent onto its local agent/project roots and
+runs the existing home-local atomic claim/start. That node's roster-claim table
+owns idempotency, so a retry with the same key replays the same claim and a
+different base with the same key remains a conflict.
+
+Operator `hrc start --on-conflict suffix` requests use
+`summonIntent: "explicit_local"` and never enter this route.
 
 ## Remote policy establishment
 

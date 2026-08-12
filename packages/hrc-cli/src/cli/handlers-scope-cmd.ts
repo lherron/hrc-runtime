@@ -553,6 +553,7 @@ export async function cmdStart(args: string[]): Promise<void> {
         baseSessionRef: sessionRef,
         runtimeIntent: intent,
         conflictPolicy: 'suffix',
+        summonIntent: 'explicit_local',
         idempotencyKey: idempotencyKey ?? `hrc-start-suffix-${randomUUID()}`,
         restartStyle,
       })

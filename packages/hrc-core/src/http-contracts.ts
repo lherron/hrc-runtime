@@ -179,6 +179,12 @@ export type SuffixStartRuntimeRequest = {
   baseSessionRef: string
   runtimeIntent: HrcRuntimeIntent
   conflictPolicy: 'suffix'
+  /**
+   * Operator starts are explicit-local; mobile provisioning is implicit and may
+   * route to the declared home through HRC federation. Absent preserves the
+   * pre-federation operator behavior for older clients.
+   */
+  summonIntent?: SummonIntent | undefined
   /** REQUIRED. One key per logical invocation; transport retries reuse it. */
   idempotencyKey: string
   restartStyle?: RestartStyle | undefined

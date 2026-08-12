@@ -6,7 +6,13 @@
  * in docs/federation-peer-protocol.md.
  */
 
-import type { FederationPlacementBinding, HrcRuntimeSnapshot, ListMessagesResponse } from 'hrc-core'
+import { HrcDomainError } from 'hrc-core'
+import type {
+  FederationPlacementBinding,
+  HrcRuntimeSnapshot,
+  ListMessagesResponse,
+  StartRuntimeResponse,
+} from 'hrc-core'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
@@ -26,11 +32,13 @@ export type PeerProtocolHealth = {
   readonly capabilities: {
     readonly accept: boolean
     readonly establish?: boolean | undefined
+    readonly rosterStart?: boolean | undefined
     readonly locate: true
     readonly health: true
     readonly runtimeProjection?: boolean | undefined
     readonly collectiveHistory?: boolean | undefined
     readonly semanticTurnHandoff?: boolean | undefined
+    readonly urgentDelivery?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
@@ -93,6 +101,12 @@ export type PeerEstablishResult =
 
 export type PeerEstablishHandler = (request: PeerEstablishRequest) => Promise<PeerEstablishResult>
 
+export type PeerRosterStartHandler = (request: {
+  readonly authenticatedNodeId: string
+  readonly protocolVersion: string
+  readonly body: Readonly<Record<string, unknown>>
+}) => Promise<StartRuntimeResponse>
+
 export type PeerCollectiveHistoryReplicateHandler = (request: {
   readonly authenticatedNodeId: string
   readonly protocolVersion: string
@@ -139,6 +153,7 @@ export type PeerProtocolRequestHandlerOptions = {
    */
   readonly acceptUrgent?: PeerAcceptHandler | undefined
   readonly establish?: PeerEstablishHandler | undefined
+  readonly rosterStart?: PeerRosterStartHandler | undefined
   readonly collectiveHistoryReplicate?: PeerCollectiveHistoryReplicateHandler | undefined
   readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
   readonly collectiveHistoryQuery?: PeerCollectiveHistoryQueryHandler | undefined
@@ -336,6 +351,98 @@ async function handleSessionIndexRequest(input: {
   return undefined
 }
 
+async function handleHealthRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+}): Promise<Response | undefined> {
+  if (input.request.method !== 'GET' || input.url.pathname !== '/v1/federation/health') {
+    return undefined
+  }
+  const health = await input.options.health({
+    includeRuntimes: input.url.searchParams.get('includeRuntimes') === 'true',
+    url: input.url,
+  })
+  return responseJson(
+    {
+      ok: true,
+      protocolVersion: PEER_PROTOCOL_VERSION,
+      nodeId: input.options.localNodeId,
+      ...health,
+    },
+    200
+  )
+}
+
+async function handleLocateRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+}): Promise<Response | undefined> {
+  if (input.request.method !== 'POST' || input.url.pathname !== '/v1/federation/locate') {
+    return undefined
+  }
+  const body = await requestRecord(input.request)
+  const location = await input.options.locate(requiredString(body, 'scopeRef'))
+  return responseJson({ ok: true, protocolVersion: PEER_PROTOCOL_VERSION, location }, 200)
+}
+
+const ROSTER_START_FIELDS = new Set([
+  'baseSessionRef',
+  'runtimeIntent',
+  'conflictPolicy',
+  'idempotencyKey',
+  'restartStyle',
+  'summonIntent',
+])
+
+async function handleRosterStartRequest(input: {
+  request: Request
+  url: URL
+  options: PeerProtocolRequestHandlerOptions
+  peerNodeId: string
+  requestVersion: string
+}): Promise<Response | undefined> {
+  if (input.request.method !== 'POST' || input.url.pathname !== '/v1/federation/roster-start') {
+    return undefined
+  }
+  const body = await requestRecord(input.request)
+  if (Object.keys(body).some((key) => !ROSTER_START_FIELDS.has(key))) {
+    throw new InvalidPeerRequest()
+  }
+  if (input.options.rosterStart === undefined) {
+    return refusal(404, 'peer_upgrade_required', { retryable: false })
+  }
+  try {
+    return responseJson(
+      await input.options.rosterStart({
+        authenticatedNodeId: input.peerNodeId,
+        protocolVersion: input.requestVersion,
+        body,
+      }),
+      200
+    )
+  } catch (error) {
+    if (error instanceof HrcDomainError) {
+      return refusal(error.status, error.code, {
+        message: error.message,
+        detail: error.detail,
+        retryable: error.detail['retryable'] === true || error.status === 503,
+      })
+    }
+    writeServerLog('ERROR', 'federation.roster_start.unexpected_failure', {
+      localNodeId: input.options.localNodeId,
+      peerNodeId: input.peerNodeId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return refusal(503, 'runtime_unavailable', {
+      message: 'remote suffix-roster provisioning is temporarily unavailable',
+      detail: { retryable: true },
+      retryable: true,
+    })
+  }
+}
+
 export function createPeerProtocolRequestHandler(
   options: PeerProtocolRequestHandlerOptions
 ): (request: Request) => Promise<Response> {
@@ -348,30 +455,14 @@ export function createPeerProtocolRequestHandler(
 
     const url = new URL(request.url)
     try {
-      if (request.method === 'GET' && url.pathname === '/v1/federation/health') {
-        const health = await options.health({
-          includeRuntimes: url.searchParams.get('includeRuntimes') === 'true',
-          url,
-        })
-        return responseJson(
-          {
-            ok: true,
-            protocolVersion: PEER_PROTOCOL_VERSION,
-            nodeId: options.localNodeId,
-            ...health,
-          },
-          200
-        )
-      }
+      const healthResponse = await handleHealthRequest({ request, url, options })
+      if (healthResponse !== undefined) return healthResponse
 
       const sessionIndexResponse = await handleSessionIndexRequest({ request, url, options })
       if (sessionIndexResponse !== undefined) return sessionIndexResponse
 
-      if (request.method === 'POST' && url.pathname === '/v1/federation/locate') {
-        const body = await requestRecord(request)
-        const location = await options.locate(requiredString(body, 'scopeRef'))
-        return responseJson({ ok: true, protocolVersion: PEER_PROTOCOL_VERSION, location }, 200)
-      }
+      const locateResponse = await handleLocateRequest({ request, url, options })
+      if (locateResponse !== undefined) return locateResponse
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/establish') {
         const body = await requestRecord(request)
@@ -433,6 +524,15 @@ export function createPeerProtocolRequestHandler(
           200
         )
       }
+
+      const rosterStartResponse = await handleRosterStartRequest({
+        request,
+        url,
+        options,
+        peerNodeId: peer.nodeId,
+        requestVersion,
+      })
+      if (rosterStartResponse !== undefined) return rosterStartResponse
 
       // T-07155 — urgent delivery rides its OWN route, never /v1/federation/accept.
       //

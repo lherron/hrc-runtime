@@ -38,7 +38,12 @@ import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { appendEvent } from '../event-notification-handlers'
 import { parseStartRuntimeRequest } from '../parsers/runtime'
-import { ROSTER_SLOT_SUFFIXES, rosterSlotTokens, startSuffixRosterRuntime } from '../roster-claim'
+import {
+  ROSTER_SLOT_SUFFIXES,
+  rosterSlotTokens,
+  startSuffixRosterRuntime,
+  suffixStartRequestHash,
+} from '../roster-claim'
 import { invalidateHostContext, rotateSessionContext } from '../runtime-control-handlers'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
@@ -243,6 +248,25 @@ describe('T-07118 suffix START request shape', () => {
     if (!isSuffixStartRuntimeRequest(parsed)) throw new Error('unreachable')
     expect(parsed.baseSessionRef).toBe(BASE_SESSION_REF)
     expect(parsed.runtimeIntent.presentation).toEqual({ viewerWindow: 'console' })
+  })
+
+  it('accepts only the two typed summon intents', () => {
+    const implicit = parseStartRuntimeRequest({ ...body, summonIntent: 'implicit' })
+    expect(isSuffixStartRuntimeRequest(implicit) && implicit.summonIntent).toBe('implicit')
+    const explicit = parseStartRuntimeRequest({ ...body, summonIntent: 'explicit_local' })
+    expect(isSuffixStartRuntimeRequest(explicit) && explicit.summonIntent).toBe('explicit_local')
+    expect(() => parseStartRuntimeRequest({ ...body, summonIntent: 'explicit' })).toThrow(
+      /summonIntent must be/
+    )
+  })
+
+  it('preserves legacy explicit hashes while distinguishing routed implicit starts', () => {
+    expect(suffixStartRequestHash(request())).toBe(
+      suffixStartRequestHash(request({ summonIntent: 'explicit_local' }))
+    )
+    expect(suffixStartRequestHash(request({ summonIntent: 'implicit' }))).not.toBe(
+      suffixStartRequestHash(request())
+    )
   })
 
   it('requires an idempotencyKey — without operation identity a retry walks the roster', () => {

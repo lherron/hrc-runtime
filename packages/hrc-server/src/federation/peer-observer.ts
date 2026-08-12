@@ -48,6 +48,7 @@ function parseCapabilities(value: unknown): FederationPeerCapabilities | undefin
     locate: value['locate'],
     health: value['health'],
     ...(typeof value['establish'] === 'boolean' ? { establish: value['establish'] } : {}),
+    ...(typeof value['rosterStart'] === 'boolean' ? { rosterStart: value['rosterStart'] } : {}),
     ...(typeof value['runtimeProjection'] === 'boolean'
       ? { runtimeProjection: value['runtimeProjection'] }
       : {}),

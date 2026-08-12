@@ -9,6 +9,7 @@ import {
   HrcErrorCode,
   HrcInternalError,
   HrcNotFoundError,
+  isSuffixStartRuntimeRequest,
 } from 'hrc-core'
 import type {
   DropContinuationResponse,
@@ -117,11 +118,13 @@ import {
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
 import { resolveFederationRegistryClient } from './federation/registry-resolution.js'
+import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import {
   assertScopeNotRetired,
   captureLivePlacementRepairCandidates,
   establishRemotePolicyAuthority,
   persistSessionTaskClaimAuthority,
+  preflightSuffixRosterFamily,
   repairLiveUnboundPlacements,
   resolvePlacementOnServer,
   withSummonAuthority,
@@ -184,7 +187,11 @@ import {
   requireRuntime,
   requireSession,
 } from './require-helpers.js'
-import { type RosterClaimHandlersMethods, rosterClaimHandlersMethods } from './roster-claim.js'
+import {
+  type RosterClaimHandlersMethods,
+  rosterClaimHandlersMethods,
+  suffixRosterFamily,
+} from './roster-claim.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   type RuntimeControlHandlersMethods,
@@ -233,6 +240,7 @@ import {
   parseResolveSessionRequest,
   parseRuntimeActionBody,
   parseSessionRef,
+  parseStartRuntimeRequest,
   parseTerminateRuntimeRequest,
 } from './server-parsers.js'
 import { exactRouteKey, matchLaunchSubroute } from './server-routing.js'
@@ -260,7 +268,7 @@ import {
 } from './session-index-handlers.js'
 import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
-import { toStatusSessionView } from './status-views.js'
+import { toStartRuntimeResponse, toStatusSessionView } from './status-views.js'
 import {
   type SteerClassDispatchMethods,
   steerClassDispatchMethods,
@@ -988,6 +996,7 @@ class HrcServerInstance implements HrcServer {
               capabilities: {
                 accept: true,
                 establish: true,
+                rosterStart: true,
                 locate: true,
                 health: true,
                 runtimeProjection: true,
@@ -999,6 +1008,35 @@ class HrcServerInstance implements HrcServer {
             }),
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
+            rosterStart: async ({ body }) => {
+              const parsed = parseStartRuntimeRequest(body)
+              if (!isSuffixStartRuntimeRequest(parsed) || parsed.summonIntent !== 'implicit') {
+                throw new HrcBadRequestError(
+                  HrcErrorCode.MALFORMED_REQUEST,
+                  'federated roster-start requires a suffix request with summonIntent "implicit"',
+                  { field: 'summonIntent' }
+                )
+              }
+              const family = suffixRosterFamily(parsed.baseSessionRef)
+              const capabilityHint = {
+                placement: parsed.runtimeIntent.placement,
+                harness: parsed.runtimeIntent.harness,
+              }
+              await preflightSuffixRosterFamily(this, {
+                scopeRefs: family.scopeRefs,
+                capabilityHint,
+                origin: 'federated-ingress',
+              })
+              const localized = localizeFederatedRuntimeIntent(
+                family.baseScopeRef,
+                parsed.runtimeIntent
+              )
+              const { runtime, claim } = await this.startSuffixRosterRuntime({
+                ...parsed,
+                runtimeIntent: localized,
+              })
+              return { ...toStartRuntimeResponse(runtime), claim }
+            },
             accept: peerAcceptHandler,
             sessionPage: ({ url }) => {
               const localUrl = new URL(url)

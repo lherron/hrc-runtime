@@ -332,6 +332,76 @@ describe('T-06617 narrow peer routes', () => {
     expect(established).toHaveLength(1)
   })
 
+  test('roster-start is authenticated, schema-exact, and returns the home-local claim', async () => {
+    const received: unknown[] = []
+    const serve = createPeerProtocolRequestHandler({
+      localNodeId: 'lab',
+      peers: new Map([
+        [
+          'svc',
+          {
+            nodeId: 'svc',
+            endpoint: 'http://svc.example.ts.net:18490',
+            token: new PeerToken(CURRENT_TOKEN),
+          },
+        ],
+      ]),
+      locate: async () => ({}),
+      health: () => ({
+        startedAt: '2026-07-20T00:00:00.000Z',
+        capabilities: { accept: true, rosterStart: true, locate: true, health: true },
+      }),
+      rosterStart: async (input) => {
+        received.push(input)
+        return {
+          runtimeId: 'rt-roster',
+          hostSessionId: 'hsid-roster',
+          transport: 'headless',
+          status: 'ready',
+          supportsInFlightInput: true,
+          claim: {
+            slot: 'minilab-nova',
+            scopeRef: 'agent:mable:project:hrc-runtime:task:minilab-nova',
+            sessionRef: 'agent:mable:project:hrc-runtime:task:minilab-nova/lane:main',
+            hostSessionId: 'hsid-roster',
+            idempotencyKey: 'mobile-1',
+            replayed: false,
+          },
+        }
+      },
+    })
+    const body = {
+      baseSessionRef: 'agent:mable:project:hrc-runtime:task:minilab/lane:main',
+      runtimeIntent: { placement: 'workspace' },
+      conflictPolicy: 'suffix',
+      idempotencyKey: 'mobile-1',
+      summonIntent: 'implicit',
+    }
+    const response = await serve(
+      request('/v1/federation/roster-start', {
+        token: CURRENT_TOKEN,
+        version: '1.9',
+        body,
+      })
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      runtimeId: 'rt-roster',
+      claim: { slot: 'minilab-nova', idempotencyKey: 'mobile-1' },
+    })
+    expect(received).toEqual([{ authenticatedNodeId: 'svc', protocolVersion: '1.9', body }])
+
+    const oversized = await serve(
+      request('/v1/federation/roster-start', {
+        token: CURRENT_TOKEN,
+        version: PEER_PROTOCOL_VERSION,
+        body: { ...body, homeNodeId: 'lab' },
+      })
+    )
+    expect(oversized.status).toBe(400)
+    expect(received).toHaveLength(1)
+  })
+
   test('the TCP handler exposes only the narrow federation verbs', async () => {
     const serve = handler()
     for (const path of ['/v1/status', '/v1/events', '/v1/federation/bindings', '/']) {

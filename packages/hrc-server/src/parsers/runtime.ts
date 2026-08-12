@@ -306,7 +306,6 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
     ['reuse_pty', 'fresh_pty'],
     'restartStyle must be "reuse_pty" or "fresh_pty"'
   )
-
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
 
   return {
@@ -382,6 +381,11 @@ export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
     ['reuse_pty', 'fresh_pty'],
     'restartStyle must be "reuse_pty" or "fresh_pty"'
   )
+  const summonIntent = requireOptionalOneOf(
+    input['summonIntent'],
+    ['implicit', 'explicit_local'],
+    'summonIntent must be "implicit" or "explicit_local"'
+  )
 
   return {
     baseSessionRef: baseSessionRef.trim(),
@@ -389,6 +393,7 @@ export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
     conflictPolicy: 'suffix',
     idempotencyKey: idempotencyKey.trim(),
     ...(restartStyle !== undefined ? { restartStyle } : {}),
+    ...(summonIntent !== undefined ? { summonIntent } : {}),
   }
 }
 

@@ -7,20 +7,26 @@ import {
   HrcErrorCode,
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
+  HrcRuntimeUnavailableError,
   type HrcSessionRecord,
+  type StartRuntimeResponse,
   type StartRuntimeRosterClaim,
   type SuffixStartRuntimeRequest,
 } from 'hrc-core'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
+import { sendRemoteRosterStart } from './federation/roster-start-client.js'
 import {
   persistSessionTaskClaimAuthority,
+  preflightSuffixRosterFamily,
+  resolveImplicitSuffixRosterHome,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { parseSessionRef } from './parsers/messages.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, timestamp } from './server-util.js'
+import { toStartRuntimeResponse } from './status-views.js'
 import { findContinuitySession } from './target-view.js'
 
 /**
@@ -113,6 +119,17 @@ function slotSessionRef(base: RosterBase, slot: string): string {
   return `${slotScopeRef(base, slot)}/lane:${base.laneRef}`
 }
 
+export function suffixRosterFamily(baseSessionRef: string): {
+  readonly baseScopeRef: string
+  readonly scopeRefs: readonly string[]
+} {
+  const base = parseRosterBase(baseSessionRef)
+  return {
+    baseScopeRef: base.baseScopeRef,
+    scopeRefs: rosterSlotTokens(base.baseTaskId).map((slot) => slotScopeRef(base, slot)),
+  }
+}
+
 /**
  * Stable key-sorted JSON — the same canonicalization discipline the dispatch
  * idempotency machinery uses, so "same key, different body" means the same
@@ -143,6 +160,9 @@ export function suffixStartRequestHash(request: SuffixStartRuntimeRequest): stri
       canonicalJson({
         baseSessionRef: request.baseSessionRef,
         conflictPolicy: request.conflictPolicy,
+        // Preserve the pre-federation hash for absent/explicit-local operator
+        // retries. Only the new routed semantic changes durable identity.
+        ...(request.summonIntent === 'implicit' ? { summonIntent: 'implicit' } : {}),
         runtimeIntent: request.runtimeIntent,
         restartStyle: request.restartStyle,
       })
@@ -217,6 +237,57 @@ type ClaimOutcome = {
   session: HrcSessionRecord
   slot: string
   replayed: boolean
+}
+
+/**
+ * Routes only implicit (mobile) roster starts. The origin resolves placement;
+ * the authenticated home node independently preflights and owns the claim.
+ * Legacy omission stays explicit-local for compatibility with older CLIs.
+ */
+export async function startRoutedSuffixRosterRuntime(
+  this: HrcServerInstanceForHandlers,
+  request: SuffixStartRuntimeRequest
+): Promise<StartRuntimeResponse> {
+  if ((request.summonIntent ?? 'explicit_local') === 'explicit_local') {
+    const { runtime, claim } = await startSuffixRosterRuntime.call(this, request)
+    return { ...toStartRuntimeResponse(runtime), claim }
+  }
+
+  const base = parseRosterBase(request.baseSessionRef)
+  const capabilityHint = {
+    placement: request.runtimeIntent.placement,
+    harness: request.runtimeIntent.harness,
+  }
+  const homeNodeId = await resolveImplicitSuffixRosterHome(this, {
+    scopeRef: base.baseScopeRef,
+    capabilityHint,
+  })
+  const config = this.options.federationConfig
+  if (config === undefined || !config.sourceExists) {
+    throw new HrcRuntimeUnavailableError(
+      'implicit suffix-roster provisioning requires federation configuration',
+      { scopeRef: base.baseScopeRef, retryable: true }
+    )
+  }
+  if (homeNodeId === config.nodeId) {
+    await preflightSuffixRosterFamily(this, {
+      scopeRefs: rosterSlotTokens(base.baseTaskId).map((slot) => slotScopeRef(base, slot)),
+      capabilityHint,
+      origin: 'local',
+    })
+    const { runtime, claim } = await startSuffixRosterRuntime.call(this, request)
+    return { ...toStartRuntimeResponse(runtime), claim }
+  }
+
+  const peer = [...config.peers.values()].find((candidate) => candidate.nodeId === homeNodeId)
+  if (peer === undefined) {
+    throw new HrcRuntimeUnavailableError('suffix-roster home is not a configured peer', {
+      scopeRef: base.baseScopeRef,
+      homeNodeId,
+      retryable: true,
+    })
+  }
+  return await sendRemoteRosterStart({ peer, request })
 }
 
 /**
@@ -460,6 +531,7 @@ async function mintSlotSession(
 
 export const rosterClaimHandlersMethods = {
   startSuffixRosterRuntime,
+  startRoutedSuffixRosterRuntime,
 }
 
 export type RosterClaimHandlersMethods = typeof rosterClaimHandlersMethods

@@ -311,8 +311,7 @@ export async function handleStartRuntime(
   // inside this one request, so the caller never holds a claim it could replay
   // against a different start. Reports the ACTUAL claimed scope back.
   if (isSuffixStartRuntimeRequest(body)) {
-    const { runtime, claim } = await this.startSuffixRosterRuntime(body)
-    return json({ ...toStartRuntimeResponse(runtime), claim } satisfies StartRuntimeResponse)
+    return json(await this.startRoutedSuffixRosterRuntime(body))
   }
   const requested = requireSession(this.db, body.hostSessionId)
   const { session } = await this.maybeAutoRotateStaleSession(requested, {

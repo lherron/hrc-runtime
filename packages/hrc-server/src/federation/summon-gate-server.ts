@@ -13,7 +13,12 @@
  * change that sits on every session-creation path.
  */
 
-import { HrcConflictError, HrcErrorCode, formatCanonicalScopeRef } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  formatCanonicalScopeRef,
+} from 'hrc-core'
 import type {
   BirthAuthorityProvenance,
   EstablishmentProvenance,
@@ -46,10 +51,12 @@ import {
   type SummonCapabilityHint,
   type SummonCapabilityObservation,
   type SummonGateDeps,
+  type SummonGateEvaluation,
   type SummonGatePolicy,
   type SummonGateResult,
   type SummonPath,
   evaluateSummonGate,
+  placementPinKey,
   resolveDeclaredPlacementHome,
   resolvePlacementDisposition,
 } from './summon-gate.js'
@@ -126,6 +133,140 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
   const deps = buildGateDeps(server)
   gateDepsCache.set(server as object, deps)
   return deps
+}
+
+function throwRosterPlacementRefusal(
+  scopeRef: string,
+  evaluation: Extract<SummonGateEvaluation, { decision: 'refuse' }>
+): never {
+  const detail = {
+    scopeRef,
+    reason: evaluation.reason,
+    retryable: evaluation.retryable,
+    ...(evaluation.homeNodeId === undefined ? {} : { homeNodeId: evaluation.homeNodeId }),
+  }
+  if (evaluation.retryable) {
+    throw new HrcRuntimeUnavailableError(evaluation.diagnostic, detail)
+  }
+  throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, evaluation.diagnostic, detail)
+}
+
+/** Resolve an implicit roster base without establishing or mutating it. */
+export async function resolveImplicitSuffixRosterHome(
+  server: SummonGateServerContext,
+  request: {
+    readonly scopeRef: string
+    readonly capabilityHint: SummonCapabilityHint
+  }
+): Promise<string> {
+  assertLocalPersonaAllowed(server, request.scopeRef)
+  const deps = gateDepsFor(server)
+  if (deps === undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'implicit suffix-roster provisioning requires the enforced federation placement gate',
+      { scopeRef: request.scopeRef, retryable: true }
+    )
+  }
+  const result = await evaluateSummonGate({
+    scopeRef: request.scopeRef,
+    path: 'resolve-session',
+    intent: 'implicit',
+    deps,
+    capabilityHint: request.capabilityHint,
+  })
+  const placement = result.placement
+  if (placement?.outcome === 'remote-bound') return placement.binding.homeNodeId
+  if (placement?.outcome === 'remote-establish') return placement.candidateHomeNodeId
+  if (result.evaluation.decision === 'refuse') {
+    throwRosterPlacementRefusal(request.scopeRef, result.evaluation)
+  }
+  if (placement === undefined || placement.outcome === 'refuse') {
+    throw new HrcRuntimeUnavailableError('implicit suffix-roster placement did not resolve', {
+      scopeRef: request.scopeRef,
+      retryable: true,
+    })
+  }
+  switch (placement.outcome) {
+    case 'local-bound':
+      return placement.binding.homeNodeId
+    case 'local-establish':
+      return placement.homeNodeId
+  }
+}
+
+/**
+ * Fail-closed, read-only whole-family preflight for a home-local roster start.
+ * Every finite member must name this node through an exact task-default and
+ * independently pass retirement, binding, authority, and materialization
+ * checks before the roster mutex is allowed to mutate anything.
+ */
+export async function preflightSuffixRosterFamily(
+  server: SummonGateServerContext,
+  request: {
+    readonly scopeRefs: readonly string[]
+    readonly capabilityHint: SummonCapabilityHint
+    readonly origin: 'local' | 'federated-ingress'
+  }
+): Promise<void> {
+  const deps = gateDepsFor(server)
+  if (deps === undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'suffix-roster family preflight requires the enforced federation placement gate',
+      { retryable: true }
+    )
+  }
+  for (const scopeRef of request.scopeRefs) {
+    assertLocalPersonaAllowed(server, scopeRef)
+    let policy: SummonGatePolicy | undefined
+    try {
+      policy = await deps.policyFor(scopeRef)
+    } catch (error) {
+      throw new HrcRuntimeUnavailableError('suffix-roster placement policy is unavailable', {
+        scopeRef,
+        retryable: true,
+        cause: error instanceof Error ? error.message : String(error),
+      })
+    }
+    const taskKey = placementPinKey(scopeRef, 'task-default')
+    const declaredHome =
+      taskKey === undefined ? undefined : policy?.placement?.taskDefaults?.[taskKey]
+    if (taskKey === undefined || declaredHome !== deps.localNodeId) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `suffix-roster member ${scopeRef} must have an exact task-default naming ${deps.localNodeId}`,
+        {
+          scopeRef,
+          taskKey: taskKey ?? null,
+          declaredHomeNodeId: declaredHome ?? null,
+          requiredHomeNodeId: deps.localNodeId,
+          retryable: false,
+        }
+      )
+    }
+    const result = await evaluateSummonGate({
+      scopeRef,
+      path: 'resolve-session',
+      intent: 'implicit',
+      origin: request.origin,
+      deps,
+      capabilityHint: request.capabilityHint,
+    })
+    if (result.evaluation.decision === 'refuse') {
+      throwRosterPlacementRefusal(scopeRef, result.evaluation)
+    }
+    if (result.evaluation.homeNodeId !== deps.localNodeId) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `suffix-roster member ${scopeRef} is not authoritative on ${deps.localNodeId}`,
+        {
+          scopeRef,
+          homeNodeId: result.evaluation.homeNodeId ?? null,
+          requiredHomeNodeId: deps.localNodeId,
+          retryable: false,
+        }
+      )
+    }
+  }
 }
 
 /**
