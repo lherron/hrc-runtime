@@ -1,0 +1,34 @@
+id: hrc-runtime.mobile-suffix-roster-provisioning
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC-owned mobile suffix-roster placement and federated provisioning
+predicate: >
+  Mobile suffix-roster families are finite: each allowed base and every member
+  produced by HRC's fixed ordered suffix list has an exact placement task-default
+  naming the same concrete home node before the surface is enabled. Implicit
+  suffix starts are routed by origin HRC from policy and registry state; ACP
+  supplies no node assertion. A remote home is invoked only through the
+  authenticated, capability-advertised rosterStart peer verb. The receiver
+  independently preflights retirement, authority and binding state, exact local
+  policy, and materialization capability for the whole family before mutation,
+  localizes the runtime intent, and then owns the existing atomic roster
+  claim/start and durable idempotency record. Operator CLI starts remain
+  explicit_local. Retryable peer failure is synchronous runtime_unavailable and
+  does not use the message outbox.
+authority: hrcchat#18964
+source:
+  - hrcchat#18964
+  - packages/hrc-server/src/roster-claim.ts
+  - packages/hrc-server/src/federation/runtime-intent-localization.ts
+  - packages/hrc-server/src/federation/peer-protocol.ts
+  - docs/federation-peer-protocol.md
+required_tests:
+  - just verify
+  - live multi-node rosterStart topology proof across max3, svc, and lab
+last_verified: 2026-08-12
+reopen_when: >
+  The mobile base set, fixed roster suffix list, exact task-default placement
+  surface, peer rosterStart contract, or home-local idempotency ownership changes.
+supersedes: []
+superseded_by: []
