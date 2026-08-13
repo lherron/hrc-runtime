@@ -1,0 +1,683 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-130 -12 2377 1796" role="img" data-arris-treatment="tinted-clean">
+  <style>
+    [data-arris-treatment="baseline"] { color-scheme: light dark; --arris-bg: #ffffff; --arris-fg: #171717; --arris-surface: #ffffff; --arris-group: #f5f5f5; --arris-description-ink: #666666; --arris-tone-info: #0969da; --arris-tone-ok: #1a7f37; --arris-tone-warn: #9a6700; --arris-tone-danger: #cf222e; }
+    @media (prefers-color-scheme: dark) { [data-arris-treatment="baseline"] { --arris-bg: #171717; --arris-fg: #f5f5f5; --arris-surface: #242424; --arris-group: #1f1f1f; --arris-description-ink: #aaaaaa; --arris-tone-info: #58a6ff; --arris-tone-ok: #3fb950; --arris-tone-warn: #d29922; --arris-tone-danger: #ff7b72; } }
+    [data-arris-treatment="baseline"] .arris-shape { fill: var(--arris-surface); stroke: var(--arris-fg); stroke-width: 2; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="baseline"] .arris-terminal-ring { fill: none; stroke: var(--arris-fg); stroke-width: 2; }
+    [data-arris-treatment="baseline"] .arris-terminal-disc { fill: var(--arris-fg); stroke: none; }
+    [data-arris-treatment="baseline"] .arris-group-shape { fill: var(--arris-group); fill-opacity: 0.45; stroke: var(--arris-fg); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="baseline"] .arris-edge-line, [data-arris-treatment="baseline"] .arris-arrow { fill: none; stroke: var(--arris-fg); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="baseline"] .arris-label { fill: var(--arris-fg); font-family: ui-sans-serif, system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="baseline"] .arris-group-label { text-anchor: start; }
+    [data-arris-treatment="baseline"] .arris-adornments { display: none; }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone] .arris-shape { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone] .arris-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone] .arris-terminal-ring { fill: none; stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="baseline"] .arris-node[data-arris-tone] .arris-terminal-disc { fill: var(--arris-semantic-tone); stroke: none; }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone] .arris-edge-line, [data-arris-treatment="baseline"] .arris-edge[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="baseline"] .arris-edge[data-arris-tone] .arris-edge-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] { color-scheme: light dark; background-color: #eef5fc; --arris-drafting-sheet: #eef5fc; --arris-drafting-surface: #f7fbff; --arris-drafting-line: #4b78a6; --arris-drafting-ink: #173d63; --arris-drafting-accent: #276fbd; --arris-drafting-grid: #cfdeed; --arris-description-ink: #4b78a6; --arris-tone-info: #0576b9; --arris-tone-ok: #2f7d57; --arris-tone-warn: #9a6700; --arris-tone-danger: #b42318; }
+    @media (prefers-color-scheme: dark) { [data-arris-treatment="drafting"] { background-color: #0c1526; --arris-drafting-sheet: #0c1526; --arris-drafting-surface: #0f1b31; --arris-drafting-line: #9fc1e8; --arris-drafting-ink: #d7e5f6; --arris-drafting-accent: #5b8dd9; --arris-drafting-grid: #263b5d; --arris-description-ink: #9fc1e8; --arris-tone-info: #58a6ff; --arris-tone-ok: #56d364; --arris-tone-warn: #e3b341; --arris-tone-danger: #ff7b72; } }
+    [data-arris-treatment="drafting"] .arris-shape { fill: var(--arris-drafting-surface); stroke: var(--arris-drafting-line); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-terminal-ring { fill: none; stroke: var(--arris-drafting-ink); stroke-width: 1.5; }
+    [data-arris-treatment="drafting"] .arris-terminal-disc { fill: var(--arris-drafting-ink); stroke: none; }
+    [data-arris-treatment="drafting"] .arris-group-shape { fill: var(--arris-drafting-sheet); fill-opacity: 0.28; stroke: var(--arris-drafting-line); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-edge-line, [data-arris-treatment="drafting"] .arris-edge > .arris-arrow { fill: none; stroke: var(--arris-drafting-line); stroke-width: 1.25; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-node > .arris-arrow { fill: none; stroke: var(--arris-drafting-line); stroke-width: 1.25; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-label { fill: var(--arris-drafting-ink); font-family: ui-sans-serif, system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="drafting"] .arris-edge-label { fill: var(--arris-drafting-line); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.015em; }
+    [data-arris-treatment="drafting"] .arris-group-label { fill: var(--arris-drafting-accent); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-caps: all-small-caps; letter-spacing: 0.12em; text-anchor: start; }
+    [data-arris-treatment="drafting"] .arris-adornments { display: inline; }
+    [data-arris-treatment="drafting"] .arris-kind-eyebrow { display: inline; fill: var(--arris-drafting-accent); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; font-variant-caps: all-small-caps; letter-spacing: 0.14em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="drafting"] .arris-corner-cartouche { display: inline; }
+    [data-arris-treatment="drafting"] .arris-cartouche-shape { fill: var(--arris-drafting-accent); fill-opacity: 0.18; stroke: var(--arris-drafting-line); stroke-width: 0.75; rx: 0; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-cartouche-label { fill: var(--arris-drafting-ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 8px; letter-spacing: 0.08em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="drafting"] .arris-icon-chip { display: none; }
+    [data-arris-treatment="drafting"] .arris-icon-chip-shape { fill: var(--arris-drafting-sheet); stroke: var(--arris-drafting-accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-icon-chip-glyph { fill: var(--arris-drafting-accent); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="drafting"] .arris-edge-pins { display: inline; }
+    [data-arris-treatment="drafting"] .arris-pin-stub { fill: none; stroke: var(--arris-drafting-accent); stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone] .arris-shape { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone] .arris-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone] .arris-terminal-ring { fill: none; stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] .arris-node[data-arris-tone] .arris-terminal-disc { fill: var(--arris-semantic-tone); stroke: none; }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone] .arris-edge-line, [data-arris-treatment="drafting"] .arris-edge[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="drafting"] .arris-edge[data-arris-tone] .arris-edge-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment="tinted"] { color-scheme: light dark; background-color: #f7f8fa; --arris-tinted-sheet: #f7f8fa; --arris-tinted-ink: #252932; --arris-tinted-dim: #667080; --arris-description-ink: #667080; --arris-tinted-edge: #737b88; --arris-tinted-group: #e9ecf1; --arris-kind-service: #477eb8; --arris-kind-datastore: #ad732e; --arris-kind-queue: #7558a8; --arris-kind-actor: #438451; --arris-kind-external: #667080; --arris-kind-note: #9b8426; --arris-kind-state: #3d8680; --arris-tone-info: #0969da; --arris-tone-ok: #1a7f37; --arris-tone-warn: #9a6700; --arris-tone-danger: #cf222e; }
+    @media (prefers-color-scheme: dark) { [data-arris-treatment="tinted"] { background-color: #17181d; --arris-tinted-sheet: #17181d; --arris-tinted-ink: #e6e8ee; --arris-tinted-dim: #9ba1ae; --arris-description-ink: #9ba1ae; --arris-tinted-edge: #aeb2bc; --arris-tinted-group: #202228; --arris-kind-service: #6e9bd1; --arris-kind-datastore: #d1a25e; --arris-kind-queue: #a98fd6; --arris-kind-actor: #7fbf8e; --arris-kind-external: #8a8d96; --arris-kind-note: #d8c878; --arris-kind-state: #63b3ac; --arris-tone-info: #58a6ff; --arris-tone-ok: #3fb950; --arris-tone-warn: #d29922; --arris-tone-danger: #ff7b72; } }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="service"] { --arris-kind: var(--arris-kind-service); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="datastore"] { --arris-kind: var(--arris-kind-datastore); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="queue"] { --arris-kind: var(--arris-kind-queue); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="actor"] { --arris-kind: var(--arris-kind-actor); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="external"] { --arris-kind: var(--arris-kind-external); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="note"] { --arris-kind: var(--arris-kind-note); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="state"] { --arris-kind: var(--arris-kind-state); }
+    [data-arris-treatment="tinted"] .arris-shape { fill: color-mix(in srgb, var(--arris-kind) 10%, transparent); stroke: color-mix(in srgb, var(--arris-kind) 62%, transparent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-terminal-ring { fill: none; stroke: var(--arris-tinted-ink); stroke-width: 2; }
+    [data-arris-treatment="tinted"] .arris-terminal-disc { fill: var(--arris-tinted-ink); stroke: none; }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="actor"] .arris-shape { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.82; stroke-width: 1.75; }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-type="external"] .arris-shape { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.72; }
+    [data-arris-treatment="tinted"] .arris-group-shape { fill: var(--arris-tinted-group); fill-opacity: 0.62; stroke: var(--arris-tinted-dim); stroke-opacity: 0.45; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-edge-line, [data-arris-treatment="tinted"] .arris-edge > .arris-arrow { fill: none; stroke: var(--arris-tinted-edge); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-node > .arris-arrow { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.82; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-label { fill: var(--arris-tinted-ink); font-family: ui-sans-serif, system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted"] .arris-edge-label { fill: var(--arris-tinted-dim); font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.01em; }
+    [data-arris-treatment="tinted"] .arris-group-label { fill: var(--arris-tinted-dim); font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; text-anchor: start; }
+    [data-arris-treatment="tinted"] .arris-adornments { display: inline; }
+    [data-arris-treatment="tinted"] .arris-kind-eyebrow { display: inline; fill: var(--arris-kind); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; font-weight: 650; letter-spacing: 0.12em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted"] .arris-corner-cartouche { display: none; }
+    [data-arris-treatment="tinted"] .arris-cartouche-shape { fill: none; stroke: var(--arris-kind); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-cartouche-label { fill: var(--arris-kind); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 8px; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted"] .arris-icon-chip { display: inline; }
+    [data-arris-treatment="tinted"] .arris-icon-chip-shape { fill: color-mix(in srgb, var(--arris-kind) 22%, transparent); stroke: color-mix(in srgb, var(--arris-kind) 45%, transparent); stroke-width: 1; rx: 5px; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-icon-chip-glyph { fill: var(--arris-kind); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted"] .arris-edge-pins { display: none; }
+    [data-arris-treatment="tinted"] .arris-pin-stub { fill: none; stroke: var(--arris-tinted-edge); stroke-width: 1.75; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone="info"] { --arris-kind: var(--arris-tone-info); }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone="info"] { --arris-kind: var(--arris-tone-info); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone="ok"] { --arris-kind: var(--arris-tone-ok); }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone="ok"] { --arris-kind: var(--arris-tone-ok); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone="warn"] { --arris-kind: var(--arris-tone-warn); }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone="warn"] { --arris-kind: var(--arris-tone-warn); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone="danger"] { --arris-kind: var(--arris-tone-danger); }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone="danger"] { --arris-kind: var(--arris-tone-danger); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone] .arris-terminal-ring { fill: none; stroke: var(--arris-kind); }
+    [data-arris-treatment="tinted"] .arris-node[data-arris-tone] .arris-terminal-disc { fill: var(--arris-kind); stroke: none; }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone] .arris-edge-line, [data-arris-treatment="tinted"] .arris-edge[data-arris-tone] > .arris-arrow { stroke: var(--arris-kind); }
+    [data-arris-treatment="tinted"] .arris-edge[data-arris-tone] .arris-edge-label { fill: var(--arris-kind); }
+    [data-arris-treatment="tinted-clean"] { color-scheme: light dark; background-color: #f7f8fa; --arris-tinted-sheet: #f7f8fa; --arris-tinted-ink: #252932; --arris-tinted-dim: #667080; --arris-description-ink: #667080; --arris-tinted-edge: #737b88; --arris-tinted-group: #e9ecf1; --arris-kind-service: #477eb8; --arris-kind-datastore: #ad732e; --arris-kind-queue: #7558a8; --arris-kind-actor: #438451; --arris-kind-external: #667080; --arris-kind-note: #9b8426; --arris-kind-state: #3d8680; --arris-tone-info: #0969da; --arris-tone-ok: #1a7f37; --arris-tone-warn: #9a6700; --arris-tone-danger: #cf222e; }
+    @media (prefers-color-scheme: dark) { [data-arris-treatment="tinted-clean"] { background-color: #17181d; --arris-tinted-sheet: #17181d; --arris-tinted-ink: #e6e8ee; --arris-tinted-dim: #9ba1ae; --arris-description-ink: #9ba1ae; --arris-tinted-edge: #aeb2bc; --arris-tinted-group: #202228; --arris-kind-service: #6e9bd1; --arris-kind-datastore: #d1a25e; --arris-kind-queue: #a98fd6; --arris-kind-actor: #7fbf8e; --arris-kind-external: #8a8d96; --arris-kind-note: #d8c878; --arris-kind-state: #63b3ac; --arris-tone-info: #58a6ff; --arris-tone-ok: #3fb950; --arris-tone-warn: #d29922; --arris-tone-danger: #ff7b72; } }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="service"] { --arris-kind: var(--arris-kind-service); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="datastore"] { --arris-kind: var(--arris-kind-datastore); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="queue"] { --arris-kind: var(--arris-kind-queue); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="actor"] { --arris-kind: var(--arris-kind-actor); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="external"] { --arris-kind: var(--arris-kind-external); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="note"] { --arris-kind: var(--arris-kind-note); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="state"] { --arris-kind: var(--arris-kind-state); }
+    [data-arris-treatment="tinted-clean"] .arris-shape { fill: color-mix(in srgb, var(--arris-kind) 10%, transparent); stroke: color-mix(in srgb, var(--arris-kind) 62%, transparent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-terminal-ring { fill: none; stroke: var(--arris-tinted-ink); stroke-width: 2; }
+    [data-arris-treatment="tinted-clean"] .arris-terminal-disc { fill: var(--arris-tinted-ink); stroke: none; }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="actor"] .arris-shape { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.82; stroke-width: 1.75; }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-type="external"] .arris-shape { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.72; }
+    [data-arris-treatment="tinted-clean"] .arris-group-shape { fill: var(--arris-tinted-group); fill-opacity: 0.62; stroke: var(--arris-tinted-dim); stroke-opacity: 0.45; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-edge-line, [data-arris-treatment="tinted-clean"] .arris-edge > .arris-arrow { fill: none; stroke: var(--arris-tinted-edge); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-node > .arris-arrow { fill: none; stroke: var(--arris-kind); stroke-opacity: 0.82; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-label { fill: var(--arris-tinted-ink); font-family: ui-sans-serif, system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted-clean"] .arris-edge-label { fill: var(--arris-tinted-dim); font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.01em; }
+    [data-arris-treatment="tinted-clean"] .arris-group-label { fill: var(--arris-tinted-dim); font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; text-anchor: start; }
+    [data-arris-treatment="tinted-clean"] .arris-adornments { display: inline; }
+    [data-arris-treatment="tinted-clean"] .arris-kind-eyebrow { display: inline; fill: var(--arris-kind); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; font-weight: 650; letter-spacing: 0.12em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted-clean"] .arris-corner-cartouche { display: none; }
+    [data-arris-treatment="tinted-clean"] .arris-cartouche-shape { fill: none; stroke: var(--arris-kind); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-cartouche-label { fill: var(--arris-kind); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 8px; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted-clean"] .arris-icon-chip { display: inline; }
+    [data-arris-treatment="tinted-clean"] .arris-icon-chip-shape { fill: color-mix(in srgb, var(--arris-kind) 22%, transparent); stroke: color-mix(in srgb, var(--arris-kind) 45%, transparent); stroke-width: 1; rx: 5px; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-icon-chip-glyph { fill: var(--arris-kind); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="tinted-clean"] .arris-edge-pins { display: none; }
+    [data-arris-treatment="tinted-clean"] .arris-pin-stub { fill: none; stroke: var(--arris-tinted-edge); stroke-width: 1.75; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone="info"] { --arris-kind: var(--arris-tone-info); }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone="info"] { --arris-kind: var(--arris-tone-info); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone="ok"] { --arris-kind: var(--arris-tone-ok); }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone="ok"] { --arris-kind: var(--arris-tone-ok); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone="warn"] { --arris-kind: var(--arris-tone-warn); }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone="warn"] { --arris-kind: var(--arris-tone-warn); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone="danger"] { --arris-kind: var(--arris-tone-danger); }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone="danger"] { --arris-kind: var(--arris-tone-danger); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone] .arris-terminal-ring { fill: none; stroke: var(--arris-kind); }
+    [data-arris-treatment="tinted-clean"] .arris-node[data-arris-tone] .arris-terminal-disc { fill: var(--arris-kind); stroke: none; }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone] .arris-edge-line, [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone] > .arris-arrow { stroke: var(--arris-kind); }
+    [data-arris-treatment="tinted-clean"] .arris-edge[data-arris-tone] .arris-edge-label { fill: var(--arris-kind); }
+    [data-arris-treatment="tinted-clean"] .arris-kind-eyebrow { display: none; }
+    [data-arris-treatment="tinted-clean"] .arris-icon-chip { display: none; }
+    [data-arris-treatment="datasheet"] { color-scheme: light dark; background-color: #f2efe6; --arris-datasheet-board: #f2efe6; --arris-datasheet-surface: #faf8f1; --arris-datasheet-ink: #292821; --arris-datasheet-dim: #706a5e; --arris-description-ink: #706a5e; --arris-datasheet-hot: #ae5d2e; --arris-datasheet-group: #e7e2d6; --arris-tone-info: #286f9d; --arris-tone-ok: #527a3a; --arris-tone-warn: #8a6500; --arris-tone-danger: #b23a2b; }
+    @media (prefers-color-scheme: dark) { [data-arris-treatment="datasheet"] { background-color: #141412; --arris-datasheet-board: #141412; --arris-datasheet-surface: #1b1b18; --arris-datasheet-ink: #e8e4d8; --arris-datasheet-dim: #8c877a; --arris-description-ink: #8c877a; --arris-datasheet-hot: #c97f4e; --arris-datasheet-group: #20201c; --arris-tone-info: #70b7e6; --arris-tone-ok: #8fbd70; --arris-tone-warn: #ddb84a; --arris-tone-danger: #ef776a; } }
+    [data-arris-treatment="datasheet"] .arris-shape { fill: var(--arris-datasheet-surface); stroke: var(--arris-datasheet-ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-terminal-ring { fill: none; stroke: var(--arris-datasheet-ink); stroke-width: 1.5; }
+    [data-arris-treatment="datasheet"] .arris-terminal-disc { fill: var(--arris-datasheet-ink); stroke: none; }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-type="service"] > rect.arris-shape { rx: 0; }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-type="external"] .arris-shape { fill: var(--arris-datasheet-board); stroke: var(--arris-datasheet-dim); stroke-dasharray: 6 5; }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-type="note"] .arris-shape { stroke: var(--arris-datasheet-dim); stroke-width: 1; }
+    [data-arris-treatment="datasheet"] .arris-group-shape { fill: var(--arris-datasheet-group); fill-opacity: 0.42; stroke: var(--arris-datasheet-dim); stroke-width: 1; stroke-dasharray: 2 3; rx: 0; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-edge-line { fill: none; stroke: var(--arris-datasheet-ink); stroke-width: 1.5; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-edge > .arris-arrow { fill: none; stroke: var(--arris-datasheet-hot); stroke-width: 2; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-node > .arris-arrow { fill: none; stroke: var(--arris-datasheet-ink); stroke-width: 1.5; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-type="note"] > .arris-arrow { stroke: var(--arris-datasheet-dim); stroke-width: 1; }
+    [data-arris-treatment="datasheet"] .arris-label { fill: var(--arris-datasheet-ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="datasheet"] .arris-edge-label { fill: var(--arris-datasheet-dim); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.015em; }
+    [data-arris-treatment="datasheet"] .arris-group-label { fill: var(--arris-datasheet-dim); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.1em; text-anchor: start; }
+    [data-arris-treatment="datasheet"] .arris-adornments { display: inline; }
+    [data-arris-treatment="datasheet"] .arris-kind-eyebrow { display: none; fill: var(--arris-datasheet-dim); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; letter-spacing: 0.08em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="datasheet"] .arris-corner-cartouche { display: inline; }
+    [data-arris-treatment="datasheet"] .arris-cartouche-shape { fill: none; stroke: var(--arris-datasheet-dim); stroke-width: 0.75; rx: 0; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-cartouche-label { fill: var(--arris-datasheet-dim); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; letter-spacing: 0.06em; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="datasheet"] .arris-icon-chip { display: none; }
+    [data-arris-treatment="datasheet"] .arris-icon-chip-shape { fill: none; stroke: var(--arris-datasheet-dim); stroke-width: 1; rx: 0; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-icon-chip-glyph { fill: var(--arris-datasheet-dim); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; text-anchor: middle; dominant-baseline: middle; }
+    [data-arris-treatment="datasheet"] .arris-edge-pins { display: inline; }
+    [data-arris-treatment="datasheet"] .arris-pin-stub { fill: none; stroke: var(--arris-datasheet-dim); stroke-width: 4; stroke-linecap: square; vector-effect: non-scaling-stroke; }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone="info"] { --arris-semantic-tone: var(--arris-tone-info); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone="ok"] { --arris-semantic-tone: var(--arris-tone-ok); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone="warn"] { --arris-semantic-tone: var(--arris-tone-warn); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone="danger"] { --arris-semantic-tone: var(--arris-tone-danger); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone] .arris-shape { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone] .arris-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone] .arris-terminal-ring { fill: none; stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="datasheet"] .arris-node[data-arris-tone] .arris-terminal-disc { fill: var(--arris-semantic-tone); stroke: none; }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone] .arris-edge-line, [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone] > .arris-arrow { stroke: var(--arris-semantic-tone); }
+    [data-arris-treatment="datasheet"] .arris-edge[data-arris-tone] .arris-edge-label { fill: var(--arris-semantic-tone); }
+    [data-arris-treatment] .arris-node .arris-description, [data-arris-treatment] .arris-node[data-arris-tone] .arris-description { fill: var(--arris-description-ink); font-weight: 400; font-style: normal; }
+  </style>
+  <g class="arris-group" data-arris-id="session">
+    <title>Session — one durable continuity per scope+lane</title>
+    <rect class="arris-group-shape" x="12" y="120" width="1898" height="1253" rx="8"/>
+    <text class="arris-label arris-group-label" x="24" y="136" font-size="13" font-weight="700">Session — one durable continuity per scope+lane</text>
+  </g>
+  <g class="arris-group" data-arris-id="runtime">
+    <title>Runtime — broker in leased tmux</title>
+    <rect class="arris-group-shape" x="32" y="412" width="1858" height="941" rx="8"/>
+    <text class="arris-label arris-group-label" x="44" y="428" font-size="13" font-weight="700">Runtime — broker in leased tmux</text>
+  </g>
+  <g class="arris-group" data-arris-id="liveloop">
+    <title>Live</title>
+    <rect class="arris-group-shape" x="52" y="455" width="1818" height="451" rx="8"/>
+    <text class="arris-label arris-group-label" x="64" y="471" font-size="13" font-weight="700">Live</text>
+  </g>
+  <g class="arris-group" data-arris-id="endings">
+    <title>Runtime endings — reachable from any live state; the session survives</title>
+    <rect class="arris-group-shape" x="568" y="1024" width="786" height="309" rx="8"/>
+    <text class="arris-label arris-group-label" x="580" y="1040" font-size="13" font-weight="700">Runtime endings — reachable from any live state; the session survives</text>
+  </g>
+  <g class="arris-group" data-arris-id="inflight">
+    <title>Turn in flight</title>
+    <rect class="arris-group-shape" x="968" y="498" width="882" height="388" rx="8"/>
+    <text class="arris-label arris-group-label" x="980" y="514" font-size="13" font-weight="700">Turn in flight</text>
+  </g>
+  <g class="arris-node" data-arris-id="born" data-arris-type="start">
+    <title>start</title>
+    <circle class="arris-shape arris-terminal-disc" cx="961" cy="26" r="14"/>
+  </g>
+  <g class="arris-node" data-arris-id="active" data-arris-type="state" data-arris-tone="ok">
+    <title>Active — generation N: status: active · continuities.activeHostSessionId points here</title>
+    <rect class="arris-shape" x="827" y="163" width="268" height="131" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="961" y="182.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="833" y="169" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="850" y="177">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="852.25" y="189.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="863.25" y="200.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="961" y="200.2" font-size="15">Active — generation N</text>
+    <text class="arris-label arris-description" x="961" y="240" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="961" y="222">status: active ·</tspan>
+      <tspan x="961" y="240">continuities.activeHostSessionId</tspan>
+      <tspan x="961" y="258">points here</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="starting" data-arris-type="state" data-arris-tone="info">
+    <title>Starting: runtime.created — broker invocation starting</title>
+    <rect class="arris-shape" x="72" y="635" width="216" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="180" y="654.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="78" y="641" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="95" y="649">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="120" y="661.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="131" y="672.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="180" y="672.2" font-size="15">Starting</text>
+    <text class="arris-label arris-description" x="180" y="703" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="180" y="694">runtime.created — broker</tspan>
+      <tspan x="180" y="712">invocation starting</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="ready" data-arris-type="state" data-arris-tone="ok">
+    <title>Ready: idle — no active run</title>
+    <rect class="arris-shape" x="464" y="644" width="190" height="95" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="559" y="663.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="470" y="650" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="487" y="658">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="510.25" y="670.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="521.25" y="681.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="559" y="681.2" font-size="15">Ready</text>
+    <text class="arris-label arris-description" x="559" y="703" font-size="13" font-weight="400" font-style="normal">idle — no active run</text>
+  </g>
+  <g class="arris-node" data-arris-id="busy" data-arris-type="state" data-arris-tone="info">
+    <title>Busy: turn.started — runtime owns the active run</title>
+    <rect class="arris-shape" x="988" y="753" width="262" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="1119" y="772.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="994" y="759" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="1011" y="767">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="1074" y="779.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="1085" y="790.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="1119" y="790.2" font-size="15">Busy</text>
+    <text class="arris-label arris-description" x="1119" y="821" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="1119" y="812">turn.started — runtime owns the</tspan>
+      <tspan x="1119" y="830">active run</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="awaiting" data-arris-type="state" data-arris-tone="warn">
+    <title>Awaiting input: open ask bracket — the durable ledger is the authority, never the pane</title>
+    <rect class="arris-shape" x="1549" y="725" width="281" height="131" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="1689.5" y="744.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="1555" y="731" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="1572" y="739">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="1607" y="751.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="1618" y="762.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="1689.5" y="762.2" font-size="15">Awaiting input</text>
+    <text class="arris-label arris-description" x="1689.5" y="802" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="1689.5" y="784">open ask bracket — the durable</tspan>
+      <tspan x="1689.5" y="802">ledger is the authority, never the</tspan>
+      <tspan x="1689.5" y="820">pane</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="terminated" data-arris-type="state">
+    <title>Terminated: intentional — /quit · operator terminate · idle cleanup</title>
+    <rect class="arris-shape" x="588" y="1067" width="255" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="715.5" y="1086.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="594" y="1073" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="611" y="1081">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="648" y="1093.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="659" y="1104.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="715.5" y="1104.2" font-size="15">Terminated</text>
+    <text class="arris-label arris-description" x="715.5" y="1135" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="715.5" y="1126">intentional — /quit · operator</tspan>
+      <tspan x="715.5" y="1144">terminate · idle cleanup</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="crashed" data-arris-type="state" data-arris-tone="danger">
+    <title>Crashed: abnormal invocation terminal — no user-exit evidence</title>
+    <rect class="arris-shape" x="863" y="1067" width="275" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="1000.5" y="1086.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="869" y="1073" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="886" y="1081">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="944.25" y="1093.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="955.25" y="1104.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="1000.5" y="1104.2" font-size="15">Crashed</text>
+    <text class="arris-label arris-description" x="1000.5" y="1135" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="1000.5" y="1126">abnormal invocation terminal — no</tspan>
+      <tspan x="1000.5" y="1144">user-exit evidence</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="stale" data-arris-type="state" data-arris-tone="warn">
+    <title>Stale: presumed gone, unproven — 24h aging · lease lost on restart</title>
+    <rect class="arris-shape" x="588" y="1200" width="249" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="712.5" y="1219.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="594" y="1206" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="611" y="1214">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="663.75" y="1226.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="674.75" y="1237.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="712.5" y="1237.2" font-size="15">Stale</text>
+    <text class="arris-label arris-description" x="712.5" y="1268" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="712.5" y="1259">presumed gone, unproven — 24h</tspan>
+      <tspan x="712.5" y="1277">aging · lease lost on restart</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="dead" data-arris-type="state" data-arris-tone="danger">
+    <title>Dead: substrate proven missing</title>
+    <rect class="arris-shape" x="1118" y="1209" width="216" height="95" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="1226" y="1228.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="1124" y="1215" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="1141" y="1223">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="1181" y="1235.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="1192" y="1246.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="1226" y="1246.2" font-size="15">Dead</text>
+    <text class="arris-label arris-description" x="1226" y="1268" font-size="13" font-weight="400" font-style="normal">substrate proven missing</text>
+  </g>
+  <g class="arris-node" data-arris-id="archived" data-arris-type="state">
+    <title>Archived: prior generations — a view filter, not a resume gate</title>
+    <rect class="arris-shape" x="856" y="1511" width="281" height="113" rx="16"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="996.5" y="1530.8">STATE</text>
+      <g class="arris-corner-cartouche" data-arris-type="state">
+        <rect class="arris-cartouche-shape" x="862" y="1517" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="879" y="1525">ST</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="state">
+        <rect class="arris-icon-chip-shape" x="936.5" y="1537.2" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="947.5" y="1548.2">T</text>
+      </g>
+    </g>
+    <text class="arris-label" x="996.5" y="1548.2" font-size="15">Archived</text>
+    <text class="arris-label arris-description" x="996.5" y="1579" font-size="13" font-weight="400" font-style="normal">
+      <tspan x="996.5" y="1570">prior generations — a view filter,</tspan>
+      <tspan x="996.5" y="1588">not a resume gate</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="gone" data-arris-type="end">
+    <title>dormant</title>
+    <circle class="arris-shape arris-terminal-ring" cx="996.5" cy="1718" r="13"/>
+    <circle class="arris-shape arris-terminal-disc" cx="996.5" cy="1718" r="7"/>
+    <text class="arris-label" x="996.5" y="1747" font-size="15">dormant</text>
+  </g>
+  <g class="arris-node" data-arris-id="reaper-note" data-arris-type="note">
+    <title>Reaper doctrine: an open ask bracket outranks every status branch. A live pane is &apos;suspect&apos; — mutate nothing.</title>
+    <path class="arris-shape" d="M 995 541 H 1234 L 1250 557 V 703 H 995 Z"/>
+    <path class="arris-arrow" d="M 1234 541 V 557 H 1250"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="1122.5" y="564.6">NOTE</text>
+      <g class="arris-corner-cartouche" data-arris-type="note">
+        <rect class="arris-cartouche-shape" x="1001" y="547" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="1018" y="555">NOTE</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="note">
+        <rect class="arris-icon-chip-shape" x="995" y="611" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="1006" y="622">N</text>
+      </g>
+    </g>
+    <text class="arris-label" x="1122.5" y="622" font-size="15">
+      <tspan x="1122.5" y="582">Reaper doctrine: an open</tspan>
+      <tspan x="1122.5" y="602">ask bracket outranks every</tspan>
+      <tspan x="1122.5" y="622">status branch. A live pane</tspan>
+      <tspan x="1122.5" y="642">is &apos;suspect&apos; — mutate</tspan>
+      <tspan x="1122.5" y="662">nothing.</tspan>
+    </text>
+  </g>
+  <g class="arris-node" data-arris-id="barrier-note" data-arris-type="note">
+    <title>Resume barriers: continuation dropped · context cleared w/ drop · terminate w/ drop · broker continuation.cleared. The 24h auto-rotate is deliberately NOT a barrier.</title>
+    <path class="arris-shape" d="M 1960 1171 H 2207 L 2223 1187 V 1373 H 1960 Z"/>
+    <path class="arris-arrow" d="M 2207 1171 V 1187 H 2223"/>
+    <g class="arris-adornments arris-node-adornments" aria-hidden="true">
+      <text class="arris-kind-eyebrow" x="2091.5" y="1194.6">NOTE</text>
+      <g class="arris-corner-cartouche" data-arris-type="note">
+        <rect class="arris-cartouche-shape" x="1966" y="1177" width="34" height="16"/>
+        <text class="arris-cartouche-label" x="1983" y="1185">NOTE</text>
+      </g>
+      <g class="arris-icon-chip" data-arris-type="note">
+        <rect class="arris-icon-chip-shape" x="1960.25" y="1261" width="22" height="22"/>
+        <text class="arris-icon-chip-glyph" x="1971.25" y="1272">N</text>
+      </g>
+    </g>
+    <text class="arris-label" x="2091.5" y="1272" font-size="15">
+      <tspan x="2091.5" y="1212">Resume barriers:</tspan>
+      <tspan x="2091.5" y="1232">continuation dropped ·</tspan>
+      <tspan x="2091.5" y="1252">context cleared w/ drop ·</tspan>
+      <tspan x="2091.5" y="1272">terminate w/ drop · broker</tspan>
+      <tspan x="2091.5" y="1292">continuation.cleared. The</tspan>
+      <tspan x="2091.5" y="1312">24h auto-rotate is</tspan>
+      <tspan x="2091.5" y="1332">deliberately NOT a barrier.</tspan>
+    </text>
+  </g>
+  <g class="arris-edge" data-arris-id="summon">
+    <title>hrc start · hrcchat DM</title>
+    <polyline class="arris-edge-line" points="961,40 961,90.5"/>
+    <polyline class="arris-edge-line" points="961,112.5 961,163"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 961 40 L 961 48"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 961 163 L 961 155"/>
+    </g>
+    <path class="arris-arrow" d="M 956.5 155.206 L 961 163 L 965.5 155.206"/>
+    <text class="arris-label arris-edge-label" x="961" y="101.5" font-size="15">hrc start · hrcchat DM</text>
+  </g>
+  <g class="arris-edge" data-arris-id="dispatch">
+    <title>a dispatch provisions a runtime</title>
+    <polyline class="arris-edge-line" points="827,229 534,229"/>
+    <polyline class="arris-edge-line" points="293,229 0,229 0,603 320,603 320,676 288,676"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 827 229 L 819 229"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 288 676 L 296 676"/>
+    </g>
+    <path class="arris-arrow" d="M 295.794 671.5 L 288 676 L 295.794 680.5"/>
+    <text class="arris-label arris-edge-label" x="413.5" y="229" font-size="15">a dispatch provisions a runtime</text>
+  </g>
+  <g class="arris-edge" data-arris-id="boot">
+    <title>invocation.ready</title>
+    <polyline class="arris-edge-line" points="288,692 312,692"/>
+    <polyline class="arris-edge-line" points="440,692 464,692"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 288 692 L 296 692"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 464 692 L 456 692"/>
+    </g>
+    <path class="arris-arrow" d="M 456.206 696.5 L 464 692 L 456.206 687.5"/>
+    <text class="arris-label arris-edge-label" x="376" y="692" font-size="15">invocation.ready</text>
+  </g>
+  <g class="arris-edge" data-arris-id="turn-start">
+    <title>turn.started</title>
+    <polyline class="arris-edge-line" points="654,709 686,709 686,827 788,827"/>
+    <polyline class="arris-edge-line" points="886,827 988,827"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 654 709 L 662 709"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 988 827 L 980 827"/>
+    </g>
+    <path class="arris-arrow" d="M 980.206 831.5 L 988 827 L 980.206 822.5"/>
+    <text class="arris-label arris-edge-label" x="837" y="827" font-size="15">turn.started</text>
+  </g>
+  <g class="arris-edge" data-arris-id="turn-done">
+    <title>turn.completed · turn.failed</title>
+    <polyline class="arris-edge-line" points="988,793 956,793 956,675 914,675"/>
+    <polyline class="arris-edge-line" points="696,675 654,675"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 988 793 L 980 793"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 654 675 L 662 675"/>
+    </g>
+    <path class="arris-arrow" d="M 661.794 670.5 L 654 675 L 661.794 679.5"/>
+    <text class="arris-label arris-edge-label" x="805" y="675" font-size="15">turn.completed · turn.failed</text>
+  </g>
+  <g class="arris-edge" data-arris-id="ask-open">
+    <title>ask tool opens the bracket</title>
+    <polyline class="arris-edge-line" points="1250,830 1298,830"/>
+    <polyline class="arris-edge-line" points="1501,830 1549,830"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1250 830 L 1258 830"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1549 830 L 1541 830"/>
+    </g>
+    <path class="arris-arrow" d="M 1541.206 834.5 L 1549 830 L 1541.206 825.5"/>
+    <text class="arris-label arris-edge-label" x="1399.5" y="830" font-size="15">ask tool opens the bracket</text>
+  </g>
+  <g class="arris-edge" data-arris-id="ask-close">
+    <title>turn.input_resumed — same turn</title>
+    <polyline class="arris-edge-line" points="1549,780 1516,780"/>
+    <polyline class="arris-edge-line" points="1283,780 1250,780"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1549 780 L 1541 780"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1250 780 L 1258 780"/>
+    </g>
+    <path class="arris-arrow" d="M 1257.794 775.5 L 1250 780 L 1257.794 784.5"/>
+    <text class="arris-label arris-edge-label" x="1399.5" y="780" font-size="15">turn.input_resumed — same turn</text>
+  </g>
+  <g class="arris-edge" data-arris-id="graceful">
+    <title>user exit / cleanup</title>
+    <polyline class="arris-edge-line" points="575,739 575,854.5"/>
+    <polyline class="arris-edge-line" points="575,876.5 575,966.99"/>
+    <polyline class="arris-edge-line" points="551,992 524,992 524,1124 588,1124"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 575 739 L 575 747"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 588 1124 L 580 1124"/>
+    </g>
+    <path class="arris-arrow" d="M 580.206 1128.5 L 588 1124 L 580.206 1119.5"/>
+    <text class="arris-label arris-edge-label" x="575" y="865.5" font-size="15">user exit / cleanup</text>
+  </g>
+  <g class="arris-edge" data-arris-id="crash" data-arris-tone="danger">
+    <title>abnormal terminal</title>
+    <polyline class="arris-edge-line" points="1119,866 1119,898 1184.5,898"/>
+    <polyline class="arris-edge-line" points="1320.5,898 1386,898 1386,1124 1138,1124"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1119 866 L 1119 874"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1138 1124 L 1146 1124"/>
+    </g>
+    <path class="arris-arrow" d="M 1145.794 1119.5 L 1138 1124 L 1145.794 1128.5"/>
+    <text class="arris-label arris-edge-label" x="1252.5" y="898" font-size="15">abnormal terminal</text>
+  </g>
+  <g class="arris-edge" data-arris-id="crash-start" data-arris-tone="danger">
+    <title>invocation dies before ready</title>
+    <polyline class="arris-edge-line" points="288,708 320,708 320,921"/>
+    <polyline class="arris-edge-line" points="320,943 320,1000 551,1000"/>
+    <polyline class="arris-edge-line" points="769,1000 1000,1000 1000,1067"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 288 708 L 296 708"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1000 1067 L 1000 1059"/>
+    </g>
+    <path class="arris-arrow" d="M 995.5 1059.206 L 1000 1067 L 1004.5 1059.206"/>
+    <text class="arris-label arris-edge-label" x="660" y="1000" font-size="15">invocation dies before ready</text>
+  </g>
+  <g class="arris-edge" data-arris-id="age" data-arris-tone="warn">
+    <title>24h aging · liveness unproven</title>
+    <polyline class="arris-edge-line" points="559,739 559,771 536,771 536,854.5"/>
+    <polyline class="arris-edge-line" points="536,876.5 536,966.99"/>
+    <polyline class="arris-edge-line" points="536,988.99 536,1190 713,1190 713,1200"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 559 739 L 559 747"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 713 1200 L 713 1192"/>
+    </g>
+    <path class="arris-arrow" d="M 708.5 1192.206 L 713 1200 L 717.5 1192.206"/>
+    <text class="arris-label arris-edge-label" x="536" y="977.99" font-size="15">24h aging · liveness unproven</text>
+  </g>
+  <g class="arris-edge" data-arris-id="proven">
+    <title>probe proves substrate missing</title>
+    <polyline class="arris-edge-line" points="837,1257 861,1257"/>
+    <polyline class="arris-edge-line" points="1094,1257 1118,1257"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 837 1257 L 845 1257"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1118 1257 L 1110 1257"/>
+    </g>
+    <path class="arris-arrow" d="M 1110.206 1261.5 L 1118 1257 L 1110.206 1252.5"/>
+    <text class="arris-label arris-edge-label" x="977.5" y="1257" font-size="15">probe proves substrate missing</text>
+  </g>
+  <g class="arris-edge" data-arris-id="reprovision">
+    <title>next dispatch provisions afresh</title>
+    <polyline class="arris-edge-line" points="588,1140 332,1140 332,943" stroke-dasharray="8 6"/>
+    <polyline class="arris-edge-line" points="332,921 332,724 288,724" stroke-dasharray="8 6"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 588 1140 L 580 1140"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 288 724 L 296 724"/>
+    </g>
+    <path class="arris-arrow" d="M 295.794 719.5 L 288 724 L 295.794 728.5" stroke-dasharray="8 6"/>
+    <text class="arris-label arris-edge-label" x="332" y="932" font-size="15">next dispatch provisions afresh</text>
+  </g>
+  <g class="arris-edge" data-arris-id="rotate">
+    <title>rotate — generation N+1</title>
+    <polyline class="arris-edge-line" points="1140,202 1140,180 1095,180"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1095 213 L 1103 213"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1095 180 L 1103 180"/>
+    </g>
+    <path class="arris-arrow" d="M 1102.794 175.5 L 1095 180 L 1102.794 184.5"/>
+    <text class="arris-label arris-edge-label" x="1140" y="213" font-size="15">rotate — generation N+1</text>
+  </g>
+  <g class="arris-edge" data-arris-id="supersede">
+    <title>rotation archives prior</title>
+    <polyline class="arris-edge-line" points="1060,294 1060,326 1922,326 1922,788"/>
+    <polyline class="arris-edge-line" points="1922,810 1922,1272 1366,1272 1366,1479 1095,1479 1095,1511"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1060 294 L 1060 302"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1095 1511 L 1095 1503"/>
+    </g>
+    <path class="arris-arrow" d="M 1090.5 1503.206 L 1095 1511 L 1099.5 1503.206"/>
+    <text class="arris-label arris-edge-label" x="1922" y="799" font-size="15">rotation archives prior</text>
+  </g>
+  <g class="arris-edge" data-arris-id="resume" data-arris-tone="ok">
+    <title>resume — newest unbarred continuation</title>
+    <polyline class="arris-edge-line" points="898,1511 898,1479 -12,1479 -12,923.5"/>
+    <polyline class="arris-edge-line" points="-12,881.5 -12,326 863,326 863,294"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 898 1511 L 898 1503"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 863 294 L 863 302"/>
+    </g>
+    <path class="arris-arrow" d="M 867.5 301.794 L 863 294 L 858.5 301.794"/>
+    <text class="arris-label arris-edge-label" x="-12" y="902.5" font-size="15">
+      <tspan x="-12" y="892.5">resume — newest unbarred</tspan>
+      <tspan x="-12" y="912.5">continuation</tspan>
+    </text>
+  </g>
+  <g class="arris-edge" data-arris-id="barred">
+    <title>continuations barred</title>
+    <polyline class="arris-edge-line" points="997,1624 997,1653"/>
+    <polyline class="arris-edge-line" points="997,1675 997,1704"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 997 1624 L 997 1632"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 997 1704 L 997 1696"/>
+    </g>
+    <path class="arris-arrow" d="M 992.5 1696.206 L 997 1704 L 1001.5 1696.206"/>
+    <text class="arris-label arris-edge-label" x="997" y="1664" font-size="15">continuations barred</text>
+  </g>
+  <g class="arris-edge" data-arris-id="reaper-ref">
+    <title>reaper-note to awaiting</title>
+    <polyline class="arris-edge-line" points="1250,622 1505,622 1505,769" stroke-dasharray="8 6"/>
+    <polyline class="arris-edge-line" points="1516,791 1549,791" stroke-dasharray="8 6"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1250 622 L 1258 622"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1549 791 L 1541 791"/>
+    </g>
+    <path class="arris-arrow" d="M 1541.206 795.5 L 1549 791 L 1541.206 786.5" stroke-dasharray="8 6"/>
+  </g>
+  <g class="arris-edge" data-arris-id="barrier-ref">
+    <title>barrier-note to archived</title>
+    <polyline class="arris-edge-line" points="1960,1272 1928,1272 1928,1568 1137,1568" stroke-dasharray="8 6"/>
+    <g class="arris-adornments arris-edge-pins" aria-hidden="true">
+      <path class="arris-pin-stub arris-pin-stub-from" data-arris-terminal="from" d="M 1960 1272 L 1952 1272"/>
+      <path class="arris-pin-stub arris-pin-stub-to" data-arris-terminal="to" d="M 1137 1568 L 1145 1568"/>
+    </g>
+    <path class="arris-arrow" d="M 1144.794 1563.5 L 1137 1568 L 1144.794 1572.5" stroke-dasharray="8 6"/>
+  </g>
+</svg>

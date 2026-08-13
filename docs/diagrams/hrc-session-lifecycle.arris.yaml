@@ -1,0 +1,84 @@
+schemaVersion: arris/v1
+revision: 6
+treatment: tinted-clean
+flow: down
+nodes:
+  born: {type: start}
+  active: {type: state, label: Active — generation N, description: "status: active · continuities.activeHostSessionId points here", tone: ok}
+  starting: {type: state, label: Starting, description: runtime.created — broker invocation starting, tone: info}
+  ready: {type: state, label: Ready, description: idle — no active run, tone: ok}
+  busy: {type: state, label: Busy, description: turn.started — runtime owns the active run, tone: info}
+  awaiting: {type: state, label: Awaiting input, description: "open ask bracket — the durable ledger is the authority, never the pane", tone: warn}
+  terminated: {type: state, label: Terminated, description: intentional — /quit · operator terminate · idle cleanup}
+  crashed: {type: state, label: Crashed, description: abnormal invocation terminal — no user-exit evidence, tone: danger}
+  stale: {type: state, label: Stale, description: "presumed gone, unproven — 24h aging · lease lost on restart", tone: warn}
+  dead: {type: state, label: Dead, description: substrate proven missing, tone: danger}
+  archived: {type: state, label: Archived, description: "prior generations — a view filter, not a resume gate"}
+  gone: {type: end, label: dormant}
+  reaper-note: {type: note, label: "Reaper doctrine: an open ask bracket outranks every status branch. A live pane is 'suspect' — mutate nothing."}
+  barrier-note: {type: note, label: "Resume barriers: continuation dropped · context cleared w/ drop · terminate w/ drop · broker continuation.cleared. The 24h auto-rotate is deliberately NOT a barrier."}
+groups:
+  session: {label: Session — one durable continuity per scope+lane, children: [active, runtime]}
+  runtime: {label: Runtime — broker in leased tmux, children: [liveloop, endings], flow: down}
+  liveloop: {label: Live, children: [starting, ready, inflight], flow: right}
+  inflight: {label: Turn in flight, children: [busy, awaiting, reaper-note], flow: right}
+  endings: {label: Runtime endings — reachable from any live state; the session survives, children: [crashed, terminated, stale, dead], flow: right}
+edges:
+  summon: {from: born, to: active, label: hrc start · hrcchat DM}
+  dispatch: {from: active, to: starting, label: a dispatch provisions a runtime}
+  boot: {from: starting, to: ready, label: invocation.ready}
+  turn-start: {from: ready, to: busy, label: turn.started}
+  turn-done: {from: busy, to: ready, label: turn.completed · turn.failed}
+  ask-open: {from: busy, to: awaiting, label: ask tool opens the bracket}
+  ask-close: {from: awaiting, to: busy, label: turn.input_resumed — same turn}
+  graceful: {from: ready, to: terminated, label: user exit / cleanup}
+  crash: {from: busy, to: crashed, label: abnormal terminal, tone: danger}
+  crash-start: {from: starting, to: crashed, label: invocation dies before ready, tone: danger}
+  age: {from: ready, to: stale, label: 24h aging · liveness unproven, tone: warn}
+  proven: {from: stale, to: dead, label: probe proves substrate missing}
+  reprovision: {from: terminated, to: starting, label: next dispatch provisions afresh, line: dashed}
+  rotate: {from: active, to: active, label: rotate — generation N+1}
+  supersede: {from: active, to: archived, label: rotation archives prior}
+  resume: {from: archived, to: active, label: resume — newest unbarred continuation, tone: ok}
+  barred: {from: archived, to: gone, label: continuations barred}
+  reaper-ref: {from: reaper-note, to: awaiting, line: dashed}
+  barrier-ref: {from: barrier-note, to: archived, line: dashed}
+layout:
+  active: {x: 815, y: 43, w: 268, h: 131}
+  archived: {x: 856, y: 1511, w: 281, h: 113}
+  awaiting: {x: 581, y: 227, w: 281, h: 131}
+  barrier-note: {x: 1960, y: 1171, w: 263, h: 202}
+  born: {x: 947, y: 12, w: 28, h: 28}
+  busy: {x: 20, y: 255, w: 262, h: 113}
+  crashed: {x: 295, y: 43, w: 275, h: 113}
+  dead: {x: 550, y: 185, w: 216, h: 95}
+  endings: {x: 536, y: 612, w: 786, h: 309}
+  gone: {x: 966, y: 1704, w: 61, h: 56}
+  inflight: {x: 916, y: 43, w: 882, h: 388}
+  liveloop: {x: 20, y: 43, w: 1818, h: 451}
+  ready: {x: 412, y: 189, w: 190, h: 95}
+  reaper-note: {x: 27, y: 43, w: 255, h: 162}
+  runtime: {x: 20, y: 292, w: 1858, h: 941}
+  session: {x: 12, y: 120, w: 1898, h: 1253}
+  stale: {x: 20, y: 176, w: 249, h: 113}
+  starting: {x: 20, y: 180, w: 216, h: 113}
+  terminated: {x: 20, y: 43, w: 255, h: 113}
+  age: {waypoints: [{x: 559, y: 739}, {x: 559, y: 771}, {x: 536, y: 771}, {x: 536, y: 1190}, {x: 713, y: 1190}, {x: 713, y: 1200}]}
+  ask-close: {waypoints: [{x: 1549, y: 780}, {x: 1250, y: 780}]}
+  ask-open: {waypoints: [{x: 1250, y: 830}, {x: 1549, y: 830}]}
+  barred: {waypoints: [{x: 997, y: 1624}, {x: 997, y: 1704}]}
+  barrier-ref: {waypoints: [{x: 1960, y: 1272}, {x: 1928, y: 1272}, {x: 1928, y: 1568}, {x: 1137, y: 1568}]}
+  boot: {waypoints: [{x: 288, y: 692}, {x: 464, y: 692}]}
+  crash: {waypoints: [{x: 1119, y: 866}, {x: 1119, y: 898}, {x: 1386, y: 898}, {x: 1386, y: 1124}, {x: 1138, y: 1124}]}
+  crash-start: {waypoints: [{x: 288, y: 708}, {x: 320, y: 708}, {x: 320, y: 1000}, {x: 1000, y: 1000}, {x: 1000, y: 1067}]}
+  dispatch: {waypoints: [{x: 827, y: 229}, {x: 0, y: 229}, {x: 0, y: 603}, {x: 320, y: 603}, {x: 320, y: 676}, {x: 288, y: 676}]}
+  graceful: {waypoints: [{x: 575, y: 739}, {x: 575, y: 992}, {x: 524, y: 992}, {x: 524, y: 1124}, {x: 588, y: 1124}]}
+  proven: {waypoints: [{x: 837, y: 1257}, {x: 1118, y: 1257}]}
+  reaper-ref: {waypoints: [{x: 1250, y: 622}, {x: 1505, y: 622}, {x: 1505, y: 791}, {x: 1549, y: 791}]}
+  reprovision: {waypoints: [{x: 588, y: 1140}, {x: 332, y: 1140}, {x: 332, y: 724}, {x: 288, y: 724}]}
+  resume: {waypoints: [{x: 898, y: 1511}, {x: 898, y: 1479}, {x: -12, y: 1479}, {x: -12, y: 326}, {x: 863, y: 326}, {x: 863, y: 294}]}
+  rotate: {waypoints: [{x: 1095, y: 213}, {x: 1140, y: 213}, {x: 1140, y: 180}, {x: 1095, y: 180}]}
+  summon: {waypoints: [{x: 961, y: 40}, {x: 961, y: 163}]}
+  supersede: {waypoints: [{x: 1060, y: 294}, {x: 1060, y: 326}, {x: 1922, y: 326}, {x: 1922, y: 1272}, {x: 1366, y: 1272}, {x: 1366, y: 1479}, {x: 1095, y: 1479}, {x: 1095, y: 1511}]}
+  turn-done: {waypoints: [{x: 988, y: 793}, {x: 956, y: 793}, {x: 956, y: 675}, {x: 654, y: 675}]}
+  turn-start: {waypoints: [{x: 654, y: 709}, {x: 686, y: 709}, {x: 686, y: 827}, {x: 988, y: 827}]}
