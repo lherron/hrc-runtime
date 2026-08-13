@@ -37,12 +37,24 @@ function isHrcErrorCode(value: unknown): value is HrcErrorCodeValue {
 
 function parseResult(body: Record<string, unknown>): StartRuntimeResponse {
   const claim = body['claim']
+  const transport = body['transport']
+  const tmux = body['tmux']
+  const surface = body['surface']
   if (
     typeof body['runtimeId'] !== 'string' ||
     typeof body['hostSessionId'] !== 'string' ||
-    body['transport'] !== 'headless' ||
+    (transport !== 'headless' && transport !== 'tmux' && transport !== 'ghostty') ||
     typeof body['status'] !== 'string' ||
     typeof body['supportsInFlightInput'] !== 'boolean' ||
+    (tmux !== undefined &&
+      (!isRecord(tmux) ||
+        typeof tmux['sessionId'] !== 'string' ||
+        typeof tmux['windowId'] !== 'string' ||
+        typeof tmux['paneId'] !== 'string')) ||
+    (surface !== undefined &&
+      (!isRecord(surface) ||
+        typeof surface['surfaceId'] !== 'string' ||
+        (surface['title'] !== undefined && typeof surface['title'] !== 'string'))) ||
     !isRecord(claim) ||
     typeof claim['slot'] !== 'string' ||
     typeof claim['scopeRef'] !== 'string' ||
@@ -53,10 +65,9 @@ function parseResult(body: Record<string, unknown>): StartRuntimeResponse {
   ) {
     throw new Error('peer roster-start response contains an invalid result')
   }
-  return {
+  const common = {
     runtimeId: body['runtimeId'],
     hostSessionId: body['hostSessionId'],
-    transport: 'headless',
     status: body['status'],
     supportsInFlightInput: body['supportsInFlightInput'],
     claim: {
@@ -67,6 +78,34 @@ function parseResult(body: Record<string, unknown>): StartRuntimeResponse {
       idempotencyKey: claim['idempotencyKey'],
       replayed: claim['replayed'],
     },
+  }
+  if (transport === 'headless') return { ...common, transport }
+  if (transport === 'ghostty') {
+    return {
+      ...common,
+      transport,
+      ...(surface === undefined
+        ? {}
+        : {
+            surface: {
+              surfaceId: surface['surfaceId'] as string,
+              ...(surface['title'] === undefined ? {} : { title: surface['title'] as string }),
+            },
+          }),
+    }
+  }
+  return {
+    ...common,
+    transport,
+    ...(tmux === undefined
+      ? {}
+      : {
+          tmux: {
+            sessionId: tmux['sessionId'] as string,
+            windowId: tmux['windowId'] as string,
+            paneId: tmux['paneId'] as string,
+          },
+        }),
   }
 }
 

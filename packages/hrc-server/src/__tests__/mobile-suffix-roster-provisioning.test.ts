@@ -191,6 +191,44 @@ describe('mobile suffix-roster peer client', () => {
     expect(result.claim).toMatchObject({ slot: 'minilab-nova', idempotencyKey: 'mobile-1' })
   })
 
+  test('preserves an interactive tmux result returned by the home peer', async () => {
+    const result = await sendRemoteRosterStart({
+      peer,
+      request,
+      fetch: async (input) => {
+        if (String(input).endsWith('/v1/federation/health')) {
+          return Response.json({ capabilities: { rosterStart: true } })
+        }
+        return Response.json({
+          runtimeId: 'rt-tmux',
+          hostSessionId: 'hsid-tmux',
+          transport: 'tmux',
+          status: 'ready',
+          supportsInFlightInput: true,
+          tmux: {
+            sessionId: '$0',
+            windowId: '@1',
+            paneId: '%1',
+          },
+          claim: {
+            slot: 'minilab',
+            scopeRef: 'agent:mable:project:hrc-runtime:task:minilab',
+            sessionRef: 'agent:mable:project:hrc-runtime:task:minilab/lane:main',
+            hostSessionId: 'hsid-tmux',
+            idempotencyKey: 'mobile-1',
+            replayed: false,
+          },
+        })
+      },
+    })
+
+    expect(result).toMatchObject({
+      transport: 'tmux',
+      tmux: { sessionId: '$0', windowId: '@1', paneId: '%1' },
+      claim: { slot: 'minilab' },
+    })
+  })
+
   test('peer unreachability is a typed retryable runtime_unavailable', async () => {
     await expect(
       sendRemoteRosterStart({
