@@ -292,6 +292,84 @@ describe('bundle assembly', () => {
     expect(bundle.paneCapture).toBeUndefined()
   })
 
+  it('captures the pane from the LEASED socket and writes it alongside the manifest', async () => {
+    fixture = await makeFixture(SPEC_WITH_PROMPTS)
+    const leasedSocket = join(fixture.dir, 'btmux', 'claude-rt-bundle.sock')
+    fixture.db.runtimes.update(RUNTIME_ID, {
+      tmuxJson: {
+        socketPath: leasedSocket,
+        sessionName: 'hrc-lease',
+        windowName: 'tui',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%7',
+        hrcRole: 'tui',
+      },
+      updatedAt: NOW,
+    })
+
+    const probed: Array<{ socketPath: string; paneId: string }> = []
+    const { bundle, bundleDir } = await assembleFirstTurnBundle(
+      {
+        db: fixture.db,
+        options: { runtimeRoot: fixture.runtimeRoot },
+        budgetMs: 2_000,
+        now: () => NOW,
+        tmuxManagerFactory: ({ socketPath }) => ({
+          capture: async (paneId: string) => {
+            probed.push({ socketPath, paneId })
+            return 'Do you trust the files in this folder?\n> 1. Yes, proceed\n'
+          },
+        }),
+      },
+      watchRecord()
+    )
+
+    // The probe must be runtime-fenced: the runtime's OWN leased socket and
+    // pane, never the shared tmux socket.
+    expect(probed).toEqual([{ socketPath: leasedSocket, paneId: '%7' }])
+    expect(bundle.paneCapture?.capturedAt).toBe(NOW)
+    expect(bundle.paneCapture?.text).toContain('Do you trust the files in this folder?')
+    expect(bundle.failures['paneCapture']).toBeUndefined()
+    expect(await readdir(bundleDir)).toContain('pane.txt')
+    expect(await readFile(join(bundleDir, 'pane.txt'), 'utf8')).toContain('Yes, proceed')
+    // Pane text is captured verbatim (it is what an operator would see on
+    // attach), so it must not have been mangled by the redaction pass.
+    expect(bundle.surfaces?.tmuxSocketPath).toBe(leasedSocket)
+    expect(bundle.surfaces?.hrcRole).toBe('tui')
+  })
+
+  it('bounds a hung pane capture instead of holding the daemon', async () => {
+    fixture = await makeFixture(SPEC_WITH_PROMPTS)
+    fixture.db.runtimes.update(RUNTIME_ID, {
+      tmuxJson: {
+        socketPath: join(fixture.dir, 'btmux.sock'),
+        sessionName: 'hrc-lease',
+        windowName: 'tui',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      updatedAt: NOW,
+    })
+
+    const started = Date.now()
+    const { bundle } = await assembleFirstTurnBundle(
+      {
+        db: fixture.db,
+        options: { runtimeRoot: fixture.runtimeRoot },
+        budgetMs: 200,
+        now: () => NOW,
+        // Prior art: an unbounded broker inspect has hung the daemon before.
+        tmuxManagerFactory: () => ({ capture: () => new Promise<string>(() => undefined) }),
+      },
+      watchRecord()
+    )
+    expect(Date.now() - started).toBeLessThan(3_000)
+    expect(bundle.paneCapture).toBeUndefined()
+    expect(bundle.failures['paneCapture']).toBe('pane_capture_timeout')
+  })
+
   it('records no_leased_tmux_pane rather than silently omitting the capture', async () => {
     fixture = await makeFixture(SPEC_WITH_PROMPTS)
     const { bundle } = await assembleFirstTurnBundle(

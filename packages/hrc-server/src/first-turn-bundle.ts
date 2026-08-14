@@ -28,8 +28,10 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import type { GhostmuxManager } from './ghostmux.js'
 import type { HrcServerOptions } from './server-types.js'
-import type { RuntimeTmuxManagerFactory } from './sweep-helpers.js'
-import { createTmuxManager } from './tmux.js'
+import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
+
+/** The only tmux capability the bundle path uses. */
+export type TmuxCapturer = Pick<ServerTmuxManager, 'capture'>
 
 /** Env keys that are known to carry prompt text. Nothing else is captured. */
 const PROMPT_BEARING_ENV_KEYS = ['ASP_PRIMING_PROMPT'] as const
@@ -208,7 +210,12 @@ export type FirstTurnBundleDeps = {
   db: HrcDatabase
   options: Pick<HrcServerOptions, 'runtimeRoot'>
   ghostmux?: Pick<GhostmuxManager, 'inspectSurface'> | undefined
-  tmuxManagerFactory?: RuntimeTmuxManagerFactory | undefined
+  /**
+   * Pane-capture seam on the LEASED tmux socket. Defaults to a real tmux
+   * manager; the server passes its broker factory so the capture always speaks
+   * to the runtime's own socket rather than the shared one.
+   */
+  tmuxManagerFactory?: ((options: { socketPath: string }) => TmuxCapturer) | undefined
   release?: { releaseId?: string | undefined; aspSetVersion?: string | undefined } | undefined
   /** Remaining wall-clock budget for the whole assembly. */
   budgetMs: number
@@ -352,8 +359,9 @@ export async function assembleFirstTurnBundle(
   } else {
     const socketPath = tmuxSurfaces.socketPath
     const paneId = tmuxSurfaces.paneId
+    const capturer = (deps.tmuxManagerFactory ?? createTmuxManager)({ socketPath })
     const captured = await withBudget(
-      createTmuxManager({ socketPath }).capture(paneId),
+      capturer.capture(paneId),
       Math.min(2_000, remaining()),
       'pane_capture'
     )
