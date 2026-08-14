@@ -195,9 +195,48 @@ async function queryRuntimesForProjection(
   ).sort((left, right) => compareRuntimes(left, right, filter.status))
 
   return {
-    runtimes: projected,
+    runtimes: projectRuntimeHealth(deps.db, projected),
     ...(nextCursor !== undefined ? { nextCursor } : {}),
   }
+}
+
+/**
+ * T-07235 — attach the `first_turn_missing` health detail so a fleet glance
+ * (`hrc runtime list`) finds a runtime whose first turn never arrived, and
+ * carries the trip event id that `hrc runtime diagnostics` consumes. This is a
+ * PROJECTION, never persisted state: runtime status deliberately stays live
+ * (the trip is observe-only), so health is the only place the finding shows.
+ * One indexed read for the whole page.
+ */
+function projectRuntimeHealth(
+  db: HrcDatabase,
+  runtimes: HrcRuntimeSnapshot[]
+): HrcRuntimeSnapshot[] {
+  if (runtimes.length === 0) return runtimes
+  const trips = db.firstTurnWatch.listLatestTripByRuntime()
+  if (trips.size === 0) return runtimes
+  return runtimes.map((runtime) => {
+    const trip = trips.get(runtime.runtimeId)
+    if (
+      trip === undefined ||
+      trip.firstTurnMissingTrippedAt === undefined ||
+      trip.tripEventSeq === undefined
+    ) {
+      return runtime
+    }
+    return {
+      ...runtime,
+      health: {
+        firstTurnMissing: {
+          trippedAt: trip.firstTurnMissingTrippedAt,
+          tripEventSeq: trip.tripEventSeq,
+          generation: trip.generation,
+          bundleAvailable: trip.bundleDir !== undefined,
+          retrieval: `hrc runtime diagnostics ${trip.tripEventSeq}`,
+        },
+      },
+    }
+  })
 }
 
 export async function listRuntimesForProjection(

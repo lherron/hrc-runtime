@@ -33,6 +33,10 @@ describe('consolidated hrc command graph', () => {
     expect(visibleChildren(child(program, 'runtime'))).toEqual([
       'list',
       'inspect',
+      // T-07235: read-only first_turn_missing bundle retrieval. Lives in the
+      // runtime namespace per the T-07011 consolidation rather than adding a
+      // top-level noun.
+      'diagnostics',
       'capture',
       'send',
       'interrupt',

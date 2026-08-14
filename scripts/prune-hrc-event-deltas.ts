@@ -1,12 +1,24 @@
 #!/usr/bin/env bun
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { Database } from 'bun:sqlite'
+
+import {
+  type FirstTurnRetentionResult,
+  pruneFirstTurnMissingBundles,
+} from '../packages/hrc-server/src/first-turn-retention.ts'
+import { RuntimeArtifactRepository } from '../packages/hrc-store-sqlite/src/repositories/broker-repositories.ts'
+import { FirstTurnWatchRepository } from '../packages/hrc-store-sqlite/src/repositories/first-turn-watch-repository.ts'
 
 const DEFAULT_HRC_STORE_PATH = '/Users/lherron/praesidium/var/state/hrc/state.sqlite'
 const DEFAULT_EVENT_RETENTION_DAYS = 3
 const DEFAULT_RUNTIME_BUFFER_RETENTION_DAYS = 1
+// T-07235 diagnostic-bundle retention. These are runtime artifact DIRECTORIES,
+// not table rows: the first artifact class HRC writes to disk on its own
+// initiative, so it needs its own declared policy (docs/state-retention.md).
+const DEFAULT_FIRST_TURN_BUNDLE_KEEP = 3
+const DEFAULT_FIRST_TURN_BUNDLE_TTL_DAYS = 14
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
 const MILLISECONDS_PER_MINUTE = 60 * 1000
 
@@ -247,6 +259,10 @@ export type PruneStateRetentionOptions = {
   busyMaxRetries: number
   countEligible: boolean
   tables: readonly RetentionTable[]
+  /** Root that holds `artifacts/<runtimeId>/first-turn-missing/<tripEventId>`. */
+  runtimeRoot: string
+  firstTurnBundleKeep: number
+  firstTurnBundleTtlDays: number
   now: Date
 }
 
@@ -293,6 +309,8 @@ export type PruneStateRetentionResult = {
   vacuumChunkPages: number
   vacuumStopReason: PrunePhaseStop
   checkpointed: boolean
+  /** T-07235 bundle-directory retention. Null when the pass did not run. */
+  firstTurnBundles: FirstTurnRetentionResult | null
   tables: {
     events: PruneRetentionTableResult
     hrc_events: PruneRetentionTableResult
@@ -359,6 +377,12 @@ function usage(): string {
     '                                      runtime to --max-write-hold-millis (default: 200)',
     '  --no-checkpoint                     skip WAL checkpoint after apply',
     '',
+    'first_turn_missing diagnostic bundles (T-07235) are runtime artifact DIRECTORIES,',
+    'not table rows, and have their own declared policy:',
+    '  --runtime-root <path>               root holding artifacts/<runtimeId>/first-turn-missing',
+    '  --first-turn-bundle-keep <n>        bundles kept per (runtimeId, generation) (default: 3)',
+    '  --first-turn-bundle-ttl-days <n>    bundle TTL (default: 14)',
+    '',
     'Writer-lock guards:',
     '  --deadline-minutes <n>              wall-clock budget; 0 = unlimited (default: 30)',
     '  --pace-millis <n>                   minimum yield between write steps (default: 250)',
@@ -374,6 +398,9 @@ function usage(): string {
     '  HRC_RUNTIME_BUFFER_RETENTION_DAYS',
     '  HRC_INCREMENTAL_VACUUM_PAGES',
     '  HRC_PRUNE_DEADLINE_MINUTES',
+    '  HRC_RUNTIME_ROOT',
+    '  HRC_FIRST_TURN_BUNDLE_KEEP',
+    '  HRC_FIRST_TURN_BUNDLE_TTL_DAYS',
   ].join('\n')
 }
 
@@ -563,6 +590,26 @@ export function parsePruneStateRetentionArgs(
       readArgValue(args, '--incremental-vacuum-pages') ?? env['HRC_INCREMENTAL_VACUUM_PAGES'],
       0,
       '--incremental-vacuum-pages'
+    ),
+    runtimeRoot:
+      readArgValue(args, '--runtime-root') ??
+      env['HRC_RUNTIME_ROOT'] ??
+      join(
+        dirname(readArgValue(args, '--db') ?? resolveDefaultDbPath(env)),
+        '..',
+        '..',
+        'run',
+        'hrc'
+      ),
+    firstTurnBundleKeep: parseNonNegativeInteger(
+      readArgValue(args, '--first-turn-bundle-keep') ?? env['HRC_FIRST_TURN_BUNDLE_KEEP'],
+      DEFAULT_FIRST_TURN_BUNDLE_KEEP,
+      '--first-turn-bundle-keep'
+    ),
+    firstTurnBundleTtlDays: parseNonNegativeNumber(
+      readArgValue(args, '--first-turn-bundle-ttl-days') ?? env['HRC_FIRST_TURN_BUNDLE_TTL_DAYS'],
+      DEFAULT_FIRST_TURN_BUNDLE_TTL_DAYS,
+      '--first-turn-bundle-ttl-days'
     ),
     now: new Date(),
   }
@@ -1054,6 +1101,7 @@ export async function pruneStateRetention(
         vacuumChunkPages: options.incrementalVacuumChunkPages,
         vacuumStopReason: 'busy',
         checkpointed: false,
+        firstTurnBundles: null,
         tables: emptyTableResult('busy'),
       }
     }
@@ -1136,6 +1184,39 @@ export async function pruneStateRetention(
       vacuumChunkPages = vacuum.chunkPages
     }
 
+    // T-07235 bundle-directory retention. Runs AFTER the row deletes so a tight
+    // wall-clock budget still spends itself on table retention first; it is a
+    // handful of unlink calls plus one indexed read, and it never holds the
+    // writer lock across the filesystem work.
+    let firstTurnBundles: FirstTurnRetentionResult | null = null
+    if (options.operation !== PURGE_DELTA_BACKLOG_OPERATION) {
+      try {
+        firstTurnBundles = await pruneFirstTurnMissingBundles(
+          {
+            firstTurnWatch: new FirstTurnWatchRepository(db),
+            runtimeArtifacts: new RuntimeArtifactRepository(db),
+          },
+          {
+            runtimeRoot: options.runtimeRoot,
+            keepPerGeneration: options.firstTurnBundleKeep,
+            ttlDays: options.firstTurnBundleTtlDays,
+            now: options.now,
+            apply: options.apply,
+          }
+        )
+      } catch (error) {
+        firstTurnBundles = {
+          scanned: 0,
+          overKeepLimit: 0,
+          expired: 0,
+          orphanDirs: 0,
+          deletedDirs: 0,
+          deletedArtifactRows: 0,
+          errors: [error instanceof Error ? error.message : String(error)],
+        }
+      }
+    }
+
     // A partial run leaves rows behind, so the remaining count is measured, not
     // assumed. Without the pre-flight scan it is honestly unknown.
     const remaining = Object.fromEntries(
@@ -1195,6 +1276,7 @@ export async function pruneStateRetention(
       vacuumChunkPages,
       vacuumStopReason,
       checkpointed,
+      firstTurnBundles,
       tables: tableResult,
     }
   } finally {

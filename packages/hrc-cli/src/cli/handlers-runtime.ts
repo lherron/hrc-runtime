@@ -1,7 +1,9 @@
 import type {
   BrokerInspectResponse,
   FederationRuntimeProjectionReport,
+  GetFirstTurnDiagnosticsResponse,
   InspectRuntimeResponse,
+  ListFirstTurnDiagnosticsResponse,
   PruneRuntimesRequest,
   PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
@@ -672,6 +674,133 @@ export async function cmdLs(noun: string | undefined, rest: string[]): Promise<v
     }
     default:
       fatal(`unknown ls noun "${noun}"; accepted: ${LS_NOUNS.join(' | ')}`)
+  }
+}
+
+/**
+ * `hrc runtime diagnostics [trip-event-id|runtime-selector]` (T-07235).
+ *
+ * READ-ONLY, and the canonical retrieval path for a `first_turn_missing`
+ * bundle: the trip event id is threaded through the durable event, the
+ * `hrc runtime list` health detail, and every waiter error, so an operator or
+ * an agent reaches the bundle without opening sqlite or knowing the filesystem
+ * layout.
+ */
+export async function cmdRuntimeDiagnostics(args: string[]): Promise<void> {
+  const selectorArg = args.find((arg) => !arg.startsWith('-'))
+  const jsonOutput = hasFlag(args, '--json')
+  const client = createClient()
+
+  const tripEventSeq =
+    selectorArg !== undefined && /^\d+$/.test(selectorArg)
+      ? Number.parseInt(selectorArg, 10)
+      : undefined
+
+  if (tripEventSeq !== undefined) {
+    const result = (await client.getFirstTurnDiagnostics({
+      trip: tripEventSeq,
+    })) as GetFirstTurnDiagnosticsResponse
+    if (jsonOutput) {
+      printJson(result)
+      return
+    }
+    printFirstTurnTripDetail(result)
+    return
+  }
+
+  const runtimeId =
+    selectorArg !== undefined ? await resolveRuntimeArg(selectorArg, client) : undefined
+  const result = (await client.getFirstTurnDiagnostics(
+    runtimeId !== undefined ? { runtimeId } : {}
+  )) as ListFirstTurnDiagnosticsResponse
+  if (jsonOutput) {
+    printJson(result)
+    return
+  }
+  if (result.trips.length === 0) {
+    process.stdout.write(
+      `no first_turn_missing trips${runtimeId !== undefined ? ` for ${runtimeId}` : ''}\n`
+    )
+    return
+  }
+  process.stdout.write('first_turn_missing trips (newest first)\n')
+  for (const trip of result.trips) {
+    process.stdout.write(
+      `  trip ${trip.tripEventSeq}  ${trip.trippedAt}  ${trip.runtimeId} gen=${trip.generation}  ${trip.scopeRef}  bundle=${trip.bundleAvailable ? 'yes' : 'no'}\n`
+    )
+  }
+  process.stdout.write('\nInspect one: hrc runtime diagnostics <trip-event-id> [--json]\n')
+}
+
+function printFirstTurnTripDetail(result: GetFirstTurnDiagnosticsResponse): void {
+  const trip = result.trip
+  const lines = [
+    `first_turn_missing trip ${trip.tripEventSeq}`,
+    `  runtime       ${trip.runtimeId}`,
+    `  generation    ${trip.generation}`,
+    `  scope         ${trip.scopeRef}`,
+    `  hostSession   ${trip.hostSessionId}`,
+    `  runId         ${trip.runId ?? '(none)'}`,
+    `  invocation    ${trip.invocationId ?? '(none)'}`,
+    `  dispatchedAt  ${trip.primingDispatchedAt ?? '(unknown)'}`,
+    `  deadlineAt    ${trip.firstTurnDeadlineAt ?? '(unknown)'}`,
+    `  trippedAt     ${trip.trippedAt}`,
+    `  bundleDir     ${trip.bundleDir ?? '(none)'}`,
+  ]
+  process.stdout.write(`${lines.join('\n')}\n`)
+
+  if (result.bundle === undefined) {
+    // A trip is complete without its bundle; say so rather than implying the
+    // detection itself was partial.
+    process.stdout.write(`\nbundle unavailable: ${result.bundleError ?? 'unknown'}\n`)
+    return
+  }
+
+  const bundle = result.bundle
+  const shape = bundle.launchShape
+  process.stdout.write('\nlaunch shape (prompt-bearing values are hashed by construction)\n')
+  if (shape === undefined) {
+    process.stdout.write('  (unavailable)\n')
+  } else {
+    process.stdout.write(`  frontend      ${shape.frontend ?? '(unknown)'}\n`)
+    process.stdout.write(`  model         ${shape.model ?? '(unknown)'}\n`)
+    process.stdout.write(`  cwd           ${shape.cwd ?? '(unknown)'}\n`)
+    process.stdout.write(
+      `  continuation  ${shape.continuation}${shape.continuationKey ? ` (${shape.continuationKey})` : ''}\n`
+    )
+    process.stdout.write(`  argv          ${shape.argv.join(' ')}\n`)
+    for (const [key, value] of Object.entries(shape.promptEnv)) {
+      process.stdout.write(`  env ${key}  ${value}\n`)
+    }
+  }
+
+  const versions = bundle.versions
+  process.stdout.write('\nversions at trip\n')
+  process.stdout.write(`  harness       ${versions?.harnessVersion ?? '(unknown)'}\n`)
+  process.stdout.write(`  hrc release   ${versions?.hrcReleaseId ?? '(unknown)'}\n`)
+  process.stdout.write(`  agent-spaces  ${versions?.agentSpacesVersion ?? '(unknown)'}\n`)
+
+  const surfaces = bundle.surfaces
+  if (surfaces !== undefined && Object.keys(surfaces).length > 0) {
+    process.stdout.write('\nsurfaces\n')
+    for (const [key, value] of Object.entries(surfaces)) {
+      process.stdout.write(`  ${key.padEnd(16)} ${String(value)}\n`)
+    }
+  }
+
+  if (Object.keys(bundle.failures).length > 0) {
+    process.stdout.write('\nfields that could not be assembled\n')
+    for (const [field, reason] of Object.entries(bundle.failures)) {
+      process.stdout.write(`  ${field.padEnd(16)} ${reason}\n`)
+    }
+  }
+
+  process.stdout.write('\npane capture\n')
+  if (bundle.paneCapture === undefined) {
+    process.stdout.write('  (none)\n')
+  } else {
+    process.stdout.write(`  capturedAt ${bundle.paneCapture.capturedAt}\n`)
+    process.stdout.write(`${bundle.paneCapture.text}\n`)
   }
 }
 

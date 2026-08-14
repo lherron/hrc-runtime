@@ -83,7 +83,15 @@ export type AttachBeforeInvocationStartOption = {
 export type DispatchRunPersistenceOptions = Pick<
   HrcRunRecord,
   'dispatchIdempotencyKey' | 'dispatchRequestHash'
->
+> & {
+  /**
+   * Per-request override for the `first_turn_missing` watchdog window
+   * (T-07235), in milliseconds. Rides the shared dispatch-persistence options
+   * because every prompt-dispatch origin threads them; consumed once, at arm
+   * time, and never read again.
+   */
+  firstTurnTimeoutMs?: number | undefined
+}
 
 export type CoalescedQueuedMember = {
   runId: string

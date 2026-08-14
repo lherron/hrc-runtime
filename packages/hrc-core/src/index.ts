@@ -161,6 +161,21 @@ export type {
   HrcProviderTranscriptArtifactMetadata,
   HrcProviderTranscriptReportedPayload,
 } from './contracts.js'
+export {
+  HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND,
+  HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA,
+  HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT,
+  HRC_FIRST_TURN_MISSING_EVENT,
+  HRC_FIRST_TURN_MISSING_LATE_START_EVENT,
+} from './contracts.js'
+export type {
+  GetFirstTurnDiagnosticsResponse,
+  HrcFirstTurnDiagnosticsTrip,
+  HrcFirstTurnMissingBundle,
+  HrcFirstTurnWatchRecord,
+  HrcRuntimeHealthDetail,
+  ListFirstTurnDiagnosticsResponse,
+} from './contracts.js'
 
 export type {
   ApplyAppManagedSessionInput,

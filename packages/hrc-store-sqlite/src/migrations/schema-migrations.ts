@@ -1852,6 +1852,65 @@ const sessionIndexMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07235 — generation-scoped provision-liveness watchdog state.
+ *
+ * One row per (runtime_id, generation). `first_turn_deadline_at` is an ABSOLUTE
+ * timestamp stamped once at arm time, so a daemon restart never has to recover
+ * a request-policy value and a generation's deadline cannot drift. All state is
+ * durable rows; there are no in-memory timers to lose.
+ *
+ * The evaluation pass reads ONLY armed rows, so the hot predicate gets a
+ * partial index: a handful of rows, not a table scan, on its 30s cadence.
+ */
+const firstTurnWatchMigration: HrcMigration = {
+  id: '0042_first_turn_watch',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE runtime_first_turn_watch (
+        runtime_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        host_session_id TEXT NOT NULL,
+        scope_ref TEXT NOT NULL,
+        lane_ref TEXT NOT NULL,
+        run_id TEXT,
+        invocation_id TEXT,
+        transport TEXT,
+        priming_dispatched_at TEXT,
+        first_turn_deadline_at TEXT,
+        first_turn_at TEXT,
+        first_turn_missing_tripped_at TEXT,
+        disarmed_at TEXT,
+        disarm_reason TEXT,
+        trip_event_seq INTEGER,
+        diagnostics_event_seq INTEGER,
+        bundle_dir TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (runtime_id, generation)
+      );
+
+      CREATE INDEX idx_first_turn_watch_armed
+        ON runtime_first_turn_watch(first_turn_deadline_at)
+        WHERE first_turn_deadline_at IS NOT NULL
+          AND first_turn_at IS NULL
+          AND first_turn_missing_tripped_at IS NULL;
+
+      CREATE INDEX idx_first_turn_watch_trip_event
+        ON runtime_first_turn_watch(trip_event_seq)
+        WHERE trip_event_seq IS NOT NULL;
+
+      CREATE INDEX idx_first_turn_watch_tripped
+        ON runtime_first_turn_watch(first_turn_missing_tripped_at)
+        WHERE first_turn_missing_tripped_at IS NOT NULL;
+
+      CREATE INDEX idx_first_turn_watch_run_id
+        ON runtime_first_turn_watch(run_id)
+        WHERE run_id IS NOT NULL;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1889,4 +1948,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   externalRegistrationRetirementMigration,
   dmQueueCoalescingMigration,
   sessionIndexMigration,
+  firstTurnWatchMigration,
 ]

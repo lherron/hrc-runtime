@@ -20,6 +20,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harness-broker-protocol'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 
+import { armFirstTurnWatch } from '../../first-turn-watch'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { BROKER_TRANSPORT } from '../constants'
 import {
@@ -164,6 +165,31 @@ export function persistStartGraph(
           dispatchRequestHash: input.dispatchRequestHash,
         })
       : undefined
+
+  // T-07235 — arm the provision-liveness watchdog for this generation.
+  //
+  // `identity.runId` is allocated by the compile adapter EXACTLY when the start
+  // carries an initial user turn (`hasInitialUserTurn`), so this is the
+  // structural test for "a prompt was dispatched", covering provision `-p`, the
+  // ACP/iOS pending run, and managed interactive priming alike. A promptless
+  // interactive start allocates no run identity and is therefore never armed —
+  // the spec's exclusion falls out of the identity allocation rather than being
+  // re-derived here. The arm is durable with the start graph and idempotent, so
+  // a later dispatch origin cannot move this generation's deadline.
+  if (run !== undefined) {
+    armFirstTurnWatch(ctx.db, {
+      runtimeId: String(identity.runtimeId),
+      generation: identity.generation,
+      hostSessionId: String(identity.hostSessionId),
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      runId: run.runId,
+      invocationId: String(identity.invocationId),
+      transport,
+      timeoutMsOverride: input.firstTurnTimeoutMs,
+      primingDispatchedAt: now,
+    })
+  }
 
   // Persist the dispatched lifecycle overlay as AUDIT material (never compiler
   // closure): record the canonical policy in lifecycle_policies and stamp the

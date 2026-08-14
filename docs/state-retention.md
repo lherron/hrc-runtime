@@ -61,6 +61,35 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
 There is no archive migration. Observation history is retained in the live state
 database; only `runtime_buffers` rows past their window are deleted.
 
+## Runtime artifact directories — `first_turn_missing` bundles
+
+`first_turn_missing` diagnostic bundles (T-07235) are the first artifact class
+HRC writes to its own filesystem on its own initiative, so they need a policy of
+their own: no existing pass covered runtime artifact directories. Each bundle is
+a directory keyed by the trip event id, under
+`<runtimeRoot>/artifacts/<runtimeId>/first-turn-missing/<tripEventId>/`, holding
+`manifest.json` and (when captured) `pane.txt`.
+
+The nightly job prunes them as a step after the table retention, so a tight
+wall-clock budget still spends itself on row retention first. Three rules, all
+keyed off durable rows rather than filesystem guesses:
+
+- keep at most `--first-turn-bundle-keep` / `HRC_FIRST_TURN_BUNDLE_KEEP`
+  (default 3) bundles per `(runtimeId, generation)`;
+- delete bundles older than `--first-turn-bundle-ttl-days` /
+  `HRC_FIRST_TURN_BUNDLE_TTL_DAYS` (default 14);
+- remove orphan directories: a bundle directory with no linking
+  `first_turn_missing.diagnostics` event, older than the 5 s assembly budget.
+  That window is exactly the write-before-link crash gap — the directory is
+  written first, then the linking event publishes the pointer.
+
+Deleting a bundle removes the directory, the `runtime_artifacts` row through
+`RuntimeArtifactRepository.deleteByArtifactId` (the repository's only deletion
+path), and the `bundle_dir` pointer on the watch row. Deleting a bundle never
+deletes the trip: the durable `first_turn_missing` event and its
+`runtime_first_turn_watch` row are observation history and follow the
+keep-forever policy above. A missing bundle degrades diagnosis, never detection.
+
 ## Freelist control
 
 The database must use `PRAGMA auto_vacuum=INCREMENTAL` (mode `2`). Installing

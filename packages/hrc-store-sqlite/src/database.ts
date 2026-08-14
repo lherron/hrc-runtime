@@ -33,6 +33,7 @@ import {
   RuntimeOperationRepository,
 } from './repositories/broker-repositories.js'
 import { EventRepository, HrcLifecycleEventRepository } from './repositories/event-repositories.js'
+import { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
 import {
   LaunchRepository,
   RunRepository,
@@ -98,6 +99,7 @@ export type HrcDatabase = {
   brokerInvocationEvents: BrokerInvocationEventRepository
   runtimeArtifacts: RuntimeArtifactRepository
   permissionDecisions: PermissionDecisionRepository
+  firstTurnWatch: FirstTurnWatchRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -182,5 +184,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite),
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
     permissionDecisions: new PermissionDecisionRepository(sqlite),
+    firstTurnWatch: new FirstTurnWatchRepository(sqlite),
   }
 }

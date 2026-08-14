@@ -488,6 +488,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const whenBusy = parseOptionalDispatchTurnWhenBusy(input['whenBusy'])
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
+  const firstTurnTimeoutMs = parseOptionalFirstTurnTimeoutMs(input['firstTurnTimeoutMs'])
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -504,7 +505,31 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(repair !== undefined ? { repair } : {}),
+    ...(firstTurnTimeoutMs !== undefined ? { firstTurnTimeoutMs } : {}),
   }
+}
+
+/**
+ * T-07235 per-request watchdog window. Validated strictly (a positive integer
+ * number of milliseconds) rather than coerced: a malformed policy value must
+ * not silently become the global default on a request that asked for a
+ * different one.
+ */
+export function parseOptionalFirstTurnTimeoutMs(input: unknown): number | undefined {
+  if (input === undefined || input === null) return undefined
+  if (
+    typeof input !== 'number' ||
+    !Number.isFinite(input) ||
+    !Number.isInteger(input) ||
+    input <= 0
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'firstTurnTimeoutMs must be a positive integer number of milliseconds',
+      { field: 'firstTurnTimeoutMs' }
+    )
+  }
+  return input
 }
 
 export function parseOptionalTurnResponseFormat(input: unknown): HrcTurnResponseFormat | undefined {

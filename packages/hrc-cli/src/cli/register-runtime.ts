@@ -15,6 +15,7 @@ import {
 import { cmdRegistrationsGc } from './handlers-registration-gc.js'
 import {
   cmdAdopt,
+  cmdRuntimeDiagnostics,
   cmdRuntimeInspect,
   cmdRuntimeList,
   cmdRuntimePrune,
@@ -297,6 +298,26 @@ export function registerRuntimeCommands(program: Command): void {
     })
 
   runtime
+    .command('diagnostics')
+    .description(
+      'list first_turn_missing trips, or print one trip and its diagnostic bundle (read-only)'
+    )
+    .argument('[selector]', "trip event id, or a runtime ID / scope to list that runtime's trips")
+    .option('--json', 'output as JSON')
+    .addHelpText(
+      'after',
+      '\nA first_turn_missing trip means a prompt was dispatched to a runtime generation and the harness never produced turn.started before its deadline (trust dialog, onboarding prompt, wedged TUI). The trip event id is carried by the durable event, the `runtime list` health detail, and every waiter error.\n'
+    )
+    .action(async (selector, _opts, cmd: Command) => {
+      await cmdRuntimeDiagnostics(
+        toLegacyArgv(selector ? [selector] : [], cmd.opts(), {
+          strings: [],
+          booleans: ['json'],
+        })
+      )
+    })
+
+  runtime
     .command('capture')
     .description('capture live runtime output')
     .argument('<runtimeId>', 'runtime ID')
@@ -414,6 +435,14 @@ export function registerRuntimeCommands(program: Command): void {
       example: 'hrc runtime inspect runtime:<id> --json',
       exitCodes: '0 success; 2 selector/usage error; 1 read/probe failure',
       output: '--json preserves separate hrc and broker authority objects',
+    },
+  })
+  annotateChild(runtime, 'diagnostics', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc runtime diagnostics 41822 --json',
+      exitCodes: '0 success; 2 usage; 1 read failure or unknown trip',
+      output: 'trips list, or one trip plus its redacted bundle manifest',
     },
   })
   annotateChild(runtime, 'terminate', {

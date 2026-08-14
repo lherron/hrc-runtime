@@ -69,6 +69,7 @@ import type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   EnsureTargetRequest,
+  GetFirstTurnDiagnosticsResponse,
   HealthResponse,
   HrcActiveRunContributionRequest,
   HrcActiveRunContributionResponse,
@@ -90,6 +91,7 @@ import type {
   LaunchCommandScopedRunRequest,
   LaunchCommandScopedRunResponse,
   LaunchListFilter,
+  ListFirstTurnDiagnosticsResponse,
   ListMessagesResponse,
   ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
@@ -782,6 +784,22 @@ export class HrcClient {
       cursor = page.nextCursor
     } while (cursor !== undefined)
     return runtimes
+  }
+
+  /**
+   * Read-only retrieval for `first_turn_missing` trips + diagnostic bundles
+   * (T-07235). Without `trip` it lists trips (optionally for one runtime); with
+   * `trip` it returns that trip plus its bundle manifest. Never mutates and
+   * never re-probes a runtime.
+   */
+  async getFirstTurnDiagnostics(
+    selector: { trip: number } | { runtimeId?: string | undefined } = {}
+  ): Promise<ListFirstTurnDiagnosticsResponse | GetFirstTurnDiagnosticsResponse> {
+    const path = buildPath('/v1/runtime-diagnostics', {
+      trip: 'trip' in selector ? selector.trip : undefined,
+      runtimeId: 'runtimeId' in selector ? emptyToUndefined(selector.runtimeId) : undefined,
+    })
+    return this.getJson<ListFirstTurnDiagnosticsResponse | GetFirstTurnDiagnosticsResponse>(path)
   }
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {

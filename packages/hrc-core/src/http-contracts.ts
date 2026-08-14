@@ -335,6 +335,14 @@ export type DispatchTurnRequest = {
    * See {@link EnsureRuntimeRequest.allowStaleGeneration}.
    */
   allowStaleGeneration?: boolean | undefined
+  /**
+   * Per-request override for the `first_turn_missing` watchdog window
+   * (T-07235), in milliseconds. Consumed ONLY at arm time, to compute the
+   * generation's absolute stored deadline; nothing reads it afterwards, so a
+   * daemon restart never has to recover it. Omitted → the global default
+   * (`HRC_FIRST_TURN_TIMEOUT_MS`, 120000).
+   */
+  firstTurnTimeoutMs?: number | undefined
 }
 
 export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'

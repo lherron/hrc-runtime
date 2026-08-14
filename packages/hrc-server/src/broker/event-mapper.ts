@@ -35,6 +35,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcContinuationRef,
+  HrcLifecycleEvent,
   HrcProvider,
   HrcProviderTranscriptArtifactMetadata,
   HrcProviderTranscriptReportedPayload,
@@ -72,6 +73,12 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
+import {
+  disarmFirstTurnWatch,
+  disarmFirstTurnWatchOnContinuationCleared,
+  emitFirstTurnLateStart,
+  noteFirstTurnStarted,
+} from '../first-turn-watch'
 import { runtimeActivityPatch } from '../runtime-activity'
 import {
   type BrokerEventMapperDeps,
@@ -140,6 +147,13 @@ export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
   private readonly nextBufferChunkSeqByRunId = new Map<string, number>()
+  /**
+   * T-07235 late-start rows appended during THIS synchronous `apply`, drained
+   * into the returned `lifecycleEvents` so live followers see them too. Safe as
+   * instance state: `apply` is synchronous and transactional, so no second
+   * projection can interleave.
+   */
+  private pendingLateStartEvents: HrcLifecycleEvent[] = []
 
   constructor(deps: BrokerEventMapperDeps) {
     this.db = deps.db
@@ -287,6 +301,7 @@ export class BrokerEventMapper {
     // — keeping the returned `lifecycleEvents` order identical to replay-by-hrcSeq
     // (and semantically the tool_call precedes the awaiting_input it triggers).
     const derivedDescriptors: DerivedTurnDescriptor[] = []
+    this.pendingLateStartEvents = []
     const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
     this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
@@ -311,7 +326,11 @@ export class BrokerEventMapper {
       idempotent: false,
       brokerEvent,
       events: [],
-      lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
+      lifecycleEvents: [
+        ...(lifecycleEvent ? [lifecycleEvent] : []),
+        ...derived,
+        ...this.pendingLateStartEvents,
+      ],
     }
   }
 
@@ -763,6 +782,16 @@ export class BrokerEventMapper {
           lifecycleTerminalReason: payload.reason ?? 'process-exit',
           updatedAt: now,
         })
+        // T-07235: the harness process is gone, so the exit reason already owns
+        // this generation's outcome. Disarm rather than let the watchdog
+        // reclassify an exit failure as a liveness trip.
+        disarmFirstTurnWatch(
+          db,
+          ctx.runtimeId,
+          ctx.generation,
+          `invocation_exited:${payload.reason ?? 'process-exit'}`,
+          envelope.time ?? now
+        )
         break
       }
       case 'invocation.failed': {
@@ -904,8 +933,32 @@ export class BrokerEventMapper {
       }
       case 'turn.started': {
         const occurredAt = envelope.time ?? now
+        // T-07235: the generation's first turn satisfies the provision-liveness
+        // invariant. Stamped before the run projection so a turn that arrives
+        // in the same millisecond as an evaluation pass loses the trip race.
+        noteFirstTurnStarted(db, ctx.runtimeId, ctx.generation, occurredAt)
         if (runId !== undefined) {
-          db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
+          // Run-terminal monotonicity (T-07235). The rewrite-to-running used to
+          // be unconditional, which let a LATE turn.started resurrect a run
+          // already answered as terminal — breaking one-fact-every-surface. The
+          // guard mirrors the one the terminal path already has for a stamped
+          // completedAt. The turn itself still proceeds normally on the
+          // still-live runtime (observe-only policy): the runtime claims
+          // ownership, monitors see the real turn, and only the run's terminal
+          // answer to its caller is immutable.
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
+          } else {
+            this.pendingLateStartEvents.push(
+              emitFirstTurnLateStart(db, ctx, run, {
+                invocationId,
+                seq: envelope.seq,
+                occurredAt,
+                now,
+              })
+            )
+          }
           claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, {
@@ -1107,6 +1160,18 @@ export class BrokerEventMapper {
       case 'continuation.cleared': {
         db.runtimes.clearContinuation(ctx.runtimeId, now)
         db.sessions.updateContinuation(ctx.hostSessionId, undefined, now)
+        // T-07235: a clear that leaves the harness process RUNNING (reason=clear
+        // — ordinary broker-controller behavior) must not disarm, or a wedged
+        // TUI escapes the watchdog with a pre-first-turn clear.
+        disarmFirstTurnWatchOnContinuationCleared(
+          db,
+          {
+            runtimeId: ctx.runtimeId,
+            generation: ctx.generation,
+            invocationId: envelope.invocationId,
+          },
+          envelope.time ?? now
+        )
         break
       }
     }

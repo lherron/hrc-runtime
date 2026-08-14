@@ -412,6 +412,14 @@ export type BrokerControllerStartInput = {
    * when the compiled start request carries no initial input (T-05142).
    */
   requestedResponseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
+  /**
+   * Per-request override for the `first_turn_missing` watchdog window
+   * (T-07235), in milliseconds. Dispatch-time policy, NOT compiler closure: it
+   * never enters the spec / start request / profile / startRequestHash. It is
+   * consumed exactly once, at arm time, to compute the generation's absolute
+   * stored deadline.
+   */
+  firstTurnTimeoutMs?: number | undefined
   /** Caller retry identity persisted atomically with the accepted run row. */
   dispatchIdempotencyKey?: string | undefined
   /** Canonical semantic request hash paired with dispatchIdempotencyKey. */

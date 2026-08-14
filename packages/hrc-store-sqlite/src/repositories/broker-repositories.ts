@@ -917,6 +917,31 @@ export class RuntimeArtifactRepository {
 
     return row ? mapRuntimeArtifactRow(row) : null
   }
+
+  listByKind(artifactKind: string): HrcRuntimeArtifactRecord[] {
+    const rows = this.db
+      .query<RuntimeArtifactRow, [string]>(
+        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
+          WHERE artifact_kind = ?
+          ORDER BY created_at ASC, artifact_id ASC`
+      )
+      .all(artifactKind)
+
+    return rows.map(mapRuntimeArtifactRow)
+  }
+
+  /**
+   * T-07235 — the repository's only deletion path. Artifact classes with a
+   * declared retention policy (see docs/state-retention.md) prune their own
+   * rows through this; nothing here deletes by age or by sweep on its own.
+   * Returns true when a row was removed.
+   */
+  deleteByArtifactId(artifactId: string): boolean {
+    const result = this.db
+      .query('DELETE FROM runtime_artifacts WHERE artifact_id = ?')
+      .run(artifactId) as { changes?: number }
+    return (result.changes ?? 0) > 0
+  }
 }
 
 function sameRuntimeArtifact(

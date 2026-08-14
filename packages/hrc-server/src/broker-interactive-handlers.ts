@@ -20,6 +20,7 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
+import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
@@ -703,6 +704,22 @@ export async function executeInteractiveBrokerInputTurn(
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
 
+  // T-07235 — a prompt dispatched to an ALREADY-LIVE generation (a DM to a
+  // runtime that was started promptless). No-op once the generation has had its
+  // first turn or is already armed, so a long-running TUI is untouched.
+  armFirstTurnWatch(this.db, {
+    runtimeId: runtime.runtimeId,
+    generation: session.generation,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    runId,
+    invocationId,
+    transport: 'tmux',
+    timeoutMsOverride: options.firstTurnTimeoutMs,
+    primingDispatchedAt: now,
+  })
+
   if (!queuedMode) {
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
@@ -1182,6 +1199,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
       dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
       dispatchRequestHash: flagOptions.dispatchRequestHash,
+      firstTurnTimeoutMs: flagOptions.firstTurnTimeoutMs,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
       brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       ...(brokerClient ? { brokerClient } : {}),

@@ -78,6 +78,14 @@ export const HrcErrorCode = {
   IDEMPOTENCY_KEY_CONFLICT: 'idempotency_key_conflict',
   /** Every live or established slot in an external-participant class is occupied. */
   REGISTRATION_INSTANCES_EXHAUSTED: 'instances_exhausted',
+  /**
+   * A prompt was dispatched to a runtime generation and the harness never
+   * produced `turn.started` before the generation's durable deadline (T-07235).
+   * Recorded once, durably, by the armed-row evaluation pass; every waiter
+   * (`hrc start --wait`, the ACP pending-run path) reads that one fact rather
+   * than timing out privately.
+   */
+  FIRST_TURN_MISSING: 'first_turn_missing',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -138,6 +146,9 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
   [HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 409,
   [HrcErrorCode.REGISTRATION_INSTANCES_EXHAUSTED]: 409,
+  // The provisioned runtime accepted the prompt and never produced a turn: the
+  // upstream harness, not the caller's request, is what failed.
+  [HrcErrorCode.FIRST_TURN_MISSING]: 503,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {

@@ -507,6 +507,9 @@ export async function handleDispatchTurn(
       waitForCompletion: false,
       whenBusy: body.whenBusy,
       responseFormat: body.responseFormat,
+      ...(body.firstTurnTimeoutMs !== undefined
+        ? { firstTurnTimeoutMs: body.firstTurnTimeoutMs }
+        : {}),
       ...(idempotencyKey !== undefined
         ? {
             dispatchIdempotencyKey: idempotencyKey,
@@ -1074,6 +1077,7 @@ async function dispatchAdmittedTurnForSession(
           coalescedMembers: options.coalescedMembers,
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
           dispatchRequestHash: options.dispatchRequestHash,
+          firstTurnTimeoutMs: options.firstTurnTimeoutMs,
         })
       )
     }
@@ -1194,6 +1198,7 @@ async function dispatchAdmittedTurnForSession(
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,
         dispatchRequestHash: options.dispatchRequestHash,
+        firstTurnTimeoutMs: options.firstTurnTimeoutMs,
       })
     )
   }
@@ -1230,6 +1235,7 @@ async function dispatchAdmittedTurnForSession(
           responseFormat: options.responseFormat,
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
           dispatchRequestHash: options.dispatchRequestHash,
+          firstTurnTimeoutMs: options.firstTurnTimeoutMs,
         }),
     })
   )

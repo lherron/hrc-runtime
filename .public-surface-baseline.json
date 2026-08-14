@@ -911,6 +911,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "GetFirstTurnDiagnosticsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|GetFirstTurnDiagnosticsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "getHrcCliRpcMetricsHook",
       "kind": "value",
       "file": "packages/hrc-core/src/cli-metrics.ts",
@@ -955,6 +963,46 @@
       "kind": "value",
       "file": "packages/hrc-core/src/federation.ts",
       "hash": "hrc-core|HRC_BIRTH_CREDENTIAL_ENV|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_FIRST_TURN_MISSING_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_FIRST_TURN_MISSING_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_FIRST_TURN_MISSING_LATE_START_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_FIRST_TURN_MISSING_LATE_START_EVENT|value",
       "count": 1
     },
     {
@@ -1467,6 +1515,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/fences.ts",
       "hash": "hrc-core|HrcFenceValidationSuccess|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFirstTurnDiagnosticsTrip",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcFirstTurnDiagnosticsTrip|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFirstTurnMissingBundle",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcFirstTurnMissingBundle|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFirstTurnWatchRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcFirstTurnWatchRecord|type",
       "count": 1
     },
     {
@@ -2199,6 +2271,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRuntimeHealthDetail",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeHealthDetail|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRuntimeIntent",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2691,6 +2771,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ListAppSessionsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListFirstTurnDiagnosticsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|ListFirstTurnDiagnosticsResponse|type",
       "count": 1
     },
     {

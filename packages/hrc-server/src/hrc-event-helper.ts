@@ -36,6 +36,11 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
   'runtime.adopted': 'runtime',
+  // T-07235 provision-liveness watchdog. `first_turn_missing` is the single
+  // reason-coded terminal fact; the other two are linked informational rows.
+  first_turn_missing: 'runtime',
+  'first_turn_missing.diagnostics': 'runtime',
+  'first_turn_missing.late_start': 'runtime',
   'broker.diagnostic': 'runtime',
   'launch.wrapper_started': 'launch',
   'launch.child_started': 'launch',

@@ -406,6 +406,12 @@ export type HrcRuntimeSnapshot = {
   currentTurnAttempt?: number | undefined
   lifecycleTerminalReason?: string | undefined
   lastLifecycleEscalationJson?: string | undefined
+  /**
+   * Projected health detail (T-07235). Never persisted — the runtime-list
+   * projection attaches it so a fleet glance finds a runtime whose first turn
+   * never arrived. Absent means "no health finding", not "healthy unknown".
+   */
+  health?: HrcRuntimeHealthDetail | undefined
   createdAt: string
   updatedAt: string
 }
@@ -703,6 +709,151 @@ export type HrcRuntimeArtifactRecord = {
   artifactJson?: string | undefined
   artifactPath?: string | undefined
   createdAt: string
+}
+
+// ── first_turn_missing provision-liveness watchdog (T-07235) ─────────────────
+
+/**
+ * Generation-scoped watchdog row for the "a prompt was dispatched but the
+ * harness never produced a first turn" invariant (trust dialogs, onboarding
+ * prompts, wedged TUIs).
+ *
+ * `firstTurnDeadlineAt` is an ABSOLUTE durable timestamp computed once at arm
+ * time (`primingDispatchedAt + X_effective`). The accepted deadline is itself
+ * the durable fact, so no request-policy value ever needs recovery after a
+ * daemon restart and a generation's deadline cannot drift across restarts.
+ */
+export type HrcFirstTurnWatchRecord = {
+  runtimeId: string
+  generation: number
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  runId?: string | undefined
+  invocationId?: string | undefined
+  transport?: string | undefined
+  primingDispatchedAt?: string | undefined
+  firstTurnDeadlineAt?: string | undefined
+  firstTurnAt?: string | undefined
+  firstTurnMissingTrippedAt?: string | undefined
+  disarmedAt?: string | undefined
+  disarmReason?: string | undefined
+  /** hrcSeq of the durable `first_turn_missing` event. THE trip event id. */
+  tripEventSeq?: number | undefined
+  /** hrcSeq of the `first_turn_missing.diagnostics` linking event. */
+  diagnosticsEventSeq?: number | undefined
+  bundleDir?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
+export const HRC_FIRST_TURN_MISSING_EVENT = 'first_turn_missing'
+export const HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT = 'first_turn_missing.diagnostics'
+export const HRC_FIRST_TURN_MISSING_LATE_START_EVENT = 'first_turn_missing.late_start'
+export const HRC_FIRST_TURN_MISSING_BUNDLE_ARTIFACT_KIND = 'first-turn-missing-bundle'
+export const HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA = 'hrc.first-turn-missing-bundle/v1'
+
+/**
+ * Diagnostic-bundle manifest. Every prompt-bearing value is replaced BY
+ * CONSTRUCTION with `sha256:<hex> (len N)` — the bundle writer never renders a
+ * shell command line, and the `displayCommand` renderer is never invoked on
+ * this path (it quotes argv and env verbatim, and the shared prompt-display
+ * formatter is readability elision, not a secret boundary).
+ */
+export type HrcFirstTurnMissingBundle = {
+  schema: typeof HRC_FIRST_TURN_MISSING_BUNDLE_SCHEMA
+  correlation: {
+    runtimeId: string
+    scopeRef: string
+    generation: number
+    invocationId?: string | undefined
+    runId?: string | undefined
+    hostSessionId: string
+  }
+  timings: {
+    provisionedAt?: string | undefined
+    primingDispatchedAt?: string | undefined
+    firstTurnDeadlineAt?: string | undefined
+    trippedAt: string
+    configuredTimeoutMs?: number | undefined
+  }
+  launchShape?:
+    | {
+        frontend?: string | undefined
+        model?: string | undefined
+        cwd?: string | undefined
+        continuation: 'expected' | 'none'
+        continuationKey?: string | undefined
+        argv: string[]
+        /** Prompt-bearing env values only, always hashed. Process env is never captured. */
+        promptEnv: Record<string, string>
+      }
+    | undefined
+  surfaces?:
+    | {
+        tmuxSocketPath?: string | undefined
+        tmuxSessionName?: string | undefined
+        tmuxWindowId?: string | undefined
+        tmuxPaneId?: string | undefined
+        hrcRole?: string | undefined
+        ghosttyWindowId?: string | undefined
+        ghosttySurfaceId?: string | undefined
+      }
+    | undefined
+  versions?:
+    | {
+        harnessVersion?: string | undefined
+        hrcReleaseId?: string | undefined
+        agentSpacesVersion?: string | undefined
+      }
+    | undefined
+  paneCapture?:
+    | {
+        capturedAt: string
+        text: string
+      }
+    | undefined
+  /** Per-field failure map. Never silently absent when a field could not be built. */
+  failures: Record<string, string>
+}
+
+export type HrcFirstTurnDiagnosticsTrip = {
+  tripEventSeq: number
+  runtimeId: string
+  generation: number
+  scopeRef: string
+  laneRef: string
+  hostSessionId: string
+  runId?: string | undefined
+  invocationId?: string | undefined
+  primingDispatchedAt?: string | undefined
+  firstTurnDeadlineAt?: string | undefined
+  trippedAt: string
+  bundleDir?: string | undefined
+  bundleAvailable: boolean
+}
+
+export type ListFirstTurnDiagnosticsResponse = {
+  ok: true
+  trips: HrcFirstTurnDiagnosticsTrip[]
+}
+
+export type GetFirstTurnDiagnosticsResponse = {
+  ok: true
+  trip: HrcFirstTurnDiagnosticsTrip
+  bundle?: HrcFirstTurnMissingBundle | undefined
+  bundleError?: string | undefined
+}
+
+/** Health detail projected onto `hrc runtime list` rows for a tripped runtime. */
+export type HrcRuntimeHealthDetail = {
+  firstTurnMissing: {
+    trippedAt: string
+    tripEventSeq: number
+    generation: number
+    bundleAvailable: boolean
+    retrieval: string
+  }
 }
 
 export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA = 'hrc.provider-transcript-artifact/v1'

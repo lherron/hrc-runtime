@@ -18,6 +18,7 @@ import type {
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
+import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { formatDmAddress } from './messages.js'
@@ -543,6 +544,7 @@ export async function startHeadlessBrokerRuntime(
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       dispatchRequestHash: options.dispatchRequestHash,
+      firstTurnTimeoutMs: options.firstTurnTimeoutMs,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
       brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       routeDecision: {
@@ -858,6 +860,21 @@ export async function executeHeadlessBrokerInputTurn(
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
+  // T-07235 — a prompt dispatched to an ALREADY-LIVE generation (a DM to a
+  // runtime that was started promptless). No-op once the generation has had its
+  // first turn or is already armed.
+  armFirstTurnWatch(this.db, {
+    runtimeId: runtime.runtimeId,
+    generation: session.generation,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    runId,
+    invocationId,
+    transport: 'headless',
+    timeoutMsOverride: options.firstTurnTimeoutMs,
+    primingDispatchedAt: now,
+  })
   if (!queuedMode) {
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,

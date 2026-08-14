@@ -13,6 +13,8 @@ import type {
 } from 'hrc-core'
 import { isClaudeGhosttyEnabled } from './broker-decisions.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
+import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
+import { resolveFirstTurnEvalIntervalSeconds } from './first-turn-watch.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
@@ -579,6 +581,39 @@ export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandle
   }
 }
 
+/**
+ * T-07235 — the provision-liveness watchdog gets its OWN timer. It deliberately
+ * does NOT ride `HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS` (300s), whose cadence
+ * cannot honor the 120s default deadline.
+ */
+export function startFirstTurnWatchdog(this: HrcServerInstanceForHandlers): void {
+  const intervalSeconds = resolveFirstTurnEvalIntervalSeconds()
+  void this.runRecurringFirstTurnEval()
+  this.firstTurnEvalTimer = setInterval(() => {
+    void this.runRecurringFirstTurnEval()
+  }, intervalSeconds * 1000)
+}
+
+export async function runRecurringFirstTurnEval(this: HrcServerInstanceForHandlers): Promise<void> {
+  if (this.firstTurnEvalInFlight) return
+  const pass = runFirstTurnEvaluationOnce(this)
+  this.firstTurnEvalInFlight = pass
+  try {
+    const summary = await pass
+    if (summary.scanned > 0) {
+      writeServerLog('INFO', 'runtime.first_turn_eval_complete', summary)
+    }
+  } catch (error) {
+    writeServerLog('WARN', 'runtime.first_turn_eval_failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  } finally {
+    if (this.firstTurnEvalInFlight === pass) {
+      this.firstTurnEvalInFlight = undefined
+    }
+  }
+}
+
 export function startClaudeGhosttyIdleCleanup(this: HrcServerInstanceForHandlers): void {
   if (!isClaudeGhosttyEnabled()) return
   if (resolveClaudeGhosttyIdleCleanupMinutes() === 0) return
@@ -669,6 +704,8 @@ export const sweepHandlersMethods = {
   runRecurringActiveRunReconcile,
   startBrokerLeaseGc,
   runRecurringBrokerLeaseGc,
+  startFirstTurnWatchdog,
+  runRecurringFirstTurnEval,
   startClaudeGhosttyIdleCleanup,
   runClaudeGhosttyIdleCleanup,
   appendSweepCompletedEvent,

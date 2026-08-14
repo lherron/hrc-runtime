@@ -129,6 +129,8 @@ import {
   resolvePlacementOnServer,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
+import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
+import type { FirstTurnEvalSummary } from './first-turn-eval.js'
 import {
   type GhostmuxManagerOptions,
   HEADLESS_VIEWER_SURFACE_KIND,
@@ -707,6 +709,8 @@ class HrcServerInstance implements HrcServer {
   tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
+  firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
+  firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
   mailKickerSweepInFlight: Promise<void> | undefined
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
@@ -821,6 +825,8 @@ class HrcServerInstance implements HrcServer {
       this.handleArchiveAbandonedSessions(request),
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       this.handleHookIngest(request),
+    [exactRouteKey('GET', '/v1/runtime-diagnostics')]: (_request, url) =>
+      handleFirstTurnDiagnostics(this.db, url),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
     [exactRouteKey('GET', '/v1/status')]: (_request, url) => this.handleStatus(url),
     [exactRouteKey('GET', '/v1/federation/locate')]: (_request, url) =>
@@ -1202,6 +1208,7 @@ class HrcServerInstance implements HrcServer {
     this.startBrokerLeaseGc()
     this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
+    this.startFirstTurnWatchdog()
     this.startMailKicker()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
       if (grant.consumed) {
@@ -1361,6 +1368,17 @@ class HrcServerInstance implements HrcServer {
         await this.activeRunReconcileInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
+      }
+    }
+    if (this.firstTurnEvalTimer) {
+      clearInterval(this.firstTurnEvalTimer)
+      this.firstTurnEvalTimer = undefined
+    }
+    if (this.firstTurnEvalInFlight) {
+      try {
+        await this.firstTurnEvalInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.first_turn_eval_wait_failed', { error })
       }
     }
     if (this.brokerLeaseGcTimer) {
