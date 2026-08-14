@@ -59,7 +59,11 @@ import {
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import type { CoalescedQueuedMember, DispatchRunPersistenceOptions } from './server-types.js'
+import {
+  type CoalescedQueuedMember,
+  type DispatchRunPersistenceOptions,
+  dispatchRunPersistence,
+} from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
@@ -679,8 +683,7 @@ export async function executeHeadlessBrokerStartTurn(
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
-    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-    dispatchRequestHash: options.dispatchRequestHash,
+    ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedAt = timestamp()

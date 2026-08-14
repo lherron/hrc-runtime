@@ -93,6 +93,26 @@ export type DispatchRunPersistenceOptions = Pick<
   firstTurnTimeoutMs?: number | undefined
 }
 
+/**
+ * Re-thread the shared dispatch-persistence options through a nested call.
+ *
+ * These options are handed down several hops (public dispatch -> route handler
+ * -> start helper -> broker controller), and each hop used to re-list the
+ * fields by hand. Adding `firstTurnTimeoutMs` proved how that fails: two hops
+ * silently dropped it and the override reached the arm as `undefined`, which
+ * only a live dispatch could reveal. Spread this instead of enumerating fields
+ * so a future addition lands everywhere at once.
+ */
+export function dispatchRunPersistence(
+  options: DispatchRunPersistenceOptions
+): DispatchRunPersistenceOptions {
+  return {
+    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    dispatchRequestHash: options.dispatchRequestHash,
+    firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+  }
+}
+
 export type CoalescedQueuedMember = {
   runId: string
   sourceMessageId: string

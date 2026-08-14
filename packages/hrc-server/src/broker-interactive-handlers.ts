@@ -65,10 +65,11 @@ import {
 } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import type {
-  AttachBeforeInvocationStartOption,
-  CoalescedQueuedMember,
-  DispatchRunPersistenceOptions,
+import {
+  type AttachBeforeInvocationStartOption,
+  type CoalescedQueuedMember,
+  type DispatchRunPersistenceOptions,
+  dispatchRunPersistence,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
@@ -527,8 +528,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
       waitForCompletion: flagOptions.waitForCompletion,
       responseFormat: flagOptions.responseFormat,
-      dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
-      dispatchRequestHash: flagOptions.dispatchRequestHash,
+      ...dispatchRunPersistence(flagOptions),
     })
   }
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
@@ -548,8 +548,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
-    dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
-    dispatchRequestHash: flagOptions.dispatchRequestHash,
+    ...dispatchRunPersistence(flagOptions),
     onAccepted: (runtime) => {
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedAt = timestamp()
