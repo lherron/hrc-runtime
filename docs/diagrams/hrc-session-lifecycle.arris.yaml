@@ -1,5 +1,5 @@
 schemaVersion: arris/v1
-revision: 12
+revision: 31
 treatment: tinted-clean
 flow: down
 nodes:
@@ -43,14 +43,15 @@ edges:
   barred: {from: archived, to: gone, label: continuations barred}
   reaper-ref: {from: reaper-note, to: awaiting, line: dashed}
   barrier-ref: {from: barrier-note, to: archived, line: dashed}
+  crashed-crashed: {from: crashed, to: crashed}
 layout:
   active: {x: 815, y: 43, w: 268, h: 131}
-  archived: {x: 856, y: 1511, w: 281, h: 113}
+  archived: {x: 854, y: 1536, w: 281, h: 113, placed: manual}
   awaiting: {x: 581, y: 227, w: 281, h: 131}
   barrier-note: {x: 1960, y: 1171, w: 263, h: 202}
   born: {x: 947, y: 12, w: 28, h: 28}
   busy: {x: 20, y: 255, w: 262, h: 113}
-  crashed: {x: 295, y: 43, w: 275, h: 113}
+  crashed: {x: 269, y: 147, w: 275, h: 113, placed: manual}
   dead: {x: 550, y: 185, w: 216, h: 95}
   endings: {x: 536, y: 612, w: 786, h: 309}
   gone: {x: 966, y: 1704, w: 61, h: 56}
@@ -66,19 +67,20 @@ layout:
   age: {waypoints: [{x: 559, y: 739}, {x: 559, y: 771}, {x: 536, y: 771}, {x: 536, y: 1190}, {x: 713, y: 1190}, {x: 713, y: 1200}]}
   ask-close: {waypoints: [{x: 1549, y: 780}, {x: 1250, y: 780}]}
   ask-open: {waypoints: [{x: 1250, y: 830}, {x: 1549, y: 830}]}
-  barred: {waypoints: [{x: 997, y: 1624}, {x: 997, y: 1704}]}
-  barrier-ref: {waypoints: [{x: 1960, y: 1272}, {x: 1928, y: 1272}, {x: 1928, y: 1568}, {x: 1137, y: 1568}]}
+  barred: {waypoints: [{x: 995, y: 1649}, {x: 995, y: 1676}, {x: 997, y: 1676}, {x: 997, y: 1704}]}
+  barrier-ref: {waypoints: [{x: 1960, y: 1272}, {x: 1928, y: 1272}, {x: 1928, y: 1593}, {x: 1135, y: 1593}]}
   boot: {waypoints: [{x: 288, y: 692}, {x: 464, y: 692}]}
-  crash: {waypoints: [{x: 1119, y: 866}, {x: 1119, y: 898}, {x: 1386, y: 898}, {x: 1386, y: 1124}, {x: 1138, y: 1124}]}
-  crash-start: {waypoints: [{x: 288, y: 708}, {x: 320, y: 708}, {x: 320, y: 1000}, {x: 1000, y: 1000}, {x: 1000, y: 1067}]}
+  crash: {waypoints: [{x: 1119, y: 866}, {x: 1119, y: 1139}, {x: 975, y: 1139}, {x: 975, y: 1171}]}
+  crash-start: {waypoints: [{x: 288, y: 708}, {x: 320, y: 708}, {x: 320, y: 1345}, {x: 837, y: 1345}, {x: 837, y: 1228}]}
   dispatch: {waypoints: [{x: 827, y: 229}, {x: 0, y: 229}, {x: 0, y: 603}, {x: 320, y: 603}, {x: 320, y: 676}, {x: 288, y: 676}]}
   graceful: {waypoints: [{x: 575, y: 739}, {x: 575, y: 992}, {x: 524, y: 992}, {x: 524, y: 1124}, {x: 588, y: 1124}]}
   proven: {waypoints: [{x: 837, y: 1257}, {x: 1118, y: 1257}]}
   reaper-ref: {waypoints: [{x: 1250, y: 622}, {x: 1505, y: 622}, {x: 1505, y: 791}, {x: 1549, y: 791}]}
   reprovision: {waypoints: [{x: 588, y: 1140}, {x: 332, y: 1140}, {x: 332, y: 724}, {x: 288, y: 724}]}
-  resume: {waypoints: [{x: 898, y: 1511}, {x: 898, y: 1479}, {x: -12, y: 1479}, {x: -12, y: 326}, {x: 863, y: 326}, {x: 863, y: 294}]}
+  resume: {waypoints: [{x: 896, y: 1536}, {x: 896, y: 1504}, {x: 544, y: 1504}, {x: 544, y: 783}, {x: 863, y: 783}, {x: 863, y: 294}]}
   rotate: {waypoints: [{x: 1095, y: 213}, {x: 1140, y: 213}, {x: 1140, y: 180}, {x: 1095, y: 180}]}
   summon: {waypoints: [{x: 961, y: 40}, {x: 961, y: 163}]}
-  supersede: {waypoints: [{x: 1060, y: 294}, {x: 1060, y: 326}, {x: 1922, y: 326}, {x: 1922, y: 1272}, {x: 1366, y: 1272}, {x: 1366, y: 1479}, {x: 1095, y: 1479}, {x: 1095, y: 1511}]}
+  supersede: {waypoints: [{x: 1060, y: 294}, {x: 1060, y: 326}, {x: 1366, y: 326}, {x: 1366, y: 1504}, {x: 1093, y: 1504}, {x: 1093, y: 1536}]}
   turn-done: {waypoints: [{x: 988, y: 793}, {x: 956, y: 793}, {x: 956, y: 675}, {x: 654, y: 675}]}
   turn-start: {waypoints: [{x: 654, y: 709}, {x: 686, y: 709}, {x: 686, y: 827}, {x: 988, y: 827}]}
+  crashed-crashed: {waypoints: [{x: 1112, y: 1228}, {x: 1115, y: 1228}, {x: 1115, y: 1151}, {x: 1131, y: 1151}, {x: 1131, y: 1127}, {x: 991, y: 1127}, {x: 991, y: 1171}]}
