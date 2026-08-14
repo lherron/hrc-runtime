@@ -35,8 +35,25 @@ export type TmuxCapturer = Pick<ServerTmuxManager, 'capture'>
 
 /** Env keys that are known to carry prompt text. Nothing else is captured. */
 const PROMPT_BEARING_ENV_KEYS = ['ASP_PRIMING_PROMPT'] as const
-/** Argv flags whose FOLLOWING element is prompt text. */
-const PROMPT_BEARING_FLAGS = new Set(['-p', '--prompt', '--print', '--initial-prompt'])
+/**
+ * Argv flags whose FOLLOWING element is prompt text.
+ *
+ * `--append-system-prompt` is here because production argv actually carries it:
+ * the fleet's claude-code launch passes ~9.4KB of composed system prompt inline,
+ * which is prompt material by HRC's own contract (HrcLaunchPromptMaterial.system)
+ * and would otherwise be ~93% of every manifest, retained for the full bundle
+ * TTL. Hashing it also serves the bundle's purpose better than the text does:
+ * auto-update is the recurring trigger class, and a changed system prompt shows
+ * up as a changed hash instead of 9.4KB to diff by eye.
+ */
+const PROMPT_BEARING_FLAGS = new Set([
+  '-p',
+  '--prompt',
+  '--print',
+  '--initial-prompt',
+  '--append-system-prompt',
+  '--system-prompt',
+])
 
 export function redactPromptValue(value: string): string {
   const hash = createHash('sha256').update(value).digest('hex')

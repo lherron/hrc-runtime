@@ -158,6 +158,49 @@ describe('redactArgv', () => {
     expect(out[1]).toBe(redactPromptValue(SECRET_PROMPT))
   })
 
+  it('redacts the PRODUCTION claude-code argv shape, not just the imagined one', () => {
+    // Shape taken verbatim from a live spec_projection_json (runtime
+    // rt-c6a0e6a3). The first fixture in this file guessed `-p <prompt>`;
+    // production actually passes the composed system prompt inline via
+    // --append-system-prompt and the user prompt as a positional past `--`.
+    // Redaction tests written against imagined command lines prove nothing
+    // about the ones the fleet runs.
+    const systemPrompt = `# Praesidium Platform\n\n${'You are an agent. '.repeat(500)}`
+    const userPrompt = 'Reply with exactly: T-07235 e2e ack. Do nothing else.'
+    const productionArgv = [
+      '--plugin-dir',
+      '/…/plugins/000-defaults',
+      '--model',
+      'opus',
+      '--setting-sources',
+      '',
+      '--settings',
+      '/…/settings.json',
+      '--append-system-prompt',
+      systemPrompt,
+      '--chrome',
+      '--dangerously-skip-permissions',
+      '--remote-control',
+      '--session-id',
+      '52d5887a-980a-4dd3-aa3d-e40d40d62aa6',
+      '--',
+      userPrompt,
+    ]
+
+    const out = redactArgv(productionArgv, [userPrompt])
+    const rendered = out.join(' ')
+
+    expect(rendered).not.toContain('You are an agent.')
+    expect(rendered).not.toContain('T-07235 e2e ack')
+    expect(out[out.indexOf('--append-system-prompt') + 1]).toBe(redactPromptValue(systemPrompt))
+    expect(out[out.indexOf('--') + 1]).toBe(redactPromptValue(userPrompt))
+    // Flags and non-prompt values stay legible — the point is a readable launch
+    // shape, and the hash is far smaller than the text it replaces.
+    expect(out).toContain('--dangerously-skip-permissions')
+    expect(out[out.indexOf('--model') + 1]).toBe('opus')
+    expect(rendered.length).toBeLessThan(productionArgv.join(' ').length / 4)
+  })
+
   it('leaves ordinary flags untouched so the launch shape stays readable', () => {
     expect(redactArgv(['--model', 'opus', '--verbose'], [])).toEqual([
       '--model',
