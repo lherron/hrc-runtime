@@ -416,6 +416,31 @@ export type HrcRuntimeSnapshot = {
   updatedAt: string
 }
 
+/**
+ * Recorded initiating principal of a dispatch (T-07236, durable law
+ * `hrc-runtime.acp-event-bridge`).
+ *
+ * Provenance is PROPAGATED, never invented: a dispatch source that knows who
+ * caused the turn states it here, and consumers that make policy decisions on
+ * causation (the ACP event bridge's origin block) read it back rather than
+ * guessing. A dispatch that genuinely has no attributable initiator omits it,
+ * and the honest `system:hrc` residue is applied at the consuming edge — not
+ * stamped here, where it would be indistinguishable from a real system cause.
+ */
+export type HrcDispatchOriginKind = 'human' | 'agent' | 'system'
+
+export type HrcDispatchOrigin = {
+  /** Principal ref, e.g. `agent:cody`, `human:lherron`, `system:hrc`. */
+  actor?: string | undefined
+  kind?: HrcDispatchOriginKind | undefined
+  /**
+   * Opaque causation token threaded through by the dispatching system (ACP
+   * passes the bare job-run id). HRC never interprets it; it is echoed so the
+   * caller's ancestry walk can terminate its own chains.
+   */
+  causationRef?: string | undefined
+}
+
 export type HrcRunRecord = {
   runId: string
   hostSessionId: string
@@ -467,6 +492,16 @@ export type HrcRunRecord = {
   coalescedIntoRunId?: string | undefined
   /** Zero-based position of this queued run within its carrying batch. */
   coalescedPosition?: number | undefined
+  /**
+   * Recorded initiating principal of the dispatch that created this run
+   * (T-07236). Set at dispatch by the origin that knows the cause — the wire
+   * `origin` block for ACP-launched runs, the durable sender for hrcchat DMs,
+   * the invoking user for local CLI starts. Left unset by genuinely
+   * unattributed seams; nothing back-fills a placeholder.
+   */
+  originActor?: string | undefined
+  originKind?: HrcDispatchOriginKind | undefined
+  originCausationRef?: string | undefined
 }
 
 export type HrcLaunchRecord = {

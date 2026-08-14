@@ -77,6 +77,7 @@ import type {
   CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
 } from './server-types.js'
+import { dispatchRunPersistence } from './server-types.js'
 import {
   isRuntimeUnavailableStatus,
   json,
@@ -510,6 +511,7 @@ export async function handleDispatchTurn(
       ...(body.firstTurnTimeoutMs !== undefined
         ? { firstTurnTimeoutMs: body.firstTurnTimeoutMs }
         : {}),
+      ...(body.origin !== undefined ? { origin: body.origin } : {}),
       ...(idempotencyKey !== undefined
         ? {
             dispatchIdempotencyKey: idempotencyKey,
@@ -1075,9 +1077,7 @@ async function dispatchAdmittedTurnForSession(
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
           coalescedMembers: options.coalescedMembers,
-          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-          dispatchRequestHash: options.dispatchRequestHash,
-          firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+          ...dispatchRunPersistence(options),
         })
       )
     }
@@ -1090,8 +1090,7 @@ async function dispatchAdmittedTurnForSession(
       return await withObservation(
         await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
-          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-          dispatchRequestHash: options.dispatchRequestHash,
+          ...dispatchRunPersistence(options),
         })
       )
     }
@@ -1196,9 +1195,7 @@ async function dispatchAdmittedTurnForSession(
         whenBusy: options.whenBusy,
         repairCorrelation: options.repairCorrelation,
         responseFormat: options.responseFormat,
-        dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-        dispatchRequestHash: options.dispatchRequestHash,
-        firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+        ...dispatchRunPersistence(options),
       })
     )
   }
@@ -1233,9 +1230,7 @@ async function dispatchAdmittedTurnForSession(
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
           responseFormat: options.responseFormat,
-          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-          dispatchRequestHash: options.dispatchRequestHash,
-          firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+          ...dispatchRunPersistence(options),
         }),
     })
   )

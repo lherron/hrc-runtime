@@ -38,6 +38,7 @@ import type {
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailDriveWakeReason, SqliteSlowStatement } from 'hrc-store-sqlite'
+import { AcpEventBridge } from './acp-event-bridge.js'
 import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
@@ -733,6 +734,8 @@ class HrcServerInstance implements HrcServer {
   brokerWarmupComplete?: Promise<void> | undefined
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
+  /** HRC→ACP reason-coded event bridge; disabled unless explicitly configured (T-07236). */
+  readonly acpEventBridge: AcpEventBridge
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   eventIngestListener: EventIngestListener | undefined
@@ -1177,6 +1180,16 @@ class HrcServerInstance implements HrcServer {
       ghostmux: this.ghostmux,
       notifyEvent: (event) => this.notifyEvent(event),
     }
+    // Node identity comes from CONFIGURATION, never from the hostname: the
+    // bridge's v1 co-residency scoping compares two configured values, and a
+    // hostname-derived identity is not an authority to compare against.
+    this.acpEventBridge = new AcpEventBridge({
+      db: this.db,
+      node: {
+        nodeId: options.federationConfig?.nodeId ?? deriveNodeIdFromHostname(),
+        nodeIdProvenance: options.federationConfig?.nodeIdProvenance ?? 'derived',
+      },
+    })
     this.headlessViewerStatus = new HeadlessViewerStatusProjector({
       resolveSurfaceId: (runtimeId) => {
         const binding = this.db.surfaceBindings

@@ -8,6 +8,7 @@
 import type {
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
+  HrcDispatchOrigin,
   HrcRunRecord,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
@@ -424,6 +425,13 @@ export type BrokerControllerStartInput = {
   dispatchIdempotencyKey?: string | undefined
   /** Canonical semantic request hash paired with dispatchIdempotencyKey. */
   dispatchRequestHash?: string | undefined
+  /**
+   * Recorded initiating principal of the dispatch (T-07236). Dispatch-time
+   * provenance, NOT compiler closure: like the watchdog override it never
+   * enters the spec / start request / profile / startRequestHash. Persisted
+   * with the accepted run row and read back at bridge-emission time.
+   */
+  origin?: HrcDispatchOrigin | undefined
   routeDecision?: unknown
   brokerClient?: BrokerClientLike | undefined
   attachBeforeInvocationStart?: BrokerAttachedLaunchInput | undefined

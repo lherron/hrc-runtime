@@ -62,6 +62,7 @@ import { writeServerLog } from './server-log.js'
 import {
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
+  dispatchOriginRunFields,
   dispatchRunPersistence,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
@@ -184,6 +185,7 @@ export function enqueueDurableHeadlessTurnInput(
       dispatchedInputId: `input-${randomUUID()}`,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       dispatchRequestHash: options.dispatchRequestHash,
+      ...dispatchOriginRunFields(options),
     })
     this.db.runs.setCorrelationJson(
       runId,
@@ -546,9 +548,7 @@ export async function startHeadlessBrokerRuntime(
       identity: compiled.identity,
       runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
-      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-      dispatchRequestHash: options.dispatchRequestHash,
-      firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+      ...dispatchRunPersistence(options),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
       brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       routeDecision: {
@@ -853,6 +853,7 @@ export async function executeHeadlessBrokerInputTurn(
       operationId: runtime.activeOperationId,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       dispatchRequestHash: options.dispatchRequestHash,
+      ...dispatchOriginRunFields(options),
       // Persist HRC's inputId on the run row so the broker event-mapper can
       // correlate a drained input.accepted envelope back to this run and flip
       // invocation.runId before turn.* events project. Set on every dispatch

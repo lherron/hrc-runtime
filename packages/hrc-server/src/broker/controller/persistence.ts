@@ -22,6 +22,7 @@ import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 
 import { armFirstTurnWatch } from '../../first-turn-watch'
 import { runtimeActivityPatch } from '../../runtime-activity'
+import { dispatchOriginRunFields } from '../../server-types'
 import { BROKER_TRANSPORT } from '../constants'
 import {
   extractRuntimeStateTmux,
@@ -163,6 +164,7 @@ export function persistStartGraph(
           invocationId: String(identity.invocationId),
           dispatchIdempotencyKey: input.dispatchIdempotencyKey,
           dispatchRequestHash: input.dispatchRequestHash,
+          ...dispatchOriginRunFields(input),
         })
       : undefined
 

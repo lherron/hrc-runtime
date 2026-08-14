@@ -1,6 +1,7 @@
 import type {
   HrcBrokerInvocationEventRecord,
   HrcCommandLaunchSpec,
+  HrcDispatchOrigin,
   HrcErrorCode,
   HrcEventEnvelope,
   HrcLaunchRecord,
@@ -91,6 +92,12 @@ export type DispatchRunPersistenceOptions = Pick<
    * time, and never read again.
    */
   firstTurnTimeoutMs?: number | undefined
+  /**
+   * Recorded initiating principal of this dispatch (T-07236). Persisted on the
+   * run row and joined back at bridge-emission time, so provenance is
+   * propagated rather than invented at the far end of the causal chain.
+   */
+  origin?: HrcDispatchOrigin | undefined
 }
 
 /**
@@ -110,6 +117,25 @@ export function dispatchRunPersistence(
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
     dispatchRequestHash: options.dispatchRequestHash,
     firstTurnTimeoutMs: options.firstTurnTimeoutMs,
+    origin: options.origin,
+  }
+}
+
+/**
+ * Project the dispatch origin onto the run row's columns (T-07236).
+ *
+ * Every prompt-dispatch route writes its own `runs.insert`, so the projection
+ * lives here rather than being re-spelled at each one: the emitter joins
+ * runId → run at emission time and must find the SAME three columns no matter
+ * which route created the run.
+ */
+export function dispatchOriginRunFields(
+  options: Pick<DispatchRunPersistenceOptions, 'origin'>
+): Pick<HrcRunRecord, 'originActor' | 'originKind' | 'originCausationRef'> {
+  return {
+    originActor: options.origin?.actor,
+    originKind: options.origin?.kind,
+    originCausationRef: options.origin?.causationRef,
   }
 }
 

@@ -21,6 +21,7 @@ import type {
   FederationSemanticTurnSignal,
   HrcDeliveryOutcome,
   HrcDeliveryWarning,
+  HrcDispatchOrigin,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -38,6 +39,7 @@ import type {
   TraceMessageResponse,
   WaitMessageResponse,
 } from 'hrc-core'
+import { dispatchOriginFromMessageAddress } from './acp-event-bridge.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
@@ -90,6 +92,16 @@ import {
   toTargetView,
   toTargetViewWithArtifactProbe,
 } from './target-view.js'
+
+/**
+ * Spreadable dispatch option carrying the DM sender's recorded identity
+ * (T-07236). Absent when the sender's scope cannot be parsed — an unattributed
+ * run is the honest answer there, and a fabricated actor is not.
+ */
+function originDispatchOption(from: HrcMessageAddress): { origin?: HrcDispatchOrigin } {
+  const origin = dispatchOriginFromMessageAddress(from)
+  return origin === undefined ? {} : { origin }
+}
 
 export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL): Response {
   const projectId = normalizeOptionalQuery(url.searchParams.get('projectId'))
@@ -1158,6 +1170,11 @@ export async function deliverPersistedSemanticTurnHandoff(
       runId,
       waitForCompletion: false,
       responseFormat: body.responseFormat,
+      // T-07236: the DM sender IS the recorded initiating principal. Derived
+      // here rather than asked for on the wire — the identity is already
+      // durable on the message — so an agent-caused trip reaches ACP labelled
+      // `agent` instead of falling to the unattributed residue.
+      ...originDispatchOption(body.from),
       // T-07155: carry the urgent class down to the broker dispatch. Without
       // this the request would parse cleanly and then deliver as an ordinary
       // deferred DM — the exact silent downgrade the design forbids.
@@ -2412,6 +2429,8 @@ export async function executeSemanticTurn(
       runId,
       waitForCompletion: options.waitForCompletion,
       responseFormat: body.responseFormat,
+      // T-07236: see above — provenance from the durable DM sender.
+      ...originDispatchOption(body.from),
       // T-07202: a semantic DM can cross another DM while an interactive
       // broker is still cold-provisioning. Join that host-session boot and
       // deliver this DM through its winning runtime instead of minting a

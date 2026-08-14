@@ -233,6 +233,10 @@ describe('executeManagedStart', () => {
         idempotencyKey: expect.any(String),
         waitFor: 'accepted',
         waitForCompletion: false,
+        // T-07236: a local CLI start states its own provenance. The KIND is
+        // what any consumer policy reads and is known even when the OS cannot
+        // name the invoking user, so the actor is asserted loosely.
+        origin: { actor: expect.any(String), kind: 'human' },
       },
     ])
     expect(result).toEqual({ runtimeId: 'rt-turn', runId: 'run-turn' })

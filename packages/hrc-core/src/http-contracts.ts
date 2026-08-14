@@ -11,6 +11,7 @@ import type {
   HrcBrokerInvocationEventRecord,
   HrcCommandLaunchSpec,
   HrcContinuationRef,
+  HrcDispatchOrigin,
   HrcHarness,
   HrcLifecycleEvent,
   HrcLocalBridgeRecord,
@@ -343,6 +344,16 @@ export type DispatchTurnRequest = {
    * (`HRC_FIRST_TURN_TIMEOUT_MS`, 120000).
    */
   firstTurnTimeoutMs?: number | undefined
+  /**
+   * Recorded initiating principal of this dispatch (T-07236). Optional on the
+   * wire and never inferred from ambient state: a caller that durably knows who
+   * caused the turn (ACP's launcher from its recorded input actor, a human CLI
+   * invocation) states it, and HRC persists it verbatim on the run row. It is
+   * read back at the far end of the causal chain — the ACP event bridge puts it
+   * in the emitted envelope's `origin` — so an agent-caused trip stays subject
+   * to the consumer's agent-origin policy instead of dodging it as unattributed.
+   */
+  origin?: HrcDispatchOrigin | undefined
 }
 
 export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'

@@ -11,6 +11,7 @@ import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
+import type { AcpEventBridge } from './acp-event-bridge.js'
 import type { AppSessionHandlersMethods } from './app-session-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
@@ -147,6 +148,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
+  /** HRC→ACP reason-coded event bridge observer (T-07236). */
+  readonly acpEventBridge: AcpEventBridge
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
   readonly externalRegistrationOperations: Map<string, Promise<void>>

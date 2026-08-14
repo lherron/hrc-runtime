@@ -1407,6 +1407,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcDispatchOrigin",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcDispatchOrigin|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcDispatchOriginKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcDispatchOriginKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcDomainError",
       "kind": "value",
       "file": "packages/hrc-core/src/errors.ts",

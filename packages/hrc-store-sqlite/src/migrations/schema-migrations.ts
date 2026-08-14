@@ -1911,6 +1911,44 @@ const firstTurnWatchMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07236 — dispatch origin on the run row + the ACP bridge's durable producer
+ * rate-cap ledger.
+ *
+ * The origin columns are the durable half of the principal transport: whatever
+ * a dispatch source knows about who caused the turn is written once, at
+ * dispatch, and joined back at emission time. Nullable/additive — every
+ * pre-existing run reads as unattributed, which is the honest answer for a run
+ * dispatched before the transport existed.
+ *
+ * `acp_bridge_emissions` is a producer-side bound, not a delivery log: one row
+ * per admitted emission keyed by the canonical event id (so a retry of the same
+ * fact cannot consume a second slot), counted over a sliding window per
+ * (scope_ref, event). It is deliberately durable — an in-memory counter would
+ * reset on every daemon restart, and a restart loop is exactly the condition a
+ * runaway mint loop rides on.
+ */
+const dispatchOriginAndAcpBridgeMigration: HrcMigration = {
+  id: '0043_dispatch_origin_and_acp_bridge',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE runs ADD COLUMN origin_actor TEXT;
+      ALTER TABLE runs ADD COLUMN origin_kind TEXT;
+      ALTER TABLE runs ADD COLUMN origin_causation_ref TEXT;
+
+      CREATE TABLE acp_bridge_emissions (
+        event_id TEXT PRIMARY KEY,
+        scope_ref TEXT NOT NULL,
+        event TEXT NOT NULL,
+        emitted_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_acp_bridge_emissions_window
+        ON acp_bridge_emissions(scope_ref, event, emitted_at);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1949,4 +1987,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   dmQueueCoalescingMigration,
   sessionIndexMigration,
   firstTurnWatchMigration,
+  dispatchOriginAndAcpBridgeMigration,
 ]

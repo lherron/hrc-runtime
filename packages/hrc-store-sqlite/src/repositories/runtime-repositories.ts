@@ -372,6 +372,9 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'queueSnapshotPosition', column: 'queue_snapshot_position' },
   { key: 'coalescedIntoRunId', column: 'coalesced_into_run_id' },
   { key: 'coalescedPosition', column: 'coalesced_position' },
+  { key: 'originActor', column: 'origin_actor' },
+  { key: 'originKind', column: 'origin_kind' },
+  { key: 'originCausationRef', column: 'origin_causation_ref' },
 ]
 
 export class RunRepository {
@@ -407,8 +410,11 @@ export class RunRepository {
           queued_input_seq,
           queue_snapshot_position,
           coalesced_into_run_id,
-          coalesced_position
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          coalesced_position,
+          origin_actor,
+          origin_kind,
+          origin_causation_ref
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -435,7 +441,10 @@ export class RunRepository {
       record.queuedInputSeq ?? null,
       record.queueSnapshotPosition ?? null,
       record.coalescedIntoRunId ?? null,
-      record.coalescedPosition ?? null
+      record.coalescedPosition ?? null,
+      record.originActor ?? null,
+      record.originKind ?? null,
+      record.originCausationRef ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)

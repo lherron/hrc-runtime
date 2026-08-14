@@ -69,6 +69,7 @@ import {
   type AttachBeforeInvocationStartOption,
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
+  dispatchOriginRunFields,
   dispatchRunPersistence,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
@@ -194,6 +195,7 @@ export async function handleHeadlessDispatchTurn(
     updatedAt: now,
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
     dispatchRequestHash: options.dispatchRequestHash,
+    ...dispatchOriginRunFields(options),
   })
 
   this.db.runtimes.update(runtime.runtimeId, {
@@ -698,6 +700,7 @@ export async function executeInteractiveBrokerInputTurn(
     dispatchedInputId: inputId,
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
     dispatchRequestHash: options.dispatchRequestHash,
+    ...dispatchOriginRunFields(options),
   })
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
@@ -1202,9 +1205,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       identity: compiled.identity,
       runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
-      dispatchIdempotencyKey: flagOptions.dispatchIdempotencyKey,
-      dispatchRequestHash: flagOptions.dispatchRequestHash,
-      firstTurnTimeoutMs: flagOptions.firstTurnTimeoutMs,
+      ...dispatchRunPersistence(flagOptions),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest),
       brokerEnv: extractPiSdkBrokerCredentialEnv(mergedDispatchEnv, compiled.startRequest),
       ...(brokerClient ? { brokerClient } : {}),

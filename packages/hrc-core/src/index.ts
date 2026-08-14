@@ -101,6 +101,8 @@ export type {
   HrcCommandLaunchSpec,
   HrcContinuityRecord,
   HrcContinuationRef,
+  HrcDispatchOrigin,
+  HrcDispatchOriginKind,
   HrcEventCategory,
   HrcEventEnvelope,
   HrcEventSource,

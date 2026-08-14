@@ -313,7 +313,10 @@ export const RUN_COLUMNS = `
   queued_input_seq,
   queue_snapshot_position,
   coalesced_into_run_id,
-  coalesced_position`
+  coalesced_position,
+  origin_actor,
+  origin_kind,
+  origin_causation_ref`
 
 export const LAUNCH_COLUMNS = `
   launch_id,
@@ -758,6 +761,15 @@ export function mapRunRow(row: RunRow): HrcRunRecord {
     queueSnapshotPosition: row.queue_snapshot_position ?? undefined,
     coalescedIntoRunId: row.coalesced_into_run_id ?? undefined,
     coalescedPosition: row.coalesced_position ?? undefined,
+    originActor: row.origin_actor ?? undefined,
+    // The column is free text at rest; the parser is the only writer of a kind,
+    // so anything else in the row is legacy/foreign data and reads as absent
+    // rather than being surfaced as a bogus kind.
+    originKind:
+      row.origin_kind === 'human' || row.origin_kind === 'agent' || row.origin_kind === 'system'
+        ? row.origin_kind
+        : undefined,
+    originCausationRef: row.origin_causation_ref ?? undefined,
   }
 }
 

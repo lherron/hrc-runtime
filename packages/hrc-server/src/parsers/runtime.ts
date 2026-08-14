@@ -6,6 +6,7 @@ import type {
   DispatchTurnRequest,
   DropContinuationRequest,
   EnsureRuntimeRequest,
+  HrcDispatchOrigin,
   HrcHarness,
   HrcProvider,
   HrcRuntimeIntent,
@@ -489,6 +490,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
   const firstTurnTimeoutMs = parseOptionalFirstTurnTimeoutMs(input['firstTurnTimeoutMs'])
+  const origin = parseOptionalDispatchOrigin(input['origin'])
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -506,6 +508,67 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(repair !== undefined ? { repair } : {}),
     ...(firstTurnTimeoutMs !== undefined ? { firstTurnTimeoutMs } : {}),
+    ...(origin !== undefined ? { origin } : {}),
+  }
+}
+
+/**
+ * T-07236 dispatch origin. Validated strictly and NEVER coerced: an origin that
+ * arrives malformed is a caller bug, and quietly dropping it would relabel a
+ * known cause as unattributed — which is exactly the bypass the bridge's
+ * origin-policy promise depends on not happening.
+ *
+ * An origin with no actor and no kind is rejected rather than accepted as an
+ * empty block: sending `origin: {}` means the caller believed it was
+ * transporting provenance, and it was not.
+ */
+export function parseOptionalDispatchOrigin(input: unknown): HrcDispatchOrigin | undefined {
+  if (input === undefined || input === null) return undefined
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'origin must be an object when present',
+      { field: 'origin' }
+    )
+  }
+
+  const actor = input['actor']
+  if (actor !== undefined && (typeof actor !== 'string' || actor.trim().length === 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'origin.actor must be a non-empty string when present',
+      { field: 'origin.actor' }
+    )
+  }
+  const kind = requireOptionalOneOf(
+    input['kind'],
+    ['human', 'agent', 'system'],
+    'origin.kind must be "human", "agent", or "system"',
+    { field: 'origin.kind' }
+  )
+  const causationRef = input['causationRef']
+  if (
+    causationRef !== undefined &&
+    (typeof causationRef !== 'string' || causationRef.trim().length === 0)
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'origin.causationRef must be a non-empty string when present',
+      { field: 'origin.causationRef' }
+    )
+  }
+  if (actor === undefined && kind === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'origin requires at least one of actor or kind',
+      { field: 'origin' }
+    )
+  }
+
+  return {
+    ...(typeof actor === 'string' ? { actor: actor.trim() } : {}),
+    ...(kind !== undefined ? { kind } : {}),
+    ...(typeof causationRef === 'string' ? { causationRef: causationRef.trim() } : {}),
   }
 }
 

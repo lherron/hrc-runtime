@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { userInfo } from 'node:os'
 
 import type { DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -28,6 +29,28 @@ import {
 import { createClient, fatal } from './shared.js'
 
 type ManagedStartClient = Pick<HrcClient, 'dispatchTurn' | 'startRuntime'>
+
+/**
+ * A local CLI start is a HUMAN typing at a terminal (T-07236).
+ *
+ * The dispatch source is what knows the cause, so it states it explicitly here
+ * rather than leaving HRC to guess later. `os.userInfo()` is the invoking user,
+ * not ambient configuration: this is the identity of the process the human just
+ * ran. It falls back to a bare `human` kind if the OS cannot name the user —
+ * the KIND is the part any policy reads, and it is known either way.
+ */
+export function localCliDispatchOrigin(): DispatchTurnRequest['origin'] {
+  let username: string | undefined
+  try {
+    username = userInfo().username
+  } catch {
+    username = undefined
+  }
+  return {
+    actor: username !== undefined && username.length > 0 ? `human:${username}` : 'human',
+    kind: 'human',
+  }
+}
 
 export type StartFollowCommand = {
   purpose: string
@@ -106,6 +129,7 @@ export async function executeManagedStart(
     idempotencyKey: input.idempotencyKey ?? `hrc-start-${randomUUID()}`,
     prompt,
     runtimeIntent: input.intent,
+    origin: localCliDispatchOrigin(),
     waitFor: input.waitFor ?? 'accepted',
     waitForCompletion: input.waitFor === 'terminal',
   })
@@ -418,6 +442,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
             prompt,
             runtimeIntent: intent,
             allowStaleGeneration: true,
+            origin: localCliDispatchOrigin(),
           })
         : await client.startRuntime({
             hostSessionId,

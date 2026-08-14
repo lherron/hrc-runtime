@@ -106,6 +106,7 @@ export type {
   ImportedHrcLifecycleEventAppendResult,
   ImportedHrcLifecycleEventInput,
 } from './repositories/event-repositories.js'
+export { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 export { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'
 export { SessionIndexRepository } from './session-index-repository.js'
 export type {

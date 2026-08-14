@@ -103,6 +103,9 @@ export type RunRow = {
   queue_snapshot_position: number | null
   coalesced_into_run_id: string | null
   coalesced_position: number | null
+  origin_actor: string | null
+  origin_kind: string | null
+  origin_causation_ref: string | null
 }
 
 export type LaunchRow = {

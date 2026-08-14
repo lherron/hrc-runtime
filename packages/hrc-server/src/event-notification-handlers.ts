@@ -76,6 +76,11 @@ export function notifyEvent(
   // Project canonical lifecycle events onto headless-viewer status bars. Pure
   // observer: never authority, never throws, never blocks dispatch (T-04439).
   this.headlessViewerStatus.observe(event)
+  // T-07236 — HRC→ACP reason-coded event bridge. Same observer discipline as
+  // the line above and one step further: the emission itself is detached, so
+  // the bridge cannot delay, fail, or otherwise reach the write that produced
+  // this event. Disabled unless explicitly configured.
+  this.acpEventBridge.observe(event)
   if ('hrcSeq' in event) {
     this.maybeRelayFederatedInteractiveLifecycle(event)
     this.observeMailDriveLifecycleEvent(event)

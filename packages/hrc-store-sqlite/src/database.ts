@@ -17,6 +17,7 @@ import { HrcMailFederatedOriginRepository } from './mail/federated-origin-reposi
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
+import { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 import {
   ActiveInputDeliveryRepository,
   LocalBridgeRepository,
@@ -100,6 +101,7 @@ export type HrcDatabase = {
   runtimeArtifacts: RuntimeArtifactRepository
   permissionDecisions: PermissionDecisionRepository
   firstTurnWatch: FirstTurnWatchRepository
+  acpBridgeEmissions: AcpBridgeEmissionRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -185,5 +187,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
     permissionDecisions: new PermissionDecisionRepository(sqlite),
     firstTurnWatch: new FirstTurnWatchRepository(sqlite),
+    acpBridgeEmissions: new AcpBridgeEmissionRepository(sqlite),
   }
 }
