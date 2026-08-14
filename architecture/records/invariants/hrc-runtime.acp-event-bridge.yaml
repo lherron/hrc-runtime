@@ -1,0 +1,27 @@
+id: hrc-runtime.acp-event-bridge
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC-produced reason-coded events delivered to the co-resident ACP event-job ingress
+predicate: >
+  An enabled HRC event bridge observes only committed, allowlisted reason-coded
+  facts and emits the frozen schema-v1 ACP envelope with node-qualified event
+  identity, recorded initiating origin and causation, and a pointer-only payload.
+  Producer emission is durably rate-bounded, runs after commit without affecting
+  the originating write, and is best-effort rather than a second source of
+  truth. V1 activation is disabled by default and confined to the HRC node
+  co-resident with the ACP listener; payload node identity is provenance and a
+  fail-loud tripwire, not execution-routing authority.
+authority: hrcchat#19077
+source:
+  - hrcchat#19075
+  - hrcchat#19077
+  - wrkq:T-07236
+required_tests:
+  - just architecture-records
+  - wrkq:T-07236 HRC envelope, origin, rate-cap, isolation, and joint live e2e gates
+  - wrkq:T-07237 ACP parser, dedupe, origin-policy, node-tripwire, and launcher-origin gates
+last_verified: 2026-08-14
+reopen_when: The ACP event envelope, producer ownership, principal transport, delivery guarantee, rate bound, trust boundary, or node-execution topology changes.
+supersedes: []
+superseded_by: []

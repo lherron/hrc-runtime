@@ -2,6 +2,10 @@
 
 # hrc-runtime — Active Invariants
 
+## hrc-runtime.acp-event-bridge
+
+An enabled HRC event bridge observes only committed, allowlisted reason-coded facts and emits the frozen schema-v1 ACP envelope with node-qualified event identity, recorded initiating origin and causation, and a pointer-only payload. Producer emission is durably rate-bounded, runs after commit without affecting the originating write, and is best-effort rather than a second source of truth. V1 activation is disabled by default and confined to the HRC node co-resident with the ACP listener; payload node identity is provenance and a fail-loud tripwire, not execution-routing authority.
+
 ## hrc-runtime.architecture-law
 
 Durable HRC architecture laws are stored as machine-checked records with explicit authority, source evidence, required tests, and reopen triggers.
