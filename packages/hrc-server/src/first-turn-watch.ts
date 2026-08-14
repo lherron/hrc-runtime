@@ -84,6 +84,38 @@ export function resolveFirstTurnBundleTtlDays(): number {
   )
 }
 
+/**
+ * Has this (runtimeId, generation) ALREADY produced a turn?
+ *
+ * The watch row alone cannot answer this. A generation that ran turns before
+ * this watchdog existed has no row at all, and "no row" is indistinguishable
+ * from "armed but never started" if you only look at `firstTurnAt`. Reading the
+ * durable run history instead makes the spec's "never armed: subsequent prompts
+ * to a generation already past its first turn" hold for the pre-existing fleet
+ * too — without it, the first DM to any long-lived runtime would arm a fresh
+ * window, and a DM that queues behind an active turn would blow that window
+ * through no fault of the harness.
+ *
+ * Indexed on `idx_runs_runtime_id` and bounded by one runtime's run history.
+ */
+export function generationHasStartedTurn(
+  db: HrcDatabase,
+  runtimeId: string,
+  generation: number
+): boolean {
+  const row = db.sqlite
+    .query<{ one: number }, [string, number]>(
+      `SELECT 1 AS one
+         FROM runs
+        WHERE runtime_id = ?
+          AND generation = ?
+          AND started_at IS NOT NULL
+        LIMIT 1`
+    )
+    .get(runtimeId, generation)
+  return row !== null
+}
+
 export type ArmFirstTurnWatchInput = {
   runtimeId: string
   generation: number
@@ -110,6 +142,10 @@ export type ArmFirstTurnWatchInput = {
  */
 export function armFirstTurnWatch(db: HrcDatabase, input: ArmFirstTurnWatchInput): void {
   try {
+    // Spec exclusion, enforced here rather than at each call site so a future
+    // dispatch origin cannot reintroduce it: a generation already past its
+    // first turn is never armed.
+    if (generationHasStartedTurn(db, input.runtimeId, input.generation)) return
     const timeoutMs = resolveFirstTurnTimeoutMs(input.timeoutMsOverride)
     const dispatchedMs = Date.parse(input.primingDispatchedAt)
     if (!Number.isFinite(dispatchedMs)) return

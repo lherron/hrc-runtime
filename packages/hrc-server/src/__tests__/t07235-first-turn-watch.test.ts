@@ -177,6 +177,73 @@ describe('arm', () => {
     expect(watch?.primingDispatchedAt).toBe(iso(0))
   })
 
+  it('never arms a generation that already ran a turn before the watchdog existed', () => {
+    // The pre-existing fleet has NO watch row, so `firstTurnAt is null` is
+    // true for every long-lived runtime. Run history is what actually answers
+    // "has this generation had its first turn" — otherwise the first DM after
+    // activation would start a clock on 43 live runtimes at once, and any DM
+    // that queues behind an active turn would blow it through no fault of the
+    // harness.
+    fixture.db.runs.insert({
+      runId: 'run-earlier',
+      hostSessionId: HOST_SESSION_ID,
+      runtimeId: RUNTIME_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'headless',
+      status: 'completed',
+      acceptedAt: iso(0),
+      startedAt: iso(10),
+      completedAt: iso(20),
+      updatedAt: iso(20),
+    })
+
+    armDefault(fixture, { runId: 'run-later', primingDispatchedAt: iso(30) })
+    expect(fixture.db.firstTurnWatch.get(RUNTIME_ID, 1)).toBeNull()
+  })
+
+  it('still arms a SUCCESSOR generation whose own history is empty', () => {
+    fixture.db.runs.insert({
+      runId: 'run-gen1',
+      hostSessionId: HOST_SESSION_ID,
+      runtimeId: RUNTIME_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'headless',
+      status: 'completed',
+      acceptedAt: iso(0),
+      startedAt: iso(10),
+      completedAt: iso(20),
+      updatedAt: iso(20),
+    })
+
+    // Generation scoping: the predecessor's turn history says nothing about
+    // whether the successor's harness ever came up.
+    armDefault(fixture, { generation: 2, timeoutMsOverride: 5_000, primingDispatchedAt: iso(30) })
+    expect(fixture.db.firstTurnWatch.get(RUNTIME_ID, 2)?.firstTurnDeadlineAt).toBe(iso(5_030))
+  })
+
+  it('an accepted-but-never-started run does not count as a prior turn', () => {
+    // Only `started_at` proves a turn happened. An accepted run that never
+    // started is exactly the failure this watchdog exists to catch.
+    fixture.db.runs.insert({
+      runId: 'run-accepted-only',
+      hostSessionId: HOST_SESSION_ID,
+      runtimeId: RUNTIME_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: iso(0),
+      updatedAt: iso(0),
+    })
+    armDefault(fixture, { timeoutMsOverride: 5_000 })
+    expect(fixture.db.firstTurnWatch.get(RUNTIME_ID, 1)?.firstTurnDeadlineAt).toBe(iso(5_000))
+  })
+
   it('scopes state by generation: a rotation arms a fresh, independent row', () => {
     armDefault(fixture, { timeoutMsOverride: 5_000 })
     armDefault(fixture, {

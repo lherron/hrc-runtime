@@ -705,20 +705,26 @@ export async function executeInteractiveBrokerInputTurn(
   }
 
   // T-07235 — a prompt dispatched to an ALREADY-LIVE generation (a DM to a
-  // runtime that was started promptless). No-op once the generation has had its
-  // first turn or is already armed, so a long-running TUI is untouched.
-  armFirstTurnWatch(this.db, {
-    runtimeId: runtime.runtimeId,
-    generation: session.generation,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    runId,
-    invocationId,
-    transport: 'tmux',
-    timeoutMsOverride: options.firstTurnTimeoutMs,
-    primingDispatchedAt: now,
-  })
+  // runtime that was started promptless). armFirstTurnWatch itself no-ops once
+  // the generation has produced a turn; the queued guard is the other half:
+  // a prompt sitting behind an active turn is not yet before the harness, so
+  // its turn.started is legitimately deferred and must not start a clock. No
+  // coverage is lost — a fresh wedged runtime is armed by the START path, and
+  // a runtime with an active turn has by definition already produced one.
+  if (!queuedMode) {
+    armFirstTurnWatch(this.db, {
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      runId,
+      invocationId,
+      transport: 'tmux',
+      timeoutMsOverride: options.firstTurnTimeoutMs,
+      primingDispatchedAt: now,
+    })
+  }
 
   if (!queuedMode) {
     this.db.runtimes.update(runtime.runtimeId, {
