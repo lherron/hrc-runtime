@@ -4,9 +4,10 @@ import type {
   BuildProcessInvocationSpecRequest,
   BuildProcessInvocationSpecResponse,
 } from 'agent-spaces'
-import type { HrcRuntimeIntent } from 'hrc-core'
+import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 
 import { SUPPORTED_CLI_HARNESSES, buildCliInvocation } from '../agent-spaces-adapter/cli-adapter'
+import { normalizeDispatchIntent } from '../dispatch-invocation'
 
 function makeIntent(
   overrides: Partial<HrcRuntimeIntent> = {},
@@ -23,6 +24,7 @@ function makeIntent(
       correlation: {
         hostSessionId: 'hsid-mode-test',
         runId: 'run-mode-test',
+        generation: 7,
         sessionRef: {
           scopeRef: 'agent:rex:project:agent-spaces:task:T-01104',
           laneRef: 'lane:main',
@@ -144,8 +146,13 @@ describe('buildCliInvocation execution mode mapping', () => {
           hintsText: 'Phase: green\nObjective: verify the fix',
         },
         launch: {
-          env: { EXTRA_ENV: 'from-launch', BASE_ENV: 'overridden' },
-          unsetEnv: ['REMOVE_ME'],
+          env: {
+            EXTRA_ENV: 'from-launch',
+            BASE_ENV: 'overridden',
+            AGENT_GENERATION: '999',
+            HRC_GENERATION: '999',
+          },
+          unsetEnv: ['REMOVE_ME', 'AGENT_GENERATION', 'HRC_GENERATION'],
           pathPrepend: ['/custom/bin'],
         },
       }),
@@ -168,7 +175,9 @@ describe('buildCliInvocation execution mode mapping', () => {
     expect(result.env).toMatchObject({
       BASE_ENV: 'overridden',
       EXTRA_ENV: 'from-launch',
+      AGENT_GENERATION: '7',
       HRC_HOST_SESSION_ID: 'hsid-mode-test',
+      HRC_GENERATION: '7',
       HRC_RUN_ID: 'run-mode-test',
       HRC_SESSION_REF: 'agent:rex:project:agent-spaces:task:T-01104/lane:main',
       ASP_SCOPE_REF: 'agent:rex:project:agent-spaces:task:T-01104',
@@ -184,6 +193,27 @@ describe('buildCliInvocation execution mode mapping', () => {
     })
     expect(result.env.PATH).toBe('/custom/bin:/usr/bin')
     expect(result.env.REMOVE_ME).toBeUndefined()
+  })
+
+  it('stamps dispatch correlation from the authoritative host session generation', () => {
+    const session = {
+      scopeRef: 'agent:rex:project:agent-spaces:task:T-07277',
+      laneRef: 'main',
+      hostSessionId: 'hsid-generation-test',
+      generation: 3,
+    } as HrcSessionRecord
+
+    const normalized = normalizeDispatchIntent(makeIntent(), session, 'run-generation-test')
+
+    expect(normalized.placement.correlation).toEqual({
+      sessionRef: {
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+      },
+      hostSessionId: session.hostSessionId,
+      runId: 'run-generation-test',
+      generation: 3,
+    })
   })
 
   it('does not persist turn-scoped wrkq causation env into interactive CLI sessions', async () => {

@@ -228,6 +228,8 @@ function localizeIntentToSession(
       correlation: {
         ...intent.placement?.correlation,
         sessionRef: { scopeRef: session.scopeRef, laneRef: session.laneRef },
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
       },
     },
   }

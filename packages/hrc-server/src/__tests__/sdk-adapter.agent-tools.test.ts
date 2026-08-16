@@ -48,6 +48,7 @@ describe('runSdkTurn agent tool env', () => {
             scopeRef: 'agent:sparky:project:agent-spaces:task:tool-env-test',
             laneRef: 'main',
           },
+          generation: 4,
         },
       },
       harness: {
@@ -57,8 +58,11 @@ describe('runSdkTurn agent tool env', () => {
       launch: {
         env: {
           CUSTOM_SDK_ENV: 'from-launch',
+          AGENT_GENERATION: '999',
+          HRC_GENERATION: '999',
           WRKQ_CAUSATION_REF: 'jrun_hook_turn',
         },
+        unsetEnv: ['AGENT_GENERATION', 'HRC_GENERATION'],
         pathPrepend: ['/custom/bin'],
       },
     }
@@ -112,6 +116,8 @@ describe('runSdkTurn agent tool env', () => {
       ASP_TASK_ID: 'tool-env-test',
       ASP_HANDLE: 'sparky@agent-spaces:tool-env-test',
       HRC_SESSION_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test/lane:main',
+      AGENT_GENERATION: '4',
+      HRC_GENERATION: '4',
       CUSTOM_SDK_ENV: 'from-launch',
       WRKQ_CAUSATION_REF: 'jrun_hook_turn',
     })

@@ -739,6 +739,7 @@ function normalizeBrokerSessionOpenIntent(
           laneRef: session.laneRef,
         },
         hostSessionId: session.hostSessionId,
+        generation: session.generation,
       },
     },
   }
@@ -1004,6 +1005,7 @@ async function dispatchAdmittedTurnForSession(
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   const runId = options.runId ?? `run-${randomUUID()}`
+  const normalizedInputIntent = normalizeDispatchIntent(inputIntent, session, runId)
   const observationContext: DispatchTurnObservationContext = {
     lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
     brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
@@ -1018,16 +1020,17 @@ async function dispatchAdmittedTurnForSession(
   // Normalizing to an interactive claude-code intent makes the predicates
   // below route them to the broker branch (and NOT runSdkTurn / the retired
   // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
-  const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(inputIntent)
+  const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(normalizedInputIntent)
   const highRiskActuatorSplit =
-    normalizeActuatorSplitPolicy(inputIntent.execution?.actuatorSplit)?.mode === 'high-risk'
+    normalizeActuatorSplitPolicy(normalizedInputIntent.execution?.actuatorSplit)?.mode ===
+    'high-risk'
   const intent =
     this.claudeCodeTmuxBrokerEnabled &&
     !rawInteractiveSurfaceReuseVeto &&
     !highRiskActuatorSplit &&
-    shouldRedirectClaudeToInteractiveBroker(inputIntent)
-      ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
-      : inputIntent
+    shouldRedirectClaudeToInteractiveBroker(normalizedInputIntent)
+      ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
+      : normalizedInputIntent
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
   // T-01873: route the durable-tmux liveness gate through the runtime-hosting
   // choke point. hasLeasedBrokerSubstrate replaces the `transport==='tmux' &&
@@ -1164,10 +1167,13 @@ async function dispatchAdmittedTurnForSession(
     })
   }
 
-  if (admission.decision === 'broker-start' && isProviderOnlyOpenAiInteractiveIntent(inputIntent)) {
+  if (
+    admission.decision === 'broker-start' &&
+    isProviderOnlyOpenAiInteractiveIntent(normalizedInputIntent)
+  ) {
     throw new HrcRuntimeUnavailableError('runtime intent is not broker-admissible', {
       hostSessionId: session.hostSessionId,
-      provider: inputIntent.harness.provider,
+      provider: normalizedInputIntent.harness.provider,
       route: 'interactive-broker',
     })
   }
@@ -1205,10 +1211,10 @@ async function dispatchAdmittedTurnForSession(
       reason: 'interactive-broker-admission-reprovision',
       allowedBrokerDriver: admission.allowedBrokerDriver,
     })
-    if (isProviderOnlyInteractiveIntent(inputIntent)) {
+    if (isProviderOnlyInteractiveIntent(normalizedInputIntent)) {
       throw new HrcRuntimeUnavailableError('runtime intent is not broker-admissible', {
         hostSessionId: session.hostSessionId,
-        provider: inputIntent.harness.provider,
+        provider: normalizedInputIntent.harness.provider,
         route: 'interactive-broker',
       })
     }

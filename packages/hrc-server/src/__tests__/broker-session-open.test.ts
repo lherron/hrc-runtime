@@ -387,13 +387,14 @@ describe('POST /v1/broker-sessions/open', () => {
     const viewerRuntimeIds = installHeadlessViewerSpy()
     const captured: {
       intentInitialPrompt?: unknown
+      intentCorrelation?: unknown
       prompt?: string
       runId?: string
       allowCompilerInitialInputWithoutIdentity?: boolean
     } = {}
     ;(server as any).startHeadlessBrokerRuntime = async (
       _session: unknown,
-      intent: { initialPrompt?: unknown },
+      intent: { initialPrompt?: unknown; placement: { correlation?: unknown } },
       prompt: string,
       runId: string,
       options?: {
@@ -401,6 +402,7 @@ describe('POST /v1/broker-sessions/open', () => {
       }
     ) => {
       captured.intentInitialPrompt = intent.initialPrompt
+      captured.intentCorrelation = intent.placement.correlation
       captured.prompt = prompt
       captured.runId = runId
       captured.allowCompilerInitialInputWithoutIdentity =
@@ -421,6 +423,11 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(body.status).toBe('ready')
     expect(body.startIdentity).toEqual({ kind: 'broker', invocationId: INVOCATION_ID })
     expect(captured.intentInitialPrompt).toBeUndefined()
+    expect(captured.intentCorrelation).toEqual({
+      sessionRef: { scopeRef: SCOPE_REF, laneRef: 'default' },
+      hostSessionId: resolved.hostSessionId,
+      generation: resolved.generation,
+    })
     expect(captured.prompt).toBe('')
     expect(captured.runId?.startsWith('broker-session-open-')).toBe(true)
     expect(captured.allowCompilerInitialInputWithoutIdentity).toBe(true)

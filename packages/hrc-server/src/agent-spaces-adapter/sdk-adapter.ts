@@ -241,7 +241,15 @@ function inferHarnessSessionJson(
 }
 
 async function buildSdkRequestEnv(intent: HrcRuntimeIntent): Promise<Record<string, string>> {
-  let env = mergeEnv(buildHrcCorrelationEnv(intent), intent.launch)
+  const correlationEnv = buildHrcCorrelationEnv(intent)
+  let env = mergeEnv(correlationEnv, intent.launch)
+  // Keep the dispatch fence authoritative even when caller launch env tries to
+  // override or unset the compatibility/canonical generation names.
+  const generation = correlationEnv['HRC_GENERATION']
+  if (generation !== undefined) {
+    env['AGENT_GENERATION'] = generation
+    env['HRC_GENERATION'] = generation
+  }
   const components = await detectAgentLocalComponents(intent.placement.agentRoot)
 
   if (components?.hasTools) {

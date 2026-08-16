@@ -236,6 +236,12 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
     env['HRC_RUN_ID'] = correlation.runId
   }
 
+  if (correlation?.generation !== undefined) {
+    const generation = String(correlation.generation)
+    env['AGENT_GENERATION'] = generation
+    env['HRC_GENERATION'] = generation
+  }
+
   if (intent.placement?.projectRoot) {
     env['AGENT_PROJECT_ROOT'] = intent.placement.projectRoot
     env['ASP_PROJECT_ROOT'] = intent.placement.projectRoot
@@ -364,6 +370,14 @@ export async function buildCliInvocation(
   // inherit stale ancestry; those CLI hook targets intentionally become
   // causation orphans. Non-CLI SDK launch paths carry turn-scoped env directly.
   const finalEnv = mergeEnv(envWithCorrelation, stripInteractiveTurnScopedEnv(intent.launch))
+  // Generation is an HRC dispatch fence, not caller-controlled launch config.
+  // Reassert both contract names after launch overrides/unsets so an intent
+  // cannot spoof or remove the authoritative session generation.
+  const generation = correlationEnv['HRC_GENERATION']
+  if (generation !== undefined) {
+    finalEnv['AGENT_GENERATION'] = generation
+    finalEnv['HRC_GENERATION'] = generation
+  }
 
   return {
     argv,

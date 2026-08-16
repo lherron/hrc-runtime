@@ -321,7 +321,11 @@ describe('T-07118 suffix roster claim-and-start', () => {
     })
     // The intent is localized onto the session actually started.
     expect(h.startedIntents[0]?.placement).toMatchObject({
-      correlation: { sessionRef: { scopeRef: BASE_SCOPE, laneRef: 'main' } },
+      correlation: {
+        sessionRef: { scopeRef: BASE_SCOPE, laneRef: 'main' },
+        hostSessionId: result.claim.hostSessionId,
+        generation: result.runtime.generation,
+      },
     })
   })
 
@@ -342,7 +346,11 @@ describe('T-07118 suffix roster claim-and-start', () => {
     expect(h.started.map((s) => s.hostSessionId)).not.toContain(live.hostSessionId)
     // The claimed slot's intent carries ITS scope, not the base scope.
     expect(h.startedIntents[0]?.placement).toMatchObject({
-      correlation: { sessionRef: { scopeRef: `${BASE_SCOPE}-nova`, laneRef: 'main' } },
+      correlation: {
+        sessionRef: { scopeRef: `${BASE_SCOPE}-nova`, laneRef: 'main' },
+        hostSessionId: result.claim.hostSessionId,
+        generation: result.runtime.generation,
+      },
     })
   })
 

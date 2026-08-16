@@ -74,6 +74,7 @@ export function normalizeDispatchIntent(
         },
         hostSessionId: session.hostSessionId,
         runId,
+        generation: session.generation,
       },
     },
   }
