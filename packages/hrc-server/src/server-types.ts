@@ -145,7 +145,10 @@ export type CoalescedQueuedMember = {
   position: number
 }
 
-export type PendingAttachedRunOperation = Promise<unknown>
+export type PendingAttachedRunOperation = {
+  result: Promise<unknown>
+  resumeDeadlineTimer?: ReturnType<typeof setTimeout> | undefined
+}
 
 export type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 

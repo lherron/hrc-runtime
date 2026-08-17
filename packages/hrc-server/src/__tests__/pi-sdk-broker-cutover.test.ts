@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 
 import {
   type DurableTmuxManagerLike,
@@ -16,7 +16,9 @@ describe('pi-sdk broker binary mapping', () => {
 
   for (const driver of ['codex-app-server', 'claude-code-tmux', 'codex-cli-tmux', 'pi-tui-tmux']) {
     it(`keeps ${driver} on the canonical broker binary`, () => {
-      expect(resolveBrokerBinary(driver)).toBe('harness-broker')
+      const binary = resolveBrokerBinary(driver)
+      expect(isAbsolute(binary)).toBe(true)
+      expect(basename(binary)).toBe('harness-broker')
     })
   }
 
@@ -62,7 +64,7 @@ describe('pi-sdk broker binary mapping', () => {
       )
 
       expect(commands).toHaveLength(1)
-      expect(commands[0]).toStartWith('exec harness-broker-pi run ')
+      expect(commands[0]).toStartWith("exec 'harness-broker-pi' run ")
       expect(allocation.brokerCommand).toBe(commands[0]!)
       expect(commands[0]).not.toContain('process-only-test-key')
       expect(environments).toEqual([{ OPENAI_API_KEY: 'process-only-test-key' }])

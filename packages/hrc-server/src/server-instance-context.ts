@@ -49,6 +49,7 @@ import type { SelectorWaitHandlersMethods } from './selector-wait-handlers.js'
 import type { ServerContext } from './server-context.js'
 import type {
   HrcServerOptions,
+  PendingAttachedRunOperation,
   PendingBrokerLiteralInput,
   RawBrokerSubscriber,
   TurnResponseFinalizer,
@@ -156,7 +157,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
   readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
-  readonly attachedRunOperations: Map<string, Promise<unknown>>
+  readonly attachedRunOperations: Map<string, PendingAttachedRunOperation>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
   readonly queuedTurnInputDrains: Set<string>

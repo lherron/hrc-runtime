@@ -35,6 +35,7 @@ import type {
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
+import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
 import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 
@@ -1058,7 +1059,7 @@ export class HarnessBrokerController {
     try {
       await Promise.race([
         resumed,
-        delay(pending.timeoutMs ?? 120_000).then(() => {
+        delay(pending.timeoutMs ?? DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS).then(() => {
           throw new Error(`timed out waiting for attached launch resume: ${pending.pendingStartId}`)
         }),
       ])

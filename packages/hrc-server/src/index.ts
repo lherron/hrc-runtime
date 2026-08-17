@@ -253,6 +253,7 @@ import type {
   HrcServer,
   HrcServerOptions,
   MessageSubscriber,
+  PendingAttachedRunOperation,
   PendingBrokerLiteralInput,
   RawBrokerSubscriber,
   TurnResponseFinalizer,
@@ -695,7 +696,7 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
-  readonly attachedRunOperations = new Map<string, Promise<unknown>>()
+  readonly attachedRunOperations = new Map<string, PendingAttachedRunOperation>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   readonly queuedTurnInputDrains = new Set<string>()

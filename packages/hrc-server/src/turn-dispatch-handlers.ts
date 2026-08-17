@@ -62,6 +62,7 @@ import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from './runtime-select.js'
+import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   parseDispatchTurnRequest,
@@ -76,6 +77,7 @@ import type {
   AttachBeforeInvocationStartOption,
   CoalescedQueuedMember,
   DispatchRunPersistenceOptions,
+  PendingAttachedRunOperation,
 } from './server-types.js'
 import { dispatchRunPersistence } from './server-types.js'
 import {
@@ -891,12 +893,9 @@ export async function handlePrepareAttachedRun(
     return toStartRuntimeResponse(runtime)
   })()
 
-  this.attachedRunOperations.set(pendingStartId, operation)
-  void operation
-    .finally(() => {
-      this.attachedRunOperations.delete(pendingStartId)
-    })
-    .catch(() => undefined)
+  const pendingOperation: PendingAttachedRunOperation = { result: operation }
+  this.attachedRunOperations.set(pendingStartId, pendingOperation)
+  void operation.catch(() => undefined)
 
   try {
     const winner = await Promise.race([
@@ -910,6 +909,15 @@ export async function handlePrepareAttachedRun(
     ])
 
     if (winner.kind === 'prepared') {
+      pendingOperation.resumeDeadlineTimer = setTimeout(() => {
+        if (this.attachedRunOperations.get(pendingStartId) !== pendingOperation) return
+        this.attachedRunOperations.delete(pendingStartId)
+        controller.cancelAttachedStart(
+          pendingStartId,
+          `attached run resume deadline expired: ${pendingStartId}`
+        )
+      }, DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS)
+      pendingOperation.resumeDeadlineTimer.unref?.()
       return json({
         status: 'prepared',
         pendingStartId,
@@ -919,6 +927,7 @@ export async function handlePrepareAttachedRun(
       } satisfies PrepareAttachedRunResponse)
     }
 
+    this.attachedRunOperations.delete(pendingStartId)
     controller.cancelAttachedStart(pendingStartId, 'attached run completed without a pending start')
     const runtime = requireKnownRuntime(this.db, runtimeIdFromAttachedRunResult(winner.result))
     return json({
@@ -927,6 +936,10 @@ export async function handlePrepareAttachedRun(
       attach: await attachDescriptorBody(this, runtime),
     } satisfies PrepareAttachedRunResponse)
   } catch (error) {
+    this.attachedRunOperations.delete(pendingStartId)
+    if (pendingOperation.resumeDeadlineTimer) {
+      clearTimeout(pendingOperation.resumeDeadlineTimer)
+    }
     controller.cancelAttachedStart(
       pendingStartId,
       error instanceof Error ? error.message : String(error)
@@ -940,14 +953,16 @@ export async function handleResumeAttachedRun(
   request: Request
 ): Promise<Response> {
   const body = parseResumeAttachedRunRequest(await parseJsonBody(request))
-  const operation = this.attachedRunOperations.get(body.pendingStartId) as
-    | Promise<AttachedRunResult>
-    | undefined
-  if (!operation) {
+  const pendingOperation = this.attachedRunOperations.get(body.pendingStartId)
+  if (!pendingOperation) {
     throw new HrcRuntimeUnavailableError('attached run is not pending', {
       pendingStartId: body.pendingStartId,
       route: 'attached-run',
     })
+  }
+  this.attachedRunOperations.delete(body.pendingStartId)
+  if (pendingOperation.resumeDeadlineTimer) {
+    clearTimeout(pendingOperation.resumeDeadlineTimer)
   }
 
   const resumed = this.getHarnessBrokerController().resumeAttachedStart(body.pendingStartId)
@@ -959,7 +974,7 @@ export async function handleResumeAttachedRun(
     })
   }
 
-  const result = await operation
+  const result = (await pendingOperation.result) as AttachedRunResult
   return json({
     status: 'started',
     result,

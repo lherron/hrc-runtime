@@ -1,6 +1,7 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
 
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type {
   BrokerTmuxAllocation,
@@ -13,6 +14,7 @@ import type {
   BrokerRuntimePresentation,
   BrokerRuntimeSubstrate,
 } from '../broker/runtime-hosting.js'
+import { shellQuote } from '../dispatch-invocation.js'
 import type { HrcServerOptions } from '../server-types.js'
 import { timestamp } from '../server-util.js'
 import {
@@ -127,7 +129,14 @@ export type BrokerSubstrateAllocation = {
 }
 
 export function resolveBrokerBinary(driverKind: string): string {
-  return driverKind === 'pi-sdk' ? 'harness-broker-pi' : 'harness-broker'
+  if (driverKind === 'pi-sdk') return 'harness-broker-pi'
+
+  // The daemon and broker must come from one coherent atomic release. Resolve
+  // the canonical broker beside this hrc-server package instead of relying on a
+  // separately maintained ~/.bun/bin link or the launchd PATH. The same shape
+  // works from a source checkout because its root node_modules/.bin occupies the
+  // corresponding location.
+  return resolve(import.meta.dir, '../../../../node_modules/.bin/harness-broker')
 }
 
 export async function allocateBrokerSubstrate(
@@ -143,6 +152,17 @@ export async function allocateBrokerSubstrate(
   // sockaddr_un path fails EARLY with a readable error, never a later
   // bind/connect errno.
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
+
+  const brokerBinary = resolveBrokerBinary(driverKind)
+  if (isAbsolute(brokerBinary)) {
+    try {
+      await access(brokerBinary, constants.X_OK)
+    } catch {
+      throw new Error(
+        `harness broker executable is missing or not executable in the HRC release: ${brokerBinary}`
+      )
+    }
+  }
 
   const btmuxSocketPath = getBrokerTmuxSocketPath(
     options as HrcServerOptions,
@@ -185,8 +205,7 @@ export async function allocateBrokerSubstrate(
   // trace. Redirecting fd2 BEFORE the shell `exec`s into the broker preserves the
   // crash/panic output across the exec into this file.
   const brokerStderrPath = join(ipcDir, 'broker.err')
-  const brokerBinary = resolveBrokerBinary(driverKind)
-  const brokerCommand = `exec ${brokerBinary} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
+  const brokerCommand = `exec ${shellQuote(brokerBinary)} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
   const brokerWindow = await tmux.createWindowWithCommand({
     sessionName,
     windowName: 'broker',
