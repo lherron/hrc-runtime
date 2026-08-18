@@ -63,7 +63,10 @@ import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from './runtime-select.js'
-import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from './server-constants.js'
+import {
+  DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS,
+  DEFAULT_ATTACHED_START_READY_TIMEOUT_MS,
+} from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   parseDispatchTurnRequest,
@@ -907,13 +910,23 @@ export async function handlePrepareAttachedRun(
   try {
     const winner = await Promise.race([
       controller
-        .waitForAttachedStartReady(pendingStartId)
-        .then((ready: { pendingStartId: string; runtime: HrcRuntimeSnapshot }) => ({
-          kind: 'prepared' as const,
-          ready,
-        })),
+        .waitForAttachedStartReady(pendingStartId, DEFAULT_ATTACHED_START_READY_TIMEOUT_MS)
+        .then(
+          (ready: { pendingStartId: string; runtime: HrcRuntimeSnapshot }) => ({
+            kind: 'prepared' as const,
+            ready,
+          }),
+          (error: unknown) => ({ kind: 'ready_timeout' as const, error })
+        ),
       operation.then((result) => ({ kind: 'started' as const, result })),
     ])
+
+    if (winner.kind === 'ready_timeout') {
+      throw new HrcRuntimeUnavailableError(
+        `attached broker start did not become ready within ${DEFAULT_ATTACHED_START_READY_TIMEOUT_MS}ms`,
+        { pendingStartId, timeoutMs: DEFAULT_ATTACHED_START_READY_TIMEOUT_MS }
+      )
+    }
 
     if (winner.kind === 'prepared') {
       pendingOperation.resumeDeadlineTimer = setTimeout(() => {

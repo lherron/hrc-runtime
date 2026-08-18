@@ -49,6 +49,9 @@ export const HRC_GHOSTTY_VIEWERS_ENV = 'HRC_GHOSTTY_VIEWERS'
 export const HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV = 'HRC_GHOSTTY_VIEWER_LINGER_SECONDS'
 export const DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS = 300
 export const DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS = 120_000
+// Must cover the whole attached launch pipeline: the ASP compile alone has been
+// observed to stall past 50s, and the CLI applies no timeout of its own.
+export const DEFAULT_ATTACHED_START_READY_TIMEOUT_MS = 120_000
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15

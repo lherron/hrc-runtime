@@ -6,6 +6,10 @@ import { writeServerLog } from './server-log.js'
 import { timestamp } from './server-util.js'
 
 const DEFAULT_COLLECTIVE_ESTABLISHMENT_RETRY_MS = 1_000
+const COLLECTIVE_ESTABLISHMENT_MAX_RETRY_MS = 60_000
+// A registration whose minted runtime reached one of these states can never
+// establish; its participant is gone and only a fresh registration revives it.
+const ABANDONED_RUNTIME_STATUSES: ReadonlySet<string> = new Set(['terminated', 'disposed'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -47,10 +51,25 @@ function projectCollectiveEstablishment(
 export async function reconcileExternalRegistrationCollectiveEstablishment(
   server: HrcServerInstanceForHandlers,
   registrationId: string
-): Promise<'pending' | 'canonical' | 'noncanonical'> {
+): Promise<'pending' | 'canonical' | 'noncanonical' | 'abandoned'> {
   const grant = server.db.externalRegistrationGrants.getByRegistrationId(registrationId)
   if (grant === null) throw new Error(`registration ${registrationId} is unknown`)
   assertMinted(grant)
+  const mintedRuntime = server.db.runtimes.getByRuntimeId(grant.runtimeId)
+  if (
+    grant.retiredAt !== undefined ||
+    mintedRuntime === null ||
+    ABANDONED_RUNTIME_STATUSES.has(mintedRuntime.status)
+  ) {
+    writeServerLog('INFO', 'external_registration.collective_establishment.abandoned', {
+      registrationId,
+      scopeRef: grant.derivedScope,
+      ...(grant.retiredAt === undefined ? {} : { retiredAt: grant.retiredAt }),
+      runtimeId: grant.runtimeId,
+      runtimeStatus: mintedRuntime?.status ?? 'missing',
+    })
+    return 'abandoned'
+  }
   const result = await establishExternalRegistrationPlacement(server, {
     scopeRef: grant.derivedScope,
     registrationId: grant.registrationId,
@@ -89,20 +108,37 @@ export async function reconcileExternalRegistrationCollectiveEstablishment(
     })
     return 'noncanonical'
   }
-  projectCollectiveEstablishment(server, grant, {
+  const pendingProjection = {
     state: 'PENDING',
     bindingState: 'UNBOUND',
     retryable: true,
     reason: result.reason,
     detail: result.detail,
-  })
-  writeServerLog('WARN', 'external_registration.collective_establishment.pending', {
-    registrationId,
-    scopeRef: grant.derivedScope,
-    reason: result.reason,
-    detail: result.detail,
-  })
+  }
+  // Retries with an unchanged cause must not rewrite the runtime row or re-log:
+  // a permanently unresolvable placement would otherwise emit one DB write and
+  // one WARN per retry tick, indefinitely.
+  if (!pendingProjectionCurrent(mintedRuntime.runtimeStateJson, pendingProjection)) {
+    projectCollectiveEstablishment(server, grant, pendingProjection)
+    writeServerLog('WARN', 'external_registration.collective_establishment.pending', {
+      registrationId,
+      scopeRef: grant.derivedScope,
+      reason: result.reason,
+      detail: result.detail,
+    })
+  }
   return 'pending'
+}
+
+function pendingProjectionCurrent(
+  runtimeStateJson: Record<string, unknown> | null | undefined,
+  next: Record<string, unknown>
+): boolean {
+  const external = runtimeStateJson?.['externalRegistration']
+  if (!isRecord(external)) return false
+  const current = external['collectiveEstablishment']
+  if (!isRecord(current)) return false
+  return Object.entries(next).every(([key, value]) => current[key] === value)
 }
 
 async function runExternalRegistrationCollectiveEstablishment(
@@ -112,6 +148,7 @@ async function runExternalRegistrationCollectiveEstablishment(
   const retryMs =
     server.options.externalParticipantCollectiveEstablishmentRetryMs ??
     DEFAULT_COLLECTIVE_ESTABLISHMENT_RETRY_MS
+  let delayMs = retryMs
   while (!server.stopping) {
     const outcome = await reconcileExternalRegistrationCollectiveEstablishment(
       server,
@@ -124,7 +161,8 @@ async function runExternalRegistrationCollectiveEstablishment(
       return 'pending' as const
     })
     if (outcome !== 'pending') return
-    await Bun.sleep(retryMs)
+    await Bun.sleep(delayMs)
+    delayMs = Math.min(delayMs * 2, Math.max(retryMs, COLLECTIVE_ESTABLISHMENT_MAX_RETRY_MS))
   }
 }
 

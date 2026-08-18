@@ -243,6 +243,37 @@ describe('T-07138 post-mint collective establishment', () => {
     expect(registry.list()).toHaveLength(1)
   })
 
+  test('a repeated pending outcome with an unchanged cause does not rewrite the runtime row', async () => {
+    const client = registryClient(registry, {
+      consult: () => {
+        throw new Error('registry asleep')
+      },
+    })
+    const server = reconciliationServer(client)
+    expect(
+      await reconcileExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    ).toBe('pending')
+    const first = projection()
+    expect(first).toMatchObject({ state: 'PENDING' })
+
+    await Bun.sleep(2)
+    expect(
+      await reconcileExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    ).toBe('pending')
+    expect(projection()['updatedAt']).toBe(first['updatedAt'])
+  })
+
+  test('abandons establishment when the minted runtime is terminal instead of retrying forever', async () => {
+    const now = new Date().toISOString()
+    db.runtimes.update(runtimeId, { status: 'terminated', statusChangedAt: now, updatedAt: now })
+    const client = registryClient(registry, {})
+    const server = reconciliationServer(client)
+    expect(
+      await reconcileExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    ).toBe('abandoned')
+    expect(registry.list()).toHaveLength(0)
+  })
+
   test('scheduled post-mint hook retries in one registration-keyed operation', async () => {
     let consultAttempts = 0
     const client = registryClient(registry, {

@@ -130,4 +130,61 @@ describe('attached-run operation lifecycle', () => {
     expect(resumed.status).toBe('started')
     expect(resumeCalls).toBe(1)
   })
+
+  it('classifies a ready-wait timeout as runtime_unavailable and cancels the pending start', async () => {
+    const attachedRunOperations = new Map<
+      string,
+      { result: Promise<unknown>; resumeDeadlineTimer?: ReturnType<typeof setTimeout> }
+    >()
+    const cancels: string[] = []
+    const server = {
+      db: {
+        sessions: {
+          getByHostSessionId: (hostSessionId: string) =>
+            hostSessionId === session.hostSessionId ? session : null,
+        },
+      },
+      attachedRunOperations,
+      maybeAutoRotateStaleSession: async () => ({ session }),
+      // The launch pipeline (e.g. its ASP compile) never settles within the wait.
+      dispatchTurnForSession: () => new Promise<never>(() => undefined),
+      getHarnessBrokerController: () => ({
+        waitForAttachedStartReady: () =>
+          Promise.reject(new Error('attached broker start did not become ready: attached-x')),
+        resumeAttachedStart: () => ({
+          ok: true as const,
+          response: { runtimeId: runtime.runtimeId },
+        }),
+        cancelAttachedStart: (pendingStartId: string, reason: string) => {
+          cancels.push(`${pendingStartId}:${reason}`)
+        },
+      }),
+    }
+
+    const request = new Request('http://hrc/v1/runs/prepare-attached', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        hostSessionId: session.hostSessionId,
+        intent: {
+          harness: { provider: 'openai', id: 'codex-cli', interactive: true },
+          execution: { preferredMode: 'interactive' },
+        },
+        prompt: 'start the attached run',
+      }),
+    })
+
+    let thrown: unknown
+    try {
+      await handlePrepareAttachedRun.call(server as never, request)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as { code?: string }).code).toBe('runtime_unavailable')
+    expect(attachedRunOperations.size).toBe(0)
+    expect(cancels).toHaveLength(1)
+    expect(cancels[0]).toContain('did not become ready')
+  })
 })
