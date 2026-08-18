@@ -7,6 +7,7 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 | --- | --- | --- |
 | `POST` | `/v1/federation/establish` | Authenticated authority-only establishment of a policy-born virgin scope on its named home. |
 | `POST` | `/v1/federation/roster-start` | Synchronously provision an implicit suffix roster on its receiver-verified home node. |
+| `POST` | `/v1/federation/exact-start` | Synchronously provision ONE implicit exact scope on its receiver-verified home node, refusing if occupied. |
 | `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
 | `POST` | `/v1/federation/history/replicate` | Idempotently project an authenticated peer's bilateral message observation into the `svc` collective read model. |
@@ -63,7 +64,8 @@ node identity, at least one configured peer, and a concrete tailnet host:
 Each peer may expose two role-separated transport origins:
 
 - `endpoint` is the peer-protocol origin and is used only for
-  `/v1/federation/establish`, `/v1/federation/roster-start`, `/v1/federation/accept`,
+  `/v1/federation/establish`, `/v1/federation/roster-start`,
+  `/v1/federation/exact-start`, `/v1/federation/accept`,
   `/v1/federation/locate`, `/v1/federation/history/*`, and
   `/v1/federation/health`, plus the authenticated node-local session index
   reads `/v1/sessions/page` and `/v1/sessions/facets`.
@@ -119,6 +121,14 @@ suffix-provisioning verb. Omission or HTTP 404 is the non-retryable
 `peer_upgrade_required` refusal. Peer sleep, timeout, or other transport failure
 is synchronous retryable `runtime_unavailable`; roster provisioning never uses
 the message outbox.
+
+The additive `exactStart: true` capability advertises the exact-scope
+provisioning verb (T-07302). It is a SEPARATE capability behind a SEPARATE
+route because the two verbs differ in occupancy semantics: `rosterStart` walks
+a family until it finds a free member, `exactStart` refuses. A peer that
+predates it must 404 rather than have `rosterStart` reused on its behalf, so an
+origin treats omission or 404 as the non-retryable `peer_upgrade_required`
+refusal and transport failure as retryable `runtime_unavailable`.
 
 The peer health handler never fans out. Aggregation belongs to the requesting
 node's Unix-socket API, which probes configured peers concurrently with a
@@ -278,6 +288,40 @@ different base with the same key remains a conflict.
 
 Operator `hrc start --on-conflict suffix` requests use
 `summonIntent: "explicit_local"` and never enter this route.
+
+## Remote exact-scope provisioning
+
+`POST /v1/federation/exact-start` accepts only the exact-start shape
+`{ sessionRef, runtimeIntent, conflictPolicy: "reject", summonIntent: "implicit",
+idempotencyKey, restartStyle? }`. It never accepts a `hostSessionId` or a
+`baseSessionRef`; either is a 400 refusal rather than a coercion. As with
+roster-start, the origin resolves the scope's home from placement policy and
+registry truth and neither ACP nor the wire body asserts a destination node.
+
+Before mutation the authenticated receiver independently evaluates retirement,
+binding, policy and materialization capability for that ONE scope and requires
+itself to be the home. Unlike the suffix family it does NOT require a
+pre-declared 11-member task-default block: an arbitrary custom name rides the
+agent's own declared or default placement, which is what lets a person type a
+name that was never anticipated, while a pinned task such as
+`cody@hrc-runtime:hrcdev` still routes by its pin. The receiver then rebases the
+runtime intent onto its local agent/project roots and runs the home-local atomic
+claim/start.
+
+On the home, exact and suffix claim/start share ONE `roster:<agentId>:<projectId>`
+mutex and one FREE predicate (no non-terminal runtime and no in-flight start), so
+a typed exact token that overlaps a roster member — `primary-nova` — cannot be
+rotated by both paths at once. A free scope is rotated with its continuation
+dropped, a virgin scope is minted, and either way the conversation is fresh. An
+occupied scope is the typed non-retryable `session_scope_occupied` (HTTP 409)
+with no mutation. The receiver's roster-claim table owns idempotency: the same
+key with the same body replays the same claim, the same key with a different
+body is `idempotency_key_conflict` decided before any intent write, and a claim
+whose successor was recycled by a newer press is `roster_claim_superseded` and
+never starts the archived predecessor.
+
+Operator `hrc start --on-conflict reject` uses this same implicit shape, so the
+CLI and HRC Mobile provision identically.
 
 ## Remote policy establishment
 

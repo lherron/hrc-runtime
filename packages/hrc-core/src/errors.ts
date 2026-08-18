@@ -71,6 +71,13 @@ export const HrcErrorCode = {
    */
   ROSTER_CLAIM_SUPERSEDED: 'roster_claim_superseded',
   /**
+   * Exact-scope start (T-07302): the one scope the caller named is occupied by
+   * a live session or an in-flight start. `conflictPolicy: 'reject'` has no
+   * reuse option and no next slot to walk, so this is the whole answer — and it
+   * is returned with NO mutation of the occupying conversation.
+   */
+  SESSION_SCOPE_OCCUPIED: 'session_scope_occupied',
+  /**
    * A durable idempotency key was replayed with a semantically different
    * request body (T-07118). Returned BEFORE any start path runs, so a
    * conflicting replay can never mutate the claimed session's persisted intent.
@@ -144,6 +151,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.RESUME_RUNTIME_LIVE]: 409,
   [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,
   [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
+  [HrcErrorCode.SESSION_SCOPE_OCCUPIED]: 409,
   [HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 409,
   [HrcErrorCode.REGISTRATION_INSTANCES_EXHAUSTED]: 409,
   // The provisioned runtime accepted the prompt and never produced a turn: the
@@ -233,6 +241,7 @@ export class HrcConflictError extends HrcDomainError {
       | 'resume_runtime_live'
       | 'session_roster_exhausted'
       | 'roster_claim_superseded'
+      | 'session_scope_occupied'
       | 'idempotency_key_conflict'
       | 'instances_exhausted'
     >,

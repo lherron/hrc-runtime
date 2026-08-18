@@ -73,8 +73,8 @@ export function registerTopLevelCommands(program: Command): void {
     .addOption(
       new Option(
         '--on-conflict <policy>',
-        'claim the next free roster slot instead of hijacking a live :primary'
-      ).choices(['suffix'])
+        'suffix: claim the next free roster slot instead of hijacking a live :primary; reject: claim exactly this scope or refuse'
+      ).choices(['suffix', 'reject'])
     )
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')

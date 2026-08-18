@@ -297,6 +297,8 @@ export type FederationPeerCapabilities = {
   readonly establish?: boolean | undefined
   /** Authenticated home-node suffix-roster provisioning. */
   readonly rosterStart?: boolean | undefined
+  /** T-07302 — authenticated home-node exact-scope provisioning (`exactStart`). */
+  readonly exactStart?: boolean | undefined
   /** Additive v1 capability; older peers simply omit it. */
   readonly runtimeProjection?: boolean | undefined
   /** Additive v1 capability; required before forwarding semantic turn handoffs. */

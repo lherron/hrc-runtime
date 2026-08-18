@@ -9,6 +9,7 @@ import {
   HrcErrorCode,
   HrcInternalError,
   HrcNotFoundError,
+  isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
 } from 'hrc-core'
 import type {
@@ -78,6 +79,11 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import {
+  type ExactClaimHandlersMethods,
+  exactClaimHandlersMethods,
+  exactStartScope,
+} from './exact-claim.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { scheduleExternalRegistrationCollectiveEstablishment } from './external-registration-establishment.js'
 import {
@@ -125,6 +131,7 @@ import {
   captureLivePlacementRepairCandidates,
   establishRemotePolicyAuthority,
   persistSessionTaskClaimAuthority,
+  preflightExactScope,
   preflightSuffixRosterFamily,
   repairLiveUnboundPlacements,
   resolvePlacementOnServer,
@@ -655,6 +662,7 @@ interface HrcServerInstance
     MailKickerHandlersMethods,
     MailHandlersMethods,
     RosterClaimHandlersMethods,
+    ExactClaimHandlersMethods,
     RegistrationGcHandlersMethods,
     RegistrationHandlersMethods,
     RuntimeInspectHandlersMethods {}
@@ -1007,6 +1015,7 @@ class HrcServerInstance implements HrcServer {
                 accept: true,
                 establish: true,
                 rosterStart: true,
+                exactStart: true,
                 locate: true,
                 health: true,
                 runtimeProjection: true,
@@ -1042,6 +1051,42 @@ class HrcServerInstance implements HrcServer {
                 parsed.runtimeIntent
               )
               const { runtime, claim } = await this.startSuffixRosterRuntime({
+                ...parsed,
+                runtimeIntent: localized,
+              })
+              return { ...toStartRuntimeResponse(runtime), claim }
+            },
+            /**
+             * T-07302 — exact-scope provisioning on the authoritative home.
+             *
+             * The origin's routing decision buys this request nothing here: the
+             * receiver re-parses the canonical shape, re-derives authority for
+             * that one scope from its OWN retirement marks, ledger, registry,
+             * policy and capability observation, and only then localizes the
+             * placement onto this node's real checkout and starts. A wrong-home
+             * or bad-policy request is refused before any mutation.
+             */
+            exactStart: async ({ body }) => {
+              const parsed = parseStartRuntimeRequest(body)
+              if (!isExactStartRuntimeRequest(parsed) || parsed.summonIntent !== 'implicit') {
+                throw new HrcBadRequestError(
+                  HrcErrorCode.MALFORMED_REQUEST,
+                  'federated exact-start requires a reject request with summonIntent "implicit"',
+                  { field: 'conflictPolicy' }
+                )
+              }
+              const scope = exactStartScope(parsed)
+              const capabilityHint = {
+                placement: parsed.runtimeIntent.placement,
+                harness: parsed.runtimeIntent.harness,
+              }
+              await preflightExactScope(this, {
+                scopeRef: scope.scopeRef,
+                capabilityHint,
+                origin: 'federated-ingress',
+              })
+              const localized = localizeFederatedRuntimeIntent(scope.scopeRef, parsed.runtimeIntent)
+              const { runtime, claim } = await this.startExactScopeRuntime({
                 ...parsed,
                 runtimeIntent: localized,
               })
@@ -2454,6 +2499,7 @@ Object.assign(
   mailHandlersMethods,
   runtimeInspectHandlersMethods,
   rosterClaimHandlersMethods,
+  exactClaimHandlersMethods,
   registrationGcHandlersMethods,
   registrationHandlersMethods
 )

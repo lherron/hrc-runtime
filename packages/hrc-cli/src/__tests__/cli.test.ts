@@ -1665,6 +1665,45 @@ describe('hrc start', () => {
     }
   })
 
+  /**
+   * T-07302 — `--on-conflict` is registered in THREE places (Commander choices,
+   * the unknown-option guard's value list, and the handler's own validation).
+   * A value accepted by only two of them fails at a different layer each time,
+   * so this drives the whole chain rather than any one registry.
+   */
+  it('accepts --on-conflict reject through every flag registry', async () => {
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--on-conflict', 'reject', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain(
+      'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
+    )
+    // The reject policy value is consumed as a flag value, never as a prompt.
+    expect(result.stdout).not.toContain('prompt:       reject')
+  })
+
+  it('refuses an --on-conflict policy that is neither suffix nor reject', async () => {
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--on-conflict', 'clobber', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).not.toBe(0)
+    expect(`${result.stderr}${result.stdout}`).toMatch(/suffix|reject/)
+  })
+
   it('resolves project-local agent roots before the canonical agents root', async () => {
     const projectRoot = join(projectsRoot, 'agent-spaces')
     const localAgentsRoot = join(projectRoot, 'agents')

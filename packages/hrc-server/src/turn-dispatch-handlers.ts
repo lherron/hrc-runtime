@@ -6,6 +6,7 @@ import {
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  isExactStartRuntimeRequest,
   isSuffixStartRuntimeRequest,
   validateFence,
 } from 'hrc-core'
@@ -315,6 +316,12 @@ export async function handleStartRuntime(
   // against a different start. Reports the ACTUAL claimed scope back.
   if (isSuffixStartRuntimeRequest(body)) {
     return json(await this.startRoutedSuffixRosterRuntime(body))
+  }
+  // Exact-scope START (T-07302): same one-request claim-and-start discipline for
+  // the ONE scope the caller named, refusing rather than reusing when it is
+  // occupied. Shares the roster namespace mutex, so the two cannot race.
+  if (isExactStartRuntimeRequest(body)) {
+    return json(await this.startRoutedExactScopeRuntime(body))
   }
   const requested = requireSession(this.db, body.hostSessionId)
   const { session } = await this.maybeAutoRotateStaleSession(requested, {

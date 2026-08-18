@@ -24,7 +24,10 @@ authority: hrcchat#19456
 source:
   - hrcchat#19456
   - wrkq:T-07302
+  - packages/hrc-server/src/scope-claim-core.ts
+  - packages/hrc-server/src/exact-claim.ts
   - packages/hrc-server/src/roster-claim.ts
+  - packages/hrc-server/src/federation/exact-start-client.ts
 required_tests:
   - just verify
   - wrkq:T-07302 exact/suffix overlap tests in both winner orders and after restart

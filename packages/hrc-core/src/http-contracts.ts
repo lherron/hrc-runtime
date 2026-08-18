@@ -191,7 +191,37 @@ export type SuffixStartRuntimeRequest = {
   restartStyle?: RestartStyle | undefined
 }
 
-export type StartRuntimeRequest = EnsureRuntimeRequest | SuffixStartRuntimeRequest
+/**
+ * Alternate START shape for ONE exact user-chosen scope (T-07302).
+ *
+ * Where `conflictPolicy: 'suffix'` walks a roster family, this shape claims the
+ * single scope the caller named or fails: there is no next slot and no reuse
+ * option, so an occupied scope is a typed `session_scope_occupied` refusal with
+ * no mutation. Like the suffix shape it carries NO `hostSessionId` — the daemon
+ * claims and starts inside the one request — and `idempotencyKey` is REQUIRED
+ * so a lost-response retry converges on the same successor instead of rotating
+ * the scope a second time.
+ *
+ * `summonIntent` is REQUIRED and must be `'implicit'`: this shape exists for
+ * mobile provisioning, where HRC — never the caller — resolves the exact
+ * scope's home from policy and registry state.
+ */
+export type ExactStartRuntimeRequest = {
+  /** The exact session ref (`<scopeRef>/lane:<lane>`) to claim and start. */
+  sessionRef: string
+  runtimeIntent: HrcRuntimeIntent
+  conflictPolicy: 'reject'
+  /** Always `'implicit'`; the origin resolves placement, the caller never asserts it. */
+  summonIntent: 'implicit'
+  /** REQUIRED. One key per logical invocation; transport retries reuse it. */
+  idempotencyKey: string
+  restartStyle?: RestartStyle | undefined
+}
+
+export type StartRuntimeRequest =
+  | EnsureRuntimeRequest
+  | SuffixStartRuntimeRequest
+  | ExactStartRuntimeRequest
 
 export function isSuffixStartRuntimeRequest(
   request: StartRuntimeRequest
@@ -199,9 +229,19 @@ export function isSuffixStartRuntimeRequest(
   return (request as SuffixStartRuntimeRequest).conflictPolicy === 'suffix'
 }
 
-/** The roster slot a `conflictPolicy: 'suffix'` start actually claimed. */
+export function isExactStartRuntimeRequest(
+  request: StartRuntimeRequest
+): request is ExactStartRuntimeRequest {
+  return (request as ExactStartRuntimeRequest).conflictPolicy === 'reject'
+}
+
+/** The scope a claim-and-start request actually claimed. */
 export type StartRuntimeRosterClaim = {
-  /** Slot token that replaced the base task token (e.g. `primary-nova`). */
+  /**
+   * Task token of the claimed scope. For `suffix` it is the slot that replaced
+   * the base task token (e.g. `primary-nova`); for `reject` it is the exact
+   * task token the caller named, which is the only one it can be.
+   */
   slot: string
   scopeRef: string
   sessionRef: string
@@ -209,6 +249,11 @@ export type StartRuntimeRosterClaim = {
   idempotencyKey: string
   /** True when this response replayed an existing durable claim. */
   replayed: boolean
+  /**
+   * Which claim policy produced this claim. Optional on the wire so a claim
+   * relayed by a pre-T-07302 peer still parses; always emitted by this build.
+   */
+  conflictPolicy?: 'suffix' | 'reject' | undefined
 }
 
 export type StartRuntimeResponse = (
@@ -221,7 +266,7 @@ export type StartRuntimeResponse = (
       supportsInFlightInput: boolean
     }
 ) & {
-  /** Present only for `conflictPolicy: 'suffix'` starts (T-07118). */
+  /** Present only for claim-and-start requests: `suffix` (T-07118) or `reject` (T-07302). */
   claim?: StartRuntimeRosterClaim | undefined
 }
 

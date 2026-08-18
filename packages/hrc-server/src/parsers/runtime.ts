@@ -6,6 +6,7 @@ import type {
   DispatchTurnRequest,
   DropContinuationRequest,
   EnsureRuntimeRequest,
+  ExactStartRuntimeRequest,
   HrcDispatchOrigin,
   HrcHarness,
   HrcProvider,
@@ -318,15 +319,18 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
 }
 
 /**
- * START accepts two shapes (T-07118):
+ * START accepts three shapes:
  *
- *  - the canonical `{ hostSessionId, intent }` ensure-shape, and
+ *  - the canonical `{ hostSessionId, intent }` ensure-shape,
  *  - the suffix collision-roster shape `{ baseSessionRef, runtimeIntent,
- *    conflictPolicy: 'suffix', idempotencyKey }`, which carries NO
- *    `hostSessionId`: the daemon picks and claims the slot inside the request.
+ *    conflictPolicy: 'suffix', idempotencyKey }` (T-07118), and
+ *  - the exact-scope shape `{ sessionRef, runtimeIntent, conflictPolicy:
+ *    'reject', summonIntent: 'implicit', idempotencyKey }` (T-07302).
  *
- * `idempotencyKey` is REQUIRED on the suffix shape — without operation identity
- * a lost-response retry would walk the roster and claim a second slot.
+ * Neither claim-and-start shape carries a `hostSessionId`: the daemon picks and
+ * claims the session inside the request. `idempotencyKey` is REQUIRED on both —
+ * without operation identity a lost-response retry would walk the roster and
+ * claim a second slot, or rotate the exact scope a second time.
  */
 export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
   if (!isRecord(input)) {
@@ -336,10 +340,13 @@ export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
   if (conflictPolicy === undefined) {
     return parseEnsureRuntimeRequest(input)
   }
+  if (conflictPolicy === 'reject') {
+    return parseExactStartRuntimeRequest(input)
+  }
   if (conflictPolicy !== 'suffix') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      'conflictPolicy must be "suffix" when present',
+      'conflictPolicy must be "suffix" or "reject" when present',
       { field: 'conflictPolicy' }
     )
   }
@@ -395,6 +402,80 @@ export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
     idempotencyKey: idempotencyKey.trim(),
     ...(restartStyle !== undefined ? { restartStyle } : {}),
     ...(summonIntent !== undefined ? { summonIntent } : {}),
+  }
+}
+
+/**
+ * The exact-scope claim-and-start shape (T-07302).
+ *
+ * Every refusal here is a REFUSAL, never a coercion: an inbound `hostSessionId`
+ * or `baseSessionRef` would mean the caller — not HRC — picked the session, and
+ * a `summonIntent` other than `implicit` would mean the caller declared its own
+ * placement. Both are exactly what this contract exists to forbid, so they are
+ * rejected before anything reads the intent.
+ */
+function parseExactStartRuntimeRequest(input: Record<string, unknown>): ExactStartRuntimeRequest {
+  const sessionRef = input['sessionRef']
+  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'sessionRef is required for conflictPolicy "reject"',
+      { field: 'sessionRef' }
+    )
+  }
+  if (input['hostSessionId'] !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'hostSessionId must not be supplied with conflictPolicy "reject"',
+      { field: 'hostSessionId' }
+    )
+  }
+  if (input['baseSessionRef'] !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'baseSessionRef must not be supplied with conflictPolicy "reject"',
+      { field: 'baseSessionRef' }
+    )
+  }
+
+  const runtimeIntent = input['runtimeIntent']
+  if (!isRecord(runtimeIntent)) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.MISSING_RUNTIME_INTENT,
+      'runtimeIntent is required for conflictPolicy "reject"'
+    )
+  }
+
+  const idempotencyKey = input['idempotencyKey']
+  if (typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'idempotencyKey is required for conflictPolicy "reject"',
+      { field: 'idempotencyKey' }
+    )
+  }
+
+  if (input['summonIntent'] !== 'implicit') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'summonIntent must be "implicit" for conflictPolicy "reject"',
+      { field: 'summonIntent' }
+    )
+  }
+
+  const restartStyle = requireOptionalOneOf(
+    input['restartStyle'],
+    ['reuse_pty', 'fresh_pty'],
+    'restartStyle must be "reuse_pty" or "fresh_pty"'
+  )
+
+  return {
+    sessionRef: sessionRef.trim(),
+    runtimeIntent: parseRuntimeIntent(runtimeIntent),
+    conflictPolicy: 'reject',
+    summonIntent: 'implicit',
+    idempotencyKey: idempotencyKey.trim(),
+    ...(restartStyle !== undefined ? { restartStyle } : {}),
   }
 }
 

@@ -8,7 +8,7 @@ import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { sendRemoteRosterStart } from '../federation/roster-start-client.js'
 import {
   preflightSuffixRosterFamily,
-  resolveImplicitSuffixRosterHome,
+  resolveImplicitScopeHome,
 } from '../federation/summon-gate-server.js'
 import { createHrcServer } from '../index.js'
 import { suffixRosterFamily } from '../roster-claim.js'
@@ -78,7 +78,7 @@ describe('mobile suffix-roster placement preflight', () => {
     const server = await serverWithTaskDefaults(taskDefaults)
     try {
       expect(
-        await resolveImplicitSuffixRosterHome(server, {
+        await resolveImplicitScopeHome(server, {
           scopeRef: family.baseScopeRef,
           capabilityHint: CAPABILITY_HINT,
         })
@@ -122,7 +122,7 @@ describe('mobile suffix-roster placement preflight', () => {
     const server = await serverWithTaskDefaults({ minilab: 'lab' })
     try {
       expect(
-        await resolveImplicitSuffixRosterHome(server, {
+        await resolveImplicitScopeHome(server, {
           scopeRef: 'agent:mable:project:hrc-runtime:task:minilab',
           capabilityHint: CAPABILITY_HINT,
         })

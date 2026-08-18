@@ -169,7 +169,8 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
     command === 'start'
       ? '  --new-session        Rotate to a fresh host session before starting\n' +
         '  --viewer-window <key> Place the session viewer tab in the keyed window\n' +
-        '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n'
+        '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
+        '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''
 
   process.stdout.write(`Usage: hrc ${command} <scope> [options]
@@ -516,8 +517,8 @@ export async function cmdStart(args: string[]): Promise<void> {
   const projectRootOverride = parseFlag(args, '--project-root')
   const viewerWindow = parseFlag(args, '--viewer-window')
   const onConflict = parseFlag(args, '--on-conflict')
-  if (onConflict !== undefined && onConflict !== 'suffix') {
-    fatal('start --on-conflict currently accepts only "suffix"')
+  if (onConflict !== undefined && onConflict !== 'suffix' && onConflict !== 'reject') {
+    fatal('start --on-conflict accepts "suffix" or "reject"')
   }
   const prompt = await parseScopePrompt(args, {
     command: 'start',
@@ -580,6 +581,30 @@ export async function cmdStart(args: string[]): Promise<void> {
         conflictPolicy: 'suffix',
         summonIntent: 'explicit_local',
         idempotencyKey: idempotencyKey ?? `hrc-start-suffix-${randomUUID()}`,
+        restartStyle,
+      })
+      printJson({
+        sessionRef: runtime.claim?.sessionRef ?? sessionRef,
+        hostSessionId: runtime.hostSessionId,
+        created: true,
+        ...(runtime.claim !== undefined ? { claim: runtime.claim } : {}),
+        runtime,
+      })
+      return
+    }
+
+    // `--on-conflict reject` (T-07302): claim EXACTLY this scope or refuse.
+    // `summonIntent: 'implicit'` is not a formality here — it is what makes HRC,
+    // rather than this terminal, decide where the scope lives, so a pinned scope
+    // such as `cody@hrc-runtime:hrcdev` provisions on its own node instead of
+    // being declared into existence wherever the operator happened to type.
+    if (onConflict === 'reject') {
+      const runtime = await client.startRuntime({
+        sessionRef,
+        runtimeIntent: intent,
+        conflictPolicy: 'reject',
+        summonIntent: 'implicit',
+        idempotencyKey: idempotencyKey ?? `hrc-start-exact-${randomUUID()}`,
         restartStyle,
       })
       printJson({

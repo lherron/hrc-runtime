@@ -151,8 +151,13 @@ function throwRosterPlacementRefusal(
   throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, evaluation.diagnostic, detail)
 }
 
-/** Resolve an implicit roster base without establishing or mutating it. */
-export async function resolveImplicitSuffixRosterHome(
+/**
+ * Resolve the home of one implicitly-summoned scope without establishing or
+ * mutating anything. Shared by the suffix roster base (T-07118) and the exact
+ * scope (T-07302) — in both cases the ORIGIN resolves placement and the caller
+ * asserts no node.
+ */
+export async function resolveImplicitScopeHome(
   server: SummonGateServerContext,
   request: {
     readonly scopeRef: string
@@ -163,7 +168,7 @@ export async function resolveImplicitSuffixRosterHome(
   const deps = gateDepsFor(server)
   if (deps === undefined) {
     throw new HrcRuntimeUnavailableError(
-      'implicit suffix-roster provisioning requires the enforced federation placement gate',
+      'implicit scope provisioning requires the enforced federation placement gate',
       { scopeRef: request.scopeRef, retryable: true }
     )
   }
@@ -181,7 +186,7 @@ export async function resolveImplicitSuffixRosterHome(
     throwRosterPlacementRefusal(request.scopeRef, result.evaluation)
   }
   if (placement === undefined || placement.outcome === 'refuse') {
-    throw new HrcRuntimeUnavailableError('implicit suffix-roster placement did not resolve', {
+    throw new HrcRuntimeUnavailableError('implicit scope placement did not resolve', {
       scopeRef: request.scopeRef,
       retryable: true,
     })
@@ -266,6 +271,72 @@ export async function preflightSuffixRosterFamily(
         }
       )
     }
+  }
+}
+
+/**
+ * Fail-closed, read-only preflight for ONE exact scope on its authoritative
+ * home (T-07302).
+ *
+ * The suffix roster demands an exact task-default for every member because it
+ * may claim any of eleven scopes and none of them may fall back silently. An
+ * exact claim touches exactly the scope the person named, so it needs no
+ * pre-declared family — it needs that scope's OWN declared or default placement
+ * to name this node. That is precisely what lets an arbitrary custom name work
+ * while `cody@hrc-runtime:hrcdev` still routes by its pin.
+ *
+ * Everything else is identical to the family preflight and is re-derived HERE,
+ * on the receiver, from this node's own retirement marks, ledger, registry,
+ * policy and capability observation: an origin's routing decision is a request,
+ * never authority.
+ */
+export async function preflightExactScope(
+  server: SummonGateServerContext,
+  request: {
+    readonly scopeRef: string
+    readonly capabilityHint: SummonCapabilityHint
+    readonly origin: 'local' | 'federated-ingress'
+  }
+): Promise<void> {
+  const deps = gateDepsFor(server)
+  if (deps === undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'exact-scope preflight requires the enforced federation placement gate',
+      { scopeRef: request.scopeRef, retryable: true }
+    )
+  }
+  assertLocalPersonaAllowed(server, request.scopeRef)
+  try {
+    await deps.policyFor(request.scopeRef)
+  } catch (error) {
+    throw new HrcRuntimeUnavailableError('exact-scope placement policy is unavailable', {
+      scopeRef: request.scopeRef,
+      retryable: true,
+      cause: error instanceof Error ? error.message : String(error),
+    })
+  }
+  const result = await evaluateSummonGate({
+    scopeRef: request.scopeRef,
+    path: 'resolve-session',
+    intent: 'implicit',
+    origin: request.origin,
+    deps,
+    capabilityHint: request.capabilityHint,
+  })
+  if (result.evaluation.decision === 'refuse') {
+    throwRosterPlacementRefusal(request.scopeRef, result.evaluation)
+  }
+  if (result.evaluation.homeNodeId !== deps.localNodeId) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `exact scope ${request.scopeRef} is not authoritative on ${deps.localNodeId}`,
+      {
+        scopeRef: request.scopeRef,
+        homeNodeId: result.evaluation.homeNodeId ?? null,
+        requiredHomeNodeId: deps.localNodeId,
+        retryable: false,
+      }
+    )
   }
 }
 

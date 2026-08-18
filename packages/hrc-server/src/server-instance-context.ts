@@ -23,6 +23,7 @@ import type {
 } from './broker/controller.js'
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
+import type { ExactClaimHandlersMethods } from './exact-claim.js'
 import type {
   ExternalParticipantRpcClient,
   ExternalRegistrationRendezvousMethods,
@@ -89,6 +90,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   MailKickerHandlersMethods &
   MailHandlersMethods &
   RosterClaimHandlersMethods &
+  ExactClaimHandlersMethods &
   RegistrationGcHandlersMethods &
   RegistrationHandlersMethods &
   RuntimeControlHandlersMethods &

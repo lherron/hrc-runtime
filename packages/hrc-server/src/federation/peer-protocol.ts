@@ -33,6 +33,7 @@ export type PeerProtocolHealth = {
     readonly accept: boolean
     readonly establish?: boolean | undefined
     readonly rosterStart?: boolean | undefined
+    readonly exactStart?: boolean | undefined
     readonly locate: true
     readonly health: true
     readonly runtimeProjection?: boolean | undefined
@@ -107,6 +108,9 @@ export type PeerRosterStartHandler = (request: {
   readonly body: Readonly<Record<string, unknown>>
 }) => Promise<StartRuntimeResponse>
 
+/** T-07302 — exact-scope claim-and-start on the authoritative home. */
+export type PeerExactStartHandler = PeerRosterStartHandler
+
 export type PeerCollectiveHistoryReplicateHandler = (request: {
   readonly authenticatedNodeId: string
   readonly protocolVersion: string
@@ -154,6 +158,12 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly acceptUrgent?: PeerAcceptHandler | undefined
   readonly establish?: PeerEstablishHandler | undefined
   readonly rosterStart?: PeerRosterStartHandler | undefined
+  /**
+   * T-07302 — a DISTINCT route and capability from `rosterStart`. The two verbs
+   * differ in occupancy semantics (walk a family versus refuse), so a peer that
+   * predates this one must 404 rather than have its roster verb reused.
+   */
+  readonly exactStart?: PeerExactStartHandler | undefined
   readonly collectiveHistoryReplicate?: PeerCollectiveHistoryReplicateHandler | undefined
   readonly collectiveHistoryCheckpoint?: PeerCollectiveHistoryCheckpointHandler | undefined
   readonly collectiveHistoryQuery?: PeerCollectiveHistoryQueryHandler | undefined
@@ -396,26 +406,65 @@ const ROSTER_START_FIELDS = new Set([
   'summonIntent',
 ])
 
-async function handleRosterStartRequest(input: {
+/** T-07302 — the exact shape names ONE scope and never a base or a host session. */
+const EXACT_START_FIELDS = new Set([
+  'sessionRef',
+  'runtimeIntent',
+  'conflictPolicy',
+  'idempotencyKey',
+  'restartStyle',
+  'summonIntent',
+])
+
+type ClaimStartRoute = {
+  readonly path: string
+  readonly fields: ReadonlySet<string>
+  readonly handler: (
+    options: PeerProtocolRequestHandlerOptions
+  ) => PeerRosterStartHandler | undefined
+  readonly logEvent: string
+  readonly unavailable: string
+}
+
+const CLAIM_START_ROUTES: readonly ClaimStartRoute[] = [
+  {
+    path: '/v1/federation/roster-start',
+    fields: ROSTER_START_FIELDS,
+    handler: (options) => options.rosterStart,
+    logEvent: 'federation.roster_start.unexpected_failure',
+    unavailable: 'remote suffix-roster provisioning is temporarily unavailable',
+  },
+  {
+    path: '/v1/federation/exact-start',
+    fields: EXACT_START_FIELDS,
+    handler: (options) => options.exactStart,
+    logEvent: 'federation.exact_start.unexpected_failure',
+    unavailable: 'remote exact-scope provisioning is temporarily unavailable',
+  },
+]
+
+async function handleClaimStartRequest(input: {
   request: Request
   url: URL
   options: PeerProtocolRequestHandlerOptions
   peerNodeId: string
   requestVersion: string
 }): Promise<Response | undefined> {
-  if (input.request.method !== 'POST' || input.url.pathname !== '/v1/federation/roster-start') {
+  const route = CLAIM_START_ROUTES.find((candidate) => candidate.path === input.url.pathname)
+  if (input.request.method !== 'POST' || route === undefined) {
     return undefined
   }
   const body = await requestRecord(input.request)
-  if (Object.keys(body).some((key) => !ROSTER_START_FIELDS.has(key))) {
+  if (Object.keys(body).some((key) => !route.fields.has(key))) {
     throw new InvalidPeerRequest()
   }
-  if (input.options.rosterStart === undefined) {
+  const handler = route.handler(input.options)
+  if (handler === undefined) {
     return refusal(404, 'peer_upgrade_required', { retryable: false })
   }
   try {
     return responseJson(
-      await input.options.rosterStart({
+      await handler({
         authenticatedNodeId: input.peerNodeId,
         protocolVersion: input.requestVersion,
         body,
@@ -430,13 +479,13 @@ async function handleRosterStartRequest(input: {
         retryable: error.detail['retryable'] === true || error.status === 503,
       })
     }
-    writeServerLog('ERROR', 'federation.roster_start.unexpected_failure', {
+    writeServerLog('ERROR', route.logEvent, {
       localNodeId: input.options.localNodeId,
       peerNodeId: input.peerNodeId,
       error: error instanceof Error ? error.message : String(error),
     })
     return refusal(503, 'runtime_unavailable', {
-      message: 'remote suffix-roster provisioning is temporarily unavailable',
+      message: route.unavailable,
       detail: { retryable: true },
       retryable: true,
     })
@@ -525,14 +574,14 @@ export function createPeerProtocolRequestHandler(
         )
       }
 
-      const rosterStartResponse = await handleRosterStartRequest({
+      const claimStartResponse = await handleClaimStartRequest({
         request,
         url,
         options,
         peerNodeId: peer.nodeId,
         requestVersion,
       })
-      if (rosterStartResponse !== undefined) return rosterStartResponse
+      if (claimStartResponse !== undefined) return claimStartResponse
 
       // T-07155 — urgent delivery rides its OWN route, never /v1/federation/accept.
       //

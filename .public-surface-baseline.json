@@ -671,6 +671,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ExactStartRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ExactStartRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationBirthClass",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -2699,6 +2707,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|isConcreteSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isExactStartRuntimeRequest",
+      "kind": "value",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|isExactStartRuntimeRequest|value",
       "count": 1
     },
     {

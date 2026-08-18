@@ -106,6 +106,9 @@ hrc start mable@hrc-runtime --viewer-window console
 
 # Never hijack a live `:primary` — claim the next free roster slot instead:
 hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
+
+# Claim EXACTLY this scope, or refuse if it is already occupied:
+hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
 ```
 
 - **`--viewer-window <key>`** — free-form window key recorded on the session
@@ -122,6 +125,17 @@ hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
   burning a second slot; every slot occupied returns
   `session_roster_exhausted`. Suffixed slots are ordinary handles —
   `mable@hrc-runtime:primary-nova` addresses normally over hrcchat.
+- **`--on-conflict reject`** — claim the ONE scope named on the command line or
+  refuse; there is no next slot and no reuse. A free scope is rotated (fresh
+  conversation) and a virgin scope is minted, both inside one request; an
+  occupied one returns `session_scope_occupied` having mutated nothing. HRC,
+  not the terminal, resolves where the scope lives, so a pinned task such as
+  `cody@hrc-runtime:hrcdev` provisions on its own node over authenticated
+  federation. Retry semantics match `suffix`: same `--idempotency-key` and same
+  body replays the same claim, a different body is `idempotency_key_conflict`,
+  and a claim whose session was recycled by a newer press is
+  `roster_claim_superseded`. This is the same contract HRC Mobile uses for
+  manually typed task scopes.
 
 **Adopting a window as the `console` key** is a one-time stamp on the WINDOW
 itself — enumerate the managed windows, then write the key onto the one you want

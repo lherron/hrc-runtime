@@ -231,6 +231,7 @@ export type {
   LaunchCommandScopedRunResponse,
   StartRuntimeRequest,
   StartRuntimeResponse,
+  ExactStartRuntimeRequest,
   StartRuntimeRosterClaim,
   SuffixStartRuntimeRequest,
   EnsureWindowRequest,
@@ -311,7 +312,11 @@ export type {
   ClearAppSessionContextRequest,
   ClearAppSessionContextResponse,
 } from './http-contracts.js'
-export { OPERATOR_REAP_REASON, isSuffixStartRuntimeRequest } from './http-contracts.js'
+export {
+  OPERATOR_REAP_REASON,
+  isExactStartRuntimeRequest,
+  isSuffixStartRuntimeRequest,
+} from './http-contracts.js'
 
 export {
   HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
