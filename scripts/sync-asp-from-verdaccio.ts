@@ -25,6 +25,7 @@ export const aspSyncSpec: SyncSpec = {
         'spaces-harness-codex',
         'spaces-harness-pi',
         'spaces-harness-pi-sdk',
+        'spaces-turn-runner',
         'agent-spaces',
       ],
     },

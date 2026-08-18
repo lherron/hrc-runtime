@@ -37,7 +37,8 @@
     "spaces-harness-broker-protocol": "latest",
     "spaces-harness-codex": "latest",
     "spaces-runtime": "latest",
-    "spaces-runtime-contracts": "latest"
+    "spaces-runtime-contracts": "latest",
+    "spaces-turn-runner": "latest"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -24,6 +24,7 @@ const aspPackages = [
   'harness-codex',
   'harness-pi',
   'harness-pi-sdk',
+  'turn-runner',
   'agent-spaces',
   'cli',
 ]

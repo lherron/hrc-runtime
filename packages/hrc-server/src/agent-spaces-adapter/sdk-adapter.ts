@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto'
 
-import {
-  type AgentEvent,
-  type AgentSpacesClient,
-  type RunTurnNonInteractiveRequest,
-  type RunTurnNonInteractiveResponse,
-  createAgentSpacesClient,
+import type {
+  AgentEvent,
+  AgentSpacesClient,
+  RunTurnNonInteractiveRequest,
+  RunTurnNonInteractiveResponse,
 } from 'agent-spaces'
 import {
   type HrcContinuationRef,
@@ -18,6 +17,7 @@ import {
 } from 'hrc-core'
 import { resolveHarnessFrontendForProvider, resolveHarnessProvider } from 'spaces-config'
 import { detectAgentLocalComponents, prepareAgentToolRuntime } from 'spaces-execution'
+import { createAgentSpacesClient } from 'spaces-turn-runner'
 
 import { UnsupportedHarnessError, buildHrcCorrelationEnv, mergeEnv } from './cli-adapter.js'
 import { optional } from './optional.js'

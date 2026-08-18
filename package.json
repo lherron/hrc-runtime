@@ -43,6 +43,7 @@
     "spaces-harness-broker": "latest",
     "spaces-harness-broker-client": "latest",
     "spaces-harness-broker-protocol": "latest",
-    "spaces-runtime": "latest"
+    "spaces-runtime": "latest",
+    "spaces-turn-runner": "latest"
   }
 }
