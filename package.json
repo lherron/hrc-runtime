@@ -25,7 +25,7 @@
     "test:fast": "bun run test",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
-    "prepare": "lefthook install"
+    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && lefthook install || echo '[prepare] skipping lefthook (not a git checkout)'"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
