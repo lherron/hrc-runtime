@@ -56,8 +56,22 @@ export function normalizeDispatchIntent(
   const projectRoot = intent.placement?.projectRoot ?? cwd
   const agentRoot = intent.placement?.agentRoot ?? projectRoot
 
+  // A stored `hrc start` intent carries harness.interactive=true with
+  // execution.preferredMode='headless' ("provision the durable broker without
+  // attaching"). Replayed at a dispatch boundary that shape is incoherent:
+  // preferredMode forces the headless transport, where every executor
+  // (decideHeadlessExecutionRoute, the broker plan compile) requires a
+  // non-interactive harness — the interactive flag would dead-end the turn in
+  // 'legacy-exec' or compile the wrong broker driver. The execution mode is
+  // caller-authoritative here, so coerce the harness flag to match it.
+  const harness =
+    intent.execution?.preferredMode === 'headless' && intent.harness.interactive === true
+      ? { ...intent.harness, interactive: false }
+      : intent.harness
+
   return {
     ...intent,
+    harness,
     placement: {
       ...intent.placement,
       agentRoot,

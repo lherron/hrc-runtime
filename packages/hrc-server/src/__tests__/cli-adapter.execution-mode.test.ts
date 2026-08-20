@@ -216,6 +216,37 @@ describe('buildCliInvocation execution mode mapping', () => {
     })
   })
 
+  it('coerces harness.interactive=false when a stored hrc-start intent (preferredMode headless) is replayed at dispatch', () => {
+    // `hrc start` persists harness.interactive=true + preferredMode='headless'
+    // ("provision without attaching"). Replayed cold — e.g. a semantic DM after
+    // a generation rotation with no live runtime — that shape has no headless
+    // executor: decideHeadlessExecutionRoute dead-ends in 'legacy-exec'.
+    const session = {
+      scopeRef: 'agent:cody:project:hrc-runtime:task:primary',
+      laneRef: 'main',
+      hostSessionId: 'hsid-headless-coerce-test',
+      generation: 31,
+    } as HrcSessionRecord
+
+    const stored = makeIntent({
+      harness: { provider: 'openai', interactive: true, id: 'codex-cli' },
+      execution: { preferredMode: 'headless' },
+    })
+    const normalized = normalizeDispatchIntent(stored, session, 'run-headless-coerce')
+    expect(normalized.harness).toEqual({
+      provider: 'openai',
+      interactive: false,
+      id: 'codex-cli',
+    })
+
+    // Interactive-mode intents keep their harness flag untouched.
+    const interactiveIntent = makeIntent({
+      execution: { preferredMode: 'interactive' },
+    })
+    const untouched = normalizeDispatchIntent(interactiveIntent, session, 'run-headless-coerce-2')
+    expect(untouched.harness.interactive).toBe(true)
+  })
+
   it('does not persist turn-scoped wrkq causation env into interactive CLI sessions', async () => {
     const result = await buildCliInvocation(
       makeIntent({

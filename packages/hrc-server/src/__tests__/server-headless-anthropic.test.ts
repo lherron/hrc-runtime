@@ -119,7 +119,7 @@ async function createTestServer(
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
     delete process.env['HRC_CLAUDE_GHOSTTY']
   }
-  fixture = await createHrcTestFixture('hrc-headless-anthropic-')
+  fixture = await createHrcTestFixture('hha-')
   server = await createHrcServer(
     fixture.serverOpts({
       ...(options.claudeCodeTmuxBrokerEnabled !== undefined
@@ -134,13 +134,6 @@ async function resolveSession(
 ): Promise<{ hostSessionId: string; generation: number }> {
   if (!fixture) throw new Error('fixture not initialized')
   return await fixture.resolveSession(scopeRef)
-}
-
-async function getSession(hostSessionId: string): Promise<any> {
-  if (!fixture) throw new Error('fixture not initialized')
-  const res = await fixture.fetchSocket(`/v1/sessions/by-host/${hostSessionId}`)
-  expect(res.status).toBe(200)
-  return await res.json()
 }
 
 function seedHeadlessRuntime(
@@ -385,7 +378,7 @@ describe('C2. Ghostty availability', () => {
   it('returns runtime_unavailable instead of internal_error when ghostmux cannot reach Ghostty', async () => {
     saveCodexEnv()
     process.env['HRC_CLAUDE_GHOSTTY'] = '1'
-    fixture = await createHrcTestFixture('hrc-headless-anthropic-')
+    fixture = await createHrcTestFixture('hha-')
     server = await createHrcServer(
       fixture.serverOpts({
         ghostmuxOptions: {
@@ -438,7 +431,11 @@ describe('D. DM fallback', () => {
     expect(dm.waited).toEqual({ matched: false, reason: 'timeout' })
   })
 
-  it('does not use legacy headless exec for non-wait Codex DM fallback', async () => {
+  it('routes a non-wait Codex DM with an hrc-start-shaped intent through the headless broker, never legacy exec', async () => {
+    // harness.interactive=true + preferredMode='headless' is the stored
+    // `hrc start` shape. normalizeDispatchIntent coerces interactive=false at
+    // the dispatch boundary, so the DM dispatches via the headless broker
+    // instead of dead-ending in 'legacy-exec'.
     await createTestServer()
 
     const fakeCodex = await installFakeCodex('fake-codex-slow-dm', { execDelayMs: 5_000 })
@@ -456,13 +453,12 @@ describe('D. DM fallback', () => {
     expect(dmRes.status).toBe(200)
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(elapsedMs).toBeLessThan(5_500)
-    expect(dm.execution).toBeUndefined()
-    expect(dm.request.execution.state).toBe('failed')
-    expect(dm.reply).toBeUndefined()
-    expect(dm.waited).toBeUndefined()
-
-    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
-    expect(execLog).not.toContain('app-server:')
+    expect(dm.execution?.transport).toBe('headless')
+    expect(dm.execution?.status).toBe('started')
+    expect(dm.request.execution.state).not.toBe('failed')
+    expect(dm.request.execution.errorMessage ?? '').not.toContain(
+      'headless legacy execution is unavailable'
+    )
   }, 10_000)
 
   it('does not use legacy headless exec for waited Codex DM fallback', async () => {
@@ -494,7 +490,10 @@ describe('D. DM fallback', () => {
 })
 
 describe('E. Regression', () => {
-  it('does not route Codex headless dispatch through legacy headless exec', async () => {
+  it('routes a Codex headless turn with an hrc-start-shaped intent through the broker, never legacy exec', async () => {
+    // Same shape as the stored `hrc start` intent (interactive=true +
+    // preferredMode='headless'): the dispatch boundary coerces it to the
+    // headless broker route instead of the 'legacy-exec' dead-end (503).
     await createTestServer()
 
     const fakeCodex = await installFakeCodex('fake-codex-openai-headless')
@@ -508,12 +507,9 @@ describe('E. Regression', () => {
       }),
     })
 
-    expect(res.status).toBe(503)
-    const data = (await res.json()) as { error?: { code?: string } }
-    expect(data.error?.code).toBe('runtime_unavailable')
-    const session = await getSession(hostSessionId)
-    expect(session.continuation).toBeUndefined()
-    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
-    expect(execLog).not.toContain('app-server:')
+    expect(res.status).toBe(202)
+    const data = (await res.json()) as { transport?: string; error?: { code?: string } }
+    expect(data.error).toBeUndefined()
+    expect(data.transport).toBe('headless')
   }, 10_000)
 })
