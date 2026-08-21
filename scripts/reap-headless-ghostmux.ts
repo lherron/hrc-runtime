@@ -658,14 +658,26 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
     }
   }
 
-  const escapedScope = sqlQuote(scopeRef)
-  const escapedRuntime = sqlQuote(runtimeId)
   const output = run([
     'sqlite3',
     '-tabs',
     '-noheader',
     options.hrcDbPath,
-    `
+    statusSql(scopeRef, runtimeId, ''),
+  ])
+  return paneStatusFromFields(pane, scopeRef, runtimeId, agent, output.trimEnd().split('\t'))
+}
+
+// The per-pane status query. `tag` is emitted as a leading column so that N of
+// these can be concatenated into ONE sqlite3 invocation and the resulting rows
+// re-associated with their pane — a stray newline inside a field then corrupts
+// only its own row instead of shifting every row after it. An empty tag emits
+// no tag column (single-pane form).
+function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
+  const escapedScope = sqlQuote(scopeRef)
+  const escapedRuntime = sqlQuote(runtimeId)
+  const tagColumn = tag ? `'${sqlQuote(tag)}',` : ''
+  return `
       WITH target(scope_ref, runtime_id) AS (
         VALUES ('${escapedScope}', '${escapedRuntime}')
       ),
@@ -700,6 +712,7 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
         LIMIT 1
       )
       SELECT
+        ${tagColumn}
         COALESCE(NULLIF('${escapedRuntime}', ''), (SELECT runtime_id FROM latest_runtime), ''),
         COALESCE((SELECT status FROM latest_runtime), 'unknown'),
         COALESCE((SELECT transport FROM latest_runtime), ''),
@@ -730,8 +743,18 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
           END,
           ''
         );
-    `,
-  ])
+    `
+}
+
+// Assemble a PaneStatus from one row of statusSql output (tag column already
+// stripped). Shared by the single-pane and batched paths so both agree.
+function paneStatusFromFields(
+  pane: DiscoveredPane,
+  scopeRef: string,
+  runtimeId: string,
+  agent: string,
+  fields: string[]
+): PaneStatus {
   const [
     resolvedRuntime,
     runtimeStatus,
@@ -745,7 +768,7 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
     lastEventKind,
     presentationKind,
     substrateKind,
-  ] = output.trimEnd().split('\t')
+  ] = fields
 
   return {
     ...pane,
@@ -767,6 +790,56 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
     presentationKind: presentationKind ?? '',
     substrateKind: substrateKind ?? '',
   }
+}
+
+// Batched status resolution: one sqlite3 process for the whole sweep instead of
+// one per pane. Each pane contributes an identical, independently-tagged copy of
+// the single-pane query, so semantics are unchanged — only the process count and
+// the number of opens against the (multi-GB) state DB drop. Panes whose row is
+// missing from the output fall back to an individual query rather than being
+// silently dropped.
+function queryStatuses(panes: DiscoveredPane[], options: Options): PaneStatus[] {
+  if (options.simulate || !existsSync(options.hrcDbPath) || panes.length === 0) {
+    return panes.map((pane) => queryStatus(pane, options))
+  }
+
+  const targets = panes.map((pane, index) => {
+    const metadata = pane.metadata
+    const scopeRef =
+      typeof metadata.hrc_scope_ref === 'string' && metadata.hrc_scope_ref
+        ? metadata.hrc_scope_ref
+        : scopeFromTitle(pane.title)
+    const runtimeId = typeof metadata.hrc_runtime_id === 'string' ? metadata.hrc_runtime_id : ''
+    return { pane, index, scopeRef, runtimeId, tag: `r${index}` }
+  })
+
+  let output: string
+  try {
+    output = run([
+      'sqlite3',
+      '-tabs',
+      '-noheader',
+      options.hrcDbPath,
+      targets.map((t) => statusSql(t.scopeRef, t.runtimeId, t.tag)).join('\n'),
+    ])
+  } catch {
+    // One malformed row must not lose the whole sweep — fall back to per-pane.
+    return panes.map((pane) => queryStatus(pane, options))
+  }
+
+  const rows = new Map<string, string[]>()
+  for (const line of output.split('\n')) {
+    if (!line) continue
+    const fields = line.split('\t')
+    const tag = fields[0]
+    if (tag && /^r\d+$/.test(tag)) rows.set(tag, fields.slice(1))
+  }
+
+  return targets.map((t) => {
+    const fields = rows.get(t.tag)
+    if (!fields) return queryStatus(t.pane, options)
+    return paneStatusFromFields(t.pane, t.scopeRef, t.runtimeId, agentFromScope(t.scopeRef), fields)
+  })
 }
 
 function capturePane(pane: Pane, options: Options): string {
@@ -983,8 +1056,12 @@ function sleep(seconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, seconds * 1000))
 }
 
-function printRemaining(options: Options): void {
-  const remaining = listPanes(options)
+// `cached` is the pane list from the initial discovery. Pass it ONLY when the
+// sweep provably mutated nothing (dry-run, or no reap and no close) — re-running
+// discovery costs a full round of ghostmux metadata round-trips (1.6-5.0s
+// measured) purely to reprint a list that cannot have changed.
+function printRemaining(options: Options, cached?: DiscoveredPane[]): void {
+  const remaining = cached ?? listPanes(options)
   console.log()
   console.log(color.bold('Remaining panes'))
   if (remaining.length === 0) {
@@ -1117,7 +1194,7 @@ async function sweep(options: Options): Promise<number> {
   })
 
   const panes = timePhase('discover', () => listPanes(options))
-  const statuses = timePhase('query-status', () => panes.map((pane) => queryStatus(pane, options)))
+  const statuses = timePhase('query-status', () => queryStatuses(panes, options))
   const eligibleStatuses = statuses.filter(isQuitEligible)
   // Already-dead viewer panes: no live runtime to reap, but still parked on the
   // harness close prompt — close their Ghostty terminals in the same sweep.
@@ -1154,7 +1231,9 @@ async function sweep(options: Options): Promise<number> {
 
   if (closeTargets.length === 0) {
     console.log(color.yellow('No eligible runtimes and no leftover viewers; nothing to do.'))
-    timePhase('print-remaining', () => printRemaining(options))
+    // Nothing was reaped or closed on this path, so the discovered list is still
+    // current — reuse it rather than paying for a second discovery.
+    timePhase('print-remaining', () => printRemaining(options, panes))
     return statuses.length
   }
 
@@ -1205,8 +1284,17 @@ async function sweep(options: Options): Promise<number> {
     }
 
     console.log()
-    console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
-    await timePhaseAsync('settle-wait', () => sleep(options.waitSeconds))
+    // The wait exists to let genuinely-reaped runtimes reach their close prompt.
+    // Under --dry-run no terminate was issued, so there is no state change to
+    // settle and the sleep is pure latency (it was ~10s of every dry run).
+    if (options.dryRun) {
+      console.log(
+        color.dim(`dry-run: skipping the ${options.waitSeconds}s settle wait (nothing reaped).`)
+      )
+    } else {
+      console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
+      await timePhaseAsync('settle-wait', () => sleep(options.waitSeconds))
+    }
   }
 
   console.log()
@@ -1236,7 +1324,9 @@ async function sweep(options: Options): Promise<number> {
   phaseStats.push({ name: 'close-prompts', ms: performance.now() - closeStarted })
   console.log(color.dim(`Summary: enter sent=${closed}, skipped=${skipped}`))
 
-  timePhase('print-remaining', () => printRemaining(options))
+  // A dry run issued no terminate and sent no Enter, so nothing can have closed;
+  // reuse the discovered list. A real sweep must re-discover to show what is left.
+  timePhase('print-remaining', () => printRemaining(options, options.dryRun ? panes : undefined))
   return statuses.length
 }
 
