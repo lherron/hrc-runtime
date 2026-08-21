@@ -296,10 +296,10 @@ describe('hrc monitor show acceptance (T-01289)', () => {
         '',
         '[identity]',
         'display = "Monitor Fixture"',
-        'role = "tester"',
+        `role = "${defaultScopeRole}"`,
+        '',
         '[provisioning]',
         'harness = "codex"',
-        `default_scope_role = "${defaultScopeRole}"`,
         '',
       ].join('\n')
 

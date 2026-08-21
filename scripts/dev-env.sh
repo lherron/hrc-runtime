@@ -91,11 +91,12 @@ provision_agents() {
   for agent in "${FIXTURE_AGENTS[@]}"; do
     mkdir -p "${AGENTS_DIR}/${agent}"
     cat > "${AGENTS_DIR}/${agent}/agent-profile.toml" <<EOF
-schemaVersion = 2
+version = 3
 
 [identity]
 display = "${agent}"
-role = "fixture"
+
+[provisioning]
 harness = "codex"
 EOF
     cat > "${AGENTS_DIR}/${agent}/SOUL.md" <<EOF

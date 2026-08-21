@@ -28,10 +28,10 @@ function profile(defaultScopeRole: string): string {
     '',
     '[identity]',
     'display = "Scope Fixture"',
-    'role = "tester"',
+    `role = "${defaultScopeRole}"`,
+    '',
     '[provisioning]',
     'harness = "codex"',
-    `default_scope_role = "${defaultScopeRole}"`,
     '',
   ].join('\n')
 }
