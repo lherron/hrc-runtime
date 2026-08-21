@@ -32,17 +32,19 @@ function agentRootWith(profile: string | undefined): string {
 }
 
 describe('resolvePlacementPolicy', () => {
-  test('reads default_home_node and the pin table', () => {
+  test('reads provisioning.node plus placement pins and homes', () => {
     const agentRoot = agentRootWith(
       [
-        'schemaVersion = 1',
+        'version = 3',
         '',
-        '[placement]',
-        'default_home_node = "max3"',
+        '[provisioning]',
+        'node = "max3"',
+        '',
+        '[placement.pins]',
         '"hrc-runtime:T-06613" = "mini"',
         '',
-        '[placement.task-defaults]',
-        'labprimary = "lab"',
+        '[placement.homes]',
+        'primary = "lab"',
       ].join('\n')
     )
 
@@ -50,13 +52,13 @@ describe('resolvePlacementPolicy', () => {
 
     expect(resolution.outcome).toBe('resolved')
     if (resolution.outcome !== 'resolved') return
-    expect(resolution.policy.placement?.defaultHomeNode).toBe('max3')
+    expect(resolution.policy.provisioning?.node).toBe('max3')
     expect(resolution.policy.placement?.pins['hrc-runtime:T-06613']).toBe('mini')
-    expect(resolution.policy.placement?.taskDefaults['labprimary']).toBe('lab')
+    expect(resolution.policy.placement?.homes['primary']).toBe('lab')
   })
 
   test('a profile with no [placement] stanza resolves with placement undefined', () => {
-    const agentRoot = agentRootWith('schemaVersion = 1\n')
+    const agentRoot = agentRootWith('version = 3\n')
 
     const resolution = resolvePlacementPolicy(SCOPE, { agentRoot })
 
@@ -65,16 +67,16 @@ describe('resolvePlacementPolicy', () => {
     expect(resolution.policy.placement).toBeUndefined()
   })
 
-  test('a placement profile without task-defaults preserves the legacy compiled shape', () => {
+  test('a profile with only provisioning.node leaves placement undefined', () => {
     const agentRoot = agentRootWith(
-      ['schemaVersion = 2', '', '[placement]', 'default_home_node = "max3"'].join('\n')
+      ['version = 3', '', '[provisioning]', 'node = "max3"'].join('\n')
     )
 
     const resolution = resolvePlacementPolicy(SCOPE, { agentRoot })
 
     expect(resolution.outcome).toBe('resolved')
     if (resolution.outcome !== 'resolved') return
-    expect(resolution.policy.placement).toEqual({ defaultHomeNode: 'max3', pins: {} })
+    expect(resolution.policy).toEqual({ provisioning: { node: 'max3' }, claimsTask: false })
   })
 
   test('a missing profile is "no-profile", not an error', () => {

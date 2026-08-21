@@ -33,7 +33,7 @@ describe('T-06683 retired routed target selection', () => {
         },
       },
       policyFor: async () => ({
-        placement: { pins: { 'agent-control-plane:wrkq-refactor': 'lab' } },
+        placement: { pins: { 'agent-control-plane:wrkq-refactor': 'lab' }, homes: {} },
         claimsTask: false,
       }),
       capabilityFor: async () => ({ outcome: 'capable' as const }),

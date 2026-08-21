@@ -55,7 +55,7 @@ function deps(patch: Partial<SummonGateDeps> = {}): SummonGateDeps {
       establish: async () => ({ outcome: 'retired', retirement: RETIRED }),
     },
     policyFor: async () => ({
-      placement: { pins: { 'hrc-runtime:T-06681': 'svc' } },
+      placement: { pins: { 'hrc-runtime:T-06681': 'svc' }, homes: {} },
       claimsTask: false,
     }),
     capabilityFor: async () => ({ outcome: 'capable' }),

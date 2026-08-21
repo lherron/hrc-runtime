@@ -9,6 +9,7 @@ import {
   type StartRuntimeRosterClaim,
   type SuffixStartRuntimeRequest,
 } from 'hrc-core'
+import { ROSTER_SLOT_TOKENS } from 'spaces-config'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
@@ -44,22 +45,9 @@ import { findContinuitySession } from './target-view.js'
  * exact claim (T-07302) can name one, and why both policies share the mutex and
  * FREE predicate in scope-claim-core.ts.
  */
-export const ROSTER_SLOT_SUFFIXES = [
-  'nova',
-  'comet',
-  'pulsar',
-  'quasar',
-  'meteor',
-  'aurora',
-  'zenith',
-  'eclipse',
-  'orbit',
-  'cosmos',
-] as const
-
 /** Base task token first, then the ten suffixed slots — iteration order. */
 export function rosterSlotTokens(baseTaskId: string): string[] {
-  return [baseTaskId, ...ROSTER_SLOT_SUFFIXES.map((suffix) => `${baseTaskId}-${suffix}`)]
+  return [baseTaskId, ...ROSTER_SLOT_TOKENS.map((suffix) => `${baseTaskId}-${suffix}`)]
 }
 
 type RosterBase = ClaimScopeIdentity & {
@@ -151,6 +139,7 @@ export async function startRoutedSuffixRosterRuntime(
   }
   if (homeNodeId === config.nodeId) {
     await preflightSuffixRosterFamily(this, {
+      baseScopeRef: base.baseScopeRef,
       scopeRefs: rosterSlotTokens(base.baseTaskId).map((slot) => slotScopeRef(base, slot)),
       capabilityHint,
       origin: 'local',

@@ -40,7 +40,7 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
     await mkdir(stateRoot, { recursive: true })
     await mkdir(join(agentsRoot, 'rex'), { recursive: true })
     await mkdir(projectRoot, { recursive: true })
-    await writeFile(join(agentsRoot, 'rex', 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(join(agentsRoot, 'rex', 'agent-profile.toml'), 'version = 3\n')
     await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\n')
 
     stub = Bun.serve({

@@ -184,7 +184,8 @@ describe('T-06875 container-local persona allowlist', () => {
     const claimCalls: string[] = []
     Object.assign(server, {
       policyFor: async () => ({
-        placement: { pins: {}, defaultHomeNode: 'room-test' },
+        provisioning: { node: 'room-test' },
+        placement: { pins: {}, homes: {} },
         claimsTask: true,
       }),
       capabilityFor: async () => ({ outcome: 'capable' }),

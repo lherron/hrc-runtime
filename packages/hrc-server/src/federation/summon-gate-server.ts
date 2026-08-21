@@ -56,7 +56,6 @@ import {
   type SummonGateResult,
   type SummonPath,
   evaluateSummonGate,
-  placementPinKey,
   resolveDeclaredPlacementHome,
   resolvePlacementDisposition,
 } from './summon-gate.js'
@@ -208,6 +207,7 @@ export async function resolveImplicitScopeHome(
 export async function preflightSuffixRosterFamily(
   server: SummonGateServerContext,
   request: {
+    readonly baseScopeRef: string
     readonly scopeRefs: readonly string[]
     readonly capabilityHint: SummonCapabilityHint
     readonly origin: 'local' | 'federated-ingress'
@@ -220,34 +220,35 @@ export async function preflightSuffixRosterFamily(
       { retryable: true }
     )
   }
+  let basePolicy: SummonGatePolicy | undefined
+  try {
+    basePolicy = await deps.policyFor(request.baseScopeRef)
+  } catch (error) {
+    throw new HrcRuntimeUnavailableError('suffix-roster placement policy is unavailable', {
+      scopeRef: request.baseScopeRef,
+      retryable: true,
+      cause: error instanceof Error ? error.message : String(error),
+    })
+  }
+  const familyHome = resolveDeclaredPlacementHome(
+    request.baseScopeRef,
+    basePolicy,
+    deps.localNodeId
+  )
+  if (familyHome?.homeNodeId !== deps.localNodeId) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `suffix-roster base ${request.baseScopeRef} must declare ${deps.localNodeId} as its home`,
+      {
+        scopeRef: request.baseScopeRef,
+        declaredHomeNodeId: familyHome?.homeNodeId ?? null,
+        requiredHomeNodeId: deps.localNodeId,
+        retryable: false,
+      }
+    )
+  }
   for (const scopeRef of request.scopeRefs) {
     assertLocalPersonaAllowed(server, scopeRef)
-    let policy: SummonGatePolicy | undefined
-    try {
-      policy = await deps.policyFor(scopeRef)
-    } catch (error) {
-      throw new HrcRuntimeUnavailableError('suffix-roster placement policy is unavailable', {
-        scopeRef,
-        retryable: true,
-        cause: error instanceof Error ? error.message : String(error),
-      })
-    }
-    const taskKey = placementPinKey(scopeRef, 'task-default')
-    const declaredHome =
-      taskKey === undefined ? undefined : policy?.placement?.taskDefaults?.[taskKey]
-    if (taskKey === undefined || declaredHome !== deps.localNodeId) {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        `suffix-roster member ${scopeRef} must have an exact task-default naming ${deps.localNodeId}`,
-        {
-          scopeRef,
-          taskKey: taskKey ?? null,
-          declaredHomeNodeId: declaredHome ?? null,
-          requiredHomeNodeId: deps.localNodeId,
-          retryable: false,
-        }
-      )
-    }
     const result = await evaluateSummonGate({
       scopeRef,
       path: 'resolve-session',
@@ -278,10 +279,9 @@ export async function preflightSuffixRosterFamily(
  * Fail-closed, read-only preflight for ONE exact scope on its authoritative
  * home (T-07302).
  *
- * The suffix roster demands an exact task-default for every member because it
- * may claim any of eleven scopes and none of them may fall back silently. An
- * exact claim touches exactly the scope the person named, so it needs no
- * pre-declared family — it needs that scope's OWN declared or default placement
+ * The suffix roster derives all eleven members from the explicit base scope and
+ * its declared family home. An exact claim touches exactly the scope the person
+ * named, so it needs that scope's own declared or inherited placement
  * to name this node. That is precisely what lets an arbitrary custom name work
  * while `cody@hrc-runtime:hrcdev` still routes by its pin.
  *

@@ -88,7 +88,8 @@ describe('T-07134 POST /v1/registrations', () => {
     Object.assign(server!, {
       policyFor: async () => ({
         claimsTask: false,
-        placement: { defaultHomeNode: 'svc', pins: {} },
+        provisioning: { node: 'svc' },
+        placement: { pins: {}, homes: {} },
       }),
     })
 

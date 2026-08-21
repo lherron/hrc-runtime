@@ -24,11 +24,12 @@ let savedEnv: Map<(typeof envNames)[number], string | undefined>
 
 function profile(defaultScopeRole: string): string {
   return [
-    'schemaVersion = 2',
+    'version = 3',
     '',
     '[identity]',
     'display = "Scope Fixture"',
     'role = "tester"',
+    '[provisioning]',
     'harness = "codex"',
     `default_scope_role = "${defaultScopeRole}"`,
     '',

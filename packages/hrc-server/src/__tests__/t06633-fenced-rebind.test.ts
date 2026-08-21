@@ -127,7 +127,7 @@ function gateDeps(
     ledger,
     registry,
     policyFor: async () => ({
-      placement: { pins: { 'hrc-runtime:T-06633': 'lab' } },
+      placement: { pins: { 'hrc-runtime:T-06633': 'lab' }, homes: {} },
       claimsTask: false,
     }),
     capabilityFor: async () => ({ outcome: 'capable' }),

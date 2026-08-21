@@ -292,11 +292,12 @@ describe('hrc monitor show acceptance (T-01289)', () => {
     const canonicalAgentRoot = join(canonicalAgentsRoot, 'clod')
     const profile = (defaultScopeRole: string) =>
       [
-        'schemaVersion = 2',
+        'version = 3',
         '',
         '[identity]',
         'display = "Monitor Fixture"',
         'role = "tester"',
+        '[provisioning]',
         'harness = "codex"',
         `default_scope_role = "${defaultScopeRole}"`,
         '',

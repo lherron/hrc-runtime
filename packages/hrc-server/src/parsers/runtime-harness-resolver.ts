@@ -38,11 +38,13 @@ export function resolveHarnessFromPlacement(
   }
 
   const profile = parseAgentProfile(readFileSync(profilePath, 'utf8'), profilePath)
-  const provider = resolveHarnessProvider(profile.identity?.harness)
+  const harness = (profile as unknown as { provisioning?: { harness?: string } }).provisioning
+    ?.harness
+  const provider = resolveHarnessProvider(harness)
   if (!provider) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      'runtimeIntent.harness is required when agent-profile identity.harness is missing',
+      'runtimeIntent.harness is required when agent-profile provisioning.harness is missing',
       { field: 'runtimeIntent.placement.agentRoot' }
     )
   }

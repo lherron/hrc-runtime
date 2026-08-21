@@ -14,7 +14,7 @@ function withAgentProfile(harness: string): { agentRoot: string; cleanup: () => 
   mkdirSync(agentRoot, { recursive: true })
   writeFileSync(
     join(agentRoot, 'agent-profile.toml'),
-    `schemaVersion = 2\n\n[identity]\nharness = "${harness}"\n`,
+    `version = 3\n\n[provisioning]\nharness = "${harness}"\n`,
     'utf8'
   )
   return {

@@ -71,7 +71,7 @@ describe('T-06697 policy-born registry establishment', () => {
   test('an eligible same-node policy successor atomically activates at E+1 and installs its ledger', async () => {
     const scopeRef = 'agent:cody:project:hrc-runtime:task:T-06697-retired-successor'
     const h = await harness(async () => ({
-      placement: { pins: { 'hrc-runtime:T-06697-retired-successor': 'svc' } },
+      placement: { pins: { 'hrc-runtime:T-06697-retired-successor': 'svc' }, homes: {} },
       claimsTask: false,
     }))
     try {
@@ -141,7 +141,7 @@ describe('T-06697 policy-born registry establishment', () => {
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-06697-pin',
       provenance: 'pin' as const,
       policy: {
-        placement: { pins: { 'hrc-runtime:T-06697-pin': 'svc' } },
+        placement: { pins: { 'hrc-runtime:T-06697-pin': 'svc' }, homes: {} },
         claimsTask: false,
       },
     },
@@ -150,7 +150,8 @@ describe('T-06697 policy-born registry establishment', () => {
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-06697-default',
       provenance: 'default_home_node' as const,
       policy: {
-        placement: { pins: {}, defaultHomeNode: 'svc' },
+        provisioning: { node: 'svc' },
+        placement: { pins: {}, homes: {} },
         claimsTask: false,
       },
     },
@@ -159,7 +160,7 @@ describe('T-06697 policy-born registry establishment', () => {
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-06697-task-default',
       provenance: 'task_default' as const,
       policy: {
-        placement: { pins: {}, taskDefaults: { 'T-06697-task-default': 'svc' } },
+        placement: { pins: {}, homes: { 'T-06697-task-default': 'svc' } },
         claimsTask: false,
       },
     },
@@ -204,7 +205,7 @@ describe('T-06697 policy-born registry establishment', () => {
   test('startup repair binds a pre-reconcile live task-default scope even when warmup marks it stale', async () => {
     const scopeRef = 'agent:cody:project:hrc-runtime:task:T-06697-repair'
     const h = await harness(async () => ({
-      placement: { pins: {}, taskDefaults: { 'T-06697-repair': 'svc' } },
+      placement: { pins: {}, homes: { 'T-06697-repair': 'svc' } },
       claimsTask: false,
     }))
     try {
@@ -335,7 +336,7 @@ describe('T-06697 policy-born registry establishment', () => {
   test('startup repair fences a live wrong-node scope without wedging daemon startup', async () => {
     const scopeRef = 'agent:mable:project:hrc-runtime:task:primary'
     const h = await harness(async () => ({
-      placement: { pins: { 'hrc-runtime:primary': 'lab' } },
+      placement: { pins: { 'hrc-runtime:primary': 'lab' }, homes: {} },
       claimsTask: false,
     }))
     try {

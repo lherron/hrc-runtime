@@ -12,7 +12,7 @@ function makeAgentDir(harness: string): { agentRoot: string; agentId: string } {
   tempRoots.push(root)
   writeFileSync(
     join(root, 'agent-profile.toml'),
-    `schemaVersion = 2\n\n[identity]\nharness = "${harness}"\n`
+    `version = 3\n\n[provisioning]\nharness = "${harness}"\n`
   )
   return { agentRoot: root, agentId: 'fixture-agent' }
 }

@@ -81,7 +81,8 @@ function deps(overrides: Partial<SummonGateDeps> = {}): SummonGateDeps {
     ledger: ledgerStub(undefined),
     registry: registryStub({ outcome: 'unbound' }),
     policyFor: async () => ({
-      placement: { pins: {}, taskDefaults: {}, defaultHomeNode: 'max3' },
+      provisioning: { node: 'max3' },
+      placement: { pins: {}, homes: {} },
       claimsTask: false,
     }),
     ...overrides,
@@ -261,7 +262,8 @@ describe('registry consult — absence of a local row is not the virgin predicat
 describe('placement policy — pins are hard constraints on every path', () => {
   const pinnedElsewhere = deps({
     policyFor: async () => ({
-      placement: { pins: { 'hrc-runtime:T-06608': 'lab' }, defaultHomeNode: 'max3' },
+      provisioning: { node: 'max3' },
+      placement: { pins: { 'hrc-runtime:T-06608': 'lab' }, homes: {} },
       claimsTask: false,
     }),
   })
@@ -288,7 +290,8 @@ describe('placement policy — pins are hard constraints on every path', () => {
       intent: 'implicit',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: { 'hrc-runtime:T-06608': 'max3' }, defaultHomeNode: 'lab' },
+          provisioning: { node: 'lab' },
+          placement: { pins: { 'hrc-runtime:T-06608': 'max3' }, homes: {} },
           claimsTask: false,
         }),
       }),
@@ -336,6 +339,46 @@ describe('placement policy — pins are hard constraints on every path', () => {
 })
 
 describe('placement task defaults — exact pin > task-default > explicit_local > default', () => {
+  test('a declared base home applies to an exact reserved-family member', async () => {
+    const familyScope = 'agent:mable:project:hrc-runtime:task:primary-nova'
+    const result = await evaluateSummonGate({
+      scopeRef: familyScope,
+      path: 'resolve-session',
+      intent: 'implicit',
+      deps: deps({
+        policyFor: async () => ({
+          placement: { pins: {}, homes: { primary: 'max3' } },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation.decision).toBe('allow')
+    if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
+    expect(result.evaluation.homeNodeId).toBe('max3')
+    expect(result.evaluation.establishmentProvenance).toBe('task_default')
+  })
+
+  test('a reserved-looking task stays independent when its base is undeclared', async () => {
+    const independentScope = 'agent:mable:project:hrc-runtime:task:research-nova'
+    const result = await evaluateSummonGate({
+      scopeRef: independentScope,
+      path: 'resolve-session',
+      intent: 'implicit',
+      deps: deps({
+        policyFor: async () => ({
+          provisioning: { node: 'lab' },
+          placement: { pins: {}, homes: { primary: 'max3' } },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation.decision).toBe('refuse')
+    if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
+    expect(result.evaluation.homeNodeId).toBe('lab')
+  })
+
   test('a task-default beats explicit_local and names the matched line in its refusal', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
@@ -346,9 +389,9 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
         policyFor: async () => ({
           placement: {
             pins: {},
-            taskDefaults: { 'T-06608': 'lab' },
-            defaultHomeNode: 'max3',
+            homes: { 'T-06608': 'lab' },
           },
+          provisioning: { node: 'max3' },
           claimsTask: false,
         }),
       }),
@@ -358,7 +401,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
     expect(result.evaluation.reason).toBe('pin-mismatch')
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('lab')
-    expect(result.evaluation.diagnostic).toContain('[placement.task-defaults]')
+    expect(result.evaluation.diagnostic).toContain('[placement.homes]')
     expect(result.evaluation.diagnostic).toContain('"T-06608" = "lab"')
     expect(result.evaluation.diagnostic).not.toContain('is pinned')
   })
@@ -373,9 +416,9 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
         policyFor: async () => ({
           placement: {
             pins: { 'hrc-runtime:T-06608': 'max3' },
-            taskDefaults: { 'T-06608': 'lab' },
-            defaultHomeNode: 'svc',
+            homes: { 'T-06608': 'lab' },
           },
+          provisioning: { node: 'svc' },
           claimsTask: false,
         }),
       }),
@@ -397,9 +440,9 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
         policyFor: async () => ({
           placement: {
             pins: {},
-            taskDefaults: { 'T-06608': 'lab' },
-            defaultHomeNode: 'svc',
+            homes: { 'T-06608': 'lab' },
           },
+          provisioning: { node: 'svc' },
           claimsTask: false,
         }),
       }),
@@ -430,8 +473,8 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
     })
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
     // Must name the stanza AND the exact line, never a bare "not configured".
-    expect(result.evaluation.diagnostic).toContain('[placement]')
-    expect(result.evaluation.diagnostic).toContain('default_home_node = "max3"')
+    expect(result.evaluation.diagnostic).toContain('[provisioning]')
+    expect(result.evaluation.diagnostic).toContain('node = "max3"')
     expect(result.evaluation.diagnostic).toContain('agent-profile.toml')
   })
 
@@ -440,13 +483,15 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
       scopeRef: SCOPE,
       path: 'ensure-target',
       intent: 'implicit',
-      deps: deps({ policyFor: async () => ({ placement: { pins: {} }, claimsTask: false }) }),
+      deps: deps({
+        policyFor: async () => ({ placement: { pins: {}, homes: {} }, claimsTask: false }),
+      }),
     })
 
     expect(result.evaluation.decision).toBe('refuse')
     expect(result.evaluation.reason).toBe('undeclared-placement')
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
-    expect(result.evaluation.diagnostic).toContain('default_home_node = "max3"')
+    expect(result.evaluation.diagnostic).toContain('node = "max3"')
   })
 
   test('never a silent fallback: undeclared does NOT resolve to the local node', async () => {
@@ -468,7 +513,8 @@ describe('default_home_node routing', () => {
       intent: 'implicit',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'max3' },
+          provisioning: { node: 'max3' },
+          placement: { pins: {}, homes: {} },
           claimsTask: false,
         }),
       }),
@@ -485,7 +531,8 @@ describe('default_home_node routing', () => {
       intent: 'implicit',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'lab' },
+          provisioning: { node: 'lab' },
+          placement: { pins: {}, homes: {} },
           claimsTask: false,
         }),
       }),
@@ -496,7 +543,7 @@ describe('default_home_node routing', () => {
     expect(result.evaluation.homeNodeId).toBe('lab')
   })
 
-  test('default_home_node = "local" resolves ONCE to this daemon\'s own configured nodeId', async () => {
+  test('provisioning.node = "local" is rejected as a deleted sentinel', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'ensure-target',
@@ -504,17 +551,15 @@ describe('default_home_node routing', () => {
       deps: deps({
         localNodeId: 'lab',
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'local' },
+          provisioning: { node: 'local' },
+          placement: { pins: {}, homes: {} },
           claimsTask: false,
         }),
       }),
     })
 
-    expect(result.evaluation.decision).toBe('allow')
-    if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.homeNodeId).toBe('lab')
-    // Provenance records the sentinel, not the resolved value.
-    expect(result.evaluation.establishmentProvenance).toBe('default_home_node(local)')
+    expect(result.evaluation.decision).toBe('refuse')
+    expect(result.evaluation.reason).toBe('invalid-pin')
   })
 
   test('"local" is invalid in a pin — a pin meaning "wherever" is not a pin', async () => {
@@ -524,7 +569,8 @@ describe('default_home_node routing', () => {
       intent: 'implicit',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: { 'hrc-runtime:T-06608': 'local' }, defaultHomeNode: 'max3' },
+          provisioning: { node: 'max3' },
+          placement: { pins: { 'hrc-runtime:T-06608': 'local' }, homes: {} },
           claimsTask: false,
         }),
       }),

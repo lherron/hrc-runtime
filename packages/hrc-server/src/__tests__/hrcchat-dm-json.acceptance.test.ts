@@ -265,8 +265,8 @@ async function seedBusyRuntime(
   await writeFile(
     join(agentRoot, 'agent-profile.toml'),
     options.agentHarness
-      ? `schemaVersion = 2\n\n[identity]\nharness = "${options.agentHarness}"\n`
-      : 'schemaVersion = 2\n'
+      ? `version = 3\n\n[provisioning]\nharness = "${options.agentHarness}"\n`
+      : 'version = 3\n'
   )
 }
 

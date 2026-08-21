@@ -33,7 +33,7 @@ describe('T-07217 project-scoped spawn placement', () => {
     await mkdir(join(projectRoot, '.git'), { recursive: true })
     await mkdir(join(projectRoot, 'packages', 'hrc-server'), { recursive: true })
     await mkdir(agentRoot, { recursive: true })
-    await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
 
     workspaceRoot = await realpath(workspaceRoot)
     projectRoot = join(workspaceRoot, 'hrc-runtime')

@@ -71,7 +71,7 @@ describe('T-06805 authenticated remote policy establishment', () => {
     const registry = openBindingRegistry(':memory:')
     closeables.push(registry)
     const server = harness('lab', registry, async () => ({
-      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' } },
+      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' }, homes: {} },
       claimsTask: false,
     }))
 
@@ -116,11 +116,11 @@ describe('T-06805 authenticated remote policy establishment', () => {
     const registry = openBindingRegistry(':memory:')
     closeables.push(registry)
     const lab = harness('lab', registry, async () => ({
-      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' } },
+      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' }, homes: {} },
       claimsTask: false,
     }))
     const max3 = harness('max3', registry, async () => ({
-      placement: { pins: { 'hrc-runtime:T-06805-remote': 'max3' } },
+      placement: { pins: { 'hrc-runtime:T-06805-remote': 'max3' }, homes: {} },
       claimsTask: false,
     }))
 
@@ -147,11 +147,12 @@ describe('T-06805 authenticated remote policy establishment', () => {
     ).toBe(winner.homeNodeId)
   })
 
-  test('node-local sentinel and claim birth fail closed without advertising authority', async () => {
+  test('invalid local node and claim birth fail closed without advertising authority', async () => {
     const registry = openBindingRegistry(':memory:')
     closeables.push(registry)
     const localSentinel = harness('lab', registry, async () => ({
-      placement: { pins: {}, defaultHomeNode: 'local' },
+      provisioning: { node: 'local' },
+      placement: { pins: {}, homes: {} },
       claimsTask: false,
     }))
     const localResult = await establishRemotePolicyAuthority(localSentinel, {
@@ -161,12 +162,12 @@ describe('T-06805 authenticated remote policy establishment', () => {
     expect(localResult).toMatchObject({
       outcome: 'refused',
       code: 'stale_context',
-      reason: 'routed-elsewhere',
+      reason: 'invalid-pin',
       retryable: false,
     })
 
     const claim = harness('lab', registry, async () => ({
-      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' } },
+      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' }, homes: {} },
       claimsTask: true,
     }))
     const claimResult = await establishRemotePolicyAuthority(claim, {

@@ -79,7 +79,7 @@ import { isReservedNodeId } from './node-id.js'
 import type { PlacementPolicyResolution } from './placement-policy.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { placementPinKey } from './summon-gate.js'
+import { placementHomeDeclaration, placementPinKey } from './summon-gate.js'
 import type { ScopeRetirement, SummonGateMode } from './summon-gate.js'
 
 export type LocateBirthChainResult = {
@@ -158,8 +158,7 @@ function toRecord(binding: PlacementBinding | PlacementLedgerRecord): LocateBind
  */
 function describeDeclaredPolicy(
   scopeRef: string,
-  resolution: PlacementPolicyResolution,
-  localNodeId: string
+  resolution: PlacementPolicyResolution
 ): LocateDeclaredPolicy {
   if (resolution.outcome === 'unreadable') {
     return { source: 'unavailable', detail: resolution.detail }
@@ -170,7 +169,7 @@ function describeDeclaredPolicy(
 
   const { policy, profilePath } = resolution
   const placement = policy.placement
-  if (placement === undefined) {
+  if (placement === undefined && policy.provisioning?.node === undefined) {
     return {
       source: 'none',
       detail: `${profilePath} declares no [placement] stanza.`,
@@ -179,7 +178,7 @@ function describeDeclaredPolicy(
   }
 
   const pinKey = placementPinKey(scopeRef)
-  const pin = pinKey === undefined ? undefined : placement.pins[pinKey]
+  const pin = pinKey === undefined ? undefined : placement?.pins[pinKey]
   if (pinKey !== undefined && pin !== undefined) {
     // Mirrors the gate's own rejection: a pin meaning "wherever" is not a pin.
     if (isReservedNodeId(pin)) {
@@ -188,41 +187,38 @@ function describeDeclaredPolicy(
         pinKey,
         rawValue: pin,
         profilePath,
-        detail: `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a pin. Name a real node, or move the value to default_home_node.`,
+        detail: `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is not a node id. Name a real node.`,
       }
     }
     return { source: 'pin', pinKey, nodeId: pin, profilePath }
   }
 
-  const taskKey = placementPinKey(scopeRef, 'task-default')
-  const taskDefault = taskKey === undefined ? undefined : placement.taskDefaults?.[taskKey]
-  if (taskKey !== undefined && taskDefault !== undefined) {
-    if (isReservedNodeId(taskDefault)) {
+  const home = placementHomeDeclaration(scopeRef, placement?.homes)
+  if (home !== undefined) {
+    if (isReservedNodeId(home.nodeId)) {
       return {
         source: 'task-default-invalid',
-        taskKey,
-        rawValue: taskDefault,
+        taskKey: home.key,
+        rawValue: home.nodeId,
         profilePath,
-        detail: `Placement task default [placement.task-defaults] "${taskKey}" = "${taskDefault}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a task default. Name a real node, or move the value to default_home_node.`,
+        detail: `Placement home [placement.homes] "${home.key}" = "${home.nodeId}" is invalid: "local" is not a node id. Name a real node.`,
       }
     }
-    return { source: 'task-default', taskKey, nodeId: taskDefault, profilePath }
+    return { source: 'task-default', taskKey: home.key, nodeId: home.nodeId, profilePath }
   }
 
-  const fallback = placement.defaultHomeNode
+  const fallback = policy.provisioning?.node
   if (fallback === undefined) {
     return {
       source: 'none',
       detail:
         pinKey === undefined
-          ? `${profilePath} declares no default_home_node, and this scope has no task component to pin.`
-          : `${profilePath} declares no default_home_node and no pin for "${pinKey}".`,
+          ? `${profilePath} declares no provisioning.node, and this scope has no task component to pin.`
+          : `${profilePath} declares no provisioning.node and no pin for "${pinKey}".`,
       profilePath,
     }
   }
-  if (isReservedNodeId(fallback)) {
-    return { source: 'default_home_node(local)', nodeId: localNodeId, profilePath }
-  }
+  if (isReservedNodeId(fallback)) return { source: 'unavailable', detail: 'local is not a node id' }
   return { source: 'default_home_node', nodeId: fallback, profilePath }
 }
 
@@ -281,7 +277,7 @@ function assessSkew(
     if (declared.nodeId === bound.homeNodeId) {
       notes.push({
         code: 'task-default-honored',
-        detail: `Task default [placement.task-defaults] "${declared.taskKey}" = "${declared.nodeId}" matches the established binding.`,
+        detail: `Placement home [placement.homes] "${declared.taskKey}" = "${declared.nodeId}" matches the established binding.`,
       })
       return { notes }
     }
@@ -294,7 +290,7 @@ function assessSkew(
         placementEpoch: bound.placementEpoch,
         establishmentProvenance: bound.establishmentProvenance,
         detail: [
-          `SKEW: task default [placement.task-defaults] "${declared.taskKey}" = "${declared.nodeId}", but this scope is established on "${bound.homeNodeId}" (epoch ${bound.placementEpoch}, established by ${bound.establishmentProvenance}).`,
+          `SKEW: placement home [placement.homes] "${declared.taskKey}" = "${declared.nodeId}", but this scope is established on "${bound.homeNodeId}" (epoch ${bound.placementEpoch}, established by ${bound.establishmentProvenance}).`,
           `"${bound.homeNodeId}" keeps summon authority. The task-default value is NOT acted on and nothing reconciles automatically.`,
           'To move the scope, rebuild the binding deliberately; editing the task-default alone will not relocate an established scope.',
         ].join('\n'),
@@ -440,7 +436,7 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   const scopeRef = formatCanonicalScopeRef({ scopeRef: request.scopeRef })
 
   const policyResolution = await deps.policyFor(scopeRef)
-  const declared = describeDeclaredPolicy(scopeRef, policyResolution, deps.localNodeId)
+  const declared = describeDeclaredPolicy(scopeRef, policyResolution)
 
   const ledgerRow = deps.ledger.get(scopeRef)
   const ledger: LocateLedgerView =
@@ -602,7 +598,7 @@ export async function scanLedgerForSkew(options: {
       continue
     }
     const resolution = await options.policyFor(binding.scopeRef)
-    const declared = describeDeclaredPolicy(binding.scopeRef, resolution, options.localNodeId)
+    const declared = describeDeclaredPolicy(binding.scopeRef, resolution)
     if (declared.source === 'unavailable') {
       unreadable.push({ scopeRef: binding.scopeRef, detail: declared.detail })
       continue

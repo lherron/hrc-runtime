@@ -51,7 +51,7 @@ describe('T-07151 messaging worktree association preflight', () => {
     const repo = createGitFixture(projectRoot, { initialBranch: 'main' })
     mkdirSync(agentRoot, { recursive: true })
     writeFileSync(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
-    writeFileSync(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+    writeFileSync(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
     runGit(repo, ['add', 'asp-targets.toml', 'agents/cody/agent-profile.toml'])
     runGit(repo, ['commit', '-m', 'fixture'])
 

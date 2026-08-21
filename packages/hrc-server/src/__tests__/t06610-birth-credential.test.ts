@@ -393,7 +393,8 @@ describe('T-06610 child-birth at the summon gate', () => {
           throw new Error('must not validate an absent credential')
         }),
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'lab' },
+          provisioning: { node: 'lab' },
+          placement: { pins: {}, homes: {} },
           claimsTask: false,
         }),
       },

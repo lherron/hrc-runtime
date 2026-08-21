@@ -73,9 +73,9 @@ describe('T-07302 exact-scope placement preflight', () => {
   })
 
   async function serverWithPlacement(placement: {
-    defaultHomeNode?: string
+    node?: string
     pins?: Record<string, string>
-    taskDefaults?: Record<string, string>
+    homes?: Record<string, string>
   }) {
     await writeFile(
       join(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
@@ -86,10 +86,10 @@ describe('T-07302 exact-scope placement preflight', () => {
     Object.assign(server, {
       registryClient: registryUnbound(),
       policyFor: async () => ({
+        provisioning: { node: placement.node ?? 'max3' },
         placement: {
-          defaultHomeNode: placement.defaultHomeNode ?? 'max3',
           pins: placement.pins ?? {},
-          taskDefaults: placement.taskDefaults ?? {},
+          homes: placement.homes ?? {},
         },
         claimsTask: false,
       }),
@@ -114,7 +114,7 @@ describe('T-07302 exact-scope placement preflight', () => {
   })
 
   test('an arbitrary custom name needs no task-default family, only a declared default', async () => {
-    const server = await serverWithPlacement({ defaultHomeNode: 'hrcdev' })
+    const server = await serverWithPlacement({ node: 'hrcdev' })
     try {
       await preflightExactScope(server, {
         scopeRef: CUSTOM_SCOPE,
@@ -144,7 +144,7 @@ describe('T-07302 exact-scope placement preflight', () => {
   })
 
   test('the receiver refuses an undeclared implicit scope rather than falling back', async () => {
-    const server = await serverWithPlacement({ defaultHomeNode: 'max3' })
+    const server = await serverWithPlacement({ node: 'max3' })
     try {
       await expect(
         preflightExactScope(server, {
@@ -169,10 +169,10 @@ describe('T-07302 exact-scope placement preflight', () => {
     Object.assign(server, {
       registryClient: registryUnbound(),
       policyFor: async () => ({
+        provisioning: { node: 'max3' },
         placement: {
-          defaultHomeNode: 'local',
           pins: { 'hrc-runtime:hrcdev': 'hrcdev' },
-          taskDefaults: {},
+          homes: {},
         },
         claimsTask: false,
       }),

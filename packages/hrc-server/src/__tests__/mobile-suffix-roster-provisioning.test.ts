@@ -52,7 +52,7 @@ describe('mobile suffix-roster placement preflight', () => {
     await fixture.cleanup()
   })
 
-  async function serverWithTaskDefaults(taskDefaults: Record<string, string>) {
+  async function serverWithTaskDefaults(homes: Record<string, string>) {
     await writeFile(
       join(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
       JSON.stringify({ nodeId: 'svc', gate: { mode: 'enforce' } }),
@@ -62,7 +62,8 @@ describe('mobile suffix-roster placement preflight', () => {
     Object.assign(server, {
       registryClient: registryUnbound(),
       policyFor: async () => ({
-        placement: { defaultHomeNode: 'max3', pins: {}, taskDefaults },
+        provisioning: { node: 'max3' },
+        placement: { pins: {}, homes },
         claimsTask: false,
       }),
       capabilityFor: async () => ({ outcome: 'capable' as const }),
@@ -72,10 +73,8 @@ describe('mobile suffix-roster placement preflight', () => {
 
   test('a complete exact family resolves and preflights without minting sessions', async () => {
     const family = suffixRosterFamily(BASE_SESSION_REF)
-    const taskDefaults = Object.fromEntries(
-      family.scopeRefs.map((scopeRef) => [scopeRef.slice(scopeRef.indexOf(':task:') + 6), 'svc'])
-    )
-    const server = await serverWithTaskDefaults(taskDefaults)
+    const homes = { minisvc: 'svc' }
+    const server = await serverWithTaskDefaults(homes)
     try {
       expect(
         await resolveImplicitScopeHome(server, {
@@ -84,6 +83,7 @@ describe('mobile suffix-roster placement preflight', () => {
         })
       ).toBe('svc')
       await preflightSuffixRosterFamily(server, {
+        baseScopeRef: family.baseScopeRef,
         scopeRefs: family.scopeRefs,
         capabilityHint: CAPABILITY_HINT,
         origin: 'federated-ingress',
@@ -95,17 +95,14 @@ describe('mobile suffix-roster placement preflight', () => {
     }
   })
 
-  test('one missing exact suffix declaration refuses the whole family before mutation', async () => {
+  test('a base declaration naming another node refuses the whole family before mutation', async () => {
     const family = suffixRosterFamily(BASE_SESSION_REF)
-    const taskDefaults = Object.fromEntries(
-      family.scopeRefs
-        .slice(0, -1)
-        .map((scopeRef) => [scopeRef.slice(scopeRef.indexOf(':task:') + 6), 'svc'])
-    )
-    const server = await serverWithTaskDefaults(taskDefaults)
+    const homes = { minisvc: 'lab' }
+    const server = await serverWithTaskDefaults(homes)
     try {
       await expect(
         preflightSuffixRosterFamily(server, {
+          baseScopeRef: family.baseScopeRef,
           scopeRefs: family.scopeRefs,
           capabilityHint: CAPABILITY_HINT,
           origin: 'federated-ingress',

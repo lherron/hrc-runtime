@@ -23,7 +23,7 @@ describe('hrcmail materialization hint', () => {
     )
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
-      'schemaVersion = 2\n\n[identity]\nharness = "codex"\n',
+      'version = 3\n\n[provisioning]\nharness = "codex"\n',
       'utf8'
     )
     setEnv('ASP_PROJECT', 'hrc-runtime')

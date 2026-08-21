@@ -94,9 +94,7 @@ async function runCredentialStrippedDm(
     await mkdir(agentRoot, { recursive: true })
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
-      agentId === 'rex'
-        ? 'schemaVersion = 2\n\n[placement]\ndefault_home_node = "svc-test"\n'
-        : 'schemaVersion = 2\n'
+      agentId === 'rex' ? 'version = 3\n\n[provisioning]\nnode = "svc-test"\n' : 'version = 3\n'
     )
   }
 
@@ -136,7 +134,7 @@ async function prepareNodePlacement(fixture: HrcServerTestFixture): Promise<{
   for (const agentId of ['clod', 'cody']) {
     const agentRoot = join(agentsRoot, agentId)
     await mkdir(agentRoot, { recursive: true })
-    await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
     await writeFile(join(agentRoot, 'SOUL.md'), `# ${agentId} test fixture\n`)
   }
   const checkoutRoot = join(fixture.tmpDir, 'checkouts')
@@ -288,9 +286,10 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
             svcDb.close()
           }
         },
-        ({ record }) =>
+        ({ record, delivery }) =>
           record?.body === 'T-06698 forwards through the DM entry point' &&
-          record.metadataJson?.['federationIngress'] !== undefined
+          record.metadataJson?.['federationIngress'] !== undefined &&
+          delivery?.state === 'delivered'
       )
 
       const labDb = openHrcDatabase(lab.dbPath)

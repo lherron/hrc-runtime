@@ -48,7 +48,8 @@ function deps(overrides: Partial<SummonGateDeps> = {}): SummonGateDeps {
     ledger: { activeAuthority: () => ({ ...localBinding(), state: 'active' }) },
     registry,
     policyFor: async () => ({
-      placement: { pins: {}, defaultHomeNode: 'max3' },
+      provisioning: { node: 'max3' },
+      placement: { pins: {}, homes: {} },
       claimsTask: false,
     }),
     capabilityFor: async () => ({ outcome: 'capable' }),
@@ -212,7 +213,7 @@ describe('capability is observed state, never authority', () => {
         ledger: { activeAuthority: () => undefined },
         localNodeId: 'svc',
         policyFor: async () => ({
-          placement: { pins: { 'archagent:ae-verify-only': 'lab' } },
+          placement: { pins: { 'archagent:ae-verify-only': 'lab' }, homes: {} },
           claimsTask: false,
         }),
         capabilityFor: async () => {

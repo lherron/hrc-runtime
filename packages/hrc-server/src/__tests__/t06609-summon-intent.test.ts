@@ -71,7 +71,8 @@ function deps(overrides: Partial<SummonGateDeps> = {}): SummonGateDeps {
     ledger: ledgerStub(undefined),
     registry: registryStub({ outcome: 'unbound' }),
     policyFor: async () => ({
-      placement: { pins: {}, defaultHomeNode: REMOTE },
+      provisioning: { node: REMOTE },
+      placement: { pins: {}, homes: {} },
       claimsTask: false,
     }),
     ...overrides,
@@ -131,7 +132,7 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     expect(result.evaluation.establishmentProvenance).toBe('explicit_local')
   })
 
-  test('implicit with no [placement] stanza still refuses, naming the stanza line', async () => {
+  test('implicit with no [provisioning] stanza still refuses, naming the stanza line', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'resolve-session',
@@ -142,17 +143,18 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     expect(result.evaluation.decision).toBe('refuse')
     if (result.evaluation.decision !== 'refuse') return
     expect(result.evaluation.reason).toBe('undeclared-placement')
-    expect(result.evaluation.diagnostic).toContain('[placement]')
+    expect(result.evaluation.diagnostic).toContain('[provisioning]')
   })
 
-  test('explicit_local wins over default_home_node = "local" and records itself', async () => {
+  test('explicit_local wins over invalid provisioning.node = "local" and records itself', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'resolve-session',
       intent: 'explicit_local',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'local' },
+          provisioning: { node: 'local' },
+          placement: { pins: {}, homes: {} },
           claimsTask: false,
         }),
       }),
@@ -176,9 +178,10 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
       intent: 'explicit_local',
       deps: deps({
         policyFor: async () => ({
+          provisioning: { node: LOCAL },
           placement: {
             pins: { 'hrc-runtime:T-06609': REMOTE },
-            defaultHomeNode: LOCAL,
+            homes: {},
           },
           claimsTask: false,
         }),
@@ -368,7 +371,7 @@ describe('gate events carry the typed intent', () => {
       intent: 'explicit_local',
       deps: deps({
         policyFor: async () => ({
-          placement: { pins: { 'hrc-runtime:T-06609': REMOTE } },
+          placement: { pins: { 'hrc-runtime:T-06609': REMOTE }, homes: {} },
           claimsTask: false,
         }),
         log: (_level, event, details) => {

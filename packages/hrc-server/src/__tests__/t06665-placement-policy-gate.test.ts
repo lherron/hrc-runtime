@@ -93,7 +93,7 @@ describe('T-06665 real placement policy in the live summon gate', () => {
   test('a declared default_home_node is read by the injected production resolver', async () => {
     await writeProfile(
       'declared',
-      ['schemaVersion = 1', '', '[placement]', 'default_home_node = "max3-test"'].join('\n')
+      ['version = 3', '', '[provisioning]', 'node = "max3-test"'].join('\n')
     )
     const captured = captureServerLog()
     const server = await startAdvisoryServer()
@@ -112,10 +112,12 @@ describe('T-06665 real placement policy in the live summon gate', () => {
     await writeProfile(
       'pinned',
       [
-        'schemaVersion = 1',
+        'version = 3',
         '',
-        '[placement]',
-        'default_home_node = "max3-test"',
+        '[provisioning]',
+        'node = "max3-test"',
+        '',
+        '[placement.pins]',
         '"hrc-runtime:T-PINNED" = "mini-test"',
       ].join('\n')
     )
@@ -135,7 +137,7 @@ describe('T-06665 real placement policy in the live summon gate', () => {
   })
 
   test('a real profile with no placement stanza remains visibly undeclared', async () => {
-    await writeProfile('legacy', 'schemaVersion = 1\n')
+    await writeProfile('legacy', 'version = 3\n')
     const captured = captureServerLog()
     const server = await startAdvisoryServer()
     try {

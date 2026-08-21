@@ -35,15 +35,11 @@ import type {
 } from 'hrc-core'
 import { isSuffixStartRuntimeRequest } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
+import { ROSTER_SLOT_TOKENS } from 'spaces-config'
 
 import { appendEvent } from '../event-notification-handlers'
 import { parseStartRuntimeRequest } from '../parsers/runtime'
-import {
-  ROSTER_SLOT_SUFFIXES,
-  rosterSlotTokens,
-  startSuffixRosterRuntime,
-  suffixStartRequestHash,
-} from '../roster-claim'
+import { rosterSlotTokens, startSuffixRosterRuntime, suffixStartRequestHash } from '../roster-claim'
 import { invalidateHostContext, rotateSessionContext } from '../runtime-control-handlers'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 
@@ -211,7 +207,7 @@ async function errorOf(promise: Promise<unknown>): Promise<{ code?: string; mess
 
 describe('T-07118 roster shape', () => {
   it('iterates the base slot first, then the ten fixed celestial slots', () => {
-    expect(ROSTER_SLOT_SUFFIXES).toHaveLength(10)
+    expect(ROSTER_SLOT_TOKENS).toHaveLength(10)
     expect(rosterSlotTokens('primary')).toEqual([
       'primary',
       'primary-nova',

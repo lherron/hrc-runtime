@@ -61,16 +61,17 @@ describe('materialization capability on a live isolated daemon', () => {
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
       [
-        'schemaVersion = 2',
+        'version = 3',
         '',
         '[identity]',
+        '[provisioning]',
         'harness = "codex"',
         '',
         '[spaces]',
         'base = []',
         '',
-        '[placement]',
-        'default_home_node = "local"',
+        '[provisioning]',
+        'node = "max3-test"',
         '',
       ].join('\n')
     )

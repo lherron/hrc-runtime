@@ -51,12 +51,13 @@ describe('resolveAgentHarness', () => {
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
       [
-        'schemaVersion = 2',
-        'priming_prompt = "test"',
+        'version = 3',
+        'priming = "test"',
         '',
         '[identity]',
         'display = "Pi"',
         'role = "coder"',
+        '[provisioning]',
         'harness = "pi"',
       ].join('\n')
     )
@@ -73,12 +74,13 @@ describe('resolveAgentHarness', () => {
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
       [
-        'schemaVersion = 2',
-        'priming_prompt = "test"',
+        'version = 3',
+        'priming = "test"',
         '',
         '[identity]',
         'display = "Codex"',
         'role = "coder"',
+        '[provisioning]',
         'harness = "codex"',
       ].join('\n')
     )
@@ -95,12 +97,13 @@ describe('resolveAgentHarness', () => {
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
       [
-        'schemaVersion = 2',
-        'priming_prompt = "test"',
+        'version = 3',
+        'priming = "test"',
         '',
         '[identity]',
         'display = "Claude"',
         'role = "coder"',
+        '[provisioning]',
         'harness = "claude-code"',
       ].join('\n')
     )
@@ -152,7 +155,7 @@ describe('buildManagedStartIntent', () => {
     await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
     await writeFile(
       join(projectRoot, 'agents', 'codex-agent', 'agent-profile.toml'),
-      'schemaVersion = 2\n\n[identity]\nharness = "codex"\n'
+      'version = 3\n\n[provisioning]\nharness = "codex"\n'
     )
   })
 

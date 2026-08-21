@@ -83,7 +83,8 @@ describe('T-06624 claim-birth summon authority', () => {
         },
       },
       policyFor: async () => ({
-        placement: { pins: {}, defaultHomeNode: 'svc' },
+        provisioning: { node: 'svc' },
+        placement: { pins: {}, homes: {} },
         claimsTask: options.claimsTask ?? true,
       }),
       capabilityFor: async () => ({ outcome: 'capable' as const }),

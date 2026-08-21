@@ -138,23 +138,25 @@ export function resolvePlacementPolicy(
     }
   }
 
-  const placement = profile.placement
+  const v3Profile = profile as unknown as {
+    claims_task?: boolean
+    provisioning?: { node?: string }
+    placement?: { pins: Record<string, string>; homes: Record<string, string> }
+  }
+  const placement = v3Profile.placement
+  const node = v3Profile.provisioning?.node
   return {
     outcome: 'resolved',
     profilePath,
     policy: {
-      claimsTask: profile.claims_task ?? false,
+      claimsTask: v3Profile.claims_task ?? false,
+      ...(node === undefined ? {} : { provisioning: { node } }),
       ...(placement === undefined
         ? {}
         : {
             placement: {
-              ...(placement.default_home_node === undefined
-                ? {}
-                : { defaultHomeNode: placement.default_home_node }),
               pins: { ...placement.pins },
-              ...(placement.task_defaults === undefined
-                ? {}
-                : { taskDefaults: { ...placement.task_defaults } }),
+              homes: { ...placement.homes },
             },
           }),
     },

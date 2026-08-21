@@ -214,7 +214,7 @@ describe('T-06870 retirement fence epochs', () => {
       policyFor: async () => ({
         outcome: 'resolved' as const,
         profilePath: '/isolated/max3/agent-profile.toml',
-        policy: { placement: { pins: {}, taskDefaults: {} }, claimsTask: false },
+        policy: { placement: { pins: {}, homes: {} }, claimsTask: false },
       }),
       observedFor: () => [],
     }

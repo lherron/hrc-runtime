@@ -35,9 +35,10 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
     await writeFile(
       join(agentRoot, 'agent-profile.toml'),
       [
-        'schemaVersion = 2',
+        'version = 3',
         '',
         '[identity]',
+        '[provisioning]',
         'harness = "codex"',
         '',
         '[spaces]',
@@ -208,7 +209,7 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
         },
       },
       policyFor: async () => ({
-        placement: { pins: { 'archagent:ae-verify-only': 'lab' } },
+        placement: { pins: { 'archagent:ae-verify-only': 'lab' }, homes: {} },
         claimsTask: false,
       }),
       capabilityFor: async () => {

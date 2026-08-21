@@ -83,7 +83,7 @@ describe('T-06674 ambient birth credential reach', () => {
     )
     const agentsRoot = join(fixture.tmpDir, 'agents')
     await mkdir(join(agentsRoot, 'clod'), { recursive: true })
-    await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'version = 3\n')
 
     const server = await createHrcServer(fixture.serverOpts())
     try {

@@ -45,11 +45,11 @@ function readDefaultScopeRole(agentRoot: string | undefined): string | undefined
   const profilePath = join(agentRoot, 'agent-profile.toml')
   if (!existsSync(profilePath)) return undefined
 
-  const source = readFileSync(profilePath, 'utf8').replace(
-    /^(\s*)schema_version(\s*=)/m,
-    '$1schemaVersion$2'
-  )
-  return parseAgentProfile(source, profilePath).identity?.default_scope_role
+  const source = readFileSync(profilePath, 'utf8')
+  const profile = parseAgentProfile(source, profilePath) as unknown as {
+    identity?: { role?: string }
+  }
+  return profile.identity?.role
 }
 
 /**

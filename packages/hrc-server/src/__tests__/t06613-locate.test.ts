@@ -75,9 +75,9 @@ function registryStub(behavior: RegistryConsultResult | Error): BindingRegistryC
 function policy(
   placement:
     | {
-        defaultHomeNode?: string
+        node?: string
         pins?: Record<string, string>
-        taskDefaults?: Record<string, string>
+        homes?: Record<string, string>
       }
     | undefined
 ): PlacementPolicyResolution {
@@ -86,15 +86,13 @@ function policy(
     profilePath: PROFILE,
     policy: {
       claimsTask: false,
+      ...(placement?.node === undefined ? {} : { provisioning: { node: placement.node } }),
       ...(placement === undefined
         ? {}
         : {
             placement: {
-              ...(placement.defaultHomeNode === undefined
-                ? {}
-                : { defaultHomeNode: placement.defaultHomeNode }),
               pins: placement.pins ?? {},
-              taskDefaults: placement.taskDefaults ?? {},
+              homes: placement.homes ?? {},
             },
           }),
     },
@@ -108,7 +106,7 @@ function deps(overrides: Partial<LocateDeps> = {}): LocateDeps {
     gateMode: 'advisory',
     ledger: ledgerStub(undefined),
     registry: registryStub({ outcome: 'unbound' }),
-    policyFor: async () => policy({ defaultHomeNode: 'max3' }),
+    policyFor: async () => policy({ node: 'max3' }),
     observedFor: (): readonly LocateObservedRuntime[] => [],
     ...overrides,
   } as LocateDeps
@@ -120,7 +118,7 @@ describe('locate — the three truths are reported separately', () => {
       scopeRef: SCOPE,
       deps: deps({
         ledger: ledgerStub(ledgerRow({ homeNodeId: 'mini' })),
-        policyFor: async () => policy({ defaultHomeNode: 'max3' }),
+        policyFor: async () => policy({ node: 'max3' }),
         observedFor: () => [
           {
             runtimeId: 'rt-1',
@@ -160,8 +158,7 @@ describe('locate — the three truths are reported separately', () => {
     const taskDefaultLocation = await locateScope({
       scopeRef: SCOPE,
       deps: deps({
-        policyFor: async () =>
-          policy({ taskDefaults: { 'T-06613': 'lab' }, defaultHomeNode: 'svc' }),
+        policyFor: async () => policy({ homes: { 'T-06613': 'lab' }, node: 'svc' }),
       }),
     })
     expect(taskDefaultLocation.declared).toMatchObject({
@@ -176,7 +173,7 @@ describe('locate — the three truths are reported separately', () => {
         policyFor: async () =>
           policy({
             pins: { 'hrc-runtime:T-06613': 'max3' },
-            taskDefaults: { 'T-06613': 'lab' },
+            homes: { 'T-06613': 'lab' },
           }),
       }),
     })
@@ -339,7 +336,7 @@ describe('skew — governing placement constraints disagreeing with a binding', 
       scopeRef: SCOPE,
       deps: deps({
         ledger: ledgerStub(ledgerRow({ homeNodeId: 'max3', placementEpoch: 3 })),
-        policyFor: async () => policy({ taskDefaults: { 'T-06613': 'lab' } }),
+        policyFor: async () => policy({ homes: { 'T-06613': 'lab' } }),
       }),
     })
 
@@ -349,7 +346,7 @@ describe('skew — governing placement constraints disagreeing with a binding', 
       taskDefaultNodeId: 'lab',
       boundNodeId: 'max3',
     })
-    expect(location.skew?.detail).toContain('[placement.task-defaults] "T-06613" = "lab"')
+    expect(location.skew?.detail).toContain('[placement.homes] "T-06613" = "lab"')
   })
 
   test('a task-default agreeing with the binding is not skew', async () => {
@@ -357,7 +354,7 @@ describe('skew — governing placement constraints disagreeing with a binding', 
       scopeRef: SCOPE,
       deps: deps({
         ledger: ledgerStub(ledgerRow({ homeNodeId: 'lab' })),
-        policyFor: async () => policy({ taskDefaults: { 'T-06613': 'lab' } }),
+        policyFor: async () => policy({ homes: { 'T-06613': 'lab' } }),
       }),
     })
 
@@ -381,7 +378,7 @@ describe('skew — governing placement constraints disagreeing with a binding', 
             establishmentProvenance: 'explicit_local',
           })
         ),
-        policyFor: async () => policy({ defaultHomeNode: 'svc' }),
+        policyFor: async () => policy({ node: 'svc' }),
       }),
     })
 
@@ -438,7 +435,7 @@ describe('NOT skew — expected divergence per provenance class', () => {
             ledgerRow({ homeNodeId: boundTo, establishmentProvenance: provenance })
           ),
           // default_home_node says max3; the scope lives on mini. Expected.
-          policyFor: async () => policy({ defaultHomeNode: 'max3' }),
+          policyFor: async () => policy({ node: 'max3' }),
         }),
       })
 
@@ -467,20 +464,17 @@ describe('NOT skew — expected divergence per provenance class', () => {
     expect(location.declared.source).toBe('none')
   })
 
-  test('default_home_node = "local" resolves to this node and is reported as such', async () => {
+  test('provisioning.node = "local" is reported unavailable as a deleted sentinel', async () => {
     const location = await locateScope({
       scopeRef: SCOPE,
       deps: deps({
         localNodeId: 'max3',
         ledger: ledgerStub(ledgerRow({ homeNodeId: 'max3' })),
-        policyFor: async () => policy({ defaultHomeNode: 'local' }),
+        policyFor: async () => policy({ node: 'local' }),
       }),
     })
 
-    expect(location.declared).toMatchObject({
-      source: 'default_home_node(local)',
-      nodeId: 'max3',
-    })
+    expect(location.declared).toMatchObject({ source: 'unavailable' })
     expect(location.skew).toBeUndefined()
   })
 
@@ -732,9 +726,7 @@ describe('scanLedgerForSkew — the doctor surface', () => {
         }),
       ],
       policyFor: async (scopeRef) =>
-        scopeRef === SCOPE
-          ? policy({ pins: { [PIN_KEY]: 'mini' } })
-          : policy({ defaultHomeNode: 'mini' }),
+        scopeRef === SCOPE ? policy({ pins: { [PIN_KEY]: 'mini' } }) : policy({ node: 'mini' }),
     })
 
     expect(scan.scanned).toBe(2)
@@ -757,7 +749,7 @@ describe('scanLedgerForSkew — the doctor surface', () => {
         }),
       ],
       localNodeId: 'max3',
-      policyFor: async () => policy({ defaultHomeNode: 'svc' }),
+      policyFor: async () => policy({ node: 'svc' }),
     })
 
     expect(report.skewed).toHaveLength(1)

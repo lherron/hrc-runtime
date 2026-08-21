@@ -1044,6 +1044,7 @@ class HrcServerInstance implements HrcServer {
                 harness: parsed.runtimeIntent.harness,
               }
               await preflightSuffixRosterFamily(this, {
+                baseScopeRef: family.baseScopeRef,
                 scopeRefs: family.scopeRefs,
                 capabilityHint,
                 origin: 'federated-ingress',

@@ -71,7 +71,8 @@ describe('T-06624 claim-birth on a live isolated daemon', () => {
       Object.assign(server, {
         registryClient: registryStub(),
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'svc-test' },
+          provisioning: { node: 'svc-test' },
+          placement: { pins: {}, homes: {} },
           claimsTask: true,
         }),
         capabilityFor: async () => ({ outcome: 'capable' }),
@@ -116,7 +117,8 @@ describe('T-06624 claim-birth on a live isolated daemon', () => {
       Object.assign(server, {
         registryClient: registryStub(),
         policyFor: async () => ({
-          placement: { pins: {}, defaultHomeNode: 'svc-test' },
+          provisioning: { node: 'svc-test' },
+          placement: { pins: {}, homes: {} },
           claimsTask: true,
         }),
         capabilityFor: async () => ({ outcome: 'capable' }),

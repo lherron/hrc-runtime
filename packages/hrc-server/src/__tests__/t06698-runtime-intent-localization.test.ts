@@ -15,7 +15,7 @@ describe('T-06698 federated runtime intent localization', () => {
     try {
       const agentsRoot = join(root, 'agents')
       await mkdir(join(agentsRoot, 'clod'), { recursive: true })
-      await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'schemaVersion = 2\n')
+      await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'version = 3\n')
       const checkoutRoot = join(root, 'checkouts')
       const localProjectRoot = join(checkoutRoot, 'hrc-runtime')
       await mkdir(join(localProjectRoot, '.git'), { recursive: true })

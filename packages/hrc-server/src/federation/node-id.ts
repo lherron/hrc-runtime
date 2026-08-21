@@ -2,7 +2,7 @@
  * Node identity grammar (federation spec §3).
  *
  * A nodeId is a standard token `[A-Za-z0-9._-]{1,64}`. The literal `local` is
- * reserved as the placement sentinel (`default_home_node = "local"`, §5) and can
+ * rejected because the deleted placement sentinel (`provisioning.node = "local"`) can
  * never name a real node.
  *
  * No network concern lives here — this is pure grammar, shared by daemon

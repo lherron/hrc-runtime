@@ -121,7 +121,8 @@ describe('T-07138 post-mint collective establishment', () => {
     client: BindingRegistryClient,
     policyFor: HrcServerInstanceForHandlers['policyFor'] = async () => ({
       claimsTask: false,
-      placement: { defaultHomeNode: 'svc', pins: {} },
+      provisioning: { node: 'svc' },
+      placement: { pins: {}, homes: {} },
     })
   ): HrcServerInstanceForHandlers {
     return {
@@ -301,7 +302,7 @@ describe('T-07138 post-mint collective establishment', () => {
   test('projects policy refusal and binding conflict as visible noncanonical shadows', async () => {
     const policyServer = reconciliationServer(registryClient(registry), async () => ({
       claimsTask: false,
-      placement: { pins: { 'arris:reg-t07138': 'lab' } },
+      placement: { pins: { 'arris:reg-t07138': 'lab' }, homes: {} },
     }))
     expect(
       await reconcileExternalRegistrationCollectiveEstablishment(policyServer, REGISTRATION_ID)
@@ -339,7 +340,8 @@ describe('T-07138 post-mint collective establishment', () => {
   test('projects a remote default_home_node as placement_refused instead of explicit-local canonical', async () => {
     const server = reconciliationServer(registryClient(registry), async () => ({
       claimsTask: false,
-      placement: { defaultHomeNode: 'lab', pins: {} },
+      provisioning: { node: 'lab' },
+      placement: { pins: {}, homes: {} },
     }))
 
     expect(
@@ -363,7 +365,8 @@ describe('T-07138 post-mint collective establishment', () => {
 
     const remotePolicy = reconciliationServer(registryClient(registry), async () => ({
       claimsTask: false,
-      placement: { defaultHomeNode: 'lab', pins: {} },
+      provisioning: { node: 'lab' },
+      placement: { pins: {}, homes: {} },
     }))
     expect(
       await reconcileExternalRegistrationCollectiveEstablishment(remotePolicy, REGISTRATION_ID)
@@ -392,7 +395,7 @@ describe('T-07138 post-mint collective establishment', () => {
     await reconcileExternalRegistrationCollectiveEstablishment(
       reconciliationServer(registryClient(registry), async () => ({
         claimsTask: false,
-        placement: { pins: { 'arris:reg-t07138': 'lab' } },
+        placement: { pins: { 'arris:reg-t07138': 'lab' }, homes: {} },
       })),
       REGISTRATION_ID
     )

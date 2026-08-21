@@ -49,6 +49,11 @@ function loadProjectTarget(
   return parseTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
 }
 
+function targetHarness(target: TargetDefinition | undefined): string | undefined {
+  return (target as unknown as { provisioning?: { harness?: string } } | undefined)?.provisioning
+    ?.harness
+}
+
 /**
  * Resolve the effective provider + harness frontend for an agent from its
  * `agent-profile.toml`, overlaid with any matching `asp-targets.toml` entry.
@@ -64,22 +69,20 @@ export function resolveAgentHarness(args: {
   const projectTarget = loadProjectTarget(projectRoot, agentId)
   const profilePath = join(agentRoot, 'agent-profile.toml')
   if (!existsSync(profilePath)) {
+    const harness = targetHarness(projectTarget)
     return {
-      provider: resolveProviderForHarness(projectTarget?.harness),
-      harness: projectTarget?.harness,
+      provider: resolveProviderForHarness(harness),
+      harness,
     }
   }
   try {
-    const source = readFileSync(profilePath, 'utf8').replace(
-      /^(\s*)schema_version(\s*=)/m,
-      '$1schemaVersion$2'
-    )
+    const source = readFileSync(profilePath, 'utf8')
     const profile = parseAgentProfile(source, profilePath)
     const primingPrompt = resolveAgentPrimingPrompt(profile, agentRoot)
     const effective = mergeAgentWithProjectTarget(
       {
         ...profile,
-        ...(primingPrompt !== undefined ? { priming_prompt: primingPrompt } : {}),
+        ...(primingPrompt !== undefined ? { priming: primingPrompt } : {}),
       },
       projectTarget,
       'task'
@@ -89,9 +92,10 @@ export function resolveAgentHarness(args: {
       harness: effective.harness,
     }
   } catch {
+    const harness = targetHarness(projectTarget)
     return {
-      provider: resolveProviderForHarness(projectTarget?.harness),
-      harness: projectTarget?.harness,
+      provider: resolveProviderForHarness(harness),
+      harness,
     }
   }
 }

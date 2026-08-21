@@ -34,7 +34,7 @@ import type {
   PlacementLedgerRepository,
   RegistryRetirementRecord,
 } from 'hrc-store-sqlite'
-import type { RuntimePlacement } from 'spaces-config'
+import { ROSTER_SLOT_TOKENS, type RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'
@@ -244,11 +244,15 @@ export type SummonGateResult = {
 
 /** Compiled placement policy (spaces-config `ResolvedAgentPolicy`, C-11100). */
 export type SummonGatePolicy = {
+  provisioning?:
+    | {
+        node?: string | undefined
+      }
+    | undefined
   placement?:
     | {
-        defaultHomeNode?: string | undefined
         pins: Record<string, string>
-        taskDefaults?: Record<string, string> | undefined
+        homes: Record<string, string>
       }
     | undefined
   claimsTask: boolean
@@ -299,7 +303,7 @@ export type SummonGateRequest = {
 /**
  * A key used by one of the two scoped placement policy levels.
  *
- * Exact pins use `project:task`; task defaults use only `task` and therefore
+ * Exact pins use `project:task`; placement homes use only `task` and therefore
  * match that task name in every project. Returns undefined when the requested
  * key cannot be formed from the scope.
  */
@@ -317,6 +321,26 @@ export function placementPinKey(
   if (level === 'task-default') return parsed.taskId
   if (parsed.projectId === undefined) return undefined
   return `${parsed.projectId}:${parsed.taskId}`
+}
+
+export function placementHomeDeclaration(
+  scopeRef: string,
+  homes: Record<string, string> | undefined
+): { key: string; nodeId: string; inherited: boolean } | undefined {
+  if (homes === undefined) return undefined
+  const taskId = placementPinKey(scopeRef, 'task-default')
+  if (taskId === undefined) return undefined
+  const exact = homes[taskId]
+  if (exact !== undefined) return { key: taskId, nodeId: exact, inherited: false }
+
+  for (const suffix of ROSTER_SLOT_TOKENS) {
+    const marker = `-${suffix}`
+    if (!taskId.endsWith(marker)) continue
+    const base = taskId.slice(0, -marker.length)
+    const inherited = homes[base]
+    if (inherited !== undefined) return { key: base, nodeId: inherited, inherited: true }
+  }
+  return undefined
 }
 
 function allow(
@@ -418,12 +442,12 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
     '',
     "Add to the agent's agent-profile.toml:",
     '',
-    '  [placement]',
-    `  default_home_node = "${localNodeId}"`,
+    '  [provisioning]',
+    `  node = "${localNodeId}"`,
     '',
     'Or pin this exact scope to a node:',
     '',
-    '  [placement]',
+    '  [placement.pins]',
     `  "${placementPinKey(scopeRef) ?? '<project>:<task>'}" = "${localNodeId}"`,
   ].join('\n')
 }
@@ -434,14 +458,11 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
  * Precedence, highest first:
  *
  *   1. **exact pin** — a hard constraint on every path (§5).
- *   2. **task default** — cross-project task-name policy with the same matched
+ *   2. **placement home** — cross-project task-name policy with the same matched
  *      constraint semantics as a pin. Neither is overridden by explicitness.
  *   3. **explicit_local** — for an unconstrained scope, the operator's start at this
  *      node IS the placement declaration (§5 "explicit operator start wins").
- *   4. **default_home_node** — where implicit summons route. `"local"` is the
- *      reserved sentinel meaning "the node accepting this birth", resolved ONCE
- *      here to the daemon's own configured nodeId and never reinterpreted
- *      downstream.
+ *   4. **provisioning.node** — where implicit summons route.
  *
  * Reaching this function at all already means the registry answered `unbound`,
  * which is what confines explicit-start-wins to genuinely virgin scopes: it
@@ -474,7 +495,7 @@ function resolveDesignatedHome(
     if (isReservedNodeId(pin)) {
       return refuse(
         'invalid-pin',
-        `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a pin. Name a real node, or move the value to default_home_node.`
+        `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is not a node id. Name a real node.`
       )
     }
     return {
@@ -484,20 +505,18 @@ function resolveDesignatedHome(
     }
   }
 
-  const taskDefaultKey = placementPinKey(scopeRef, 'task-default')
-  const taskDefault =
-    taskDefaultKey === undefined ? undefined : placement?.taskDefaults?.[taskDefaultKey]
-  if (taskDefaultKey !== undefined && taskDefault !== undefined) {
-    if (isReservedNodeId(taskDefault)) {
+  const home = placementHomeDeclaration(scopeRef, placement?.homes)
+  if (home !== undefined) {
+    if (isReservedNodeId(home.nodeId)) {
       return refuse(
         'invalid-pin',
-        `Placement task default [placement.task-defaults] "${taskDefaultKey}" = "${taskDefault}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a task default. Name a real node, or move the value to default_home_node.`
+        `Placement home [placement.homes] "${home.key}" = "${home.nodeId}" is invalid: "local" is not a node id. Name a real node.`
       )
     }
     return {
-      homeNodeId: taskDefault,
+      homeNodeId: home.nodeId,
       provenance: 'task_default',
-      matchedConstraint: { kind: 'task-default', key: taskDefaultKey },
+      matchedConstraint: { kind: 'task-default', key: home.key },
     }
   }
 
@@ -510,18 +529,16 @@ function resolveDesignatedHome(
     return { homeNodeId: localNodeId, provenance: 'explicit_local' }
   }
 
-  if (placement === undefined) {
-    return refuse('undeclared-placement', undeclaredPlacementDiagnostic(scopeRef, localNodeId))
-  }
-
-  const fallback = placement.defaultHomeNode
+  const fallback = policy?.provisioning?.node
   if (fallback === undefined) {
     return refuse('undeclared-placement', undeclaredPlacementDiagnostic(scopeRef, localNodeId))
   }
 
   if (isReservedNodeId(fallback)) {
-    // Resolved once, here, to this daemon's own configured nodeId.
-    return { homeNodeId: localNodeId, provenance: 'default_home_node(local)' }
+    return refuse(
+      'invalid-pin',
+      `Provisioning node "${fallback}" is invalid: "local" is not a node id. Name a real node.`
+    )
   }
   return { homeNodeId: fallback, provenance: 'default_home_node' }
 }
@@ -604,7 +621,7 @@ async function decideVirginPolicyPlacement(
       const taskKey = designated.matchedConstraint.key
       return refuse(
         'pin-mismatch',
-        `${scopeRef} matches task default [placement.task-defaults] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that task-default line.`,
+        `${scopeRef} matches placement home [placement.homes] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that home line.`,
         {
           homeNodeId: designated.homeNodeId,
           candidateEstablishmentProvenance: 'task_default',
@@ -623,7 +640,7 @@ async function decideVirginPolicyPlacement(
 
   return refuse(
     'routed-elsewhere',
-    `${scopeRef} routes to ${designated.homeNodeId} by default_home_node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
+    `${scopeRef} routes to ${designated.homeNodeId} by provisioning.node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
     {
       homeNodeId: designated.homeNodeId,
       ...(designated.provenance === 'explicit_local' ||
