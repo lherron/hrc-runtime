@@ -9,6 +9,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -348,10 +353,38 @@ function seedForensicsLedger(fixture: HrcServerTestFixture): void {
   }
 }
 
+/**
+ * The scope handles under test name a real project id. Project resolution
+ * marker-scans a search root for a canonical checkout of that project, so
+ * without a provisioned root these tests silently depend on the developer's
+ * machine having that project cloned next to this one. Provision a real
+ * canonical checkout in a temp search root instead: resolution still runs for
+ * real and still has to find the project by marker scan — only the ambient
+ * machine dependency is removed.
+ */
+let projectSearchRoot: string | undefined
+
+function provisionProjectSearchRoot(projectIds: readonly string[]): string {
+  const root = mkdtempSync(join(tmpdir(), 'hrc-forensics-projects-'))
+  for (const projectId of projectIds) {
+    const projectRoot = join(root, projectId)
+    mkdirSync(projectRoot, { recursive: true })
+    const init = spawnSync('git', ['init', '-q'], { cwd: projectRoot, stdio: 'ignore' })
+    if (init.status !== 0) {
+      throw new Error(`failed to provision canonical checkout fixture for ${projectId}`)
+    }
+  }
+  return root
+}
+
 function cliEnv(fixture: HrcServerTestFixture): Record<string, string> {
+  if (projectSearchRoot === undefined) {
+    throw new Error('project search root fixture is not provisioned')
+  }
   return {
     HRC_RUNTIME_DIR: fixture.runtimeRoot,
     HRC_STATE_DIR: fixture.stateRoot,
+    HRC_PROJECT_SEARCH_ROOTS: projectSearchRoot,
   }
 }
 
@@ -368,6 +401,7 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 
 beforeEach(async () => {
+  projectSearchRoot = provisionProjectSearchRoot(['agent-control-plane', 'hrc-runtime'])
   fixture = await createHrcTestFixture('hrc-broker-forensics-')
   seedForensicsLedger(fixture)
   server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
@@ -379,6 +413,10 @@ afterEach(async () => {
     server = undefined
   }
   await fixture.cleanup()
+  if (projectSearchRoot !== undefined) {
+    rmSync(projectSearchRoot, { recursive: true, force: true })
+    projectSearchRoot = undefined
+  }
 })
 
 describe('hrc monitor events', () => {

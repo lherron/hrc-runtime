@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
@@ -11,6 +15,42 @@ import {
 } from '../selector-resolve'
 
 const scopeRef = 'agent:room-coordinator:project:taskboard:task:T-05967'
+
+/**
+ * Resolving the scope handle below marker-scans a search root for a canonical
+ * checkout of its project. Without a provisioned root this test silently
+ * depends on the developer's machine having that project cloned next to this
+ * one. Provision a real canonical checkout in a temp search root instead: the
+ * resolution path still runs for real and still has to find the project by
+ * marker scan — only the ambient machine dependency is removed.
+ */
+let projectSearchRoot: string | undefined
+let originalProjectSearchRoots: string | undefined
+
+beforeEach(() => {
+  projectSearchRoot = mkdtempSync(join(tmpdir(), 'hrc-selector-projects-'))
+  const projectRoot = join(projectSearchRoot, 'taskboard')
+  mkdirSync(projectRoot, { recursive: true })
+  const init = spawnSync('git', ['init', '-q'], { cwd: projectRoot, stdio: 'ignore' })
+  if (init.status !== 0) {
+    throw new Error('failed to provision canonical checkout fixture for taskboard')
+  }
+  originalProjectSearchRoots = process.env['HRC_PROJECT_SEARCH_ROOTS']
+  process.env['HRC_PROJECT_SEARCH_ROOTS'] = projectSearchRoot
+})
+
+afterEach(() => {
+  if (originalProjectSearchRoots === undefined) {
+    Reflect.deleteProperty(process.env, 'HRC_PROJECT_SEARCH_ROOTS')
+  } else {
+    process.env['HRC_PROJECT_SEARCH_ROOTS'] = originalProjectSearchRoots
+  }
+  originalProjectSearchRoots = undefined
+  if (projectSearchRoot !== undefined) {
+    rmSync(projectSearchRoot, { recursive: true, force: true })
+    projectSearchRoot = undefined
+  }
+})
 
 function runtime(runtimeId: string, status: string): HrcRuntimeSnapshot {
   return {
