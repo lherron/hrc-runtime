@@ -4,31 +4,44 @@ status: active
 owner_project: hrc-runtime
 scope: HRC-owned mobile suffix-roster placement and federated provisioning
 predicate: >
-  Mobile suffix-roster families are finite: each allowed base and every member
-  produced by HRC's fixed ordered suffix list has an exact placement task-default
-  naming the same concrete home node before the surface is enabled. Implicit
-  suffix starts are routed by origin HRC from policy and registry state; ACP
-  supplies no node assertion. A remote home is invoked only through the
-  authenticated, capability-advertised rosterStart peer verb. The receiver
-  independently preflights retirement, authority and binding state, exact local
-  policy, and materialization capability for the whole family before mutation,
-  localizes the runtime intent, and then owns the existing atomic roster
-  claim/start and durable idempotency record. Operator CLI starts remain
-  explicit_local. Retryable peer failure is synchronous runtime_unavailable and
-  does not use the message outbox.
-authority: hrcchat#18964
+  Mobile suffix-roster families are finite. Every enabled ACP quick-pick base
+  has a concrete declared home before the surface is enabled. A declared base
+  reserves every member produced by HRC's fixed ordered suffix list on that
+  home, and profile validation rejects pins or homes for reserved members. An
+  undeclared family may instead use an explicit typed provision.node directive;
+  it is validated at both origin and receiver against the federation registry
+  and the receiver's own profile, and any placement conflict is a typed refusal
+  before mutation. No placement is inferred from caller identity, transport,
+  connection, or environment. Origin HRC routes the whole family from registry
+  binding state and the baseSessionRef-derived family home. A remote home is
+  invoked only through the authenticated, capability-advertised rosterStart
+  peer verb. The receiver independently preflights retirement, authority,
+  binding state, placement, and materialization capability for the whole family
+  before mutation, localizes the runtime intent, and then owns the existing
+  atomic roster claim/start and durable idempotency record. Operator starts
+  without an explicit node directive remain explicit-local. Retryable peer
+  failure is synchronous runtime_unavailable and does not use the message
+  outbox.
+authority: Lance / wrkq:T-07398
 source:
   - hrcchat#18964
+  - hrcchat#20022
+  - wrkq:T-07398
   - packages/hrc-server/src/roster-claim.ts
   - packages/hrc-server/src/federation/runtime-intent-localization.ts
   - packages/hrc-server/src/federation/peer-protocol.ts
   - docs/federation-peer-protocol.md
 required_tests:
   - just verify
+  - wrkq:T-07398 parser refusal for reserved-member pins and homes
+  - wrkq:T-07398 exact-first and suffix-first family placement parity across restart
+  - wrkq:T-07398 origin and receiver directive validation, conflict, and no-mutation tests
   - live multi-node rosterStart topology proof across max3, svc, and lab
-last_verified: 2026-08-12
+  - live multi-node undeclared-family directive and declared-family conflict proof
+last_verified: 2026-08-21
 reopen_when: >
-  The mobile base set, fixed roster suffix list, exact task-default placement
-  surface, peer rosterStart contract, or home-local idempotency ownership changes.
+  The mobile base set, fixed roster suffix list, reserved-family placement
+  derivation, explicit provision directive admission, peer rosterStart contract,
+  or home-local idempotency ownership changes.
 supersedes: []
 superseded_by: []
