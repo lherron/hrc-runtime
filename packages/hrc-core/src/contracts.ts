@@ -153,11 +153,22 @@ export type HrcExecutionIntent = {
   autoLaunchInteractive?: boolean | undefined
   allowFallback?: boolean | undefined
   /**
-   * T-05177: when explicitly `false`, this dispatch is an autonomous one-shot
-   * that must NOT be deferred into a live interactive broker surface for the
-   * same scope (the codex "DM lands in the operator's open TUI" reuse). HRC
-   * gives the turn its own runtime instead. Undefined ⇒ treated as `true`
-   * (preserves DM-into-open-TUI for every existing caller).
+   * T-05177 / T-07397: when explicitly `false`, this dispatch is never delivered
+   * into a live interactive surface that the DISPATCHING CALLER did not itself
+   * establish. HRC satisfies it in exactly one of three ways:
+   *   - a fresh runtime, when the scope has no healthy matching live surface;
+   *   - reuse of the caller's OWN broker invocation, proven by carrying
+   *     `establishedBrokerInvocationId` (see DispatchTurnRequest) equal to that
+   *     runtime's active invocation — this is what makes multi-turn sessions
+   *     possible without weakening the guarantee;
+   *   - otherwise a loud, ZERO-MUTATION failure
+   *     (runtime-unavailable / 'caller-surface-reuse-refusal'). Refusing
+   *     delivery into a surface is never authority to invalidate it: the live
+   *     runtime's status, activeRunId and in-flight turn are left untouched.
+   * "Autonomous one-shot" was the original framing (the codex "DM lands in the
+   * operator's open TUI" reuse); the rule is about SURFACE OWNERSHIP, not turn
+   * count. Undefined ⇒ treated as `true` (preserves DM-into-open-TUI for every
+   * existing caller).
    */
   allowInteractiveSurfaceReuse?: boolean | undefined
   /**

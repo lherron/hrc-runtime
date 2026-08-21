@@ -126,6 +126,12 @@ function dispatchRequestHash(input: {
   attachments?: unknown
   whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   repair?: unknown
+  // T-07397: surface-ownership identity is part of the SEMANTIC request, so it
+  // must be hashed. `canonicalDispatchJson` always emits the key (absent
+  // serializes as null), giving absent != present != different-value — an
+  // idempotency key cannot be replayed with a substituted identity to smuggle
+  // reuse of a surface the replaying caller does not own.
+  establishedBrokerInvocationId?: string | undefined
 }): string {
   return createHash('sha256')
     .update(
@@ -136,6 +142,7 @@ function dispatchRequestHash(input: {
         attachments: input.attachments,
         whenBusy: input.whenBusy,
         repair: input.repair,
+        establishedBrokerInvocationId: input.establishedBrokerInvocationId,
       })
     )
     .digest('hex')
@@ -453,6 +460,7 @@ export async function handleDispatchTurn(
     attachments: body.attachments,
     whenBusy: body.whenBusy,
     repair: body.repair,
+    establishedBrokerInvocationId: body.establishedBrokerInvocationId,
   })
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
@@ -520,6 +528,9 @@ export async function handleDispatchTurn(
       waitForCompletion: false,
       whenBusy: body.whenBusy,
       responseFormat: body.responseFormat,
+      ...(body.establishedBrokerInvocationId !== undefined
+        ? { establishedBrokerInvocationId: body.establishedBrokerInvocationId }
+        : {}),
       ...(body.firstTurnTimeoutMs !== undefined
         ? { firstTurnTimeoutMs: body.firstTurnTimeoutMs }
         : {}),
@@ -1011,6 +1022,8 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   repairCorrelation?: JsonRepairRunCorrelation | undefined
   responseFormat?: HrcTurnResponseFormat | undefined
   coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
+  /** T-07397 surface-ownership proof; see DispatchTurnRequest. */
+  establishedBrokerInvocationId?: string | undefined
 }
 
 export async function dispatchTurnForSession(
@@ -1198,6 +1211,12 @@ async function dispatchAdmittedTurnForSession(
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
       codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+      // T-07397: the caller's proof that it owns this surface. Compared by
+      // exact identity against the runtime's ACTIVE invocation; absent means
+      // "owns nothing", which can only ever refuse.
+      ...(options.establishedBrokerInvocationId !== undefined
+        ? { establishedBrokerInvocationId: options.establishedBrokerInvocationId }
+        : {}),
     }
   )
 

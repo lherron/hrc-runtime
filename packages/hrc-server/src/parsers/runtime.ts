@@ -569,6 +569,12 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   )
   const whenBusy = parseOptionalDispatchTurnWhenBusy(input['whenBusy'])
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
+  // T-07397 surface-ownership proof; validated as a non-empty string so an empty
+  // value can never masquerade as "I established this invocation".
+  const establishedBrokerInvocationId = readOptionalNonEmptyStringField(
+    input,
+    'establishedBrokerInvocationId'
+  )
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
   const firstTurnTimeoutMs = parseOptionalFirstTurnTimeoutMs(input['firstTurnTimeoutMs'])
   const origin = parseOptionalDispatchOrigin(input['origin'])
@@ -587,6 +593,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(waitFor !== undefined ? { waitFor } : {}),
     ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
+    ...(establishedBrokerInvocationId !== undefined ? { establishedBrokerInvocationId } : {}),
     ...(repair !== undefined ? { repair } : {}),
     ...(firstTurnTimeoutMs !== undefined ? { firstTurnTimeoutMs } : {}),
     ...(origin !== undefined ? { origin } : {}),

@@ -816,6 +816,137 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
     ).toBe(false)
   })
 
+  // ---- v7 (approved) — surface OWNERSHIP, proven by exact invocation identity.
+  // v4 refused any healthy matching live runtime, which broke multi-turn
+  // sessions from turn 2 (a scope stops being free once turn 1 runs) — found by
+  // live e2e, C-15300. v7 lets a refusing caller continue the invocation IT
+  // established, and only that one.
+
+  const CLAUDE_TUI = {
+    controllerKind: 'harness-broker' as const,
+    transport: 'tmux',
+    status: 'ready',
+    provider: 'anthropic' as const,
+    brokerDriver: 'claude-code-tmux' as const,
+    inputDispatchable: true,
+    activeInvocationId: 'inv-owned-by-this-caller',
+  }
+  const refusingClaude = () => normalizeClaudeInteractiveBrokerIntent(claudeSdkIntent(false))
+
+  it('(e) T-07397 v7: a refusing caller MAY continue the invocation it established', async () => {
+    // The C-15300 trap: this is session turn 2+ on the caller's own pane.
+    expect(
+      decideInteractiveBrokerAdmission(refusingClaude(), CLAUDE_TUI, {
+        ...ALL_BROKERS,
+        establishedBrokerInvocationId: 'inv-owned-by-this-caller',
+      })
+    ).toEqual({ decision: 'broker-reuse', allowedBrokerDriver: 'claude-code-tmux' })
+  })
+
+  it('(f) T-07397 v7: absent or mismatched identity never reuses', async () => {
+    // Absent — a first turn owns nothing yet, and a cross-caller dispatch that
+    // simply omits the field must not be handed someone else's surface.
+    expect(decideInteractiveBrokerAdmission(refusingClaude(), CLAUDE_TUI, ALL_BROKERS)).toEqual({
+      decision: 'runtime-unavailable',
+      reason: CALLER_SURFACE_REUSE_REFUSAL,
+    })
+    // Mismatched — a different caller naming ITS invocation cannot borrow this one.
+    expect(
+      decideInteractiveBrokerAdmission(refusingClaude(), CLAUDE_TUI, {
+        ...ALL_BROKERS,
+        establishedBrokerInvocationId: 'inv-belongs-to-someone-else',
+      })
+    ).toEqual({ decision: 'runtime-unavailable', reason: CALLER_SURFACE_REUSE_REFUSAL })
+  })
+
+  it('(g) T-07397 v7: a STALE identity loses ownership when the surface rotates', async () => {
+    // The operator's pane restarted, so the runtime is driving a new invocation.
+    // A caller holding the old id no longer owns this surface and must be refused
+    // — ownership is exact identity against the ACTIVE invocation, never "was
+    // mine once" and never "is a claude-code-tmux runtime". This is the Flaw 2
+    // boundary: the refusal must not become authority over the operator's pane.
+    expect(
+      decideInteractiveBrokerAdmission(
+        refusingClaude(),
+        { ...CLAUDE_TUI, activeInvocationId: 'inv-after-operator-restart' },
+        { ...ALL_BROKERS, establishedBrokerInvocationId: 'inv-owned-by-this-caller' }
+      )
+    ).toEqual({ decision: 'runtime-unavailable', reason: CALLER_SURFACE_REUSE_REFUSAL })
+    // A runtime with no active invocation matches nothing, whatever is carried.
+    const { activeInvocationId: _dropped, ...noActive } = CLAUDE_TUI
+    expect(
+      decideInteractiveBrokerAdmission(refusingClaude(), noActive, {
+        ...ALL_BROKERS,
+        establishedBrokerInvocationId: 'inv-owned-by-this-caller',
+      })
+    ).toEqual({ decision: 'runtime-unavailable', reason: CALLER_SURFACE_REUSE_REFUSAL })
+  })
+
+  it('(h) T-07397 v7: a true multi-turn session runs turn 1 then continues on turn 2', async () => {
+    const intent = refusingClaude()
+    // Turn 1: scope free -> fresh pane. The session now owns invocation X.
+    const turn1 = decideInteractiveBrokerAdmission(intent, null, ALL_BROKERS)
+    expect(turn1.decision).toBe('broker-start')
+    const established = 'inv-session-turn-1'
+    const liveAfterTurn1 = { ...CLAUDE_TUI, activeInvocationId: established }
+    // Turn 2 carrying it: continues the SAME pane — this is the continuity that
+    // T-07397 exists to restore.
+    expect(
+      decideInteractiveBrokerAdmission(intent, liveAfterTurn1, {
+        ...ALL_BROKERS,
+        establishedBrokerInvocationId: established,
+      }).decision
+    ).toBe('broker-reuse')
+    // Turn 2 WITHOUT it reproduces the C-15300 failure exactly — pinned so the
+    // regression cannot return silently.
+    expect(decideInteractiveBrokerAdmission(intent, liveAfterTurn1, ALL_BROKERS)).toEqual({
+      decision: 'runtime-unavailable',
+      reason: CALLER_SURFACE_REUSE_REFUSAL,
+    })
+  })
+
+  it('(i) T-07397 v7: identity is inside the idempotency fence', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: 'rt-t07397-idem',
+      invocationId: 'inv-t07397-idem',
+      transport: 'tmux',
+      status: 'ready',
+      provider: 'anthropic',
+      harness: 'claude-code',
+      brokerDriver: 'claude-code-tmux',
+    })
+    installDispatchInputSpy()
+    const key = 'idem-t07397-identity'
+    const post = (extra: Record<string, unknown>) =>
+      fixture.postJson('/v1/turns', {
+        hostSessionId,
+        prompt: 'same prompt, same key',
+        runtimeIntent: claudeSdkIntent(false),
+        waitForCompletion: false,
+        idempotencyKey: key,
+        ...extra,
+      })
+
+    // First use of the key, carrying an identity.
+    const first = await post({ establishedBrokerInvocationId: 'inv-t07397-idem' })
+    // Replaying the SAME key with the identity REMOVED, or SUBSTITUTED, is a
+    // different semantic request and must be rejected — otherwise a replay could
+    // launder ownership of a surface the replaying caller does not hold.
+    for (const substitution of [{}, { establishedBrokerInvocationId: 'inv-someone-else' }]) {
+      const replay = await post(substitution)
+      expect(replay.status).toBe(409)
+      const body = (await replay.json()) as any
+      expect(body.error?.code).toBe(HrcErrorCode.STALE_CONTEXT)
+    }
+    // The identical request replays idempotently rather than dispatching twice.
+    const same = await post({ establishedBrokerInvocationId: 'inv-t07397-idem' })
+    expect(same.status).toBe(first.status)
+    expect(runIdsForRuntime('rt-t07397-idem').length).toBeLessThanOrEqual(1)
+  }, 20_000)
+
   it('(d) T-07397 codex control: admission decisions unchanged for openai intents', async () => {
     const codex = codexInteractiveIntent()
     const healthyCodexTui = {

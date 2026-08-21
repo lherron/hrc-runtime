@@ -377,6 +377,18 @@ export type DispatchTurnRequest = {
       }
     | undefined
   /**
+   * T-07397 — the broker invocation THIS caller already established and is
+   * continuing (a session's turns 2+, or a repair turn on an invocation the
+   * caller's own first turn created). Proof of surface ownership: it is the
+   * only thing that lets a dispatch carrying
+   * `execution.allowInteractiveSurfaceReuse: false` reuse a healthy matching
+   * live runtime, and only when it equals that runtime's ACTIVE invocation.
+   * Absent ⇒ never reuse (a first turn owns nothing yet). Participates in the
+   * idempotency request hash, so a replayed key cannot substitute a different
+   * identity.
+   */
+  establishedBrokerInvocationId?: string | undefined
+  /**
    * Opt out of the server's stale-generation auto-rotation policy.
    * See {@link EnsureRuntimeRequest.allowStaleGeneration}.
    */

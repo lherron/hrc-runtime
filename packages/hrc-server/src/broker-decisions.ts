@@ -244,6 +244,10 @@ export type LatestRuntimeAdmissionView = {
   // tearing-down runtime and the broker rejects it (`Cannot accept input in
   // state: stopping`).
   inputDispatchable: boolean
+  // T-07397: the runtime's ACTIVE broker invocation. A refusing caller may reuse
+  // this runtime only by carrying exactly this id (proof it established the
+  // surface itself). Undefined ⇒ nothing to match ⇒ never reuse under refusal.
+  activeInvocationId?: string | undefined
 } | null
 
 export type InteractiveBrokerAdmissionDecision =
@@ -362,6 +366,22 @@ export function refusesSurfaceReuse(intent: HrcRuntimeIntent): boolean {
   return intent.execution?.allowInteractiveSurfaceReuse === false
 }
 
+/**
+ * T-07397 — did THIS dispatch establish the live surface it is being routed at?
+ * True only on exact identity between the carried proof and the runtime's active
+ * broker invocation. Deliberately strict: no prefix/substring matching, no
+ * falling back to "same host session" (a colliding scope shares the session but
+ * not the surface), and an absent id on either side is never a match.
+ */
+function ownsLiveSurface(
+  options: { establishedBrokerInvocationId?: string | undefined },
+  latestRuntime: NonNullable<LatestRuntimeAdmissionView>
+): boolean {
+  const carried = options.establishedBrokerInvocationId
+  const active = latestRuntime.activeInvocationId
+  return carried !== undefined && active !== undefined && carried === active
+}
+
 export function decideInteractiveBrokerAdmission(
   intent: HrcRuntimeIntent,
   latestRuntime: LatestRuntimeAdmissionView,
@@ -369,6 +389,8 @@ export function decideInteractiveBrokerAdmission(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    /** T-07397 surface-ownership proof carried by the dispatch, if any. */
+    establishedBrokerInvocationId?: string | undefined
   }
 ): InteractiveBrokerAdmissionDecision {
   const resolved = resolveInteractiveBrokerAdmissionDriver(intent, options)
@@ -400,13 +422,20 @@ export function decideInteractiveBrokerAdmission(
     latestRuntime.inputDispatchable
   ) {
     // T-07397: the caller refused delivery into an existing surface, and this
-    // healthy runtime IS that surface. Refusal is NEGATIVE ROUTING AUTHORITY
-    // ONLY — fail normally, mutate nothing. Returning 'runtime-unavailable'
-    // here (handled before both the broker-reuse and stale-and-reprovision
-    // branches) is what keeps the operator's runtime untouched: no
-    // markRuntimeStaleForBrokerReprovision, no runtime.stale, activeRunId and
-    // durable status intact, the operator's in-flight turn unharmed.
-    if (refusesSurfaceReuse(intent)) {
+    // healthy runtime IS a surface. The refusal means "not a surface I did not
+    // establish" — NOT "not any surface" — so the caller may continue its OWN
+    // broker invocation, and only that one. Proof is exact identity: the id it
+    // carries must equal this runtime's ACTIVE invocation. Anything else —
+    // absent id (a first turn owns nothing), or an id naming some other
+    // invocation — refuses.
+    //
+    // Without this, a multi-turn session is refused its own pane from turn 2
+    // onward, because turn 1 makes the scope non-free (falsified live, C-15300).
+    // Refusal remains NEGATIVE ROUTING AUTHORITY ONLY: 'runtime-unavailable' is
+    // handled before both the broker-reuse and stale-and-reprovision branches,
+    // so no markRuntimeStaleForBrokerReprovision, no runtime.stale, activeRunId
+    // and durable status intact, any in-flight operator turn unharmed.
+    if (refusesSurfaceReuse(intent) && !ownsLiveSurface(options, latestRuntime)) {
       return {
         decision: 'runtime-unavailable',
         reason: CALLER_SURFACE_REUSE_REFUSAL,
@@ -846,6 +875,11 @@ export function toLatestRuntimeAdmissionView(
     provider: runtime.provider,
     brokerDriver: isInteractiveTmuxBrokerDriver(brokerDriver) ? brokerDriver : undefined,
     inputDispatchable,
+    // T-07397: surfaced so admission can match a refusing caller's ownership
+    // proof against the invocation this runtime is actually driving.
+    ...(runtime.activeInvocationId !== undefined
+      ? { activeInvocationId: runtime.activeInvocationId }
+      : {}),
   }
 }
 
