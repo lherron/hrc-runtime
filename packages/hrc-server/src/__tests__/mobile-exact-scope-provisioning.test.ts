@@ -578,4 +578,66 @@ describe('T-07398 exact-door directive placement', () => {
       await server.stop()
     }
   })
+
+  test('a pin outranks the directive: disagreement conflicts, agreement resolves', async () => {
+    // The top tier. A directive is admissible only where `[placement]` is
+    // silent; against a pin it has no authority at all, which is the exact
+    // breach the amended law exists to forbid — and the case the live half
+    // demonstrates against the cody@hrc-runtime:hrcdev pin.
+    const server = await serverWithPeers({ node: 'max3', pins: { 'hrc-runtime:hrcdev': 'hrcdev' } })
+    try {
+      const error = await rejectionOf(
+        resolveImplicitScopeHome(server, {
+          scopeRef: EXACT_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'lab' },
+        })
+      )
+      expect(error.code).toBe('placement_directive_conflict')
+      expect(server.db.sessions.count()).toBe(0)
+
+      // Agreement is not disagreement: a directive naming the pinned node is
+      // accepted and still resolves to the pin.
+      expect(
+        await resolveImplicitScopeHome(server, {
+          scopeRef: EXACT_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'hrcdev' },
+        })
+      ).toBe('hrcdev')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test('the receiver re-derives and refuses a directive the origin already blessed', async () => {
+    // Dual validation. The origin saw an undeclared scope and blessed `lab`;
+    // this receiver declares a home for that very task, so it must re-run the
+    // derivation on ITS OWN policy inputs and refuse. Trusting the forwarded
+    // resolution — the one failure mode origin-only tests cannot see — would
+    // let a caller place a scope the receiver's policy disagrees with.
+    const server = await serverWithPeers({ node: 'max3', homes: { 'my-own-name': 'hrcdev' } })
+    try {
+      // Control: with no directive this same federated ingress is authoritative
+      // here, so the refusal below is the directive's doing and nothing else.
+      await preflightExactScope(server, {
+        scopeRef: CUSTOM_SCOPE,
+        capabilityHint: CAPABILITY_HINT,
+        origin: 'federated-ingress',
+      })
+
+      const error = await rejectionOf(
+        preflightExactScope(server, {
+          scopeRef: CUSTOM_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          origin: 'federated-ingress',
+          provision: { node: 'lab' },
+        })
+      )
+      expect(error.code).toBe('placement_directive_conflict')
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
 })
