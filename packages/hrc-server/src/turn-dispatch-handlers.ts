@@ -1055,13 +1055,21 @@ async function dispatchAdmittedTurnForSession(
   // Normalizing to an interactive claude-code intent makes the predicates
   // below route them to the broker branch (and NOT runSdkTurn / the retired
   // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
-  const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(normalizedInputIntent)
+  //
+  // T-07397: a caller's surface-reuse refusal does NOT veto this redirect. The
+  // redirect selects a claude-code-tmux BROKER PANE (HRC-leased, not a user
+  // TTY); it is not, by itself, delivery into anyone's existing surface. Vetoing
+  // it here did not route the turn somewhere safer — it dropped every
+  // refusal-stamped claude dispatch onto the retired legacy-exec route (a hard
+  // 503, and the whole of T-07397). Refusal is enforced where reuse is actually
+  // decided: `decideInteractiveBrokerAdmission` via `refusesSurfaceReuse`, which
+  // is normalization-invariant and therefore survives the rewrite below.
+  const callerSurfaceReuseRefusal = disallowsInteractiveSurfaceReuse(normalizedInputIntent)
   const highRiskActuatorSplit =
     normalizeActuatorSplitPolicy(normalizedInputIntent.execution?.actuatorSplit)?.mode ===
     'high-risk'
   const intent =
     this.claudeCodeTmuxBrokerEnabled &&
-    !rawInteractiveSurfaceReuseVeto &&
     !highRiskActuatorSplit &&
     shouldRedirectClaudeToInteractiveBroker(normalizedInputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
@@ -1152,7 +1160,7 @@ async function dispatchAdmittedTurnForSession(
     // headless for CLI/headless-capable targets, SDK only as fallback)
     const liveInteractiveRuntime = latestRuntime
     const interactiveAvailableAndIdle =
-      !rawInteractiveSurfaceReuseVeto &&
+      !callerSurfaceReuseRefusal &&
       liveInteractiveRuntime &&
       (liveInteractiveRuntime.transport === 'tmux' ||
         liveInteractiveRuntime.transport === 'ghostty') &&
@@ -1194,11 +1202,18 @@ async function dispatchAdmittedTurnForSession(
   )
 
   if (admission.decision === 'runtime-unavailable') {
+    // T-07397: carry the admission reason into the detail so a caller can tell
+    // "scope occupied and you refused reuse — use a fresh scope or drop the
+    // refusal" apart from generic unavailability. This throw happens BEFORE the
+    // broker-reuse and stale-and-reprovision branches, so a refusal never
+    // reaches markRuntimeStaleForBrokerReprovision: zero mutation of the live
+    // operator runtime.
     throw new HrcRuntimeUnavailableError(admission.reason, {
       hostSessionId: session.hostSessionId,
       provider: intent.harness.provider,
       harnessId: intent.harness.id,
       route: 'interactive-broker',
+      reason: admission.reason,
     })
   }
 
@@ -1305,6 +1320,14 @@ function isProviderOnlyOpenAiInteractiveIntent(intent: HrcRuntimeIntent): boolea
   return isProviderOnlyInteractiveIntent(intent) && intent.harness.provider === 'openai'
 }
 
+/**
+ * Mode-ENTANGLED surface-reuse reading, kept for the headless/SDK route gate
+ * only. T-07397: do NOT use this to decide interactive-broker reuse — it is
+ * evaluated against a pre-redirect intent and flips to false once
+ * `normalizeClaudeInteractiveBrokerIntent` rewrites `preferredMode`/
+ * `harness.interactive`. `refusesSurfaceReuse` (broker-decisions.ts) is the
+ * normalization-invariant predicate that governs admission.
+ */
 function disallowsInteractiveSurfaceReuse(intent: HrcRuntimeIntent): boolean {
   if (intent.execution?.allowInteractiveSurfaceReuse !== false) {
     return false

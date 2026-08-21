@@ -334,6 +334,34 @@ export function decideLegacyRuntimeStartupDisposition(
   return { disposition: 'stale', reason: 'legacy_non_broker_controller_kind' }
 }
 
+/**
+ * T-07397 — the admission `reason` for a dispatch that refused surface reuse
+ * against a scope whose live surface is healthy. Distinguishes "scope occupied
+ * and you refused reuse — use a fresh scope or drop the refusal" from generic
+ * runtime unavailability; carried into the HrcRuntimeUnavailableError detail.
+ */
+export const CALLER_SURFACE_REUSE_REFUSAL = 'caller-surface-reuse-refusal'
+
+/**
+ * T-07397 — does this caller refuse delivery into an EXISTING interactive
+ * surface? Reads the RAW flag and nothing else.
+ *
+ * MUST STAY MODE-INDEPENDENT. Do NOT entangle this with
+ * `execution.preferredMode` or `harness.interactive`: this predicate is
+ * evaluated on the POST-redirect intent, and
+ * `normalizeClaudeInteractiveBrokerIntent` rewrites exactly those two fields
+ * (`harness.interactive: true`, `preferredMode: 'interactive'`). A mode-entangled
+ * reading flips to false across that rewrite and silently readmits an autonomous
+ * dispatch into a live operator TUI — the original T-07397 Flaw 1. Reading only
+ * `allowInteractiveSurfaceReuse` is normalization-invariant by construction.
+ *
+ * Distinct from the handler-local `disallowsInteractiveSurfaceReuse`, which is
+ * deliberately mode-entangled and serves the headless/SDK route gate.
+ */
+export function refusesSurfaceReuse(intent: HrcRuntimeIntent): boolean {
+  return intent.execution?.allowInteractiveSurfaceReuse === false
+}
+
 export function decideInteractiveBrokerAdmission(
   intent: HrcRuntimeIntent,
   latestRuntime: LatestRuntimeAdmissionView,
@@ -371,11 +399,29 @@ export function decideInteractiveBrokerAdmission(
     // teardown window.
     latestRuntime.inputDispatchable
   ) {
+    // T-07397: the caller refused delivery into an existing surface, and this
+    // healthy runtime IS that surface. Refusal is NEGATIVE ROUTING AUTHORITY
+    // ONLY — fail normally, mutate nothing. Returning 'runtime-unavailable'
+    // here (handled before both the broker-reuse and stale-and-reprovision
+    // branches) is what keeps the operator's runtime untouched: no
+    // markRuntimeStaleForBrokerReprovision, no runtime.stale, activeRunId and
+    // durable status intact, the operator's in-flight turn unharmed.
+    if (refusesSurfaceReuse(intent)) {
+      return {
+        decision: 'runtime-unavailable',
+        reason: CALLER_SURFACE_REUSE_REFUSAL,
+      }
+    }
     return {
       decision: 'broker-reuse',
       allowedBrokerDriver: resolved.allowedBrokerDriver,
     }
   }
+
+  // Fall-through: the runtime is unhealthy / non-matching by the EXISTING rules
+  // above. It is invalidated because of its own state — a caller's refusal is
+  // never the cause, and `refusesSurfaceReuse` deliberately appears nowhere in
+  // this branch (T-07397 Flaw 2).
 
   return {
     decision: 'stale-and-reprovision',

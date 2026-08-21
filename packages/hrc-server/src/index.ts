@@ -388,6 +388,7 @@ export type { InteractiveRuntimeSelectionView } from './runtime-select.js'
 export {
   decideHeadlessExecutionRoute,
   decideCodexAppServerPresentation,
+  CALLER_SURFACE_REUSE_REFUSAL,
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxBrokerStartRoute,
@@ -401,6 +402,7 @@ export {
   runInteractiveTmuxRoute,
   shouldBlockForBrokerTurnCompletion,
   shouldConsiderClaudeCodeTmuxBrokerDispatch,
+  refusesSurfaceReuse,
   shouldDeferHeadlessToInteractiveBrokerReuse,
   shouldRedirectClaudeToInteractiveBroker,
   shouldSpawnGhosttyViewer,

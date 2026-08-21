@@ -22,7 +22,13 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import { BrokerEventMapper } from '../broker/event-mapper'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
-import { shouldDeferHeadlessToInteractiveBrokerReuse } from '../index'
+import {
+  CALLER_SURFACE_REUSE_REFUSAL,
+  decideInteractiveBrokerAdmission,
+  normalizeClaudeInteractiveBrokerIntent,
+  refusesSurfaceReuse,
+  shouldDeferHeadlessToInteractiveBrokerReuse,
+} from '../index'
 
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -363,13 +369,31 @@ function runIdsForRuntime(runtimeId: string): string[] {
   }
 }
 
-function runtimeTransport(runtimeId: string): string | undefined {
+/** Durable control state that a caller's refusal must never touch (T-07397). */
+function runtimeControlState(runtimeId: string): { status?: string; activeRunId?: string | null } {
   const db = openHrcDatabase(fixture.dbPath)
   try {
-    return db.runtimes.getByRuntimeId(runtimeId)?.transport
+    const runtime = db.runtimes.getByRuntimeId(runtimeId)
+    return { status: runtime?.status, activeRunId: runtime?.activeRunId ?? null }
   } finally {
     db.close()
   }
+}
+
+function eventKindsForRuntime(runtimeId: string): string[] {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents.listFromHrcSeq(1, { runtimeId }).map((event) => event.eventKind)
+  } finally {
+    db.close()
+  }
+}
+
+/** Admission options with every interactive broker driver enabled. */
+const ALL_BROKERS = {
+  claudeCodeTmuxBrokerEnabled: true,
+  codexCliTmuxBrokerEnabled: true,
+  piTuiTmuxBrokerEnabled: true,
 }
 
 function turnUserPromptEventsForRuntime(runtimeId: string): unknown[] {
@@ -688,34 +712,137 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
     })
   }, 15_000)
 
-  it('T-05177: explicit false reuse veto prevents Claude SDK normalization into the live TUI', async () => {
+  // -------------------------------------------------------------------------
+  // T-07397 (daedalus-approved v4) replacement assertions.
+  //
+  // These REPLACE the old "explicit false reuse veto prevents Claude SDK
+  // normalization into the live TUI" test, which asserted the refused claude
+  // turn lands on a HEADLESS runtime. That state has no executor: headless
+  // claude resolves to `legacy-exec`, which is retired, so the assertion
+  // described a hard 503 in production. The refusal is still honoured — it just
+  // fails loudly instead of being routed into a dead end, and it no longer
+  // vetoes the claude-code-tmux redirect.
+  // -------------------------------------------------------------------------
+
+  it('(a) T-07397: refusal + healthy live claude TUI fails normally and mutates NOTHING', async () => {
     const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
-    const interactiveRuntimeId = 'rt-t05177-claude-live-tui-veto'
+    const interactiveRuntimeId = 'rt-t07397-claude-live-tui-refusal'
+    const operatorRunId = 'run-t07397-operator-in-flight'
     seedReadyBrokerRuntime({
       hostSessionId,
       generation,
       runtimeId: interactiveRuntimeId,
-      invocationId: 'inv-t05177-claude-live-tui-veto',
+      invocationId: 'inv-t07397-claude-live-tui-refusal',
       transport: 'tmux',
+      status: 'ready',
+      activeRunId: operatorRunId,
       provider: 'anthropic',
       harness: 'claude-code',
       brokerDriver: 'claude-code-tmux',
     })
     const dispatchSpy = installDispatchInputSpy()
+    const before = runtimeControlState(interactiveRuntimeId)
+    const kindsBefore = eventKindsForRuntime(interactiveRuntimeId)
 
     const res = await fixture.postJson('/v1/turns', {
       hostSessionId,
-      prompt: 'autonomous Claude SDK verifier must not land in the live TUI',
+      prompt: 'autonomous claude dispatch refusing to reuse the operator surface',
       runtimeIntent: claudeSdkIntent(false),
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { runtimeId?: string }
-    expect(body.runtimeId).not.toBe(interactiveRuntimeId)
-    expect(body.runtimeId ? runtimeTransport(body.runtimeId) : undefined).toBe('headless')
+    // Fails loudly, and names WHY so the caller can act on it.
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as any
+    expect(body.error?.code).toBe(HrcErrorCode.RUNTIME_UNAVAILABLE)
+    expect(body.error?.message).toBe(CALLER_SURFACE_REUSE_REFUSAL)
+    expect(body.error?.detail?.reason).toBe(CALLER_SURFACE_REUSE_REFUSAL)
+
+    // ZERO mutation of the operator's runtime — the Flaw 2 boundary. A refusal
+    // to be delivered into a surface is not authority to invalidate it.
+    expect(runtimeControlState(interactiveRuntimeId)).toEqual(before)
+    expect(runtimeControlState(interactiveRuntimeId).activeRunId).toBe(operatorRunId)
+    expect(eventKindsForRuntime(interactiveRuntimeId)).toEqual(kindsBefore)
+    expect(eventKindsForRuntime(interactiveRuntimeId)).not.toContain('runtime.stale')
     expect(dispatchSpy.calls).toHaveLength(0)
   }, 15_000)
+
+  it('(b) T-07397: refusal + FREE scope reaches the broker route, never the legacy-exec 503', async () => {
+    // Pure decision: nothing live on the scope → a fresh claude-code-tmux pane.
+    // Not reuse, so the refusal has nothing to refuse and no state is touched.
+    expect(
+      decideInteractiveBrokerAdmission(
+        normalizeClaudeInteractiveBrokerIntent(claudeSdkIntent(false)),
+        null,
+        ALL_BROKERS
+      )
+    ).toEqual({
+      decision: 'broker-start',
+      flagEnvName: expect.any(String),
+      allowedBrokerDriver: 'claude-code-tmux',
+    })
+
+    // End to end on a free scope: whatever else happens in a fixture that has no
+    // real tmux, the retired legacy-exec route must NOT be what we land on.
+    // That 503 was the entire T-07397 outage.
+    const { hostSessionId } = await fixture.resolveSession(SCOPE_REF)
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'autonomous claude dispatch on a free scope',
+      runtimeIntent: claudeSdkIntent(false),
+      waitForCompletion: false,
+    })
+    if (res.status >= 400) {
+      const body = (await res.json()) as any
+      expect(body.error?.message).not.toBe('headless legacy execution is unavailable')
+      expect(body.error?.detail?.route).not.toBe('legacy-exec')
+    }
+  }, 15_000)
+
+  it('(c) T-07397 Flaw 1 trap: the refusal survives claude interactive normalization', async () => {
+    const submitted = claudeSdkIntent(false)
+    expect(refusesSurfaceReuse(submitted)).toBe(true)
+    // normalizeClaudeInteractiveBrokerIntent rewrites harness.interactive and
+    // execution.preferredMode — the exact two fields a mode-entangled reading
+    // keys on. The predicate must not flip, or an autonomous dispatch is
+    // silently readmitted into a live operator TUI.
+    const normalized = normalizeClaudeInteractiveBrokerIntent(submitted)
+    expect(normalized.harness.interactive).toBe(true)
+    expect(normalized.execution?.preferredMode).toBe('interactive')
+    expect(refusesSurfaceReuse(normalized)).toBe(true)
+    // And a caller that did NOT refuse still does not, after normalization.
+    expect(
+      refusesSurfaceReuse(normalizeClaudeInteractiveBrokerIntent(claudeSdkIntent(undefined)))
+    ).toBe(false)
+  })
+
+  it('(d) T-07397 codex control: admission decisions unchanged for openai intents', async () => {
+    const codex = codexInteractiveIntent()
+    const healthyCodexTui = {
+      controllerKind: 'harness-broker' as const,
+      transport: 'tmux',
+      status: 'ready',
+      provider: PROVIDER,
+      brokerDriver: 'codex-cli-tmux' as const,
+      inputDispatchable: true,
+    }
+
+    // free scope
+    expect(decideInteractiveBrokerAdmission(codex, null, ALL_BROKERS).decision).toBe('broker-start')
+    // healthy matching live runtime → reuse, exactly as before T-07397
+    expect(decideInteractiveBrokerAdmission(codex, healthyCodexTui, ALL_BROKERS).decision).toBe(
+      'broker-reuse'
+    )
+    // unhealthy by the EXISTING health rules → stale-and-reprovision, and the
+    // cause is the runtime's own state, never a caller refusal
+    expect(
+      decideInteractiveBrokerAdmission(
+        codex,
+        { ...healthyCodexTui, inputDispatchable: false },
+        ALL_BROKERS
+      ).decision
+    ).toBe('stale-and-reprovision')
+  })
 
   it('T-05177 guard: omitted reuse flag still normalizes Claude SDK dispatch into the live TUI', async () => {
     const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
