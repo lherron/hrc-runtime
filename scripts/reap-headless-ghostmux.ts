@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { loadavg } from 'node:os'
+import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { Chalk } from 'chalk'
 
@@ -13,6 +15,7 @@ type Options = {
   waitSeconds: number
   reapTimeoutMs: number
   hrcDbPath: string
+  timing: boolean
 }
 
 type Pane = {
@@ -94,7 +97,12 @@ Environment:
 Options:
   --dry-run            Print intended reap/ghostmux actions without running them.
   --simulate           Run against built-in fake panes/captures; implies dry-run.
-  -y, --yes            Skip the interactive confirmation before reaping.`)
+  -y, --yes            Skip the interactive confirmation before reaping.
+  --timing             Print a phase + subprocess-spawn timing ledger to stderr.
+
+Every run appends a timing record to <state>/metrics/script-YYYY-MM-DD.ndjson
+(14-day retention) regardless of --timing; the flag only adds the stderr report.
+Set REAP_TIMING=1 to enable the report without passing the flag.`)
   process.exit(0)
 }
 
@@ -114,10 +122,13 @@ function parseArgs(argv: string[]): Options {
     // disables the bound (legacy hang-forever behavior).
     reapTimeoutMs: Math.round(Number(process.env.REAP_TIMEOUT_SECONDS ?? '20') * 1000),
     hrcDbPath: process.env.HRC_DB_PATH ?? '/Users/lherron/praesidium/var/state/hrc/state.sqlite',
+    timing: process.env.REAP_TIMING === '1',
   }
 
   for (const arg of argv) {
-    if (arg === '--dry-run') {
+    if (arg === '--timing') {
+      options.timing = true
+    } else if (arg === '--dry-run') {
       options.dryRun = true
     } else if (arg === '--simulate') {
       options.simulate = true
@@ -141,12 +152,89 @@ function parseArgs(argv: string[]): Options {
   return options
 }
 
+// --- Timing instrumentation (T-07388) -------------------------------------
+//
+// Every subprocess in this script funnels through run()/tryRun(), so wrapping
+// those two is sufficient to account for all spawn cost. The ledger groups by
+// command + subcommand ("ghostmux metadata get") rather than by full argv, so
+// an O(N) fan-out shows up as one row with a high `count` — which is the defect
+// class this instrumentation exists to make visible.
+
+type SpawnStat = {
+  key: string
+  count: number
+  totalMs: number
+  samples: number[]
+}
+
+type PhaseStat = {
+  name: string
+  ms: number
+}
+
+const spawnStats = new Map<string, SpawnStat>()
+const phaseStats: PhaseStat[] = []
+// Wall time from process start to the status table being printed. 0 until the
+// listing is rendered (e.g. the sweep threw during discovery).
+let timeToListMs = 0
+
+// Collapse an argv into a stable bucket key: the command basename plus any
+// leading non-flag, non-path tokens (the subcommand path). `sqlite3 -tabs
+// -noheader /path/db <sql>` therefore buckets as plain "sqlite3", while
+// `ghostmux metadata get -t ...` buckets as "ghostmux metadata get".
+function spawnKey(argv: string[]): string {
+  const command = (argv[0] ?? '').split('/').pop() ?? ''
+  const parts = [command]
+  for (const token of argv.slice(1)) {
+    if (token.startsWith('-') || token.includes('/') || token.includes('\n')) break
+    parts.push(token)
+    if (parts.length === 3) break
+  }
+  return parts.join(' ')
+}
+
+function recordSpawn(argv: string[], ms: number): void {
+  const key = spawnKey(argv)
+  const stat = spawnStats.get(key) ?? { key, count: 0, totalMs: 0, samples: [] }
+  stat.count += 1
+  stat.totalMs += ms
+  stat.samples.push(ms)
+  spawnStats.set(key, stat)
+}
+
+// Nearest-rank quantile over an already-sorted ascending array.
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0
+  const rank = Math.ceil(q * sorted.length)
+  return sorted[Math.min(Math.max(rank, 1), sorted.length) - 1] ?? 0
+}
+
+function timePhase<T>(name: string, fn: () => T): T {
+  const started = performance.now()
+  try {
+    return fn()
+  } finally {
+    phaseStats.push({ name, ms: performance.now() - started })
+  }
+}
+
+async function timePhaseAsync<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  const started = performance.now()
+  try {
+    return await fn()
+  } finally {
+    phaseStats.push({ name, ms: performance.now() - started })
+  }
+}
+
 function run(argv: string[], input?: string): string {
+  const started = performance.now()
   const proc = Bun.spawnSync(argv, {
     stdin: input ? new TextEncoder().encode(input) : undefined,
     stdout: 'pipe',
     stderr: 'pipe',
   })
+  recordSpawn(argv, performance.now() - started)
   const stdout = new TextDecoder().decode(proc.stdout)
   const stderr = new TextDecoder().decode(proc.stderr)
   if (proc.exitCode !== 0) {
@@ -168,10 +256,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function requireCommand(command: string): void {
-  const proc = Bun.spawnSync(['bash', '-lc', `command -v ${command}`], {
+  const argv = ['bash', '-lc', `command -v ${command}`]
+  const started = performance.now()
+  const proc = Bun.spawnSync(argv, {
     stdout: 'pipe',
     stderr: 'pipe',
   })
+  recordSpawn(argv, performance.now() - started)
   if (proc.exitCode !== 0) throw new Error(`missing required command: ${command}`)
 }
 
@@ -735,11 +826,13 @@ function sendReap(status: PaneStatus, options: Options): ReapResult {
   // timeout, so an unbounded spawnSync here freezes the entire sequential sweep.
   // On timeout, SIGTERM the hung `hrc` child and treat it as a benign warn — the
   // runtime stays `ready` with continuation intact, and the sweep moves on.
+  const started = performance.now()
   const proc = Bun.spawnSync(argv, {
     stdout: 'pipe',
     stderr: 'pipe',
     ...(options.reapTimeoutMs > 0 ? { timeout: options.reapTimeoutMs, killSignal: 'SIGTERM' } : {}),
   })
+  recordSpawn(argv, performance.now() - started)
   return classifyReapExec(
     {
       exitedDueToTimeout: proc.exitedDueToTimeout,
@@ -903,16 +996,128 @@ function printRemaining(options: Options): void {
   }
 }
 
-async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2))
-  if (!options.simulate) {
-    requireCommand('ghostmux')
-    requireCommand('sqlite3')
-    requireCommand('hrc')
-  }
+// Render the phase/spawn ledger to stderr so it never contaminates the pane
+// listing on stdout.
+function printTimingReport(totalMs: number, loadStart: number, loadEnd: number): void {
+  const stats = [...spawnStats.values()].sort((a, b) => b.totalMs - a.totalMs)
+  const spawnTotalMs = stats.reduce((sum, stat) => sum + stat.totalMs, 0)
+  const spawnCount = stats.reduce((sum, stat) => sum + stat.count, 0)
 
-  const panes = listPanes(options)
-  const statuses = panes.map((pane) => queryStatus(pane, options))
+  const lines: string[] = []
+  lines.push('')
+  lines.push(color.bold('Timing'))
+  lines.push(
+    color.dim(
+      `  load avg (1m): ${loadStart.toFixed(2)} at start → ${loadEnd.toFixed(2)} at end` +
+        `  ·  ${spawnCount} subprocess spawns`
+    )
+  )
+  lines.push('')
+  lines.push(color.dim('  phase                          ms'))
+  for (const phase of phaseStats) {
+    lines.push(`  ${phase.name.padEnd(28)} ${phase.ms.toFixed(0).padStart(7)}`)
+  }
+  lines.push(`  ${color.bold('TOTAL'.padEnd(28))} ${color.bold(totalMs.toFixed(0).padStart(7))}`)
+  lines.push(
+    color.dim(
+      `  time to list printed:        ${timeToListMs.toFixed(0).padStart(7)}  ` +
+        `(${totalMs > 0 ? ((timeToListMs / totalMs) * 100).toFixed(0) : '0'}% of wall)`
+    )
+  )
+  lines.push('')
+  lines.push(color.dim('  spawn bucket                count    total ms     avg     p50     p95'))
+  for (const stat of stats) {
+    const sorted = [...stat.samples].sort((a, b) => a - b)
+    lines.push(
+      `  ${stat.key.padEnd(26)} ${String(stat.count).padStart(5)} ${stat.totalMs
+        .toFixed(0)
+        .padStart(11)} ${(stat.totalMs / stat.count).toFixed(0).padStart(7)} ${quantile(sorted, 0.5)
+        .toFixed(0)
+        .padStart(7)} ${quantile(sorted, 0.95).toFixed(0).padStart(7)}`
+    )
+  }
+  const spawnShare = totalMs > 0 ? (spawnTotalMs / totalMs) * 100 : 0
+  lines.push(
+    color.dim(
+      `  subprocess time = ${spawnTotalMs.toFixed(0)}ms of ${totalMs.toFixed(0)}ms wall ` +
+        `(${spawnShare.toFixed(1)}%)`
+    )
+  )
+  process.stderr.write(`${lines.join('\n')}\n`)
+}
+
+const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
+const METRICS_FILE_PATTERN = /^script-\d{4}-\d{2}-\d{2}\.ndjson$/
+
+// Durable per-run record alongside the hrc CLI metrics (same `<stateRoot>/metrics`
+// directory, distinct `script-*` file so `hrc metrics report`'s cli-* reader is
+// unaffected). Best-effort: instrumentation must never fail the sweep.
+function emitTimingMetrics(
+  options: Options,
+  totalMs: number,
+  loadStart: number,
+  loadEnd: number,
+  paneCount: number,
+  exitCode: number
+): void {
+  try {
+    const metricsDir = join(dirname(options.hrcDbPath), 'metrics')
+    mkdirSync(metricsDir, { recursive: true })
+    const now = new Date()
+    const record = {
+      v: 1,
+      kind: 'script',
+      ts: now.toISOString(),
+      script: 'reap-headless-ghostmux',
+      cmd: process.argv.slice(2).join(' '),
+      exitCode,
+      durMs: Math.round(totalMs),
+      timeToListMs: Math.round(timeToListMs),
+      pid: process.pid,
+      panes: paneCount,
+      loadStart: Number(loadStart.toFixed(2)),
+      loadEnd: Number(loadEnd.toFixed(2)),
+      phases: phaseStats.map((phase) => ({ name: phase.name, ms: Math.round(phase.ms) })),
+      spawns: [...spawnStats.values()]
+        .sort((a, b) => b.totalMs - a.totalMs)
+        .map((stat) => {
+          const sorted = [...stat.samples].sort((a, b) => a - b)
+          return {
+            key: stat.key,
+            count: stat.count,
+            totalMs: Math.round(stat.totalMs),
+            avgMs: Math.round(stat.totalMs / stat.count),
+            p50Ms: Math.round(quantile(sorted, 0.5)),
+            p95Ms: Math.round(quantile(sorted, 0.95)),
+          }
+        }),
+    }
+    appendFileSync(
+      join(metricsDir, `script-${now.toISOString().slice(0, 10)}.ndjson`),
+      `${JSON.stringify(record)}\n`
+    )
+    for (const name of readdirSync(metricsDir)) {
+      if (!METRICS_FILE_PATTERN.test(name)) continue
+      const path = join(metricsDir, name)
+      if (now.getTime() - statSync(path).mtimeMs > METRICS_RETENTION_MS) unlinkSync(path)
+    }
+  } catch {
+    // Instrumentation is never load-bearing.
+  }
+}
+
+// Returns the number of discovered panes (for the metrics record).
+async function sweep(options: Options): Promise<number> {
+  timePhase('preflight', () => {
+    if (!options.simulate) {
+      requireCommand('ghostmux')
+      requireCommand('sqlite3')
+      requireCommand('hrc')
+    }
+  })
+
+  const panes = timePhase('discover', () => listPanes(options))
+  const statuses = timePhase('query-status', () => panes.map((pane) => queryStatus(pane, options)))
   const eligibleStatuses = statuses.filter(isQuitEligible)
   // Already-dead viewer panes: no live runtime to reap, but still parked on the
   // harness close prompt — close their Ghostty terminals in the same sweep.
@@ -920,7 +1125,11 @@ async function main(): Promise<void> {
   // The close-prompt phase Enters BOTH the runtimes we just reaped and the
   // already-dead leftover viewers.
   const closeTargets = [...eligibleStatuses, ...leftoverStatuses]
-  printStatus(statuses, options)
+  timePhase('print-status', () => printStatus(statuses, options))
+  // The user-perceived "how long until I see the list" figure: everything up to
+  // and including the status table hitting stdout. Everything after this point
+  // is post-list work the operator is not waiting on to read the listing.
+  timeToListMs = phaseStats.reduce((sum, phase) => sum + phase.ms, 0)
   if (statuses.length > 0) {
     const skipped = statuses.length - eligibleStatuses.length
     console.log()
@@ -937,12 +1146,16 @@ async function main(): Promise<void> {
       )
     }
   }
-  await confirm(eligibleStatuses, leftoverStatuses, options)
+  // Includes human think-time at the prompt — labelled so it is never mistaken
+  // for script cost when reading the ledger.
+  await timePhaseAsync('confirm (human)', () =>
+    confirm(eligibleStatuses, leftoverStatuses, options)
+  )
 
   if (closeTargets.length === 0) {
     console.log(color.yellow('No eligible runtimes and no leftover viewers; nothing to do.'))
-    printRemaining(options)
-    return
+    timePhase('print-remaining', () => printRemaining(options))
+    return statuses.length
   }
 
   if (eligibleStatuses.length === 0) {
@@ -958,6 +1171,7 @@ async function main(): Promise<void> {
     // close-prompt phase still runs.
     let reapSent = 0
     let reapWarned = 0
+    const reapStarted = performance.now()
     for (const status of eligibleStatuses) {
       const result = sendReap(status, options)
       const suffix = `${color.dim(handleFromScope(status.scopeRef))} ${color.dim(shortRuntime(status.runtimeId))}`
@@ -985,13 +1199,14 @@ async function main(): Promise<void> {
         console.log(`  ${color.cyan(status.id)} ${color.green('reap sent')} ${suffix}`)
       }
     }
+    phaseStats.push({ name: 'reap', ms: performance.now() - reapStarted })
     if (reapWarned > 0) {
       console.log(color.dim(`Reap summary: sent=${reapSent}, warned=${reapWarned}`))
     }
 
     console.log()
     console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
-    await sleep(options.waitSeconds)
+    await timePhaseAsync('settle-wait', () => sleep(options.waitSeconds))
   }
 
   console.log()
@@ -999,6 +1214,7 @@ async function main(): Promise<void> {
   const closePrompt = new RegExp(options.closePromptRegex)
   let closed = 0
   let skipped = 0
+  const closeStarted = performance.now()
   for (const status of closeTargets) {
     const capture = capturePane(status, options)
     if (closePrompt.test(capture)) {
@@ -1017,9 +1233,30 @@ async function main(): Promise<void> {
       )
     }
   }
+  phaseStats.push({ name: 'close-prompts', ms: performance.now() - closeStarted })
   console.log(color.dim(`Summary: enter sent=${closed}, skipped=${skipped}`))
 
-  printRemaining(options)
+  timePhase('print-remaining', () => printRemaining(options))
+  return statuses.length
+}
+
+async function main(): Promise<void> {
+  const startedAt = performance.now()
+  const loadStart = loadavg()[0] ?? 0
+  const options = parseArgs(process.argv.slice(2))
+  let paneCount = 0
+  let exitCode = 0
+  try {
+    paneCount = await sweep(options)
+  } catch (error) {
+    exitCode = 1
+    throw error
+  } finally {
+    const totalMs = performance.now() - startedAt
+    const loadEnd = loadavg()[0] ?? 0
+    if (options.timing) printTimingReport(totalMs, loadStart, loadEnd)
+    emitTimingMetrics(options, totalMs, loadStart, loadEnd, paneCount, exitCode)
+  }
 }
 
 // Only run as a CLI; guarded so importing the module for unit tests
