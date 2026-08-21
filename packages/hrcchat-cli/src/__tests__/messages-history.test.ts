@@ -165,3 +165,53 @@ describe('T-07188 messages --after sequence namespace', () => {
     expect(filters).toEqual([{ afterSeq: 19_566, limit: 50 }])
   })
 })
+
+describe('messages --with participant alias', () => {
+  function clientCapturingFilters(filters: HrcMessageFilter[]): HrcClient {
+    return {
+      async listMessages(filter?: HrcMessageFilter) {
+        filters.push(filter ?? {})
+        return { messages: [] }
+      },
+    } as unknown as HrcClient
+  }
+
+  test('--with sets the participant filter like the positional target', async () => {
+    const filters: HrcMessageFilter[] = []
+    await captureStdout(async () => {
+      await cmdMessages(
+        clientCapturingFilters(filters),
+        { with: 'daedalus@hrc-runtime:T-07398', json: true },
+        []
+      )
+    })
+    const positional: HrcMessageFilter[] = []
+    await captureStdout(async () => {
+      await cmdMessages(clientCapturingFilters(positional), { json: true }, [
+        'daedalus@hrc-runtime:T-07398',
+      ])
+    })
+    expect(filters).toEqual(positional)
+    expect(filters[0]?.participant).toBeDefined()
+  })
+
+  test('positional and --with agreeing is accepted', async () => {
+    const filters: HrcMessageFilter[] = []
+    await captureStdout(async () => {
+      await cmdMessages(
+        clientCapturingFilters(filters),
+        { with: 'daedalus@hrc-runtime:T-07398', json: true },
+        ['daedalus@hrc-runtime:T-07398']
+      )
+    })
+    expect(filters).toHaveLength(1)
+  })
+
+  test('positional and --with disagreeing is a typed refusal', async () => {
+    await expect(
+      cmdMessages(clientCapturingFilters([]), { with: 'cody@hrc-runtime:primary', json: true }, [
+        'daedalus@hrc-runtime:T-07398',
+      ])
+    ).rejects.toThrow(/conflicting participant filters/)
+  })
+})

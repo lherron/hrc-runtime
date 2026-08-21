@@ -5,6 +5,7 @@ import { printJson } from '../print.js'
 import { resolveMessageAfterSeq } from './message-selector.js'
 
 export type MessagesOptions = {
+  with?: string
   to?: string
   responsesTo?: string
   from?: string
@@ -23,10 +24,18 @@ export async function cmdMessages(
 
   const filter: HrcMessageFilter = {}
 
-  // Positional target = participant filter
+  // Positional target and --with are the same participant filter (either
+  // direction). Both given with different values is a contradiction, not a
+  // merge — refuse rather than silently prefer one.
   const targetInput = positionals[0]
-  if (targetInput) {
-    filter.participant = resolveAddress(targetInput, callerSessionRef)
+  if (targetInput !== undefined && opts.with !== undefined && targetInput !== opts.with) {
+    throw new Error(
+      `conflicting participant filters: positional "${targetInput}" vs --with "${opts.with}"`
+    )
+  }
+  const participantInput = targetInput ?? opts.with
+  if (participantInput) {
+    filter.participant = resolveAddress(participantInput, callerSessionRef)
   }
 
   const toRaw = opts.to ?? opts.responsesTo

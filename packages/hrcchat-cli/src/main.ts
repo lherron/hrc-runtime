@@ -320,7 +320,11 @@ program
 program
   .command('messages')
   .description('query durable directed message history')
-  .argument('[target]', 'filter by target participant')
+  .argument('[target]', 'filter by participant (matches sender or recipient)')
+  .option(
+    '--with <address>',
+    'filter by participant (matches sender or recipient); alias for the positional target'
+  )
   .option('--to <address>', 'filter by recipient')
   .option('--responses-to <address>', 'alias for --to')
   .option('--from <address>', 'filter by sender')
