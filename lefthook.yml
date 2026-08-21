@@ -29,4 +29,9 @@ pre-push:
     install:
       run: bun install
     test:
-      run: bun run test:fast
+      # TMPDIR=/tmp is load-bearing on macOS: the default
+      # /var/folders/.../T/ prefix is 49 chars, which puts hrc-server's test
+      # sockets at ~96 of the 104-char sun_path limit. The longest-named
+      # fixtures cross it, so the gate fails on a CLEAN tree (8/2401 on
+      # 2026-08-21) and the failure set drifts as fixtures are renamed.
+      run: TMPDIR=/tmp bun run test:fast

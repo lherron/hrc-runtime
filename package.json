@@ -21,7 +21,7 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "bash -lc 'for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-store-sqlite\" \"hrc-capture-verifier\" \"hrc-sdk\" \"hrc-frame-render\" \"hrc-server\" \"hrc-top\" \"hrc-pi-top\" \"hrc-cli\" \"hrcchat-cli\" \"hrcmail-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
+    "test": "bash -lc 'export TMPDIR=/tmp; for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-store-sqlite\" \"hrc-capture-verifier\" \"hrc-sdk\" \"hrc-frame-render\" \"hrc-server\" \"hrc-top\" \"hrc-pi-top\" \"hrc-cli\" \"hrcchat-cli\" \"hrcmail-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
     "test:fast": "bun run test",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
