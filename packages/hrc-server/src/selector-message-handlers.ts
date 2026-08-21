@@ -187,6 +187,9 @@ export async function ensureTargetSession(
           knownSession: true,
           origin,
           capabilityHint: { placement: intent.placement, harness: intent.harness },
+          // T-07398: a successor is a birth, so its directive block still
+          // decides placement (gap-filling only) and provisioning.
+          ...(intent.provision === undefined ? {} : { provision: intent.provision }),
           ...(birthCredential === undefined ? {} : { birthCredential }),
         },
         (claimAuthority) => {
@@ -242,6 +245,9 @@ export async function ensureTargetSession(
       intent: 'implicit',
       origin,
       capabilityHint: { placement: intent.placement, harness: intent.harness },
+      // T-07398: the dm/ensure door is the second provisioning door, and it
+      // honors the same directive block on the same terms as the claim doors.
+      ...(intent.provision === undefined ? {} : { provision: intent.provision }),
       ...(birthCredential === undefined ? {} : { birthCredential }),
     },
     (claimAuthority) => {

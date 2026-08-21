@@ -1,3 +1,4 @@
+import type { ProvisioningScalars } from 'agent-scope'
 import type { RuntimePlacement } from 'spaces-config'
 
 import type { HrcErrorCode } from './errors.js'
@@ -212,6 +213,23 @@ export type HrcPresentationIntent = {
 export type HrcRuntimeIntent = {
   placement: RuntimePlacement
   harness: HrcHarnessIntent
+  /**
+   * T-07398 — the effective `[provisioning]` top-level scalars this runtime is
+   * born with, after the profile+target merge and any per-summon directive
+   * overlay. One type, three homes (toml base / directive override / this wire
+   * form), so no surface needs a request-body field of its own: `provision`
+   * rides the intent every existing door already carries.
+   *
+   * Birth-only. A directive block arriving at an ALREADY-LIVE scope is reported
+   * back as `directivesApplied: false` and never rewrites the sticky birth
+   * intent — the runtime's active values are the ones it was born with.
+   *
+   * Structurally top-level scalars only: nested harness tables
+   * (`provisioning.claude`, `provisioning.codex`) are profile-only and are
+   * refused here by shape, which closes the nested-spelling deny-list bypass
+   * without enumerating spellings.
+   */
+  provision?: Partial<ProvisioningScalars> | undefined
   execution?: HrcExecutionIntent | undefined
   launch?: HrcLaunchEnvConfig | undefined
   initialPrompt?: string | undefined

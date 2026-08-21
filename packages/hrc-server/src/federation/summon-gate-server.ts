@@ -13,8 +13,10 @@
  * change that sits on every session-creation path.
  */
 
+import type { ProvisioningScalars } from 'agent-scope'
 import {
   HrcConflictError,
+  HrcDomainError,
   HrcErrorCode,
   HrcRuntimeUnavailableError,
   formatCanonicalScopeRef,
@@ -57,6 +59,8 @@ import {
   type SummonPath,
   evaluateSummonGate,
   resolveDeclaredPlacementHome,
+  resolveDeclaredPlacementHomeOrRefusal,
+  resolvePlacementDirectiveNode,
   resolvePlacementDisposition,
 } from './summon-gate.js'
 import {
@@ -109,6 +113,11 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
     mode: config.gate.mode,
     federationConfigured: true,
     localNodeId: config.nodeId,
+    // T-07398: the registry a `node=` directive is validated against — this
+    // node plus its configured peers. Built from the SAME config the receiver
+    // reads, which is what makes origin and receiver validation independent
+    // rather than one trusting the other.
+    knownNodeIds: [config.nodeId, ...[...config.peers.values()].map((peer) => peer.nodeId)],
     ledger,
     registry:
       server.registryClient ??
@@ -134,6 +143,28 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
   return deps
 }
 
+/**
+ * T-07398 — the refusals that are about the REQUEST's directive block rather
+ * than about this node's authority over the scope. They earn their own wire
+ * codes: a caller that mistyped a node id, named a denied placement, or asked
+ * for a node the registry has never heard of needs to be able to tell those
+ * three apart from "that scope lives somewhere else", and none of them should
+ * read as a retryable placement race.
+ */
+const DIRECTIVE_REFUSAL_CODES: Partial<
+  Record<Extract<SummonGateEvaluation, { decision: 'refuse' }>['reason'], HrcErrorCode>
+> = {
+  'placement-directive-conflict': HrcErrorCode.PLACEMENT_DIRECTIVE_CONFLICT,
+  'unknown-node': HrcErrorCode.UNKNOWN_NODE,
+  'invalid-provision-value': HrcErrorCode.INVALID_PROVISION_VALUE,
+}
+
+function isRefusal(
+  value: { nodeId: string } | SummonGateEvaluation
+): value is Extract<SummonGateEvaluation, { decision: 'refuse' }> {
+  return 'decision' in value && value.decision === 'refuse'
+}
+
 function throwRosterPlacementRefusal(
   scopeRef: string,
   evaluation: Extract<SummonGateEvaluation, { decision: 'refuse' }>
@@ -143,6 +174,10 @@ function throwRosterPlacementRefusal(
     reason: evaluation.reason,
     retryable: evaluation.retryable,
     ...(evaluation.homeNodeId === undefined ? {} : { homeNodeId: evaluation.homeNodeId }),
+  }
+  const directiveCode = DIRECTIVE_REFUSAL_CODES[evaluation.reason]
+  if (directiveCode !== undefined) {
+    throw new HrcDomainError(directiveCode, evaluation.diagnostic, detail)
   }
   if (evaluation.retryable) {
     throw new HrcRuntimeUnavailableError(evaluation.diagnostic, detail)
@@ -161,6 +196,8 @@ export async function resolveImplicitScopeHome(
   request: {
     readonly scopeRef: string
     readonly capabilityHint: SummonCapabilityHint
+    /** T-07398 — the request's explicit directive block, if it carried one. */
+    readonly provision?: Partial<ProvisioningScalars> | undefined
   }
 ): Promise<string> {
   assertLocalPersonaAllowed(server, request.scopeRef)
@@ -177,6 +214,7 @@ export async function resolveImplicitScopeHome(
     intent: 'implicit',
     deps,
     capabilityHint: request.capabilityHint,
+    ...(request.provision === undefined ? {} : { provision: request.provision }),
   })
   const placement = result.placement
   if (placement?.outcome === 'remote-bound') return placement.binding.homeNodeId
@@ -211,6 +249,14 @@ export async function preflightSuffixRosterFamily(
     readonly scopeRefs: readonly string[]
     readonly capabilityHint: SummonCapabilityHint
     readonly origin: 'local' | 'federated-ingress'
+    /**
+     * T-07398 — a directive on an UNDECLARED family places the WHOLE family.
+     * Family-wide is the point: the same-home property the one-family-one-mutex
+     * claim discipline rests on has to hold by construction, so this block is
+     * applied to the base AND to every reserved member below, never to the one
+     * member that happens to be claimed.
+     */
+    readonly provision?: Partial<ProvisioningScalars> | undefined
   }
 ): Promise<void> {
   const deps = gateDepsFor(server)
@@ -219,6 +265,12 @@ export async function preflightSuffixRosterFamily(
       'suffix-roster family preflight requires the enforced federation placement gate',
       { retryable: true }
     )
+  }
+  // Validate the directive before the family home is derived, so a bad node id
+  // is reported as itself rather than as "the base does not declare this node".
+  const directive = resolvePlacementDirectiveNode(request.provision, deps.knownNodeIds)
+  if (directive !== undefined && isRefusal(directive)) {
+    throwRosterPlacementRefusal(request.baseScopeRef, directive)
   }
   let basePolicy: SummonGatePolicy | undefined
   try {
@@ -230,11 +282,19 @@ export async function preflightSuffixRosterFamily(
       cause: error instanceof Error ? error.message : String(error),
     })
   }
-  const familyHome = resolveDeclaredPlacementHome(
+  const resolvedFamilyHome = resolveDeclaredPlacementHomeOrRefusal(
     request.baseScopeRef,
     basePolicy,
-    deps.localNodeId
+    deps.localNodeId,
+    { provision: request.provision, knownNodeIds: deps.knownNodeIds }
   )
+  // A directive disagreeing with the family's DECLARED home is that refusal,
+  // reported as itself: collapsing it into "the base does not declare this
+  // node" would name the wrong fix.
+  if (resolvedFamilyHome !== undefined && 'decision' in resolvedFamilyHome) {
+    throwRosterPlacementRefusal(request.baseScopeRef, resolvedFamilyHome)
+  }
+  const familyHome = resolvedFamilyHome
   if (familyHome?.homeNodeId !== deps.localNodeId) {
     throw new HrcConflictError(
       HrcErrorCode.STALE_CONTEXT,
@@ -256,6 +316,7 @@ export async function preflightSuffixRosterFamily(
       origin: request.origin,
       deps,
       capabilityHint: request.capabilityHint,
+      ...(request.provision === undefined ? {} : { provision: request.provision }),
     })
     if (result.evaluation.decision === 'refuse') {
       throwRosterPlacementRefusal(scopeRef, result.evaluation)
@@ -296,6 +357,14 @@ export async function preflightExactScope(
     readonly scopeRef: string
     readonly capabilityHint: SummonCapabilityHint
     readonly origin: 'local' | 'federated-ingress'
+    /**
+     * T-07398 — the directive block as the request carried it. At
+     * `federated-ingress` this is the receiver's half of dual validation: the
+     * origin's resolution buys nothing here, so the same derivation is re-run
+     * against THIS node's registry and THIS node's `[placement]`, and a
+     * directive the origin blessed is refused if it disagrees with either.
+     */
+    readonly provision?: Partial<ProvisioningScalars> | undefined
   }
 ): Promise<void> {
   const deps = gateDepsFor(server)
@@ -322,6 +391,7 @@ export async function preflightExactScope(
     origin: request.origin,
     deps,
     capabilityHint: request.capabilityHint,
+    ...(request.provision === undefined ? {} : { provision: request.provision }),
   })
   if (result.evaluation.decision === 'refuse') {
     throwRosterPlacementRefusal(request.scopeRef, result.evaluation)
@@ -374,6 +444,12 @@ export type SummonAuthorityRequest = (
   knownSession?: boolean | undefined
   /** Present at session-mint call sites to serialize exactly one continuity birth. */
   laneRef?: string | undefined
+  /**
+   * T-07398 — the request's explicit provisioning directive block. Placement
+   * reads `node=` from it (gap-filling only, strictly below `[placement]`); the
+   * rest of the block is carried on the intent and applied at birth.
+   */
+  provision?: Partial<ProvisioningScalars> | undefined
 }
 
 export type SummonAuthorityResult = SummonGateResult & {
@@ -929,9 +1005,25 @@ export async function assertSummonAuthority(
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
+    ...(request.provision === undefined ? {} : { provision: request.provision }),
   })
 
   if (result.enforced && result.evaluation.decision === 'refuse') {
+    // Directive refusals keep their own typed codes here too: the dm/ensure
+    // door must not report a mistyped node as `stale_context` when the
+    // exact/suffix door reports it as `unknown_node`.
+    const directiveCode = DIRECTIVE_REFUSAL_CODES[result.evaluation.reason]
+    if (directiveCode !== undefined) {
+      throw new HrcDomainError(directiveCode, result.evaluation.diagnostic, {
+        scopeRef: request.scopeRef,
+        path: request.path,
+        reason: result.evaluation.reason,
+        retryable: result.evaluation.retryable,
+        ...(result.evaluation.homeNodeId === undefined
+          ? {}
+          : { homeNodeId: result.evaluation.homeNodeId }),
+      })
+    }
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, result.evaluation.diagnostic, {
       scopeRef: request.scopeRef,
       path: request.path,

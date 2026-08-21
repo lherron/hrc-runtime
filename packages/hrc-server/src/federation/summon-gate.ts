@@ -27,6 +27,7 @@
  */
 
 import { parseScopeRef } from 'agent-scope'
+import type { ProvisioningScalars } from 'agent-scope'
 import type {
   BirthAuthorityProvenance,
   EstablishmentProvenance,
@@ -43,7 +44,7 @@ import type {
   BirthCredentialValidation,
   ChildBirthAuthorityProvenance,
 } from './birth-credential.js'
-import { isReservedNodeId } from './node-id.js'
+import { isReservedNodeId, isValidNodeId } from './node-id.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
 import type { BindingRegistryClient } from './registry-client.js'
 
@@ -123,6 +124,14 @@ export type SummonGateRefuseReason =
   | 'invalid-birth-credential'
   | 'zombie-runtime'
   | 'claim-birth-authority-required'
+  /**
+   * T-07398 — the three directive refusals. They are refusals of the REQUEST,
+   * not of this node's authority, so the server maps them to their own typed
+   * wire codes rather than folding them into `stale_context`.
+   */
+  | 'placement-directive-conflict'
+  | 'unknown-node'
+  | 'invalid-provision-value'
 
 /** Node-local facts required to materialize an agent scope (§5). */
 export type SummonCapabilityName =
@@ -279,6 +288,13 @@ export type SummonGateDeps = {
         hint?: SummonCapabilityHint | undefined
       ) => Promise<SummonCapabilityObservation>)
     | undefined
+  /**
+   * Every node id this daemon knows: its own, plus its configured peers
+   * (T-07398). A `node=` directive is validated against it at BOTH origin and
+   * receiver — the receiver re-runs this derivation on its OWN registry rather
+   * than trusting the resolution the origin forwarded.
+   */
+  knownNodeIds?: readonly string[] | undefined
   /** Node-local retirement lookup (T-06614). Absent until that task lands. */
   retirementFor?: ((scopeRef: string) => ScopeRetirement | undefined) | undefined
   /** Daemon-owned runtime/live-run lookup. Never trusts caller parent assertions. */
@@ -298,6 +314,14 @@ export type SummonGateRequest = {
   knownSession?: boolean | undefined
   deps: SummonGateDeps
   capabilityHint?: SummonCapabilityHint | undefined
+  /**
+   * T-07398 — the explicit provisioning directive block carried by the request
+   * body. `node=` is the only member placement reads, and it is admissible only
+   * where `[placement]` is silent. This is a DECLARED request field, never an
+   * ambient caller assertion: nothing here reads the caller's own node, its
+   * transport, or its environment.
+   */
+  provision?: Partial<ProvisioningScalars> | undefined
 }
 
 /**
@@ -455,14 +479,25 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
 /**
  * Resolves where placement says a VIRGIN scope should be born.
  *
- * Precedence, highest first:
+ * Precedence, highest first (T-07398 amended law, praesidium-root 913bfcd):
  *
  *   1. **exact pin** — a hard constraint on every path (§5).
  *   2. **placement home** — cross-project task-name policy with the same matched
- *      constraint semantics as a pin. Neither is overridden by explicitness.
- *   3. **explicit_local** — for an unconstrained scope, the operator's start at this
- *      node IS the placement declaration (§5 "explicit operator start wins").
- *   4. **provisioning.node** — where implicit summons route.
+ *      constraint semantics as a pin, including the reserved-family derivation
+ *      (a declared base reserves its roster-slot names). Neither is overridden
+ *      by explicitness.
+ *   3. **`node=` directive** — an explicit, typed, dual-validated request field.
+ *      It FILLS GAPS: admissible only where `[placement]` is silent, and a
+ *      disagreement with tier 1 or 2 is a hard typed failure rather than a
+ *      silent demotion. This is not the forbidden ambient caller assertion —
+ *      nothing about placement is inferred from the caller's node, transport or
+ *      environment; the directive is a field of the request, re-derived here on
+ *      the receiver against the receiver's OWN policy and registry.
+ *   4. **explicit_local** — for a scope no declaration and no directive reaches,
+ *      the operator's start at this node IS the placement declaration (§5
+ *      "explicit operator start wins"). A directive is more specific than
+ *      "here", which is why it sits above this.
+ *   5. **provisioning.node** — where implicit summons route.
  *
  * Reaching this function at all already means the registry answered `unbound`,
  * which is what confines explicit-start-wins to genuinely virgin scopes: it
@@ -479,13 +514,82 @@ type DesignatedHome = {
     | undefined
 }
 
+/**
+ * Validate the `node=` member of a directive block against node grammar and the
+ * federation registry, INDEPENDENTLY of what the scope's policy says.
+ *
+ * Validation is deliberately first, ahead of every precedence tier: a directive
+ * naming a node that does not exist is wrong whether or not the scope it names
+ * happens to be pinned, and an operator debugging a typo should be told about
+ * the typo rather than about a conflict.
+ *
+ * Returns `undefined` when the block carries no `node=` at all.
+ */
+export function resolvePlacementDirectiveNode(
+  provision: Partial<ProvisioningScalars> | undefined,
+  knownNodeIds: readonly string[] | undefined
+): { nodeId: string } | SummonGateEvaluation | undefined {
+  const raw = provision?.node
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return refuse(
+      'invalid-provision-value',
+      'The provisioning directive "node" must name a node id. Spell it as node=<nodeId>.'
+    )
+  }
+  const nodeId = raw.trim()
+  if (isReservedNodeId(nodeId)) {
+    return refuse(
+      'invalid-provision-value',
+      `The provisioning directive node="${nodeId}" is invalid: "local" is not a node id — the sentinel was deleted, and omitting the directive is what means "here". Name a real node.`
+    )
+  }
+  if (!isValidNodeId(nodeId)) {
+    return refuse(
+      'invalid-provision-value',
+      `The provisioning directive node="${nodeId}" is not a valid node id (allowed: A-Z a-z 0-9 . _ -, up to 64 characters).`
+    )
+  }
+  if (knownNodeIds !== undefined && !knownNodeIds.includes(nodeId)) {
+    return refuse(
+      'unknown-node',
+      `The provisioning directive node="${nodeId}" names no node this daemon knows. Known nodes: ${knownNodeIds.join(', ')}. Add it to the federation peer registry, or name one of those.`
+    )
+  }
+  return { nodeId }
+}
+
+function directiveConflict(
+  scopeRef: string,
+  declared: { kind: 'pin' | 'placement home'; key: string; nodeId: string },
+  directedNodeId: string
+): SummonGateEvaluation {
+  return refuse(
+    'placement-directive-conflict',
+    `${scopeRef} is declared by ${declared.kind} "${declared.key}" = "${declared.nodeId}", but the request directs node="${directedNodeId}". A directive fills a gap in [placement]; it never moves a declared scope. Summon it on ${declared.nodeId}, or change that declaration.`,
+    { homeNodeId: declared.nodeId }
+  )
+}
+
 function resolveDesignatedHome(
   scopeRef: string,
   policy: SummonGatePolicy | undefined,
   localNodeId: string,
-  intent: SummonIntent
+  intent: SummonIntent,
+  directiveInput?:
+    | {
+        provision?: Partial<ProvisioningScalars> | undefined
+        knownNodeIds?: readonly string[] | undefined
+      }
+    | undefined
 ): DesignatedHome | SummonGateEvaluation {
   const placement = policy?.placement
+
+  const directive = resolvePlacementDirectiveNode(
+    directiveInput?.provision,
+    directiveInput?.knownNodeIds
+  )
+  if (isEvaluation(directive)) return directive
 
   const pinKey = placementPinKey(scopeRef)
   const pin = pinKey === undefined ? undefined : placement?.pins[pinKey]
@@ -496,6 +600,13 @@ function resolveDesignatedHome(
       return refuse(
         'invalid-pin',
         `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is not a node id. Name a real node.`
+      )
+    }
+    if (directive !== undefined && directive.nodeId !== pin) {
+      return directiveConflict(
+        scopeRef,
+        { kind: 'pin', key: pinKey, nodeId: pin },
+        directive.nodeId
       )
     }
     return {
@@ -513,11 +624,26 @@ function resolveDesignatedHome(
         `Placement home [placement.homes] "${home.key}" = "${home.nodeId}" is invalid: "local" is not a node id. Name a real node.`
       )
     }
+    if (directive !== undefined && directive.nodeId !== home.nodeId) {
+      return directiveConflict(
+        scopeRef,
+        { kind: 'placement home', key: home.key, nodeId: home.nodeId },
+        directive.nodeId
+      )
+    }
     return {
       homeNodeId: home.nodeId,
       provenance: 'task_default',
       matchedConstraint: { kind: 'task-default', key: home.key },
     }
+  }
+
+  // Nothing in [placement] speaks for this scope, so the directive places it.
+  // `matchedConstraint` stays absent on purpose: a directive is a defaults-tier
+  // input, not a declared constraint, so it must not acquire pin-mismatch
+  // diagnostics or pin-grade authority anywhere downstream.
+  if (directive !== undefined) {
+    return { homeNodeId: directive.nodeId, provenance: 'default_home_node' }
   }
 
   // The scope is virgin and unconstrained, and a human ran `hrc run`/`hrc start`
@@ -551,15 +677,65 @@ function resolveDesignatedHome(
 export function resolveDeclaredPlacementHome(
   scopeRef: string,
   policy: SummonGatePolicy | undefined,
-  localNodeId: string
+  localNodeId: string,
+  directiveInput?:
+    | {
+        provision?: Partial<ProvisioningScalars> | undefined
+        knownNodeIds?: readonly string[] | undefined
+      }
+    | undefined
 ):
   | {
       homeNodeId: string
       provenance: Exclude<EstablishmentProvenance, 'rebind'>
     }
   | undefined {
-  const designated = resolveDesignatedHome(scopeRef, policy, localNodeId, 'implicit')
-  if (isEvaluation(designated)) return undefined
+  const resolved = resolveDeclaredPlacementHomeOrRefusal(
+    scopeRef,
+    policy,
+    localNodeId,
+    directiveInput
+  )
+  return resolved === undefined || 'decision' in resolved ? undefined : resolved
+}
+
+/**
+ * The same projection, but WITH the refusal a directive can produce.
+ *
+ * Callers that carry a directive block need the typed refusal rather than the
+ * bare `undefined` a policy-only projection collapses it to — otherwise a
+ * `node=` disagreeing with a declared family home reads downstream as "the base
+ * declares no home here", which is a different fact with a different fix.
+ * Delegating keeps ONE implementation of the precedence; this only chooses how
+ * much of its answer the caller can see.
+ */
+export function resolveDeclaredPlacementHomeOrRefusal(
+  scopeRef: string,
+  policy: SummonGatePolicy | undefined,
+  localNodeId: string,
+  directiveInput?:
+    | {
+        provision?: Partial<ProvisioningScalars> | undefined
+        knownNodeIds?: readonly string[] | undefined
+      }
+    | undefined
+):
+  | {
+      homeNodeId: string
+      provenance: Exclude<EstablishmentProvenance, 'rebind'>
+    }
+  | Extract<SummonGateEvaluation, { decision: 'refuse' }>
+  | undefined {
+  const designated = resolveDesignatedHome(
+    scopeRef,
+    policy,
+    localNodeId,
+    'implicit',
+    directiveInput
+  )
+  if (isEvaluation(designated)) {
+    return designated.decision === 'refuse' ? designated : undefined
+  }
   return { homeNodeId: designated.homeNodeId, provenance: designated.provenance }
 }
 
@@ -892,7 +1068,10 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
         { retryable: true }
       )
     }
-    const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent)
+    const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent, {
+      provision: request.provision,
+      knownNodeIds: deps.knownNodeIds,
+    })
     if (isEvaluation(designated)) return designated
     if (designated.homeNodeId !== deps.localNodeId) {
       return refuse(
@@ -954,7 +1133,10 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     )
   }
 
-  const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent)
+  const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent, {
+    provision: request.provision,
+    knownNodeIds: deps.knownNodeIds,
+  })
   if (isEvaluation(designated)) return designated
   return await decideVirginPolicyPlacement(request, scopeRef, designated)
 }

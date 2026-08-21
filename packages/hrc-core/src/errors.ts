@@ -93,6 +93,27 @@ export const HrcErrorCode = {
    * than timing out privately.
    */
   FIRST_TURN_MISSING: 'first_turn_missing',
+  /**
+   * T-07398 Wave 2b — the provisioning-directive vocabulary, re-validated at the
+   * server dispatch boundary and at the summon gate. The sender validates the
+   * same block, but a server that trusted that would leave the deny-list open to
+   * any caller that hand-writes a request body.
+   */
+  /** `intent.provision` is not a flat table of top-level scalars (nested harness table, or a non-scalar value). */
+  INVALID_PROVISION_SHAPE: 'invalid_provision_shape',
+  /** A directive named a key that may only ever be set in the agent profile (`yolo`, `sandbox`). */
+  DENIED_PROVISION_KEY: 'denied_provision_key',
+  /** A directive's value is structurally well-formed but cannot be honoured (e.g. the deleted `node = "local"` sentinel). */
+  INVALID_PROVISION_VALUE: 'invalid_provision_value',
+  /**
+   * A `node=` directive disagreed with a `[placement]` declaration (pin, or a
+   * home — including a declared base's reserved family member). The directive
+   * tier is strictly below the authority tier: it fills gaps, never moves a
+   * declared scope.
+   */
+  PLACEMENT_DIRECTIVE_CONFLICT: 'placement_directive_conflict',
+  /** A `node=` directive named a node this daemon's federation registry does not know. */
+  UNKNOWN_NODE: 'unknown_node',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -157,6 +178,15 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   // The provisioned runtime accepted the prompt and never produced a turn: the
   // upstream harness, not the caller's request, is what failed.
   [HrcErrorCode.FIRST_TURN_MISSING]: 503,
+  // Directive refusals are caller-fixable request facts, never server faults.
+  // Shape is malformed input (400); the rest are well-formed but unprocessable
+  // (422), except a placement disagreement, which is a genuine conflict with
+  // declared authority (409) and reads as one to every existing client.
+  [HrcErrorCode.INVALID_PROVISION_SHAPE]: 400,
+  [HrcErrorCode.DENIED_PROVISION_KEY]: 422,
+  [HrcErrorCode.INVALID_PROVISION_VALUE]: 422,
+  [HrcErrorCode.PLACEMENT_DIRECTIVE_CONFLICT]: 409,
+  [HrcErrorCode.UNKNOWN_NODE]: 422,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {

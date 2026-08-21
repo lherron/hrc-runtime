@@ -526,6 +526,10 @@ async function createNotifiedSessionSuccessor(
               placement: capabilityIntent.placement,
               harness: capabilityIntent.harness,
             },
+            // T-07398: the successor's birth reads the same directive block.
+            ...(capabilityIntent.provision === undefined
+              ? {}
+              : { provision: capabilityIntent.provision }),
           }),
       ...(birthCredential === undefined ? {} : { birthCredential }),
     },
@@ -1422,6 +1426,15 @@ export async function handleSemanticDm(
     }
   }
 
+  // T-07398 — provisioning is decided at BIRTH. A directive block arriving at a
+  // scope that is already live cannot take effect (no hot-swap), so the honest
+  // answer is to deliver anyway and say so: the sender learns the block did not
+  // apply instead of reading a delivered reply as proof that it did. Observed
+  // BEFORE delivery, because delivery is exactly what can create the runtime
+  // that would otherwise make a birth look like a live scope.
+  const directivesApplied =
+    body.runtimeIntent?.provision === undefined ? undefined : !targetHasLiveRuntime(this, body.to)
+
   const respondTo = body.respondTo ?? body.from
   const record = this.insertAndNotifyMessage({
     messageId: `msg-${randomUUID()}`,
@@ -1481,7 +1494,28 @@ export async function handleSemanticDm(
     ...(waited ? { waited } : {}),
     ...(warnings ? { warnings } : {}),
     ...(delivery ? { delivery } : {}),
+    ...(directivesApplied === undefined ? {} : { directivesApplied }),
   } satisfies SemanticDmResponse)
+}
+
+/**
+ * Whether the DM's target already has a live runtime — i.e. whether this
+ * dispatch is a delivery into an existing runtime rather than a birth.
+ *
+ * Non-session targets (entity/selector addressing) are treated as births: they
+ * resolve to a scope through the ordinary summon path, where a directive is
+ * applied at mint time like any other birth.
+ */
+function targetHasLiveRuntime(
+  server: HrcServerInstanceForHandlers,
+  to: HrcMessageAddress
+): boolean {
+  if (to.kind !== 'session') return false
+  const session = findTargetSession(server.db, to.sessionRef)
+  if (session === null) return false
+  return server.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .some((runtime) => !isRuntimeUnavailableStatus(runtime.status))
 }
 
 /** Filterable durable delivery projection consumed by the F3 operator CLI. */

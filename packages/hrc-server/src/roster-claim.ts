@@ -126,9 +126,13 @@ export async function startRoutedSuffixRosterRuntime(
     placement: request.runtimeIntent.placement,
     harness: request.runtimeIntent.harness,
   }
+  // T-07398: a directive on an undeclared family places the WHOLE family, so the
+  // same block resolves the base here and preflights every member below.
+  const provision = request.runtimeIntent.provision
   const homeNodeId = await resolveImplicitScopeHome(this, {
     scopeRef: base.baseScopeRef,
     capabilityHint,
+    ...(provision === undefined ? {} : { provision }),
   })
   const config = this.options.federationConfig
   if (config === undefined || !config.sourceExists) {
@@ -143,6 +147,7 @@ export async function startRoutedSuffixRosterRuntime(
       scopeRefs: rosterSlotTokens(base.baseTaskId).map((slot) => slotScopeRef(base, slot)),
       capabilityHint,
       origin: 'local',
+      ...(provision === undefined ? {} : { provision }),
     })
     const { runtime, claim } = await startSuffixRosterRuntime.call(this, request)
     return { ...toStartRuntimeResponse(runtime), claim }

@@ -482,6 +482,14 @@ export type SemanticDmResponse = {
   warnings?: HrcDeliveryWarning[] | undefined
   /** Present for urgent sends: how the order actually landed. */
   delivery?: HrcDeliveryOutcome | undefined
+  /**
+   * T-07398 — whether the `runtimeIntent.provision` directive block this DM
+   * carried actually decided anything. Present only when the request carried
+   * one. Provisioning is birth-only: a DM into an already-live runtime is
+   * delivered (it never blocks) but reports `false`, so a delivered reply is
+   * never mistaken for evidence that `+model=...` took effect.
+   */
+  directivesApplied?: boolean | undefined
 }
 
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)

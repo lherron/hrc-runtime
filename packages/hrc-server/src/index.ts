@@ -1048,6 +1048,12 @@ class HrcServerInstance implements HrcServer {
                 scopeRefs: family.scopeRefs,
                 capabilityHint,
                 origin: 'federated-ingress',
+                // T-07398: re-derived here against THIS node's registry and
+                // [placement]. The origin's resolution is a request, not
+                // authority, so the forwarded directive is validated again.
+                ...(parsed.runtimeIntent.provision === undefined
+                  ? {}
+                  : { provision: parsed.runtimeIntent.provision }),
               })
               const localized = localizeFederatedRuntimeIntent(
                 family.baseScopeRef,
@@ -1087,6 +1093,10 @@ class HrcServerInstance implements HrcServer {
                 scopeRef: scope.scopeRef,
                 capabilityHint,
                 origin: 'federated-ingress',
+                // T-07398: the receiver's half of dual validation — see above.
+                ...(parsed.runtimeIntent.provision === undefined
+                  ? {}
+                  : { provision: parsed.runtimeIntent.provision }),
               })
               const localized = localizeFederatedRuntimeIntent(scope.scopeRef, parsed.runtimeIntent)
               const { runtime, claim } = await this.startExactScopeRuntime({
@@ -1736,6 +1746,10 @@ class HrcServerInstance implements HrcServer {
                 placement: parsed.runtimeIntent.placement,
                 harness: parsed.runtimeIntent.harness,
               },
+              // T-07398: the ensure/dm-summon door honors directives too.
+              ...(parsed.runtimeIntent.provision === undefined
+                ? {}
+                : { provision: parsed.runtimeIntent.provision }),
             }),
         ...(parsed.birthCredential === undefined
           ? {}

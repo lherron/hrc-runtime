@@ -92,9 +92,13 @@ export async function startRoutedExactScopeRuntime(
     placement: request.runtimeIntent.placement,
     harness: request.runtimeIntent.harness,
   }
+  // T-07398: the directive rides the intent the request already carries, so the
+  // origin resolves placement from it without a new request-body field.
+  const provision = request.runtimeIntent.provision
   const homeNodeId = await resolveImplicitScopeHome(this, {
     scopeRef: scope.scopeRef,
     capabilityHint,
+    ...(provision === undefined ? {} : { provision }),
   })
   const config = this.options.federationConfig
   if (config === undefined || !config.sourceExists) {
@@ -108,6 +112,7 @@ export async function startRoutedExactScopeRuntime(
       scopeRef: scope.scopeRef,
       capabilityHint,
       origin: 'local',
+      ...(provision === undefined ? {} : { provision }),
     })
     const { runtime, claim } = await startExactScopeRuntime.call(this, request)
     return { ...toStartRuntimeResponse(runtime), claim }

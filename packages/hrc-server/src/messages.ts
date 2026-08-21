@@ -13,6 +13,7 @@ import type {
   HrcTurnResponseFormat,
 } from 'hrc-core'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import { parseOptionalProvisionBlock } from './parsers/provision.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
 
 /**
@@ -348,9 +349,17 @@ export function parseSemanticDmRequest(input: unknown): {
       ? parseMessageAddress(input['respondTo'], 'respondTo')
       : undefined
 
+  // T-07398: this door casts `runtimeIntent` straight through rather than
+  // running the start/ensure parser, so the directive block would otherwise
+  // reach the summon gate unvalidated — the exact hole a deny-list enforced
+  // only at the sender leaves open. The cast stays (the rest of the intent's
+  // contract is unchanged here); only `provision` is re-validated.
   const runtimeIntent = isRecord(input['runtimeIntent'])
     ? (input['runtimeIntent'] as HrcRuntimeIntent)
     : undefined
+  if (runtimeIntent !== undefined) {
+    parseOptionalProvisionBlock((runtimeIntent as { provision?: unknown }).provision)
+  }
 
   const createIfMissing =
     typeof input['createIfMissing'] === 'boolean' ? input['createIfMissing'] : undefined

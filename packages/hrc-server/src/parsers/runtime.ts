@@ -36,6 +36,7 @@ import {
   requireOptionalOneOf,
   requireTrimmedStringField,
 } from './common.js'
+import { parseOptionalProvisionBlock } from './provision.js'
 import { resolveHarnessFromPlacement } from './runtime-harness-resolver.js'
 
 export type InFlightInputRequest = {
@@ -176,10 +177,15 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
     : resolveHarnessFromPlacement(placement, execution)
 
   const presentation = parseOptionalPresentationIntent(input['presentation'])
+  // T-07398: re-validated HERE, at the dispatch boundary, then carried verbatim.
+  // Every surface that already accepts a runtimeIntent therefore accepts a
+  // directive block without a new request-body field of its own.
+  const provision = parseOptionalProvisionBlock(input['provision'])
 
   return {
     placement: placement as import('spaces-config').RuntimePlacement,
     harness: resolvedHarness,
+    ...(provision === undefined ? {} : { provision }),
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
     ...(isRecord(launch) ? { launch: launch as HrcRuntimeIntent['launch'] } : {}),
     ...(typeof initialPrompt === 'string' ? { initialPrompt } : {}),
