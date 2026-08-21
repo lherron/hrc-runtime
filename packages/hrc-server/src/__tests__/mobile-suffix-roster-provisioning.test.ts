@@ -254,3 +254,82 @@ describe('mobile suffix-roster peer client', () => {
     })
   })
 })
+
+/**
+ * T-07398 Wave 2b — the suffix door honors the same directive, family-wide.
+ *
+ * A suffix start of an UNDECLARED family is the one case the amended law lets a
+ * directive fill: there is no `[placement.homes]` entry to contradict, so the
+ * directive places the WHOLE family on the directed node. Family-wide is the
+ * point — the same-home property that the one-family-one-mutex claim discipline
+ * rests on has to hold by construction, so a directive that placed only the
+ * base (or only the claimed member) would be worse than no directive at all.
+ */
+describe('T-07398 suffix-door directive placement', () => {
+  let fixture: HrcServerTestFixture
+
+  beforeEach(async () => {
+    fixture = await createHrcTestFixture('hrc-t07398-roster-')
+  })
+
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
+
+  const UNDECLARED_BASE_SESSION_REF = 'agent:mable:project:hrc-runtime:task:scratchpad/lane:main'
+
+  async function serverWithPeers(homes: Record<string, string>) {
+    await writeFile(
+      join(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
+      JSON.stringify({
+        nodeId: 'svc',
+        gate: { mode: 'enforce' },
+        peers: {
+          max3: { endpoint: 'http://max3.example.ts.net:18490', token: 'token-max3' },
+          lab: { endpoint: 'http://lab.example.ts.net:18490', token: 'token-lab' },
+        },
+      }),
+      { mode: 0o600 }
+    )
+    const server = await createHrcServer(fixture.serverOpts())
+    Object.assign(server, {
+      registryClient: registryUnbound(),
+      policyFor: async () => ({
+        provisioning: { node: 'max3' },
+        placement: { pins: {}, homes },
+        claimsTask: false,
+      }),
+      capabilityFor: async () => ({ outcome: 'capable' as const }),
+    })
+    return server
+  }
+
+  test('a directive on an undeclared family places every member, not just the base', async () => {
+    const family = suffixRosterFamily(UNDECLARED_BASE_SESSION_REF)
+    const server = await serverWithPeers({})
+    try {
+      // The base resolves to the directed node rather than provisioning.node...
+      expect(
+        await resolveImplicitScopeHome(server, {
+          scopeRef: family.baseScopeRef,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'svc' },
+        })
+      ).toBe('svc')
+
+      // ...and so does every reserved member, which is what lets the whole
+      // family preflight here without a single homes entry.
+      await preflightSuffixRosterFamily(server, {
+        baseScopeRef: family.baseScopeRef,
+        scopeRefs: family.scopeRefs,
+        capabilityHint: CAPABILITY_HINT,
+        origin: 'local',
+        provision: { node: 'svc' },
+      })
+      expect(server.db.sessions.count()).toBe(0)
+      expect(server.db.rosterClaims.listByBaseScope(family.baseScopeRef)).toEqual([])
+    } finally {
+      await server.stop()
+    }
+  })
+})

@@ -412,3 +412,170 @@ describe('T-07302 exact-start peer route', () => {
     })
   })
 })
+
+/**
+ * T-07398 Wave 2b — placement precedence with an explicit provision directive.
+ *
+ * The amended law (praesidium-root 913bfcd) admits ONE new placement input and
+ * gives it the LOWEST declared authority:
+ *
+ *   pin  >  home (incl. the reserved-family derivation)  >  node= directive
+ *        >  provisioning.node  >  platform default
+ *
+ * So a directive fills a gap and never moves a declared scope. Ambient caller
+ * assertion stays forbidden — nothing here reads the caller's own node; the
+ * directive is a typed, validated field of the request, re-derived by the
+ * receiver against its own registry and its own view of `[placement]`.
+ *
+ * The three t07302 rows this suite owes Wave 2b are here: an exact start of a
+ * declared base's reserved family member lands on the FAMILY home; the same
+ * name with a disagreeing directive is a typed conflict; and an unknown node is
+ * a typed refusal rather than a silent fall-through to the default.
+ */
+describe('T-07398 exact-door directive placement', () => {
+  let fixture: HrcServerTestFixture
+
+  beforeEach(async () => {
+    fixture = await createHrcTestFixture('hrc-t07398-exact-')
+  })
+
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
+
+  const FAMILY_MEMBER_SCOPE = 'agent:cody:project:hrc-runtime:task:primary-nova'
+
+  async function serverWithPeers(placement: {
+    node?: string
+    pins?: Record<string, string>
+    homes?: Record<string, string>
+  }) {
+    await writeFile(
+      join(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
+      JSON.stringify({
+        nodeId: 'hrcdev',
+        gate: { mode: 'enforce' },
+        peers: {
+          max3: { endpoint: 'http://max3.example.ts.net:18490', token: 'token-max3' },
+          lab: { endpoint: 'http://lab.example.ts.net:18490', token: 'token-lab' },
+        },
+      }),
+      { mode: 0o600 }
+    )
+    const server = await createHrcServer(fixture.serverOpts())
+    Object.assign(server, {
+      registryClient: registryUnbound(),
+      policyFor: async () => ({
+        provisioning: { node: placement.node ?? 'max3' },
+        placement: { pins: placement.pins ?? {}, homes: placement.homes ?? {} },
+        claimsTask: false,
+      }),
+      capabilityFor: async () => ({ outcome: 'capable' as const }),
+    })
+    return server
+  }
+
+  async function rejectionOf(promise: Promise<unknown>): Promise<{ code?: string }> {
+    try {
+      await promise
+    } catch (error) {
+      return error as { code?: string }
+    }
+    throw new Error('expected the directive placement to be refused')
+  }
+
+  test('an undeclared exact scope is placed by the directive, over provisioning.node', async () => {
+    const server = await serverWithPeers({ node: 'max3' })
+    try {
+      expect(
+        await resolveImplicitScopeHome(server, {
+          scopeRef: CUSTOM_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'lab' },
+        })
+      ).toBe('lab')
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test('an exact start of a declared base family member lands on the family home', async () => {
+    const server = await serverWithPeers({ node: 'hrcdev', homes: { primary: 'max3' } })
+    try {
+      // No directive: the reserved-family derivation gives the exact door the
+      // same answer the roster door would give, so the family cannot be split.
+      expect(
+        await resolveImplicitScopeHome(server, {
+          scopeRef: FAMILY_MEMBER_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+        })
+      ).toBe('max3')
+      // A directive that AGREES with the family home is accepted, not refused.
+      expect(
+        await resolveImplicitScopeHome(server, {
+          scopeRef: FAMILY_MEMBER_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'max3' },
+        })
+      ).toBe('max3')
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test('a directive disagreeing with the family home is PLACEMENT_DIRECTIVE_CONFLICT', async () => {
+    const server = await serverWithPeers({ node: 'hrcdev', homes: { primary: 'max3' } })
+    try {
+      const error = await rejectionOf(
+        resolveImplicitScopeHome(server, {
+          scopeRef: FAMILY_MEMBER_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'lab' },
+        })
+      )
+      expect(error.code).toBe('placement_directive_conflict')
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test('a directive naming an unregistered node is UNKNOWN_NODE, never a silent default', async () => {
+    const server = await serverWithPeers({ node: 'max3' })
+    try {
+      const error = await rejectionOf(
+        resolveImplicitScopeHome(server, {
+          scopeRef: CUSTOM_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'nosuchnode' },
+        })
+      )
+      expect(error.code).toBe('unknown_node')
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test('the deleted "local" sentinel is refused, never resolved as a node', async () => {
+    const server = await serverWithPeers({ node: 'max3' })
+    try {
+      const error = await rejectionOf(
+        resolveImplicitScopeHome(server, {
+          scopeRef: CUSTOM_SCOPE,
+          capabilityHint: CAPABILITY_HINT,
+          provision: { node: 'local' },
+        })
+      )
+      // "local" is not a node id; which typed refusal it earns is the
+      // implementation's call, but it must be one of the directive codes and
+      // must never resolve to a home.
+      expect(['unknown_node', 'invalid_provision_value']).toContain(error.code)
+      expect(server.db.sessions.count()).toBe(0)
+    } finally {
+      await server.stop()
+    }
+  })
+})

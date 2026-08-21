@@ -123,3 +123,72 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
     expect(omitted.execution).toEqual({ preferredMode: 'headless' })
   })
 })
+
+/**
+ * T-07398 Wave 2b — the directive overlay is the FINAL step of intent assembly.
+ *
+ * The profile (plus any project-target overlay) supplies the `[provisioning]`
+ * baseline; a per-summon directive block overlays it last, so a directive can
+ * change what the merge concluded — including the harness, which the provider
+ * and harness id must then follow. The overlaid result is what rides the intent
+ * as `provision`, verbatim.
+ */
+describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () => {
+  function makeProvisioningAgentDir(): { agentRoot: string; agentId: string } {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-'))
+    tempRoots.push(root)
+    writeFileSync(
+      join(root, 'agent-profile.toml'),
+      [
+        'version = 3',
+        '',
+        '[provisioning]',
+        'harness = "claude-code"',
+        'model = "opus"',
+        'reasoning = "high"',
+        'approval = "never"',
+        'remote = true',
+        '',
+      ].join('\n')
+    )
+    return { agentRoot: root, agentId: 'fixture-agent' }
+  }
+
+  test('directives overlay the merged profile baseline and re-resolve the harness', () => {
+    const { agentRoot, agentId } = makeProvisioningAgentDir()
+
+    // No directives: the intent carries the merged profile baseline verbatim.
+    const baseline = buildHrcRuntimeIntent({
+      agentId,
+      agentRoot,
+      interactive: false,
+      preferredMode: 'headless',
+    })
+    expect(baseline.provision).toMatchObject({
+      harness: 'claude-code',
+      model: 'opus',
+      reasoning: 'high',
+      approval: 'never',
+      remote: true,
+    })
+
+    // Directives applied LAST: they win over the merge, and the harness id and
+    // provider follow the overlaid harness rather than the profile's.
+    const directed = buildHrcRuntimeIntent({
+      agentId,
+      agentRoot,
+      interactive: false,
+      preferredMode: 'headless',
+      provision: { harness: 'codex', model: 'gpt-5.6-sol', reasoning: 'low' },
+    })
+    expect(directed.provision).toMatchObject({
+      harness: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoning: 'low',
+      // Untouched keys survive the overlay.
+      approval: 'never',
+      remote: true,
+    })
+    expect(directed.harness).toMatchObject({ provider: 'openai', id: 'codex-cli' })
+  })
+})
