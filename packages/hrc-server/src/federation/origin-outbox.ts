@@ -17,12 +17,12 @@ import type {
   HrcMailSendRequest,
   HrcMessageAddress,
   HrcMessageRecord,
-  SemanticDmRequest,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { FederationOutboxDeliveryRecord, HrcDatabase } from 'hrc-store-sqlite'
 
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
+import type { CompleteSemanticDmRequest } from '../messages.js'
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
 import { sendFederationEnvelope } from './accept-client.js'
@@ -54,7 +54,7 @@ export type FederationOriginOutboxOptions = {
   resolvePlacement?:
     | ((input: {
         scopeRef: string
-        body: SemanticDmRequest
+        body: CompleteSemanticDmRequest
       }) => Promise<PlacementDisposition | undefined>)
     | undefined
 }
@@ -129,7 +129,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function deliveryContext(
-  body: SemanticDmRequest | undefined,
+  body: CompleteSemanticDmRequest | undefined,
   options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationMessageDelivery | undefined {
   if (body === undefined) return undefined
@@ -157,7 +157,7 @@ function deliveryContext(
 
 function pendingEnvelopeFor(
   record: HrcMessageRecord,
-  body: SemanticDmRequest | undefined,
+  body: CompleteSemanticDmRequest | undefined,
   options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationPendingMessageEnvelope {
   const delivery = deliveryContext(body, options)
@@ -193,7 +193,7 @@ function mailActorAddress(actor: HrcMailActor): HrcMessageAddress {
 
 function envelopeFor(
   record: HrcMessageRecord,
-  body: SemanticDmRequest | undefined,
+  body: CompleteSemanticDmRequest | undefined,
   expected: { homeNodeId: string; placementEpoch: number },
   options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationMessageEnvelope {
@@ -367,7 +367,9 @@ export class FederationOriginOutbox {
    * registry's active binding when the same node originates a federated DM to
    * the winner.
    */
-  async resolveTargetPlacement(body: SemanticDmRequest): Promise<FederationTargetPlacement> {
+  async resolveTargetPlacement(
+    body: CompleteSemanticDmRequest
+  ): Promise<FederationTargetPlacement> {
     if (body.to.kind !== 'session') return { outcome: 'local' }
     const scopeRef = parseSessionRef(body.to.sessionRef).scopeRef
     let binding: ResolvedFederationRoutingBinding | undefined
@@ -449,7 +451,7 @@ export class FederationOriginOutbox {
   }
 
   async route(
-    body: SemanticDmRequest,
+    body: CompleteSemanticDmRequest,
     record: HrcMessageRecord,
     resolvedPlacement?: FederationTargetPlacement | undefined,
     options?: { semanticTurnHandoff?: boolean | undefined }
@@ -625,7 +627,7 @@ export class FederationOriginOutbox {
 
   private enqueue(
     record: HrcMessageRecord,
-    body: SemanticDmRequest | undefined,
+    body: CompleteSemanticDmRequest | undefined,
     peerNodeId: string,
     expected: { homeNodeId: string; placementEpoch: number },
     log: {
@@ -665,7 +667,7 @@ export class FederationOriginOutbox {
 
   private enqueueEstablishing(
     record: HrcMessageRecord,
-    body: SemanticDmRequest | undefined,
+    body: CompleteSemanticDmRequest | undefined,
     scopeRef: string,
     peerNodeId: string,
     options?: { semanticTurnHandoff?: boolean | undefined }

@@ -48,6 +48,19 @@ export function normalizeDispatchIntent(
     )
   }
 
+  // Deployment-skew defense: an older sender may put the provision-only DM
+  // fragment directly in front of a whole-intent consumer. Typed callers cannot
+  // do this after HrcDmRuntimeIntent is narrowed by handleSemanticDm, but raw
+  // JSON from a mismatched deployment must fail instead of half-applying with
+  // the daemon cwd and an absent harness.
+  if (intent.placement === undefined) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.MISSING_RUNTIME_INTENT,
+      'runtimeIntent must be complete before dispatch',
+      { reason: 'directive_only_runtime_intent' }
+    )
+  }
+
   const cwd =
     intent.placement?.cwd ??
     intent.placement?.projectRoot ??

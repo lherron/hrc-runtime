@@ -14,6 +14,21 @@ import type { HrcBirthCredential } from './federation.js'
  */
 import type { HrcFence } from './fences.js'
 
+/**
+ * The provision-only wire fragment hrcchat sends for a directive-bearing DM
+ * when the target session already exists. It is deliberately not a runtime
+ * intent: the server must complete it from the target session's stored intent
+ * before any dispatch, summon, or successor consumer can observe it.
+ */
+export type HrcDirectiveOnlyIntent = {
+  provision: NonNullable<HrcRuntimeIntent['provision']>
+  placement?: never
+  harness?: never
+}
+
+/** The two runtime-intent shapes accepted specifically by the semantic-DM wire. */
+export type HrcDmRuntimeIntent = HrcRuntimeIntent | HrcDirectiveOnlyIntent
+
 // -- Address model ------------------------------------------------------------
 
 export type HrcMessageAddress =
@@ -424,7 +439,7 @@ export type SemanticDmRequest = {
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   respondTo?: HrcMessageAddress | undefined
   replyToMessageId?: string | undefined
-  runtimeIntent?: HrcRuntimeIntent | undefined
+  runtimeIntent?: HrcDmRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
   /**
    * `steer` (T-07155) requests STRICT urgent delivery: preempt the target's
@@ -493,7 +508,9 @@ export type SemanticDmResponse = {
 }
 
 // POST /v1/messages/turn-handoff (durable request + detached semantic turn)
-export type SemanticTurnHandoffRequest = Omit<SemanticDmRequest, 'wait'>
+export type SemanticTurnHandoffRequest = Omit<SemanticDmRequest, 'wait' | 'runtimeIntent'> & {
+  runtimeIntent?: HrcRuntimeIntent | undefined
+}
 
 export type SemanticTurnHandoffStartedResponse = {
   messageId: string

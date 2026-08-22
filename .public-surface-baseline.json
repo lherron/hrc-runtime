@@ -1415,6 +1415,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcDirectiveOnlyIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcDirectiveOnlyIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcDispatchOrigin",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1427,6 +1435,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcDispatchOriginKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcDmRuntimeIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcDmRuntimeIntent|type",
       "count": 1
     },
     {

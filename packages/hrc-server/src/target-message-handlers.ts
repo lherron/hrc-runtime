@@ -22,6 +22,7 @@ import type {
   HrcDeliveryOutcome,
   HrcDeliveryWarning,
   HrcDispatchOrigin,
+  HrcDmRuntimeIntent,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -34,6 +35,7 @@ import type {
   SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffPendingResponse,
+  SemanticTurnHandoffRequest,
   SemanticTurnHandoffStartedResponse,
   TraceMessageRequest,
   TraceMessageResponse,
@@ -58,6 +60,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { buildMessageTrace } from './message-trace.js'
 import {
+  type CompleteSemanticDmRequest,
   extractProjectId,
   formatDmPayload,
   formatSessionRef,
@@ -784,7 +787,11 @@ export async function handleSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
-  const body = parseSemanticDmRequest(await parseJsonBody(request))
+  const parsedBody = parseSemanticDmRequest(await parseJsonBody(request))
+  const body: SemanticTurnHandoffRequest = {
+    ...parsedBody,
+    runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent),
+  }
   // T-07214: the best-effort class is a /v1/messages/dm surface only — the
   // own-turn handoff primitive stays unambiguous.
   if (body.whenBusy === 'steer_else_queue') {
@@ -802,7 +809,7 @@ export async function handleSemanticTurnHandoff(
     )
   }
   const targetSessionRef = body.to.sessionRef
-  const sessionBody: SemanticDmRequest & {
+  const sessionBody: SemanticTurnHandoffRequest & {
     to: Extract<HrcMessageAddress, { kind: 'session' }>
   } = { ...body, to: body.to }
   const targetScopeRef = scopeRefOf(targetSessionRef)
@@ -1024,7 +1031,7 @@ export async function handleSemanticTurnHandoff(
 
 export async function deliverPersistedSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
-  body: SemanticDmRequest & { to: Extract<HrcMessageAddress, { kind: 'session' }> },
+  body: SemanticTurnHandoffRequest & { to: Extract<HrcMessageAddress, { kind: 'session' }> },
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress
 ): Promise<SemanticTurnHandoffStartedResponse> {
@@ -1331,8 +1338,8 @@ export async function handleSemanticDm(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
-  const body = parseSemanticDmRequest(await parseJsonBody(request))
-  if (body.freshContext !== undefined) {
+  const parsedBody = parseSemanticDmRequest(await parseJsonBody(request))
+  if (parsedBody.freshContext !== undefined) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'freshContext is only supported by /v1/messages/turn-handoff',
@@ -1344,10 +1351,10 @@ export async function handleSemanticDm(
   // whether the target is live. Shape and the deny-list were already re-checked
   // in the parser; this is the half that needs the TARGET (its pin, its home,
   // and this node's peer registry), so it cannot live in the parser.
-  if (body.to.kind === 'session' && body.runtimeIntent?.provision !== undefined) {
+  if (parsedBody.to.kind === 'session' && parsedBody.runtimeIntent?.provision !== undefined) {
     await assertProvisionDirectiveAdmissible(this, {
-      scopeRef: scopeRefOf(body.to.sessionRef),
-      provision: body.runtimeIntent.provision,
+      scopeRef: scopeRefOf(parsedBody.to.sessionRef),
+      provision: parsedBody.runtimeIntent.provision,
     })
   }
 
@@ -1357,9 +1364,17 @@ export async function handleSemanticDm(
   // Complete it HERE, once, before any consumer that needs a whole intent:
   // downstream this value becomes the dispatch intent, the auto-summon intent
   // and the archived-successor intent, none of which can run on a fragment.
-  if (body.to.kind === 'session') {
-    body.runtimeIntent = completeDirectiveOnlyIntent(this, body.to.sessionRef, body.runtimeIntent)
-  }
+  const body: CompleteSemanticDmRequest =
+    parsedBody.to.kind === 'session'
+      ? {
+          ...parsedBody,
+          runtimeIntent: completeDirectiveOnlyIntent(
+            this,
+            parsedBody.to.sessionRef,
+            parsedBody.runtimeIntent
+          ),
+        }
+      : { ...parsedBody, runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent) }
 
   let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
@@ -1540,19 +1555,30 @@ export async function handleSemanticDm(
  * exactly what this path sent before directives existed, so a directive can
  * never become authority to birth a scope from a placement-less intent.
  */
-function completeDirectiveOnlyIntent(
+export function completeDirectiveOnlyIntent(
   server: HrcServerInstanceForHandlers,
   sessionRef: string,
-  intent: HrcRuntimeIntent | undefined
+  intent: HrcDmRuntimeIntent | undefined
 ): HrcRuntimeIntent | undefined {
   if (intent === undefined) return undefined
-  if ((intent as { placement?: unknown }).placement !== undefined) return intent
+  if (intent.placement !== undefined) return intent
   // Truthiness, not `=== undefined`: a persisted-but-null intent would spread
   // to `{}` and silently rebuild the very fragment this function exists to
   // remove.
   const base = findTargetSession(server.db, sessionRef)?.lastAppliedIntentJson
   if (!base) return undefined
   return { ...base, ...(intent.provision === undefined ? {} : { provision: intent.provision }) }
+}
+
+function requireCompleteRuntimeIntent(
+  intent: HrcDmRuntimeIntent | undefined
+): HrcRuntimeIntent | undefined {
+  if (intent === undefined || intent.placement !== undefined) return intent
+  throw new HrcUnprocessableEntityError(
+    HrcErrorCode.MISSING_RUNTIME_INTENT,
+    'runtimeIntent must be complete before dispatch',
+    { reason: 'directive_only_runtime_intent' }
+  )
 }
 
 /**
@@ -1839,7 +1865,7 @@ export async function deliverFederationAcceptedMessage(
             delivery.runtimeIntent,
             this.runtimeIntentLocalizationOptions
           )
-    const body: SemanticDmRequest & {
+    const body: SemanticTurnHandoffRequest & {
       to: Extract<HrcMessageAddress, { kind: 'session' }>
     } = {
       from: envelope.from,
@@ -1991,7 +2017,7 @@ export async function deliverFederationAcceptedMessage(
     this.isPeerUrgentDeliveryAuthorized?.(originNodeId) === true
       ? ('steer_else_queue' as const)
       : undefined
-  const body: SemanticDmRequest = {
+  const body: CompleteSemanticDmRequest = {
     from: envelope.from,
     to: envelope.to,
     body: envelope.body,
@@ -2133,7 +2159,7 @@ function projectFederatedSemanticTurnSignal(
 
 export async function deliverPersistedSemanticDm(
   this: HrcServerInstanceForHandlers,
-  body: SemanticDmRequest,
+  body: CompleteSemanticDmRequest,
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress
 ): Promise<{

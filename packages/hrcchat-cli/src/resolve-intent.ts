@@ -9,7 +9,7 @@
  */
 import type { ProvisioningScalars } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
-import type { HrcRuntimeIntent } from 'hrc-core'
+import type { HrcDirectiveOnlyIntent, HrcRuntimeIntent } from 'hrc-core'
 import {
   type ProfileAwareResolvedScopeInput,
   buildHrcRuntimeIntent,
@@ -71,8 +71,8 @@ function buildRuntimeIntentForResolvedScope(
  */
 export function directiveOnlyRuntimeIntent(
   directives: Partial<ProvisioningScalars>
-): HrcRuntimeIntent {
-  return { provision: directives } as unknown as HrcRuntimeIntent
+): HrcDirectiveOnlyIntent {
+  return { provision: directives }
 }
 
 /** Resolve an hrcchat messaging target once, with association drift advisory. */

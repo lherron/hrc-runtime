@@ -349,6 +349,8 @@ export type {
   HrcCollectiveMessageRecord,
   HrcMessageHistoryStatus,
   HrcMessageFilter,
+  HrcDirectiveOnlyIntent,
+  HrcDmRuntimeIntent,
   EnsureTargetRequest,
   EnsureTargetResponse,
   ListTargetsRequest,

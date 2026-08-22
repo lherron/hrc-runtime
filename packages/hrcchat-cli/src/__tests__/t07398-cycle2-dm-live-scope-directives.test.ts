@@ -104,7 +104,7 @@ describe('T-07398 cycle 2 item 2 — dm carries directives to already-existing s
     // same existing target — the only difference is the block on the handle.
     const directed = await deliverToExistingTarget('cody@project:hrcdev+node=svc')
     expect(directed).toHaveLength(1)
-    expect(directed[0]?.runtimeIntent?.provision).toMatchObject({ node: 'svc' })
+    expect(directed[0]?.runtimeIntent).toEqual({ provision: { node: 'svc' } })
   })
 })
 

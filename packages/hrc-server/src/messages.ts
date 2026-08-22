@@ -6,15 +6,22 @@ import {
   normalizeSessionRef,
 } from 'hrc-core'
 import type {
+  HrcDmRuntimeIntent,
   HrcMessageAddress,
   HrcMessageFilter,
   HrcMessageRecord,
   HrcRuntimeIntent,
   HrcTurnResponseFormat,
+  SemanticDmRequest,
 } from 'hrc-core'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { parseOptionalProvisionBlock } from './parsers/provision.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
+
+/** A semantic-DM request after its wire-only directive fragment has been completed. */
+export type CompleteSemanticDmRequest = Omit<SemanticDmRequest, 'runtimeIntent'> & {
+  runtimeIntent?: HrcRuntimeIntent | undefined
+}
 
 /**
  * Format an HrcMessageAddress for display in DM delivery (e.g. "clod@agent-spaces" or "human").
@@ -306,7 +313,7 @@ export function parseSemanticDmRequest(input: unknown): {
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   respondTo?: HrcMessageAddress | undefined
   replyToMessageId?: string | undefined
-  runtimeIntent?: HrcRuntimeIntent | undefined
+  runtimeIntent?: HrcDmRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
   whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
@@ -355,7 +362,7 @@ export function parseSemanticDmRequest(input: unknown): {
   // only at the sender leaves open. The cast stays (the rest of the intent's
   // contract is unchanged here); only `provision` is re-validated.
   const runtimeIntent = isRecord(input['runtimeIntent'])
-    ? (input['runtimeIntent'] as HrcRuntimeIntent)
+    ? (input['runtimeIntent'] as HrcDmRuntimeIntent)
     : undefined
   if (runtimeIntent !== undefined) {
     parseOptionalProvisionBlock((runtimeIntent as { provision?: unknown }).provision)
