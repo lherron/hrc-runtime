@@ -22,6 +22,19 @@
  * `provision` into the harness route inside (or just before) each adapter — but
  * the guarantee has to hold at the adapter, since that is the shape the
  * persisted intent actually has.
+ *
+ * WHERE `reasoning` IS OBSERVABLE. Only two of the three boundaries carry a
+ * reasoning field at all, so it is asserted exactly there rather than three
+ * times mechanically:
+ *   - cli-adapter     -> `BuildProcessInvocationSpecRequest.modelReasoningEffort`
+ *   - compile-adapter -> `RuntimeCompileRequest.requested.reasoningEffort`
+ *   - sdk-adapter     -> NOTHING. `RunTurnNonInteractiveRequest` (agent-spaces
+ *     types.d.ts) declares model and yolo but no reasoning of any spelling, so
+ *     there is no field to wire and no assertion to make. That door is
+ *     model-only by contract, not by omission here.
+ * Because `modelReasoningEffort` and `reasoningEffort` are fields of their own,
+ * the cheap fix of projecting the overlaid model onto `harness.model` — which
+ * the adapters already read — cannot turn this file green.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -41,6 +54,12 @@ import { runSdkTurn } from '../agent-spaces-adapter/sdk-adapter'
 import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
 
 const DIRECTED_MODEL = 'sonnet'
+/**
+ * Kept inside the compile boundary's closed enum ('low'|'medium'|'high'|'xhigh')
+ * so this bar never has to invent a harness mapping table — the spec assigns
+ * per-harness reasoning mapping to the compiler, not to HRC.
+ */
+const DIRECTED_REASONING = 'low'
 
 function placement(): HrcRuntimeIntent['placement'] {
   return {
@@ -67,12 +86,12 @@ function directedIntent(harness: HrcRuntimeIntent['harness']): HrcRuntimeIntent 
   return {
     placement: placement(),
     harness,
-    provision: { model: DIRECTED_MODEL },
+    provision: { model: DIRECTED_MODEL, reasoning: DIRECTED_REASONING },
   } as unknown as HrcRuntimeIntent
 }
 
 describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch path', () => {
-  it('cli-adapter: the process invocation spec is built for the directed model', async () => {
+  it('cli-adapter: the process invocation spec is built for the directed model AND reasoning', async () => {
     let captured: BuildProcessInvocationSpecRequest | undefined
 
     await buildCliInvocation(directedIntent({ provider: 'anthropic', interactive: true }), {
@@ -83,9 +102,13 @@ describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch pa
     })
 
     expect(captured?.model).toBe(DIRECTED_MODEL)
+    // Independently red: `modelReasoningEffort` is its own field on the process
+    // spec request, so projecting only the model onto `harness.model` (which the
+    // adapter already reads) cannot satisfy this line.
+    expect(captured?.modelReasoningEffort).toBe(DIRECTED_REASONING)
   })
 
-  it('compile-adapter: the broker compile request requests the directed model', async () => {
+  it('compile-adapter: the broker compile request requests the directed model AND reasoning', async () => {
     const captured: { request?: RuntimeCompileRequest } = {}
 
     await compileBrokerRuntimePlan(
@@ -125,6 +148,7 @@ describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch pa
     )
 
     expect(captured.request?.requested.model).toBe(DIRECTED_MODEL)
+    expect(captured.request?.requested.reasoningEffort).toBe(DIRECTED_REASONING)
   })
 
   it('sdk-adapter: the non-interactive turn runs on the directed model', async () => {
