@@ -21,6 +21,7 @@ export const aspSyncSpec: SyncSpec = {
         'spaces-runtime-contracts',
         'spaces-aspc-protocol',
         'spaces-aspc',
+        'spaces-aspc-facade',
         'spaces-harness-claude',
         'spaces-harness-codex',
         'spaces-harness-pi',

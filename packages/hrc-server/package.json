@@ -29,7 +29,7 @@
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
-    "spaces-aspc": "latest",
+    "spaces-aspc-facade": "latest",
     "spaces-aspc-protocol": "latest",
     "spaces-config": "latest",
     "spaces-execution": "latest",
