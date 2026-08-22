@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test'
 
 import type { SemanticDmResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -18,6 +18,12 @@ let originalPath: string | undefined
 let originalAspCodexPath: string | undefined
 let originalAspCodexSkipCommonPaths: string | undefined
 let originalHrcClaudeGhostty: string | undefined
+
+// This file boots real server instances and compiles real harness plans. The
+// isolated Ghostty-unavailable path is ~1.1s, but the full repository gate has
+// pushed the same liveness path past 10s on a loaded seat. Match the established
+// loaded-box integration backstop used by server-sdk-dispatch.test.ts.
+setDefaultTimeout(60_000)
 
 function saveCodexEnv(): void {
   originalPath = process.env['PATH']
@@ -373,7 +379,7 @@ describe('C2. Ghostty availability', () => {
     expect(data.error?.code).toBe('runtime_unavailable')
     const execLog = await readFile(fakeClaude.logPath, 'utf-8').catch(() => '')
     expect(execLog).toBe('')
-  }, 10_000)
+  })
 
   it('returns runtime_unavailable instead of internal_error when ghostmux cannot reach Ghostty', async () => {
     saveCodexEnv()

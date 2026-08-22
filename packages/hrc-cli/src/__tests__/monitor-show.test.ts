@@ -204,7 +204,9 @@ function seedHeadlessRuntime(session: {
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-monitor-show-test-'))
+  // Keep the nested event-ingest socket below macOS's sockaddr_un limit even
+  // when tmpdir() is the long per-user /var/folders path.
+  tmpDir = await mkdtemp(join(tmpdir(), 'hms-'))
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

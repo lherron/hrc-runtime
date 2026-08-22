@@ -13,7 +13,7 @@ type InspectableServer = HrcServer & {
   exactRouteHandlers: Record<string, ExactRouteHandler>
 }
 
-describe.serial('T-05639 internal request error observability', () => {
+describe('T-05639 internal request error observability', () => {
   test('logs a forced handler throw with request context and preserves its cause for SDK callers', async () => {
     const fixture = await createHrcTestFixture('hrc-t05639-')
     const server = (await createHrcServer(

@@ -107,7 +107,7 @@ afterEach(async () => {
   await rm(stateRoot, { recursive: true, force: true })
 })
 
-describe.serial('metrics report reader', () => {
+describe('metrics report reader', () => {
   test('uses nearest-rank p50/p95/max and honors the since cutoff', async () => {
     const samples = [1, 2, 3, 4, 100]
     await writeMetrics(

@@ -81,7 +81,7 @@ afterEach(async () => {
   process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = originalSqliteSlowStatementMs
 })
 
-describe.serial('server request metrics', () => {
+describe('server request metrics', () => {
   test('uses a 5000ms SQLite busy timeout and accepts finite non-negative overrides', () => {
     expect(resolveSqliteBusyTimeoutMs(undefined, undefined)).toBe(5_000)
     expect(resolveSqliteBusyTimeoutMs(undefined, '125')).toBe(125)
