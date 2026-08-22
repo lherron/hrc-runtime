@@ -104,16 +104,17 @@ describe('T-07428 directive-only runtime intent contract', () => {
     ).toBeUndefined()
   })
 
-  it('returns undefined when the persisted session intent is SQL NULL', async () => {
+  it('returns undefined when the persisted session intent is JSON null', async () => {
     const { hostSessionId } = await fixture.resolveSession(SCOPE_REF)
     const db = openHrcDatabase(fixture.dbPath)
     try {
+      db.sessions.updateIntent(hostSessionId, null, fixture.now())
       const persisted = db.sqlite
         .query<{ last_applied_intent_json: string | null }, [string]>(
           'SELECT last_applied_intent_json FROM sessions WHERE host_session_id = ?'
         )
         .get(hostSessionId)
-      expect(persisted?.last_applied_intent_json).toBeNull()
+      expect(persisted?.last_applied_intent_json).toBe('null')
     } finally {
       db.close()
     }
@@ -159,6 +160,22 @@ describe('T-07428 directive-only runtime intent contract', () => {
       harness: STORED_INTENT.harness,
       provision: FRAGMENT.provision,
     })
+  })
+
+  it('refuses a directive-only fragment on a non-session DM before routing', async () => {
+    const response = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'entity', entity: 'system' },
+      body: 'deployment-skew fragment cannot route to a non-session target',
+      runtimeIntent: FRAGMENT,
+    })
+    const body = (await response.json()) as {
+      error?: { code?: string; detail?: Record<string, unknown> }
+    }
+
+    expect(response.status).toBe(422)
+    expect(body.error?.code).toBe(HrcErrorCode.MISSING_RUNTIME_INTENT)
+    expect(body.error?.detail).toEqual({ reason: 'directive_only_runtime_intent' })
   })
 
   it('refuses a deployment-skew fragment at the whole-intent dispatch seam', async () => {
