@@ -30,7 +30,8 @@
  * Evidence form is the one the amendment names for AC #3: suite + import resolution.
  */
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -193,6 +194,58 @@ describe('T-07318 AC #3 — compile leaves hrc-server only through the aspc faca
     const violations = productionSources(HRC_SERVER_SRC).sort().flatMap(compileSurfaceViolations)
 
     expect(violations).toEqual([])
+  })
+})
+
+// ── Anti-vacuity control for the scan above ──────────────────────────────────
+
+describe('T-07318 AC #3 — the compile-surface detector still detects', () => {
+  /**
+   * The scan above asserts an EMPTY violation list, which a detector that has gone
+   * blind satisfies just as well as a clean repo — once the implementer lands, all
+   * three criteria tests are green and assertion-negative, so nothing else would
+   * notice. The realistic blinding path is the source tree moving out from under
+   * `packages/hrc-server/src`, not malice. This control runs the same detector over
+   * SYNTHETIC source, so it cannot drift with the tree, and asserts BOTH directions:
+   * the violating forms are caught, and the permitted forms are still spared.
+   */
+  test('flags the violating import forms and spares the permitted ones', () => {
+    const dir = mkdtempSync(join(tmpdir(), 't07318-detector-'))
+    try {
+      const fixture = join(dir, 'synthetic-source.ts')
+      writeFileSync(
+        fixture,
+        [
+          // Violating: reach the in-process compiler as a value.
+          "import * as compilerNamespace from 'agent-spaces'",
+          "import { createAgentSpacesClient } from 'agent-spaces'",
+          "import { createAgentSpacesClient as compileAlias } from 'agent-spaces'",
+          "import 'agent-spaces'",
+          // Permitted: erased at runtime, so it binds no compiler.
+          "import type { ProcessInvocationSpec } from 'agent-spaces'",
+          // Permitted: the TURN path stays in-process against the relocated surface.
+          "import { createAgentSpacesClient as turnClient } from 'spaces-turn-runner'",
+          '',
+        ].join('\n')
+      )
+
+      const violations = compileSurfaceViolations(fixture)
+      const rendered = violations.join('\n')
+
+      // Positive half — the detector fires on every violating form.
+      expect(rendered).toContain('`* as compilerNamespace`')
+      expect(rendered).toContain('`createAgentSpacesClient`')
+      expect(rendered).toContain('`createAgentSpacesClient as compileAlias`')
+      expect(rendered).toContain("side-effect import of 'agent-spaces'")
+
+      // Negative half — the detector still discriminates. The exact count is what
+      // proves the permitted forms produced nothing, not merely that they differ.
+      expect(rendered).not.toContain('ProcessInvocationSpec')
+      expect(rendered).not.toContain('spaces-turn-runner')
+      expect(violations).toHaveLength(4)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
