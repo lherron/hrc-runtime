@@ -405,6 +405,21 @@ export class FederationOriginOutbox {
         case 'remote-bound':
           return { outcome: 'remote-bound', binding: placement.binding }
         case 'remote-establish':
+          if (
+            body.runtimeIntent?.provision?.node !== undefined &&
+            placement.policyProvenance === 'default_home_node'
+          ) {
+            throw new HrcConflictError(
+              HrcErrorCode.STALE_CONTEXT,
+              `${scopeRef} routes to ${placement.candidateHomeNodeId} by provisioning.node; this node is ${this.options.config.nodeId}. Summon it on ${placement.candidateHomeNodeId}.`,
+              {
+                scopeRef,
+                reason: placement.reason,
+                retryable: false,
+                homeNodeId: placement.candidateHomeNodeId,
+              }
+            )
+          }
           return {
             outcome: 'remote-establish',
             scopeRef,

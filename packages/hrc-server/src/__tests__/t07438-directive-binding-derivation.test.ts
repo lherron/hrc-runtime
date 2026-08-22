@@ -17,7 +17,6 @@ import { HrcConflictError, HrcErrorCode, type HrcRuntimeIntent } from 'hrc-core'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
-import { assertSummonAuthority } from '../federation/summon-gate-server.js'
 import { type HrcServer, createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
@@ -120,17 +119,19 @@ describe('T-07438 directive-aware binding derivation', () => {
   })
 
   it('still refuses on an origin other than the directive node before mutation', async () => {
+    const outbox = server.federationOriginOutbox
+    if (outbox === undefined) throw new Error('federation origin outbox missing from fixture')
+
     let caught: unknown
     try {
-      await assertSummonAuthority(server, {
-        scopeRef: SCOPE_REF,
-        path: 'ensure-target',
-        intent: 'implicit',
-        capabilityHint: {
-          placement: runtimeIntent.placement,
-          harness: runtimeIntent.harness,
+      await outbox.resolveTargetPlacement({
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: SESSION_REF },
+        body: 'T-07438 remote directive refusal',
+        runtimeIntent: {
+          ...runtimeIntent,
+          provision: { node: PROFILE_DEFAULT_NODE },
         },
-        provision: { node: PROFILE_DEFAULT_NODE },
       })
     } catch (error) {
       caught = error
