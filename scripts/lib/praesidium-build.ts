@@ -25,6 +25,7 @@ export const ASP_PACKAGE_NAMES = [
   'spaces-runtime-contracts',
   'spaces-aspc-protocol',
   'spaces-aspc',
+  'spaces-aspc-facade',
   'spaces-harness-claude',
   'spaces-harness-codex',
   'spaces-harness-pi',
