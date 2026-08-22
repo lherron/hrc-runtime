@@ -377,8 +377,9 @@ export type HrcServerOptions = {
   externalParticipantRendezvousRetryMs?: number | undefined
   externalParticipantRendezvousRetryMaxMs?: number | undefined
   externalParticipantRendezvousRetryBudget?: number | undefined
-  /** Test/embedded retry override for post-mint collective establishment. */
+  /** Test/embedded retry overrides for post-mint collective establishment. */
   externalParticipantCollectiveEstablishmentRetryMs?: number | undefined
+  externalParticipantCollectiveEstablishmentRetryBudget?: number | undefined
   /** Test/embedded EPR liveness and linger overrides. */
   externalParticipantProbeIntervalMs?: number | undefined
   externalParticipantProbeDeadlineMs?: number | undefined

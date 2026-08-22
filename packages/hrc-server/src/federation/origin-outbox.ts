@@ -107,11 +107,13 @@ export function assertExternalParticipantFederatedEgress(
   if (state === 'CANONICAL' && binding !== undefined && binding.homeNodeId === localNodeId) return
 
   const reason =
-    state === 'NONCANONICAL' && (cause === 'placement_refused' || cause === 'binding_conflict')
-      ? cause
-      : binding?.homeNodeId !== undefined && binding.homeNodeId !== localNodeId
-        ? 'binding_conflict'
-        : 'binding_unbound'
+    state === 'QUARANTINED'
+      ? 'collective_establishment_quarantined'
+      : state === 'NONCANONICAL' && (cause === 'placement_refused' || cause === 'binding_conflict')
+        ? cause
+        : binding?.homeNodeId !== undefined && binding.homeNodeId !== localNodeId
+          ? 'binding_conflict'
+          : 'binding_unbound'
   throw new HrcConflictError(
     HrcErrorCode.STALE_CONTEXT,
     `federated egress for external participant ${scopeRef} is fenced (${reason})`,
@@ -119,6 +121,12 @@ export function assertExternalParticipantFederatedEgress(
       scopeRef,
       reason,
       retryable: reason === 'binding_unbound',
+      ...(state === 'QUARANTINED' && isRecord(collective)
+        ? {
+            attemptCount: collective['attemptCount'],
+            attemptBudget: collective['attemptBudget'],
+          }
+        : {}),
       ...(binding === undefined ? {} : { homeNodeId: binding.homeNodeId }),
     }
   )

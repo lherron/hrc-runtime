@@ -286,6 +286,7 @@ describe('T-07138 post-mint collective establishment', () => {
     const server = reconciliationServer(client)
     server.options.externalParticipantCollectiveEstablishmentRetryMs = 1
     scheduleExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    scheduleExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
     const operation = server.externalRegistrationEstablishmentOperations.get(REGISTRATION_ID)
     expect(operation).toBeDefined()
     await operation
@@ -296,6 +297,88 @@ describe('T-07138 post-mint collective establishment', () => {
       state: 'CANONICAL',
       bindingState: 'BOUND',
       homeNodeId: 'svc',
+    })
+  })
+
+  test('quarantines a permanently unbound registration at its durable attempt budget', async () => {
+    let consultAttempts = 0
+    const client = registryClient(registry, {
+      consult: () => {
+        consultAttempts += 1
+        throw new Error(`registry unavailable ${consultAttempts}`)
+      },
+    })
+    const server = reconciliationServer(client)
+    server.options.externalParticipantCollectiveEstablishmentRetryMs = 1
+    server.options.externalParticipantCollectiveEstablishmentRetryBudget = 3
+
+    scheduleExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    const operation = server.externalRegistrationEstablishmentOperations.get(REGISTRATION_ID)
+    expect(operation).toBeDefined()
+    await operation
+
+    expect(consultAttempts).toBe(3)
+    expect(server.externalRegistrationEstablishmentOperations.has(REGISTRATION_ID)).toBe(false)
+    expect(projection()).toMatchObject({
+      state: 'QUARANTINED',
+      bindingState: 'UNBOUND',
+      retryable: false,
+      attemptCount: 3,
+      attemptBudget: 3,
+    })
+    expect(typeof projection()['quarantinedAt']).toBe('string')
+
+    scheduleExternalRegistrationCollectiveEstablishment(server, REGISTRATION_ID)
+    expect(server.externalRegistrationEstablishmentOperations.has(REGISTRATION_ID)).toBe(false)
+    await Bun.sleep(5)
+    expect(consultAttempts).toBe(3)
+
+    const record = { from: { kind: 'session' as const, sessionRef: SESSION } }
+    let error: unknown
+    try {
+      assertExternalParticipantFederatedEgress(db, 'svc', record)
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toBeInstanceOf(HrcConflictError)
+    expect((error as HrcConflictError).detail).toMatchObject({
+      reason: 'collective_establishment_quarantined',
+      retryable: false,
+      attemptCount: 3,
+      attemptBudget: 3,
+    })
+  })
+
+  test('resumes the monotonic registration attempt count after controller restart', async () => {
+    let consultAttempts = 0
+    const client = registryClient(registry, {
+      consult: () => {
+        consultAttempts += 1
+        throw new Error(`alternating failure ${consultAttempts % 2}`)
+      },
+    })
+    const firstServer = reconciliationServer(client)
+    firstServer.options.externalParticipantCollectiveEstablishmentRetryMs = 100
+    firstServer.options.externalParticipantCollectiveEstablishmentRetryBudget = 3
+    scheduleExternalRegistrationCollectiveEstablishment(firstServer, REGISTRATION_ID)
+    while (projection()['attemptCount'] !== 1) await Bun.sleep(1)
+    firstServer.stopping = true
+    await firstServer.externalRegistrationEstablishmentOperations.get(REGISTRATION_ID)
+
+    expect(projection()).toMatchObject({ state: 'PENDING', attemptCount: 1, attemptBudget: 3 })
+
+    const restartedServer = reconciliationServer(client)
+    restartedServer.stopping = false
+    restartedServer.options.externalParticipantCollectiveEstablishmentRetryMs = 1
+    restartedServer.options.externalParticipantCollectiveEstablishmentRetryBudget = 3
+    scheduleExternalRegistrationCollectiveEstablishment(restartedServer, REGISTRATION_ID)
+    await restartedServer.externalRegistrationEstablishmentOperations.get(REGISTRATION_ID)
+
+    expect(consultAttempts).toBe(3)
+    expect(projection()).toMatchObject({
+      state: 'QUARANTINED',
+      attemptCount: 3,
+      attemptBudget: 3,
     })
   })
 

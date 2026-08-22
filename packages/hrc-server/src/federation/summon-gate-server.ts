@@ -590,7 +590,9 @@ export async function establishExternalRegistrationPlacement(
       origin: 'local',
       // Local mint already proved materialization. Capability probing here
       // would incorrectly ask whether HRC can launch the external process.
-      deps: { ...deps, capabilityFor: undefined },
+      // This bounded controller owns cause-change and terminal logging. Letting
+      // the generic gate log here would emit a second WARN on every retry tick.
+      deps: { ...deps, capabilityFor: undefined, log: undefined },
     })
 
     if (placement === undefined) {
