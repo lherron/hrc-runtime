@@ -27,6 +27,7 @@ import type { ResolvedRuntimeBundle } from 'spaces-config'
 
 import { optional } from './optional.js'
 import { placementPlaceholders } from './placement-placeholders.js'
+import { resolveLaunchModel, resolveLaunchReasoning } from './provision-launch.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -342,11 +343,14 @@ export async function buildCliInvocation(
     placement: intent.placement,
     provider: intent.harness.provider,
     frontend,
-    model: intent.harness.model,
+    // T-07398: the directive-overlaid launch route, not `harness.model` alone —
+    // this is the boundary that becomes process argv.
+    model: resolveLaunchModel(intent),
     interactionMode,
     ioMode,
     ...(options?.continuation ? { continuation: options.continuation } : {}),
     ...(intent.harness.yolo ? { yolo: true } : {}),
+    ...optional('modelReasoningEffort', resolveLaunchReasoning(intent)),
     ...optional('prompt', initialPrompt),
     ...optional('attachments', intent.attachments),
     ...placementPlaceholders(),

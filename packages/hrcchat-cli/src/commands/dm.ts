@@ -1,3 +1,4 @@
+import type { ProvisioningScalars } from 'agent-scope'
 import { CliUsageError, consumeBody, parseDuration } from 'cli-kit'
 import { HrcDomainError, HrcErrorCode, splitSessionRef } from 'hrc-core'
 import type {
@@ -11,7 +12,11 @@ import { tryRouteBackchannelDm } from '../backchannel-route.js'
 import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
 import { formatAddress, resolveAddress, resolveSenderAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
-import { resolveMessagingTarget, resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import {
+  directiveOnlyRuntimeIntent,
+  resolveMessagingTarget,
+  resolveRuntimeIntentForTarget,
+} from '../resolve-intent.js'
 import {
   buildDmFinalResponseResult,
   buildDmWaitResult,
@@ -123,7 +128,12 @@ export async function cmdDm(
 
   // Resolve runtimeIntent for session targets so auto-summon works
   const runtimeIntent = target
-    ? await resolveDmRuntimeIntent(client, targetInput, target.sessionRef)
+    ? await resolveDmRuntimeIntent(
+        client,
+        targetInput,
+        target.sessionRef,
+        target.resolved.directives
+      )
     : to.kind === 'session'
       ? resolveRuntimeIntentForTarget(targetInput)
       : undefined
@@ -290,14 +300,25 @@ export async function cmdDm(
   }
 }
 
-async function resolveDmRuntimeIntent(client: HrcClient, targetInput: string, sessionRef: string) {
+async function resolveDmRuntimeIntent(
+  client: HrcClient,
+  targetInput: string,
+  sessionRef: string,
+  directives: Partial<ProvisioningScalars> | undefined
+) {
   // Existing-scope delivery needs no placement intent and must remain available
   // to correct a drifted checkout. Only an absent target crosses the launch
   // boundary, where strict task-worktree placement remains fail-closed.
   if (typeof client.getTarget !== 'function') return resolveRuntimeIntentForTarget(targetInput)
   try {
     await client.getTarget(sessionRef)
-    return undefined
+    // T-07398 cycle 2: the target exists, so still no placement intent — but a
+    // handle that carried a `+` block must not have it silently dropped here.
+    // Before this, the directive never left the terminal, so the daemon's typed
+    // refusal had nothing to refuse and `dm "cody@hrc-runtime:hrcdev+node=svc"`
+    // simply delivered (seq 226). Whether a directive is admissible depends on
+    // the pin and the peer registry, both of which only the daemon knows.
+    return directives === undefined ? undefined : directiveOnlyRuntimeIntent(directives)
   } catch (error) {
     if (error instanceof HrcDomainError && error.code === HrcErrorCode.UNKNOWN_SESSION) {
       return resolveRuntimeIntentForTarget(targetInput)

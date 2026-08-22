@@ -1351,6 +1351,16 @@ export async function handleSemanticDm(
     })
   }
 
+  // T-07398 cycle 2: a dm to an ALREADY-EXISTING scope carries its directive
+  // block as a provision-only intent — deliberately without placement, so
+  // existing-scope delivery keeps working against a drifted checkout (T-07151).
+  // Complete it HERE, once, before any consumer that needs a whole intent:
+  // downstream this value becomes the dispatch intent, the auto-summon intent
+  // and the archived-successor intent, none of which can run on a fragment.
+  if (body.to.kind === 'session') {
+    body.runtimeIntent = completeDirectiveOnlyIntent(this, body.to.sessionRef, body.runtimeIntent)
+  }
+
   let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
     body.replyToMessageId !== undefined
@@ -1509,6 +1519,40 @@ export async function handleSemanticDm(
     ...(delivery ? { delivery } : {}),
     ...(directivesApplied === undefined ? {} : { directivesApplied }),
   } satisfies SemanticDmResponse)
+}
+
+/**
+ * Layer a provision-only intent onto the target session's own birth intent.
+ *
+ * The dm sender omits placement for an existing scope on purpose (T-07151:
+ * existing-scope delivery must stay usable against a drifted checkout), so when
+ * a handle carries a `+` block the wire value is a fragment: `provision` and
+ * nothing else. Every downstream consumer — dispatch, auto-summon, the archived
+ * successor — needs a whole intent, so the fragment is completed here from the
+ * session's `lastAppliedIntentJson` rather than being pushed onto them.
+ *
+ * The runtime's own intent is the base and only `provision` rides on top, which
+ * is what keeps birth-only stickiness true: the directive is visible to the
+ * admissibility check and to `directivesApplied`, and it changes nothing about
+ * what the live runtime already is.
+ *
+ * With no session to complete it from, the fragment resolves to `undefined` —
+ * exactly what this path sent before directives existed, so a directive can
+ * never become authority to birth a scope from a placement-less intent.
+ */
+function completeDirectiveOnlyIntent(
+  server: HrcServerInstanceForHandlers,
+  sessionRef: string,
+  intent: HrcRuntimeIntent | undefined
+): HrcRuntimeIntent | undefined {
+  if (intent === undefined) return undefined
+  if ((intent as { placement?: unknown }).placement !== undefined) return intent
+  // Truthiness, not `=== undefined`: a persisted-but-null intent would spread
+  // to `{}` and silently rebuild the very fragment this function exists to
+  // remove.
+  const base = findTargetSession(server.db, sessionRef)?.lastAppliedIntentJson
+  if (!base) return undefined
+  return { ...base, ...(intent.provision === undefined ? {} : { provision: intent.provision }) }
 }
 
 /**

@@ -22,6 +22,7 @@ import { createAgentSpacesClient } from 'spaces-turn-runner'
 import { UnsupportedHarnessError, buildHrcCorrelationEnv, mergeEnv } from './cli-adapter.js'
 import { optional } from './optional.js'
 import { placementPlaceholders } from './placement-placeholders.js'
+import { resolveLaunchModel } from './provision-launch.js'
 
 export type SdkTurnRunner = (
   request: RunTurnNonInteractiveRequest
@@ -355,7 +356,10 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
     ...placementPlaceholders(),
     placement: options.intent.placement,
     frontend,
-    model: options.intent.harness.model,
+    // T-07398: the directive-overlaid launch route. This door carries no
+    // reasoning field of any spelling (RunTurnNonInteractiveRequest declares
+    // model and yolo only), so model is the whole surface here.
+    model: resolveLaunchModel(options.intent),
     lockedEnv: env,
     prompt: options.prompt,
     ...optional('attachments', options.intent.attachments),

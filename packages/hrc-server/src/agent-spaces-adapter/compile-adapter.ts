@@ -62,6 +62,7 @@ import {
   selectBrokerExecutionProfile,
 } from './compile-profile-selector'
 import { optional } from './optional.js'
+import { resolveCompileReasoningEffort, resolveLaunchModel } from './provision-launch.js'
 
 /**
  * Allocates the runtime identities used by a single compile+dispatch operation.
@@ -427,6 +428,8 @@ export async function compileBrokerRuntimePlan(
     ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
   }
 
+  const launchModel = resolveLaunchModel(intent)
+  const launchReasoningEffort = resolveCompileReasoningEffort(intent)
   const request: RuntimeCompileRequest = {
     schemaVersion: 'agent-runtime-compile-request/v1',
     identity,
@@ -439,7 +442,13 @@ export async function compileBrokerRuntimePlan(
           : intent.harness.interactive
             ? 'interactive'
             : 'headless',
-      ...(intent.harness.model ? { model: intent.harness.model } : {}),
+      // T-07398: the directive-overlaid launch route on the compile hop.
+      // Truthiness, NOT `optional()`: this request is hashed upstream
+      // (recomputeStartRequestHash / jsonEqual) and the field it replaces used
+      // the truthiness idiom, so an empty value must keep dropping the key
+      // rather than diverging the hash.
+      ...(launchModel ? { model: launchModel } : {}),
+      ...(launchReasoningEffort ? { reasoningEffort: launchReasoningEffort } : {}),
     },
     materialization: {
       initialPrompt: intent.initialPrompt,
