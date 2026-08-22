@@ -2284,7 +2284,8 @@ describe('hrc run', () => {
         })
 
         expect(prepared.status).toBe('prepared')
-        expect(prepared.attach.argv[0]).toBe('tmux')
+        expect(prepared.attach.argv[0]?.startsWith('/')).toBe(true)
+        expect(prepared.attach.argv[0]?.endsWith('/tmux')).toBe(true)
         expect(prepared.attach.bindingFence.hostSessionId).toBe(resolved.hostSessionId)
         expect(prepared.attach.bindingFence.runtimeId).toMatch(/^rt-/)
       }

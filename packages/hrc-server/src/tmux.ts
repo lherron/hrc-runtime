@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
+import { constants, accessSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { delimiter, isAbsolute, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -55,6 +57,34 @@ export class TmuxCommandTimeoutError extends Error {
 
 export function isTmuxCommandTimeoutError(error: unknown): error is TmuxCommandTimeoutError {
   return error instanceof TmuxCommandTimeoutError
+}
+
+/**
+ * Resolve the executable while still inside hrc-server's launch environment.
+ * Attach descriptors are consumed by GUI processes whose PATH is intentionally
+ * smaller, so a bare command name is not a complete executable contract.
+ */
+export function resolveTmuxBinary(
+  command: string,
+  searchPath: string = process.env['PATH'] ?? ''
+): string {
+  if (command.includes('/')) {
+    const candidate = isAbsolute(command) ? command : resolve(command)
+    accessSync(candidate, constants.X_OK)
+    return candidate
+  }
+
+  for (const entry of searchPath.split(delimiter).filter(Boolean)) {
+    const candidate = resolve(entry, command)
+    try {
+      accessSync(candidate, constants.X_OK)
+      return candidate
+    } catch {
+      // Keep searching.
+    }
+  }
+
+  throw new Error(`tmux executable "${command}" was not found on PATH`)
 }
 
 const MIN_SUPPORTED_TMUX_VERSION = {
@@ -207,10 +237,14 @@ export function parsePaneProcess(
 }
 
 export class TmuxManager {
+  private readonly tmuxBinary: string
+
   constructor(
     private readonly socketPath: string,
-    private readonly tmuxBinary = 'tmux'
-  ) {}
+    tmuxBinary = 'tmux'
+  ) {
+    this.tmuxBinary = resolveTmuxBinary(tmuxBinary)
+  }
 
   async initialize(): Promise<void> {
     await this.checkVersion()
@@ -455,9 +489,12 @@ export class TmuxManager {
     }
   }
 
-  getAttachDescriptor(sessionName: string): { argv: string[] } {
+  getAttachDescriptor(
+    sessionName: string,
+    socketPath: string = this.socketPath
+  ): { argv: string[] } {
     return {
-      argv: [this.tmuxBinary, '-S', this.socketPath, 'attach-session', '-t', sessionName],
+      argv: [this.tmuxBinary, '-S', socketPath, 'attach-session', '-t', sessionName],
     }
   }
 

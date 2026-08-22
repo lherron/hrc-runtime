@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test'
+import { basename, isAbsolute } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
 import { attachRuntime } from '../runtime-io-handlers'
+import { createTmuxManager } from '../tmux'
 
 describe('broker tmux attach descriptors', () => {
   it('targets the operator TUI window and fences the TUI pane identity', async () => {
@@ -31,14 +33,18 @@ describe('broker tmux attach descriptors', () => {
       updatedAt: '2026-06-02T00:00:00.000Z',
     } as HrcRuntimeSnapshot
 
-    const response = attachRuntime.call({} as never, runtime)
+    const response = attachRuntime.call(
+      { tmux: createTmuxManager({ socketPath: '/tmp/unused-default.sock' }) } as never,
+      runtime
+    )
     const body = (await response.json()) as {
       argv: string[]
       bindingFence: { windowId?: string; paneId?: string }
     }
 
-    expect(body.argv).toEqual([
-      'tmux',
+    expect(isAbsolute(body.argv[0] ?? '')).toBe(true)
+    expect(basename(body.argv[0] ?? '')).toBe('tmux')
+    expect(body.argv.slice(1)).toEqual([
       '-S',
       '/tmp/hrc-btmux/codex-cli-tmux-rt-broker-attach.sock',
       'attach-session',

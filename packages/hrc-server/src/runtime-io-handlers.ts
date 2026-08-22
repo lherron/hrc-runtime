@@ -585,14 +585,8 @@ export function attachRuntime(
 
     return json({
       transport: 'tmux',
-      argv: [
-        'tmux',
-        '-S',
-        socketPath,
-        'attach-session',
-        '-t',
-        getBrokerRuntimeTmuxAttachTarget(runtime),
-      ],
+      argv: this.tmux.getAttachDescriptor(getBrokerRuntimeTmuxAttachTarget(runtime), socketPath)
+        .argv,
       bindingFence: {
         hostSessionId: runtime.hostSessionId,
         runtimeId: runtime.runtimeId,
