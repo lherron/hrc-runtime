@@ -56,6 +56,35 @@ describe('resolveRuntimeIntentForTarget', () => {
     expect(intent.placement.cwd).toBe(projectRoot)
   })
 
+  /**
+   * T-07398 DEFECT CYCLE 1, D2 — the hrcchat sender must CARRY the handle's
+   * directive block onto the intent it builds.
+   *
+   * `agent-scope` already parses `+node=...` off the handle and hands it back as
+   * `directives`; this module drops it on the floor, so on the installed surface
+   * the daemon receives an intent with no `provision` and has nothing to
+   * validate or apply. That is why `+node=notanode` births silently instead of
+   * returning UNKNOWN_NODE, and why a pin-conflicting directive delivers: the
+   * gate's checks are all live and correct, they are simply never reached.
+   */
+  it('carries the handle directive block onto the intent as provision (T-07398 D2)', async () => {
+    const localAgentsRoot = join(projectRoot, 'agents')
+    const localAgentRoot = join(localAgentsRoot, 'localbot')
+    await mkdir(localAgentRoot, { recursive: true })
+    await writeFile(
+      join(projectRoot, 'asp-targets.toml'),
+      'schema = 1\nagents-root = "agents"\n',
+      'utf8'
+    )
+    await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'version = 3\n', 'utf8')
+
+    const intent = resolveRuntimeIntentForTarget(
+      'localbot@project:t07402smoke3+node=lab+model=sonnet'
+    )
+
+    expect(intent.provision).toMatchObject({ node: 'lab', model: 'sonnet' })
+  })
+
   it('reports every searched project-local and canonical agent root when an agent is missing', async () => {
     const localAgentsRoot = join(projectRoot, 'agents')
     await mkdir(localAgentsRoot, { recursive: true })

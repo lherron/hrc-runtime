@@ -14,7 +14,7 @@ import { join } from 'node:path'
 
 import { harnessStringToHarnessId, resolveAgentHarness } from '../cli'
 import { executeManagedStart } from '../cli/handlers-scope-cmd'
-import { buildManagedStartIntent, parseScopePrompt } from '../cli/scope'
+import { buildManagedStartIntent, parseScopePrompt, resolveManagedScopeContext } from '../cli/scope'
 
 describe('harnessStringToHarnessId', () => {
   it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
@@ -169,6 +169,30 @@ describe('buildManagedStartIntent', () => {
     laneRef: 'main',
     sessionRef: 'agent:codex-agent/lane:main',
     projectRootOverride: projectRoot,
+  })
+
+  /**
+   * T-07398 DEFECT CYCLE 1, D2 — the `hrc start` sender must CARRY the handle's
+   * directive block through to the intent.
+   *
+   * `resolveManagedScopeContext` destructures only parsed/scopeRef/laneRef/
+   * placement out of the shared resolver and throws `directives` away, and
+   * `buildManagedRuntimeIntent` assembles the intent by hand with no
+   * `provision`. So `hrc start "<agent>@<proj>:<task>+node=notanode"` reaches
+   * the daemon with nothing to validate and is born locally instead of
+   * returning typed UNKNOWN_NODE (C-15413 D2). The gate's registry check is
+   * already correct — the directive simply never arrives.
+   */
+  it('carries the handle directive block onto the start intent as provision (T-07398 D2)', () => {
+    const scopeContext = resolveManagedScopeContext(
+      'codex-agent@fixture-project:t07402smoke3+node=notanode+model=sonnet',
+      { projectRootOverride: projectRoot, registerPolicy: 'never' }
+    )
+
+    expect(buildManagedStartIntent(scopeContext).provision).toMatchObject({
+      node: 'notanode',
+      model: 'sonnet',
+    })
   })
 
   it('classifies prompt-bearing detached start as non-interactive headless', () => {
