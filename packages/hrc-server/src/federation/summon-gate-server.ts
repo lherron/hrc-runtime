@@ -730,6 +730,7 @@ export async function resolvePlacementOnServer(
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
+    ...(request.provision === undefined ? {} : { provision: request.provision }),
   })
 }
 

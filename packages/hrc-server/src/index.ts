@@ -1200,6 +1200,9 @@ class HrcServerInstance implements HrcServer {
                       ? {}
                       : { harness: body.runtimeIntent.harness }),
                   },
+                  ...(body.runtimeIntent?.provision === undefined
+                    ? {}
+                    : { provision: body.runtimeIntent.provision }),
                   ...(body.birthCredential === undefined
                     ? {}
                     : { birthCredential: body.birthCredential }),
