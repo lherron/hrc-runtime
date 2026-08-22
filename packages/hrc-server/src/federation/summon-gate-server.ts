@@ -186,6 +186,70 @@ function throwRosterPlacementRefusal(
 }
 
 /**
+ * Refuse an INADMISSIBLE provisioning directive before the caller's request is
+ * allowed to have any effect (T-07398 cycle 1, D3).
+ *
+ * The shape/deny boundary in `parsers/provision.ts` cannot answer this question:
+ * it sees the block, never the scope, so it cannot know about pins, homes or the
+ * peer registry. Placement admissibility needs the target, which is why it lives
+ * here beside the derivation it has to agree with.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM THE SUMMON GATE. The gate runs on the BIRTH
+ * path. A DM to an already-live scope never reaches it, so before this an
+ * invalid directive at a live target was simply delivered — the operator was
+ * told it "did not apply" when it should have been told it was refused. The two
+ * spec clauses only look like they disagree: "never blocks" governs a VALID
+ * directive that cannot apply yet (birth-only ⇒ `directivesApplied: false`),
+ * while "hard typed failure ... before any session or message row" governs an
+ * input that was never admissible. Liveness decides whether a valid directive
+ * APPLIES; it never decides whether an invalid one is accepted.
+ *
+ * Deliberately silent about values (model, reasoning, ...): those validate
+ * against the resolved harness vocabulary at the sender, and re-litigating them
+ * here without the profile in hand would refuse legitimate requests.
+ */
+export async function assertProvisionDirectiveAdmissible(
+  server: SummonGateServerContext,
+  request: {
+    readonly scopeRef: string
+    readonly provision?: Partial<ProvisioningScalars> | undefined
+  }
+): Promise<void> {
+  if (request.provision?.node === undefined) return
+  const deps = gateDepsFor(server)
+  // No enforced gate ⇒ no registry and no policy to validate against. Refusing
+  // here would invent a constraint an unfederated daemon never declared.
+  if (deps === undefined) return
+
+  const directive = resolvePlacementDirectiveNode(request.provision, deps.knownNodeIds)
+  if (directive !== undefined && isRefusal(directive)) {
+    throwRosterPlacementRefusal(request.scopeRef, directive)
+  }
+
+  let policy: SummonGatePolicy | undefined
+  try {
+    policy = await deps.policyFor(request.scopeRef)
+  } catch {
+    // An unreadable profile is not the directive's fault. Stay silent and let
+    // the ordinary path surface `policy-unavailable` in its own terms.
+    return
+  }
+
+  const resolved = resolveDeclaredPlacementHomeOrRefusal(
+    request.scopeRef,
+    policy,
+    deps.localNodeId,
+    {
+      provision: request.provision,
+      knownNodeIds: deps.knownNodeIds,
+    }
+  )
+  if (resolved !== undefined && 'decision' in resolved) {
+    throwRosterPlacementRefusal(request.scopeRef, resolved)
+  }
+}
+
+/**
  * Resolve the home of one implicitly-summoned scope without establishing or
  * mutating anything. Shared by the suffix roster base (T-07118) and the exact
  * scope (T-07302) — in both cases the ORIGIN resolves placement and the caller

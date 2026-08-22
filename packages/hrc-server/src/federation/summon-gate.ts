@@ -649,13 +649,40 @@ function resolveDesignatedHome(
   // The scope is virgin and unconstrained, and a human ran `hrc run`/`hrc start`
   // right here. That is a legitimate one-shot declaration (§5), so it needs no
   // pre-declared policy — including on a profile with no [placement] stanza at
-  // all. The undeclared-placement refusal below exists to stop an IMPLICIT
-  // summon falling back silently; an explicit start is not a fallback.
+  // all.
   if (intent === 'explicit_local') {
     return { homeNodeId: localNodeId, provenance: 'explicit_local' }
   }
 
   const fallback = policy?.provisioning?.node
+  if (fallback === undefined && policy !== undefined) {
+    // T-07398 v3: OMISSION MEANS LOCAL. v3 deleted the
+    // `default_home_node = "local"` sentinel and moved its meaning onto the
+    // absent key, so a profile with no `provisioning.node` is not silent about
+    // placement — it is saying "born here". The pre-v3 refusal on this branch
+    // was the other half of a sentinel that no longer exists, and leaving it
+    // meant every implicit summon of a fresh scope died with
+    // "No placement declared ...", i.e. every `hrcchat dm` to a task scope
+    // nobody had declared (C-15413 D1). `explicit_local` already fell through
+    // above, which is exactly why `hrc start` kept working while the dm/ensure
+    // door did not.
+    //
+    // This is the LAST tier, reached only when no pin, no home and no directive
+    // spoke: every declaration above still wins, and a directive still cannot
+    // move a declared scope.
+    //
+    // Scoped to a RESOLVED policy on purpose. `policyFor` returning undefined is
+    // a different fact from a profile that omits the key: per the C-11100 note
+    // on `SummonGateDeps.policyFor` it means no agent policy could be determined
+    // at all, and a real v3 profile — even a bare `version = 3` — resolves to a
+    // policy OBJECT (see placement-policy.ts: only `not-an-agent-scope` yields
+    // undefined; a missing or unreadable profile throws into `policy-unavailable`
+    // instead). So "omitted" here means what the addendum says it means — a
+    // profile that declares no node — and the undeclared refusal below still
+    // covers the case where the daemon could not establish any policy to read.
+    return { homeNodeId: localNodeId, provenance: 'default_home_node(local)' }
+  }
+
   if (fallback === undefined) {
     return refuse('undeclared-placement', undeclaredPlacementDiagnostic(scopeRef, localNodeId))
   }

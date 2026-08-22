@@ -3975,6 +3975,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "applyProvisionDirectives",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|applyProvisionDirectives|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "AttachDescriptor",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",

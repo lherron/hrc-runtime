@@ -136,7 +136,19 @@ describe('T-06665 real placement policy in the live summon gate', () => {
     }
   })
 
-  test('a real profile with no placement stanza remains visibly undeclared', async () => {
+  /**
+   * REVERSED BY T-07398 v3 (spec addendum, DEFECT CYCLE 1 item 1 / C-15413 D1).
+   *
+   * A bare `version = 3` profile RESOLVES — placement-policy.ts returns a policy
+   * object for it, with `placement` and `provisioning` simply absent — so under
+   * v3 it declares "born here", not "undeclared". This test previously asserted
+   * the pre-v3 refusal; it now pins the same profile producing NO undeclared
+   * refusal, mirroring the sibling pin test above which asserts the same
+   * negation. The visible-refusal behaviour itself is still covered by
+   * `an unreadable profile is policy-unavailable, never undeclared` below and by
+   * the undefined-policy cases in t06608.
+   */
+  test('a real profile with no placement stanza is born locally, not refused (v3)', async () => {
     await writeProfile('legacy', 'version = 3\n')
     const captured = captureServerLog()
     const server = await startAdvisoryServer()
@@ -144,7 +156,7 @@ describe('T-06665 real placement policy in the live summon gate', () => {
       const response = await summon('legacy', 'T-UNDECLARED')
       expect(response.status).toBe(200)
       const event = captured.lines.find((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT)) ?? ''
-      expect(event).toContain('"reason":"undeclared-placement"')
+      expect(event).not.toContain('undeclared-placement')
     } finally {
       await server.stop()
       captured.restore()

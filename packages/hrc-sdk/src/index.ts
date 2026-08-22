@@ -13,6 +13,7 @@ export {
   warnAutoLoadedCredentials,
 } from './dotenv-local.js'
 export {
+  applyProvisionDirectives,
   buildHrcRuntimeIntent,
   harnessFrontendToHrcHarness,
   resolveAgentHarness,

@@ -3,6 +3,7 @@ import { basename, join, resolve as resolvePath } from 'node:path'
 
 import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
+  applyProvisionDirectives,
   harnessFrontendToHrcHarness,
   resolveProfileAwareScopeInput,
   resolveAgentHarness as resolveSdkAgentHarness,
@@ -67,6 +68,13 @@ export type ManagedScopeContext = {
   sessionRef: string
   /** Placement selected before the authoritative profile was read. */
   placement?: ProfileAwareResolvedScopeInput['placement'] | undefined
+  /**
+   * T-07398 — the handle's `+` directive block, out-of-band from the canonical
+   * identity above (`scopeRef` is byte-identical with and without it). Carried
+   * so the assembled intent can hand it to the daemon; absent when the input
+   * carried no block.
+   */
+  directives?: ProfileAwareResolvedScopeInput['directives'] | undefined
   /** Explicit projectRoot override (from --project-root or inferred from --project-id + cwd). */
   projectRootOverride?: string | undefined
 }
@@ -197,7 +205,7 @@ export function resolveManagedScopeContext(
     projectOrigin,
   })
 
-  const { parsed, scopeRef, laneRef, placement } = resolved
+  const { parsed, scopeRef, laneRef, placement, directives } = resolved
 
   const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
   return {
@@ -208,6 +216,7 @@ export function resolveManagedScopeContext(
     laneRef: laneId === 'main' ? 'main' : `lane:${laneId}`,
     sessionRef: `${scopeRef}/lane:${laneId}`,
     placement,
+    ...(directives === undefined ? {} : { directives }),
     ...(projectRootOverride ? { projectRootOverride } : {}),
   }
 }
@@ -319,14 +328,14 @@ function buildManagedRuntimeIntent(
     agentRoot,
     projectRoot,
   })
-  const { provider, harness: harnessString } = resolveAgentHarness(
-    agentRoot,
-    scope.agentId,
-    projectRoot
-  )
-  const harnessId =
-    harnessStringToHarnessId(harnessString) ??
-    (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
+  // T-07398: the directive overlay is the FINAL step, and the provider/harness
+  // id follow the OVERLAID harness — `+harness=codex` must actually change what
+  // launches. The rule itself lives once in hrc-sdk; this assembler only feeds
+  // it the merge and the handle's block.
+  const merged = resolveAgentHarness(agentRoot, scope.agentId, projectRoot)
+  const overlaid = applyProvisionDirectives(merged, scope.directives)
+  const provider = overlaid.provider
+  const harnessId = overlaid.harnessId ?? (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
 
   return {
     placement: {
@@ -352,6 +361,9 @@ function buildManagedRuntimeIntent(
     },
     ...(options.prompt !== undefined ? { initialPrompt: options.prompt } : {}),
     ...(options.debug ? { launch: { env: { HRC_DEBUG: '1' } } } : {}),
+    // No block at all when nothing was declared or directed, so an empty
+    // `provision` is never mistaken for a deliberate empty declaration.
+    ...(Object.keys(overlaid.provision).length === 0 ? {} : { provision: overlaid.provision }),
   }
 }
 

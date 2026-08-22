@@ -209,6 +209,42 @@ export interface BuildHrcRuntimeIntentInput {
 }
 
 /**
+ * Apply a per-summon directive block to a resolved profile+target merge — the
+ * FINAL step of provisioning assembly.
+ *
+ * Exported because there are TWO intent assemblers in this monorepo:
+ * `buildHrcRuntimeIntent` below (hrcchat, agent-loop) and hrc-cli's
+ * `buildManagedRuntimeIntent`, which hand-assembles so it can carry its own
+ * placement correlation. Both must apply the overlay identically — a directive
+ * that changes the harness has to move the provider and harness id with it, or
+ * `+harness=codex` silently launches the profile's harness — so the rule lives
+ * here once rather than being restated at each assembler.
+ *
+ * Returns the overlaid block plus the harness identity that follows FROM it.
+ */
+export function applyProvisionDirectives(
+  merged: ResolvedAgentHarness,
+  directives: Partial<ProvisioningScalars> | undefined
+): {
+  provision: ProvisioningScalars
+  harness: string | undefined
+  provider: 'anthropic' | 'openai'
+  harnessId: HrcHarness | undefined
+} {
+  const provision = overridableProvision({
+    ...merged.provision,
+    ...scalarsOnly(directives ?? {}),
+  })
+  const harness = provision.harness ?? merged.harness
+  return {
+    provision,
+    harness,
+    provider: resolveProviderForHarness(harness),
+    harnessId: harnessFrontendToHrcHarness(harness),
+  }
+}
+
+/**
  * Assemble an {@link HrcRuntimeIntent} from a resolved placement. The provider
  * and harness id are derived from the agent profile; the placement and the
  * caller-supplied interaction semantics are passed through unchanged.
@@ -226,14 +262,8 @@ export function buildHrcRuntimeIntent(input: BuildHrcRuntimeIntentInput): HrcRun
   // The overlay is LAST, after the profile+target merge, so a directive can
   // change what the merge concluded. Everything downstream reads the overlaid
   // result — including the provider and harness id, which is why `harness=`
-  // works at all: they are re-resolved here rather than carried over.
-  const provision = overridableProvision({
-    ...merged.provision,
-    ...scalarsOnly(input.provision ?? {}),
-  })
-  const harness = provision.harness ?? merged.harness
-  const provider = resolveProviderForHarness(harness)
-  const harnessId = harnessFrontendToHrcHarness(harness)
+  // works at all: they are re-resolved rather than carried over.
+  const { provision, provider, harnessId } = applyProvisionDirectives(merged, input.provision)
 
   const placement: RuntimePlacement = {
     agentRoot,

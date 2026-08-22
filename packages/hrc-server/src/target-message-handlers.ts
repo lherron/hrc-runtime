@@ -49,6 +49,7 @@ import { FederationOutboxCancelError } from './federation/outbox-delivery.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
+  assertProvisionDirectiveAdmissible,
   assertScopeNotRetired,
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
@@ -1338,6 +1339,18 @@ export async function handleSemanticDm(
       { field: 'freshContext', route: 'semantic-dm' }
     )
   }
+  // T-07398 cycle 1 (D3): an INADMISSIBLE directive is refused here, before the
+  // message row, the routing decision and any session mint — and regardless of
+  // whether the target is live. Shape and the deny-list were already re-checked
+  // in the parser; this is the half that needs the TARGET (its pin, its home,
+  // and this node's peer registry), so it cannot live in the parser.
+  if (body.to.kind === 'session' && body.runtimeIntent?.provision !== undefined) {
+    await assertProvisionDirectiveAdmissible(this, {
+      scopeRef: scopeRefOf(body.to.sessionRef),
+      provision: body.runtimeIntent.provision,
+    })
+  }
+
   let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
     body.replyToMessageId !== undefined

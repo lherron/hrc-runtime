@@ -43,6 +43,11 @@ function buildRuntimeIntentForResolvedScope(
     runMode: 'task',
     interactive: false,
     preferredMode: 'nonInteractive',
+    // T-07398: the handle's `+` block. `agent-scope` parses it off the input and
+    // hands it back here; carrying it onto the intent is what makes the daemon's
+    // validation and overlay reachable at all. Omitted entirely when the input
+    // carried no block, so "no directives" never reads as an empty declaration.
+    ...(resolved.directives === undefined ? {} : { provision: resolved.directives }),
   })
 }
 

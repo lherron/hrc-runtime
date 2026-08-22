@@ -478,7 +478,21 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
     expect(result.evaluation.diagnostic).toContain('agent-profile.toml')
   })
 
-  test('policy present but no pin and no default_home_node refuses the same way', async () => {
+  /**
+   * REVERSED BY T-07398 v3 (spec addendum, DEFECT CYCLE 1 item 1 / C-15413 D1).
+   *
+   * This test asserted the pre-v3 law. v3 deleted the
+   * `default_home_node = "local"` sentinel and moved its meaning onto the ABSENT
+   * key, so a resolved profile that declares no `provisioning.node` now means
+   * "born here" rather than "undeclared". Under the old assertion every implicit
+   * summon of a fresh task scope — every `hrcchat dm <agent>@<proj>:<new-task>` —
+   * died with "No placement declared ...".
+   *
+   * Kept as a real assertion of the NEW law rather than deleted, and its two
+   * siblings in this describe are untouched: `policyFor → undefined` (no policy
+   * determinable at all) still refuses, and still names the stanza line.
+   */
+  test('policy present but no pin and no default_home_node is born HERE (v3)', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'ensure-target',
@@ -488,10 +502,10 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
       }),
     })
 
-    expect(result.evaluation.decision).toBe('refuse')
-    expect(result.evaluation.reason).toBe('undeclared-placement')
-    if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
-    expect(result.evaluation.diagnostic).toContain('node = "max3"')
+    expect(result.evaluation.decision).toBe('allow')
+    if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
+    expect(result.evaluation.homeNodeId).toBe('max3')
+    expect(result.evaluation.establishmentProvenance).toBe('default_home_node(local)')
   })
 
   test('never a silent fallback: undeclared does NOT resolve to the local node', async () => {
