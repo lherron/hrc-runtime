@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.praesidium.AgentHost</string>
+	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>HOME</key>
@@ -21,6 +25,7 @@
 	<string>com.praesidium.verdaccio</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>/Users/lherron/.local/bin/praesidium-launch</string>
 		<string>/opt/homebrew/bin/node</string>
 		<string>/Users/lherron/.bun/install/global/node_modules/verdaccio/bin/verdaccio</string>
 		<string>--config</string>

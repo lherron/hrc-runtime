@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.praesidium.AgentHost</string>
+	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>BACKCHANNEL_NODE</key>
@@ -23,6 +27,7 @@
 	<string>Background</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>/Users/lherron/.local/bin/praesidium-launch</string>
 		<string>/Users/lherron/praesidium/var/backchannel/interim-dm-backchannel.sh</string>
 		<string>poll</string>
 	</array>
