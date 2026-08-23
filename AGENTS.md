@@ -87,6 +87,16 @@ orphans to PID 1 identically. Check `launchctl print gui/<uid>/<label>` (or
 `system/<label>`) and whether the running argv matches the plist's
 `ProgramArguments`.
 
+### hrcdev VM (max3)
+
+Tart macOS guest, `ssh lherron@192.168.50.45`. If ssh times out while
+`tart list` says **running**, the vmnet bridge lost its uplink: `ifconfig
+bridge100` shows `member: vmenet0` with no `member: en7`. Fix without
+restarting the guest: `sudo ifconfig bridge100 addm en7` (macOS uses
+`addm`/`deletem`). It is not tailscale and not guest sleep. LaunchAgent
+`com.praesidium.hrcdev-vm-watchdog` (300s) auto-repairs; log at
+`var/logs/hrcdev-vm-watchdog.log`.
+
 ## Runtimes and Long Tool Calls
 
 Headless runtimes run agents under a wrapper process (events via hooks + OTEL);
