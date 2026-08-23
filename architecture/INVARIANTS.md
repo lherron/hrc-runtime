@@ -10,6 +10,10 @@ An enabled HRC event bridge observes only committed, allowlisted reason-coded fa
 
 Durable HRC architecture laws are stored as machine-checked records with explicit authority, source evidence, required tests, and reopen triggers.
 
+## hrc-runtime.bounded-lifecycle-event-observation
+
+HRC owns the lifecycle ledger incarnation and canonical event envelope. Its bounded tail returns the selected ascending page, global head, and incarnation from one transaction. Its bounded follow stream requires an expected incarnation plus exclusive sequence, atomically admits and pins that ledger incarnation, admits no replacement-ledger event, and orders advisory ready, explicit gap, and canonical event records. Replay, seam, and live admission remain within fixed row and serialized-byte ceilings and are pulled through a one-record transport handoff. Ready is not resumable progress; only a fully received event or gap advances a consumer cursor. This observation contract is distinct from and does not amend hrc-runtime.acp-event-bridge.
+
 ## hrc-runtime.canonical-package-publication
 
 Every canonical HRC package set is produced from one clean commit contained by a freshly fetched named canonical ref, carries the exact normative praesidiumBuild tuple, refuses same-name/version replacement, and is verified by cache-empty registry tarball reads before publication succeeds.

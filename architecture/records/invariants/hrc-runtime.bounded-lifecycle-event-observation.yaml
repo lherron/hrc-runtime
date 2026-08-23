@@ -1,0 +1,33 @@
+id: hrc-runtime.bounded-lifecycle-event-observation
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: canonical lifecycle-event tail and bounded replay/live observation surfaces
+predicate: >
+  HRC owns the lifecycle ledger incarnation and canonical event envelope. Its
+  bounded tail returns the selected ascending page, global head, and incarnation
+  from one transaction. Its bounded follow stream requires an expected
+  incarnation plus exclusive sequence, atomically admits and pins that ledger
+  incarnation, admits no replacement-ledger event, and orders advisory ready,
+  explicit gap, and canonical event records. Replay, seam, and live admission
+  remain within fixed row and serialized-byte ceilings and are pulled through a
+  one-record transport handoff. Ready is not resumable progress; only a fully
+  received event or gap advances a consumer cursor. This observation contract
+  is distinct from and does not amend hrc-runtime.acp-event-bridge.
+authority: daedalus@hrc-ios:primary architecture ruling, 2026-08-23
+source:
+  - hrcchat#20461
+  - hrcchat#20458
+  - packages/hrc-server/src/event-handlers.ts
+  - packages/hrc-sdk/src/client.ts
+  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
+required_tests:
+  - just architecture-records
+  - bounded tail query-plan and one-transaction incarnation/head/page gate
+  - bounded replay, live-seam, slow-reader, and event-oversize admission gates
+  - disconnect-after-ready resume gate
+  - ledger replacement before admission and during a pinned stream gates
+last_verified: 2026-08-23 design approval; implementation gates pending
+reopen_when: The lifecycle envelope, ledger incarnation authority, cursor fence, stream ordering, admission bounds, or replacement behavior changes.
+supersedes: []
+superseded_by: []
