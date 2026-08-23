@@ -767,6 +767,9 @@ class HrcServerInstance implements HrcServer {
       this.handleApplyAppSessions(request),
     [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) => this.handleListAppSessions(url),
     [exactRouteKey('GET', '/v1/events')]: (request, url) => this.handleEvents(url, request),
+    [exactRouteKey('GET', '/v1/events/tail')]: (_request, url) => this.handleEventsTail(url),
+    [exactRouteKey('GET', '/v1/events/bounded-stream')]: (request, url) =>
+      this.handleBoundedEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-events')]: (request, url) =>
       this.handleBrokerEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-forensics')]: (_request, url) =>

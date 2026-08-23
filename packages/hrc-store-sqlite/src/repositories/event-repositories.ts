@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite'
-import type { HrcEventEnvelope, HrcLifecycleEvent } from 'hrc-core'
+import type { HrcEventEnvelope, HrcEventTail, HrcLifecycleEvent } from 'hrc-core'
 import type { EventRow, HrcEventRow } from './rows.js'
 import {
   EVENT_COLUMNS,
@@ -185,6 +185,30 @@ export class ImportedHrcLifecycleEventConflictError extends Error {
   }
 }
 
+export class HrcEventLedgerIncarnationMismatchError extends Error {
+  constructor(
+    readonly expectedLedgerIncarnationId: string,
+    readonly currentLedgerIncarnationId: string
+  ) {
+    super(
+      `lifecycle-event ledger incarnation changed from ${expectedLedgerIncarnationId} to ${currentLedgerIncarnationId}`
+    )
+    this.name = 'HrcEventLedgerIncarnationMismatchError'
+  }
+}
+
+export type ScanHrcLifecycleReplayInput = {
+  expectedLedgerIncarnationId: string
+  afterHrcSeq: number
+  filters?: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> | undefined
+}
+
+export type ScanHrcLifecycleReplayResult = {
+  ledgerIncarnationId: string
+  headHrcSeq: number
+  complete: boolean
+}
+
 export class HrcLifecycleEventRepository {
   private readonly appendInTransaction: (event: HrcLifecycleEventInput) => HrcLifecycleEvent
 
@@ -253,6 +277,93 @@ export class HrcLifecycleEventRepository {
 
   append(event: HrcLifecycleEventInput): HrcLifecycleEvent {
     return this.appendInTransaction(event)
+  }
+
+  ledgerIncarnationId(): string {
+    const row = this.db
+      .query<{ ledger_incarnation_id: string }, []>(
+        `SELECT ledger_incarnation_id
+           FROM hrc_event_ledger_metadata
+          WHERE id = 1`
+      )
+      .get()
+    if (!row) throw new Error('lifecycle-event ledger incarnation metadata is missing')
+    return row.ledger_incarnation_id
+  }
+
+  tail(
+    limit: number,
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> = {}
+  ): HrcEventTail {
+    const read = this.db.transaction(() => {
+      const ledgerIncarnationId = this.ledgerIncarnationId()
+      const headHrcSeq = this.maxHrcSeq()
+      const { where, values } = buildLifecycleWhere(filters, { includeSeqPredicates: false })
+      const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+      values.push(limit + 1)
+      const rows = this.db
+        .query<HrcEventRow, Array<string | number>>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+            ${whereClause}
+            ORDER BY hrc_seq DESC
+            LIMIT ?`
+        )
+        .all(...values)
+      const truncated = rows.length > limit
+      if (truncated) rows.pop()
+      return {
+        events: rows.reverse().map(mapHrcEventRow),
+        ledgerIncarnationId,
+        headHrcSeq,
+        truncated,
+      } satisfies HrcEventTail
+    })
+    return read()
+  }
+
+  /**
+   * Visit the newest matching replay suffix inside the same read transaction
+   * that validates the expected incarnation and captures the global head.
+   * Returning false from `visitNewestFirst` stops SQLite iteration immediately,
+   * allowing the server's serialized-byte admission bound to be authoritative.
+   */
+  scanReplayNewestFirst(
+    input: ScanHrcLifecycleReplayInput,
+    visitNewestFirst: (event: HrcLifecycleEvent) => boolean
+  ): ScanHrcLifecycleReplayResult {
+    const read = this.db.transaction(() => {
+      const ledgerIncarnationId = this.ledgerIncarnationId()
+      if (ledgerIncarnationId !== input.expectedLedgerIncarnationId) {
+        throw new HrcEventLedgerIncarnationMismatchError(
+          input.expectedLedgerIncarnationId,
+          ledgerIncarnationId
+        )
+      }
+      const headHrcSeq = this.maxHrcSeq()
+      const { where, values } = buildLifecycleWhere(input.filters ?? {}, {
+        includeSeqPredicates: true,
+      })
+      where.push('hrc_seq > ?')
+      values.push(input.afterHrcSeq)
+      where.push('hrc_seq <= ?')
+      values.push(headHrcSeq)
+      const rows = this.db
+        .query<HrcEventRow, Array<string | number>>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+            WHERE ${where.join(' AND ')}
+            ORDER BY hrc_seq DESC`
+        )
+        .iterate(...values)
+      let complete = true
+      for (const row of rows) {
+        if (!visitNewestFirst(mapHrcEventRow(row))) {
+          complete = false
+          break
+        }
+      }
+      return { ledgerIncarnationId, headHrcSeq, complete }
+    })
+    return read()
   }
 
   appendImported(input: ImportedHrcLifecycleEventInput): ImportedHrcLifecycleEventAppendResult {

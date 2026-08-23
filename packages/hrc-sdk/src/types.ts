@@ -161,6 +161,34 @@ export type WatchOptions = {
   signal?: AbortSignal | undefined
 }
 
+export type HrcEventTailOptions = {
+  limit: number
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  category?: HrcEventCategory | undefined
+  eventKind?: string | undefined
+  sourceRef?: string | undefined
+}
+
+export type WatchBoundedEventsOptions = {
+  ledgerIncarnationId: string
+  afterSeq: number
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  category?: HrcEventCategory | undefined
+  eventKind?: string | undefined
+  sourceRef?: string | undefined
+  signal?: AbortSignal | undefined
+}
+
 export type InvocationEventEnvelope = {
   invocationId: string
   seq: number

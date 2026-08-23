@@ -81,6 +81,8 @@ export type {
   UnbindSurfaceRequest,
   InvocationEventEnvelope,
   WatchBrokerEventsOptions,
+  WatchBoundedEventsOptions,
+  HrcEventTailOptions,
   WatchOptions,
   TargetListFilter,
   WatchMessagesOptions,
@@ -105,6 +107,8 @@ export type {
   SemanticDmResponse,
 } from './types.js'
 export type {
+  HrcBoundedEventStreamRecord,
+  HrcEventTail,
   HrcMailAckRequest,
   HrcMailAckResponse,
   HrcMailActor,

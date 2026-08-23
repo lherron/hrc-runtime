@@ -99,12 +99,17 @@ export type {
   HrcLifecycleQueryFilters,
   RunListFilters,
 } from './repositories/shared.js'
-export { ImportedHrcLifecycleEventConflictError } from './repositories/event-repositories.js'
+export {
+  HrcEventLedgerIncarnationMismatchError,
+  ImportedHrcLifecycleEventConflictError,
+} from './repositories/event-repositories.js'
 export type {
   EventAppendInput,
   HrcLifecycleEventInput,
   ImportedHrcLifecycleEventAppendResult,
   ImportedHrcLifecycleEventInput,
+  ScanHrcLifecycleReplayInput,
+  ScanHrcLifecycleReplayResult,
 } from './repositories/event-repositories.js'
 export { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 export { FirstTurnWatchRepository } from './repositories/first-turn-watch-repository.js'

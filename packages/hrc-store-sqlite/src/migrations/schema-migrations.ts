@@ -1949,6 +1949,29 @@ const dispatchOriginAndAcpBridgeMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07493 — durable identity for the canonical lifecycle-event ledger.
+ *
+ * The value belongs to the database incarnation: reopening the same database
+ * preserves it, while constructing/replacing the database creates a new one.
+ * SQLite supplies entropy directly so identity is independent of host, path,
+ * time and sequence state.
+ */
+const hrcEventLedgerIncarnationMigration: HrcMigration = {
+  id: '0044_hrc_event_ledger_incarnation',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE hrc_event_ledger_metadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        ledger_incarnation_id TEXT NOT NULL UNIQUE
+      );
+
+      INSERT INTO hrc_event_ledger_metadata (id, ledger_incarnation_id)
+      VALUES (1, lower(hex(randomblob(16))));
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1988,4 +2011,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   sessionIndexMigration,
   firstTurnWatchMigration,
   dispatchOriginAndAcpBridgeMigration,
+  hrcEventLedgerIncarnationMigration,
 ]

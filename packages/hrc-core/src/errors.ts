@@ -4,6 +4,8 @@ export const HrcErrorCode = {
   MALFORMED_REGISTRATION: 'malformed',
   INVALID_SELECTOR: 'invalid_selector',
   INVALID_FENCE: 'invalid_fence',
+  /** A lifecycle-event cursor names a ledger incarnation that is no longer authoritative. */
+  CURSOR_INVALID: 'cursor_invalid',
   UNKNOWN_SESSION: 'unknown_session',
   UNKNOWN_HOST_SESSION: 'unknown_host_session',
   UNKNOWN_RUNTIME: 'unknown_runtime',
@@ -133,6 +135,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MALFORMED_REGISTRATION]: 400,
   [HrcErrorCode.INVALID_SELECTOR]: 400,
   [HrcErrorCode.INVALID_FENCE]: 400,
+  [HrcErrorCode.CURSOR_INVALID]: 409,
   [HrcErrorCode.UNKNOWN_SESSION]: 404,
   [HrcErrorCode.UNKNOWN_HOST_SESSION]: 404,
   [HrcErrorCode.UNKNOWN_RUNTIME]: 404,
@@ -274,6 +277,7 @@ export class HrcConflictError extends HrcDomainError {
       | 'session_scope_occupied'
       | 'idempotency_key_conflict'
       | 'instances_exhausted'
+      | 'cursor_invalid'
     >,
     message: string,
     detail: Record<string, unknown> = {}

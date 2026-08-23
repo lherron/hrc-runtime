@@ -1,4 +1,4 @@
-import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
+import { HrcBadRequestError, HrcConflictError, HrcErrorCode } from 'hrc-core'
 import type {
   BrokerForensicsEvent,
   BrokerForensicsResponse,
@@ -7,7 +7,14 @@ import type {
   HrcLifecycleEvent,
   HrcSubscriberReceiptAckRequest,
 } from 'hrc-core'
+import { HrcEventLedgerIncarnationMismatchError } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
+import {
+  BoundedEventRecordQueue,
+  BoundedEventStreamDelivery,
+  createBoundedReplayCollector,
+} from './bounded-event-stream.js'
+import type { EncodedBoundedEventRecord } from './bounded-event-stream.js'
 import {
   HRC_EVENTS_KEEPALIVE_MS,
   NDJSON_HEADERS,
@@ -370,6 +377,188 @@ export function handleEvents(
   })
 }
 
+const HRC_EVENTS_TAIL_MAX_LIMIT = 500
+
+function parseRequiredSafeInteger(
+  searchParams: URLSearchParams,
+  field: string,
+  minimum: number
+): number {
+  const raw = normalizeOptionalQuery(searchParams.get(field))
+  if (raw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} is required`, {
+      field,
+    })
+  }
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field} must be a safe integer greater than or equal to ${minimum}`,
+      { field, value: raw }
+    )
+  }
+  return value
+}
+
+export function handleEventsTail(this: HrcServerInstanceForHandlers, url: URL): Response {
+  const limit = parseRequiredSafeInteger(url.searchParams, 'limit', 1)
+  if (limit > HRC_EVENTS_TAIL_MAX_LIMIT) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `limit must be between 1 and ${HRC_EVENTS_TAIL_MAX_LIMIT}`,
+      { field: 'limit', value: limit }
+    )
+  }
+  const filters = this.parseEventsRouteFilters(url.searchParams)
+  return json(this.db.hrcEvents.tail(limit, filters))
+}
+
+export function handleBoundedEvents(
+  this: HrcServerInstanceForHandlers,
+  url: URL,
+  request: Request
+): Response {
+  const expectedLedgerIncarnationId = requireQuery(url.searchParams, 'ledgerIncarnationId')
+  const afterHrcSeq = parseRequiredSafeInteger(url.searchParams, 'afterSeq', 0)
+  if (url.searchParams.get('follow') !== 'true') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'bounded event stream requires follow=true',
+      { field: 'follow' }
+    )
+  }
+  const filters = this.parseEventsRouteFilters(url.searchParams)
+  const seam = new BoundedEventRecordQueue(expectedLedgerIncarnationId, afterHrcSeq)
+  let admitted = false
+  let replayHeadHrcSeq = afterHrcSeq
+  let delivery: BoundedEventStreamDelivery | undefined
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null
+  let closed = false
+  const activeCloser = () => delivery?.close()
+
+  const close = () => {
+    if (closed) return
+    closed = true
+    this.activeStreamClosers.delete(activeCloser)
+    this.followSubscribers.delete(subscriber)
+    if (keepaliveTimer) {
+      clearInterval(keepaliveTimer)
+      keepaliveTimer = null
+    }
+    seam.clear()
+  }
+
+  const replaceLedger = (currentLedgerIncarnationId: string): void => {
+    this.followSubscribers.delete(subscriber)
+    delivery?.ledgerReplaced(currentLedgerIncarnationId)
+  }
+
+  const subscriber: FollowSubscriber = (candidate) => {
+    try {
+      if (!('hrcSeq' in candidate)) return
+      const currentLedgerIncarnationId = this.db.hrcEvents.ledgerIncarnationId()
+      if (currentLedgerIncarnationId !== expectedLedgerIncarnationId) {
+        replaceLedger(currentLedgerIncarnationId)
+        return
+      }
+      if (candidate.hrcSeq <= afterHrcSeq) return
+      if (!matchesHrcLifecycleEventFilter(candidate, filters)) return
+      if (!admitted) {
+        seam.appendEvent(candidate)
+        return
+      }
+      if (candidate.hrcSeq > replayHeadHrcSeq) delivery?.appendEvent(candidate)
+    } catch {
+      // Observation must never make the lifecycle-event producer fail.
+      delivery?.close()
+    }
+  }
+
+  this.followSubscribers.add(subscriber)
+  const replayCollector = createBoundedReplayCollector(expectedLedgerIncarnationId, afterHrcSeq)
+  let replayRecords: EncodedBoundedEventRecord[]
+  try {
+    const snapshot = this.db.hrcEvents.scanReplayNewestFirst(
+      {
+        expectedLedgerIncarnationId,
+        afterHrcSeq,
+        filters,
+      },
+      replayCollector.visitNewestFirst
+    )
+    replayHeadHrcSeq = snapshot.headHrcSeq
+    replayRecords = replayCollector.finish(snapshot.complete)
+  } catch (error) {
+    close()
+    if (error instanceof HrcEventLedgerIncarnationMismatchError) {
+      throw new HrcConflictError(
+        HrcErrorCode.CURSOR_INVALID,
+        'event ledger incarnation is no longer current',
+        {
+          expectedLedgerIncarnationId: error.expectedLedgerIncarnationId,
+          currentLedgerIncarnationId: error.currentLedgerIncarnationId,
+        }
+      )
+    }
+    throw error
+  }
+
+  admitted = true
+  const queue = new BoundedEventRecordQueue(expectedLedgerIncarnationId, afterHrcSeq)
+  for (const record of replayRecords) queue.appendEncoded(record)
+  seam.discardThrough(replayHeadHrcSeq)
+  for (const record of seam.drain()) queue.appendEncoded(record)
+
+  delivery = new BoundedEventStreamDelivery(
+    {
+      type: 'ready',
+      ledgerIncarnationId: expectedLedgerIncarnationId,
+      acceptedAfterHrcSeq: afterHrcSeq,
+      replayHeadHrcSeq,
+    },
+    queue,
+    close
+  )
+  this.activeStreamClosers.add(activeCloser)
+
+  // Re-check after the admission transaction before exposing a 200 response.
+  // A replacement at this seam must never make the numeric cursor admissible.
+  const currentLedgerIncarnationId = this.db.hrcEvents.ledgerIncarnationId()
+  if (currentLedgerIncarnationId !== expectedLedgerIncarnationId) {
+    delivery.close()
+    throw new HrcConflictError(
+      HrcErrorCode.CURSOR_INVALID,
+      'event ledger incarnation changed during stream admission',
+      { expectedLedgerIncarnationId, currentLedgerIncarnationId }
+    )
+  }
+
+  const keepaliveBytes = new TextEncoder().encode('\n')
+  keepaliveTimer = setInterval(() => {
+    try {
+      const current = this.db.hrcEvents.ledgerIncarnationId()
+      if (current !== expectedLedgerIncarnationId) {
+        replaceLedger(current)
+        return
+      }
+      delivery?.keepalive(keepaliveBytes)
+    } catch {
+      delivery?.close()
+    }
+  }, HRC_EVENTS_KEEPALIVE_MS)
+  request.signal.addEventListener('abort', () => delivery?.close(), { once: true })
+
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull: (controller) => delivery?.pull(controller),
+      cancel: () => delivery?.close(),
+    },
+    { highWaterMark: 1, size: () => 1 }
+  )
+  return new Response(stream, { status: 200, headers: STREAMING_NDJSON_HEADERS })
+}
+
 export function handleBrokerEvents(
   this: HrcServerInstanceForHandlers,
   url: URL,
@@ -639,6 +828,8 @@ export const eventHandlersMethods = {
   parseBrokerEventsRouteSelector,
   assertBrokerEventsRuntimeFence,
   handleEvents,
+  handleEventsTail,
+  handleBoundedEvents,
   handleBrokerEvents,
   handleSubscriberReceiptAck,
   handleBrokerForensics,

@@ -90,6 +90,44 @@ export type HrcLifecycleEvent = {
   payload: unknown
 }
 
+/**
+ * Control/data records emitted by the bounded lifecycle-event observation
+ * route. Controls deliberately stay outside {@link HrcLifecycleEvent}: they
+ * describe delivery, not lifecycle facts.
+ */
+export type HrcBoundedEventStreamRecord =
+  | {
+      type: 'ready'
+      ledgerIncarnationId: string
+      acceptedAfterHrcSeq: number
+      replayHeadHrcSeq: number
+    }
+  | {
+      type: 'event'
+      ledgerIncarnationId: string
+      event: HrcLifecycleEvent
+    }
+  | {
+      type: 'gap'
+      ledgerIncarnationId: string
+      reason: 'replay_window' | 'live_queue' | 'event_oversize'
+      afterHrcSeq: number
+      beforeHrcSeq: number
+      dropped: number | null
+    }
+  | {
+      type: 'ledger_replaced'
+      expectedLedgerIncarnationId: string
+      currentLedgerIncarnationId: string
+    }
+
+export type HrcEventTail = {
+  events: HrcLifecycleEvent[]
+  ledgerIncarnationId: string
+  headHrcSeq: number
+  truncated: boolean
+}
+
 export type HrcHarnessIntent = {
   provider: HrcProvider
   interactive: boolean

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  HrcBoundedEventStreamRecord,
+  HrcEventTail,
   HrcHttpError,
   HrcLifecycleEvent,
   HrcMailAckRequest,
@@ -77,6 +79,7 @@ import type {
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
+  HrcEventTailOptions,
   HrcSubscriberAdmissionSnapshot,
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
@@ -142,6 +145,7 @@ import type {
   UnbindSurfaceRequest,
   WaitMessageRequest,
   WaitMessageResponse,
+  WatchBoundedEventsOptions,
   WatchBrokerEventsOptions,
   WatchMessagesOptions,
   WatchOptions,
@@ -983,6 +987,33 @@ export class HrcClient {
   ): Promise<HrcLifecycleEvent[]> {
     const path = buildPath('/v1/events/latest-by-session', eventFilterParams(filter))
     return this.getJson<HrcLifecycleEvent[]>(path)
+  }
+
+  async tailEvents(options: HrcEventTailOptions): Promise<HrcEventTail> {
+    const path = buildPath('/v1/events/tail', {
+      limit: options.limit,
+      ...eventFilterParams(options),
+    })
+    return this.getJson<HrcEventTail>(path)
+  }
+
+  async *watchBoundedEvents(
+    options: WatchBoundedEventsOptions
+  ): AsyncIterable<HrcBoundedEventStreamRecord> {
+    const path = buildPath('/v1/events/bounded-stream', {
+      ledgerIncarnationId: options.ledgerIncarnationId,
+      afterSeq: options.afterSeq,
+      follow: 'true',
+      ...eventFilterParams(options),
+    })
+    yield* this.streamNdjson<HrcBoundedEventStreamRecord>(
+      path,
+      {
+        method: 'GET',
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+      options.signal
+    )
   }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
