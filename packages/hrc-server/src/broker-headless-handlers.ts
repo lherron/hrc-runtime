@@ -471,7 +471,7 @@ export async function startHeadlessBrokerRuntime(
   })
   const directPlan =
     turnIntent.harness.id === 'pi-sdk'
-      ? buildDirectAgentHarnessPlan({
+      ? await buildDirectAgentHarnessPlan({
           intent: turnIntent,
           session,
           runtimeId,

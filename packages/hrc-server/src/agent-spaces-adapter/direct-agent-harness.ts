@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { HrcRuntimeIntent, HrcSessionRecord, HrcTurnResponseFormat } from 'hrc-core'
+import { resolvePlacementContext } from 'spaces-config'
 import type {
   HarnessInvocationSpec,
   InvocationInput,
@@ -27,7 +28,7 @@ export type DirectAgentHarnessPlan = {
   identity: RuntimeIdentityAllocation
 }
 
-export function buildDirectAgentHarnessPlan(input: {
+export async function buildDirectAgentHarnessPlan(input: {
   intent: HrcRuntimeIntent
   session: HrcSessionRecord
   runtimeId: string
@@ -35,7 +36,10 @@ export function buildDirectAgentHarnessPlan(input: {
   responseFormat?: HrcTurnResponseFormat | undefined
   dispatchEnv: Record<string, string>
   now: string
-}): DirectAgentHarnessPlan {
+  resolveProfileYolo?:
+    | ((placement: HrcRuntimeIntent['placement']) => Promise<boolean | undefined>)
+    | undefined
+}): Promise<DirectAgentHarnessPlan> {
   const bundle = input.intent.placement['bundle'] as
     | { kind?: string; agentName?: string; projectRoot?: string }
     | undefined
@@ -67,7 +71,12 @@ export function buildDirectAgentHarnessPlan(input: {
       ? `anthropic-max/${requestedModel}`
       : `openai-codex/${requestedModel}`
   const reasoningEffort = input.intent.provision?.reasoning
-  const yolo = input.intent.provision?.yolo ?? input.intent.harness.yolo ?? false
+  const profileYolo =
+    input.resolveProfileYolo !== undefined
+      ? await input.resolveProfileYolo(input.intent.placement)
+      : (await resolvePlacementContext(input.intent.placement)).materialization.effectiveConfig
+          ?.yolo
+  const yolo = input.intent.provision?.yolo ?? input.intent.harness.yolo ?? profileYolo ?? false
   const projectRoot =
     bundle?.projectRoot ??
     (typeof input.intent.placement['projectRoot'] === 'string'

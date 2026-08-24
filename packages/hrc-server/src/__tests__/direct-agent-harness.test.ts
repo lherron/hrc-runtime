@@ -5,7 +5,7 @@ import { validateInvocationSpec } from 'spaces-harness-broker-protocol'
 import { buildDirectAgentHarnessPlan } from '../agent-spaces-adapter/direct-agent-harness'
 
 describe('direct agent-harness plan', () => {
-  test('lowers semantic agent identity without an ASPC process plan', () => {
+  test('lowers semantic agent identity without an ASPC process plan', async () => {
     const intent = {
       placement: {
         agentRoot: '/agents/cody',
@@ -18,7 +18,7 @@ describe('direct agent-harness plan', () => {
         },
       },
       harness: { provider: 'openai', interactive: false, id: 'pi-sdk' },
-      provision: { model: 'gpt-5.6-sol', reasoning: 'high', yolo: true },
+      provision: { model: 'gpt-5.6-sol', reasoning: 'high' },
       initialPrompt: 'Reply with the active agent id.',
     } satisfies HrcRuntimeIntent
     const session = {
@@ -27,13 +27,14 @@ describe('direct agent-harness plan', () => {
       laneRef: 'main',
       generation: 3,
     } as HrcSessionRecord
-    const built = buildDirectAgentHarnessPlan({
+    const built = await buildDirectAgentHarnessPlan({
       intent,
       session,
       runtimeId: 'runtime-cody',
       runId: 'run-cody',
       dispatchEnv: { ASP_PROJECT: 'agent-spaces' },
       now: '2026-08-24T12:00:00.000Z',
+      resolveProfileYolo: async () => true,
     })
 
     expect(() => validateInvocationSpec(built.startRequest.spec)).not.toThrow()
@@ -55,5 +56,6 @@ describe('direct agent-harness plan', () => {
     )
     expect(built.plan.artifacts.materializedBundleRoot).toBeUndefined()
     expect(built.plan.artifacts.systemPromptFile).toBeUndefined()
+    expect(built.profile.policy.permissionPolicy.mode).toBe('allow')
   })
 })
