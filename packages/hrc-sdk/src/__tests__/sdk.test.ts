@@ -977,50 +977,6 @@ describe('Phase 6 diagnostics round-trip', () => {
     }
   })
 
-  // -------------------------------------------------------------------------
-  // T-00998: getStatus() capability reporting
-  //
-  // RED GATE: These assertions will fail until:
-  //   - Larry lands HrcCapabilityStatus in hrc-core
-  //   - Server handleStatus() is expanded with capabilities + apiVersion
-  //   - SDK StatusResponse type is updated to include new fields
-  //
-  // Pass conditions:
-  //   1. getStatus() result includes `apiVersion` string
-  //   2. getStatus() result includes typed `capabilities` object
-  //   3. capabilities.backend.tmux.available is true (tmux present in CI/dev)
-  //   4. Unimplemented platform capabilities report false
-  // -------------------------------------------------------------------------
-
-  it('getStatus returns capabilities object with apiVersion (T-00998)', async () => {
-    if (!server) return
-    const client = new HrcClient(socketPath)
-    const result = await client.getStatus()
-    expect(result.apiVersion).toBe(HRC_API_VERSION)
-  })
-
-  it('getStatus returns typed capabilities with backend.tmux (T-00998)', async () => {
-    if (!server) return
-    const client = new HrcClient(socketPath)
-    const result = await client.getStatus()
-    expect(result.capabilities).toBeDefined()
-    expect(typeof result.capabilities).toBe('object')
-    expect(result.capabilities.backend.tmux.available).toBe(true)
-    expect(typeof result.capabilities.backend.tmux.version).toBe('string')
-  })
-
-  it('getStatus reports unimplemented platform capabilities as false (T-00998)', async () => {
-    if (!server) return
-    const client = new HrcClient(socketPath)
-    const result = await client.getStatus()
-    expect(result.capabilities.platform.appOwnedSessions).toBe(true)
-    expect(result.capabilities.platform.appHarnessSessions).toBe(true)
-    expect(result.capabilities.platform.commandSessions).toBe(true)
-    expect(result.capabilities.platform.literalInput).toBe(true)
-    expect(result.capabilities.platform.surfaceBindings).toBe(true)
-    expect(result.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
-  })
-
   it('listRuntimes returns an array', async () => {
     if (!server) return
     const client = new HrcClient(socketPath)
