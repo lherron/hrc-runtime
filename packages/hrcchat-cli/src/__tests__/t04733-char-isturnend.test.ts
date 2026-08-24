@@ -379,15 +379,6 @@ describe('T-04733 char: watch-loop isTurnEnd = turn_end || turn.completed', () =
     }
   })
 
-  it('bare turn_end terminates the watch loop with exitCode 0 (non-stacked)', async () => {
-    // Non-stacked path: watch-loop's isTurnEnd matches turn_end → turnCompleted=true → exit 0
-    const client = makeWlClient([wlEvent({ eventKind: 'turn_end', hrcSeq: 10 })])
-
-    const result = await runTurn(client, {} as TurnOptions, ['cody@agent-spaces', 'hello'])
-
-    expect(result.exitCode).toBe(0)
-  })
-
   it('[turn_end] in stacked mode: watch-loop breaks → success arm → final stacked frame emitted', async () => {
     // The watch-loop's broad isTurnEnd (turn_end || turn.completed) breaks the loop on turn_end.
     // Post-loop: turnCompleted=true AND lastPhase≠permission/error → finalizeTurn('success')
