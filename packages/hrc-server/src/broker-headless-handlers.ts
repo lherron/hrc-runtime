@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -17,6 +19,7 @@ import type {
 } from 'hrc-core'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { buildDirectAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
@@ -457,7 +460,6 @@ export async function startHeadlessBrokerRuntime(
   const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
   this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
 
-  const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
   const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
@@ -467,31 +469,61 @@ export async function startHeadlessBrokerRuntime(
     runtimeId,
     mailStopSocket: this.options.socketPath,
   })
+  const directPlan =
+    turnIntent.harness.id === 'pi-sdk'
+      ? buildDirectAgentHarnessPlan({
+          intent: turnIntent,
+          session,
+          runtimeId,
+          runId,
+          responseFormat: options.responseFormat,
+          dispatchEnv: hrcDispatchEnv,
+          now,
+        })
+      : undefined
+  if (directPlan !== undefined && hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] === undefined) {
+    hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] = join(homedir(), '.pi', 'agent', 'auth.json')
+  }
+  const client = directPlan === undefined ? await startAspcFacadeBrokerClient(timing) : undefined
   try {
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: turnIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        dispatchEnv: hrcDispatchEnv,
-        continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
-        allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
-        responseFormat: options.responseFormat,
-      },
-      {
-        compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
-        timing,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => runtimeId,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => runId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
-      }
-    )
+    const compiled =
+      directPlan === undefined
+        ? await compileBrokerRuntimePlan(
+            {
+              intent: turnIntent,
+              hostSessionId: session.hostSessionId,
+              generation: session.generation,
+              dispatchEnv: hrcDispatchEnv,
+              continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+              allowCompilerInitialInputWithoutIdentity:
+                options.allowCompilerInitialInputWithoutIdentity,
+              responseFormat: options.responseFormat,
+            },
+            {
+              compileHarnessInvocation: (request) => {
+                if (client === undefined) {
+                  throw new Error('ASPC facade client is unavailable for compiler-backed launch')
+                }
+                return client.compileHarnessInvocation(request)
+              },
+              timing,
+              ids: {
+                requestId: () => `req-${randomUUID()}`,
+                operationId: () => `op-${randomUUID()}`,
+                runtimeId: () => runtimeId,
+                invocationId: () => `inv-${randomUUID()}`,
+                initialInputId: () => `input-${randomUUID()}`,
+                runId: () => runId,
+                traceId: () => `trace-${randomUUID()}`,
+              },
+            }
+          )
+        : {
+            admitted: true as const,
+            ...directPlan,
+            dispatchEnv: hrcDispatchEnv,
+            diagnostics: [],
+          }
 
     if (!compiled.admitted) {
       throw new HrcRuntimeUnavailableError('headless broker compile/admission rejected', {
@@ -524,7 +556,7 @@ export async function startHeadlessBrokerRuntime(
     // dropped here before handing off. There is no legacy-stdio route and no
     // HRC_HEADLESS_BROKER_LEGACY_STDIO escape hatch: the controller always
     // allocates a leased substrate + Unix v0.2 endpoint.
-    await client.close().catch(() => undefined)
+    await client?.close().catch(() => undefined)
 
     const controller = this.getHarnessBrokerController()
     handedOffToController = true
@@ -651,7 +683,7 @@ export async function startHeadlessBrokerRuntime(
     return result.runtime
   } catch (error) {
     if (!handedOffToController) {
-      await client.close().catch(() => undefined)
+      await client?.close().catch(() => undefined)
     }
     throw error
   }

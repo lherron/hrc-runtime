@@ -607,7 +607,10 @@ export function extractPiSdkBrokerCredentialEnv(
   dispatchEnv: Record<string, string> | undefined,
   startRequest: InvocationStartRequest
 ): Record<string, string> | undefined {
-  if (dispatchEnv === undefined || brokerDriverKind(startRequest) !== 'pi-sdk') {
+  if (
+    dispatchEnv === undefined ||
+    !['pi-sdk', 'agent-harness'].includes(brokerDriverKind(startRequest) ?? '')
+  ) {
     return undefined
   }
   const credentials = Object.fromEntries(
@@ -617,7 +620,10 @@ export function extractPiSdkBrokerCredentialEnv(
 }
 
 function isPiSdkCredentialEnvKey(key: string, startRequest: InvocationStartRequest): boolean {
-  return brokerDriverKind(startRequest) === 'pi-sdk' && isCredentialEnvKey(key)
+  return (
+    ['pi-sdk', 'agent-harness'].includes(brokerDriverKind(startRequest) ?? '') &&
+    isCredentialEnvKey(key)
+  )
 }
 
 function brokerDriverKind(startRequest: InvocationStartRequest): string | undefined {

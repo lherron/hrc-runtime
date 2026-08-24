@@ -24,6 +24,13 @@ import type {
   HrcRuntimeIntent,
 } from 'hrc-core'
 import type { ResolvedRuntimeBundle } from 'spaces-config'
+import {
+  detectAgentLocalComponents,
+  harnessRegistry,
+  planPlacementRuntime,
+  prepareAgentToolRuntime,
+  prepareCodexRuntimeHome,
+} from 'spaces-execution'
 
 import { optional } from './optional.js'
 import { placementPlaceholders } from './placement-placeholders.js'
@@ -283,7 +290,15 @@ function normalizeCorrelationLaneRef(laneRef: string): LaneRef {
 // ---------------------------------------------------------------------------
 
 function defaultSpecBuilder(): SpecBuilder {
-  const client = createAgentSpacesClient()
+  const client = createAgentSpacesClient({
+    runtime: {
+      getHarnessAdapter: (harnessId) => harnessRegistry.getOrThrow(harnessId),
+      detectAgentLocalComponents,
+      planPlacementRuntime,
+      prepareCodexRuntimeHome,
+      prepareAgentToolRuntime,
+    },
+  })
   return (req) => client.buildProcessInvocationSpec(req)
 }
 

@@ -130,6 +130,7 @@ export type BrokerSubstrateAllocation = {
 
 export function resolveBrokerBinary(driverKind: string): string {
   if (driverKind === 'pi-sdk') return 'harness-broker-pi'
+  if (driverKind === 'agent-harness') return 'agent-harness'
 
   // The daemon and broker must come from one coherent atomic release. Resolve
   // the canonical broker beside this hrc-server package instead of relying on a
