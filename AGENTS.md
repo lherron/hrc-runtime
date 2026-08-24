@@ -81,6 +81,29 @@ sleep. Fix without restarting the guest: `sudo ifconfig bridge100 addm en7`
 (macOS uses `addm`/`deletem`). LaunchAgent `com.praesidium.hrcdev-vm-watchdog`
 (300s) auto-repairs; log `var/logs/hrcdev-vm-watchdog.log`.
 
+**Guest provisioning is not a copy of max3** — the guest was built credential-native
+(T-07279/T-07281), so host-only conveniences are absent and host-only workarounds
+linger. Two traps that cost real time:
+
+- **Claude auth must be a real `claude auth login`, never `CLAUDE_CODE_OAUTH_TOKEN`.**
+  Provisioning could not reach the login keychain over ssh, so it left a file-based
+  `~/.claude/oauth-token` plus a `~/.local/bin/claude` zsh shim that exported
+  `CLAUDE_CODE_OAUTH_TOKEN` before `exec`ing the real binary. ASP launch artifacts
+  put that shim in `argv[0]`, so **every** harness session inherited a long-lived
+  token — which Claude Code treats as inference-only, permanently breaking
+  `/remote-control` ("requires a full-scope login token") no matter how often you
+  re-run `claude auth login`. Retired 2026-08-24: shim replaced by a symlink to
+  `~/.bun/bin/claude`, token file renamed `.disabled`. Auth now comes from
+  `~/.claude/.credentials.json` like every other node. When diagnosing this class,
+  note the var is **invisible to `env` inside the session** (Claude deletes it from
+  `process.env` at startup) — read the exec env with `ps -Eww -p <pid>`, and check
+  `argv[0]` in the launch artifact before suspecting the broker's env fence.
+- **Do not pin interpreter minor versions in agent-home hooks.** max3 has
+  `~/.local/bin/python3.12`; the guest has only `python3` (3.14). A
+  `#!/usr/bin/env python3.12` shebang in the shared `defaults` hooks made every
+  PostToolUse hook exit 127 on the guest. Shebangs in `var/agents/spaces/**/hooks`
+  are fleet-wide — keep them at `python3`.
+
 ## Runtimes and Long Tool Calls
 
 Headless runtimes run agents under a wrapper process (events via hooks + OTEL);
