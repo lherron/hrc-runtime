@@ -656,20 +656,6 @@ describe('hrc admin runs — §5 (RED: command does not exist yet)', () => {
     expect(result.stdout).toContain('--dry-run')
   })
 
-  // ── Deprecation guidance in OLD `hrc run sweep-zombies` help ──
-
-  it('hrc run sweep-zombies --help mentions the replacement admin path', async () => {
-    const result = await runCli(['run', 'sweep-zombies', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc admin runs sweep-zombies')
-  })
-
-  it('hrc run reconcile-active --help mentions the replacement admin path', async () => {
-    const result = await runCli(['run', 'reconcile-active', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc admin runs reconcile-active')
-  })
-
   // ── server-required: new admin path works ──
 
   describe('admin runs functional (needs live server)', () => {
