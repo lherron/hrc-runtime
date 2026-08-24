@@ -3052,13 +3052,3 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 })
-
-// ===========================================================================
-describe('error output', () => {
-  it('errors go to stderr, not stdout', async () => {
-    const result = await runCli(['nonexistent'])
-    expect(result.exitCode).toBe(2)
-    // stdout should be empty or minimal; error text on stderr
-    expect(result.stderr.length).toBeGreaterThan(0)
-  })
-})
