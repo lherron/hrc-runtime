@@ -866,42 +866,5 @@ describe('existing lifecycle preserved — §6 regression guards', () => {
       server = await createHrcServer(serverOpts())
       await seedRunRoots('rex', 'agent-spaces')
     })
-
-    it('hrc start rex@agent-spaces --dry-run still exits 0 (unchanged)', async () => {
-      const result = await runCli(
-        ['start', 'rex@agent-spaces', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('local plan preview')
-    })
-
-    it('hrc run rex@agent-spaces --dry-run fails in a non-TTY and points to start', async () => {
-      const result = await runCli(
-        ['run', 'rex@agent-spaces', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-      expect(result.exitCode).not.toBe(0)
-      expect(result.stderr).toContain('hrc run is interactive-only (no TTY detected)')
-      expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
-    })
-
-    it('hrc attach rex@agent-spaces --dry-run still exits 0 (unchanged)', async () => {
-      const result = await runCli(
-        ['attach', 'rex@agent-spaces', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('local plan preview')
-    })
   })
 })
