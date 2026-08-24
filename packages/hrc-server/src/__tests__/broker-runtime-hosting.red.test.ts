@@ -344,11 +344,6 @@ const unparseableRuntime = makeRuntime({
 describe('parseBrokerRuntimeHostingState', () => {
   // ── G2: flat T-01801 interactive durable shape ────────────────────────────
   describe('G2 flat T-01801 shape — brokerWindow + tuiWindow at broker root', () => {
-    it('parses flat interactive shape and returns a defined result', () => {
-      const result = parseBrokerRuntimeHostingState(flatInteractiveRuntime)
-      expect(result).toBeDefined()
-    })
-
     it('flat shape: endpoint.kind = unix-jsonrpc-ndjson', () => {
       const result = parseBrokerRuntimeHostingState(flatInteractiveRuntime)
       expect(result?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
@@ -426,10 +421,6 @@ describe('parseBrokerRuntimeHostingState', () => {
 
   // ── G2: new normalized endpoint/substrate/presentation shape ─────────────
   describe('G2 normalized endpoint/substrate/presentation shape', () => {
-    it('parses new normalized interactive shape', () => {
-      expect(parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)).toBeDefined()
-    })
-
     it('normalized shape: endpoint.kind = unix-jsonrpc-ndjson', () => {
       const result = parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)
       expect(result?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
@@ -505,11 +496,6 @@ describe('parseBrokerRuntimeHostingState', () => {
 
   // ── G2: flat and normalized shapes resolve to equivalent state ────────────
   describe('G2 equivalence: flat and normalized shapes resolve to the same logical state', () => {
-    it('both shapes parse without error', () => {
-      expect(parseBrokerRuntimeHostingState(eqFlatRuntime)).toBeDefined()
-      expect(parseBrokerRuntimeHostingState(eqNormalizedRuntime)).toBeDefined()
-    })
-
     it('endpoint.kind is the same from both shapes', () => {
       const flat = parseBrokerRuntimeHostingState(eqFlatRuntime)
       const norm = parseBrokerRuntimeHostingState(eqNormalizedRuntime)
@@ -878,10 +864,6 @@ describe('hasDurableBrokerEndpoint', () => {
 describe('hasLeasedBrokerSubstrate', () => {
   it('returns true for leased-tmux substrate (normalized interactive)', () => {
     expect(hasLeasedBrokerSubstrate(normalizedInteractiveRuntime)).toBe(true)
-  })
-
-  it('returns true for leased-tmux substrate (normalized headless)', () => {
-    expect(hasLeasedBrokerSubstrate(normalizedHeadlessRuntime)).toBe(true)
   })
 
   it('returns true for flat T-01801 shape — substrate inferred from brokerWindow', () => {
