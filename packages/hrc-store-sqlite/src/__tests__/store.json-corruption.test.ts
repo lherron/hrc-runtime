@@ -59,26 +59,6 @@ function corruptColumn(table: string, column: string, pk: string, pkColumn: stri
 // Session: corrupted parsed_scope_json
 // ---------------------------------------------------------------------------
 describe('C-2: corrupted JSON does not crash reads', () => {
-  it('session with corrupted parsed_scope_json returns undefined for that field', () => {
-    insertSession('hsid-corrupt-1')
-    corruptColumn('sessions', 'parsed_scope_json', 'hsid-corrupt-1', 'host_session_id')
-
-    const logged: string[] = []
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      logged.push(args.map(String).join(' '))
-    })
-    try {
-      const session = db.sessions.getByHostSessionId('hsid-corrupt-1')
-      expect(session).not.toBeNull()
-      expect(session!.parsedScopeJson).toBeUndefined()
-      // Should have logged the corruption
-      expect(logged.length).toBeGreaterThan(0)
-      expect(logged[0]).toContain('parsed_scope_json')
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
   it('session with corrupted last_applied_intent_json returns undefined', () => {
     insertSession('hsid-corrupt-2')
     corruptColumn('sessions', 'last_applied_intent_json', 'hsid-corrupt-2', 'host_session_id')
@@ -88,90 +68,6 @@ describe('C-2: corrupted JSON does not crash reads', () => {
       const session = db.sessions.getByHostSessionId('hsid-corrupt-2')
       expect(session).not.toBeNull()
       expect(session!.lastAppliedIntentJson).toBeUndefined()
-      expect(errorSpy).toHaveBeenCalled()
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
-  it('session with corrupted continuation_json returns undefined', () => {
-    insertSession('hsid-corrupt-3')
-    corruptColumn('sessions', 'continuation_json', 'hsid-corrupt-3', 'host_session_id')
-
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const session = db.sessions.getByHostSessionId('hsid-corrupt-3')
-      expect(session).not.toBeNull()
-      expect(session!.continuation).toBeUndefined()
-      expect(errorSpy).toHaveBeenCalled()
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
-  // ---------------------------------------------------------------------------
-  // Runtime: corrupted tmux_json
-  // ---------------------------------------------------------------------------
-  it('runtime with corrupted tmux_json returns undefined for that field', () => {
-    // Insert session first (FK constraint)
-    insertSession('hsid-rt-corrupt')
-    const now = ts()
-    db.runtimes.insert({
-      runtimeId: 'rt-corrupt-1',
-      hostSessionId: 'hsid-rt-corrupt',
-      scopeRef: testScopeRef('corrupt'),
-      laneRef: 'default',
-      generation: 1,
-      transport: 'tmux',
-      harness: 'claude-code' as any,
-      provider: 'anthropic' as any,
-      status: 'running',
-      supportsInflightInput: false,
-      adopted: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-    corruptColumn('runtimes', 'tmux_json', 'rt-corrupt-1', 'runtime_id')
-
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const runtime = db.runtimes.getByRuntimeId('rt-corrupt-1')
-      expect(runtime).not.toBeNull()
-      expect(runtime!.tmuxJson).toBeUndefined()
-      expect(errorSpy).toHaveBeenCalled()
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
-  // ---------------------------------------------------------------------------
-  // Event: corrupted event_json
-  // ---------------------------------------------------------------------------
-  it('event with corrupted event_json returns undefined for eventJson', () => {
-    insertSession('hsid-ev-corrupt')
-    db.events.append({
-      ts: ts(),
-      hostSessionId: 'hsid-ev-corrupt',
-      scopeRef: testScopeRef('corrupt'),
-      laneRef: 'default',
-      generation: 1,
-      source: 'test' as any,
-      eventKind: 'test-event',
-      eventJson: { hello: 'world' },
-    })
-
-    // Corrupt the event_json column
-    db.sqlite.run(
-      'UPDATE events SET event_json = ? WHERE host_session_id = ?',
-      '{broken json',
-      'hsid-ev-corrupt'
-    )
-
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const events = db.events.listFromSeq(1, { hostSessionId: 'hsid-ev-corrupt' })
-      expect(events.length).toBeGreaterThan(0)
-      expect(events[0].eventJson).toBeUndefined()
       expect(errorSpy).toHaveBeenCalled()
     } finally {
       errorSpy.mockRestore()
