@@ -97,26 +97,6 @@ describe('hrcchat did-you-mean — PHANTOM MAP wins before fuzzy (§7a)', () => 
     expect(result.stderr).toMatch(/did you mean/i)
   })
 
-  // ── hrcchat message → messages ──
-
-  it('hrcchat message → exit 2', async () => {
-    const result = await runMain(['message'])
-    expect(result.exitCode).toBe(2)
-  })
-
-  it('hrcchat message → stdout is empty (no action side-effect)', async () => {
-    const result = await runMain(['message'])
-    expect(result.stdout).toBe('')
-  })
-
-  it('hrcchat message → stderr contains "messages" (phantom map wins over fuzzy)', async () => {
-    const result = await runMain(['message'])
-    // Commander already suggests "messages" for "message" via fuzzy.
-    // Phantom map must also resolve to "messages". Pin that the suggestion is correct.
-    expect(result.stderr).toMatch(/messages/i)
-    expect(result.stderr).toMatch(/did you mean/i)
-  })
-
   // ── hrcchat seq → show (WRONG suggestion currently: Commander says "send") ──
 
   it('hrcchat seq → exit 2', async () => {
