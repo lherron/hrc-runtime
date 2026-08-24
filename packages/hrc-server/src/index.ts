@@ -642,6 +642,21 @@ export { drainEventDatabase } from './event-ingest.js'
 export type { BrokerRunPreview } from './broker-run-preview.js'
 export { buildBrokerRunPreview } from './broker-run-preview.js'
 
+const SESSION_TITLE_MAX_LENGTH = 200
+
+/**
+ * C0 controls and DEL. A newline breaks the roster row structure and a raw CSI
+ * sequence is echoed to the operator's terminal verbatim. Checked by code point
+ * rather than by regex so the source file stays free of control bytes itself.
+ */
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) return true
+  }
+  return false
+}
+
 type SessionTitleWriteInput = {
   title: string
   source: 'generated' | 'manual'
@@ -662,6 +677,23 @@ function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteInput {
       field: 'title',
     })
   }
+  // Titles are rendered unescaped into a terminal and are destined to be
+  // model-generated, so the write boundary is the only place to bound them.
+  const normalizedTitle = title.trim()
+  if (normalizedTitle.length > SESSION_TITLE_MAX_LENGTH) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `title must be at most ${SESSION_TITLE_MAX_LENGTH} characters`,
+      { field: 'title', maxLength: SESSION_TITLE_MAX_LENGTH, length: normalizedTitle.length }
+    )
+  }
+  if (hasControlCharacters(normalizedTitle)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'title must not contain control characters',
+      { field: 'title' }
+    )
+  }
   if (source !== 'generated' && source !== 'manual') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -680,7 +712,7 @@ function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteInput {
     })
   }
   return {
-    title,
+    title: normalizedTitle,
     source,
     ...(model === undefined ? {} : { model }),
     force: force === true,

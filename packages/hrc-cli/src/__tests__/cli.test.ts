@@ -1551,6 +1551,68 @@ describe('session retitle', () => {
     ) as Array<{ hostSessionId: string; title?: string }>
     expect(after.find((session) => session.hostSessionId === hostSessionId)?.title).toBeUndefined()
   })
+
+  it('renames an already-titled session only with --force', async () => {
+    const hostSessionId = await resolveHostSessionId(testProjectScope('retitleforce'))
+    const first = await runCli(['session', 'retitle', hostSessionId, '--title', 'First'], cliEnv())
+    expect(first.exitCode).toBe(0)
+
+    // Without --force the server refuses rather than discarding the operator's
+    // own title, and the CLI must name the flag that unblocks it.
+    const refused = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', 'Second'],
+      cliEnv()
+    )
+    expect(refused.exitCode).not.toBe(0)
+    expect(refused.stderr).toContain('--force')
+    const unchanged = await runCli(['session', 'get', hostSessionId], cliEnv())
+    expect(JSON.parse(unchanged.stdout.trim())).toMatchObject({ title: 'First' })
+
+    const forced = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', 'Second', '--force'],
+      cliEnv()
+    )
+    expect(forced.exitCode).toBe(0)
+    expect(JSON.parse(forced.stdout.trim())).toMatchObject({ title: 'Second', source: 'manual' })
+
+    // Exercises session_index_title_update — the projection path that has no
+    // other reachable caller.
+    const listed = JSON.parse(
+      (await runCli(['session', 'list', '--json'], cliEnv())).stdout.trim()
+    ) as Array<{ hostSessionId: string; title?: string }>
+    expect(listed.find((session) => session.hostSessionId === hostSessionId)?.title).toBe('Second')
+
+    const misused = await runCli(
+      ['session', 'retitle', hostSessionId, '--regenerate', '--force'],
+      cliEnv()
+    )
+    expect(misused.exitCode).toBe(2)
+    expect(misused.stderr).toContain('--force applies to --title only')
+  })
+
+  it('rejects titles that are oversized or carry control characters', async () => {
+    const hostSessionId = await resolveHostSessionId(testProjectScope('retitleguard'))
+    const long = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', 'x'.repeat(201)],
+      cliEnv()
+    )
+    expect(long.exitCode).not.toBe(0)
+    expect(long.stderr).toContain('at most 200 characters')
+
+    const control = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', 'break\u001b[2Jrow'],
+      cliEnv()
+    )
+    expect(control.exitCode).not.toBe(0)
+    expect(control.stderr).toContain('control characters')
+
+    const trimmed = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', '  Padded title  '],
+      cliEnv()
+    )
+    expect(trimmed.exitCode).toBe(0)
+    expect(JSON.parse(trimmed.stdout.trim())).toMatchObject({ title: 'Padded title' })
+  })
 })
 
 // ===========================================================================

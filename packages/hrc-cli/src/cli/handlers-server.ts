@@ -30,6 +30,7 @@ import { printJson } from '../print.js'
 import { resolveSessionArg } from '../selector-resolve.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
+import { isHrcDomainErrorLike } from './errors.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
 const DEFAULT_RESTART_PROOF_TIMEOUT_MS = 30_000
@@ -594,19 +595,39 @@ export async function cmdSessionRetitle(args: string[]): Promise<void> {
   const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const title = parseFlag(args, '--title')
   const regenerate = hasFlag(args, '--regenerate')
+  const force = hasFlag(args, '--force')
   if (title === undefined && !regenerate) {
     fatal('session retitle requires exactly one of --title or --regenerate')
   }
   if (title !== undefined && regenerate) {
     fatal('--title and --regenerate are mutually exclusive')
   }
+  if (force && regenerate) {
+    fatal('--force applies to --title only; --regenerate always clears')
+  }
 
   const client = createClient()
   const hostSessionId = await resolveSessionArg(hostSessionArg, client)
-  const result = regenerate
-    ? await client.deleteSessionTitle(hostSessionId)
-    : await client.setSessionTitle(hostSessionId, { title: title as string, source: 'manual' })
-  printJson(result)
+  if (regenerate) {
+    printJson(await client.deleteSessionTitle(hostSessionId))
+    return
+  }
+  try {
+    printJson(
+      await client.setSessionTitle(hostSessionId, {
+        title: title as string,
+        source: 'manual',
+        force,
+      })
+    )
+  } catch (err) {
+    // The server refuses to silently discard an operator's own title. Name the
+    // flag that unblocks it — the bare conflict code reads like version skew.
+    if (isHrcDomainErrorLike(err) && (err.detail as { requiresForce?: boolean })?.requiresForce) {
+      fatal(`${err.message}; re-run with --force to replace it`)
+    }
+    throw err
+  }
 }
 
 export async function cmdSessionDropContinuation(args: string[]): Promise<void> {

@@ -269,11 +269,12 @@ Exit codes:
     .description('set a manual title or clear it for regeneration')
     .argument('<hostSessionId>', 'host session ID')
     .option('--title <title>', 'set a manual session title')
+    .option('--force', 'replace an existing manual title')
     .option('--regenerate', 'clear the title so it can be regenerated')
     .action(async (hostSessionId, _opts, cmd: Command) => {
       const args = toLegacyArgv([hostSessionId], cmd.opts(), {
         strings: ['title'],
-        booleans: ['regenerate'],
+        booleans: ['regenerate', 'force'],
       })
       await cmdSessionRetitle(args)
     })
