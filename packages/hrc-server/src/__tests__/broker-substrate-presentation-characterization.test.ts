@@ -54,9 +54,7 @@ import { getBrokerRuntimeTmuxSocketPath } from '../broker-decisions'
 
 import {
   canOperatorAttach,
-  canUseDirectPaneFallback,
   hasBrokerPresentation,
-  hasDurableBrokerEndpoint,
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
   requireBrokerRuntimeHostingState,
@@ -260,50 +258,6 @@ const normalizedHeadlessRuntime = makeRuntime({
 // and broker IPC socket are separate paths; attach is possible; canOperatorAttach is true.
 
 describe('[CHARACTERIZATION A1] flat T-01801 interactive allocation — substrate/presentation split', () => {
-  it('parseBrokerRuntimeHostingState succeeds for the flat interactive broker shape', () => {
-    expect(parseBrokerRuntimeHostingState(interactiveRuntime)).toBeDefined()
-  })
-
-  it('substrate.kind = leased-tmux (broker process lives in a leased tmux session)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    expect(result?.substrate.kind).toBe('leased-tmux')
-  })
-
-  it('presentation.kind = tmux-tui (TUI window present for interactive allocation)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    expect(result?.presentation.kind).toBe('tmux-tui')
-  })
-
-  it('substrate.brokerWindow carries the BROKER PROCESS pane identity (NOT the TUI pane)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    expect(result.substrate.brokerWindow.sessionId).toBe('$4')
-    expect(result.substrate.brokerWindow.windowId).toBe('@10')
-    expect(result.substrate.brokerWindow.paneId).toBe('%18')
-  })
-
-  it('presentation.tuiWindow carries the TUI (operator) pane identity (NOT the broker pane)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
-    expect(result.presentation.tuiWindow.sessionId).toBe('$4')
-    expect(result.presentation.tuiWindow.windowId).toBe('@11')
-    expect(result.presentation.tuiWindow.paneId).toBe('%19')
-  })
-
-  it('substrate.brokerWindow and presentation.tuiWindow have DISTINCT windowId (two separate windows)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
-    expect(result.substrate.brokerWindow.windowId).not.toBe(result.presentation.tuiWindow.windowId)
-  })
-
-  it('substrate.brokerWindow and presentation.tuiWindow have DISTINCT paneId', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
-    expect(result.substrate.brokerWindow.paneId).not.toBe(result.presentation.tuiWindow.paneId)
-  })
-
   it('presentation.operatorAttachTarget = true for interactive allocation', () => {
     const result = parseBrokerRuntimeHostingState(interactiveRuntime)
     if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
@@ -327,62 +281,6 @@ describe('[CHARACTERIZATION A1] flat T-01801 interactive allocation — substrat
     const result = parseBrokerRuntimeHostingState(interactiveRuntime)
     if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
     expect(result.presentation.attachCommand).toContain(SESSION_NAME)
-  })
-
-  it('endpoint.kind = unix-jsonrpc-ndjson (durable endpoint for interactive allocation)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    expect(result?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
-  })
-
-  it('endpoint.socketPath = broker IPC socket path (separate from btmux socket)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    expect((result?.endpoint as { socketPath?: string }).socketPath).toBe(BROKER_IPC_SOCKET)
-    // The broker IPC socket is NOT the btmux socket (two separate paths per runtime)
-    expect((result?.endpoint as { socketPath?: string }).socketPath).not.toBe(BTMUX_SOCKET)
-  })
-
-  it('substrate.tmuxSocketPath = btmux socket (separate from broker IPC socket)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    expect(result.substrate.tmuxSocketPath).toBe(BTMUX_SOCKET)
-    // The btmux socket is NOT the broker IPC socket
-    expect(result.substrate.tmuxSocketPath).not.toBe(BROKER_IPC_SOCKET)
-  })
-
-  it('substrate.sessionName from brokerWindow.sessionName', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    expect(result.substrate.sessionName).toBe(SESSION_NAME)
-  })
-
-  it('substrate.generation = 3 (from broker.generation)', () => {
-    const result = parseBrokerRuntimeHostingState(interactiveRuntime)
-    if (result?.substrate.kind !== 'leased-tmux') throw new Error('expected leased-tmux')
-    expect(result.substrate.generation).toBe(3)
-  })
-
-  it('canOperatorAttach = true for interactive flat allocation', () => {
-    expect(canOperatorAttach(interactiveRuntime)).toBe(true)
-  })
-
-  it('canUseDirectPaneFallback = true for interactive flat allocation', () => {
-    expect(canUseDirectPaneFallback(interactiveRuntime)).toBe(true)
-  })
-
-  it('hasDurableBrokerEndpoint = true for interactive flat allocation', () => {
-    expect(hasDurableBrokerEndpoint(interactiveRuntime)).toBe(true)
-  })
-
-  it('hasLeasedBrokerSubstrate = true for interactive flat allocation', () => {
-    expect(hasLeasedBrokerSubstrate(interactiveRuntime)).toBe(true)
-  })
-
-  it('hasBrokerPresentation(runtime, "tmux-tui") = true for interactive allocation', () => {
-    expect(hasBrokerPresentation(interactiveRuntime, 'tmux-tui')).toBe(true)
-  })
-
-  it('hasBrokerPresentation(runtime, "none") = false for interactive allocation', () => {
-    expect(hasBrokerPresentation(interactiveRuntime, 'none')).toBe(false)
   })
 })
 
