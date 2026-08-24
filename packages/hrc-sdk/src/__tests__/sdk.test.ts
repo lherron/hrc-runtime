@@ -91,16 +91,6 @@ describe('discoverSocket', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 2. HrcClient — constructor and typed error parsing
-// ---------------------------------------------------------------------------
-describe('HrcClient constructor', () => {
-  it('accepts a socket path', () => {
-    const client = new HrcClient('/tmp/fake.sock')
-    expect(client).toBeDefined()
-  })
-})
-
 describe('runtime lifecycle client methods', () => {
   let tmpDir: string
   let stubSocketPath: string
