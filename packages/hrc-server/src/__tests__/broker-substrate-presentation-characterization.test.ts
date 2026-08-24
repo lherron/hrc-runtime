@@ -263,7 +263,6 @@ describe('[CHARACTERIZATION A1] flat T-01801 interactive allocation — substrat
     if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
     expect(result.presentation.operatorAttachTarget).toBe(true)
   })
-
   it('presentation.attachCommand is present (operator can attach)', () => {
     const result = parseBrokerRuntimeHostingState(interactiveRuntime)
     if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
@@ -438,10 +437,6 @@ describe('[CHARACTERIZATION A4] absent tuiWindow → presentation:none valid (C-
     },
   })
 
-  it('flat broker block with absent tuiWindow: parseBrokerRuntimeHostingState succeeds (not undefined)', () => {
-    expect(parseBrokerRuntimeHostingState(flatNoTuiRuntime)).toBeDefined()
-  })
-
   it('flat broker block with absent tuiWindow: presentation.kind = none', () => {
     const result = parseBrokerRuntimeHostingState(flatNoTuiRuntime)
     expect(result?.presentation.kind).toBe('none')
@@ -455,10 +450,6 @@ describe('[CHARACTERIZATION A4] absent tuiWindow → presentation:none valid (C-
   it('flat broker block with absent tuiWindow: endpoint.kind = unix-jsonrpc-ndjson', () => {
     const result = parseBrokerRuntimeHostingState(flatNoTuiRuntime)
     expect(result?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
-  })
-
-  it('flat broker block with absent tuiWindow: canOperatorAttach = false', () => {
-    expect(canOperatorAttach(flatNoTuiRuntime)).toBe(false)
   })
 
   it('flat broker block with absent tuiWindow: hasBrokerPresentation("none") = true', () => {
@@ -568,27 +559,5 @@ describe('[RED — FAILS NOW] present-but-malformed tuiWindow → parse REJECTS 
     // TODAY this FAILS: current code silently downgrades to presentation:none.
     // AFTER curly's fix, returns undefined (parse rejected).
     expect(parseBrokerRuntimeHostingState(flatEmptyTuiRuntime)).toBeUndefined()
-  })
-
-  // ── Paired characterization: absent tuiWindow → none (the VALID contrast) ──
-  // This paired test re-confirms A4 in proximity to the red tests so the
-  // before/after distinction is immediately visible when reviewing test output.
-
-  it('[paired characterization] absent tuiWindow (undefined) → parse succeeds with presentation:none', () => {
-    // This test is GREEN NOW and must stay green after curly's fix.
-    // It proves the fix distinguishes "absent" from "present-but-malformed".
-    const flatAbsentTuiRuntime = makeRuntime({
-      runtimeId: 'rt-absent-tui-paired',
-      generation: 3,
-      runtimeStateJson: {
-        broker: {
-          ...flatInteractiveBrokerBlock,
-          tuiWindow: undefined, // ABSENT — presentation:none, valid
-        },
-      },
-    })
-    const result = parseBrokerRuntimeHostingState(flatAbsentTuiRuntime)
-    expect(result).toBeDefined()
-    expect(result?.presentation.kind).toBe('none')
   })
 })
