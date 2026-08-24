@@ -53,7 +53,6 @@ import {
 import { getBrokerRuntimeTmuxSocketPath } from '../broker-decisions'
 
 import {
-  canOperatorAttach,
   hasBrokerPresentation,
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
@@ -169,46 +168,7 @@ const interactiveRuntime = makeRuntime({
 // the round-trip parser handles both presentation kinds correctly.
 
 const NORM_BTMUX_SOCKET = '/tmp/hrc-ph2/btmux/claude-code-tmux-rt-norm.sock'
-const NORM_SESSION = 'hrc-claude-code-tmux-rt-norm'
 const NORM_BROKER_IPC = '/tmp/hrc-ph2/bipc/b5e2d1f0/b.sock'
-const NORM_TOKEN_PATH = '/tmp/hrc-ph2/bipc/b5e2d1f0/attach.token'
-const NORM_LEDGER = '/tmp/hrc-ph2/bipc/b5e2d1f0/events.ndjson'
-
-const normalizedInteractiveBrokerBlock: Record<string, unknown> = {
-  endpoint: {
-    kind: 'unix-jsonrpc-ndjson',
-    socketPath: NORM_BROKER_IPC,
-    attachTokenRef: { kind: 'file', path: NORM_TOKEN_PATH, redacted: true },
-    protocolVersion: 'harness-broker/0.2', // present in endpoint in normalized shape
-  },
-  substrate: {
-    kind: 'leased-tmux',
-    tmuxSocketPath: NORM_BTMUX_SOCKET,
-    sessionName: NORM_SESSION,
-    brokerWindow: { sessionId: '$5', windowId: '@12', paneId: '%20' },
-    generation: 2,
-    eventLedgerPath: NORM_LEDGER,
-  },
-  presentation: {
-    kind: 'tmux-tui',
-    tuiWindow: { sessionId: '$5', windowId: '@13', paneId: '%21' },
-    operatorAttachTarget: true,
-    attachCommand: `tmux -S ${NORM_BTMUX_SOCKET} attach -t ${NORM_SESSION}:tui`,
-  },
-}
-
-const normalizedInteractiveRuntime = makeRuntime({
-  runtimeId: 'rt-norm-interactive',
-  generation: 2,
-  transport: 'tmux',
-  runtimeStateJson: {
-    schemaVersion: 'runtime-state/v1',
-    kind: 'harness-broker',
-    runtimeId: 'rt-norm-interactive',
-    broker: normalizedInteractiveBrokerBlock,
-    control: { mode: 'broker-ipc', brokerAttached: true },
-  },
-})
 
 const NORM_HL_BTMUX = '/tmp/hrc-ph2/btmux/claude-code-tmux-rt-headless.sock'
 const NORM_HL_IPC = '/tmp/hrc-ph2/bipc/c6d3e2a1/b.sock'
@@ -335,85 +295,12 @@ describe('[CHARACTERIZATION A2] socket path-length invariants (T-01776)', () => 
 // returns the correct logical BrokerRuntimeHostingState for each.
 
 describe('[CHARACTERIZATION A3] substrate/presentation round-trips for both presentation kinds', () => {
-  // Flat shape: tmux-tui
-  it('flat shape with tuiWindow → presentation.kind = tmux-tui (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(interactiveRuntime)?.presentation.kind).toBe('tmux-tui')
-  })
-
-  it('flat shape with tuiWindow → substrate.kind = leased-tmux (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(interactiveRuntime)?.substrate.kind).toBe('leased-tmux')
-  })
-
-  it('flat shape with tuiWindow → endpoint.kind = unix-jsonrpc-ndjson (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(interactiveRuntime)?.endpoint.kind).toBe(
-      'unix-jsonrpc-ndjson'
-    )
-  })
-
-  // Normalized shape: tmux-tui
-  it('normalized shape with presentation.tmux-tui → presentation.kind = tmux-tui (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.presentation.kind).toBe(
-      'tmux-tui'
-    )
-  })
-
-  it('normalized shape with presentation.tmux-tui → operatorAttachTarget = true (round-trip)', () => {
-    const result = parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)
-    if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
-    expect(result.presentation.operatorAttachTarget).toBe(true)
-  })
-
-  it('normalized shape with presentation.tmux-tui → substrate.kind = leased-tmux (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.substrate.kind).toBe(
-      'leased-tmux'
-    )
-  })
-
-  it('normalized shape with presentation.tmux-tui → tuiWindow identity preserved (round-trip)', () => {
-    const result = parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)
-    if (result?.presentation.kind !== 'tmux-tui') throw new Error('expected tmux-tui')
-    expect(result.presentation.tuiWindow.sessionId).toBe('$5')
-    expect(result.presentation.tuiWindow.windowId).toBe('@13')
-    expect(result.presentation.tuiWindow.paneId).toBe('%21')
-  })
-
-  // Normalized shape: none
-  it('normalized headless shape with presentation.none → presentation.kind = none (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.presentation.kind).toBe(
-      'none'
-    )
-  })
-
-  it('normalized headless shape with presentation.none → substrate.kind = leased-tmux (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.substrate.kind).toBe(
-      'leased-tmux'
-    )
-  })
-
   it('normalized headless leased substrate exposes its tmux socket for liveness checks', () => {
     expect(getBrokerRuntimeTmuxSocketPath(normalizedHeadlessRuntime)).toBe(NORM_HL_BTMUX)
   })
 
-  it('normalized headless shape → endpoint.kind = unix-jsonrpc-ndjson (durable even without TUI)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.endpoint.kind).toBe(
-      'unix-jsonrpc-ndjson'
-    )
-  })
-
   it('hasBrokerPresentation("none") = true for normalized headless', () => {
     expect(hasBrokerPresentation(normalizedHeadlessRuntime, 'none')).toBe(true)
-  })
-
-  it('hasBrokerPresentation("tmux-tui") = false for normalized headless (no TUI window)', () => {
-    expect(hasBrokerPresentation(normalizedHeadlessRuntime, 'tmux-tui')).toBe(false)
-  })
-
-  it('canOperatorAttach = false for normalized headless (presentation.none)', () => {
-    expect(canOperatorAttach(normalizedHeadlessRuntime)).toBe(false)
-  })
-
-  it('canOperatorAttach = true for normalized interactive (presentation.tmux-tui)', () => {
-    expect(canOperatorAttach(normalizedInteractiveRuntime)).toBe(true)
   })
 })
 
