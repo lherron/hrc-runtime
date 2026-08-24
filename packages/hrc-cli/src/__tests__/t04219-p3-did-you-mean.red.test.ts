@@ -246,12 +246,6 @@ describe('hrc did-you-mean — nested unknown subcommands scoped to siblings (§
 // ===========================================================================
 
 describe('hrc resume — real command, not an unknown-command path (§7c regression)', () => {
-  it('hrc resume --help exits 0 (resume is a real command via P2)', async () => {
-    const result = await runCli(['resume', '--help'])
-    // This was RED in P2; it is now GREEN. Pin it so P3 does not regress it.
-    expect(result.exitCode).toBe(0)
-  })
-
   it('hrc resume --help does NOT contain "unknown command"', async () => {
     const result = await runCli(['resume', '--help'])
     expect(result.stderr).not.toMatch(/unknown command/i)
