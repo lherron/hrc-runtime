@@ -5,6 +5,7 @@ export type SessionIndexExecutionMode = 'headless' | 'interactive' | 'nonInterac
 
 export type SessionIndexRecord = {
   hostSessionId: string
+  title?: string | undefined
   scopeRef: string
   laneRef: string
   generation: number
@@ -52,6 +53,7 @@ export type SessionIndexBackfillEvidence = {
 
 type SessionIndexRow = {
   host_session_id: string
+  title: string | null
   scope_ref: string
   lane_ref: string
   generation: number
@@ -111,6 +113,7 @@ function buildWhere(
 function mapRow(row: SessionIndexRow): SessionIndexRecord {
   return {
     hostSessionId: row.host_session_id,
+    ...(row.title === null ? {} : { title: row.title }),
     scopeRef: row.scope_ref,
     laneRef: row.lane_ref,
     generation: row.generation,
@@ -162,7 +165,7 @@ export class SessionIndexRepository {
     const rows = this.db
       .query<SessionIndexRow, SQLQueryBindings[]>(
         `SELECT
-           host_session_id, scope_ref, lane_ref, generation, agent_id, project_id,
+           host_session_id, title, scope_ref, lane_ref, generation, agent_id, project_id,
            created_at, effective_status, execution_mode, last_activity_at
          FROM session_index
          ${where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`}

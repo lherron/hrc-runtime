@@ -2,11 +2,16 @@ import type { Database } from 'bun:sqlite'
 
 import { brokerMigrations } from './migrations/broker-migrations.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
+import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
 import { type HrcMigration, execute } from './migrations/types.js'
 
 export type { HrcMigration } from './migrations/types.js'
 
-export const phase1Migrations: readonly HrcMigration[] = [...schemaMigrations, ...brokerMigrations]
+export const phase1Migrations: readonly HrcMigration[] = [
+  ...schemaMigrations,
+  ...brokerMigrations,
+  ...sessionTitleMigrations,
+]
 
 function ensureMigrationTable(db: Database): void {
   db.exec(`

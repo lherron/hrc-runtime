@@ -102,6 +102,42 @@ function appendEvent(
 }
 
 describe('session_index maintained projection', () => {
+  test('projects session title insert, update, and delete mutations', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      seedCurrent(db, { hostSessionId: 'hsid-titled' })
+      const createdAt = '2026-08-11T10:01:00.000Z'
+
+      db.sessionTitles.upsert({
+        hostSessionId: 'hsid-titled',
+        title: 'Fix session activity filter',
+        source: 'generated',
+        model: 'test-model',
+        createdAt,
+        updatedAt: createdAt,
+      })
+      expect(db.sessionIndex.listPage({ limit: 10 }).items[0]?.title).toBe(
+        'Fix session activity filter'
+      )
+
+      db.sessionTitles.upsert({
+        hostSessionId: 'hsid-titled',
+        title: 'Repair session activity ordering',
+        source: 'manual',
+        createdAt,
+        updatedAt: '2026-08-11T10:02:00.000Z',
+      })
+      expect(db.sessionIndex.listPage({ limit: 10 }).items[0]?.title).toBe(
+        'Repair session activity ordering'
+      )
+
+      expect(db.sessionTitles.delete('hsid-titled')).toBe(true)
+      expect(db.sessionIndex.listPage({ limit: 10 }).items[0]?.title).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
   test('tracks current lineages and derives Mobile status/mode at write time', () => {
     const db = openHrcDatabase(dbPath)
     try {
@@ -190,6 +226,16 @@ describe('session_index maintained projection', () => {
         hostSessionId: 'hsid-g1',
         updatedAt: '2026-08-11T12:00:00.000Z',
       })
+      db.sessionTitles.upsert({
+        hostSessionId: 'hsid-g1',
+        title: 'Title belongs to generation one',
+        source: 'generated',
+        createdAt: '2026-08-11T12:00:00.000Z',
+        updatedAt: '2026-08-11T12:00:00.000Z',
+      })
+      expect(db.sessionIndex.listPage({ limit: 10 }).items[0]?.title).toBe(
+        'Title belongs to generation one'
+      )
       db.sessions.insert({
         hostSessionId: 'hsid-g2',
         scopeRef: first.scopeRef,
@@ -207,13 +253,15 @@ describe('session_index maintained projection', () => {
         activeHostSessionId: 'hsid-g2',
         updatedAt: '2026-08-11T12:01:00.000Z',
       })
-      expect(db.sessionIndex.listPage({ limit: 10 }).items).toEqual([
+      const rotated = db.sessionIndex.listPage({ limit: 10 }).items
+      expect(rotated).toEqual([
         expect.objectContaining({
           hostSessionId: 'hsid-g2',
           generation: 2,
           lastActivityAt: '2026-08-11T09:00:00.000Z',
         }),
       ])
+      expect(rotated[0]?.title).toBeUndefined()
     } finally {
       db.close()
     }

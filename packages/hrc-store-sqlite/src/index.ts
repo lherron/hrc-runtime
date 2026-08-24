@@ -124,6 +124,11 @@ export type {
   SessionIndexPage,
   SessionIndexRecord,
 } from './session-index-repository.js'
+export { SessionTitleRepository } from './session-title-repository.js'
+export type {
+  SessionTitleRecord,
+  SessionTitleSource,
+} from './session-title-repository.js'
 export type {
   BrokerInvocationEventAppendInput,
   BrokerInvocationEventAppendResult,
