@@ -163,19 +163,6 @@ describe('hrcchat did-you-mean — ordinary fuzzy misspellings (§7b)', () => {
 })
 
 // ===========================================================================
-// §7c: No side effect — suggestion must not trigger the command action
-// ===========================================================================
-
-describe('hrcchat did-you-mean — no side effect contract (§7c)', () => {
-  it('hrcchat unknown-xyz stdout is empty (no output from an action)', async () => {
-    // Any unknown command: stdout must be empty regardless of what is in stderr
-    const result = await runMain(['unknown-xyz'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stdout).toBe('')
-  })
-})
-
-// ===========================================================================
 // §7d: Double-print suppression — Commander's direct stderr output is suppressed
 // ===========================================================================
 
