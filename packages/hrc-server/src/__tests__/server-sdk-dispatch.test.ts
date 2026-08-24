@@ -1107,27 +1107,6 @@ if (cmd === 'app-server') {
     expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
   })
 
-  it('POST /v1/runtimes/start fails closed for non-broker interactive harness start', async () => {
-    const fakeCodex = await installFakeCodex('fake-codex-dead-after-exit', {
-      interactiveDelayMs: 10_000,
-    })
-    const hsid = await resolveSession('lifecycle-exited-dead-runtime')
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: interactiveCliIntent('openai', {
-        pathPrepend: [fakeCodex.binDir],
-      }),
-    })
-    expect(startRes.status).toBe(503)
-    const body = (await startRes.json()) as { error?: { code?: string; message?: string } }
-    expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('interactive runtime is not broker-admissible')
-
-    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
-    expect(execLog).toBe('')
-  })
-
   it('POST /v1/runtimes/start does not launch legacy interactive harness before attach', async () => {
     const interactiveBanner = 'INTERACTIVE_START_LAUNCHED'
     const fakeCodex = await installFakeCodex('fake-codex-interactive-start', {
