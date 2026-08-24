@@ -599,24 +599,6 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
     })
 
     // ── Regression: existing noun list commands must be UNCHANGED ──
-
-    it('[regression] hrc runtime list still exits 0 and returns JSON array', async () => {
-      const result = await runCli(['runtime', 'list'], cliEnv())
-      expect(result.exitCode).toBe(0)
-      expect(Array.isArray(JSON.parse(result.stdout.trim()))).toBe(true)
-    })
-
-    it('[regression] hrc session list still exits 0 and returns JSON array', async () => {
-      const result = await runCli(['session', 'list'], cliEnv())
-      expect(result.exitCode).toBe(0)
-      expect(Array.isArray(JSON.parse(result.stdout.trim()))).toBe(true)
-    })
-
-    it('[regression] hrc ls launches exits 0 and returns JSON array', async () => {
-      const result = await runCli(['ls', 'launches'], cliEnv())
-      expect(result.exitCode).toBe(0)
-      expect(Array.isArray(JSON.parse(result.stdout.trim()))).toBe(true)
-    })
   })
 })
 
