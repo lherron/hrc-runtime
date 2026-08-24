@@ -800,6 +800,7 @@ export type HrcBrokerInvocationEventRecord = {
   sourceRef?: string | undefined
   /** Monotonic id in the source ledger. Present iff sourceRef is present. */
   originSeq?: number | undefined
+  /** Insertion time in the originating HRC ledger, distinct from broker event time. */
   createdAt: string
 }
 

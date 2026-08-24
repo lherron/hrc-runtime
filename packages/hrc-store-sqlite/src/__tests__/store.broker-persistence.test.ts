@@ -71,6 +71,30 @@ function createLegacyPreBrokerDatabase(): ReturnType<typeof createHrcDatabase> {
 }
 
 describe('broker persistence migration (0016/0017)', () => {
+  it('stamps a backfilled broker event with its actual insertion time', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const historicalEventTime = '2026-08-24T01:12:53.612Z'
+      const insertedAfterMs = Date.now()
+      const appended = db.brokerInvocationEvents.appendEvent({
+        invocationId: 'inv-backfilled',
+        seq: 1,
+        time: historicalEventTime,
+        type: 'turn.started',
+        runtimeId: 'rt-backfilled',
+        payload: { delayed: true },
+      })
+      const insertedBeforeMs = Date.now()
+
+      expect(appended.record.time).toBe(historicalEventTime)
+      expect(appended.record.createdAt).not.toBe(historicalEventTime)
+      expect(Date.parse(appended.record.createdAt)).toBeGreaterThanOrEqual(insertedAfterMs)
+      expect(Date.parse(appended.record.createdAt)).toBeLessThanOrEqual(insertedBeforeMs)
+    } finally {
+      db.close()
+    }
+  })
+
   it('creates all six broker tables on a fresh db with the UNIQUE(invocation_id, seq) constraint', () => {
     const db = openHrcDatabase(dbPath)
     try {

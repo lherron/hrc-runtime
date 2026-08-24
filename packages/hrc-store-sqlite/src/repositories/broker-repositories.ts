@@ -447,7 +447,6 @@ export type BrokerInvocationEventAppendInput = {
   hrcEventSeq?: number | undefined
   projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
   projectionError?: string | undefined
-  createdAt?: string | undefined
 }
 
 export type ImportedBrokerInvocationEventInput = {
@@ -559,7 +558,7 @@ export class BrokerInvocationEventRepository {
               projection_status,
               projection_error,
               created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
           `,
           input.invocationId,
           input.seq,
@@ -573,8 +572,7 @@ export class BrokerInvocationEventRepository {
           brokerEnvelopeJson ?? null,
           input.hrcEventSeq ?? null,
           input.projectionStatus ?? 'pending',
-          input.projectionError ?? null,
-          input.createdAt ?? input.time
+          input.projectionError ?? null
         )
 
         const stored = requireRecord(

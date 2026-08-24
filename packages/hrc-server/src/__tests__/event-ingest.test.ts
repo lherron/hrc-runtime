@@ -324,7 +324,6 @@ describe('T-06838 dedicated observational ingest', () => {
       payload: JSON.parse(broker().brokerEventJson),
       envelopeJson: broker().brokerEnvelopeJson,
       projectionStatus: 'applied',
-      createdAt: broker().createdAt,
     })
 
     const first = await forwardAvailableEvents({
@@ -413,7 +412,6 @@ describe('T-06838 dedicated observational ingest', () => {
       type: broker().type,
       runtimeId: broker().runtimeId,
       payload: JSON.parse(broker().brokerEventJson),
-      createdAt: broker().createdAt,
     })
     dead.close()
 

@@ -487,7 +487,6 @@ describe('POST /v1/broker-sessions/open', () => {
           type: 'invocation.ready',
           payload: { ok: true },
         }),
-        createdAt: now,
       })
     } finally {
       db.close()
