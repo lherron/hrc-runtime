@@ -2,36 +2,40 @@
 # Install: lefthook install
 # Docs: https://github.com/evilmartians/lefthook
 
+min_version: "2.1.10"
+
 pre-commit:
   parallel: false
   commands:
     gitleaks:
       run: gitleaks protect --staged --redact
     lint:
-      run: bun run lint
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun run lint
       stage_fixed: true
     boundaries:
-      run: bun scripts/check-boundaries.ts
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-boundaries.ts
     manifests:
-      run: bun scripts/check-manifest-edges.ts
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-manifest-edges.ts
     cli-surface:
-      run: bun scripts/check-cli-surface.ts
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-cli-surface.ts
     public-surface:
-      run: bun scripts/check-public-surface.ts
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-public-surface.ts
     suppressions:
-      run: bun scripts/check-suppressions.ts
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-suppressions.ts
     typecheck:
-      run: bun run build && bun run typecheck
+      run: bun scripts/run-if-code-changed.ts pre-commit -- sh -c 'bun run build && bun run typecheck'
 
 pre-push:
   parallel: false
+  # Keep the hook alive for deleted paths, which Lefthook omits from push_files.
+  files: printf 'lefthook.yml\n'
   commands:
-    install:
-      run: bun install
-    test:
+    code-validation:
+      use_stdin: true
       # TMPDIR=/tmp is load-bearing on macOS: the default
       # /var/folders/.../T/ prefix is 49 chars, which puts hrc-server's test
       # sockets at ~96 of the 104-char sun_path limit. The longest-named
       # fixtures cross it, so the gate fails on a CLEAN tree (8/2401 on
       # 2026-08-21) and the failure set drifts as fixtures are renamed.
-      run: TMPDIR=/tmp bun run test:fast
+      # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
+      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun install && TMPDIR=/tmp bun run test:fast' {files}
