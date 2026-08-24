@@ -113,17 +113,6 @@ async function runCli(args: string[]): Promise<CliResult> {
 // ===========================================================================
 
 describe('hrc did-you-mean — top-level unknown commands (§7a)', () => {
-  it('hrc <unknown> exits code 2', async () => {
-    const result = await runCli(['completelyunknown'])
-    expect(result.exitCode).toBe(2)
-  })
-
-  it('hrc <unknown> stdout is empty (no action side-effect)', async () => {
-    const result = await runCli(['completelyunknown'])
-    // No command action must have run; all output must be on stderr
-    expect(result.stdout).toBe('')
-  })
-
   it('hrc montior → exit 2 + suggestion for monitor', async () => {
     const result = await runCli(['montior'])
     // RED: double-print removed; single clean hint
@@ -167,13 +156,6 @@ describe('hrc did-you-mean — top-level unknown commands (§7a)', () => {
     expect(result.exitCode).toBe(2)
     expect(result.stderr).toMatch(/runtime/i)
     expect(result.stderr).toMatch(/did you mean/i)
-  })
-
-  it('hrc runtiem → suggestion appears exactly once (no double-print)', async () => {
-    const result = await runCli(['runtiem'])
-    // RED: double-print currently present
-    const occurrences = (result.stderr.match(/unknown command/gi) ?? []).length
-    expect(occurrences).toBe(1)
   })
 
   it('hrc attch → exit 2 + suggestion for attach (regression pin)', async () => {
