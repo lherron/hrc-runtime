@@ -398,19 +398,6 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
       expect(body.kind).toBe('runtime')
       expect(body.runtimeId).toBe(runtimeId)
     })
-
-    it('JSON shape is stable: kind + runtimeId always present for runtime selector', async () => {
-      const { runtimeId } = await seedSessionAndRuntime('show-shape-rt')
-
-      const result = await runCli(['show', runtimeId, '--json'], cliEnv())
-      // RED: command missing
-      expect(result.exitCode).toBe(0)
-
-      const body = JSON.parse(result.stdout.trim())
-      // Stable contract: these keys must be present (no optional/undefined for kind/id)
-      expect(typeof body.kind).toBe('string')
-      expect(typeof body.runtimeId).toBe('string')
-    })
   })
 
   // ── server-required: session selector forms ──
