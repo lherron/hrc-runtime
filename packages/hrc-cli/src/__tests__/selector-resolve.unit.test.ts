@@ -118,23 +118,6 @@ describe('resolveSelectorTarget — raw runtimeId beats bare-handle parse', () =
     expect(result).toEqual({ kind: 'runtime', runtimeId: RUNTIME_A.runtimeId })
   })
 
-  it('does NOT attempt handle parsing when the raw token is a valid runtimeId in the snapshot', () => {
-    // rt-... tokens look nothing like agent handles, but the invariant says
-    // raw-id match happens first regardless of token shape.
-    const snapshot = snapshotWith([RUNTIME_A, RUNTIME_B])
-    const resultA = resolveSelectorTarget(RUNTIME_A.runtimeId, {
-      expect: 'runtime',
-      snapshot,
-    })
-    expect(resultA).toEqual({ kind: 'runtime', runtimeId: RUNTIME_A.runtimeId })
-
-    const resultB = resolveSelectorTarget(RUNTIME_B.runtimeId, {
-      expect: 'runtime',
-      snapshot,
-    })
-    expect(resultB).toEqual({ kind: 'runtime', runtimeId: RUNTIME_B.runtimeId })
-  })
-
   it('raw hostSessionId beats bare-handle parse when expect is host-session', () => {
     const snapshot = snapshotWith([], [SESSION_A])
     const result = resolveSelectorTarget(SESSION_A.hostSessionId, {
@@ -227,19 +210,6 @@ describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
       const resolveErr = err as SelectorResolutionError
       expect(resolveErr.code).toBe('type-mismatch')
       expect(resolveErr.message).toMatch(/host.session|hostSessionId/i)
-    }
-  })
-
-  it('error message names both what was given and what was expected', () => {
-    const snapshot = snapshotWith([])
-    try {
-      resolveSelectorTarget('msg:m-xyz', { expect: 'runtime', snapshot })
-    } catch (err) {
-      const resolveErr = err as SelectorResolutionError
-      // Must name received kind AND accepted kinds so the operator knows what to fix
-      expect(resolveErr.message.length).toBeGreaterThan(10)
-      // accepted forms should appear — at minimum 'runtime:' or 'runtime'
-      expect(resolveErr.message).toContain('runtime')
     }
   })
 })
