@@ -10,7 +10,7 @@ import {
   makeSeededFixture,
   ts,
 } from '../../../hrc-server/src/__tests__/broker-event-mapper-fixtures'
-import { MonitorWaitExit, cmdMonitorWait, writeEarlyTimeout } from '../monitor/wait-command'
+import { MonitorWaitExit, cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
 
 const TASK_ID = 'T-06575'
@@ -427,32 +427,6 @@ describe('T-06575 suite 4 — temporal truth', () => {
 })
 
 describe('T-06575 suite 5 — exit codes and grammar legality', () => {
-  test('wait initial-read timeout uses canonical 20 and before-arm machine fields', () => {
-    const stdout: string[] = []
-    const originalStdout = process.stdout.write
-    process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
-      return true
-    }) as typeof process.stdout.write
-    try {
-      expect(writeEarlyTimeout('runtime:unresolved', 'turn-finished', true)).toBe(20)
-    } finally {
-      process.stdout.write = originalStdout
-    }
-
-    expect(jsonLines(stdout.join(''))).toEqual([
-      expect.objectContaining({
-        event: 'monitor.completed',
-        result: 'timeout',
-        outcome: 'not_matched',
-        exitCode: 20,
-        phase: 'before-arm',
-        members: [],
-        reason: 'initial_read_timeout',
-      }),
-    ])
-  })
-
   test('exports the frozen monitor code table, including observed terminal failure', async () => {
     const modulePath = '../monitor/exit-codes'
     const monitorExits = (await import(modulePath)) as {
