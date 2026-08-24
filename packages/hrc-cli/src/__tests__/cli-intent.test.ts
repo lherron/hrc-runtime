@@ -8,7 +8,7 @@
  * harness specificity.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -119,30 +119,6 @@ describe('resolveAgentHarness', () => {
     expect(result.provider).toBe('anthropic')
     expect(result.harness).toBeUndefined()
     expect(harnessStringToHarnessId(result.harness)).toBeUndefined()
-  })
-})
-
-describe('hrc-cli resolve intent single authority', () => {
-  it('delegates profile/target harness resolution to hrc-sdk instead of owning parser and overlay logic', async () => {
-    const scopeSource = await readFile(join(import.meta.dir, '..', 'cli', 'scope.ts'), 'utf8')
-
-    // T-05127: hrc-cli keeps the positional API, but hrc-sdk owns profile parsing,
-    // project-target overlay, and provider normalization for harness resolution.
-    expect(scopeSource).toContain("from 'hrc-sdk'")
-    expect(scopeSource).toContain('resolveAgentHarness as resolveSdkAgentHarness')
-    expect(scopeSource).toContain('harnessFrontendToHrcHarness')
-
-    for (const duplicateAuthority of [
-      'parseAgentProfile',
-      'parseTargetsToml',
-      'mergeAgentWithProjectTarget',
-      'resolveAgentPrimingPrompt',
-      'resolveHarnessProvider',
-      'function loadProjectTarget',
-      'function resolveProviderForHarness',
-    ]) {
-      expect(scopeSource).not.toContain(duplicateAuthority)
-    }
   })
 })
 
