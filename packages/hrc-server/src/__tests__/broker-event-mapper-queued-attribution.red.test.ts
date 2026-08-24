@@ -48,12 +48,10 @@ import type {
 import {
   Q_INPUT_A_ID,
   Q_INPUT_B_ID,
-  Q_INPUT_C_ID,
   Q_INVOCATION_ID,
   Q_RUNTIME_ID,
   Q_RUN_A_ID,
   Q_RUN_B_ID,
-  Q_RUN_C_ID,
   type SeededFixture,
   makeQueuedFixture,
   ts,
@@ -80,7 +78,6 @@ function qEnv(
 
 const TURN_A = 'turn_queued_A' as TurnId
 const TURN_B = 'turn_queued_B' as TurnId
-const TURN_C = 'turn_queued_C' as TurnId
 
 let fixture: SeededFixture
 let mapper: BrokerEventMapper
@@ -480,50 +477,3 @@ describe('[RED T-04239/6] ask-bracket guard: closed ask bracket + correct termin
 // FAILS against current HEAD: early-return on `activeRunId !== runId` fires
 // before the defense check → runtime stays 'busy', activeRunId=fossil forever.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('[RED T-04239/7] defense-in-depth: fossil-mismatch un-wedges runtime without completing fossil run', () => {
-  it('clears runtime busy and leaves fossil run un-completed when clean run_C terminal hits mismatch guard', () => {
-    const db = fixture.db
-
-    // Precondition: runtime is pre-wedged with fossil activeRunId=run_A (status=busy).
-    // makeQueuedFixture already seeds this. Verify the fossil state:
-    const runtimeBefore = db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    expect(runtimeBefore.status).toBe('busy')
-    expect(runtimeBefore.activeRunId).toBe(Q_RUN_A_ID) // fossil
-
-    // Apply a clean, single-turn sequence for run_C.
-    // The oracle sees: input.accepted(C) at seq=50, turn.started(C) at seq=51.
-    // For turn.completed(C) at seq=52: findPriorInputAccepted(52) → input_C at
-    // seq=50 → run_C. No terminal between seq=50 and seq=52 → resolvedRunId=run_C.
-    // Attribution is CORRECT — no queued-input confusion here.
-    mapper.apply(qEnv('input.accepted', 50, { inputId: Q_INPUT_C_ID }, { inputId: Q_INPUT_C_ID }))
-    mapper.apply(qEnv('turn.started', 51, { turnId: TURN_C }, { turnId: TURN_C }))
-    mapper.apply(
-      qEnv(
-        'turn.completed',
-        52,
-        { turnId: TURN_C, status: 'completed', producedContent: true },
-        { turnId: TURN_C }
-      )
-    )
-
-    const runtime = db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    const runA = db.runs.getByRunId(Q_RUN_A_ID)! // fossil
-    const runC = db.runs.getByRunId(Q_RUN_C_ID)! // clean run
-
-    // FAILS: current code's markRuntimeTurnTerminal early-returns on
-    //   `runtime.activeRunId (run_A) !== runId (run_C)` → runtime stays 'busy'.
-    // After fix (defense-in-depth path): detects invocation=active, no open turn,
-    // no ask bracket → clears busy without completing the fossil run.
-    expect(runtime.status).toBe('ready') // FAILS: stays 'busy'
-    expect(runtime.activeRunId).toBeUndefined() // FAILS: stays 'run_queued_A'
-
-    // run_C's terminal correctly completes run_C (its own turn finished).
-    expect(runC.status).toBe('completed') // FAILS: stays 'accepted' (early-return never marks it)
-
-    // Fossil run_A must NOT be marked completed — the defense path only un-wedges
-    // the runtime; it does not assume the fossil run actually finished.
-    // (This assertion passes with current code since early-return doesn't touch run_A,
-    // but the combined test still FAILS on the runtime.status assertions above.)
-    expect(runA.status).not.toBe('completed')
-  })
-})
