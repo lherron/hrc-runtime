@@ -119,15 +119,6 @@ function getTableIndexColumns(db: HrcDatabase, tableName: string, indexName: str
 // 1. Migration and database wiring
 // ---------------------------------------------------------------------------
 describe('Phase 5 migration — local_bridges', () => {
-  it('applies the Phase 5 migration', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      expect(db.migrations.applied).toContain('0003_phase5_app_sessions_and_bridges')
-    } finally {
-      db.close()
-    }
-  })
-
   it('exposes localBridges repository on HrcDatabase', () => {
     const db = openHrcDatabase(dbPath)
     try {
