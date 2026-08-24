@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite'
 
 import { brokerMigrations } from './migrations/broker-migrations.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
+import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
 import { sessionTitleMigrations } from './migrations/session-title-migrations.js'
 import { type HrcMigration, execute } from './migrations/types.js'
 
@@ -11,6 +12,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   ...schemaMigrations,
   ...brokerMigrations,
   ...sessionTitleMigrations,
+  ...sessionTitleCascadeMigrations,
 ]
 
 function ensureMigrationTable(db: Database): void {

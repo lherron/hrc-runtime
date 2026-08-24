@@ -285,4 +285,53 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
     })
     expect(event.seq).toBeGreaterThan(0)
   })
+
+  it('rejects a session title referencing a non-existent session', () => {
+    expect(() =>
+      db.sessionTitles.upsert({
+        hostSessionId: 'hsid-absent',
+        title: 'Orphan',
+        source: 'manual',
+        createdAt: ts(),
+        updatedAt: ts(),
+      })
+    ).toThrow()
+  })
+
+  it('cascades a session title when its session is deleted (T-07512)', () => {
+    const session = db.sessions.insert(makeSession('hsid-cascade'))
+    db.sessionTitles.upsert({
+      hostSessionId: session.hostSessionId,
+      title: 'Goes with its session',
+      source: 'manual',
+      createdAt: ts(),
+      updatedAt: ts(),
+    })
+    expect(db.sessionTitles.getByHostSessionId(session.hostSessionId)).not.toBeNull()
+
+    // No repository exposes a session delete yet; retention work (T-07024) adds
+    // one. Without ON DELETE CASCADE this raises FOREIGN KEY constraint failed
+    // rather than removing the title.
+    db.sqlite.query('DELETE FROM sessions WHERE host_session_id = ?').run(session.hostSessionId)
+
+    expect(db.sessionTitles.getByHostSessionId(session.hostSessionId)).toBeNull()
+  })
+
+  it('keeps the roster projection triggers after the cascade rebuild (T-07512)', () => {
+    // 0046 drops and recreates session_titles, which drops the triggers defined
+    // ON it. If they are not recreated the roster silently stops projecting.
+    const triggers = db.sqlite
+      .query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master
+          WHERE type = 'trigger' AND name LIKE 'session_index_title_%'
+          ORDER BY name`
+      )
+      .all()
+      .map((row) => row.name)
+    expect(triggers).toEqual([
+      'session_index_title_delete',
+      'session_index_title_insert',
+      'session_index_title_update',
+    ])
+  })
 })
