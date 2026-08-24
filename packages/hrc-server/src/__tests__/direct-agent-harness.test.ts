@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import { validateInvocationSpec } from 'spaces-harness-broker-protocol'
 import { buildDirectAgentHarnessPlan } from '../agent-spaces-adapter/direct-agent-harness'
+import { runtimeHarness } from '../broker/runtime-state'
 
 describe('direct agent-harness plan', () => {
   test('lowers semantic agent identity without an ASPC process plan', async () => {
@@ -57,5 +58,8 @@ describe('direct agent-harness plan', () => {
     expect(built.plan.artifacts.materializedBundleRoot).toBeUndefined()
     expect(built.plan.artifacts.systemPromptFile).toBeUndefined()
     expect(built.profile.policy.permissionPolicy.mode).toBe('allow')
+    expect(runtimeHarness(built.plan.harness.runtime, built.profile.brokerDriver)).toBe(
+      'agent-harness'
+    )
   })
 })

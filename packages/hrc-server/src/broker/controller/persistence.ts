@@ -113,7 +113,7 @@ export function persistStartGraph(
     laneRef: session.laneRef,
     generation: identity.generation,
     transport,
-    harness: runtimeHarness(input.plan.harness.runtime),
+    harness: runtimeHarness(input.plan.harness.runtime, input.profile.brokerDriver),
     provider: input.plan.harness.provider as HrcProvider,
     status: 'starting',
     statusChangedAt: now,
