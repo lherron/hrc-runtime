@@ -959,7 +959,7 @@ export function getBrokerRuntimeTmuxSocketPath(runtime: HrcRuntimeSnapshot): str
   }
 
   const hosting = parseBrokerRuntimeHostingState(runtime)
-  if (hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux') {
+  if (hosting?.substrate.kind === 'leased-tmux') {
     return hosting.substrate.tmuxSocketPath
   }
 

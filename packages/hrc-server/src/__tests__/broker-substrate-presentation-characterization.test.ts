@@ -50,6 +50,7 @@ import {
   socketPathByteBudget,
   socketPathByteLength,
 } from 'spaces-harness-broker-client'
+import { getBrokerRuntimeTmuxSocketPath } from '../broker-decisions'
 
 import {
   canOperatorAttach,
@@ -490,6 +491,10 @@ describe('[CHARACTERIZATION A3] substrate/presentation round-trips for both pres
     expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.substrate.kind).toBe(
       'leased-tmux'
     )
+  })
+
+  it('normalized headless leased substrate exposes its tmux socket for liveness checks', () => {
+    expect(getBrokerRuntimeTmuxSocketPath(normalizedHeadlessRuntime)).toBe(NORM_HL_BTMUX)
   })
 
   it('normalized headless shape → endpoint.kind = unix-jsonrpc-ndjson (durable even without TUI)', () => {
