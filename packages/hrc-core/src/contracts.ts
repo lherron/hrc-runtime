@@ -7,7 +7,14 @@ import type { HrcSessionRef } from './selectors.js'
 import type { AttachmentRef } from 'spaces-runtime'
 
 export type HrcProvider = 'anthropic' | 'openai'
-export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
+export type HrcHarness =
+  | 'agent-harness'
+  | 'agent-sdk'
+  | 'claude-code'
+  | 'codex-cli'
+  | 'pi'
+  | 'pi-cli'
+  | 'pi-sdk'
 export type HrcEventSource =
   | 'agent-spaces'
   | 'hook'

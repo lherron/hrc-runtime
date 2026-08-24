@@ -230,6 +230,11 @@ describe('decideHeadlessExecutionRoute — Codex flag ON', () => {
       expected: 'sdk',
     },
     {
+      name: 'canonical agent-harness → broker',
+      harness: { provider: 'openai', interactive: false, id: 'agent-harness' },
+      expected: 'broker',
+    },
+    {
       name: 'openai pi-sdk → broker',
       harness: { provider: 'openai', interactive: false, id: 'pi-sdk' },
       expected: 'broker',
@@ -254,12 +259,19 @@ describe('decideHeadlessExecutionRoute — Codex flag ON', () => {
   }
 })
 
-describe('decideHeadlessExecutionRoute — pi-sdk broker route', () => {
-  const piSdk = intent({ provider: 'openai', interactive: false, id: 'pi-sdk' })
+describe('decideHeadlessExecutionRoute — agent-harness broker route', () => {
+  const canonical = intent({ provider: 'openai', interactive: false, id: 'agent-harness' })
+  const compatibilityAlias = intent({ provider: 'openai', interactive: false, id: 'pi-sdk' })
 
-  it('selects broker independently of the Codex flag', () => {
-    expect(decideHeadlessExecutionRoute!(piSdk, { brokerFlagEnabled: false })).toBe('broker')
-    expect(decideHeadlessExecutionRoute!(piSdk, { brokerFlagEnabled: true })).toBe('broker')
+  it('selects broker for the canonical id independently of the Codex flag', () => {
+    expect(decideHeadlessExecutionRoute!(canonical, { brokerFlagEnabled: false })).toBe('broker')
+    expect(decideHeadlessExecutionRoute!(canonical, { brokerFlagEnabled: true })).toBe('broker')
+  })
+
+  it('keeps pi-sdk as a compatibility alias', () => {
+    expect(decideHeadlessExecutionRoute!(compatibilityAlias, { brokerFlagEnabled: false })).toBe(
+      'broker'
+    )
   })
 })
 

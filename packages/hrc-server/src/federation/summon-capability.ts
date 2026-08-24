@@ -97,6 +97,8 @@ function adapterIdFor(
         return 'pi'
       case 'pi-sdk':
         return 'pi-sdk'
+      case 'agent-harness':
+        return 'pi-sdk'
     }
   }
 
@@ -143,6 +145,7 @@ function credentialRefusal(
         'openai credentials not observed: no OPENAI_API_KEY and no ~/.codex/auth.json — run codex login as this user'
       )
     }
+    case 'agent-harness':
     case 'pi':
     case 'pi-sdk': {
       const auth = join(userHome, '.pi', 'agent', 'auth.json')

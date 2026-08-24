@@ -40,6 +40,14 @@ describe('resolveAgentHarness — provider/harness derived from the agent profil
     })
   })
 
+  test('agent-harness profile resolves to the canonical direct harness', () => {
+    const { agentRoot, agentId } = makeAgentDir('agent-harness')
+    expect(resolveAgentHarness({ agentRoot, agentId })).toMatchObject({
+      provider: 'openai',
+      harness: 'agent-harness',
+    })
+  })
+
   test('missing profile falls back to anthropic', () => {
     const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-intent-empty-'))
     tempRoots.push(root)
@@ -83,6 +91,21 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
     expect(intent.harness).toMatchObject({
       provider: 'anthropic',
       id: 'claude-code',
+      interactive: false,
+    })
+  })
+
+  test('agent-harness agent → canonical first-party harness id', () => {
+    const { agentRoot, agentId } = makeAgentDir('agent-harness')
+    const intent = buildHrcRuntimeIntent({
+      agentId,
+      agentRoot,
+      interactive: false,
+      preferredMode: 'headless',
+    })
+    expect(intent.harness).toMatchObject({
+      provider: 'openai',
+      id: 'agent-harness',
       interactive: false,
     })
   })

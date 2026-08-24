@@ -72,7 +72,7 @@ export function toRuntimeContinuationRef(
 export function deriveSdkHarness(
   harness: HrcRuntimeIntent['harness']
 ): HrcRuntimeSnapshot['harness'] {
-  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+  if (harness.id === 'agent-harness' || harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
   }
   return resolveHarnessFrontendForProvider(harness.provider, 'sdk') ?? 'agent-sdk'
@@ -80,8 +80,8 @@ export function deriveSdkHarness(
 
 /**
  * Decide whether a headless dispatch (or start) should select the SDK route
- * rather than the CLI route. Explicit agent-sdk always wins; explicit pi-sdk
- * is broker-owned and never enters the SDK fallback.
+ * rather than the CLI route. Explicit agent-sdk always wins; explicit
+ * agent-harness and pi-sdk are broker-owned and never enter the SDK fallback.
  * Id-less Anthropic intents keep the legacy SDK fallback only after the caller
  * has already selected the headless path. Normal Claude dispatch routes through
  * Ghostty only when HRC_CLAUDE_GHOSTTY=1 is set.
@@ -110,12 +110,12 @@ export function decideHeadlessExecutionRoute(
     return 'sdk'
   }
 
-  const isHeadlessPiSdkCandidate =
+  const isHeadlessAgentHarnessCandidate =
     shouldUseHeadlessTransport(intent) &&
     intent.harness.interactive !== true &&
-    intent.harness.id === 'pi-sdk'
+    (intent.harness.id === 'agent-harness' || intent.harness.id === 'pi-sdk')
 
-  if (isHeadlessPiSdkCandidate) {
+  if (isHeadlessAgentHarnessCandidate) {
     return 'broker'
   }
 
@@ -1050,7 +1050,11 @@ export function isGhosttyClaudeIntent(intent: HrcRuntimeIntent): boolean {
   if (intent.harness.provider !== 'anthropic') {
     return false
   }
-  return intent.harness.id !== 'agent-sdk' && intent.harness.id !== 'pi-sdk'
+  return (
+    intent.harness.id !== 'agent-harness' &&
+    intent.harness.id !== 'agent-sdk' &&
+    intent.harness.id !== 'pi-sdk'
+  )
 }
 
 export function isClaudeGhosttyEnabled(): boolean {

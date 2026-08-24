@@ -470,7 +470,7 @@ export async function startHeadlessBrokerRuntime(
     mailStopSocket: this.options.socketPath,
   })
   const directPlan =
-    turnIntent.harness.id === 'pi-sdk'
+    turnIntent.harness.id === 'agent-harness' || turnIntent.harness.id === 'pi-sdk'
       ? await buildDirectAgentHarnessPlan({
           intent: turnIntent,
           session,

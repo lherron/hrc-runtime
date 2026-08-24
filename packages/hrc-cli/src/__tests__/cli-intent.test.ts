@@ -17,6 +17,10 @@ import { executeManagedStart } from '../cli/handlers-scope-cmd'
 import { buildManagedStartIntent, parseScopePrompt, resolveManagedScopeContext } from '../cli/scope'
 
 describe('harnessStringToHarnessId', () => {
+  it('preserves the canonical "agent-harness" selector', () => {
+    expect(harnessStringToHarnessId('agent-harness')).toBe('agent-harness')
+  })
+
   it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
     expect(harnessStringToHarnessId('pi')).toBe('pi-cli')
   })

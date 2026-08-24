@@ -17,7 +17,7 @@ describe('direct agent-harness plan', () => {
           projectRoot: '/projects/agent-spaces',
         },
       },
-      harness: { provider: 'openai', interactive: false, id: 'pi-sdk' },
+      harness: { provider: 'openai', interactive: false, id: 'agent-harness' },
       provision: { model: 'gpt-5.6-sol', reasoning: 'high' },
       initialPrompt: 'Reply with the active agent id.',
     } satisfies HrcRuntimeIntent
