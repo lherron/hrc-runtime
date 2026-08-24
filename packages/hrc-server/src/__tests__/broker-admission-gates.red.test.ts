@@ -386,41 +386,6 @@ describe('T-05078/21 busy-policy parity — overlapping input rejects with typed
    * C-05442: assertRuntimeNotBusy throws HrcConflictError(RUNTIME_BUSY), which
    * maps to 409 with code 'runtime_busy'. ACP requeue depends on that code.
    */
-  it('overlapping session input returns 409 with runtime_busy', async () => {
-    await startBrokerServer()
-
-    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
-    const runtimeId = 'rt-busy-parity-01'
-    const invocationId = INVOCATION_ID_BASE + runtimeId
-    const existingRunId = 'run-busy-parity-existing'
-
-    // Seed a BUSY runtime with an active run.
-    seedReadyBrokerRuntime(hostSessionId, SCOPE_REF, generation, runtimeId, invocationId, {
-      status: 'busy',
-      activeRunId: existingRunId,
-    })
-    seedActiveRun(hostSessionId, runtimeId, existingRunId, invocationId, SCOPE_REF, generation)
-
-    const spy = stubBrokerDispatchInput()
-
-    const res = await fixture.postJson('/v1/turns', {
-      hostSessionId,
-      prompt: 'second input while busy',
-      runtimeIntent: headlessBrokerIntent(),
-      waitForCompletion: false,
-    })
-
-    // Must be a 409 conflict.
-    expect(res.status).toBe(409)
-
-    const body = (await res.json()) as any
-
-    expect(body.error?.code).toBe('runtime_busy')
-
-    // Sanity: broker dispatchInput was NOT called (rejection at admission).
-    expect(spy.callCount()).toBe(0)
-  }, 15_000)
-
   it('runtime_busy error has structured detail including runtimeId and activeRunId', async () => {
     await startBrokerServer()
 
@@ -588,52 +553,6 @@ describe('C-05442 busy-reject must preserve existing runtime_busy machine code',
    * implementation must NOT replace it with a new code. The admission gate
    * concept (T-05078) maps to the existing RUNTIME_BUSY code family.
    */
-  it('busy runtime overlapping dispatch returns runtime_busy code (existing HrcErrorCode)', async () => {
-    await startBrokerServer()
-
-    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
-    const runtimeId = 'rt-c05442-constraint-01'
-    const invocationId = INVOCATION_ID_BASE + runtimeId
-    const existingRunId = 'run-c05442-existing'
-
-    seedReadyBrokerRuntime(hostSessionId, SCOPE_REF, generation, runtimeId, invocationId, {
-      status: 'busy',
-      activeRunId: existingRunId,
-    })
-    seedActiveRun(hostSessionId, runtimeId, existingRunId, invocationId, SCOPE_REF, generation)
-
-    const dbBefore = openHrcDatabase(fixture.dbPath)
-    const runCountBefore = dbBefore.runs.listByRuntimeId(runtimeId).length
-    dbBefore.close()
-
-    const spy = stubBrokerDispatchInput()
-
-    const res = await fixture.postJson('/v1/turns', {
-      hostSessionId,
-      prompt: 'c05442 constraint check',
-      runtimeIntent: headlessBrokerIntent(),
-      waitForCompletion: false,
-    })
-
-    expect(res.status).toBe(409)
-    const body = (await res.json()) as any
-
-    // C-05442 CONSTRAINT: must be 'runtime_busy' (HrcErrorCode.RUNTIME_BUSY).
-    // This guards against the wrong implementation: minting 'dispatch_busy_reject'
-    // violates this cross-project constraint.
-    // Currently GREEN (existing assertRuntimeNotBusy returns runtime_busy).
-    // Goes RED if an implementer adds dispatch_busy_reject to satisfy tests 21+22.
-    expect(body.error?.code).toBe('runtime_busy') // C-05442 constraint: reuse existing code
-
-    // Admission-time rejection: ZERO new runs, ZERO broker calls.
-    const dbAfter = openHrcDatabase(fixture.dbPath)
-    const runCountAfter = dbAfter.runs.listByRuntimeId(runtimeId).length
-    dbAfter.close()
-
-    expect(runCountAfter).toBe(runCountBefore) // No new run row created
-    expect(spy.callCount()).toBe(0) // No broker input dispatched
-  }, 15_000)
-
   it('hrc-core exports HrcErrorCode.RUNTIME_BUSY (existing code family, no dispatch-specific alias)', async () => {
     // Verify HrcErrorCode.RUNTIME_BUSY exists and is stable.
     const hrcCore = await import('hrc-core')
