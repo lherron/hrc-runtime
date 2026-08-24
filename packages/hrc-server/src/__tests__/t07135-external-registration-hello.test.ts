@@ -439,6 +439,7 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
       throw new Error('harness-broker Unix client must not dial EPR rows')
     }
     const outcomes = await reconcileDurableBrokerStartup(db, {
+      runtimeRoot: '/tmp',
       controller,
       brokerUnixClientFactory: neverClient,
       resolveAttachToken: async () => undefined,
@@ -449,6 +450,7 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
       sweepOrphans: async () => undefined,
     })
     const warmup = await warmDurableBrokerBindings(db, {
+      runtimeRoot: '/tmp',
       controller,
       brokerUnixClientFactory: neverClient,
     })

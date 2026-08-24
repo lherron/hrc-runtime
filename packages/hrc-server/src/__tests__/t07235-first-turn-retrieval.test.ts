@@ -148,6 +148,7 @@ describe('runtime list health detail', () => {
     const tripEventSeq = await trip()
     const routes = createRuntimeListAdoptRoutes({
       db: fixture.db,
+      runtimeRoot: fixture.runtimeRoot,
       staleGenerationThresholdSec: 86_400,
       reconcileTmuxRuntimeLiveness: async (runtime) => runtime,
       notifyEvent: () => undefined,
@@ -174,6 +175,7 @@ describe('runtime list health detail', () => {
   it('leaves untripped runtimes with no health finding', async () => {
     const routes = createRuntimeListAdoptRoutes({
       db: fixture.db,
+      runtimeRoot: fixture.runtimeRoot,
       staleGenerationThresholdSec: 86_400,
       reconcileTmuxRuntimeLiveness: async (runtime) => runtime,
       notifyEvent: () => undefined,

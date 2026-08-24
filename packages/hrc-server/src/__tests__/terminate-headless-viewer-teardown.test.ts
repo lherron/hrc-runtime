@@ -158,6 +158,7 @@ function seedDaemonChildHeadlessRuntime(runtimeId: string): HrcRuntimeSnapshot {
 function makeFakeThis(disposeCalls: Array<{ runtimeId: string; reason?: string }>): unknown {
   return {
     db,
+    options: { runtimeRoot: tmpdir() },
     notifyEvent() {},
     terminateHeadlessRuntime,
     getHarnessBrokerController() {

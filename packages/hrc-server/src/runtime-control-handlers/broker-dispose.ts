@@ -3,6 +3,10 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
+import {
+  BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+  rejectedBrokerAdoptionPaths,
+} from '../broker/adoption-root.js'
 import { BrokerControllerError, type BrokerControllerRpcResult } from '../broker/controller.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
@@ -77,9 +81,19 @@ export function hasBrokerLeasedTmux(runtime: HrcRuntimeSnapshot): boolean {
  */
 export async function teardownBrokerLeasedTmux(
   runtime: HrcRuntimeSnapshot,
-  opts: { logMessage: string }
+  opts: { logMessage: string; runtimeRoot: string }
 ): Promise<void> {
   if (isExternalLifecycleOwner(runtime)) return
+  const rejectedPaths = rejectedBrokerAdoptionPaths(runtime, opts.runtimeRoot)
+  if (rejectedPaths.length > 0) {
+    writeServerLog('WARN', 'broker.adoption.tmux_teardown_rejected', {
+      runtimeId: runtime.runtimeId,
+      runtimeRoot: opts.runtimeRoot,
+      rejectedPaths,
+      reason: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+    })
+    return
+  }
   const hosting = parseBrokerRuntimeHostingState(runtime)
   const substrate = hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
   const socketPath = substrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)

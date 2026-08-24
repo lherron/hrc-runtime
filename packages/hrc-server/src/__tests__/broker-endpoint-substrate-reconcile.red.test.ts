@@ -40,7 +40,7 @@
  *                regardless of the headless-claim fix. (Sanity check that the
  *                substrate-based claim detection doesn't over-protect.)
  *
- *  Scenario 8  (G5) — reattachDurableBrokerForDispatch returns true for a HEADLESS
+ *  Scenario 8  (G5) — reattachDurableBrokerForDispatch reattaches a HEADLESS
  *                runtime (presentation.none) when the broker socket is live.
  *                AT HEAD: brokerLeaseWindowsMatch fails (no tuiWindow) → returns false.
  *
@@ -109,6 +109,7 @@ import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 const SERVER_INSTANCE_ID = 'hrc-server-ph4-test'
 const ATTACH_TOKEN = 'attach-token-ph4'
+const RUNTIME_ROOT = '/tmp/hrc-ph4'
 const GENERATION = 1
 const SCOPE_REF = 'agent:smokey:project:hrc-runtime:task:T-01875'
 const LANE_REF = 'main'
@@ -703,6 +704,7 @@ describe('Scenario 1: reconcileDurableBrokerStartup reattaches headless durable 
 
     const controller = makeController()
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,
@@ -777,6 +779,7 @@ describe('Scenario 2: interactive runtime with normalized shape reattaches', () 
       db,
       readRuntime(INTERACTIVE_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller,
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,
@@ -814,6 +817,7 @@ describe('Scenario 3: legacy daemon-child headless → broker_legacy_no_durable_
     seedLegacyDaemonChildRuntime(db)
 
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not be called for legacy/v0.1 classify-once path')
@@ -853,6 +857,7 @@ describe('Scenario 4: v0.1 row → broker_protocol_legacy_unsupported_on_startup
     seedV01Row(db)
 
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not be called for v0.1 rows')
@@ -883,6 +888,7 @@ describe('Scenario 4: v0.1 row → broker_protocol_legacy_unsupported_on_startup
     seedV01Row(db)
 
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('unused')
@@ -939,6 +945,7 @@ describe('Scenario 5 (G4): headless reattach requires only brokerWindow, not tui
       db,
       readRuntime(HEADLESS_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,
@@ -967,6 +974,7 @@ describe('Scenario 5 (G4): headless reattach requires only brokerWindow, not tui
       db,
       readRuntime(INTERACTIVE_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => {
           throw new Error('must not dial when identity check fails')
@@ -1250,7 +1258,7 @@ describe('Scenario 7: orphan sweeper still REAPS unclaimed/dead leased substrate
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scenario 8 (G5): reattachDurableBrokerForDispatch returns true for HEADLESS
+// Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches a HEADLESS
 // runtime (presentation.none) when broker socket is live.
 //
 // RED: At HEAD, reconcileDurableBrokerRuntimeReattach uses brokerLeaseWindowsMatch
@@ -1278,6 +1286,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
       db,
       readRuntime(HEADLESS_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller,
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,
@@ -1291,7 +1300,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
 
     // Ph4: headless reattach returns true → dispatch retry can proceed.
     // AT HEAD: returns false (brokerLeaseWindowsMatch fails for presentation.none).
-    expect(reattached).toBe(true)
+    expect(reattached.state).toBe('reattached')
     expect(client.calls).toContain('attach')
   })
 
@@ -1304,7 +1313,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scenario 9 (G5/G4): reattachDurableBrokerForDispatch returns false for
+// Scenario 9 (G5/G4): reattachDurableBrokerForDispatch reports unavailable for
 // headless when broker socket is dead (no direct tmux fallback available).
 //
 // At HEAD: already returns false (for wrong reason — window check fails).
@@ -1312,7 +1321,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
 // This scenario verifies the correct failure mode, not just the return value.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('Scenario 9 (G5/G4): headless dispatch: no direct tmux pane fallback when reattach fails', () => {
-  it('reattachDurableBrokerForDispatch returns false when broker socket is dead (presentation.none)', async () => {
+  it('reattachDurableBrokerForDispatch reports unavailable when broker socket is dead (presentation.none)', async () => {
     seedHeadlessDurableRuntime(db)
 
     let dialed = false
@@ -1320,6 +1329,7 @@ describe('Scenario 9 (G5/G4): headless dispatch: no direct tmux pane fallback wh
       db,
       readRuntime(HEADLESS_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => {
           dialed = true
@@ -1335,7 +1345,7 @@ describe('Scenario 9 (G5/G4): headless dispatch: no direct tmux pane fallback wh
     )
 
     // Reattach must fail (no socket → no attach).
-    expect(reattached).toBe(false)
+    expect(reattached.state).toBe('unavailable')
     // The unix factory must NOT be called when the socket probe returns dead.
     expect(dialed).toBe(false)
 
@@ -1384,6 +1394,7 @@ describe('Scenario 10 (G6): active RUN activity refreshed on broker.attach/repla
       db,
       readRuntime(HEADLESS_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,
@@ -1452,6 +1463,7 @@ describe('Scenario 10 (G6): active RUN activity refreshed on broker.attach/repla
       db,
       readRuntime(HEADLESS_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,
@@ -1489,6 +1501,7 @@ describe('T-01996: classification-only pass (attach:false)', () => {
       db,
       readRuntime(INTERACTIVE_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         attach: false,
         controller: makeController(),
         brokerUnixClientFactory: async () => client,
@@ -1523,6 +1536,7 @@ describe('T-01996: broker.health shutting_down is skipped, not staled', () => {
       db,
       readRuntime(INTERACTIVE_RUNTIME_ID),
       {
+        runtimeRoot: RUNTIME_ROOT,
         controller: makeController(),
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ATTACH_TOKEN,

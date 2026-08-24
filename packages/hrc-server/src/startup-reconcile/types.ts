@@ -61,6 +61,7 @@ export type BrokerReattachProbe = {
 }
 
 export type DurableBrokerReattachDeps = {
+  runtimeRoot: string
   controller: Pick<HarnessBrokerController, 'attachAndReplay'>
   brokerUnixClientFactory: BrokerUnixClientFactory
   resolveAttachToken(runtime: HrcRuntimeSnapshot): Promise<string | undefined>
@@ -100,6 +101,7 @@ export type BrokerWindowObservation = {
 /** Operator-visible warmup category, derived from a BrokerReattachOutcome. */
 export type BrokerWarmupCategory =
   | 'attached'
+  | 'adoption_path_rejected'
   | 'skipped_shutting_down'
   | 'ipc_unreachable_nonterminal'
   | 'substrate_gone_stale'

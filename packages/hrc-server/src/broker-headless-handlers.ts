@@ -953,19 +953,22 @@ export async function executeHeadlessBrokerInputTurn(
   // first input fails `broker_runtime_not_active` even when the runtime row is
   // 'ready'. Lazily reattach the persisted durable endpoint onto the
   // request-serving controller and retry on the SAME broker (continuity, no
-  // re-alloc). No-ops to false for non-durable runtimes. Mirrors the interactive
+  // re-alloc). Reports unavailable for non-durable runtimes. Mirrors the interactive
   // path's reattach-on-dispatch (broker-interactive-handlers), minus the
   // transport==='tmux' gate so durable HEADLESS benefits.
   if (
     !result.ok &&
     result.error.code === 'broker_runtime_not_active' &&
-    (await reattachDurableBrokerForDispatch(this.db, runtime, {
-      controller: this.getHarnessBrokerController(),
-      brokerUnixClientFactory:
-        this.brokerUnixClientFactory ??
-        ((options) =>
-          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
-    }))
+    (
+      await reattachDurableBrokerForDispatch(this.db, runtime, {
+        runtimeRoot: this.options.runtimeRoot,
+        controller: this.getHarnessBrokerController(),
+        brokerUnixClientFactory:
+          this.brokerUnixClientFactory ??
+          ((options) =>
+            connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
+      })
+    ).state === 'reattached'
   ) {
     writeServerLog('INFO', 'headless.durable_reattach.dispatch_recovered', {
       runtimeId: runtime.runtimeId,
