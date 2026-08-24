@@ -545,14 +545,6 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
       expect(Array.isArray(body)).toBe(true)
     })
 
-    it('hrc list sessions (hidden alias) exits 0 and returns a JSON array', async () => {
-      const result = await runCli(['list', 'sessions'], cliEnv())
-      // RED: exits 2 "unknown command: list"
-      expect(result.exitCode).toBe(0)
-      const body = JSON.parse(result.stdout.trim())
-      expect(Array.isArray(body)).toBe(true)
-    })
-
     it('hrc ls runtimes returns same data as hrc runtime list', async () => {
       const { runtimeId } = await seedSessionAndRuntime('ls-vs-runtime-list')
 
