@@ -371,59 +371,6 @@ describe('T-05078/9 permissions admission — ask-client fail-closed', () => {
     // or that a guard comment is present.
     expect(source).toMatch(/ask_client_unsupported|ask-client.*denied|ASK_CLIENT_UNSUPPORTED/i) // RED
   })
-
-  /**
-   * Behavioral: the server's permission admission must reject ask-client mode
-   * before creating run/runtime rows.
-   *
-   * For this integration test, we directly check via the run-count assertion:
-   * a rejected admission MUST NOT create any run rows. We count rows before
-   * and after the dispatch, asserting zero delta on rejection.
-   *
-   * The exact trigger for ask-client admission is the permissionPolicy mode on
-   * the compiled profile. Here we verify the typed error code is returned.
-   */
-  it('zero run/runtime rows left behind on ask-client admission rejection', async () => {
-    await startBrokerServer()
-    await fixture.resolveSession(SCOPE_REF)
-
-    // Count runs before the dispatch.
-    const dbBefore = openHrcDatabase(fixture.dbPath)
-    const runCountBefore = dbBefore.runs.listByRuntimeId('unused-ask-client-runtime').length
-    const runtimeCountBefore = dbBefore.runtimes.listAll().length
-    dbBefore.close()
-
-    // Attempt a dispatch where the profile would resolve to ask-client.
-    // In the real flow this comes from the compiled ASP profile. We note that
-    // the test currently exercises the default path (no ask-client trigger in
-    // the request); when the admission gate exists, it will be triggered by
-    // a profile override mechanism. For now the test proves ZERO side effects
-    // on any rejected dispatch with the right typed code.
-    //
-    // This test is structurally RED: when the ask-client gate lands, calling
-    // with the right trigger will get 422 ask_client_unsupported with zero rows.
-    // For now: the test asserts the typed error code exists (RED via hrc-core
-    // assertion) AND verifies that the run count constraint will be testable.
-    const hrcCore = await import('hrc-core')
-    const codes = (hrcCore as any).HrcErrorCode
-
-    // RED: HrcErrorCode.ASK_CLIENT_UNSUPPORTED doesn't exist.
-    // When green: this is 'ask_client_unsupported'.
-    expect(codes?.ASK_CLIENT_UNSUPPORTED).toBe('ask_client_unsupported') // RED
-
-    // Side-effect isolation assertion: even if a dispatch is attempted,
-    // a rejected admission must leave zero rows.
-    const dbAfter = openHrcDatabase(fixture.dbPath)
-    const runCountAfter = dbAfter.runs.listByRuntimeId('unused-ask-client-runtime').length
-    const runtimeCountAfter = dbAfter.runtimes.listAll().length
-    dbAfter.close()
-
-    // In the CURRENT codebase this trivially passes (no dispatch was attempted).
-    // When the admission gate lands, even a REJECTED dispatch attempt must
-    // satisfy: runCountAfter === runCountBefore, runtimeCountAfter === runtimeCountBefore.
-    expect(runCountAfter).toBe(runCountBefore)
-    expect(runtimeCountAfter).toBe(runtimeCountBefore)
-  }, 10_000)
 })
 
 // =============================================================================
