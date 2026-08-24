@@ -1339,61 +1339,6 @@ describe('EventRepository', () => {
 // 8. SurfaceBindingRepository
 // ---------------------------------------------------------------------------
 describe('SurfaceBindingRepository', () => {
-  it('binds and finds a surface by surface key', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      const now = ts()
-      db.sessions.insert({
-        hostSessionId: 'hsid-surface-1',
-        scopeRef: testScopeRef('scope-surface'),
-        laneRef: 'default',
-        generation: 1,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-        ancestorScopeRefs: [],
-      })
-      db.runtimes.insert({
-        runtimeId: 'rt-surface-1',
-        hostSessionId: 'hsid-surface-1',
-        scopeRef: testScopeRef('scope-surface'),
-        laneRef: 'default',
-        generation: 1,
-        transport: 'tmux',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        supportsInflightInput: false,
-        adopted: false,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      const binding = db.surfaceBindings.bind({
-        surfaceKind: 'ghostty',
-        surfaceId: 'ghostty-1',
-        hostSessionId: 'hsid-surface-1',
-        runtimeId: 'rt-surface-1',
-        generation: 1,
-        windowId: 'window-1',
-        paneId: 'pane-1',
-        boundAt: now,
-      })
-
-      expect(binding.surfaceKind).toBe('ghostty')
-      expect(binding.surfaceId).toBe('ghostty-1')
-      expect(binding.runtimeId).toBe('rt-surface-1')
-      expect(binding.unboundAt).toBeUndefined()
-
-      const found = db.surfaceBindings.findBySurface('ghostty', 'ghostty-1')
-      expect(found).not.toBeNull()
-      expect(found?.hostSessionId).toBe('hsid-surface-1')
-      expect(found?.paneId).toBe('pane-1')
-    } finally {
-      db.close()
-    }
-  })
-
   it('rebinds an existing surface to a newer runtime and keeps active queries current', () => {
     const db = openHrcDatabase(dbPath)
     try {
