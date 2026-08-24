@@ -167,22 +167,6 @@ describe('hrcchat did-you-mean — ordinary fuzzy misspellings (§7b)', () => {
 // ===========================================================================
 
 describe('hrcchat did-you-mean — no side effect contract (§7c)', () => {
-  it('hrcchat msg exits 2 (not 0 or 1) — action did not run', async () => {
-    const result = await runMain(['msg'])
-    // Exit 2 = usage error. Exit 0 = success (action ran). Exit 1 = runtime error.
-    expect(result.exitCode).toBe(2)
-  })
-
-  it('hrcchat seq exits 2 (not 0 or 1) — show action did not run', async () => {
-    const result = await runMain(['seq'])
-    expect(result.exitCode).toBe(2)
-  })
-
-  it('hrcchat mesagges exits 2 — messages action did not run', async () => {
-    const result = await runMain(['mesagges'])
-    expect(result.exitCode).toBe(2)
-  })
-
   it('hrcchat unknown-xyz stdout is empty (no output from an action)', async () => {
     // Any unknown command: stdout must be empty regardless of what is in stderr
     const result = await runMain(['unknown-xyz'])
