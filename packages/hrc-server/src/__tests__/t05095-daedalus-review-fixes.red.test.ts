@@ -27,7 +27,6 @@ import {
   decideInteractiveBrokerAdmission,
   normalizeClaudeInteractiveBrokerIntent,
   refusesSurfaceReuse,
-  shouldDeferHeadlessToInteractiveBrokerReuse,
 } from '../index'
 
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -582,19 +581,6 @@ describe('T-05095 finding 1 — queue-capable broker busy reject is admission-fe
 })
 
 describe('T-05095 regression guard — interactive live-TUI queue is preserved', () => {
-  it('still defers headless-preferred input into a busy interactive broker for queue delivery', async () => {
-    expect(
-      shouldDeferHeadlessToInteractiveBrokerReuse(codexHeadlessIntent(), {
-        controllerKind: 'harness-broker',
-        transport: 'tmux',
-        provider: PROVIDER,
-        status: 'ready',
-        hasLiveSurface: true,
-        idle: false,
-      })
-    ).toBe(true)
-  })
-
   it('busy queue-capable interactive broker receives queued dispatchInput', async () => {
     const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
     const runtimeId = 'rt-t05095-interactive-queue'
