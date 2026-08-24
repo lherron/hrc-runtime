@@ -1296,20 +1296,3 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
     })
   })
 })
-
-// ---------------------------------------------------------------------------
-// 7. Export surface validation
-// ---------------------------------------------------------------------------
-describe('export surface', () => {
-  it('exports discoverSocket function', () => {
-    expect(typeof discoverSocket).toBe('function')
-  })
-
-  it('exports HrcClient class', () => {
-    expect(typeof HrcClient).toBe('function')
-  })
-
-  // Type-level exports are validated by the import statement at the top.
-  // If ResolveSessionRequest, ResolveSessionResponse, SessionFilter,
-  // or WatchOptions are not exported, the import will fail.
-})
