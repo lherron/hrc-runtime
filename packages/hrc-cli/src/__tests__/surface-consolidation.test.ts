@@ -49,6 +49,7 @@ describe('consolidated hrc command graph', () => {
       'list',
       'get',
       'rotate',
+      'retitle',
       'drop-continuation',
     ])
     expect(visibleChildren(child(program, 'monitor'))).toEqual([

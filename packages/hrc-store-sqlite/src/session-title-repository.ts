@@ -38,6 +38,13 @@ function mapRow(row: SessionTitleRow): SessionTitleRecord {
 export class SessionTitleRepository {
   constructor(private readonly db: Database) {}
 
+  listAll(): SessionTitleRecord[] {
+    return this.db
+      .query<SessionTitleRow, []>(`SELECT ${COLUMNS} FROM session_titles ORDER BY host_session_id`)
+      .all()
+      .map(mapRow)
+  }
+
   getByHostSessionId(hostSessionId: string): SessionTitleRecord | null {
     const row = this.db
       .query<SessionTitleRow, [string]>(

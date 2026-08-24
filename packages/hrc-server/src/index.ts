@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import {
   HRC_API_VERSION,
   HrcBadRequestError,
+  HrcConflictError,
   HrcErrorCode,
   HrcInternalError,
   HrcNotFoundError,
@@ -253,7 +254,7 @@ import {
   parseStartRuntimeRequest,
   parseTerminateRuntimeRequest,
 } from './server-parsers.js'
-import { exactRouteKey, matchLaunchSubroute } from './server-routing.js'
+import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 import type {
   ExactRouteHandler,
   FollowSubscriber,
@@ -640,6 +641,71 @@ export { drainEventDatabase } from './event-ingest.js'
 
 export type { BrokerRunPreview } from './broker-run-preview.js'
 export { buildBrokerRunPreview } from './broker-run-preview.js'
+
+type SessionTitleWriteInput = {
+  title: string
+  source: 'generated' | 'manual'
+  model?: string | undefined
+  force: boolean
+}
+
+function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteInput {
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const title = value['title']
+  const source = value['source']
+  const model = value['model']
+  const force = value['force']
+  if (typeof title !== 'string' || title.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'title is required', {
+      field: 'title',
+    })
+  }
+  if (source !== 'generated' && source !== 'manual') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'source must be generated or manual',
+      { field: 'source' }
+    )
+  }
+  if (model !== undefined && typeof model !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'model must be a string', {
+      field: 'model',
+    })
+  }
+  if (force !== undefined && typeof force !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'force must be a boolean', {
+      field: 'force',
+    })
+  }
+  return {
+    title,
+    source,
+    ...(model === undefined ? {} : { model }),
+    force: force === true,
+  }
+}
+
+function decodeSessionTitleHostSessionId(encodedHostSessionId: string): string {
+  try {
+    const hostSessionId = decodeURIComponent(encodedHostSessionId)
+    if (hostSessionId.length > 0) return hostSessionId
+  } catch {}
+  throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'host session id is malformed', {
+    field: 'hostSessionId',
+  })
+}
+
+function decorateSessionTitles(db: HrcDatabase, sessions: HrcSessionRecord[]): HrcSessionRecord[] {
+  const titles = new Map(
+    db.sessionTitles.listAll().map((record) => [record.hostSessionId, record.title] as const)
+  )
+  return sessions.map((session) => {
+    const title = titles.get(session.hostSessionId)
+    return title === undefined ? session : { ...session, title }
+  })
+}
 
 // biome-ignore lint/correctness/noUnusedVariables: Declaration merges prototype-attached handler methods into HrcServerInstance.
 interface HrcServerInstance
@@ -1663,6 +1729,16 @@ class HrcServerInstance implements HrcServer {
         return this.handleGetSessionByHost(hostSessionId)
       }
 
+      const sessionTitleRoute = matchSessionTitleRoute(request.method, pathname)
+      if (sessionTitleRoute) {
+        const hostSessionId = decodeSessionTitleHostSessionId(
+          sessionTitleRoute.encodedHostSessionId
+        )
+        return request.method === 'POST'
+          ? await this.handleSetSessionTitle(hostSessionId, request)
+          : this.handleDeleteSessionTitle(hostSessionId)
+      }
+
       if (request.method === 'GET' && pathname.startsWith('/v1/active-run-contributions/')) {
         const inputApplicationId = decodeURIComponent(
           pathname.slice('/v1/active-run-contributions/'.length)
@@ -1996,7 +2072,7 @@ class HrcServerInstance implements HrcServer {
       ? this.listSessionsByScope(scopeRef, laneRef)
       : this.listAllSessions(laneRef)
 
-    return json(rows)
+    return json(decorateSessionTitles(this.db, rows))
   }
 
   handleGetSessionByHost(hostSessionId: string): Response {
@@ -2009,7 +2085,55 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
-    return json(session)
+    const title = this.db.sessionTitles.getByHostSessionId(hostSessionId)?.title
+    return json(title === undefined ? session : { ...session, title })
+  }
+
+  async handleSetSessionTitle(hostSessionId: string, request: Request): Promise<Response> {
+    if (!this.db.sessions.getByHostSessionId(hostSessionId)) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_HOST_SESSION,
+        `unknown host session "${hostSessionId}"`,
+        { hostSessionId }
+      )
+    }
+    const input = parseSessionTitleWriteInput(await parseJsonBody(request))
+    const now = timestamp()
+    const stored = this.db.sqlite.transaction(() => {
+      const existing = this.db.sessionTitles.getByHostSessionId(hostSessionId)
+      if (existing?.source === 'manual' && !input.force) {
+        throw new HrcConflictError(
+          HrcErrorCode.STALE_CONTEXT,
+          'manual session title requires force to overwrite',
+          {
+            hostSessionId,
+            existingSource: existing.source,
+            requestedSource: input.source,
+            requiresForce: true,
+          }
+        )
+      }
+      return this.db.sessionTitles.upsert({
+        hostSessionId,
+        title: input.title,
+        source: input.source,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      })
+    })()
+    return json(stored)
+  }
+
+  handleDeleteSessionTitle(hostSessionId: string): Response {
+    if (!this.db.sessions.getByHostSessionId(hostSessionId)) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_HOST_SESSION,
+        `unknown host session "${hostSessionId}"`,
+        { hostSessionId }
+      )
+    }
+    return json({ hostSessionId, deleted: this.db.sessionTitles.delete(hostSessionId) })
   }
 
   async handleClearContext(request: Request): Promise<Response> {
@@ -2490,6 +2614,8 @@ export type HrcServerInstanceClassBodyMethods = {
     | 'handleHookIngest'
     | 'handleInterrupt'
     | 'handleListSessions'
+    | 'handleSetSessionTitle'
+    | 'handleDeleteSessionTitle'
     | 'handleOtlpRequest'
     | 'handleRequest'
     | 'handleResolveSession'

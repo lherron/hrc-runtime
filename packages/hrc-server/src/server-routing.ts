@@ -2,6 +2,18 @@ export function exactRouteKey(method: string, pathname: string): string {
   return `${method} ${pathname}`
 }
 
+const SESSION_TITLE_ROUTE = /^\/v1\/sessions\/([^/]+)\/title$/
+
+export function matchSessionTitleRoute(
+  method: string,
+  pathname: string
+): { encodedHostSessionId: string } | undefined {
+  if (method !== 'POST' && method !== 'DELETE') return undefined
+  const match = pathname.match(SESSION_TITLE_ROUTE)
+  const encodedHostSessionId = match?.[1]
+  return encodedHostSessionId === undefined ? undefined : { encodedHostSessionId }
+}
+
 const LAUNCH_SUBROUTE_PREFIX = '/v1/internal/launches/'
 const LAUNCH_SUBROUTE_SUFFIXES = [
   'continuation',

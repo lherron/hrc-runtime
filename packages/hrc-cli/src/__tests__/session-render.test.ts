@@ -108,6 +108,27 @@ describe('renderSessions', () => {
     expect(out).toContain('1 total')
   })
 
+  it('uses a title as the primary label and demotes the exact scope ref', () => {
+    const out = renderSessions([session({ title: 'Fix session activity filter' })], baseOpts)
+    const lines = out.split('\n')
+    const titleLine = lines.findIndex((line) => line.includes('Fix session activity filter'))
+    const scopeLine = lines.findIndex((line) =>
+      line.includes('agent:clod:project:hrc-runtime:task:primary')
+    )
+    expect(titleLine).toBeGreaterThan(-1)
+    expect(scopeLine).toBe(titleLine + 1)
+  })
+
+  it('keeps the pre-title scope rendering byte-for-byte when title is absent', () => {
+    expect(renderSessions([session({})], baseOpts)).toBe(
+      'hrc · sessions   1 heads · 0 hidden · last 1d\n\n' +
+        'clod\n' +
+        '  ◆ hrc-runtime:primary  g1     ff6c1c65   2m ago\n\n' +
+        '────────────────────────────────────────────────────────────────────────────\n' +
+        '1 total · 0 archived · widen: --since 7d · --all · --scope <ref> · --json\n'
+    )
+  })
+
   it('hides archived + stale sessions by default and reports the count', () => {
     const out = renderSessions(
       [
@@ -329,8 +350,9 @@ describe('renderSessions', () => {
 
 describe('renderPorcelain', () => {
   it('emits one tab-separated line per session', () => {
-    const out = renderPorcelain([session({})])
+    const out = renderPorcelain([session({ title: 'Additive title' })])
     const cols = out.trimEnd().split('\t')
+    expect(cols).toHaveLength(7)
     expect(cols[0]).toBe('hsid-ff6c1c65-4116-449c-a2df-547345fe1f4f')
     expect(cols[1]).toBe('agent:clod:project:hrc-runtime:task:primary')
     expect(cols[2]).toBe('main')
@@ -352,5 +374,22 @@ describe('session list --dormant CLI plumbing', () => {
     expect(toLegacyArgv([], { dormant: true }, { strings: [], booleans: ['dormant'] })).toContain(
       '--dormant'
     )
+  })
+})
+
+describe('session retitle CLI plumbing', () => {
+  it('registers both flags and preserves their values for the legacy handler', () => {
+    const program = buildProgram()
+    const session = program.commands.find((cmd) => cmd.name() === 'session')
+    const retitle = session?.commands.find((cmd) => cmd.name() === 'retitle')
+
+    expect(retitle?.options.map((option) => option.long)).toEqual(['--title', '--regenerate'])
+    expect(
+      toLegacyArgv(
+        ['hsid-test'],
+        { title: 'A title', regenerate: true },
+        { strings: ['title'], booleans: ['regenerate'] }
+      )
+    ).toEqual(['hsid-test', '--title', 'A title', '--regenerate'])
   })
 })

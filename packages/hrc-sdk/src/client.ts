@@ -58,6 +58,7 @@ import type {
   CloseBridgeRequest,
   CreateMessageRequest,
   CreateMessageResponse,
+  DeleteSessionTitleResponse,
   DeliverBridgeRequest,
   DeliverBridgeResponse,
   DeliverLiteralBySelectorRequest,
@@ -130,6 +131,8 @@ import type {
   SessionFilter,
   SessionPageRequest,
   SessionPageResponse,
+  SessionTitleRecord,
+  SetSessionTitleRequest,
   StartRuntimeRequest,
   StartRuntimeResponse,
   StatusResponse,
@@ -305,6 +308,14 @@ export class HrcClient {
     return (await res.json()) as T
   }
 
+  private async deleteJson<T>(path: string): Promise<T> {
+    const res = await this.unixFetch(path, { method: 'DELETE' })
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as T
+  }
+
   private async throwTypedError(res: Response): Promise<never> {
     const cloned = res.clone()
     let body: HrcHttpError | undefined
@@ -378,6 +389,22 @@ export class HrcClient {
   async getSession(hostSessionId: string): Promise<HrcSessionRecord> {
     return this.getJson<HrcSessionRecord>(
       `/v1/sessions/by-host/${encodeURIComponent(hostSessionId)}`
+    )
+  }
+
+  async setSessionTitle(
+    hostSessionId: string,
+    request: SetSessionTitleRequest
+  ): Promise<SessionTitleRecord> {
+    return this.postJson<SessionTitleRecord>(
+      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`,
+      request
+    )
+  }
+
+  async deleteSessionTitle(hostSessionId: string): Promise<DeleteSessionTitleResponse> {
+    return this.deleteJson<DeleteSessionTitleResponse>(
+      `/v1/sessions/${encodeURIComponent(hostSessionId)}/title`
     )
   }
 

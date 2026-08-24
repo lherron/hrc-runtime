@@ -88,6 +88,30 @@ export type SessionFilter = {
 export type SessionEffectiveStatus = 'active' | 'detached' | 'inactive' | 'stale'
 export type SessionExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 
+export type SessionTitleSource = 'generated' | 'manual'
+
+export type SessionTitleRecord = {
+  hostSessionId: string
+  title: string
+  source: SessionTitleSource
+  model?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
+export type SetSessionTitleRequest = {
+  title: string
+  source: SessionTitleSource
+  model?: string | undefined
+  /** Required to replace an existing manual title. */
+  force?: boolean | undefined
+}
+
+export type DeleteSessionTitleResponse = {
+  hostSessionId: string
+  deleted: boolean
+}
+
 export type SessionPageFilters = {
   q?: string | undefined
   agentId?: string | undefined
@@ -110,6 +134,7 @@ export type SessionFacetsRequest = SessionPageFilters
 export type SessionPageItem = {
   nodeId: string
   hostSessionId: string
+  title?: string | undefined
   scopeRef: string
   laneRef: string
   generation: number

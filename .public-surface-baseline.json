@@ -4151,6 +4151,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "DeleteSessionTitleResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|DeleteSessionTitleResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "DeliverBridgeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -4827,6 +4835,30 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|SessionPeerStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionTitleRecord",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionTitleRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionTitleSource",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionTitleSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SetSessionTitleRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SetSessionTitleRequest|type",
       "count": 1
     },
     {

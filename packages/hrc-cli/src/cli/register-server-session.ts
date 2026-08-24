@@ -18,6 +18,7 @@ import {
   cmdSessionGet,
   cmdSessionList,
   cmdSessionResolve,
+  cmdSessionRetitle,
   cmdTmuxKill,
   cmdTmuxStatus,
 } from './handlers-server.js'
@@ -261,6 +262,20 @@ Exit codes:
         booleans: ['relaunch'],
       })
       await cmdSessionClearContext(args)
+    })
+
+  session
+    .command('retitle')
+    .description('set a manual title or clear it for regeneration')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--title <title>', 'set a manual session title')
+    .option('--regenerate', 'clear the title so it can be regenerated')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: ['title'],
+        booleans: ['regenerate'],
+      })
+      await cmdSessionRetitle(args)
     })
 
   registerMovedCommandShim(session, 'clear-context', 'hrc session rotate')

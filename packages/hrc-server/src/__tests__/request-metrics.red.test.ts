@@ -133,6 +133,8 @@ describe('server request metrics', () => {
         '/v1/active-run-contributions/:inputApplicationId',
         'input-42',
       ],
+      ['POST', '/v1/sessions/hsid-42/title', '/v1/sessions/:hostSessionId/title', 'hsid-42'],
+      ['DELETE', '/v1/sessions/hsid-42/title', '/v1/sessions/:hostSessionId/title', 'hsid-42'],
       ['POST', '/v1/internal/launches/L-9/exited', '/v1/internal/launches/:launchId/exited', 'L-9'],
       ['GET', '/v1/nonesuch/xyz', 'unmatched', 'xyz'],
     ] as const

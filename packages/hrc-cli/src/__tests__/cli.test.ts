@@ -1490,6 +1490,69 @@ describe('session rotate', () => {
   )
 })
 
+describe('session retitle', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  async function resolveHostSessionId(scope: string): Promise<string> {
+    const result = await runCli(
+      ['session', 'resolve', '--scope', scope, '--lane', 'default', '--create'],
+      cliEnv()
+    )
+    return JSON.parse(result.stdout.trim()).hostSessionId as string
+  }
+
+  it('requires exactly one title action', async () => {
+    const missing = await runCli(['session', 'retitle', 'hsid-missing'], cliEnv())
+    expect(missing.exitCode).toBe(2)
+    expect(missing.stderr).toContain('exactly one')
+
+    const conflicting = await runCli(
+      ['session', 'retitle', 'hsid-missing', '--title', 'Title', '--regenerate'],
+      cliEnv()
+    )
+    expect(conflicting.exitCode).toBe(2)
+    expect(conflicting.stderr).toContain('mutually exclusive')
+  })
+
+  it('sets a manual title, preserves script outputs, and clears it for regeneration', async () => {
+    const hostSessionId = await resolveHostSessionId(testProjectScope('retitlecli'))
+    const set = await runCli(
+      ['session', 'retitle', hostSessionId, '--title', 'Implement title routes'],
+      cliEnv()
+    )
+    expect(set.exitCode).toBe(0)
+    expect(JSON.parse(set.stdout.trim())).toMatchObject({
+      hostSessionId,
+      title: 'Implement title routes',
+      source: 'manual',
+    })
+
+    const jsonList = await runCli(['session', 'list', '--json'], cliEnv())
+    expect(jsonList.exitCode).toBe(0)
+    const sessions = JSON.parse(jsonList.stdout.trim()) as Array<{
+      hostSessionId: string
+      title?: string
+    }>
+    expect(sessions.find((session) => session.hostSessionId === hostSessionId)?.title).toBe(
+      'Implement title routes'
+    )
+
+    const porcelain = await runCli(['session', 'list', '--porcelain'], cliEnv())
+    expect(porcelain.exitCode).toBe(0)
+    expect(porcelain.stdout.trimEnd().split('\t')).toHaveLength(7)
+
+    const cleared = await runCli(['session', 'retitle', hostSessionId, '--regenerate'], cliEnv())
+    expect(cleared.exitCode).toBe(0)
+    expect(JSON.parse(cleared.stdout.trim())).toEqual({ hostSessionId, deleted: true })
+    const after = JSON.parse(
+      (await runCli(['session', 'list', '--json'], cliEnv())).stdout.trim()
+    ) as Array<{ hostSessionId: string; title?: string }>
+    expect(after.find((session) => session.hostSessionId === hostSessionId)?.title).toBeUndefined()
+  })
+})
+
 // ===========================================================================
 // 4. hrc runtime ensure / capture / attach / runtime interrupt / runtime terminate
 // ===========================================================================

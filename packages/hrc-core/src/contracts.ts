@@ -414,6 +414,8 @@ export type HrcContinuityRecord = {
 
 export type HrcSessionRecord = {
   hostSessionId: string
+  /** Optional display-only label; never participates in session selection or recency. */
+  title?: string | undefined
   scopeRef: string
   laneRef: string
   generation: number

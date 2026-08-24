@@ -252,6 +252,11 @@ describe('T-07221 federated session traversal', () => {
       expect(degraded.nextCursor).toEqual(expect.any(String))
 
       labServer = await createFederationTestServer(lab, { otelListenerEnabled: false })
+      const titleResponse = await lab.postJson('/v1/sessions/hsid-lab-a/title', {
+        title: 'Title from owning lab node',
+        source: 'manual',
+      })
+      expect(titleResponse.status).toBe(200)
       const recovered: SessionPageResponse['items'] = []
       let cursor = degraded.nextCursor
       while (cursor !== undefined) {
@@ -269,6 +274,9 @@ describe('T-07221 federated session traversal', () => {
 
       const exact = await page(svc, '/v1/sessions/page?nodes=lab&limit=10')
       expect(exact.items.every((item) => item.nodeId === 'lab')).toBe(true)
+      expect(exact.items.find((item) => item.hostSessionId === 'hsid-lab-a')?.title).toBe(
+        'Title from owning lab node'
+      )
       const facetsResponse = await svc.fetchSocket('/v1/sessions/facets?nodes=svc')
       const facets = (await facetsResponse.json()) as SessionFacetsResponse
       expect(facets.total).toBe(2)

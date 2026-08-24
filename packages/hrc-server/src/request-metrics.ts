@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { resolveStateRoot } from 'hrc-core'
 
-import { exactRouteKey, matchLaunchSubroute } from './server-routing.js'
+import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 const SERVER_METRICS_FILE_PATTERN = /^server-\d{4}-\d{2}-\d{2}\.ndjson$/
@@ -47,6 +47,9 @@ export function normalizeRoute(
   }
   if (method === 'GET' && pathname.startsWith('/v1/active-run-contributions/')) {
     return '/v1/active-run-contributions/:inputApplicationId'
+  }
+  if (matchSessionTitleRoute(method, pathname)) {
+    return '/v1/sessions/:hostSessionId/title'
   }
   const launchSubroute = matchLaunchSubroute(method, pathname)
   if (launchSubroute) {

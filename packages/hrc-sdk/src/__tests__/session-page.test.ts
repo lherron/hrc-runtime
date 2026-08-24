@@ -89,4 +89,41 @@ describe('session page SDK methods', () => {
     expect(facets.total).toBe(3)
     expect(facets.byNodeId).toEqual({ svc: 3 })
   })
+
+  test('sets and deletes a title through the host-session resource', async () => {
+    const observed: Array<{ method: string; url: URL; body?: unknown }> = []
+    server = Bun.serve({
+      unix: socketPath,
+      async fetch(request) {
+        observed.push({
+          method: request.method,
+          url: new URL(request.url),
+          ...(request.method === 'POST' ? { body: await request.json() } : {}),
+        })
+        return request.method === 'POST'
+          ? Response.json({
+              hostSessionId: 'hsid/a',
+              title: 'Friendly title',
+              source: 'manual',
+              createdAt: '2026-08-24T00:00:00.000Z',
+              updatedAt: '2026-08-24T00:00:00.000Z',
+            })
+          : Response.json({ hostSessionId: 'hsid/a', deleted: true })
+      },
+    })
+    const client = new HrcClient(socketPath)
+    const stored = await client.setSessionTitle('hsid/a', {
+      title: 'Friendly title',
+      source: 'manual',
+    })
+    const deleted = await client.deleteSessionTitle('hsid/a')
+
+    expect(stored.title).toBe('Friendly title')
+    expect(deleted.deleted).toBe(true)
+    expect(observed.map(({ method, url }) => [method, url.pathname])).toEqual([
+      ['POST', '/v1/sessions/hsid%2Fa/title'],
+      ['DELETE', '/v1/sessions/hsid%2Fa/title'],
+    ])
+    expect(observed[0]?.body).toEqual({ title: 'Friendly title', source: 'manual' })
+  })
 })

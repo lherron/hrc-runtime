@@ -590,6 +590,25 @@ export async function cmdSessionGet(args: string[]): Promise<void> {
   printJson({ session, runtimes: inspections })
 }
 
+export async function cmdSessionRetitle(args: string[]): Promise<void> {
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
+  const title = parseFlag(args, '--title')
+  const regenerate = hasFlag(args, '--regenerate')
+  if (title === undefined && !regenerate) {
+    fatal('session retitle requires exactly one of --title or --regenerate')
+  }
+  if (title !== undefined && regenerate) {
+    fatal('--title and --regenerate are mutually exclusive')
+  }
+
+  const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
+  const result = regenerate
+    ? await client.deleteSessionTitle(hostSessionId)
+    : await client.setSessionTitle(hostSessionId, { title: title as string, source: 'manual' })
+  printJson(result)
+}
+
 export async function cmdSessionDropContinuation(args: string[]): Promise<void> {
   const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const reason = parseFlag(args, '--reason')
