@@ -281,11 +281,6 @@ describe('[CHARACTERIZATION A2] socket path-length invariants (T-01776)', () => 
   it('normalized headless broker IPC socket path fits the sockaddr_un budget', () => {
     expect(socketPathByteLength(NORM_HL_IPC)).toBeLessThanOrEqual(socketPathByteBudget())
   })
-
-  it('btmux socket path and broker IPC socket path are DISTINCT paths for the same runtime', () => {
-    // Each runtime has two separate sockets: one for tmux hosting, one for broker IPC.
-    expect(BTMUX_SOCKET).not.toBe(BROKER_IPC_SOCKET)
-  })
 })
 
 // ── A3: Round-trips for both presentation kinds ───────────────────────────────

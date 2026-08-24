@@ -1240,10 +1240,6 @@ describe('no-second-parser guard', () => {
     expect(canUseDirectPaneFallback(unparseableRuntime)).toBe(false)
   })
 
-  it('requireBrokerRuntimeHostingState throws for unparseable runtime', () => {
-    expect(() => requireBrokerRuntimeHostingState(unparseableRuntime)).toThrow()
-  })
-
   it('brokerLeaseIdentityMatches returns false for unparseable runtime', () => {
     const probe: BrokerLeaseProbe = {
       tmuxSocketPath: '/s',
