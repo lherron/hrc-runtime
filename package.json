@@ -18,6 +18,8 @@
     "check:manifests": "bun scripts/check-manifest-edges.ts",
     "check:public-surface": "bun scripts/check-public-surface.ts",
     "check:suppressions": "bun scripts/check-suppressions.ts",
+    "test:size": "bun scripts/check-test-source-size.ts",
+    "check:test-size": "bun scripts/check-test-source-size.ts --enforce",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

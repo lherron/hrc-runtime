@@ -33,6 +33,11 @@ test:
 release-test:
     bun run test:release
 
+# Report authored-test source pressure (>=800 lines). This becomes a hard
+# 1,000-line gate once the structural split campaign clears the baseline.
+test-size:
+    bun run test:size
+
 # Run integration tests
 test-integration:
     bun run test:integration
