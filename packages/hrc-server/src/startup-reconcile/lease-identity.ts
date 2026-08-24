@@ -7,6 +7,10 @@ import {
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
 import {
+  BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+  rejectedBrokerAdoptionPaths,
+} from '../broker/adoption-root.js'
+import {
   brokerLeaseIdentityMatches,
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting.js'
@@ -270,7 +274,7 @@ export async function sweepOrphanedBrokerTmuxLeases(
         for (const claim of claims) {
           const identityMatches =
             classified.kind === 'live-orphan'
-              ? await runtimeClaimMatchesObservedLease(claim, socketPath)
+              ? await runtimeClaimMatchesObservedLease(claim, socketPath, runtimeRoot)
               : false
           const withinTerminalTtl =
             isRuntimeUnavailableStatus(claim.status) &&
@@ -381,7 +385,8 @@ export async function sweepOrphanedBrokerTmuxLeases(
 
 async function runtimeClaimMatchesObservedLease(
   runtime: HrcRuntimeSnapshot,
-  socketPath: string
+  socketPath: string,
+  runtimeRoot: string
 ): Promise<boolean> {
   const hosting = parseBrokerRuntimeHostingState(runtime)
   if (hosting?.substrate.kind === 'leased-tmux') {
@@ -419,7 +424,7 @@ async function runtimeClaimMatchesObservedLease(
         : {}),
     })
   }
-  return await reassociateBrokerTmuxLease(runtime)
+  return await reassociateBrokerTmuxLease(runtime, runtimeRoot)
 }
 
 function runtimeTerminalAgeMs(runtime: HrcRuntimeSnapshot, now: number): number {
@@ -734,7 +739,20 @@ async function classifyLeaseSocket(
   return { kind: 'live-orphan', ageMs, sessions: orphanLeaseSessions, leaseTmux }
 }
 
-export async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): Promise<boolean> {
+export async function reassociateBrokerTmuxLease(
+  runtime: HrcRuntimeSnapshot,
+  runtimeRoot: string
+): Promise<boolean> {
+  const rejectedPaths = rejectedBrokerAdoptionPaths(runtime, runtimeRoot)
+  if (rejectedPaths.length > 0) {
+    writeServerLog('WARN', 'broker.adoption.tmux_reassociation_rejected', {
+      runtimeId: runtime.runtimeId,
+      runtimeRoot,
+      rejectedPaths,
+      reason: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+    })
+    return false
+  }
   const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
   if (!socketPath) {
     return false

@@ -278,6 +278,7 @@ describe('Phase 4 scope gap: invalidateHostContext broker-lease-aware teardown',
     const brokerDisposeCalls: string[] = []
     const fakeThis = {
       db,
+      options: { runtimeRoot: '/tmp/hrc-teardown' },
       tmux: {
         async inspectSession(sessionName: string) {
           return {

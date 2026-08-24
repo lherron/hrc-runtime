@@ -16,6 +16,10 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import {
+  BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+  rejectedBrokerAdoptionPaths,
+} from './broker/adoption-root.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
@@ -446,14 +450,18 @@ export async function handleHeadlessBrokerDispatchTurn(
     dispatchIntent.harness.id
   )
   if (durableHeadless) {
-    const reattached = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
+    const reattachResult = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
+      runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
         ((options) =>
           connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     })
-    const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
+    const recovered =
+      reattachResult.state === 'reattached'
+        ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+        : null
     if (recovered && recovered.activeInvocationId !== undefined) {
       writeServerLog('INFO', 'headless.durable_reattach.reused', {
         hostSessionId: session.hostSessionId,
@@ -476,16 +484,18 @@ export async function handleHeadlessBrokerDispatchTurn(
     writeServerLog('WARN', 'headless.durable_reattach.failed_reprovision', {
       hostSessionId: session.hostSessionId,
       runtimeId: durableHeadless.runtimeId,
-      reattached,
+      reattachState: reattachResult.state,
     })
-    await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
-      (error: unknown) => {
-        writeServerLog('WARN', 'headless.durable_reattach.reprovision_cleanup_failed', {
-          runtimeId: durableHeadless.runtimeId,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    )
+    if (reattachResult.state !== 'rejected-outside-runtime-root') {
+      await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
+        (error: unknown) => {
+          writeServerLog('WARN', 'headless.durable_reattach.reprovision_cleanup_failed', {
+            runtimeId: durableHeadless.runtimeId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      )
+    }
   }
 
   return await this.executeHeadlessBrokerStartTurn(
@@ -780,19 +790,24 @@ export async function executeInteractiveBrokerInputTurn(
   // controller and retry on the SAME broker (continuity, no re-alloc) BEFORE
   // falling back to legacy pane-lease reassociation. No-ops for non-durable
   // runtimes, so legacy reassociation still handles them below.
+  let adoptionPathRejected = false
   if (
     !result.ok &&
     result.error.code === 'broker_runtime_not_active' &&
-    runtime.transport === 'tmux' &&
-    (await reattachDurableBrokerForDispatch(this.db, runtime, {
+    runtime.transport === 'tmux'
+  ) {
+    const reattachResult = await reattachDurableBrokerForDispatch(this.db, runtime, {
+      runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
         ((options) =>
           connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
-    }))
-  ) {
-    result = await dispatchToBroker()
+    })
+    adoptionPathRejected = reattachResult.state === 'rejected-outside-runtime-root'
+    if (reattachResult.state === 'reattached') {
+      result = await dispatchToBroker()
+    }
   }
 
   if (!result.ok || !result.response.accepted) {
@@ -806,6 +821,7 @@ export async function executeInteractiveBrokerInputTurn(
       !result.ok &&
       result.error.code === 'broker_runtime_not_active' &&
       runtime.transport === 'tmux' &&
+      !adoptionPathRejected &&
       (await this.deliverReassociatedBrokerTmuxInput(session, runtime, prompt, runId))
     ) {
       return json({
@@ -932,6 +948,16 @@ export async function deliverReassociatedBrokerTmuxInput(
   prompt: string,
   runId: string
 ): Promise<boolean> {
+  const rejectedPaths = rejectedBrokerAdoptionPaths(runtime, this.options.runtimeRoot)
+  if (rejectedPaths.length > 0) {
+    writeServerLog('WARN', 'broker.adoption.direct_tmux_delivery_rejected', {
+      runtimeId: runtime.runtimeId,
+      runtimeRoot: this.options.runtimeRoot,
+      rejectedPaths,
+      reason: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+    })
+    return false
+  }
   const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
   const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
   if (!socketPath || !sessionName) {

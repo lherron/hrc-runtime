@@ -10,6 +10,10 @@ import {
   decideLegacyRuntimeStartupDisposition,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
+import {
+  BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+  rejectedBrokerAdoptionPaths,
+} from './broker/adoption-root.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type {
   BrokerControllerAttachResult,
@@ -248,6 +252,7 @@ export async function reconcileStartupState(
   }
 
   await reconcileDurableBrokerStartup(db, {
+    runtimeRoot: options.runtimeRoot,
     // ───────────────────────────────────────────────────────────────────────
     // INVARIANT (T-01996) — SINGLE ATTACH AUTHORITY. DO NOT REINTRODUCE A
     // THROWAWAY-CONTROLLER ATTACH HERE.
@@ -325,7 +330,7 @@ export async function reconcileStartupState(
         if (control?.mode === 'direct-tmux-degraded') {
           continue
         }
-        if (await reassociateBrokerTmuxLease(runtime)) {
+        if (await reassociateBrokerTmuxLease(runtime, options.runtimeRoot)) {
           emitBrokerTmuxReassociated(db, runtime)
           continue
         }
@@ -432,6 +437,22 @@ export async function reconcileDurableBrokerRuntimeReattach(
       ...fields,
     })
     previousPhaseAt = now
+  }
+
+  const rejectedPaths = rejectedBrokerAdoptionPaths(runtime, deps.runtimeRoot)
+  if (rejectedPaths.length > 0) {
+    phase('adoption-path-rejected', {
+      finalCategory: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+      runtimeRoot: deps.runtimeRoot,
+      rejectedPaths,
+    })
+    writeServerLog('WARN', 'broker.adoption.path_rejected', {
+      runtimeId,
+      runtimeRoot: deps.runtimeRoot,
+      rejectedPaths,
+      reason: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+    })
+    return markBrokerReattachStale(db, runtime, BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT)
   }
 
   phase('lease-probe.begin')
@@ -701,14 +722,15 @@ export async function reconcileDurableBrokerStartup(
  * request-serving controller, exists). The first input therefore fails
  * `broker_runtime_not_active`. Re-attach the persisted durable endpoint onto the
  * REQUEST-SERVING controller passed in here, so the caller can retry the dispatch
- * on the SAME broker (continuity, no re-alloc). Returns true iff the controller
- * is now broker-attached. No-ops to false for a runtime with no persisted durable
- * IPC endpoint, so the caller falls back to legacy pane-lease reassociation.
+ * on the SAME broker (continuity, no re-alloc). Returns a discriminated result so
+ * callers cannot confuse an off-root authority rejection with ordinary broker
+ * unavailability and destructively clean up the persisted source lease.
  */
 export async function reattachDurableBrokerForDispatch(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
   deps: {
+    runtimeRoot: string
     controller: Pick<HarnessBrokerController, 'attachAndReplay'>
     brokerUnixClientFactory: BrokerUnixClientFactory
     // Default to the persisted-state probe/token resolvers (production). Tests
@@ -716,18 +738,36 @@ export async function reattachDurableBrokerForDispatch(
     resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
     probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
   }
-): Promise<boolean> {
+): Promise<DurableBrokerDispatchReattachResult> {
   if (!getPersistedDurableBrokerEndpoint(runtime)) {
-    return false
+    return { state: 'unavailable' }
   }
   const outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
+    runtimeRoot: deps.runtimeRoot,
     controller: deps.controller,
     brokerUnixClientFactory: deps.brokerUnixClientFactory,
     resolveAttachToken: deps.resolveAttachToken ?? resolvePersistedBrokerAttachToken,
     probeBrokerLease: deps.probeBrokerLease ?? probePersistedBrokerLease,
   })
-  return outcome.state === 'broker-attached'
+  if (outcome.state === 'broker-attached') {
+    return { state: 'reattached' }
+  }
+  if (outcome.reason === BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT) {
+    return {
+      state: 'rejected-outside-runtime-root',
+      reason: BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
+    }
+  }
+  return { state: 'unavailable' }
 }
+
+export type DurableBrokerDispatchReattachResult =
+  | { state: 'reattached' }
+  | { state: 'unavailable' }
+  | {
+      state: 'rejected-outside-runtime-root'
+      reason: typeof BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT
+    }
 
 export function brokerWarmupCategoryForOutcome(
   outcome: BrokerReattachOutcome
@@ -743,6 +783,9 @@ export function brokerWarmupCategoryForOutcome(
     case 'terminated':
       return 'terminated'
     case 'stale':
+      if (outcome.reason === BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT) {
+        return 'adoption_path_rejected'
+      }
       if (outcome.reason?.startsWith('broker_control_probe_')) {
         return 'control_probe_failed'
       }
@@ -776,6 +819,7 @@ export function brokerWarmupCategoryForOutcome(
 export async function warmDurableBrokerBindings(
   db: HrcDatabase,
   deps: {
+    runtimeRoot: string
     controller: Pick<HarnessBrokerController, 'attachAndReplay'>
     brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
   }
@@ -789,6 +833,7 @@ export async function warmDurableBrokerBindings(
     attached: 0,
     byCategory: {
       attached: 0,
+      adoption_path_rejected: 0,
       skipped_shutting_down: 0,
       ipc_unreachable_nonterminal: 0,
       substrate_gone_stale: 0,
@@ -813,6 +858,7 @@ export async function warmDurableBrokerBindings(
     let outcome: BrokerReattachOutcome
     try {
       outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
+        runtimeRoot: deps.runtimeRoot,
         controller: deps.controller,
         brokerUnixClientFactory,
         resolveAttachToken: resolvePersistedBrokerAttachToken,

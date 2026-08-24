@@ -195,6 +195,7 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
       })
 
       const deps = {
+        runtimeRoot: '/tmp',
         controller: {
           attachAndReplay: async () => {
             throw new Error('degraded path must not attach')

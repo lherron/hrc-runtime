@@ -107,7 +107,11 @@ type Seeded = {
   runtime: HrcRuntimeSnapshot
   runId: string
   events: HrcLifecycleEvent[]
-  fakeThis: { db: HrcDatabase; notifyEvent: (event: HrcLifecycleEvent) => void }
+  fakeThis: {
+    db: HrcDatabase
+    options: { runtimeRoot: string }
+    notifyEvent: (event: HrcLifecycleEvent) => void
+  }
 }
 
 /**
@@ -191,6 +195,7 @@ async function seed(): Promise<Seeded> {
   const events: HrcLifecycleEvent[] = []
   const fakeThis = {
     db: fixture.db,
+    options: { runtimeRoot: fixture.dir },
     notifyEvent: (event: HrcLifecycleEvent) => {
       events.push(event)
     },

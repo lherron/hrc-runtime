@@ -110,6 +110,7 @@ const OPERATION_ID = 'op_reattach'
 const INVOCATION_ID = 'invocation_reattach' as InvocationId
 const RUN_ID = 'run_reattach'
 
+const RUNTIME_ROOT = '/tmp/hrc-reattach'
 const BROKER_SOCKET = '/tmp/hrc-reattach/bipc/b.sock'
 const LEASE_SOCKET = '/tmp/hrc-reattach/btmux/claude-code-tmux-runtime_reattach.sock'
 const SESSION_NAME = 'hrc-claude-code-tmux-runtime_reattach'
@@ -466,6 +467,7 @@ describe('Phase 4 reattach: live broker socket reattaches BEFORE the sweep', () 
 
     const factoryCalls: Array<{ socketPath: string }> = []
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async (opts) => {
         factoryCalls.push({ socketPath: opts.socketPath })
@@ -525,6 +527,7 @@ describe('Phase 4 reattach: live broker socket reattaches BEFORE the sweep', () 
     }
 
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,
@@ -554,6 +557,7 @@ describe('Phase 4 reattach: socket gone + TUI live => direct-tmux-degraded', () 
 
     let dialed = false
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => {
         dialed = true
@@ -586,6 +590,7 @@ describe('Phase 4 reattach: /quit while down => terminated', () => {
     const controller = makeController()
 
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => {
         throw new Error('must not dial: user already exited')
@@ -621,6 +626,7 @@ describe('Phase 4 reattach: fenced / transport-close during replay => not attach
     client.eventsSinceThrows = new Error('ControllerFenced: transport closed during replay')
 
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,
@@ -665,6 +671,7 @@ describe('T-05299 startup/lazy reattach control-proof surfacing', () => {
     }
 
     const reattached = await reconcile.reattachDurableBrokerForDispatch(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,
@@ -675,7 +682,7 @@ describe('T-05299 startup/lazy reattach control-proof surfacing', () => {
       }),
     })
 
-    expect(reattached).toBe(false)
+    expect(reattached.state).toBe('unavailable')
     const control = extractRuntimeControlState(readRuntime().runtimeStateJson)
     expect(control?.brokerAttached).toBe(false)
     const rawControl = readRuntime().runtimeStateJson?.['control'] as
@@ -719,6 +726,7 @@ describe('Phase 4 minimal surfacing: brokerAttached + replay outcome observable'
     })
 
     await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,

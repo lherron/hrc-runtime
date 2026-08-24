@@ -1341,6 +1341,7 @@ class HrcServerInstance implements HrcServer {
     })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
+      runtimeRoot: this.options.runtimeRoot,
       staleGenerationThresholdSec: this.staleGenerationThresholdSec,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
       notifyEvent: (event) => this.notifyEvent(event),
@@ -1378,6 +1379,7 @@ class HrcServerInstance implements HrcServer {
     // resolves — broker input handlers await it and fall through to the lazy
     // reattach path on failure, never wedging on a rejected promise.
     this.brokerWarmupComplete = warmDurableBrokerBindings(this.db, {
+      runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
     })
       .then(() => undefined)

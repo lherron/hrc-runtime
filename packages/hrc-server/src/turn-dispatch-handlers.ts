@@ -90,7 +90,10 @@ import {
   requireDispatchRuntimeId,
   timestamp,
 } from './server-util.js'
-import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
+import {
+  type DurableBrokerDispatchReattachResult,
+  reattachDurableBrokerForDispatch,
+} from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
 
 type PublicDispatchWaitStage = 'accepted' | 'turn_started' | 'terminal'
@@ -593,32 +596,37 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (durableHeadless) {
-    const reattached = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
-    const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
+    const reattachResult = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
+    const recovered =
+      reattachResult.state === 'reattached'
+        ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+        : null
     if (recovered && recovered.activeInvocationId !== undefined) {
       assertActuatorSplitRuntimeReuse(intent, recovered)
       assertBrokerRuntimeReusableAdmission(this.db, recovered)
       return await finalizeHeadlessBrokerSessionOpen(this, recovered)
     }
 
-    await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
-      (error: unknown) => {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        appendHrcEvent(this.db, 'runtime.stale', {
-          ts: timestamp(),
-          hostSessionId: session.hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
-          runtimeId: durableHeadless.runtimeId,
-          transport: 'headless',
-          payload: {
-            reason: 'broker-session-open-reattach-cleanup-failed',
-            error: errorMessage,
-          },
-        })
-      }
-    )
+    if (reattachResult.state !== 'rejected-outside-runtime-root') {
+      await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
+        (error: unknown) => {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          appendHrcEvent(this.db, 'runtime.stale', {
+            ts: timestamp(),
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runtimeId: durableHeadless.runtimeId,
+            transport: 'headless',
+            payload: {
+              reason: 'broker-session-open-reattach-cleanup-failed',
+              error: errorMessage,
+            },
+          })
+        }
+      )
+    }
   }
 
   const runtime = await this.startHeadlessBrokerRuntime(
@@ -656,8 +664,9 @@ async function finalizeHeadlessBrokerSessionOpen(
 export async function reattachDurableBrokerSessionForOpen(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
-): Promise<boolean> {
+): Promise<DurableBrokerDispatchReattachResult> {
   return await reattachDurableBrokerForDispatch(this.db, runtime, {
+    runtimeRoot: this.options.runtimeRoot,
     controller: this.getHarnessBrokerController(),
     brokerUnixClientFactory:
       this.brokerUnixClientFactory ??

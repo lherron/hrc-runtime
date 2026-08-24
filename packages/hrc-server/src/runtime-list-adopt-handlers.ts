@@ -283,7 +283,7 @@ function handleListLaunches(deps: RuntimeListAdoptDependencies, url: URL): Respo
 }
 
 async function handleAdoptRuntime(
-  deps: RuntimeListAdoptDependencies,
+  deps: RuntimeListAdoptDependencies & { readonly runtimeRoot: string },
   request: Request
 ): Promise<Response> {
   const body = await parseJsonBody(request)
@@ -328,7 +328,7 @@ async function handleAdoptRuntime(
     const hosting = parseBrokerRuntimeHostingState(runtime)
     const leaseSocketPath =
       hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate.tmuxSocketPath : undefined
-    const leaseLive = await reassociateBrokerTmuxLease(runtime)
+    const leaseLive = await reassociateBrokerTmuxLease(runtime, deps.runtimeRoot)
     if (!leaseLive) {
       throw new HrcConflictError(
         HrcErrorCode.CONFLICT,
@@ -369,7 +369,7 @@ async function handleAdoptRuntime(
 }
 
 export function createRuntimeListAdoptRoutes(
-  deps: RuntimeListAdoptDependencies
+  deps: RuntimeListAdoptDependencies & { readonly runtimeRoot: string }
 ): RuntimeListAdoptRoute[] {
   return [
     {

@@ -318,6 +318,7 @@ export async function invalidateHostContext(
       })
       if (hasBrokerLeasedTmux(runtime)) {
         await teardownBrokerLeasedTmux(runtime, {
+          runtimeRoot: this.options.runtimeRoot,
           logMessage: 'broker leased tmux teardown failed during context invalidation',
         })
       }

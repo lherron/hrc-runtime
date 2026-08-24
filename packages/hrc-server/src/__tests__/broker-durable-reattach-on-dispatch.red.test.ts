@@ -62,6 +62,7 @@ const OPERATION_ID = 'op_reattach'
 const INVOCATION_ID = 'invocation_reattach' as InvocationId
 const RUN_ID = 'run_reattach'
 
+const RUNTIME_ROOT = '/tmp/hrc-reattach-dispatch'
 const BROKER_SOCKET = '/tmp/hrc-reattach-dispatch/bipc/b.sock'
 const LEASE_SOCKET = '/tmp/hrc-reattach-dispatch/btmux/claude-code-tmux-runtime_reattach.sock'
 const SESSION_NAME = 'hrc-claude-code-tmux-runtime_reattach'
@@ -388,6 +389,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
 
     const factoryCalls: Array<{ socketPath: string }> = []
     const reattached = await reattachDurableBrokerForDispatch(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async (opts) => {
         factoryCalls.push({ socketPath: opts.socketPath })
@@ -401,7 +403,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
       }),
     })
 
-    expect(reattached).toBe(true)
+    expect(reattached.state).toBe('reattached')
     // Dialed the persisted durable broker IPC socket (not the tmux lease socket).
     expect(factoryCalls).toEqual([{ socketPath: BROKER_SOCKET }])
     expect(client.calls).toContain('attach')
@@ -421,6 +423,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
 
     let dialed = false
     const reattached = await reattachDurableBrokerForDispatch(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller,
       brokerUnixClientFactory: async () => {
         dialed = true
@@ -428,7 +431,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
       },
     })
 
-    expect(reattached).toBe(false)
+    expect(reattached.state).toBe('unavailable')
     expect(dialed).toBe(false)
   })
 })

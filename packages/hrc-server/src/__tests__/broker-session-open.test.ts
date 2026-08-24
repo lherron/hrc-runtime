@@ -97,15 +97,15 @@ function seedReusableBrokerRuntime(
                 generation,
                 endpoint: {
                   kind: 'unix-jsonrpc-ndjson',
-                  socketPath: `${fixture.tmpDir}/broker.sock`,
+                  socketPath: `${fixture.runtimeRoot}/broker.sock`,
                   attachTokenRef: {
                     kind: 'file',
-                    path: `${fixture.tmpDir}/attach.token`,
+                    path: `${fixture.runtimeRoot}/attach.token`,
                     redacted: true,
                   },
                 },
                 brokerWindow: {
-                  socketPath: `${fixture.tmpDir}/btmux.sock`,
+                  socketPath: `${fixture.runtimeRoot}/btmux.sock`,
                   sessionName: `hrc-codex-app-server-${RUNTIME_ID}`,
                   sessionId: '$0',
                   windowId: '@0',
@@ -268,7 +268,7 @@ describe('POST /v1/broker-sessions/open', () => {
         updatedAt: new Date().toISOString(),
         runtimeStateJson: { ...runtime.runtimeStateJson, status: 'ready' },
       })
-      return true
+      return { state: 'reattached' as const }
     }
     ;(server as any).startHeadlessBrokerRuntime = async () => {
       throw new Error('durable recovery must not provision a replacement runtime')

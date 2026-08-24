@@ -412,6 +412,7 @@ describe('explicit lifecycle cleanup', () => {
     const disposeCalls: string[] = []
     const fakeServer = {
       db,
+      options: { runtimeRoot: fixture.runtimeRoot },
       tmux: createTmuxManager({ socketPath: join(fixture.runtimeRoot, 'default.sock') }),
       getHarnessBrokerController() {
         return {

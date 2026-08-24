@@ -46,6 +46,7 @@ const OPERATION_ID = 'op_zombie'
 const INVOCATION_ID = 'invocation_zombie' as InvocationId
 const RUN_ID = 'run_zombie'
 
+const RUNTIME_ROOT = '/tmp/hrc-zombie'
 const BROKER_SOCKET = '/tmp/hrc-zombie/bipc/b.sock'
 const LEASE_SOCKET = '/tmp/hrc-zombie/btmux/codex-app-se-runtime_zombie.sock'
 const SESSION_NAME = 'hrc-codex-app-server-runtime_zombie'
@@ -185,6 +186,7 @@ describe('T-04297 durable headless reboot-zombie reap', () => {
     seedDurableHeadlessRuntime()
 
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not dial: IPC probe already reported unreachable')
@@ -209,6 +211,7 @@ describe('T-04297 durable headless reboot-zombie reap', () => {
     seedDurableHeadlessRuntime()
 
     const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not dial: IPC probe already reported unreachable')
@@ -235,6 +238,7 @@ describe('T-04297 durable headless reboot-zombie reap', () => {
     seedDurableHeadlessRuntime()
 
     const reattached = await reconcile.reattachDurableBrokerForDispatch(db, readRuntime(), {
+      runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not dial: IPC probe already reported unreachable')
@@ -248,7 +252,7 @@ describe('T-04297 durable headless reboot-zombie reap', () => {
       }),
     })
 
-    expect(reattached).toBe(false)
+    expect(reattached.state).toBe('unavailable')
     expect(isRuntimeUnavailableStatus(readRuntime().status)).toBe(true)
   })
 })

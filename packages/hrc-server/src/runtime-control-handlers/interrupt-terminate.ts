@@ -187,6 +187,7 @@ async function disposeAndTeardownBrokerLeasedTmux(
   })
 
   await teardownBrokerLeasedTmux(runtime, {
+    runtimeRoot: this.options.runtimeRoot,
     logMessage: 'broker leased tmux teardown failed during terminate',
   })
 }
@@ -471,6 +472,7 @@ export async function terminateTmuxRuntime(
     })
 
     await teardownBrokerLeasedTmux(runtime, {
+      runtimeRoot: this.options.runtimeRoot,
       logMessage: 'broker leased tmux teardown failed during tmux terminate',
     })
   } else {
