@@ -29,6 +29,10 @@ build:
 test:
     bun run test
 
+# Full server fixture suite; required for release qualification, not pre-push.
+release-test:
+    bun run test:release
+
 # Run integration tests
 test-integration:
     bun run test:integration

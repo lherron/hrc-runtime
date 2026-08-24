@@ -22,7 +22,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "bash -lc 'export TMPDIR=/tmp; for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-store-sqlite\" \"hrc-capture-verifier\" \"hrc-sdk\" \"hrc-frame-render\" \"hrc-server\" \"hrc-top\" \"hrc-pi-top\" \"hrc-cli\" \"hrcchat-cli\" \"hrcmail-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
-    "test:fast": "bun run test",
+    "test:fast": "bash -lc 'export TMPDIR=/tmp; for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-store-sqlite\" \"hrc-capture-verifier\" \"hrc-sdk\" \"hrc-frame-render\" \"hrc-top\" \"hrc-pi-top\" \"hrc-cli\" \"hrcchat-cli\" \"hrcmail-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
+    "test:release": "TMPDIR=/tmp bun run --filter hrc-server test",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && lefthook install || echo '[prepare] skipping lefthook (not a git checkout)'"
