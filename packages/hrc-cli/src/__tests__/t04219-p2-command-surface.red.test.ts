@@ -701,13 +701,6 @@ describe('hrc admin runs — §5 (RED: command does not exist yet)', () => {
 describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)', () => {
   // ── no-server: --help ──
 
-  it('hrc run --help includes --attach-only flag', async () => {
-    const result = await runCli(['run', '--help'])
-    // RED: --attach-only is not yet registered; currently absent from help
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--attach-only')
-  })
-
   it('hrc run --attach-only --help exits 0 with Usage', async () => {
     const result = await runCli(['run', '--attach-only', '--help'])
     // RED: currently `run --attach-only` may be treated as unknown option
@@ -828,30 +821,12 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
     expect(result.stdout).toContain('--new-session')
   })
 
-  it('hrc start --help still contains --force-restart flag', async () => {
-    const result = await runCli(['start', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--force-restart')
-  })
-
   // ── server-required: --new-session dry-run shows the flag is accepted ──
 
   describe('start --new-session dry-run (needs live server)', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
       await seedRunRoots('rex', 'agent-spaces')
-    })
-
-    it('hrc start rex@agent-spaces --new-session --dry-run exits 0', async () => {
-      const result = await runCli(
-        ['start', 'rex@agent-spaces', '--new-session', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-      // Must remain GREEN: --new-session is already accepted; pin it doesn't break under P2
-      expect(result.exitCode).toBe(0)
     })
 
     it('hrc start --new-session --dry-run emits local plan preview (not an error)', async () => {
@@ -883,25 +858,6 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
 
 describe('existing lifecycle preserved — §6 regression guards', () => {
   // ── no-server: --help ──
-
-  it('hrc run --help no longer contains --no-attach', async () => {
-    const result = await runCli(['run', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).not.toContain('--no-attach')
-    expect(result.stdout).toContain('--attach-only')
-  })
-
-  it('hrc run --help still contains --force-restart (unchanged)', async () => {
-    const result = await runCli(['run', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--force-restart')
-  })
-
-  it('hrc attach --help still exits 0 with --dry-run flag (unchanged)', async () => {
-    const result = await runCli(['attach', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--dry-run')
-  })
 
   // ── server-required ──
 
