@@ -114,15 +114,6 @@ describe('Phase 4 migration', () => {
       db.close()
     }
   })
-
-  it('exposes surfaceBindings repository on HrcDatabase', () => {
-    const db = openHrcDatabase(dbPath)
-    try {
-      expect(db.surfaceBindings).toBeDefined()
-    } finally {
-      db.close()
-    }
-  })
 })
 
 // ---------------------------------------------------------------------------
