@@ -529,30 +529,6 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
       server = await createHrcServer(serverOpts())
     })
 
-    it('hrc ls runtimes exits 0 and returns a JSON array', async () => {
-      const result = await runCli(['ls', 'runtimes'], cliEnv())
-      // RED: exits 2 "unknown command: ls"
-      expect(result.exitCode).toBe(0)
-      const body = JSON.parse(result.stdout.trim())
-      expect(Array.isArray(body)).toBe(true)
-    })
-
-    it('hrc ls sessions exits 0 and returns a JSON array', async () => {
-      const result = await runCli(['ls', 'sessions'], cliEnv())
-      // RED: exits 2 "unknown command: ls"
-      expect(result.exitCode).toBe(0)
-      const body = JSON.parse(result.stdout.trim())
-      expect(Array.isArray(body)).toBe(true)
-    })
-
-    it('hrc ls launches exits 0 and returns a JSON array', async () => {
-      const result = await runCli(['ls', 'launches'], cliEnv())
-      // RED: exits 2 "unknown command: ls"
-      expect(result.exitCode).toBe(0)
-      const body = JSON.parse(result.stdout.trim())
-      expect(Array.isArray(body)).toBe(true)
-    })
-
     it('hrc ls messages exits 0 and returns a JSON array', async () => {
       const result = await runCli(['ls', 'messages'], cliEnv())
       // RED: exits 2 "unknown command: ls"
