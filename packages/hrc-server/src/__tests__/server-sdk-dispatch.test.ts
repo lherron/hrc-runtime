@@ -36,6 +36,13 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 
 import { installFakeCodex } from './fixtures/fake-harness-driver'
+import {
+  readRuntime,
+  seedSessionContinuation,
+  seedTerminatedTmuxRuntime,
+  waitForQueuedPrompt,
+  waitForRuntimeStatus,
+} from './fixtures/sdk-dispatch-database.fixture'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -244,103 +251,6 @@ afterEach(async () => {
 })
 
 describe('runtime lifecycle start/attach', () => {
-  function seedSessionContinuation(hostSessionId: string, key: string): void {
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.sessions.updateContinuation(
-        hostSessionId,
-        { provider: 'anthropic', key },
-        new Date().toISOString()
-      )
-    } finally {
-      db.close()
-    }
-  }
-
-  function seedTerminatedTmuxRuntime(input: {
-    hostSessionId: string
-    scopeRef: string
-    runtimeId: string
-  }): void {
-    const db = openHrcDatabase(dbPath)
-    const now = new Date().toISOString()
-    try {
-      db.runtimes.insert({
-        runtimeId: input.runtimeId,
-        hostSessionId: input.hostSessionId,
-        scopeRef: input.scopeRef,
-        laneRef: 'default',
-        generation: 1,
-        transport: 'tmux',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'terminated',
-        supportsInflightInput: false,
-        adopted: false,
-        lastActivityAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-    } finally {
-      db.close()
-    }
-  }
-
-  function readRuntime(runtimeId: string) {
-    const db = openHrcDatabase(dbPath)
-    try {
-      return db.runtimes.getByRuntimeId(runtimeId) ?? null
-    } finally {
-      db.close()
-    }
-  }
-
-  async function waitForRuntimeStatus(
-    runtimeId: string,
-    expectedStatuses: string[],
-    timeoutMs = 5_000
-  ): Promise<string> {
-    const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
-      const db = openHrcDatabase(dbPath)
-      try {
-        const runtime = db.runtimes.getByRuntimeId(runtimeId)
-        if (runtime && expectedStatuses.includes(runtime.status)) {
-          return runtime.status
-        }
-      } finally {
-        db.close()
-      }
-      await Bun.sleep(100)
-    }
-
-    throw new Error(
-      `runtime ${runtimeId} did not reach one of [${expectedStatuses.join(', ')}] within ${timeoutMs}ms`
-    )
-  }
-
-  async function waitForQueuedPrompt(
-    hostSessionId: string,
-    prompt: string,
-    timeoutMs = INTEGRATION_TIMEOUT_MS
-  ): Promise<void> {
-    const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
-      const db = openHrcDatabase(dbPath)
-      try {
-        const found = db.runs.listQueuedByHostSessionId(hostSessionId).some((run) => {
-          const correlation = db.runs.getCorrelationJson(run.runId)
-          return correlation !== null && JSON.parse(correlation).prompt === prompt
-        })
-        if (found) return
-      } finally {
-        db.close()
-      }
-      await Bun.sleep(25)
-    }
-    throw new Error(`timed out waiting for queued prompt ${JSON.stringify(prompt)}`)
-  }
-
   // T-01757 (Wave C, A2): codex headless START provisions THROUGH the
   // HarnessBrokerController, which requires the headless codex broker flag ON.
   // The default beforeEach server runs with the flag OFF (to exercise the
@@ -501,12 +411,12 @@ describe('runtime lifecycle start/attach', () => {
 
   it('interactive ensure fails closed when no broker-admissible route exists', async () => {
     const hsid = await resolveSession('interactive-dispatch-no-stale-session-continuation')
-    seedTerminatedTmuxRuntime({
+    seedTerminatedTmuxRuntime(dbPath, {
       hostSessionId: hsid,
       scopeRef: 'agent:interactive-dispatch-no-stale-session-continuation',
       runtimeId: 'rt-prior-terminated-no-continuation',
     })
-    seedSessionContinuation(hsid, 'stale-session-continuation')
+    seedSessionContinuation(dbPath, hsid, 'stale-session-continuation')
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
@@ -520,7 +430,7 @@ describe('runtime lifecycle start/attach', () => {
 
   it('interactive ensure does not mint legacy tmux runtimes with runtime continuation present', async () => {
     const hsid = await resolveSession('interactive-dispatch-runtime-continuation')
-    seedSessionContinuation(hsid, 'stale-session-continuation')
+    seedSessionContinuation(dbPath, hsid, 'stale-session-continuation')
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
@@ -583,7 +493,7 @@ describe('runtime lifecycle start/attach', () => {
     expect(firstRes.status).toBe(200)
     const firstData = (await firstRes.json()) as any
 
-    const firstRuntime = readRuntime(firstData.runtimeId)
+    const firstRuntime = readRuntime(dbPath, firstData.runtimeId)
     expect(firstRuntime?.controllerKind).toBe('harness-broker')
     expect(firstRuntime?.transport).toBe('headless')
 
@@ -713,7 +623,12 @@ describe('runtime lifecycle start/attach', () => {
 
       try {
         // Abort only after the accepting handler has durably queued the prompt.
-        await waitForQueuedPrompt(hsid, 'queued prompt must survive boot timeout')
+        await waitForQueuedPrompt(
+          dbPath,
+          hsid,
+          'queued prompt must survive boot timeout',
+          INTEGRATION_TIMEOUT_MS
+        )
         controller.abort()
         await promptRequest.catch(() => undefined)
       } finally {
@@ -750,7 +665,7 @@ describe('runtime lifecycle start/attach', () => {
     })
     expect(startRes.status).toBe(200)
     const startData = (await startRes.json()) as { runtimeId: string }
-    await waitForRuntimeStatus(startData.runtimeId, ['ready'])
+    await waitForRuntimeStatus(dbPath, startData.runtimeId, ['ready'])
 
     const clearRes = await postJson('/v1/clear-context', {
       hostSessionId: hsid,
@@ -959,7 +874,9 @@ describe('runtime lifecycle start/attach', () => {
         runtimeId: startData.runtimeId,
       })
       expect(initialAttachRes.status).toBe(503)
-      expect(await waitForRuntimeStatus(startData.runtimeId, ['ready', 'terminated'])).toBe('ready')
+      expect(await waitForRuntimeStatus(dbPath, startData.runtimeId, ['ready', 'terminated'])).toBe(
+        'ready'
+      )
 
       const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
         runtimeId: startData.runtimeId,
