@@ -28,6 +28,7 @@
     "test:contract": "bash -lc 'export TMPDIR=/tmp; for pkg in \"hrc-store-sqlite\" \"hrc-sdk\" \"hrc-cli\" \"hrcchat-cli\" \"hrcmail-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
     "test:integration": "TMPDIR=/tmp bun run --filter hrc-server test",
     "test:installed-live": "just e2e",
+    "test:observability": "bun scripts/test-observability.ts",
     "test:fast": "bun run check:test-size && bun run test:unit && bun run test:contract",
     "test:release": "bun run test:integration",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
