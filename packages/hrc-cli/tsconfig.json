@@ -7,5 +7,11 @@
     "noEmit": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.fixture.ts",
+    "src/__tests__/fixtures/cli-test-fixture.ts"
+  ]
 }
