@@ -29,6 +29,12 @@ build:
 test:
     bun run test
 
+test-unit:
+    bun run test:unit
+
+test-contract:
+    bun run test:contract
+
 # Full server fixture suite; required for release qualification, not pre-push.
 release-test:
     bun run test:release
@@ -41,6 +47,9 @@ test-size:
 # Run integration tests
 test-integration:
     bun run test:integration
+
+installed-live-test:
+    bun run test:installed-live
 
 # Portable behavior rung: real HRC instances and stores over fixture-only
 # loopback transport. The runner mechanically selects the fixture-marked corpus
