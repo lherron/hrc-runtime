@@ -101,6 +101,7 @@ if (cmd === 'app-server') {
 appendFileSync(logPath, 'app-server:' + commandArgs.join(' ') + '\\n')
 const rl = createInterface({ input: process.stdin })
 rl.on('line', (line) => {
+  appendFileSync(logPath, 'stdin:' + line + '\\n')
   const message = JSON.parse(line)
   if (!('id' in message)) return
   if (message.method === 'initialize') {
