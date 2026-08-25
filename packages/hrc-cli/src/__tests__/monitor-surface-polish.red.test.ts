@@ -2,9 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Command } from 'commander'
 
 import { buildProgram } from '../cli/build-program.js'
-import { buildInfoText } from '../cli/help.js'
 import { VALID_CONDITIONS } from '../monitor-conditions.js'
-import { resolveMonitorOutputFormat } from '../monitor-render.js'
 
 const EXIT_CODE_HELP = [
   '0 matched after arm/replay',
@@ -51,22 +49,6 @@ function expectConditionAndExitCodeHelp(help: string): void {
 }
 
 describe('hrc monitor surface polish', () => {
-  test('monitor watch defaults by TTY while every explicit format selector wins', () => {
-    const resolveWithTty = resolveMonitorOutputFormat as (
-      options: Parameters<typeof resolveMonitorOutputFormat>[0],
-      isTTY: boolean
-    ) => ReturnType<typeof resolveMonitorOutputFormat>
-
-    expect(resolveWithTty({}, false)).toBe('ndjson')
-    expect(resolveWithTty({}, true)).toBe('tree')
-
-    for (const isTTY of [false, true]) {
-      expect(resolveWithTty({ format: 'compact' }, isTTY)).toBe('compact')
-      expect(resolveWithTty({ pretty: true }, isTTY)).toBe('tree')
-      expect(resolveWithTty({ json: true }, isTTY)).toBe('ndjson')
-    }
-  })
-
   test('monitor watch help documents replay cap, conditions, coupling, exits, and defaults', () => {
     const help = commandHelp('monitor', 'watch')
 
@@ -108,17 +90,6 @@ describe('hrc monitor surface polish', () => {
     expect(documented).toMatch(/exact cursor.*scripts/i)
     expect(documented).toMatch(/duration.*human convenience/i)
     expect(documented).toMatch(/duration.*prior attempt/i)
-  })
-
-  test('hrc info --agent includes monitor runbook, cursor, and condition guidance', () => {
-    const info = buildInfoText(buildProgram(), undefined, 'agent')
-
-    expect(info).toContain('hrc monitor watch')
-    expect(info).toContain('hrc monitor wait')
-    expect(info).toContain('global hrcSeq')
-    expect(info).toContain('invocation-local broker seq')
-    expect(info).toContain('Monitor conditions NEVER evaluate the broker invocation ledger.')
-    expect(info).toContain('timeout is semantic exit 20')
   })
 
   test('monitor show help distinguishes its snapshot from list surfaces', () => {

@@ -69,6 +69,11 @@ describe('no args / help', () => {
     expect(result.stdout).toContain(
       'Monitor conditions NEVER evaluate the broker invocation ledger.'
     )
+    expect(result.stdout).toContain('hrc monitor watch')
+    expect(result.stdout).toContain('hrc monitor wait')
+    expect(result.stdout).toContain('global hrcSeq')
+    expect(result.stdout).toContain('invocation-local broker seq')
+    expect(result.stdout).toContain('timeout is semantic exit 20')
     expect(result.stdout).toContain('continuation-only recovery')
     expect(result.stderr).toBe('')
   })
