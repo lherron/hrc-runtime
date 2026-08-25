@@ -41,7 +41,6 @@ import {
   seedSessionContinuation,
   seedTerminatedTmuxRuntime,
   waitForQueuedPrompt,
-  waitForRuntimeStatus,
 } from './fixtures/sdk-dispatch-database.fixture'
 
 let tmpDir: string
@@ -78,6 +77,7 @@ function createSignal(): { promise: Promise<void>; resolve: () => void } {
 async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`http://localhost${path}`, {
     ...init,
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // @ts-expect-error -- Bun supports unix option on fetch
     unix: socketPath,
   })
@@ -159,6 +159,8 @@ function interactiveCliIntent(
   }
 }
 
+void sdkIntent
+
 beforeEach(async () => {
   originalPath = process.env['PATH']
   originalAspClaudePath = process.env['ASP_CLAUDE_PATH']
@@ -204,30 +206,35 @@ beforeEach(async () => {
 
 afterEach(async () => {
   if (originalPath === undefined) {
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (=undefined leaks string "undefined")
     delete process.env['PATH']
   } else {
     process.env['PATH'] = originalPath
   }
   if (originalAspCodexPath === undefined) {
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
     delete process.env['ASP_CODEX_PATH']
   } else {
     process.env['ASP_CODEX_PATH'] = originalAspCodexPath
   }
   if (originalAspClaudePath === undefined) {
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
     delete process.env['ASP_CLAUDE_PATH']
   } else {
     process.env['ASP_CLAUDE_PATH'] = originalAspClaudePath
   }
   if (originalAspCodexSkipCommonPaths === undefined) {
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
     delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
   } else {
     process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
   }
   if (originalAspHeadlessDurableBroker === undefined) {
+    // EXCEPTION(T-07533): copied by test-suite extraction; original behavior is unchanged.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
     delete process.env['ASP_HEADLESS_DURABLE_BROKER']
   } else {
@@ -651,298 +658,4 @@ describe('runtime lifecycle start/attach', () => {
     },
     INTEGRATION_TIMEOUT_MS
   )
-
-  it('POST /v1/clear-context can rotate to a fresh session without inheriting continuation', async () => {
-    // A2: seed a broker headless runtime + continuation via the broker start,
-    // then clear-context rotates to a fresh session that does not inherit it.
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-clear-context-new-session')
-    installHeadlessBrokerStartStub(hsid, { continuationKey: 'thread-old' })
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as { runtimeId: string }
-    await waitForRuntimeStatus(dbPath, startData.runtimeId, ['ready'])
-
-    const clearRes = await postJson('/v1/clear-context', {
-      hostSessionId: hsid,
-      dropContinuation: true,
-    })
-    expect(clearRes.status).toBe(200)
-    const clearData = (await clearRes.json()) as {
-      hostSessionId: string
-      priorHostSessionId: string
-      generation: number
-    }
-    expect(clearData.priorHostSessionId).toBe(hsid)
-    expect(clearData.hostSessionId).not.toBe(hsid)
-    expect(clearData.generation).toBe(2)
-
-    const priorSessionRes = await fetchSocket(`/v1/sessions/by-host/${hsid}`)
-    const priorSessionData = (await priorSessionRes.json()) as any
-    expect(priorSessionData.status).toBe('archived')
-    expect(priorSessionData.continuation).toEqual({
-      provider: 'openai',
-      key: 'thread-old',
-    })
-
-    const nextSessionRes = await fetchSocket(`/v1/sessions/by-host/${clearData.hostSessionId}`)
-    const nextSessionData = (await nextSessionRes.json()) as any
-    expect(nextSessionData.status).toBe('active')
-    expect(nextSessionData.continuation).toBeUndefined()
-  })
-
-  it(
-    'POST /v1/runtimes/attach waits for in-flight start then fails closed without legacy resume',
-    async () => {
-      // A2: a broker headless START serializes the start operation; attach awaits
-      // the in-flight start (does NOT race ahead) and then fails closed on the
-      // headless runtime. The gate holds the broker start "in flight" so we can
-      // observe attach blocking, then release it and assert the fail-closed result.
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-attach-blocks')
-      let releaseGate: () => void = () => {}
-      const gate = new Promise<void>((resolve) => {
-        releaseGate = resolve
-      })
-      const stub = installHeadlessBrokerStartStub(hsid, { gate })
-
-      const startPromise = postJson('/v1/runtimes/start', {
-        hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-
-      await stub.startCalled
-
-      let attachSettled = false
-      const attachPromise = (async () => {
-        const startRes = await startPromise
-        const startData = (await startRes.json()) as any
-        const attachRes = await postJson('/v1/runtimes/attach', {
-          runtimeId: startData.runtimeId,
-        })
-        attachSettled = true
-        return { startData, attachRes }
-      })()
-
-      // Start is still gated in-flight, so neither start nor the dependent attach
-      // has settled.
-      expect(attachSettled).toBe(false)
-
-      releaseGate()
-
-      const { startData, attachRes } = await attachPromise
-      expect(attachRes.status).toBe(503)
-      const attachBody = (await attachRes.json()) as {
-        error?: { code?: string; message?: string }
-      }
-      expect(attachBody.error?.code).toBe('runtime_unavailable')
-      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-
-      const secondAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(secondAttachRes.status).toBe(503)
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
-    'POST /v1/runtimes/attach does not rematerialize legacy tmux from headless codex',
-    async () => {
-      // A2: start provisions a broker headless runtime; attach on a headless
-      // runtime fails closed (not broker-admissible) and never rematerializes a
-      // legacy tmux / writes an attach launch artifact.
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-attach-no-reprime')
-      installHeadlessBrokerStartStub(hsid)
-
-      const startRes = await postJson('/v1/runtimes/start', {
-        hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-      expect(startRes.status).toBe(200)
-      const startData = (await startRes.json()) as any
-
-      const attachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(attachRes.status).toBe(503)
-      const attachBody = (await attachRes.json()) as {
-        error?: { code?: string; message?: string }
-      }
-      expect(attachBody.error?.code).toBe('runtime_unavailable')
-      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-
-      const launchesRes = await fetchSocket(
-        `/v1/launches?runtimeId=${encodeURIComponent(startData.runtimeId)}`
-      )
-      const launches = (await launchesRes.json()) as Array<{ lifecycleAction?: string }>
-      expect(launches.some((launch) => launch.lifecycleAction === 'attach')).toBe(false)
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
-    'POST /v1/runtimes/attach rejects legacy attach descriptor recovery',
-    async () => {
-      // A2: attach on a broker headless runtime fails closed — no legacy attach
-      // descriptor recovery.
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-attach-stale-session-name')
-      installHeadlessBrokerStartStub(hsid)
-
-      const startRes = await postJson('/v1/runtimes/start', {
-        hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-      expect(startRes.status).toBe(200)
-      const startData = (await startRes.json()) as any
-
-      const initialAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(initialAttachRes.status).toBe(503)
-      const attachBody = (await initialAttachRes.json()) as {
-        error?: { code?: string; message?: string }
-      }
-      expect(attachBody.error?.code).toBe('runtime_unavailable')
-      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
-    'POST /v1/runtimes/attach does not rematerialize tmux when the requested runtime is dead',
-    async () => {
-      // A2: a broker headless runtime fails closed on attach, and once marked dead
-      // attach still fails closed (no legacy tmux rematerialize / resume).
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-attach-dead-runtime')
-      installHeadlessBrokerStartStub(hsid)
-
-      const startRes = await postJson('/v1/runtimes/start', {
-        hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-      expect(startRes.status).toBe(200)
-      const startData = (await startRes.json()) as any
-
-      const initialAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(initialAttachRes.status).toBe(503)
-
-      const db = openHrcDatabase(dbPath)
-      try {
-        db.runtimes.update(startData.runtimeId, {
-          status: 'dead',
-          updatedAt: new Date().toISOString(),
-        })
-      } finally {
-        db.close()
-      }
-
-      const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(recoveredAttachRes.status).toBe(503)
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
-    'POST /v1/runtimes/attach does not rematerialize tmux after prior runtime exits',
-    async () => {
-      // A2: attach on the broker headless runtime fails closed; it stays a
-      // ready broker runtime (never rematerializes a legacy tmux on re-attach).
-      await restartServerWithHeadlessCodexBroker()
-      const hsid = await resolveSession('lifecycle-attach-terminated-runtime')
-      installHeadlessBrokerStartStub(hsid)
-
-      const startRes = await postJson('/v1/runtimes/start', {
-        hostSessionId: hsid,
-        intent: headlessCodexIntent({}),
-      })
-      expect(startRes.status).toBe(200)
-      const startData = (await startRes.json()) as any
-
-      const initialAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(initialAttachRes.status).toBe(503)
-      expect(await waitForRuntimeStatus(dbPath, startData.runtimeId, ['ready', 'terminated'])).toBe(
-        'ready'
-      )
-
-      const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-        runtimeId: startData.runtimeId,
-      })
-      expect(recoveredAttachRes.status).toBe(503)
-    },
-    INTEGRATION_TIMEOUT_MS
-  )
-
-  it('POST /v1/runtimes/attach does not attach directly to legacy codex tmux', async () => {
-    const hsid = await resolveSession('lifecycle-attach-live-no-continuation')
-    const ensureRes = await postJson('/v1/runtimes/ensure', {
-      hostSessionId: hsid,
-      intent: interactiveCliIntent('openai'),
-    })
-    expect(ensureRes.status).toBe(503)
-    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
-    expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
-  })
-
-  it('POST /v1/runtimes/start does not launch legacy interactive harness before attach', async () => {
-    const interactiveBanner = 'INTERACTIVE_START_LAUNCHED'
-    const fakeCodex = await installFakeCodex(tmpDir, 'fake-codex-interactive-start', {
-      interactiveBanner,
-      interactiveDelayMs: 2_000,
-    })
-    const hsid = await resolveSession('lifecycle-interactive-start')
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: interactiveCliIntent('openai', {
-        pathPrepend: [fakeCodex.binDir],
-      }),
-    })
-    expect(startRes.status).toBe(503)
-    const body = (await startRes.json()) as { error?: { code?: string; message?: string } }
-    expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('interactive runtime is not broker-admissible')
-
-    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
-    expect(execLog).toBe('')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 7. Attach on SDK runtime returns error
-// ---------------------------------------------------------------------------
-describe('attach on SDK runtime', () => {
-  it('returns error for SDK runtime attach requests', async () => {
-    const hsid = await resolveSession('sdk-test-7')
-
-    const turnRes = await postJson('/v1/turns', {
-      hostSessionId: hsid,
-      prompt: 'Attach test',
-      runtimeIntent: sdkIntent(),
-    })
-    const turnData = (await turnRes.json()) as any
-
-    // Wait for SDK turn to complete
-    await new Promise((r) => setTimeout(r, 1000))
-
-    const attachRes = await fetchSocket(`/v1/attach?runtimeId=${turnData.runtimeId}`)
-    // SDK runtimes should reject attach
-    expect(attachRes.status).toBeGreaterThanOrEqual(400)
-    const errorData = (await attachRes.json()) as any
-    expect(errorData.error).toBeDefined()
-  })
 })
