@@ -1,0 +1,645 @@
+/**
+ * RED acceptance tests for the broker post-mortem forensics surface.
+ *
+ * These tests exercise the operator commands against a real hrc-server and a
+ * persisted broker ledger. They intentionally avoid importing proposed
+ * implementation helpers so the contract remains the CLI behavior described
+ * by the task: filtered raw events, interleaved transcripts, stats, runtime
+ * discovery, explicit post-mortem access, and live scope-selector resolution.
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { createHrcServer } from 'hrc-server'
+import type { HrcServer } from 'hrc-server'
+import { openHrcDatabase } from 'hrc-store-sqlite'
+
+import { createHrcTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
+import { main } from '../cli'
+
+type CliResult = {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+class CliExit extends Error {
+  constructor(readonly code: number) {
+    super(`CLI exited with code ${code}`)
+  }
+}
+
+function captureChunk(chunk: string | ArrayBufferView | ArrayBuffer, chunks: string[]): void {
+  if (typeof chunk === 'string') {
+    chunks.push(chunk)
+    return
+  }
+  chunks.push(Buffer.from(chunk as ArrayBufferView).toString('utf8'))
+}
+
+async function runCli(args: string[], env: Record<string, string>): Promise<CliResult> {
+  const stdoutChunks: string[] = []
+  const stderrChunks: string[] = []
+  const originalStdoutWrite = process.stdout.write
+  const originalStderrWrite = process.stderr.write
+  const originalExit = process.exit
+  const originalEnv = new Map<string, string | undefined>()
+
+  for (const [key, value] of Object.entries(env)) {
+    originalEnv.set(key, process.env[key])
+    process.env[key] = value
+  }
+
+  process.stdout.write = ((chunk: string | ArrayBufferView | ArrayBuffer, ...rest: unknown[]) => {
+    captureChunk(chunk, stdoutChunks)
+    const callback = rest.find((value) => typeof value === 'function') as (() => void) | undefined
+    callback?.()
+    return true
+  }) as typeof process.stdout.write
+
+  process.stderr.write = ((chunk: string | ArrayBufferView | ArrayBuffer, ...rest: unknown[]) => {
+    captureChunk(chunk, stderrChunks)
+    const callback = rest.find((value) => typeof value === 'function') as (() => void) | undefined
+    callback?.()
+    return true
+  }) as typeof process.stderr.write
+
+  process.exit = ((code?: number) => {
+    throw new CliExit(code ?? 0)
+  }) as typeof process.exit
+
+  try {
+    await main(args)
+    return { stdout: stdoutChunks.join(''), stderr: stderrChunks.join(''), exitCode: 0 }
+  } catch (error) {
+    if (error instanceof CliExit) {
+      return {
+        stdout: stdoutChunks.join(''),
+        stderr: stderrChunks.join(''),
+        exitCode: error.code,
+      }
+    }
+    throw error
+  } finally {
+    process.stdout.write = originalStdoutWrite
+    process.stderr.write = originalStderrWrite
+    process.exit = originalExit
+    for (const [key, value] of originalEnv.entries()) {
+      if (value === undefined) {
+        process.env[key] = undefined
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+}
+
+const SCOPE_REF = 'agent:room-coordinator:project:agent-control-plane:task:T-05091:role:coordinator'
+const SCOPE_HANDLE = 'room-coordinator@agent-control-plane:T-05091/coordinator'
+const HOST_SESSION_ID = 'hs-forensics-main'
+const RUNTIME_ID = 'rt-forensics-main'
+const RUN_ID = 'run-forensics-main'
+const INVOCATION_ID = 'inv-forensics-main'
+const FIRST_ACTIVITY = '2026-07-01T00:00:01.000Z'
+const LAST_ACTIVITY = '2026-07-01T00:00:12.000Z'
+const LONG_TAIL = 'END-OF-LONG-MESSAGE'
+const LONG_MESSAGE = `${'large-message '.repeat(120)}${LONG_TAIL}`
+
+type SeedRuntimeGraphOptions = {
+  hostSessionId: string
+  runtimeId: string
+  runId: string
+  invocationId: string
+  scopeRef: string
+  laneRef?: string
+  status?: string
+  createdAt?: string
+}
+
+function seedRuntimeGraph(fixture: HrcServerTestFixture, options: SeedRuntimeGraphOptions): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const createdAt = options.createdAt ?? '2026-07-01T00:00:00.000Z'
+  const laneRef = options.laneRef ?? 'main'
+
+  try {
+    if (!db.sessions.getByHostSessionId(options.hostSessionId)) {
+      db.sessions.insert({
+        hostSessionId: options.hostSessionId,
+        scopeRef: options.scopeRef,
+        laneRef,
+        generation: 1,
+        status: 'terminated',
+        createdAt,
+        updatedAt: createdAt,
+        ancestorScopeRefs: [],
+      })
+    }
+
+    db.runtimes.insert({
+      runtimeId: options.runtimeId,
+      hostSessionId: options.hostSessionId,
+      scopeRef: options.scopeRef,
+      laneRef,
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: options.status ?? 'terminated',
+      supportsInflightInput: false,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      activeOperationId: `op-${options.runtimeId}`,
+      lastActivityAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+    })
+
+    db.runs.insert({
+      runId: options.runId,
+      hostSessionId: options.hostSessionId,
+      runtimeId: options.runtimeId,
+      scopeRef: options.scopeRef,
+      laneRef,
+      generation: 1,
+      transport: 'headless',
+      status: 'completed',
+      acceptedAt: createdAt,
+      completedAt: createdAt,
+      updatedAt: createdAt,
+      operationId: `op-${options.runtimeId}`,
+      invocationId: options.invocationId,
+    })
+
+    db.brokerInvocations.insert({
+      invocationId: options.invocationId,
+      operationId: `op-${options.runtimeId}`,
+      runtimeId: options.runtimeId,
+      runId: options.runId,
+      brokerProtocol: 'harness-broker/0.1',
+      brokerDriver: 'codex-app-server',
+      invocationState: 'terminated',
+      capabilitiesJson: JSON.stringify({ turns: 'multi' }),
+      specHash: `sha256:spec-${options.runtimeId}`,
+      startRequestHash: `sha256:req-${options.runtimeId}`,
+      selectedProfileHash: `sha256:profile-${options.runtimeId}`,
+      createdAt,
+      updatedAt: createdAt,
+    })
+  } finally {
+    db.close()
+  }
+}
+
+function appendEvent(
+  fixture: HrcServerTestFixture,
+  input: {
+    seq: number
+    type: string
+    payload: unknown
+    turnId?: string
+    runtimeId?: string
+    runId?: string
+    invocationId?: string
+    time?: string
+  }
+): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const invocationId = input.invocationId ?? INVOCATION_ID
+  const runtimeId = input.runtimeId ?? RUNTIME_ID
+  const runId = input.runId ?? RUN_ID
+  const time = input.time ?? `2026-07-01T00:00:${String(input.seq).padStart(2, '0')}.000Z`
+  const envelope = {
+    invocationId,
+    seq: input.seq,
+    time,
+    type: input.type,
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    payload: input.payload,
+  }
+
+  try {
+    db.brokerInvocationEvents.appendEvent({
+      invocationId,
+      seq: input.seq,
+      time,
+      type: input.type as never,
+      runtimeId,
+      runId,
+      payload: input.payload,
+      envelopeJson: JSON.stringify(envelope),
+    })
+  } finally {
+    db.close()
+  }
+}
+
+function seedForensicsLedger(fixture: HrcServerTestFixture): void {
+  seedRuntimeGraph(fixture, {
+    hostSessionId: HOST_SESSION_ID,
+    runtimeId: RUNTIME_ID,
+    runId: RUN_ID,
+    invocationId: INVOCATION_ID,
+    scopeRef: SCOPE_REF,
+  })
+
+  appendEvent(fixture, { seq: 1, type: 'turn.started', turnId: 'turn-1', payload: {} })
+  appendEvent(fixture, {
+    seq: 2,
+    type: 'tool.call.started',
+    turnId: 'turn-1',
+    payload: {
+      toolCallId: 'tool-1',
+      name: 'Bash',
+      input: { command: 'bun test packages/hrc-cli' },
+    },
+  })
+  appendEvent(fixture, {
+    seq: 3,
+    type: 'assistant.message.completed',
+    turnId: 'turn-1',
+    payload: { content: [{ type: 'text', text: 'nested assistant message' }] },
+  })
+  appendEvent(fixture, {
+    seq: 4,
+    type: 'driver.notice',
+    turnId: 'turn-1',
+    payload: { notice: 'driver recovered its session' },
+  })
+  appendEvent(fixture, {
+    seq: 5,
+    type: 'tool.call.started',
+    turnId: 'turn-1',
+    payload: {
+      toolCallId: 'tool-2',
+      name: 'Read',
+      input: { file_path: '/tmp/forensics.ts' },
+    },
+  })
+  appendEvent(fixture, {
+    seq: 6,
+    type: 'assistant.message.completed',
+    turnId: 'turn-1',
+    payload: { content: [{ type: 'text', text: LONG_MESSAGE }] },
+  })
+  appendEvent(fixture, {
+    seq: 7,
+    type: 'driver.notice',
+    turnId: 'turn-1',
+    payload: { notice: 'this row will be corrupted below' },
+  })
+  appendEvent(fixture, {
+    seq: 8,
+    type: 'tool.call.started',
+    turnId: 'turn-1',
+    payload: {
+      toolCallId: 'tool-3',
+      name: 'AskUserQuestion',
+      input: { prompt: 'Which runtime should be inspected?' },
+    },
+  })
+  appendEvent(fixture, { seq: 9, type: 'turn.completed', turnId: 'turn-1', payload: {} })
+  appendEvent(fixture, { seq: 10, type: 'turn.started', turnId: 'turn-2', payload: {} })
+  appendEvent(fixture, {
+    seq: 11,
+    type: 'tool.call.started',
+    turnId: 'turn-2',
+    payload: {
+      toolCallId: 'tool-4',
+      name: 'Bash',
+      input: { command: 'hrc monitor stats rt-forensics-main' },
+    },
+  })
+  appendEvent(fixture, {
+    seq: 12,
+    type: 'turn.completed',
+    turnId: 'turn-2',
+    payload: {},
+    time: LAST_ACTIVITY,
+  })
+
+  // Reproduce the older persisted shape where broker_event_json contains an
+  // envelope-like object with payload nested under `payload`.
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    db.sqlite
+      .query(
+        `UPDATE broker_invocation_events
+           SET broker_event_json = ?
+         WHERE invocation_id = ? AND seq = 3`
+      )
+      .run(
+        JSON.stringify({
+          payload: { content: [{ type: 'text', text: 'nested assistant message' }] },
+        }),
+        INVOCATION_ID
+      )
+
+    // A damaged historical row must remain inspectable rather than aborting
+    // the entire event or transcript command.
+    db.sqlite
+      .query(
+        `UPDATE broker_invocation_events
+           SET broker_event_json = ?
+         WHERE invocation_id = ? AND seq = 7`
+      )
+      .run('{not valid json', INVOCATION_ID)
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * The scope handles under test name a real project id. Project resolution
+ * marker-scans a search root for a canonical checkout of that project, so
+ * without a provisioned root these tests silently depend on the developer's
+ * machine having that project cloned next to this one. Provision a real
+ * canonical checkout in a temp search root instead: resolution still runs for
+ * real and still has to find the project by marker scan — only the ambient
+ * machine dependency is removed.
+ */
+let projectSearchRoot: string | undefined
+
+function provisionProjectSearchRoot(projectIds: readonly string[]): string {
+  const root = mkdtempSync(join(tmpdir(), 'hrc-forensics-projects-'))
+  for (const projectId of projectIds) {
+    const projectRoot = join(root, projectId)
+    mkdirSync(projectRoot, { recursive: true })
+    const init = spawnSync('git', ['init', '-q'], { cwd: projectRoot, stdio: 'ignore' })
+    if (init.status !== 0) {
+      throw new Error(`failed to provision canonical checkout fixture for ${projectId}`)
+    }
+  }
+  return root
+}
+
+function cliEnv(fixture: HrcServerTestFixture): Record<string, string> {
+  if (projectSearchRoot === undefined) {
+    throw new Error('project search root fixture is not provisioned')
+  }
+  return {
+    HRC_RUNTIME_DIR: fixture.runtimeRoot,
+    HRC_STATE_DIR: fixture.stateRoot,
+    HRC_PROJECT_SEARCH_ROOTS: projectSearchRoot,
+  }
+}
+
+function parseNdjson(text: string): Array<Record<string, unknown>> {
+  if (text === '') return []
+  return text
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+let fixture: HrcServerTestFixture
+let server: HrcServer | undefined
+
+beforeEach(async () => {
+  projectSearchRoot = provisionProjectSearchRoot(['agent-control-plane', 'hrc-runtime'])
+  fixture = await createHrcTestFixture('hrc-broker-forensics-')
+  seedForensicsLedger(fixture)
+  server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+})
+
+afterEach(async () => {
+  if (server) {
+    await server.stop()
+    server = undefined
+  }
+  await fixture.cleanup()
+  if (projectSearchRoot !== undefined) {
+    rmSync(projectSearchRoot, { recursive: true, force: true })
+    projectSearchRoot = undefined
+  }
+})
+
+describe('hrc monitor stats and selector convenience', () => {
+  it('selects terminated runtimes newest-first with --previous and never selects a live runtime', async () => {
+    const terminatedNewest = {
+      runtimeId: 'rt-forensics-terminated-newest',
+      invocationId: 'inv-forensics-terminated-newest',
+      runId: 'run-forensics-terminated-newest',
+    }
+    const terminatedSecond = {
+      runtimeId: 'rt-forensics-terminated-second',
+      invocationId: 'inv-forensics-terminated-second',
+      runId: 'run-forensics-terminated-second',
+    }
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-terminated-second',
+      runtimeId: terminatedSecond.runtimeId,
+      runId: terminatedSecond.runId,
+      invocationId: terminatedSecond.invocationId,
+      scopeRef: SCOPE_REF,
+      createdAt: '2026-07-02T00:00:00.000Z',
+    })
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-terminated-newest',
+      runtimeId: terminatedNewest.runtimeId,
+      runId: terminatedNewest.runId,
+      invocationId: terminatedNewest.invocationId,
+      scopeRef: SCOPE_REF,
+      createdAt: '2026-07-03T00:00:00.000Z',
+    })
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-live-newest',
+      runtimeId: 'rt-forensics-live-newest',
+      runId: 'run-forensics-live-newest',
+      invocationId: 'inv-forensics-live-newest',
+      scopeRef: SCOPE_REF,
+      status: 'busy',
+      createdAt: '2026-07-04T00:00:00.000Z',
+    })
+    appendEvent(fixture, {
+      runtimeId: terminatedNewest.runtimeId,
+      runId: terminatedNewest.runId,
+      invocationId: terminatedNewest.invocationId,
+      seq: 1,
+      type: 'newest.terminated',
+      payload: {},
+    })
+    appendEvent(fixture, {
+      runtimeId: terminatedSecond.runtimeId,
+      runId: terminatedSecond.runId,
+      invocationId: terminatedSecond.invocationId,
+      seq: 1,
+      type: 'second.terminated',
+      payload: {},
+    })
+
+    const previous = await runCli(
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '--json'],
+      cliEnv(fixture)
+    )
+    const previousTwo = await runCli(
+      ['monitor', 'events', SCOPE_HANDLE, '--previous', '2', '--ndjson'],
+      cliEnv(fixture)
+    )
+
+    expect(previous.exitCode).toBe(0)
+    expect(previous.stdout).toContain(terminatedNewest.runtimeId)
+    expect(previous.stdout).toContain('newest.terminated')
+    expect(previous.stdout).not.toContain('rt-forensics-live-newest')
+    expect(previousTwo.exitCode).toBe(0)
+    expect(previousTwo.stdout).toContain(terminatedSecond.runtimeId)
+    expect(previousTwo.stdout).toContain('second.terminated')
+  })
+
+  it('errors when --previous over-counts terminated runtimes or is combined with --latest', async () => {
+    const overCount = await runCli(
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '2'],
+      cliEnv(fixture)
+    )
+    const conflicting = await runCli(
+      ['monitor', 'stats', SCOPE_HANDLE, '--previous', '--latest'],
+      cliEnv(fixture)
+    )
+
+    expect(overCount.exitCode).not.toBe(0)
+    expect(overCount.stderr).toContain('only 1 exist')
+    expect(conflicting.exitCode).not.toBe(0)
+    expect(conflicting.stderr).toContain('--previous and --latest are mutually exclusive')
+  })
+
+  it('resolves a live runtime from its scope selector', async () => {
+    const liveRuntimeId = 'rt-forensics-live'
+    const liveInvocationId = 'inv-forensics-live'
+    const liveScopeRef = 'agent:room-live:project:hrc-runtime:task:T-09999'
+    const liveScopeHandle = 'room-live@hrc-runtime:T-09999'
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-live',
+      runtimeId: liveRuntimeId,
+      runId: 'run-forensics-live',
+      invocationId: liveInvocationId,
+      scopeRef: liveScopeRef,
+      status: 'ready',
+    })
+    appendEvent(fixture, {
+      invocationId: liveInvocationId,
+      runtimeId: liveRuntimeId,
+      runId: 'run-forensics-live',
+      seq: 1,
+      type: 'live.only',
+      payload: {},
+    })
+
+    const result = await runCli(['monitor', 'stats', liveScopeHandle, '--json'], cliEnv(fixture))
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    const stats = JSON.parse(result.stdout) as {
+      runtimeIds: string[]
+      invocationIds: string[]
+      eventTypes: Record<string, number>
+    }
+    expect(stats.runtimeIds).toEqual([liveRuntimeId])
+    expect(stats.invocationIds).toEqual([liveInvocationId])
+    expect(stats.eventTypes).toEqual({ 'live.only': 1 })
+  })
+
+  it('reports histogram, turn/tool counts, activity bounds, and per-turn tool breakdown', async () => {
+    // This runtime is terminated. Explicit runtime IDs preserve post-mortem
+    // access without allowing unavailable history to shadow implicit selectors.
+    const result = await runCli(['monitor', 'stats', RUNTIME_ID], cliEnv(fixture))
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toMatch(/tool\.call\.started\s*(?:\||:)?\s*4/m)
+    expect(result.stdout).toMatch(/turn(?: count|s)\s*(?:\||:)?\s*2/i)
+    expect(result.stdout).toMatch(/tool(?:-call| call)s?\s*(?:\||:)?\s*4/i)
+    expect(result.stdout).toContain(FIRST_ACTIVITY)
+    expect(result.stdout).toContain(LAST_ACTIVITY)
+    expect(result.stdout).toMatch(/turn-1.*3/)
+    expect(result.stdout).toMatch(/turn-2.*1/)
+  })
+
+  it('lists every ambiguous runtime candidate and --latest selects the newest', async () => {
+    const latestRuntimeId = 'rt-forensics-latest'
+    const latestInvocationId = 'inv-forensics-latest'
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.updateStatus(RUNTIME_ID, 'ready', '2026-07-01T00:00:00.000Z')
+    } finally {
+      db.close()
+    }
+    seedRuntimeGraph(fixture, {
+      hostSessionId: HOST_SESSION_ID,
+      runtimeId: latestRuntimeId,
+      runId: 'run-forensics-latest',
+      invocationId: latestInvocationId,
+      scopeRef: SCOPE_REF,
+      laneRef: 'repair',
+      status: 'ready',
+      createdAt: '2026-07-02T00:00:00.000Z',
+    })
+    appendEvent(fixture, {
+      invocationId: latestInvocationId,
+      runtimeId: latestRuntimeId,
+      runId: 'run-forensics-latest',
+      seq: 1,
+      type: 'latest.only',
+      payload: {},
+      time: '2026-07-02T00:00:01.000Z',
+    })
+
+    const ambiguous = await runCli(['monitor', 'stats', SCOPE_HANDLE], cliEnv(fixture))
+    expect(ambiguous.exitCode).not.toBe(0)
+    expect(ambiguous.stderr).toContain(RUNTIME_ID)
+    expect(ambiguous.stderr).toContain(latestRuntimeId)
+
+    const latest = await runCli(
+      ['monitor', 'stats', SCOPE_HANDLE, '--latest', '--json'],
+      cliEnv(fixture)
+    )
+    expect(latest.exitCode).toBe(0)
+    expect(latest.stdout).toContain(latestRuntimeId)
+    expect(latest.stdout).toContain('latest.only')
+    expect(latest.stdout).not.toContain('tool.call.started')
+  })
+})
+
+describe('hrc ls runtimes post-mortem discovery filters', () => {
+  function seedDistractorRuntime(): void {
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-distractor',
+      runtimeId: 'rt-forensics-distractor',
+      runId: 'run-forensics-distractor',
+      invocationId: 'inv-forensics-distractor',
+      scopeRef: 'agent:other:project:agent-control-plane:task:T-05091',
+    })
+  }
+
+  it('filters hrc ls runtimes by --session hostSessionId', async () => {
+    seedDistractorRuntime()
+
+    const result = await runCli(
+      ['ls', 'runtimes', '--session', HOST_SESSION_ID, '--all', '--json'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    const rows = JSON.parse(result.stdout) as Array<{ runtimeId: string }>
+    expect(rows.map((row) => row.runtimeId)).toEqual([RUNTIME_ID])
+  })
+
+  it('accepts monitor-selector grammar for the --scope filter', async () => {
+    seedDistractorRuntime()
+
+    const result = await runCli(
+      ['ls', 'runtimes', '--scope', SCOPE_HANDLE, '--all', '--json'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    const rows = JSON.parse(result.stdout) as Array<{ runtimeId: string }>
+    expect(rows.map((row) => row.runtimeId)).toEqual([RUNTIME_ID])
+  })
+})
+
+void parseNdjson
