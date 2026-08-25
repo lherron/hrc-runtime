@@ -73,62 +73,40 @@ async function runMain(args: string[]): Promise<CliResult> {
 describe('hrcchat did-you-mean — PHANTOM MAP wins before fuzzy (§7a)', () => {
   // ── hrcchat msg → messages ──
 
-  it('hrcchat msg → exit 2', async () => {
+  it('hrcchat msg rejects once with the phantom messages suggestion', async () => {
     const result = await runMain(['msg'])
     expect(result.exitCode).toBe(2)
-  })
-
-  it('hrcchat msg → stdout is empty (no action side-effect)', async () => {
-    const result = await runMain(['msg'])
     // "messages" action must NOT have run
     expect(result.stdout).toBe('')
-  })
-
-  it('hrcchat msg → stderr contains "messages" (phantom map suggestion)', async () => {
-    const result = await runMain(['msg'])
     // RED: currently no suggestion at all — "msg" is too far from "messages" for
     // Commander's built-in fuzzy. Phantom map must add it explicitly.
     expect(result.stderr).toMatch(/messages/i)
-  })
-
-  it('hrcchat msg → stderr contains "did you mean" hint', async () => {
-    const result = await runMain(['msg'])
     // RED: no "did you mean" hint currently emitted for "msg"
     expect(result.stderr).toMatch(/did you mean/i)
+    expect((result.stderr.match(/unknown command/gi) ?? []).length).toBe(1)
   })
 
   // ── hrcchat seq → show (WRONG suggestion currently: Commander says "send") ──
 
-  it('hrcchat seq → exit 2', async () => {
+  it('hrcchat seq rejects once with show, never send, and no raw Commander line', async () => {
     const result = await runMain(['seq'])
     expect(result.exitCode).toBe(2)
-  })
-
-  it('hrcchat seq → stdout is empty (no action side-effect)', async () => {
-    const result = await runMain(['seq'])
     // "show" action must NOT have run
     expect(result.stdout).toBe('')
-  })
-
-  it('hrcchat seq → stderr contains "show" (phantom map overrides fuzzy)', async () => {
-    const result = await runMain(['seq'])
     // RED: Commander currently fuzzy-matches "seq" to "send". The phantom map must
     // win: `seq` → `show`. After P3, the suggestion must be "show" not "send".
     expect(result.stderr).toMatch(/\bshow\b/i)
-  })
-
-  it('hrcchat seq → stderr does NOT suggest "send" (phantom map replaced fuzzy)', async () => {
-    const result = await runMain(['seq'])
     // RED: currently Commander suggests "(Did you mean send?)". After P3 the phantom
     // map fires first and replaces the suggestion with "show". "send" must not appear
     // as the suggestion.
     expect(result.stderr).not.toMatch(/did you mean.*\bsend\b/i)
-  })
-
-  it('hrcchat seq → stderr contains "did you mean" hint for show', async () => {
-    const result = await runMain(['seq'])
     // RED: currently "did you mean send?" — after P3 "did you mean 'show'?" (or similar)
     expect(result.stderr).toMatch(/did you mean.*\bshow\b/i)
+    expect((result.stderr.match(/unknown command/gi) ?? []).length).toBe(1)
+    const rawCommanderLines = result.stderr
+      .split('\n')
+      .filter((line) => /^error: unknown command/.test(line) && !line.startsWith('hrcchat:'))
+    expect(rawCommanderLines).toHaveLength(0)
   })
 })
 
@@ -159,39 +137,5 @@ describe('hrcchat did-you-mean — ordinary fuzzy misspellings (§7b)', () => {
     expect(result.stdout).toBe('')
     expect(result.stderr).toMatch(/\bdm\b/i)
     expect(result.stderr).toMatch(/did you mean/i)
-  })
-})
-
-// ===========================================================================
-// §7d: Double-print suppression — Commander's direct stderr output is suppressed
-// ===========================================================================
-
-describe('hrcchat did-you-mean — Commander direct output suppressed (§7d)', () => {
-  it('hrcchat seq → "unknown command" appears at most once in stderr (no duplicate)', async () => {
-    const result = await runMain(['seq'])
-    // RED: currently Commander writes "(Did you mean send?)" directly to stderr AND
-    // the error handler also writes via exitWithError. P3 suppresses Commander's direct
-    // output; only the hrcchat-prefixed handler line remains.
-    const occurrences = (result.stderr.match(/unknown command/gi) ?? []).length
-    expect(occurrences).toBe(1)
-  })
-
-  it('hrcchat msg → "unknown command" appears at most once in stderr', async () => {
-    const result = await runMain(['msg'])
-    // RED: Commander direct write + handler write currently = 2 occurrences
-    const occurrences = (result.stderr.match(/unknown command/gi) ?? []).length
-    expect(occurrences).toBe(1)
-  })
-
-  it('hrcchat seq → no raw Commander "error:" prefix line in stderr', async () => {
-    const result = await runMain(['seq'])
-    // RED: Commander writes "error: unknown command 'seq'" directly. After P3, this
-    // raw line (without "hrcchat:" prefix) must not appear.
-    const lines = result.stderr.split('\n').filter((l) => l.trim().length > 0)
-    const rawCommanderLines = lines.filter(
-      (l) => /^error: unknown command/.test(l) && !l.startsWith('hrcchat:')
-    )
-    // RED: raw Commander line currently present; after P3 it is suppressed
-    expect(rawCommanderLines).toHaveLength(0)
   })
 })
