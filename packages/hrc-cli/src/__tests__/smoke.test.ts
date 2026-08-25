@@ -143,23 +143,6 @@ afterEach(async () => {
 })
 
 describe('hrc-cli commander migration smoke fixtures', () => {
-  it('monitor show --json exposes snapshot counters', async () => {
-    server = await createHrcServer(serverOpts())
-
-    const result = await runCli(['monitor', 'show', '--json'], cliEnv())
-
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      kind: 'monitor.snapshot',
-      daemon: { status: 'healthy' },
-      counts: {
-        sessions: expect.any(Number),
-        runtimes: expect.any(Number),
-      },
-    })
-  })
-
   it('top-level --help is human-readable and lists the command groups', async () => {
     const result = await runCli(['--help'], cliEnv())
     const output = result.stdout + result.stderr

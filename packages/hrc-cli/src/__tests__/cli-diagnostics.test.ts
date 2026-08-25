@@ -248,6 +248,7 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc monitor show --json prints snapshot JSON with daemon status and exits 0', async () => {
     const result = await runCli(['monitor', 'show', '--json'], cliEnv())
     expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
     const body = JSON.parse(result.stdout.trim())
     expect(body.kind).toBe('monitor.snapshot')
     expect(body.daemon.status).toBe('healthy')
