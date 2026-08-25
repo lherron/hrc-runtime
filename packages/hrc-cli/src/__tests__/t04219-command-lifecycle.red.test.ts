@@ -349,7 +349,7 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
       await seedRunRoots('rex', 'agent-spaces')
     })
 
-    it('hrc run --attach-only rex@agent-spaces --dry-run exits 0 and shows attach plan', async () => {
+    it('hrc run --attach-only rex@agent-spaces --dry-run shows an attach plan without starting', async () => {
       const result = await runCli(
         ['run', '--attach-only', 'rex@agent-spaces', '--dry-run'],
         cliEnv({
@@ -362,18 +362,6 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
       expect(result.stdout).toContain('local plan preview')
       // attach-only plan must mention the attach-only intent (not a full start plan)
       expect(result.stdout).toMatch(/attach/i)
-    })
-
-    it('hrc run --attach-only plan does NOT start a new session', async () => {
-      const result = await runCli(
-        ['run', '--attach-only', 'rex@agent-spaces', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-      // RED: flag not registered
-      expect(result.exitCode).toBe(0)
       // Dry-run must NOT report a new session start
       expect(result.stdout).not.toMatch(/start|ensure/i)
     })
@@ -386,22 +374,12 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
 describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume verb)', () => {
   // ── no-server: --help ──
 
-  it('hrc resume --help exits 0 with Usage', async () => {
+  it('hrc resume --help documents its continuation semantics and alternate paths', async () => {
     const result = await runCli(['resume', '--help'])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/i)
-  })
-
-  it('hrc resume --help states continuation-resume semantics', async () => {
-    const result = await runCli(['resume', '--help'])
-    expect(result.exitCode).toBe(0)
     // Help text describes resuming a stored continuation (not run aliasing).
     expect(result.stdout).toMatch(/continuation/i)
-  })
-
-  it('hrc resume --help points to hrc attach / hrc run for the other paths', async () => {
-    const result = await runCli(['resume', '--help'])
-    expect(result.exitCode).toBe(0)
     // T-04836: resume is not attach-only; help points elsewhere for attach/run.
     expect(result.stdout).toMatch(/hrc attach|hrc run/i)
   })

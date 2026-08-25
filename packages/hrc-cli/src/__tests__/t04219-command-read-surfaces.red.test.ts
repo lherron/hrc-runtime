@@ -334,24 +334,12 @@ async function seedSessionAndRuntime(
 describe('hrc show — §3 (RED: command does not exist yet)', () => {
   // ── no-server: --help ──
 
-  it('hrc show --help exits 0 with Usage', async () => {
+  it('hrc show --help documents usage, selector, and stable JSON output', async () => {
     const result = await runCli(['show', '--help'])
     // RED: exits 2 with "unknown command: show" until implemented
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/i)
-  })
-
-  it('hrc show --help mentions <selector> argument', async () => {
-    const result = await runCli(['show', '--help'])
-    // RED: command not registered yet
-    expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/selector/i)
-  })
-
-  it('hrc show --help mentions --json flag for stable JSON output', async () => {
-    const result = await runCli(['show', '--help'])
-    // RED: command not registered yet
-    expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('--json')
   })
 
@@ -497,17 +485,11 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
 describe('hrc ls — §4 (RED: command does not exist yet)', () => {
   // ── no-server: --help ──
 
-  it('hrc ls --help exits 0 with Usage', async () => {
+  it('hrc ls --help documents usage and all accepted nouns', async () => {
     const result = await runCli(['ls', '--help'])
     // RED: exits 2 "unknown command: ls"
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/i)
-  })
-
-  it('hrc ls --help lists the accepted nouns', async () => {
-    const result = await runCli(['ls', '--help'])
-    // RED: command not registered
-    expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/runtimes/i)
     expect(output).toMatch(/sessions/i)
@@ -609,17 +591,11 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
 describe('hrc admin runs — §5 (RED: command does not exist yet)', () => {
   // ── no-server: --help ──
 
-  it('hrc admin --help exits 0 with Usage', async () => {
+  it('hrc admin --help documents usage and the runs subgroup', async () => {
     const result = await runCli(['admin', '--help'])
     // RED: exits 2 "unknown command: admin"
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/i)
-  })
-
-  it('hrc admin --help lists the runs subgroup', async () => {
-    const result = await runCli(['admin', '--help'])
-    // RED: command not registered
-    expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/runs/i)
   })
 
