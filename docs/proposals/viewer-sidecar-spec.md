@@ -1,6 +1,6 @@
 # Viewer Sidecar Spec: Extracting Ghostty Presentation from hrc-server
 
-Status: APPROVED rev 3 — daedalus ruling DM #21133 (2026-08-26); durable law `hrc-runtime.viewer-presentation-sidecar` (bc10bbdc)  
+Status: DRAFT rev 4 — material amendment to APPROVED rev 3 (DM #21133, law `hrc-runtime.viewer-presentation-sidecar`), submitted to daedalus. Trigger: P3 live shadow run reaped production panes (§10).  
 Date: 2026-08-26  
 Author: mable@hrc-runtime  
 Primary systems: hrc-server (event ledger, runtime lifecycle), new `packages/hrc-viewer`, `ghostmux` CLI, ScriptableGhostty
@@ -42,7 +42,7 @@ ghostmux actuates Ghostty. It knows nothing about hrc.
 - No change to the tmux substrate, broker protocol, or which runtimes get an attachable `:tui` window (system C is untouched except for naming).
 - No change to `hrc run` / `hrc attach` operator-terminal attach.
 - No new authentication, provenance, signing, attestation, or audit surfaces. The viewer is a same-user, same-host, loopback consumer of a Unix socket the user already owns; it inherits exactly the trust the `hrc` CLI has. Anything beyond that is out of scope for this spec.
-- No cross-node behavior. A viewer serves the daemon on its own node for its own GUI user.
+- No cross-node behavior. A viewer serves ONE daemon on its own node for its own GUI user. **Several daemons per user share one Ghostty registry** (production `hrc` and the `hrc-dev` lane on max3 today); each may have its own viewer, and a viewer must never act on another daemon's panes (§4.4 ownership, §4.5).
 - No HRCMac / libghostty embedding (that campaign has its own spec; §9 notes the relationship).
 
 ## 3. Current coupling being removed (evidence)
@@ -98,7 +98,7 @@ Every input arrives on one of two surfaces, both side-effect-free by contract (�
 | `turn.started` / `turn.input_resumed` | status bar → `running` |
 | `turn.awaiting_input` | status bar → `awaiting` |
 | `turn.completed` | status bar → `idle` |
-| `runtime.terminated` / `runtime.dead` / `runtime.stale` / `runtime.crashed` | status bar → `exited` (sticky); schedule reap after `linger` seconds (default 300, `0` = immediate) |
+| `runtime.terminated` / `runtime.dead` / `runtime.stale` / `runtime.crashed` | status bar → `exited` (sticky); schedule reap after `linger` seconds (default 300, `0` = immediate). Reap is fenced on the pane's live `hrc_runtime_id` equalling the event's `runtimeId` (globally unique `rt-<uuid>`), so an event from this daemon can only ever reap a pane mirroring this daemon's runtime, owned or legacy; foreign panes are excluded regardless. |
 | `session.retitled` | `ghostmux set-title` on the pane for that session |
 | `context.cleared` / `session.generation_auto_rotated` | rebind pane metadata `hrc_runtime_id` on the next `runtime.*` for the new generation (existing reuse rule) |
 | stream `gap` / `ledger_replaced` / socket EOF | reconnect from `/v1/events/tail` head; run full reconcile (§4.5) |
@@ -113,7 +113,9 @@ These rules are the shipped T-05237 / T-07118 / T-07121 behavior, moved out of c
 - **Tab key** = `task:<T-XXXXX>` when the scope carries a real task id, else `project:<projectId>:primary`. Tab identity is the pair `(windowKey, tabKey)`.
 - **Pane key** = the normalized `(scopeRef, laneRef)` pair, exactly as shipped (`ghostmux.ts:157-168`, `:247-270`), **global**: at most one live viewer pane per hrc session. `agentId` is presentation metadata used for theme and labels, never uniqueness authority — two role-qualified scopes for the same agent/task are two sessions and get two panes (characterized by `ghostmux-manager-viewer.test.ts:353-391`, which moves to the viewer package unchanged). A pane wearing the right key but resident in a different window is not a split target (residency fence).
 - Placement authority is split: pane metadata = logical identity; first-class `window_id` = physical residency. Order is mandatory: find-or-create window first, then evaluate candidates.
-- Pane metadata written: `hrc_role=headless-agent-pane`, `hrc_window_key`, `hrc_tab_key`, `hrc_pane_key`, `hrc_agent_id`, `hrc_lane_ref`, `hrc_project`, `hrc_task_id`, `hrc_scope_ref`, `hrc_runtime_id`, `hrc_host_session_id`, `hrc_generation`.
+- Pane metadata written: `hrc_role=headless-agent-pane`, `hrc_window_key`, `hrc_tab_key`, `hrc_pane_key`, `hrc_agent_id`, `hrc_lane_ref`, `hrc_project`, `hrc_task_id`, `hrc_scope_ref`, `hrc_runtime_id`, `hrc_host_session_id`, `hrc_generation`, **`hrc_owner_root`**.
+- **Ownership.** `hrc_owner_root` is the owning daemon's `runtimeRoot` (absolute path, e.g. `/Users/lherron/praesidium/var/run/hrc` vs `.../hrc-dev`), as self-reported by that daemon in the read model (§5.3). The Ghostty registry is per user and shared by every daemon of that user, so a pane's owner is NOT derivable from its runtime id alone once a second daemon exists. A viewer treats a pane as **owned** iff `hrc_owner_root` equals its connected daemon's `runtimeRoot`; **foreign** iff it names a different root; **legacy** iff absent. Foreign panes are invisible to the viewer — never painted, retitled, rebound, or reaped. Legacy panes are adopt-only (§4.5).
+- The pane key is scoped by owner: find-or-create matches on `(hrc_owner_root, hrc_pane_key)`. Two daemons hosting the same `(scopeRef, laneRef)` (prod and hrc-dev both running `cody@hrc-runtime:T-07595`) get two panes; the in-daemon path today would have collided on that key.
 - Pane command: `hrc session-report ... --wait-timeout <linger>` wrapping `tmux -S <socket> attach -t <session>:tui`; the title write is the **last** write after the blocking attach so OSC-7 cwd reporting cannot clobber it.
 - Per-key in-process mutex serializes find-or-create per `(windowKey, tabKey)` and per window; each create re-reads live metadata after acquiring the lock.
 - **Reap is runtime-fenced**: kill the pane only if live metadata `hrc_runtime_id` equals the terminating runtime and role is `headless-agent-pane`; never kill a window anchor. A pane rebound to a newer runtime survives a stale terminate.
@@ -124,7 +126,10 @@ Run on viewer start, on every reconnect, and on a slow timer (default 5 min). Us
 
 1. `ghostmux list-surfaces --json` → panes with `hrc_role=headless-agent-pane`.
 2. `GET /v1/presentation/runtimes` (§5.3) → every non-terminal runtime with its persisted presentation record (or none). This is a db-only projection: no liveness reconcile runs, no runtime can be marked dead by the call.
-3. Record with `viewerRequested === true` and `operatorAttachable === true` and no pane → `ensurePane`. Record with `viewerRequested === false`, or **no record** (§5.5 upgrade rule) → never mint; an existing pane for it is still adopted, status-painted and reaped. Pane whose `hrc_runtime_id` is absent from the read model (terminal or unknown) and whose reap linger has elapsed → reap. Pane whose session is present with a newer generation → rebind metadata. Titles re-applied from the `title` column.
+3. Partition panes by ownership (§4.4): **foreign** panes are dropped from consideration entirely. **Owned** and **legacy** panes proceed.
+4. Record with `viewerRequested === true` and `operatorAttachable === true` and no owned pane for its key → `ensurePane` (stamping `hrc_owner_root`). A legacy pane whose `hrc_runtime_id` matches a live runtime in this read model is **adopted** on the spot: its metadata is rewritten with `hrc_owner_root` and it becomes owned; no second pane is minted. Record with `viewerRequested === false`, or **no record** (§5.5) → never mint.
+5. **Absence-reap is owner-fenced.** An *owned* pane whose `hrc_runtime_id` is absent from the read model (terminal or unknown to this daemon) and whose reap linger has elapsed → reap. A *legacy* pane absent from this daemon's read model is **never** reaped by reconcile — this daemon has no authority to say the runtime is gone, because the runtime may belong to another daemon. Legacy panes are reaped only by the event path (§4.3), which is fenced on a `runtime.terminated|dead|stale` event *from this daemon's own ledger* carrying that exact `hrc_runtime_id`.
+6. Owned pane whose session is present with a newer generation → rebind metadata. Titles re-applied from the `title` column for owned panes.
 
 `viewerRequested` is exactly the fact the in-daemon path acts on today: ensure is find-or-create and reap happens only on terminate, so "a pane should exist" ⇔ "at least one non-suppressed invocation has run for this generation". Reconcile therefore reproduces the event path's cumulative outcome, not a snapshot of one invocation. A runtime born for `hrc run` and never reused stays pane-less; once a detached invocation reuses it, `viewerRequested` flips and both the event and the next reconcile mint the pane — identical to today.
 
@@ -177,7 +182,7 @@ Both kinds are added to `KIND_CATEGORIES` (`hrc-event-helper.ts:18-77`).
 
 ### 5.3 Presentation read model
 
-`GET /v1/presentation/runtimes` returns, for every runtime whose status is non-terminal, one row: identity (`runtimeId`, `hostSessionId`, `scopeRef`, `laneRef`, `generation`, `status`), `presentation` (the persisted record, or absent for pre-Phase-2 generations), `tmux`, `title`. No invocation-local field appears here; the read model carries only durable facts. It is a **projection over the store only**: it reads runtime rows, the persisted §5.1 record, hosting/tmux state and `session_titles`, and returns. It does **not** call `reconcileTmuxRuntimeLiveness`, probe tmux, attach, or append events. SDK: `HrcClient.listPresentationRuntimes()`.
+`GET /v1/presentation/runtimes` returns, for every runtime whose status is non-terminal, one row: identity (`runtimeId`, `hostSessionId`, `scopeRef`, `laneRef`, `generation`, `status`), `presentation` (the persisted record, or absent for pre-Phase-2 generations), `tmux`, `title`. No invocation-local field appears here; the read model carries only durable facts. The response envelope also carries `daemon: { runtimeRoot: string }` — the serving daemon's configured runtime root — which the viewer uses as the ownership key (§4.4). This is configuration, not store state, and stays side-effect-free. It is a **projection over the store only**: it reads runtime rows, the persisted §5.1 record, hosting/tmux state and `session_titles`, and returns. It does **not** call `reconcileTmuxRuntimeLiveness`, probe tmux, attach, or append events. SDK: `HrcClient.listPresentationRuntimes()`.
 
 ### 5.4 Side-effect-free read contract
 
@@ -198,6 +203,10 @@ Runtime generations created before Phase 2 ships have no persisted record and �
 - Generation rotation (24 h default, checked before dispatch; disable-able, and live tmux runtimes do not rotate — `session-rotation.ts:71-99`) shrinks the record-less population over time but is not relied on: adopt-only plus next-invocation record is sufficient for safety and parity on its own.
 
 This is parity with today: the in-daemon path also never re-creates a pane for an existing runtime except on a new invocation.
+
+### 5.6 In-daemon path stamps ownership until Phase 4
+
+Until P4 deletes it, `GhostmuxManager.ensureHeadlessViewer` in hrc-server stamps `hrc_owner_root` (its own `runtimeRoot`) on every pane it creates or reuses, and scopes its own find-or-create by `(hrc_owner_root, hrc_pane_key)`. This (a) shrinks the legacy population to panes created before this change ships, and (b) fixes the pre-existing cross-daemon key collision in the in-daemon path itself. The in-daemon reaper is already runtime-fenced and is unchanged.
 
 ## 6. Phases and gates
 
@@ -221,11 +230,13 @@ Rollback at any phase ≤ 3: stop the LaunchAgent, leave `HRC_GHOSTTY_VIEWERS` u
 4. Ghostty metadata is the sole viewer registry; the viewer keeps no state that must survive its own restart. Everything needed to reconstruct a pane (attachability, the cumulative `viewerRequested` fact, window key, socket, target, title) is persisted by hrc and served by §5.3; invocation-local facts are never persisted and never needed for reconstruction (§5.5).
 5. At most one live viewer pane per hrc session, keyed by normalized `(scopeRef, laneRef)`, same as today.
 6. Viewer absence, death, lag, or polling can never change runtime state, finalize a run, delay a turn, or fail a start — a consequence of invariant 3.
+7. A viewer never mutates a pane it does not own. Ownership is the `hrc_owner_root` stamp equal to the connected daemon's `runtimeRoot`; unstamped (legacy) panes may be adopted or event-reaped only when this daemon's own ledger names their exact runtime id, and are never reaped on mere absence from this daemon's read model.
 
 ## 8. Risks
 
 - **Readiness race.** Eliminated by construction: `runtime.presentation` is appended at the exact point the in-daemon spawn happens today, i.e. after the `:tui` substrate exists, and it carries the socket and target.
 - **Suppression is per invocation.** An `hrc run` runtime later reused by a detached `hrc start` gains a pane (today's behavior, now explicit). If an operator attaches *later* to a runtime that already has a pane, both coexist — identical to today.
+- **Shared Ghostty registry across daemons.** Discovered live in P3: a dev-lane sidecar reaped three production panes because absence-from-read-model was treated as "runtime gone". Rev 4's ownership stamp + owner-fenced absence-reap + event-only reap for legacy panes closes it. Residual: a legacy pane whose runtime died while its owning daemon had no viewer running is never reaped by another daemon's viewer; it is reaped when that daemon's viewer (or in-daemon path, until P4) processes the terminate, or by the operator. Acceptable — the failure mode is a stale pane, never a lost one.
 - **Record-less generations after upgrade** get no new panes until their next invocation or rotation (§5.5). Parity with today; rotation helps but is not required.
 - **Stale read model rows.** The read model deliberately does not reconcile liveness, so it can list a runtime whose tmux has died until hrc's own sweep marks it. The viewer's pane then shows a dead attach until the `runtime.dead`/`stale` event arrives — the same window that exists today between substrate death and sweep.
 - **wrkq read moves to the viewer.** The viewer needs `wrkq` reachable for tab labels; on failure it falls back to the raw task id (same as today's resolver).
@@ -249,3 +260,7 @@ The HRCMac campaign (T-07334..37) embeds libghostty and attaches to broker-tmux 
 - *Flaw 1b — no authority for pre-upgrade generations.* Rev 3 adds §5.5: record-less rows are never minted, existing panes are adopted, the next invocation writes the record, and rotation shrinks the population without being relied on. The Phase 5 gate is restated to what can actually be asserted.
 
 **rev 3 APPROVED** (DM #21133). Non-binding prose correction applied: generation rotation is not a hard expiry.
+
+**rev 3 → rev 4** (material amendment; trigger: cody's P3 shadow run, T-07595 blocked, evidence `T-07595/sidecar-off/`):
+
+- *Defect — cross-daemon reap.* Rev 3 §4.5 reaped any pane whose runtime was absent from the connected daemon's read model. Ghostty's metadata registry is per user and shared by every daemon of that user (prod `hrc` + `hrc-dev` on max3), so the hrc-dev sidecar's first reconcile reaped three production panes (2 s test linger). The in-daemon reaper never had this defect: it reaps only on its own runtime's terminate, runtime-fenced. Rev 4 adds pane ownership (`hrc_owner_root` = owning daemon's `runtimeRoot`, served by the read model envelope), makes absence-reap owner-fenced, makes legacy (unstamped) panes adopt-only and event-reap-only, excludes foreign panes from every viewer action, scopes the pane key by owner (fixing a latent in-daemon cross-daemon key collision), stamps ownership from the in-daemon path until P4 (§5.6), and adds matrix row 13 (cross-daemon isolation) to the P3/P4 gates. Invariant 7 added; §2.2 now states the multi-daemon fact.
