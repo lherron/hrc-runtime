@@ -1,6 +1,6 @@
 # Viewer Sidecar Spec: Extracting Ghostty Presentation from hrc-server
 
-Status: DRAFT rev 3 — resubmitted to daedalus (rev 1, rev 2 REJECTED; see §10)  
+Status: APPROVED rev 3 — daedalus ruling DM #21133 (2026-08-26); durable law `hrc-runtime.viewer-presentation-sidecar` (bc10bbdc)  
 Date: 2026-08-26  
 Author: mable@hrc-runtime  
 Primary systems: hrc-server (event ledger, runtime lifecycle), new `packages/hrc-viewer`, `ghostmux` CLI, ScriptableGhostty
@@ -195,7 +195,7 @@ Runtime generations created before Phase 2 ships have no persisted record and �
 - The read model returns `presentation: undefined` for them; the viewer **never mints** a pane for a record-less row.
 - A pane that the in-daemon path already created for such a runtime carries the same Ghostty metadata keys, so the viewer **adopts** it: status painting, retitle, rebind and reap all apply.
 - The next start/reuse invocation on that runtime runs `publishPresentation`, which writes the record and emits the event, from which point the runtime is fully governed.
-- Generations rotate every 24 h, so the record-less population is bounded and self-clears.
+- Generation rotation (24 h default, checked before dispatch; disable-able, and live tmux runtimes do not rotate — `session-rotation.ts:71-99`) shrinks the record-less population over time but is not relied on: adopt-only plus next-invocation record is sufficient for safety and parity on its own.
 
 This is parity with today: the in-daemon path also never re-creates a pane for an existing runtime except on a new invocation.
 
@@ -226,7 +226,7 @@ Rollback at any phase ≤ 3: stop the LaunchAgent, leave `HRC_GHOSTTY_VIEWERS` u
 
 - **Readiness race.** Eliminated by construction: `runtime.presentation` is appended at the exact point the in-daemon spawn happens today, i.e. after the `:tui` substrate exists, and it carries the socket and target.
 - **Suppression is per invocation.** An `hrc run` runtime later reused by a detached `hrc start` gains a pane (today's behavior, now explicit). If an operator attaches *later* to a runtime that already has a pane, both coexist — identical to today.
-- **Record-less generations after upgrade** get no new panes until their next invocation or rotation (§5.5). Bounded by the 24 h generation rotation; parity with today.
+- **Record-less generations after upgrade** get no new panes until their next invocation or rotation (§5.5). Parity with today; rotation helps but is not required.
 - **Stale read model rows.** The read model deliberately does not reconcile liveness, so it can list a runtime whose tmux has died until hrc's own sweep marks it. The viewer's pane then shows a dead attach until the `runtime.dead`/`stale` event arrives — the same window that exists today between substrate death and sweep.
 - **wrkq read moves to the viewer.** The viewer needs `wrkq` reachable for tab labels; on failure it falls back to the raw task id (same as today's resolver).
 - **Two processes to keep alive instead of one.** Mitigated by `KeepAlive` and the fact that the failure mode is cosmetic.
@@ -246,4 +246,6 @@ The HRCMac campaign (T-07334..37) embeds libghostty and attaches to broker-tmux 
 **rev 2 → rev 3** (daedalus REJECT, DM #21131):
 
 - *Flaw 1 — invocation-local `operatorAttachPending` promoted to immutable generation state.* Today the predicate is computed per start/reuse invocation and only skips that invocation; a detached `hrc start` reusing an `hrc run` runtime mints a viewer. Rev 3 stops persisting `operatorAttachPending`; it rides only on the per-invocation `runtime.presentation` event (§5.2), which is now emitted on every start *and reuse* invocation. The persisted record carries the cumulative fact the in-daemon path actually acts on — monotone `viewerRequested` (§5.1) — and reconcile keys on it (§4.5), reproducing the event path's cumulative outcome. The reuse-after-run case is added to the Phase 3 gate.
-- *Flaw 1b — no authority for pre-upgrade generations.* Rev 3 adds §5.5: record-less rows are never minted, existing panes are adopted, the next invocation writes the record, and 24 h rotation bounds the population. The Phase 5 gate is restated to what can actually be asserted.
+- *Flaw 1b — no authority for pre-upgrade generations.* Rev 3 adds §5.5: record-less rows are never minted, existing panes are adopted, the next invocation writes the record, and rotation shrinks the population without being relied on. The Phase 5 gate is restated to what can actually be asserted.
+
+**rev 3 APPROVED** (DM #21133). Non-binding prose correction applied: generation rotation is not a hard expiry.
