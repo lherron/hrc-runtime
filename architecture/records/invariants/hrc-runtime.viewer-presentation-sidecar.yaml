@@ -11,27 +11,41 @@ predicate: >
   only operator attachability, latest viewer window, and monotone
   viewerRequested intent. A store-only presentation read model exposes those
   facts without probing or mutating runtimes. hrc-viewer alone actuates Ghostty
-  through ghostmux, keeps no persistent registry outside Ghostty pane metadata,
-  and keys the single global pane for a logical session by normalized
-  (scopeRef, laneRef), with runtime and generation fences for adoption and reap.
-  A pre-record generation is adopt-only and cannot cause a pane to be minted
-  until an invocation establishes presentation authority. Viewer absence,
-  death, lag, reconnect, reconciliation, and polling cannot mutate or finalize
-  runtime, run, or turn state and cannot delay or fail their lifecycle paths.
-authority: daedalus@hrc-runtime:primary architecture ruling, 2026-08-26
+  through ghostmux and keeps no persistent registry outside Ghostty surface and
+  managed-window metadata. The connected daemon's runtimeRoot names its
+  presentation lane and is stamped as hrc_owner_root: managed windows are
+  found or created by (owner, windowKey), and the one pane for a logical session
+  is keyed by (owner, normalized scopeRef, laneRef). A viewer never mutates,
+  resizes, splits from, reaps, or places into foreign surfaces or windows.
+  Unstamped legacy windows are never claimed or used for placement; an unstamped
+  pane may be adopted in place only when this daemon's read model names its exact
+  runtime id, and otherwise cannot be absence-reaped. Runtime and generation
+  fences still govern adoption and reap. A pre-record generation is adopt-only
+  and cannot cause a pane to be minted until an invocation establishes
+  presentation authority. Viewer absence, death, lag, reconnect,
+  reconciliation, and polling cannot mutate or finalize runtime, run, or turn
+  state and cannot delay or fail their lifecycle paths.
+authority: daedalus@hrc-runtime:primary architecture rulings, 2026-08-26
 source:
   - hrcchat#21132
+  - hrcchat#21160
+  - hrcchat#21164
+  - wrkq:T-07595
   - docs/proposals/viewer-sidecar-spec.md
   - packages/hrc-server/src/runtime-io-handlers.ts
   - packages/hrc-server/src/ghostmux.ts
+  - packages/hrc-viewer/src/viewer.ts
+  - packages/hrc-viewer/src/ghostmux.ts
   - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
 required_tests:
   - just architecture-records
   - viewer side-effect-free HRC route and SDK allowlist gates
   - viewer event, presentation read-model, restart, and reconciliation gates
-  - viewer pane identity, runtime-fenced reap, and role-qualified scope coexistence gates
+  - viewer dry-run metadata-classification completeness gate
+  - cross-daemon pane and window non-actuation isolation gate
+  - owner-scoped viewer identity, runtime-fenced reap, and role-qualified scope coexistence gates
   - live Ghostty shadow matrix for start, run, reuse, retitle, terminate, and restart
 last_verified: 2026-08-26 design approval; implementation gates pending
-reopen_when: The Ghostty actuation owner, presentation authority or read model, invocation suppression lifetime, pane identity, upgrade adoption rule, lifecycle failure isolation, or ghostmux boundary changes.
+reopen_when: The Ghostty actuation owner, daemon-lane ownership key, shared registry boundary, presentation authority or read model, invocation suppression lifetime, window or pane identity, legacy adoption rule, lifecycle failure isolation, or ghostmux boundary changes.
 supersedes: []
 superseded_by: []
