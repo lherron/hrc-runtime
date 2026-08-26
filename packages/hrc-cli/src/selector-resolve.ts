@@ -342,7 +342,15 @@ export function resolveSelectorTarget(
 }
 
 export async function fetchSelectorSnapshot(client: HrcClient): Promise<SelectorSnapshot> {
-  const [runtimes, sessions] = await Promise.all([client.listRuntimes(), client.listSessions()])
+  const [runtimes, sessions] = await Promise.all([
+    client.listRuntimes(),
+    // `all: true` is load-bearing (T-07575). An unscoped `listSessions` is now
+    // bounded to a recency window for display callers; resolution is not a
+    // display caller. Narrowing it would make a selector for a scope idle
+    // longer than the window fail to resolve — a bounded *view* turning into a
+    // lost *capability*.
+    client.listSessions({ all: true }),
+  ])
   return {
     runtimes: runtimes.map((runtime) => ({
       runtimeId: runtime.runtimeId,

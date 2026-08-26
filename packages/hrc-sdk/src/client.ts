@@ -131,6 +131,7 @@ import type {
   SessionFilter,
   SessionPageRequest,
   SessionPageResponse,
+  SessionProjectionResult,
   SessionTitleRecord,
   SetSessionTitleRequest,
   StartRuntimeRequest,
@@ -352,8 +353,51 @@ export class HrcClient {
     const path = buildPath('/v1/sessions', {
       scopeRef: emptyToUndefined(filter?.scopeRef),
       laneRef: emptyToUndefined(filter?.laneRef),
+      ...(filter?.all === true ? { all: 'true' } : {}),
+      updatedSince: emptyToUndefined(filter?.updatedSince),
+      status: emptyToUndefined(filter?.status),
+      limit: filter?.limit,
     })
     return this.getJson<HrcSessionRecord[]>(path)
+  }
+
+  /**
+   * T-07575 — `listSessions` plus what the server's bounded projection left
+   * out, read from the `X-Hrc-Session-*` headers.
+   *
+   * Callers that only need rows keep using `listSessions`; this exists so a
+   * human-facing surface can say "showing 525 of 8,319" instead of quietly
+   * presenting a bounded read as the whole store.
+   */
+  async listSessionsWithProjection(filter?: SessionFilter): Promise<SessionProjectionResult> {
+    const path = buildPath('/v1/sessions', {
+      scopeRef: emptyToUndefined(filter?.scopeRef),
+      laneRef: emptyToUndefined(filter?.laneRef),
+      ...(filter?.all === true ? { all: 'true' } : {}),
+      updatedSince: emptyToUndefined(filter?.updatedSince),
+      status: emptyToUndefined(filter?.status),
+      limit: filter?.limit,
+    })
+    const res = await this.unixFetch(path, { method: 'GET' })
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    const sessions = (await res.json()) as HrcSessionRecord[]
+    const readHeader = (name: string): number | undefined => {
+      const raw = res.headers.get(name)
+      if (raw === null) return undefined
+      const parsed = Number(raw)
+      return Number.isFinite(parsed) ? parsed : undefined
+    }
+    return {
+      sessions,
+      ...(readHeader('X-Hrc-Session-Total') !== undefined
+        ? { total: readHeader('X-Hrc-Session-Total') as number }
+        : {}),
+      ...(readHeader('X-Hrc-Session-Withheld') !== undefined
+        ? { withheld: readHeader('X-Hrc-Session-Withheld') as number }
+        : {}),
+    }
   }
 
   async listSessionsPage(request: SessionPageRequest = {}): Promise<SessionPageResponse> {

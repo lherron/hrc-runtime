@@ -518,11 +518,21 @@ export async function cmdSessionResolve(args: string[]): Promise<void> {
 export async function cmdSessionList(args: string[]): Promise<void> {
   const scope = parseFlag(args, '--scope')
   const lane = parseFlag(args, '--lane')
+  const all = hasFlag(args, '--all')
+  const since = parseFlag(args, '--since')
 
   const client = createClient()
-  const sessions = await client.listSessions({
+  // T-07575 — the server bounds an unscoped read to a recency window, so the
+  // two flags that widen the *render* window must widen the *read* too.
+  // Otherwise `--all` or `--since 30d` would silently re-render the same seven
+  // days and look like the store held nothing older.
+  const { sessions, total, withheld } = await client.listSessionsWithProjection({
     ...(scope ? { scopeRef: scope } : {}),
     ...(lane ? { laneRef: lane } : {}),
+    ...(all ? { all: true } : {}),
+    ...(!all && since
+      ? { updatedSince: new Date(Date.now() - parseSinceMs(since)).toISOString() }
+      : {}),
   })
 
   if (hasFlag(args, '--porcelain')) {
@@ -537,7 +547,6 @@ export async function cmdSessionList(args: string[]): Promise<void> {
     return
   }
 
-  const since = parseFlag(args, '--since')
   process.stdout.write(
     renderSessions(sessions, {
       now: new Date(),
@@ -550,6 +559,25 @@ export async function cmdSessionList(args: string[]): Promise<void> {
       ...(scope ? { scope } : {}),
     })
   )
+  process.stdout.write(renderProjectionFooter({ shown: sessions.length, total, withheld }))
+}
+
+/**
+ * T-07575 — say out loud when the read was bounded.
+ *
+ * The bug this change fixes was 8,319 rows arriving at every caller; the bug it
+ * could introduce is a caller believing 525 rows are all there is. A bounded
+ * read that does not announce itself is the second bug, so the footer names the
+ * withheld count and the flag that lifts the bound.
+ */
+function renderProjectionFooter(input: {
+  shown: number
+  total?: number | undefined
+  withheld?: number | undefined
+}): string {
+  if (input.withheld === undefined || input.withheld <= 0) return ''
+  const total = input.total ?? input.shown + input.withheld
+  return `\n${input.withheld} older session(s) withheld of ${total} stored — pass --all, --since, or --scope to reach them.\n`
 }
 
 export async function cmdSessionGet(args: string[]): Promise<void> {

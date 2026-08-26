@@ -184,6 +184,81 @@ The controlling reason is resume-path integrity. Terminated rows anchor the
 `--resume`; deleting them could orphan resumable state. The table is tiny, so
 there is no scale pressure that outweighs that risk.
 
+## Session retention — keep forever, project narrowly
+
+`sessions` rows are keep-forever, the same class as terminated `runtimes` rows
+above and non-delta observation events. **No path deletes a session row**, and
+that is a binding condition of the policy, not an implementation detail: Lance
+ruled on it on 2026-08-25 (T-07575) in these words — *"as long as we never
+delete."* Retention for sessions is therefore applied to **projection breadth**,
+never to storage.
+
+The defect that produced this section (T-07575): nothing retired a session at
+all. `sessions` was absent from this document and from `RETENTION_TABLES`, so
+the nightly job never touched it; the one archival mechanism that existed
+(`POST /v1/sessions/archive-abandoned`) had no caller anywhere in either repo.
+Four months of accumulation left 8,319 rows on the primary host, of which 5,807
+still claimed `status: 'active'` while 28 held a live runtime. Every unscoped
+consumer paid for all of it — `hrc list sessions` was 33 MB, and ACP's
+`/v1/mobile/dashboard` served that scan verbatim to HRCMac.
+
+### The bounded default projection
+
+An unscoped `GET /v1/sessions` returns sessions whose `updated_at` falls inside
+`HRC_SESSION_PROJECTION_DAYS` (default 7), **plus** every session holding a
+`ready` or `busy` runtime regardless of age. The second arm matters: being live
+is the strongest possible reason to be listed, so a long-running session that
+has been quietly busy past the window never falls out of the default view.
+
+Four doors widen or narrow that read, and each is explicit:
+
+- `?scopeRef=` — **never bounded**. A scoped read returns every generation of
+  that scope, always. This is the documented path to history, and it is what
+  session resolution and resume use.
+- `?all=true` — take the whole store. Only the affirmative spellings (`1`,
+  `true`, `yes`) widen; a bare `?all` leaves the bound in place, because
+  returning 8k rows on a typo is the failure this parameter exists to prevent.
+- `?updatedSince=<iso8601>` — caller-chosen window. An unparseable value is
+  rejected rather than silently replaced with the default.
+- `?status=` and `?limit=` — narrow further; they never widen.
+
+**The bound is never silent.** Every response carries `X-Hrc-Session-Total`,
+`X-Hrc-Session-Returned` and `X-Hrc-Session-Withheld`. `hrc list sessions`
+prints the withheld count and names the flags that reach past it; `--all` and
+`--since` widen the server read, not only the render window.
+
+Resolution paths opt out explicitly. `fetchSelectorSnapshot` passes
+`all: true`, because a selector for a scope idle longer than the window must
+still resolve: a bounded *view* must never become a lost *capability*.
+
+### The idle-archive sweep
+
+hrc-server runs the archival pass on its own daily timer
+(`HRC_SESSION_RETENTION_SWEEP_ENABLED=0` disables it), sharing exactly the code
+behind `POST /v1/sessions/archive-abandoned`. It writes `sessions.status` and
+nothing else — it never deletes a row and never touches `continuation_json`.
+
+A non-primary `active` session is archived when all of the following hold:
+
+- it carries a continuation key;
+- no runtime of its owns a non-terminal status;
+- its last activity — the later of `sessions.updated_at` and its runtimes'
+  `last_activity_at` — is older than `HRC_SESSION_IDLE_ARCHIVE_DAYS`
+  (default 7).
+
+Liveness wins over age, and an unparseable timestamp fails closed rather than
+reading as infinitely old.
+
+The continuation-key condition is load-bearing, and it is the one place where
+archival could stop being a view change. `toTargetState` reports an archived
+session **with** a key as `dormant`, which is accurate; without one it reports
+`broken`, and `handleListTargets` drops it from `--includeDormant` listings
+outright. Archiving a keyless session would therefore remove it from target
+listings — a capability change, which the standing rule that archived is a view
+filter and never a resume gate forbids. Keyless idle sessions stay `active` and
+stay listed; the projection window already keeps them out of unscoped reads on
+age, which is the actual defect.
+
 ## Index adequacy
 
 The C-10743 audit measured 8571 `runtimes` rows on 2026-07-18 (about 8.5k):

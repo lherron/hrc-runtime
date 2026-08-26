@@ -1,4 +1,9 @@
-import type { HrcEventCategory, HrcMessageFilter, HrcRuntimeSnapshot } from 'hrc-core'
+import type {
+  HrcEventCategory,
+  HrcMessageFilter,
+  HrcRuntimeSnapshot,
+  HrcSessionRecord,
+} from 'hrc-core'
 
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
@@ -83,6 +88,30 @@ export type {
 export type SessionFilter = {
   scopeRef?: string | undefined
   laneRef?: string | undefined
+  /**
+   * T-07575 — opt an unscoped read out of the bounded default projection and
+   * take the whole store. A read that passes `scopeRef` is already unbounded
+   * for that scope, so this is only meaningful without one. Resolution paths
+   * (selector resolution, resume) pass it; display paths must not.
+   */
+  all?: boolean | undefined
+  /** ISO-8601 lower bound on `updatedAt`; overrides the default window. */
+  updatedSince?: string | undefined
+  /** Persisted `sessions.status`. Narrows the result; never widens it. */
+  status?: 'active' | 'archived' | undefined
+  /** Maximum rows to return. Narrows the result; never widens it. */
+  limit?: number | undefined
+}
+
+/**
+ * T-07575 — a session read plus how much the server's bounded default
+ * projection withheld. Both counts are absent when the server predates the
+ * headers.
+ */
+export type SessionProjectionResult = {
+  sessions: HrcSessionRecord[]
+  total?: number | undefined
+  withheld?: number | undefined
 }
 
 export type SessionEffectiveStatus = 'active' | 'detached' | 'inactive' | 'stale'

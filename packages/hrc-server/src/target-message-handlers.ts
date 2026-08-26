@@ -394,12 +394,43 @@ export async function handleArchiveAbandonedSessions(
     )
   }
 
-  const cutoffMs = Date.now() - idleThresholdDays * 24 * 60 * 60 * 1000
+  return json({ ...archiveIdleSessions(this, idleThresholdDays), idleThresholdDays })
+}
+
+export type ArchiveIdleSessionsResult = {
+  archived: number
+  skippedPrimary: number
+  skippedNotIdle: number
+  skippedNoContinuation: number
+}
+
+/**
+ * T-07575 — the idle-archive pass, callable without an HTTP request so the
+ * recurring sweep and `POST /v1/sessions/archive-abandoned` run exactly the
+ * same code.
+ *
+ * This writes `sessions.status` and nothing else. It never deletes a row and
+ * never touches `continuation_json` — Lance's binding condition on the
+ * retention policy (2026-08-25) is that no path introduced here deletes.
+ */
+export function archiveIdleSessions(
+  server: HrcServerInstanceForHandlers,
+  idleThresholdDays: number
+): ArchiveIdleSessionsResult {
+  const activeSince = new Date(Date.now() - idleThresholdDays * 24 * 60 * 60 * 1000).toISOString()
   const now = timestamp()
+  // Recency comes from `listIdleSessionCandidates`, which reads the same
+  // authoritative expression as the bounded projection. Deriving it here from
+  // `session.updatedAt` instead is the trap this design was rejected for once:
+  // `updateStatus` writes `updated_at`, so a sweep that sensed on it would mark
+  // every row it archived as active-this-second and defeat its own outcome.
+  const idle = server.listIdleSessionCandidates(activeSince)
   let archived = 0
   let skippedPrimary = 0
+  let skippedNotIdle = 0
+  let skippedNoContinuation = 0
 
-  for (const session of this.listAllSessions()) {
+  for (const session of server.listAllSessions()) {
     if (session.status !== 'active') {
       continue
     }
@@ -407,25 +438,24 @@ export async function handleArchiveAbandonedSessions(
       skippedPrimary += 1
       continue
     }
-
-    const abandonedRuntime = this.db.runtimes
-      .listByHostSessionId(session.hostSessionId)
-      .find((runtime) => {
-        if (!isRuntimeUnavailableStatus(runtime.status)) {
-          return false
-        }
-        const lastActivityMs = Date.parse(runtime.lastActivityAt ?? runtime.createdAt)
-        return Number.isFinite(lastActivityMs) && lastActivityMs <= cutoffMs
-      })
-    if (!abandonedRuntime) {
+    if (!idle.has(session.hostSessionId)) {
+      skippedNotIdle += 1
+      continue
+    }
+    // A session with no continuation key must NOT be archived. `toTargetState`
+    // reports archived-without-a-key as 'broken', and `handleListTargets` drops
+    // it from dormant listings outright. That is a capability change, not a
+    // view change, and this sweep is only licensed to make the view honest.
+    if (!session.continuation?.key) {
+      skippedNoContinuation += 1
       continue
     }
 
-    this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
+    server.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
     archived += 1
   }
 
-  return json({ archived, skippedPrimary, idleThresholdDays })
+  return { archived, skippedPrimary, skippedNotIdle, skippedNoContinuation }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

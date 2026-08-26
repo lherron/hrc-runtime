@@ -325,3 +325,73 @@ export function parseFenceInput(input: unknown): import('hrc-core').HrcFence {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, { fence: input })
   }
 }
+
+/**
+ * T-07575 — `?all=true` on `GET /v1/sessions`: the explicit door out of the
+ * bounded default projection. Only the affirmative spellings widen the read;
+ * anything else (including a bare `?all` with no value) leaves the bound in
+ * place, because silently returning the whole store on a typo is the exact
+ * failure this parameter exists to prevent.
+ */
+export function parseSessionAllQuery(url: URL): boolean {
+  const raw = normalizeOptionalQuery(url.searchParams.get('all'))
+  if (raw === undefined) return false
+  const normalized = raw.toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
+/**
+ * T-07575 — `?updatedSince=<iso8601>`: caller-chosen projection window. A value
+ * that does not parse is rejected rather than ignored; falling back to the
+ * default window would answer a different question than the one asked.
+ */
+export function parseSessionUpdatedSinceQuery(url: URL): string | undefined {
+  const raw = normalizeOptionalQuery(url.searchParams.get('updatedSince'))
+  if (raw === undefined) return undefined
+
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'updatedSince must be an ISO-8601 timestamp',
+      { field: 'updatedSince', value: raw }
+    )
+  }
+
+  return new Date(parsed).toISOString()
+}
+
+/** The persisted `sessions.status` values, as opposed to a projected view status. */
+const SESSION_STATUS_VALUES = ['active', 'archived'] as const
+
+/** T-07575 — `?status=` on `GET /v1/sessions`; narrows, never widens. */
+export function parseSessionStatusQuery(url: URL): string | undefined {
+  const raw = normalizeOptionalQuery(url.searchParams.get('status'))
+  if (raw === undefined) return undefined
+
+  if (!SESSION_STATUS_VALUES.includes(raw as (typeof SESSION_STATUS_VALUES)[number])) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `status must be one of ${SESSION_STATUS_VALUES.join(', ')}`,
+      { field: 'status', value: raw }
+    )
+  }
+
+  return raw
+}
+
+/** T-07575 — `?limit=` on `GET /v1/sessions`; narrows, never widens. */
+export function parseSessionLimitQuery(url: URL): number | undefined {
+  const raw = normalizeOptionalQuery(url.searchParams.get('limit'))
+  if (raw === undefined) return undefined
+
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'limit must be an integer >= 1', {
+      field: 'limit',
+      value: raw,
+    })
+  }
+
+  return parsed
+}

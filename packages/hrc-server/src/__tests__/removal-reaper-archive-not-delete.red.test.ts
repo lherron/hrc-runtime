@@ -91,6 +91,33 @@ async function seedSessionWithContinuation(
   return { ...resolved, sessionRef: `${scopeRef}/lane:${laneRef}` }
 }
 
+/**
+ * Age the session row itself, not just its runtime.
+ *
+ * T-07575 made session recency authoritative: the sweep reads
+ * `MAX(session_index.last_activity_at, runtimes.last_activity_at,
+ * sessions.created_at)`, so a fixture that seeds an 8-day-old runtime under a
+ * session minted three milliseconds ago describes a session that is *not*
+ * abandoned, and the sweep is right to spare it. These fixtures always meant
+ * "this whole session was abandoned N days ago"; this makes them say it.
+ */
+function ageSession(hostSessionId: string, isoTimestamp: string): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    db.sqlite.run('UPDATE sessions SET created_at = ?, updated_at = ? WHERE host_session_id = ?', [
+      isoTimestamp,
+      isoTimestamp,
+      hostSessionId,
+    ])
+    db.sqlite.run('UPDATE session_index SET last_activity_at = ? WHERE host_session_id = ?', [
+      isoTimestamp,
+      hostSessionId,
+    ])
+  } finally {
+    db.close()
+  }
+}
+
 function seedAppManagedSession(
   appId: string,
   appSessionKey: string,
@@ -339,6 +366,7 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     } finally {
       db.close()
     }
+    ageSession(resolved.hostSessionId, pastDate)
   })
 
   it('archive-abandoned endpoint returns HTTP 200 (not 404)', async () => {
@@ -365,11 +393,14 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     // which masked the bug: isPrimaryScopeRef = !scopeRef.includes(':task:') returns
     // false for the real primary shape, so the reaper wrongly archives it.
     const primaryScope = 'agent:test:project:t04831-group3:task:primary'
-    const primaryResolved = await fixture.resolveSession(primaryScope)
+    const primaryResolved = await seedSessionWithContinuation(primaryScope)
 
-    // NON-PRIMARY companion: a regular task session that MUST be reaped
+    // NON-PRIMARY companion: a regular task session that MUST be reaped.
+    // It carries a continuation because T-07575 only archives resumable
+    // sessions — archiving a keyless one would report it `broken` and drop it
+    // from dormant target listings, which is a capability change.
     const nonPrimaryScope = 'agent:test:project:t04831-group3:task:T-04833-reapme'
-    const nonPrimaryResolved = await fixture.resolveSession(nonPrimaryScope)
+    const nonPrimaryResolved = await seedSessionWithContinuation(nonPrimaryScope)
 
     // Seed terminal runtimes for BOTH so the reaper would archive them if unprotected
     const pastDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
@@ -410,6 +441,8 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     } finally {
       setupDb.close()
     }
+    ageSession(primaryResolved.hostSessionId, pastDate)
+    ageSession(nonPrimaryResolved.hostSessionId, pastDate)
 
     await postArchiveAbandoned({ idleThresholdDays: 7 })
 
@@ -514,6 +547,7 @@ describe('[RED 3f] reaped session returns dormant from target view', () => {
     } finally {
       db.close()
     }
+    ageSession(resolved.hostSessionId, pastDate)
   })
 
   it('reaped session has state dormant in target view (continuation intact, resumable)', async () => {

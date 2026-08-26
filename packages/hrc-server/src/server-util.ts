@@ -31,8 +31,8 @@ export function serializeEvent(event: HrcLifecycleEvent): string {
   return `${JSON.stringify(event)}\n`
 }
 
-export function json(body: unknown, status = 200): Response {
-  return Response.json(body, { status })
+export function json(body: unknown, status = 200, headers?: Record<string, string>): Response {
+  return Response.json(body, headers ? { status, headers } : { status })
 }
 
 export function requireDispatchRuntimeId(

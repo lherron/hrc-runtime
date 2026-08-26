@@ -174,6 +174,8 @@ type HrcServerInstanceDataForHandlers = {
   tmuxAgingInFlight: Promise<unknown> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
+  sessionRetentionTimer: ReturnType<typeof setInterval> | undefined
+  sessionRetentionInFlight: Promise<void> | undefined
   /** Immutable process release identity, captured once at construction. */
   readonly capturedRelease: CapturedServerRelease
   /** T-07235 provision-liveness watchdog: its own cadence, not the zombie sweep's. */

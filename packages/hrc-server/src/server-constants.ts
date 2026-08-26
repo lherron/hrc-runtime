@@ -60,6 +60,26 @@ export const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15
 export const DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS = 1_000
 export const DEFAULT_HRC_MAIL_MAX_ROUNDS = 5
 
+/**
+ * T-07575 session retention. The session store keeps every row forever (the
+ * 2026-07-28 keep-forever ruling covers session records the same way it covers
+ * observation events), so retention is applied to *projection breadth* rather
+ * than to storage. Two independent windows:
+ *
+ * - PROJECTION days bounds what an unscoped `GET /v1/sessions` returns by
+ *   default. Scoped reads (`?scopeRef=`) and `?all=true` stay unbounded.
+ * - IDLE_ARCHIVE days bounds how long a session keeps claiming `status:
+ *   'active'` after its last activity. Archiving is a view state, never a
+ *   resume gate: `continuation_json` is untouched.
+ */
+export const HRC_SESSION_PROJECTION_DAYS_ENV = 'HRC_SESSION_PROJECTION_DAYS'
+export const DEFAULT_SESSION_PROJECTION_DAYS = 7
+export const HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV = 'HRC_SESSION_IDLE_ARCHIVE_DAYS'
+export const DEFAULT_SESSION_IDLE_ARCHIVE_DAYS = 7
+export const HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV = 'HRC_SESSION_RETENTION_SWEEP_ENABLED'
+/** Idle archival is a daily-scale concern; it does not ride the 300s sweep cadence. */
+export const HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
+
 export const HRC_ZOMBIE_SWEEP_ENABLED = true
 export const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
 export const HRC_TMUX_AGING_INTERVAL_SECONDS = 300

@@ -38,6 +38,7 @@ import { mapSessionRow } from './server-misc.js'
 import { isRecord, parseJsonBody, parseSessionRef } from './server-parsers.js'
 import type { SessionRow } from './server-types.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { SESSION_HAS_RUNNING_RUNTIME_SQL, SESSION_RECENCY_SQL } from './session-recency.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import { findTargetSession, toTargetView } from './target-view.js'
 
@@ -110,6 +111,85 @@ export function listAllSessions(
     : this.db.sqlite.query<SessionRow, []>(sql).all()
 
   return rows.map(mapSessionRow)
+}
+
+/**
+ * T-07575 — the bounded default projection behind an unscoped
+ * `GET /v1/sessions`.
+ *
+ * `listAllSessions` above stays deliberately unbounded: it is the internal
+ * primitive that the retention sweep and every whole-store consumer needs. The
+ * bound belongs at the HTTP boundary, where a caller who asked a question with
+ * no limits in it gets a useful answer instead of the entire history of the
+ * host.
+ *
+ * "Recent" is a union, not an intersection: a session qualifies if its
+ * authoritative recency (`SESSION_RECENCY_SQL` — see that module for why
+ * `sessions.updated_at` is *not* it) is at or after `activeSince`, OR if it
+ * currently holds a non-terminal runtime. The second arm exists because a
+ * session that is still running must never fall out of the default view — being
+ * live is itself the strongest possible reason to be listed, and that includes
+ * a turn parked on an operator prompt, which has no activity but is not idle.
+ */
+export function listRecentSessions(
+  this: HrcServerInstanceForHandlers,
+  activeSince: string,
+  laneRef?: string
+): HrcSessionRecord[] {
+  const sql = `
+        SELECT
+          s.host_session_id,
+          s.scope_ref,
+          s.lane_ref,
+          s.generation,
+          s.status,
+          s.prior_host_session_id,
+          s.created_at,
+          s.updated_at,
+          s.parsed_scope_json,
+          s.ancestor_scope_refs_json,
+          s.last_applied_intent_json,
+          s.continuation_json
+        FROM sessions s
+        WHERE (${SESSION_RECENCY_SQL} >= ? OR ${SESSION_HAS_RUNNING_RUNTIME_SQL})
+        ${laneRef ? 'AND s.lane_ref = ?' : ''}
+        ORDER BY s.scope_ref ASC, s.lane_ref ASC, s.generation ASC
+      `
+
+  const rows = laneRef
+    ? this.db.sqlite.query<SessionRow, [string, string]>(sql).all(activeSince, laneRef)
+    : this.db.sqlite.query<SessionRow, [string]>(sql).all(activeSince)
+
+  return rows.map(mapSessionRow)
+}
+
+/**
+ * T-07575 — host session ids whose authoritative recency has fallen behind
+ * `activeSince` and which hold no live runtime.
+ *
+ * The archive sweep asks SQL for its candidates rather than filtering
+ * `listAllSessions` in JS so that the projection and the sweep cannot drift
+ * apart: both read the same recency expression from the same module. The
+ * remaining conditions the sweep applies (primary scope, continuation key) are
+ * policy, not recency, and stay in the caller where they are legible.
+ */
+export function listIdleSessionCandidates(
+  this: HrcServerInstanceForHandlers,
+  activeSince: string
+): Set<string> {
+  const rows = this.db.sqlite
+    .query<{ host_session_id: string }, [string]>(
+      `
+        SELECT s.host_session_id
+        FROM sessions s
+        WHERE s.status = 'active'
+          AND ${SESSION_RECENCY_SQL} < ?
+          AND NOT ${SESSION_HAS_RUNNING_RUNTIME_SQL}
+      `
+    )
+    .all(activeSince)
+
+  return new Set(rows.map((row) => row.host_session_id))
 }
 
 export async function ensureRuntimeForSession(
@@ -420,6 +500,8 @@ export async function handleCreateMessage(
 export const selectorMessageHandlersMethods = {
   listSessionsByScope,
   listAllSessions,
+  listRecentSessions,
+  listIdleSessionCandidates,
   ensureRuntimeForSession,
   handleSdkDispatchTurn,
   recordDetachedSemanticTurnFailure,

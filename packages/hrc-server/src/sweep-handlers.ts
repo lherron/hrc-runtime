@@ -16,11 +16,16 @@ import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
 import { resolveFirstTurnEvalIntervalSeconds } from './first-turn-watch.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
+import {
+  resolveClaudeGhosttyIdleCleanupMinutes,
+  resolveSessionIdleArchiveDays,
+} from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
 import {
   HRC_ACTIVE_RUN_RECONCILE_ENABLED,
   HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS,
+  HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV,
+  HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS,
   HRC_TMUX_AGING_INTERVAL_SECONDS,
   HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
   HRC_ZOMBIE_SWEEP_ENABLED,
@@ -54,6 +59,7 @@ import {
   reconcileActiveRunsOnce,
   sweepZombieRunsOnce,
 } from './sweep-reconcile.js'
+import { archiveIdleSessions } from './target-message-handlers.js'
 import { createTmuxManager } from './tmux.js'
 
 export async function handleSweepRuntimes(
@@ -688,6 +694,49 @@ export function resolveSweepSummarySession(
   })
 }
 
+/**
+ * T-07575 — the session retention sweep.
+ *
+ * Before this the session store had no retirement mechanism at all: the
+ * archiver existed (`POST /v1/sessions/archive-abandoned`) but had no caller,
+ * so on a four-month-old host 5,807 rows still claimed `status: 'active'` while
+ * only 28 held a live runtime.
+ *
+ * Its own timer, at a daily cadence: idle archival is a days-scale question and
+ * has no business riding the 300s runtime sweep, whose cadence is chosen for
+ * liveness. Set `HRC_SESSION_RETENTION_SWEEP_ENABLED=0` to disable.
+ */
+export function startSessionRetentionSweep(this: HrcServerInstanceForHandlers): void {
+  if (process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV] === '0') return
+  this.sessionRetentionTimer = setInterval(() => {
+    void this.runRecurringSessionRetention()
+  }, HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS)
+}
+
+export async function runRecurringSessionRetention(
+  this: HrcServerInstanceForHandlers
+): Promise<void> {
+  if (this.sessionRetentionInFlight) return
+  const idleThresholdDays = resolveSessionIdleArchiveDays()
+  const sweep = (async () => {
+    const result = archiveIdleSessions(this, idleThresholdDays)
+    // Log every tick, not just the ones that changed something: a healthy idle
+    // timer and a dead timer must not look identical from the log. Matches the
+    // broker lease GC and tmux aging siblings.
+    writeServerLog('INFO', 'session.retention_sweep_complete', { idleThresholdDays, ...result })
+  })()
+  this.sessionRetentionInFlight = sweep
+  try {
+    await sweep
+  } catch (error) {
+    writeServerLog('WARN', 'session.retention_sweep_failed', { idleThresholdDays, error })
+  } finally {
+    if (this.sessionRetentionInFlight === sweep) {
+      this.sessionRetentionInFlight = undefined
+    }
+  }
+}
+
 export const sweepHandlersMethods = {
   handleSweepRuntimes,
   handlePruneRuntimes,
@@ -708,6 +757,8 @@ export const sweepHandlersMethods = {
   runRecurringFirstTurnEval,
   startClaudeGhosttyIdleCleanup,
   runClaudeGhosttyIdleCleanup,
+  startSessionRetentionSweep,
+  runRecurringSessionRetention,
   appendSweepCompletedEvent,
   resolveSweepSummarySession,
 }

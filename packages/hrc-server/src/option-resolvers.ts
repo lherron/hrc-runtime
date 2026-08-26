@@ -12,6 +12,8 @@ import {
   DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES,
   DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
   DEFAULT_HRC_MAIL_MAX_ROUNDS,
+  DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
+  DEFAULT_SESSION_PROJECTION_DAYS,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
   HRC_BROKER_DURABLE_IPC_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
@@ -20,6 +22,8 @@ import {
   HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_MAIL_MAX_ROUNDS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
+  HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
+  HRC_SESSION_PROJECTION_DAYS_ENV,
   HRC_TMUX_AGING_ENABLED_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
@@ -210,4 +214,36 @@ export function resolveClaudeGhosttyIdleCleanupMinutes(): number {
     return DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES
   }
   return minutes
+}
+
+/**
+ * Read a non-negative day count from the environment, falling back to
+ * `fallbackDays` for anything absent, unparseable or negative. Zero is a legal
+ * value and means "the window is empty" — for the projection window that is a
+ * deliberate way to see only live-runtime sessions.
+ */
+function resolveRetentionDays(envName: string, fallbackDays: number): number {
+  const raw = process.env[envName]
+  if (raw === undefined) return fallbackDays
+  const days = Number.parseFloat(raw)
+  if (!Number.isFinite(days) || days < 0) return fallbackDays
+  return days
+}
+
+/**
+ * T-07575 — how far back an unscoped `GET /v1/sessions` reaches by default.
+ * Sessions outside the window are still stored and still reachable, via
+ * `?all=true`, `?updatedSince=`, or a scoped read; they are simply not what a
+ * caller gets for asking a question with no bounds in it.
+ */
+export function resolveSessionProjectionDays(): number {
+  return resolveRetentionDays(HRC_SESSION_PROJECTION_DAYS_ENV, DEFAULT_SESSION_PROJECTION_DAYS)
+}
+
+/**
+ * T-07575 — how long a session may keep claiming `status: 'active'` after its
+ * last activity before the retention sweep archives it.
+ */
+export function resolveSessionIdleArchiveDays(): number {
+  return resolveRetentionDays(HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV, DEFAULT_SESSION_IDLE_ARCHIVE_DAYS)
 }

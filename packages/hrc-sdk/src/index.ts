@@ -74,6 +74,7 @@ export type {
   SessionPageItem,
   SessionPageRequest,
   SessionPageResponse,
+  SessionProjectionResult,
   SessionPeerStatus,
   SessionTitleRecord,
   SessionTitleSource,

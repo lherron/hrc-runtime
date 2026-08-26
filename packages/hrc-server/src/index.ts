@@ -169,6 +169,7 @@ import {
   resolveHrcMailKickerSweepIntervalMs,
   resolveHrcMailMaxRounds,
   resolvePiTuiTmuxBrokerEnabled,
+  resolveSessionProjectionDays,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
   resolveTmuxAgingEnabled,
@@ -250,7 +251,11 @@ import {
   parseLaunchCommandScopedRunRequest,
   parseResolveSessionRequest,
   parseRuntimeActionBody,
+  parseSessionAllQuery,
+  parseSessionLimitQuery,
   parseSessionRef,
+  parseSessionStatusQuery,
+  parseSessionUpdatedSinceQuery,
   parseStartRuntimeRequest,
   parseTerminateRuntimeRequest,
 } from './server-parsers.js'
@@ -819,6 +824,8 @@ class HrcServerInstance implements HrcServer {
   tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
+  sessionRetentionTimer: ReturnType<typeof setInterval> | undefined
+  sessionRetentionInFlight: Promise<void> | undefined
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -1385,6 +1392,7 @@ class HrcServerInstance implements HrcServer {
     this.startBrokerLeaseGc()
     this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
+    this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
     this.startMailKicker()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -1590,6 +1598,17 @@ class HrcServerInstance implements HrcServer {
         await this.idleCleanupInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.idle_cleanup_wait_failed', { error })
+      }
+    }
+    if (this.sessionRetentionTimer) {
+      clearInterval(this.sessionRetentionTimer)
+      this.sessionRetentionTimer = undefined
+    }
+    if (this.sessionRetentionInFlight) {
+      try {
+        await this.sessionRetentionInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.session_retention_wait_failed', { error })
       }
     }
     if (this.mailKickerSweepTimer) {
@@ -2098,15 +2117,78 @@ class HrcServerInstance implements HrcServer {
     )
   }
 
+  /**
+   * T-07575 — an unscoped read is bounded by default.
+   *
+   * Before this, `GET /v1/sessions` with no `scopeRef` was a bare unbounded
+   * scan of the whole table, and there was no parameter a caller could pass to
+   * ask for less. On a host with four months of history that is 8k rows and
+   * 33 MB of JSON for every dashboard refresh, which is what T-07575 was filed
+   * about.
+   *
+   * The rules, in order:
+   *
+   * - A **scoped** read (`?scopeRef=`) is never bounded. Every generation of
+   *   that scope comes back, always. This is the documented path to history and
+   *   the one that selector resolution and resume depend on, so narrowing it
+   *   would turn a display fix into a correctness bug.
+   * - `?all=true` opts an unscoped read out of the bound entirely.
+   * - `?updatedSince=<iso8601>` sets the window explicitly.
+   * - Otherwise the window is `HRC_SESSION_PROJECTION_DAYS` (default 7), plus
+   *   every session holding a live runtime regardless of age.
+   *
+   * `?status=` and `?limit=` narrow further; they never widen. Nothing here
+   * deletes or hides a row from storage — an excluded session is one HTTP
+   * parameter away.
+   */
   handleListSessions(url: URL): Response {
     const scopeRef = normalizeOptionalQuery(url.searchParams.get('scopeRef'))
     const laneRef = normalizeOptionalQuery(url.searchParams.get('laneRef'))
+    const status = parseSessionStatusQuery(url)
+    const limit = parseSessionLimitQuery(url)
 
     const rows = scopeRef
       ? this.listSessionsByScope(scopeRef, laneRef)
-      : this.listAllSessions(laneRef)
+      : this.listUnscopedSessionsForProjection(url, laneRef)
 
-    return json(decorateSessionTitles(this.db, rows))
+    const filtered = status === undefined ? rows : rows.filter((row) => row.status === status)
+    const limited = limit === undefined ? filtered : filtered.slice(0, limit)
+
+    // The bound must never be silent: a caller that got 525 of 8,319 rows is
+    // told so, in headers rather than in the body so the array shape every
+    // existing consumer parses is untouched. `total` is a COUNT over an 8k-row
+    // table — cheap next to the projection itself.
+    const total = this.countAllSessions()
+    return json(decorateSessionTitles(this.db, limited), 200, {
+      'X-Hrc-Session-Total': String(total),
+      'X-Hrc-Session-Returned': String(limited.length),
+      'X-Hrc-Session-Withheld': String(Math.max(0, total - limited.length)),
+    })
+  }
+
+  /** Total durable session rows, for reporting how much a bounded read withheld. */
+  countAllSessions(): number {
+    const row = this.db.sqlite
+      .query<{ total: number }, []>('SELECT COUNT(*) AS total FROM sessions')
+      .get()
+    return row?.total ?? 0
+  }
+
+  /**
+   * Resolve the unscoped session projection: unbounded on `?all=true`,
+   * otherwise bounded by `?updatedSince=` or the configured projection window.
+   */
+  private listUnscopedSessionsForProjection(url: URL, laneRef?: string): HrcSessionRecord[] {
+    if (parseSessionAllQuery(url)) {
+      return this.listAllSessions(laneRef)
+    }
+
+    const explicitSince = parseSessionUpdatedSinceQuery(url)
+    const updatedSince =
+      explicitSince ??
+      new Date(Date.now() - resolveSessionProjectionDays() * 24 * 60 * 60 * 1000).toISOString()
+
+    return this.listRecentSessions(updatedSince, laneRef)
   }
 
   handleGetSessionByHost(hostSessionId: string): Response {

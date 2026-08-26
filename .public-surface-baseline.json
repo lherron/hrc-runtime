@@ -4839,6 +4839,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "SessionProjectionResult",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionProjectionResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "SessionTitleRecord",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
