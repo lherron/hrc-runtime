@@ -201,3 +201,44 @@ bun run check:manifests
 Then the installed-binary bar: `just install`, restart the real launchd
 daemon, and smoke `hrc --help`, `hrc server status`, and at least one real
 read-only API/CLI command.
+
+## Per-user hrc-viewer LaunchAgent
+
+`hrc-viewer` is the sole Ghostty presentation actuator. Run one LaunchAgent for
+each GUI user that should receive the consolidated Headless Sessions window, and
+bind it to that node's production HRC runtime directory. Do not install a viewer
+for headless placement users or development daemons.
+
+The tracked plist is `launchd/com.praesidium.hrc-viewer.plist`; the install recipe
+materializes the current user's home, writes
+`~/Library/LaunchAgents/com.praesidium.hrc-viewer.plist`, and reloads
+`com.praesidium.hrc-viewer` in the current `gui/<uid>` domain:
+
+```bash
+just install                         # install hrc-viewer with the HRC release
+just install-hrc-viewer-launchd      # bootstrap/reload the per-user viewer
+launchctl print gui/$(id -u)/com.praesidium.hrc-viewer
+pgrep -fal hrc-viewer                # exactly one process for this GUI user
+tail -f ~/praesidium/var/logs/hrc-viewer.log
+```
+
+The plist uses the signed `~/.local/bin/praesidium-launch` shim as
+`ProgramArguments[0]`, keeps the viewer alive, points `HRC_RUNTIME_DIR` at
+`~/praesidium/var/run/hrc`, and uses the default 300-second reap linger. Presence
+of this LaunchAgent is enablement; there is no daemon feature flag. Re-run the
+recipe after a plist change because `kickstart` does not reload plist content.
+
+To remove the viewer from a GUI user, unload the exact service before removing
+its installed plist:
+
+```bash
+launchctl bootout gui/$(id -u)/com.praesidium.hrc-viewer
+rm ~/Library/LaunchAgents/com.praesidium.hrc-viewer.plist
+```
+
+After activation, verify `ghostmux list-surfaces --json` has one pane for every
+attachable `/v1/presentation/runtimes` row whose `viewerRequested` is true. A
+viewer restart must adopt matching panes by their `hrc_runtime_id` metadata; it
+must not duplicate them. Viewer reconciliation events belong in
+`~/praesidium/var/logs/hrc-viewer.log`. New `broker_headless_viewer` events in
+`hrc-server.log` indicate that the retired in-daemon actuator is still active.

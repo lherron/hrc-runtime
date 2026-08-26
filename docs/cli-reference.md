@@ -137,8 +137,9 @@ hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
   `roster_claim_superseded`. This is the same contract HRC Mobile uses for
   manually typed task scopes.
 
-**Adopting a window as the `console` key** is a one-time stamp on the WINDOW
-itself — enumerate the managed windows, then write the key onto the one you want
+**Adopting a window as the `console` key** is a one-time `hrc-viewer` operator
+procedure. Stamp the WINDOW itself before starting or restarting the per-user
+viewer — enumerate the managed windows, then write the key onto the one you want
 (T-07121). No pane is marked and nothing in that window is ever reaped:
 
 ```bash
@@ -148,14 +149,15 @@ ghostmux metadata set --window-id <windowId> \
 ghostmux list-windows --meta hrc_window_key=console --json   # verify
 ```
 
-HRC resolves the keyed window by that metadata alone, so closing any tab in it —
-including the one you stamped from — leaves the key intact. If the whole window
-is closed, HRC creates a fresh keyed window on the next dispatch: degraded, never
-broken. The window registry is in-memory, so the same re-adoption applies after a
-Ghostty restart.
+`hrc-viewer` resolves the keyed window by that metadata alone, so closing any tab
+in it — including the one you stamped from — leaves the key intact. If the whole
+window is closed, the viewer creates a fresh keyed window on its next reconcile:
+degraded, never broken. The window registry is in-memory, so repeat the stamp
+after a Ghostty restart when the `console` placement must be preserved.
 
-On a ScriptableGhostty without the windows API (404), HRC falls back to the older
-anchor-pane scheme, where the key rides on a long-lived surface instead:
+On a ScriptableGhostty without the windows API (404), `hrc-viewer` falls back to
+the older anchor-pane scheme, where the key rides on a long-lived surface
+instead:
 
 ```bash
 ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-window-anchor","hrc_window_key":"console"}'

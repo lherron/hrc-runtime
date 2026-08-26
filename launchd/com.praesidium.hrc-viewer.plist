@@ -21,6 +21,7 @@
 	<string>Interactive</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>__HOME__/.local/bin/praesidium-launch</string>
 		<string>__HOME__/.bun/bin/hrc-viewer</string>
 	</array>
 	<key>RunAtLoad</key>
