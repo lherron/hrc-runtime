@@ -105,18 +105,54 @@ export async function detectLaunchdOwner(): Promise<LaunchdOwner | null> {
   return { label, domain, serviceTarget }
 }
 
+/**
+ * `EALREADY` from launchctl. `kickstart -k` asked launchd to kill and relaunch a
+ * job whose restart was already in flight, so launchd declined to start a second
+ * one. The actuation still happened — this is a race with our own shutdown or
+ * with launchd's KeepAlive respawn, not a failure to restart.
+ */
+export const LAUNCHCTL_EALREADY = 37
+
+export type LaunchctlKickstartResult = {
+  /** launchctl reported success. */
+  ok: boolean
+  exitCode: number
+  /** Trimmed stderr/stdout from launchctl, when it said anything. */
+  detail: string
+  /**
+   * launchctl failed, but with a status that does not mean the job failed to
+   * restart. Callers must still prove the outcome; they must not report failure
+   * on this basis alone.
+   */
+  benign: boolean
+  /** Human-readable summary for logs and error messages. */
+  message: string
+}
+
+/**
+ * Ask launchd to (re)start the job. Never exits or throws on a non-zero
+ * launchctl status: the exit code of `launchctl kickstart` describes the
+ * *actuation request*, not the *outcome*, and only observing the daemon can
+ * establish the latter. Callers own the verdict — see `requireRestartProof`.
+ */
 export async function launchctlKickstart(
   owner: LaunchdOwner,
   opts: { kill?: boolean } = {}
-): Promise<void> {
+): Promise<LaunchctlKickstartResult> {
   const argv = ['launchctl', 'kickstart']
   if (opts.kill) argv.push('-k')
   argv.push(owner.serviceTarget)
   const result = await execProcess(argv)
-  if (result.exitCode !== 0) {
-    const detail = (result.stderr || result.stdout).trim()
-    fatalExit(`launchctl kickstart failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`)
+  if (result.exitCode === 0) {
+    return { ok: true, exitCode: 0, detail: '', benign: false, message: '' }
   }
+
+  const detail = (result.stderr || result.stdout).trim()
+  const benign = result.exitCode === LAUNCHCTL_EALREADY
+  const message = benign
+    ? `launchctl kickstart reported EALREADY (exit ${LAUNCHCTL_EALREADY}: operation already in progress) for ${owner.serviceTarget}; a restart was already in flight`
+    : `launchctl kickstart failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`
+  return { ok: false, exitCode: result.exitCode, detail, benign, message }
 }
 
 export async function collectServerRuntimeStatus(

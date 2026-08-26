@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  LAUNCHCTL_EALREADY,
   detectLaunchdOwner,
   launchctlKickstart,
   resolveOtelPreferredPortFromEnv,
@@ -237,5 +238,74 @@ describe('launchctlKickstart', () => {
 
     const log = await readFile(shim.logFile, 'utf8')
     expect(log.trim()).toBe('kickstart -k gui/501/com.example.hrc')
+  })
+
+  it.if(IS_DARWIN)('reports success without a failure message when launchctl exits 0', async () => {
+    shim = await writeShim({ exitCode: 0 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    const result = await launchctlKickstart({
+      label: 'com.example.hrc',
+      domain: 'gui/501',
+      serviceTarget: 'gui/501/com.example.hrc',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.exitCode).toBe(0)
+    expect(result.benign).toBe(false)
+    expect(result.message).toBe('')
+  })
+
+  // Regression (T-07580): EALREADY means launchd was already restarting the
+  // job, so the actuation happened. Classifying it as a hard failure produced a
+  // false RED on `hrc server restart` for a restart that had in fact succeeded.
+  it.if(IS_DARWIN)('classifies EALREADY (37) as a benign already-in-progress race', async () => {
+    shim = await writeShim({ exitCode: LAUNCHCTL_EALREADY })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    const result = await launchctlKickstart(
+      {
+        label: 'com.example.hrc',
+        domain: 'gui/501',
+        serviceTarget: 'gui/501/com.example.hrc',
+      },
+      { kill: true }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(LAUNCHCTL_EALREADY)
+    expect(result.benign).toBe(true)
+    expect(result.message).toContain('already in progress')
+  })
+
+  it.if(IS_DARWIN)('classifies any other non-zero status as a real failure', async () => {
+    shim = await writeShim({ exitCode: 113 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    const result = await launchctlKickstart({
+      label: 'com.example.hrc',
+      domain: 'gui/501',
+      serviceTarget: 'gui/501/com.example.hrc',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(113)
+    expect(result.benign).toBe(false)
+    expect(result.message).toContain('launchctl kickstart failed (exit 113)')
+  })
+
+  // The whole point of returning a result: a non-zero status must never end the
+  // process, because only observing the daemon can establish the outcome.
+  it.if(IS_DARWIN)('never exits or throws on a non-zero status', async () => {
+    shim = await writeShim({ exitCode: 113 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    await expect(
+      launchctlKickstart({
+        label: 'com.example.hrc',
+        domain: 'gui/501',
+        serviceTarget: 'gui/501/com.example.hrc',
+      })
+    ).resolves.toBeDefined()
   })
 })

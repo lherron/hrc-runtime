@@ -41,6 +41,7 @@ export {
 } from './cli-runtime/tmux-status.js'
 
 export type {
+  LaunchctlKickstartResult,
   LaunchdOwner,
   ServerRuntimeStatus,
 } from './cli-runtime/server-status.js'
@@ -49,6 +50,7 @@ export {
   daemonizeAndWait,
   detectLaunchdOwner,
   formatServerRuntimeStatus,
+  LAUNCHCTL_EALREADY,
   launchctlKickstart,
   resolveServerMode,
   stopServerProcess,

@@ -33,6 +33,7 @@ import {
   setupCliFixture,
   teardownCliFixture,
   testProjectScope,
+  tmpDir,
   waitForServerLog,
   waitForServerStatus,
 } from './fixtures/cli.fixture'
@@ -459,6 +460,158 @@ exit 1
       } finally {
         await runCli(
           ['server', 'stop', '--force', '--reason', 'T-07157 isolated test cleanup'],
+          isolatedEnv
+        ).catch(() => undefined)
+      }
+    }
+  )
+
+  // Regression (T-07580). Observed live during the T-07575 activation restart:
+  // `launchctl kickstart -k` raced launchd's own in-flight restart of the job
+  // and returned EALREADY (37). The actuation had happened and the daemon came
+  // back on the new build, but hrc treated the non-zero status as fatal, exited
+  // 1 before requireRestartProof ever ran, and reported a hard failure for a
+  // restart that worked. The danger is the false RED, not the noise: the
+  // operator's next move is a retry or --force against a healthy daemon that
+  // has already taken live turns.
+  it.if(process.platform === 'darwin')(
+    'server restart proves the outcome when launchctl reports EALREADY but the job did restart',
+    async () => {
+      const isolatedLabel = 'com.praesidium.hrc-T-07580-ealready'
+      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
+      const isolatedEnv = cliEnv({
+        HRC_LAUNCHD_LABEL: isolatedLabel,
+        HRC_SESSION_REF: `${primaryScope}/lane:main`,
+        ASP_SCOPE_REF: primaryScope,
+        ASP_TASK_ID: 'primary',
+        ASP_DEFAULT_TASK: 'primary',
+      })
+      try {
+        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
+        expect(startResult.exitCode).toBe(0)
+
+        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        const beforeStartedAt = before.release?.processStartedAt as string | undefined
+        expect(beforeStartedAt).toBeString()
+
+        // Actuates a real restart, then exits 37 — exactly what launchd did.
+        const shimDir = join(tmpDir, 'launchctl-ealready')
+        await mkdir(shimDir, { recursive: true })
+        await writeFile(
+          join(shimDir, 'launchctl'),
+          `#!/bin/sh
+if [ "$1" = "print" ]; then
+  exit 0
+fi
+if [ "$1" = "kickstart" ]; then
+  (
+    if [ -f "$HRC_RUNTIME_DIR/server.pid" ]; then
+      old_pid="$(sed -n '1p' "$HRC_RUNTIME_DIR/server.pid")"
+      kill "$old_pid" 2>/dev/null || true
+      while kill -0 "$old_pid" 2>/dev/null; do sleep 0.01; done
+    fi
+    exec "$HRC_TEST_BUN_PATH" "$HRC_TEST_CLI_PATH" server serve
+  ) </dev/null >>"$HRC_RUNTIME_DIR/ealready-launch.log" 2>&1 &
+  exit 37
+fi
+exit 1
+`
+        )
+        await chmod(join(shimDir, 'launchctl'), 0o755)
+
+        const restartResult = await runCli(
+          [
+            'server',
+            'restart',
+            '--wait',
+            '--timeout-ms',
+            '5000',
+            '--reason',
+            'T-07580 EALREADY proof',
+          ],
+          {
+            ...isolatedEnv,
+            HRC_TEST_BUN_PATH: process.execPath,
+            HRC_TEST_CLI_PATH: CLI_PATH,
+            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          }
+        )
+
+        // The proof, not launchctl's status, decides the verdict.
+        expect(restartResult.exitCode).toBe(0)
+        expect(restartResult.stderr).toContain('restart proven')
+        // ...and the benign race is still surfaced rather than swallowed.
+        expect(restartResult.stderr).toContain('already in progress')
+        expect(restartResult.stderr).not.toContain('launchctl kickstart failed')
+
+        const after = await waitForServerStatus(
+          (value) => value.running === true && value.release?.processStartedAt !== beforeStartedAt,
+          isolatedEnv
+        )
+        expect(after.release?.processStartedAt).toBeString()
+        expect(after.release?.processStartedAt).not.toBe(beforeStartedAt)
+      } finally {
+        await runCli(
+          ['server', 'stop', '--force', '--reason', 'T-07580 isolated test cleanup'],
+          isolatedEnv
+        ).catch(() => undefined)
+      }
+    }
+  )
+
+  // Guards the fix against over-correction: EALREADY must not become a blanket
+  // pass. If the job did NOT come back, the restart is still unproven.
+  it.if(process.platform === 'darwin')(
+    'server restart still fails unproven when launchctl reports EALREADY and nothing restarted',
+    async () => {
+      const isolatedLabel = 'com.praesidium.hrc-T-07580-ealready-noop'
+      const primaryScope = 'agent:test:project:hrc-runtime:task:primary'
+      const isolatedEnv = cliEnv({
+        HRC_LAUNCHD_LABEL: isolatedLabel,
+        HRC_SESSION_REF: `${primaryScope}/lane:main`,
+        ASP_SCOPE_REF: primaryScope,
+        ASP_TASK_ID: 'primary',
+        ASP_DEFAULT_TASK: 'primary',
+      })
+      try {
+        const startResult = await runCli(['server', 'start', '--daemon'], isolatedEnv)
+        expect(startResult.exitCode).toBe(0)
+
+        const before = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        const beforeStartedAt = before.release?.processStartedAt as string | undefined
+        expect(beforeStartedAt).toBeString()
+
+        const shimDir = join(tmpDir, 'launchctl-ealready-noop')
+        await mkdir(shimDir, { recursive: true })
+        await writeFile(
+          join(shimDir, 'launchctl'),
+          '#!/bin/sh\nif [ "$1" = "print" ]; then\n exit 0\nfi\nexit 37\n'
+        )
+        await chmod(join(shimDir, 'launchctl'), 0o755)
+
+        const restartResult = await runCli(
+          [
+            'server',
+            'restart',
+            '--wait',
+            '--proof-timeout-ms',
+            '100',
+            '--reason',
+            'T-07580 EALREADY no-op proof',
+          ],
+          {
+            ...isolatedEnv,
+            PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          }
+        )
+        expect(restartResult.exitCode).toBe(1)
+        expect(restartResult.stderr).toContain('[restart_unproven]')
+
+        const after = await waitForServerStatus((value) => value.running === true, isolatedEnv)
+        expect(after.release?.processStartedAt).toBe(beforeStartedAt)
+      } finally {
+        await runCli(
+          ['server', 'stop', '--force', '--reason', 'T-07580 isolated test cleanup'],
           isolatedEnv
         ).catch(() => undefined)
       }

@@ -80,7 +80,13 @@ export async function cmdServerStart(
 
   const owner = await detectLaunchdOwner()
   if (owner) {
-    await launchctlKickstart(owner)
+    const kickstart = await launchctlKickstart(owner)
+    // EALREADY means launchd is already bringing the job up, which is what we
+    // asked for; anything else is a real failure to actuate.
+    if (!kickstart.ok) {
+      if (!kickstart.benign) fatal(kickstart.message)
+      process.stderr.write(`hrc: ${kickstart.message}\n`)
+    }
     process.stderr.write(`hrc: daemon started via launchd (${owner.serviceTarget})\n`)
     return
   }
@@ -351,8 +357,24 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
     const owner = await detectLaunchdOwner()
     if (owner) {
       restartInitiated = true
-      await launchctlKickstart(owner, { kill: true })
-      if (before !== undefined) await requireRestartProof(before, proofTimeoutMs)
+      const kickstart = await launchctlKickstart(owner, { kill: true })
+
+      // A non-zero launchctl status describes the actuation request, not the
+      // outcome. When we can prove the outcome, the proof is authoritative and
+      // launchctl's complaint is context — failing here instead would report a
+      // false RED for a restart that worked, whose natural operator response is
+      // a retry or --force against a healthy daemon that has already taken live
+      // turns.
+      if (!kickstart.ok) {
+        process.stderr.write(`hrc: ${kickstart.message}\n`)
+      }
+      if (before !== undefined) {
+        await requireRestartProof(before, proofTimeoutMs)
+      } else if (!kickstart.ok && !kickstart.benign) {
+        // Nothing to prove against (no --wait/--drain baseline), so a hard
+        // launchctl failure stays a failure.
+        fatal(kickstart.message)
+      }
       process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
       return
     }
