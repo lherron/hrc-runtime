@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { createHrcServer } from 'hrc-server'
 
 import {
+  BROKER_LIFECYCLE_TEST_TIMEOUT_MS,
   cliEnv,
   runCli,
   serverOpts,
