@@ -65,6 +65,7 @@ const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
   { key: 'currentTurnAttempt', column: 'current_turn_attempt' },
   { key: 'lifecycleTerminalReason', column: 'lifecycle_terminal_reason' },
   { key: 'lastLifecycleEscalationJson', column: 'last_lifecycle_escalation_json' },
+  { key: 'presentation', column: 'presentation_json', transform: (v) => serializeJson(v) },
   { key: 'createdAt', column: 'created_at' },
   { key: 'updatedAt', column: 'updated_at' },
 ]
@@ -117,9 +118,10 @@ export class RuntimeRepository {
           current_turn_attempt,
           lifecycle_terminal_reason,
           last_lifecycle_escalation_json,
+          presentation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
       record.runtimeKind ?? 'harness',
@@ -158,6 +160,7 @@ export class RuntimeRepository {
       record.currentTurnAttempt ?? null,
       record.lifecycleTerminalReason ?? null,
       record.lastLifecycleEscalationJson ?? null,
+      serializeJson(record.presentation),
       record.createdAt,
       record.updatedAt
     )

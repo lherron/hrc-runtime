@@ -97,6 +97,7 @@ import type {
   LaunchListFilter,
   ListFirstTurnDiagnosticsResponse,
   ListMessagesResponse,
+  ListPresentationRuntimesResponse,
   ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
@@ -875,6 +876,20 @@ export class HrcClient {
       runtimeId: 'runtimeId' in selector ? emptyToUndefined(selector.runtimeId) : undefined,
     })
     return this.getJson<ListFirstTurnDiagnosticsResponse | GetFirstTurnDiagnosticsResponse>(path)
+  }
+
+  /**
+   * Presentation read model (T-07594 §5.3): every non-terminal runtime with its
+   * persisted presentation record, tmux coordinates and session title.
+   *
+   * SIDE-EFFECT-FREE by contract (§5.4) — a store projection that never
+   * reconciles liveness, probes tmux, attaches or appends events. This is the
+   * read a presentation consumer reconciles against; `listRuntimes()` and
+   * `attachRuntime()` reconcile liveness as a side effect of reading and are
+   * off-limits to it.
+   */
+  async listPresentationRuntimes(): Promise<ListPresentationRuntimesResponse> {
+    return this.getJson<ListPresentationRuntimesResponse>('/v1/presentation/runtimes')
   }
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {

@@ -305,7 +305,7 @@ export async function startRuntimeForSession(
         ? normalizeClaudeInteractiveBrokerIntent(intent)
         : intent
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
-    const viewerSpawnOptions = {
+    const presentationOptions = {
       operatorAttachPending:
         options.attachBeforeInvocationStart !== undefined ||
         options.suppressHeadlessViewer === true,
@@ -339,7 +339,7 @@ export async function startRuntimeForSession(
           (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
         ) {
           assertActuatorSplitRuntimeReuse(startIntent, reusableBrokerRuntime)
-          await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime, viewerSpawnOptions)
+          await this.publishPresentation(reusableBrokerRuntime, presentationOptions)
           const initialPrompt = startIntent.initialPrompt ?? ''
           if (initialPrompt.length > 0) {
             await this.executeHeadlessBrokerInputTurn(
@@ -373,7 +373,7 @@ export async function startRuntimeForSession(
           initialPrompt,
           startRunId
         )
-        await this.spawnBrokerHeadlessViewer(brokerRuntime, viewerSpawnOptions)
+        await this.publishPresentation(brokerRuntime, presentationOptions)
         // Explicit start WITH an initial prompt: wait for the startup turn to
         // complete (continuation established) via broker events, as the old
         // exec.ts start did. With NO initial user turn there is no run to wait
@@ -434,7 +434,7 @@ export async function startRuntimeForSession(
         )
       ) {
         assertActuatorSplitRuntimeReuse(normalizedIntent, existingRuntime)
-        await this.spawnBrokerHeadlessViewer(existingRuntime, viewerSpawnOptions)
+        await this.publishPresentation(existingRuntime, presentationOptions)
         return existingRuntime
       }
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
@@ -456,7 +456,7 @@ export async function startRuntimeForSession(
               : {}),
           }),
       })
-      await this.spawnBrokerHeadlessViewer(runtime, viewerSpawnOptions)
+      await this.publishPresentation(runtime, presentationOptions)
       if ((normalizedIntent.initialPrompt ?? '').length > 0) {
         await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
       }

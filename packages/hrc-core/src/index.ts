@@ -181,6 +181,19 @@ export type {
   ListFirstTurnDiagnosticsResponse,
 } from './contracts.js'
 
+export {
+  HRC_RUNTIME_PRESENTATION_EVENT,
+  HRC_SESSION_RETITLED_EVENT,
+} from './contracts.js'
+export type {
+  HrcPresentationRuntimeRow,
+  HrcPresentationTmuxTarget,
+  HrcRuntimePresentationEventPayload,
+  HrcRuntimePresentationRecord,
+  HrcSessionRetitledEventPayload,
+  ListPresentationRuntimesResponse,
+} from './contracts.js'
+
 export type {
   ApplyAppManagedSessionInput,
   ApplyAppManagedSessionsRequest,

@@ -14,6 +14,7 @@ import {
   type HrcManagedSessionRecord,
   type HrcRunRecord,
   type HrcRuntimeIntent,
+  type HrcRuntimePresentationRecord,
   type HrcRuntimeSnapshot,
   type HrcSessionRecord,
   type HrcSurfaceBindingRecord,
@@ -284,6 +285,7 @@ export const RUNTIME_COLUMNS = `
   current_turn_attempt,
   lifecycle_terminal_reason,
   last_lifecycle_escalation_json,
+  presentation_json,
   created_at,
   updated_at`
 
@@ -728,6 +730,10 @@ export function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
     currentTurnAttempt: row.current_turn_attempt ?? undefined,
     lifecycleTerminalReason: row.lifecycle_terminal_reason ?? undefined,
     lastLifecycleEscalationJson: row.last_lifecycle_escalation_json ?? undefined,
+    presentation: parseJson<HrcRuntimePresentationRecord>(
+      row.presentation_json,
+      'presentation_json'
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

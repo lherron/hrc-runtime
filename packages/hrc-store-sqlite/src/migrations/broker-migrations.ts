@@ -697,6 +697,30 @@ const steerContributionsMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07594 — durable viewer-presentation record on the runtime row (durable law
+ * `hrc-runtime.viewer-presentation-sidecar` §5.1).
+ *
+ * One nullable JSON column rather than three typed ones: the record is a single
+ * additive fact written and read as a unit by `publishPresentation` and the
+ * presentation read model, and NULL is load-bearing — it means "this generation
+ * predates the record", which the read model reports rather than defaults away.
+ */
+const runtimePresentationRecordMigration: HrcMigration = {
+  id: '0047_runtime_presentation',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runtimes)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!columns.has('presentation_json')) {
+      db.exec('ALTER TABLE runtimes ADD COLUMN presentation_json TEXT')
+    }
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -712,4 +736,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runsDispatchIdempotencyMigration,
   eventRepositoryQueryIndexesMigration,
   steerContributionsMigration,
+  runtimePresentationRecordMigration,
 ]

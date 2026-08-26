@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 
 import { handleInteractiveTmuxBrokerDispatchTurn } from '../broker-interactive-handlers'
-import type { SpawnBrokerHeadlessViewerOptions } from '../broker-interactive-handlers/controller-factory'
+import type { PublishPresentationOptions } from '../presentation-publish'
 
 function session(): HrcSessionRecord {
   return {
@@ -44,14 +44,16 @@ function runtime(): HrcRuntimeSnapshot {
 
 describe('T-05881 operator attach viewer suppression', () => {
   it('passes operatorAttachPending to claude viewer spawn for attached prompt dispatch', async () => {
-    const spawnCalls: Array<SpawnBrokerHeadlessViewerOptions | undefined> = []
+    const publishCalls: Array<PublishPresentationOptions | undefined> = []
     const mockThis = {
       startInteractiveTmuxBrokerRuntime: async () => runtime(),
-      spawnBrokerHeadlessViewer: async (
+      // T-07594: the dispatch path now publishes the presentation decision; the
+      // in-daemon viewer spawn happens behind that helper, with the same options.
+      publishPresentation: async (
         _runtime: HrcRuntimeSnapshot,
-        options?: SpawnBrokerHeadlessViewerOptions
+        options?: PublishPresentationOptions
       ) => {
-        spawnCalls.push(options)
+        publishCalls.push(options)
       },
     }
 
@@ -70,18 +72,20 @@ describe('T-05881 operator attach viewer suppression', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(spawnCalls).toEqual([{ operatorAttachPending: true }])
+    expect(publishCalls).toEqual([{ operatorAttachPending: true }])
   })
 
   it('does not mark non-attached claude dispatch as operator-attached', async () => {
-    const spawnCalls: Array<SpawnBrokerHeadlessViewerOptions | undefined> = []
+    const publishCalls: Array<PublishPresentationOptions | undefined> = []
     const mockThis = {
       startInteractiveTmuxBrokerRuntime: async () => runtime(),
-      spawnBrokerHeadlessViewer: async (
+      // T-07594: the dispatch path now publishes the presentation decision; the
+      // in-daemon viewer spawn happens behind that helper, with the same options.
+      publishPresentation: async (
         _runtime: HrcRuntimeSnapshot,
-        options?: SpawnBrokerHeadlessViewerOptions
+        options?: PublishPresentationOptions
       ) => {
-        spawnCalls.push(options)
+        publishCalls.push(options)
       },
     }
 
@@ -99,6 +103,6 @@ describe('T-05881 operator attach viewer suppression', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(spawnCalls).toEqual([{ operatorAttachPending: false }])
+    expect(publishCalls).toEqual([{ operatorAttachPending: false }])
   })
 })

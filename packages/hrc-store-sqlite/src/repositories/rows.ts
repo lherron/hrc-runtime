@@ -72,6 +72,7 @@ export type RuntimeRow = {
   current_turn_attempt: number | null
   lifecycle_terminal_reason: string | null
   last_lifecycle_escalation_json: string | null
+  presentation_json: string | null
   created_at: string
   updated_at: string
 }

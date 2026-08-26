@@ -20,6 +20,10 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'session.resolved': 'session',
   'session.generation_auto_rotated': 'session',
   'session.continuation_dropped': 'session',
+  // T-07594 (durable law `hrc-runtime.viewer-presentation-sidecar` §5.2): the
+  // session-title write/clear becomes a ledger fact so a presentation consumer
+  // can retitle from the stream instead of polling.
+  'session.retitled': 'session',
   'app-session.created': 'app_session',
   'app-session.removed': 'app_session',
   'app-session.literal-input': 'app_session',
@@ -36,6 +40,10 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
   'runtime.adopted': 'runtime',
+  // T-07594 §5.2: one invocation's presentation decision. Appended at the exact
+  // point the in-daemon viewer spawn happens today — after the `:tui` substrate
+  // exists — so a consumer needs no readiness race and no effectful read.
+  'runtime.presentation': 'runtime',
   // T-07235 provision-liveness watchdog. `first_turn_missing` is the single
   // reason-coded terminal fact; the other two are linked informational rows.
   first_turn_missing: 'runtime',

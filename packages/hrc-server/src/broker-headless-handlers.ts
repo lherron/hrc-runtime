@@ -42,7 +42,6 @@ import {
 } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
@@ -740,10 +739,11 @@ export async function executeHeadlessBrokerStartTurn(
   })
     .then((runtime) => {
       // Detached acceptance must not wait for presentation, but completion of
-      // the background boot still owns the best-effort viewer side effect.
-      if (canOperatorAttach(runtime)) {
-        void this.spawnBrokerHeadlessViewer(runtime)
-      }
+      // the background boot still owns the best-effort presentation publish.
+      // The attachability gate that used to stand here is redundant:
+      // publishPresentation computes `operatorAttachable` itself and records it
+      // either way, and the in-daemon spawn it fronts re-checks the predicate.
+      void this.publishPresentation(runtime)
       // Test doubles and older controller adapters may not implement the
       // acceptance callback. Full boot is a conservative fallback boundary.
       if (!acceptedSettled) resolveAccepted(runtime)

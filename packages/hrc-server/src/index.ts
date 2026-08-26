@@ -25,6 +25,7 @@ import type {
   HrcCommandLaunchSpec,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcSessionRetitledEventPayload,
   HrcStatusResponse,
   HrcStatusSummaryResponse,
   HrcTurnAdmissionCloseRequest,
@@ -181,6 +182,11 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
+import {
+  type PresentationPublishMethods,
+  presentationPublishMethods,
+} from './presentation-publish.js'
+import { handleListPresentationRuntimes } from './presentation-read-model.js'
 import { resolveRegistrationClasses } from './registration-classes-config.js'
 import {
   type RegistrationGcHandlersMethods,
@@ -751,6 +757,7 @@ interface HrcServerInstance
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
     BrokerHeadlessHandlersMethods,
+    PresentationPublishMethods,
     SteerClassDispatchMethods,
     SdkTurnHandlersMethods,
     SessionIndexHandlersMethods,
@@ -948,6 +955,8 @@ class HrcServerInstance implements HrcServer {
       this.handleHookIngest(request),
     [exactRouteKey('GET', '/v1/runtime-diagnostics')]: (_request, url) =>
       handleFirstTurnDiagnostics(this.db, url),
+    [exactRouteKey('GET', '/v1/presentation/runtimes')]: () =>
+      handleListPresentationRuntimes(this.db),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
     [exactRouteKey('GET', '/v1/status')]: (_request, url) => this.handleStatus(url),
     [exactRouteKey('GET', '/v1/federation/locate')]: (_request, url) =>
@@ -2226,7 +2235,36 @@ class HrcServerInstance implements HrcServer {
         updatedAt: now,
       })
     })()
+    this.appendSessionRetitled(hostSessionId, stored.title, now)
     return json(stored)
+  }
+
+  /**
+   * T-07594 §5.2 — a title write/clear becomes a ledger fact so a presentation
+   * consumer can retitle from the stream instead of polling. `null` is an
+   * explicit clear, never an absence. Best-effort by construction: the title
+   * has already been committed, and a ledger failure must not fail the write.
+   */
+  appendSessionRetitled(hostSessionId: string, title: string | null, ts: string): void {
+    const session = this.db.sessions.getByHostSessionId(hostSessionId)
+    if (!session) return
+    try {
+      this.notifyEvent(
+        appendHrcEvent(this.db, 'session.retitled', {
+          ts,
+          hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          payload: { title } satisfies HrcSessionRetitledEventPayload,
+        })
+      )
+    } catch (error) {
+      writeServerLog('WARN', 'session_retitled.append_failed', {
+        hostSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   handleDeleteSessionTitle(hostSessionId: string): Response {
@@ -2237,7 +2275,11 @@ class HrcServerInstance implements HrcServer {
         { hostSessionId }
       )
     }
-    return json({ hostSessionId, deleted: this.db.sessionTitles.delete(hostSessionId) })
+    const deleted = this.db.sessionTitles.delete(hostSessionId)
+    if (deleted) {
+      this.appendSessionRetitled(hostSessionId, null, timestamp())
+    }
+    return json({ hostSessionId, deleted })
   }
 
   async handleClearContext(request: Request): Promise<Response> {
@@ -2735,6 +2777,7 @@ Object.assign(
   turnDispatchHandlersMethods,
   brokerInteractiveHandlersMethods,
   brokerHeadlessHandlersMethods,
+  presentationPublishMethods,
   steerClassDispatchMethods,
   sdkTurnHandlersMethods,
   sessionIndexHandlersMethods,

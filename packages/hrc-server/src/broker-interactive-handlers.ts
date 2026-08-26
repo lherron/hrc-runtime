@@ -593,7 +593,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       // agent-loop) starts a tmux TUI with no operator terminal watching it.
       // Presentation stays best-effort and outside the acceptance boundary.
       if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-        void this.spawnBrokerHeadlessViewer(runtime, {
+        void this.publishPresentation(runtime, {
           operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
         })
       }

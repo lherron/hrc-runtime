@@ -437,6 +437,31 @@ export type HrcSessionRecord = {
   continuation?: HrcContinuationRef | undefined
 }
 
+/**
+ * Durable viewer-presentation record on a runtime row (T-07594, durable law
+ * `hrc-runtime.viewer-presentation-sidecar` §5.1).
+ *
+ * Additive and nullable: a generation created before the record shipped carries
+ * none, and the read model reports its absence rather than inventing a value
+ * (§5.5). Only DURABLE facts live here — `operatorAttachPending` is an
+ * invocation-local predicate and is deliberately NOT persisted; what is
+ * persisted is its cumulative consequence, `viewerRequested`.
+ */
+export type HrcRuntimePresentationRecord = {
+  /** `canOperatorAttach(runtime)` at the last publishing invocation. */
+  operatorAttachable: boolean
+  /**
+   * MONOTONE within a generation: false → true on the first non-suppressed
+   * start/reuse invocation, never cleared. This is exactly the fact the
+   * in-daemon spawn path acts on — ensure is find-or-create and reap happens
+   * only on terminate — so "a pane should exist" ⇔ "at least one non-suppressed
+   * invocation has run for this generation".
+   */
+  viewerRequested: boolean
+  /** Latest `lastAppliedIntentJson.presentation.viewerWindow`; latest wins. */
+  viewerWindow?: string | undefined
+}
+
 export type HrcRuntimeSnapshot = {
   runtimeId: string
   runtimeKind?: HrcRuntimeKind | undefined
@@ -482,6 +507,11 @@ export type HrcRuntimeSnapshot = {
   currentTurnAttempt?: number | undefined
   lifecycleTerminalReason?: string | undefined
   lastLifecycleEscalationJson?: string | undefined
+  /**
+   * Durable viewer-presentation record (T-07594). Absent for generations that
+   * predate the record; never carries invocation-local state.
+   */
+  presentation?: HrcRuntimePresentationRecord | undefined
   /**
    * Projected health detail (T-07235). Never persisted — the runtime-list
    * projection attaches it so a fleet glance finds a runtime whose first turn
@@ -964,6 +994,65 @@ export type HrcRuntimeHealthDetail = {
     bundleAvailable: boolean
     retrieval: string
   }
+}
+
+/** Event kind carrying one invocation's presentation decision (T-07594 §5.2). */
+export const HRC_RUNTIME_PRESENTATION_EVENT = 'runtime.presentation'
+/** Event kind carrying a session-title write or clear (T-07594 §5.2). */
+export const HRC_SESSION_RETITLED_EVENT = 'session.retitled'
+
+/**
+ * tmux coordinates an operator (or a viewer) attaches with. Present only when
+ * the runtime is operator-attachable; derived from the persisted hosting state
+ * at emit/projection time, never probed.
+ */
+export type HrcPresentationTmuxTarget = {
+  socketPath: string
+  attachTarget: string
+}
+
+/**
+ * `runtime.presentation` payload — appended on EVERY start/reuse invocation
+ * that would spawn a viewer today (T-07594 §5.2).
+ *
+ * `invocation.operatorAttachPending` is the invocation-local suppression
+ * predicate; it appears here and nowhere else. `presentation` is the persisted
+ * record AFTER this invocation folded into it.
+ */
+export type HrcRuntimePresentationEventPayload = {
+  invocation: { operatorAttachPending: boolean }
+  presentation: HrcRuntimePresentationRecord
+  tmux?: HrcPresentationTmuxTarget | undefined
+  title?: string | undefined
+}
+
+/** `session.retitled` payload. `null` is an explicit clear, not an absence. */
+export type HrcSessionRetitledEventPayload = {
+  title: string | null
+}
+
+/**
+ * One row of the presentation read model (T-07594 §5.3). Durable facts only:
+ * no invocation-local field ever appears here, and the projection that builds
+ * it reads the store and returns — it never reconciles liveness, probes tmux,
+ * attaches, or appends events.
+ */
+export type HrcPresentationRuntimeRow = {
+  runtimeId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  status: string
+  /** Absent for generations created before the record shipped (§5.5). */
+  presentation?: HrcRuntimePresentationRecord | undefined
+  tmux?: HrcPresentationTmuxTarget | undefined
+  title?: string | undefined
+}
+
+export type ListPresentationRuntimesResponse = {
+  ok: true
+  runtimes: HrcPresentationRuntimeRow[]
 }
 
 export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA = 'hrc.provider-transcript-artifact/v1'

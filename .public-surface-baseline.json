@@ -1087,6 +1087,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_RUNTIME_PRESENTATION_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_RUNTIME_PRESENTATION_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_SESSION_RETITLED_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_SESSION_RETITLED_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_STARTED_FRESH_TURN_OUTCOME",
       "kind": "value",
       "file": "packages/hrc-core/src/delivery-contracts.ts",
@@ -2255,6 +2271,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcPresentationRuntimeRow",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcPresentationRuntimeRow|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcPresentationTmuxTarget",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcPresentationTmuxTarget|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "hrcPresentedToLiveHarness",
       "kind": "value",
       "file": "packages/hrc-core/src/delivery-contracts.ts",
@@ -2375,6 +2407,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRuntimePresentationEventPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimePresentationEventPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimePresentationRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimePresentationRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRuntimeSelector",
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -2435,6 +2483,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|HrcSessionRef|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSessionRetitledEventPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcSessionRetitledEventPayload|type",
       "count": 1
     },
     {
@@ -2859,6 +2915,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|ListMessagesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListPresentationRuntimesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|ListPresentationRuntimesResponse|type",
       "count": 1
     },
     {
