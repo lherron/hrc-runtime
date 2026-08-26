@@ -1,6 +1,7 @@
 import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   HrcContinuationRef,
+  HrcHarness,
   HrcProvider,
   HrcRuntimeControllerKind,
   HrcRuntimeIntent,
@@ -75,7 +76,25 @@ export function deriveSdkHarness(
   if (harness.id === 'agent-harness' || harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
   }
-  return resolveHarnessFrontendForProvider(harness.provider, 'sdk') ?? 'agent-sdk'
+  const frontend = resolveHarnessFrontendForProvider(harness.provider, 'sdk')
+  // spaces-config can name frontends HRC has not admitted yet (e.g.
+  // agent-harness-tui, pending T-07568); only HRC-known harness ids pass
+  // through, anything else keeps the legacy SDK fallback.
+  return frontend !== undefined && isHrcHarness(frontend) ? frontend : 'agent-sdk'
+}
+
+const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([
+  'agent-harness',
+  'agent-sdk',
+  'claude-code',
+  'codex-cli',
+  'pi',
+  'pi-cli',
+  'pi-sdk',
+])
+
+function isHrcHarness(value: string): value is HrcHarness {
+  return HRC_HARNESS_IDS.has(value)
 }
 
 /**
