@@ -30,7 +30,7 @@ describe('selectDispatchInteractiveRuntime', () => {
 
   it('falls back to the newest interactive runtime when none are available', () => {
     const olderStale = { id: 'older-stale', transport: 'tmux', status: 'stale' }
-    const newerDead = { id: 'newer-dead', transport: 'ghostty', status: 'dead' }
+    const newerDead = { id: 'newer-dead', transport: 'tmux', status: 'dead' }
 
     expect(selectDispatchInteractiveRuntime([olderStale, newerDead])).toBe(newerDead)
   })

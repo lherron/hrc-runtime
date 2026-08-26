@@ -108,7 +108,7 @@ export type FederationSemanticTurnIdentity = {
   readonly runId: string
   readonly generation: number
   readonly mode: 'headless' | 'interactive' | 'nonInteractive'
-  readonly transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  readonly transport: 'sdk' | 'tmux' | 'headless'
 }
 
 /**
@@ -155,7 +155,7 @@ export type FederationInteractiveLifecycleSignal = {
     readonly generation: number
     readonly runtimeId?: string | undefined
     readonly runId: string
-    readonly transport?: 'sdk' | 'tmux' | 'headless' | 'ghostty' | undefined
+    readonly transport?: 'sdk' | 'tmux' | 'headless' | undefined
     readonly payload: Readonly<Record<string, unknown>>
   }
 }

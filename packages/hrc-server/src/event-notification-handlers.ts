@@ -144,7 +144,7 @@ export function maybeCompleteInteractiveSemanticTurn(
   if (
     !request ||
     request.execution.mode !== 'interactive' ||
-    (request.execution.transport !== 'tmux' && request.execution.transport !== 'ghostty') ||
+    request.execution.transport !== 'tmux' ||
     request.execution.runId === undefined ||
     request.execution.hostSessionId === undefined ||
     request.execution.generation === undefined
@@ -488,12 +488,7 @@ export function finalizeSemanticTurnResponse(
       ? finalizer.mode
       : undefined
   const signalTransport =
-    transport === 'sdk' ||
-    transport === 'tmux' ||
-    transport === 'headless' ||
-    transport === 'ghostty'
-      ? transport
-      : undefined
+    transport === 'sdk' || transport === 'tmux' || transport === 'headless' ? transport : undefined
   const semanticTurnSignal: FederationSemanticTurnSignal | undefined =
     federatedSemanticTurn &&
     runtimeId !== undefined &&
@@ -537,10 +532,7 @@ export function finalizeSemanticTurnResponse(
       generation,
       ...(runtimeId ? { runtimeId } : {}),
       runId,
-      ...(transport === 'sdk' ||
-      transport === 'tmux' ||
-      transport === 'headless' ||
-      transport === 'ghostty'
+      ...(transport === 'sdk' || transport === 'tmux' || transport === 'headless'
         ? { transport }
         : {}),
       ...(event.errorCode ? { errorCode: event.errorCode } : {}),

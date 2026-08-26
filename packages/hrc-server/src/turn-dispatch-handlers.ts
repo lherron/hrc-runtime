@@ -1184,10 +1184,8 @@ async function dispatchAdmittedTurnForSession(
     const interactiveAvailableAndIdle =
       !callerSurfaceReuseRefusal &&
       liveInteractiveRuntime &&
-      (liveInteractiveRuntime.transport === 'tmux' ||
-        liveInteractiveRuntime.transport === 'ghostty') &&
-      (liveInteractiveRuntime.tmuxJson !== undefined ||
-        liveInteractiveRuntime.surfaceJson !== undefined) &&
+      liveInteractiveRuntime.transport === 'tmux' &&
+      liveInteractiveRuntime.tmuxJson !== undefined &&
       !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
       // T-05358: never reuse an interactive runtime whose broker invocation is
       // transitioning (starting/stopping) — row status alone admits `stopping`.
@@ -1414,8 +1412,7 @@ export function markRuntimeStaleForBrokerReprovision(
     runtimeId: runtime.runtimeId,
     ...(runtime.transport === 'sdk' ||
     runtime.transport === 'tmux' ||
-    runtime.transport === 'headless' ||
-    runtime.transport === 'ghostty'
+    runtime.transport === 'headless'
       ? { transport: runtime.transport }
       : {}),
     payload,

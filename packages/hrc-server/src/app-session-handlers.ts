@@ -865,7 +865,7 @@ export async function handleAppSessionCapture(
 
 export function handleAppSessionAttach(this: HrcServerInstanceForHandlers, url: URL): Response {
   const { runtime } = this.resolveManagedSessionRuntime(parseAppSessionSelectorFromQuery(url))
-  return this.attachRuntime(runtime, { allowLegacyOperatorAttach: true })
+  return this.attachRuntime(runtime, { allowLegacyTmuxAttach: true })
 }
 
 export async function handleAppSessionInterrupt(

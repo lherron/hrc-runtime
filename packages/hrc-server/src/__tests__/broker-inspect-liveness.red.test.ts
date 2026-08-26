@@ -10,14 +10,6 @@
  *       the InvocationInspectionSummary[] shape
  *     - must mutate ZERO DB state (no inserts / updates / events)
  *
- *  2. Non-broker ghostty fallback labeling (item #5, must-not-mislead gate)
- *     - for transport:'ghostty' + harness:'claude-code' with no broker:
- *       response must include source:'hrc-derived' (or derivedBy field)
- *       and a synthesized lifecycle.retention.computedRetireAt =
- *       lastActivityAt + 15 min (DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES)
- *     - HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES env override is honored
- *     - label MUST be present; plain broker-less inspect must never omit it
- *
  *  3. Pre-broker / adopted runtime fallback
  *     - adopted runtime (no controllerKind:'harness-broker') → same
  *       source:'hrc-derived' label, DB-only facts, no broker lifecycle synthesized
@@ -53,10 +45,6 @@ import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
-// ── constants matching production policy ─────────────────────────────────────
-const DEFAULT_GHOSTTY_IDLE_TTL_MINUTES = 15
-const _DEFAULT_GHOSTTY_IDLE_TTL_MS = DEFAULT_GHOSTTY_IDLE_TTL_MINUTES * 60 * 1000
-
 // ── fixture wiring ────────────────────────────────────────────────────────────
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -67,7 +55,6 @@ beforeEach(async () => {
 })
 
 void totalWriteableRows
-void seedGhosttyRuntime
 void seedAdoptedHeadlessRuntime
 
 afterEach(async () => {
@@ -226,50 +213,6 @@ function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
         updatedAt: now,
       })
     }
-  } finally {
-    db.close()
-  }
-}
-
-type SeedGhosttyRuntimeOpts = {
-  runtimeId: string
-  hostSessionId: string
-  scopeRef: string
-  lastActivityAt?: string | undefined
-  adopted?: boolean | undefined
-}
-
-function seedGhosttyRuntime(opts: SeedGhosttyRuntimeOpts): void {
-  const now = fixture.now()
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    db.sessions.insert({
-      hostSessionId: opts.hostSessionId,
-      scopeRef: opts.scopeRef,
-      laneRef: 'main',
-      generation: 1,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: [],
-    })
-    db.runtimes.insert({
-      runtimeId: opts.runtimeId,
-      hostSessionId: opts.hostSessionId,
-      scopeRef: opts.scopeRef,
-      laneRef: 'main',
-      generation: 1,
-      transport: 'ghostty',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'ready',
-      supportsInflightInput: false,
-      adopted: opts.adopted ?? false,
-      // No controllerKind — not broker-managed
-      lastActivityAt: opts.lastActivityAt ?? now,
-      createdAt: now,
-      updatedAt: now,
-    })
   } finally {
     db.close()
   }

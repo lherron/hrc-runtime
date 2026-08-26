@@ -58,9 +58,7 @@ export function mapServerRunRow(row: HrcServerRunRow): HrcRunRecord {
 }
 
 export function reconcileResultTransport(run: HrcRunRecord): ReconcileActiveRunResult['transport'] {
-  return run.transport === 'sdk' || run.transport === 'headless' || run.transport === 'ghostty'
-    ? run.transport
-    : 'tmux'
+  return run.transport === 'sdk' || run.transport === 'headless' ? run.transport : 'tmux'
 }
 
 export function runtimeMatchesSweepRequest(
@@ -294,12 +292,7 @@ export async function evaluatePruneDisposition(
 }
 
 export function isSweepRuntimeTransport(transport: string): transport is SweepRuntimeTransport {
-  return (
-    transport === 'tmux' ||
-    transport === 'headless' ||
-    transport === 'sdk' ||
-    transport === 'ghostty'
-  )
+  return transport === 'tmux' || transport === 'headless' || transport === 'sdk'
 }
 
 export function filterRuntimes(

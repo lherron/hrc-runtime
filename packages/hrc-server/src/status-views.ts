@@ -9,8 +9,7 @@ import type {
   StartRuntimeResponse,
 } from 'hrc-core'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
-import type { GhostmuxSurfaceState } from './ghostmux.js'
-import { requireGhosttySurface, requireTmuxPane } from './require-helpers.js'
+import { requireTmuxPane } from './require-helpers.js'
 import { findLatestSessionRuntime } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import type { TmuxPaneState } from './tmux.js'
@@ -39,31 +38,6 @@ export function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
     sessionId: tmuxPane.sessionId,
     windowId: tmuxPane.windowId,
     paneId: tmuxPane.paneId,
-  }
-}
-
-export function toSurfaceJson(surface: GhostmuxSurfaceState): Record<string, unknown> {
-  return {
-    kind: 'ghostty',
-    surfaceId: surface.surfaceId,
-    title: surface.title,
-    createdBy: surface.createdBy,
-    ...(surface.anchorSurfaceId ? { anchorSurfaceId: surface.anchorSurfaceId } : {}),
-  }
-}
-
-export function simplifySurfaceJson(
-  surfaceJson: Record<string, unknown> | undefined
-): Record<string, unknown> {
-  if (!surfaceJson) {
-    return {}
-  }
-
-  return {
-    kind: surfaceJson['kind'],
-    surfaceId: surfaceJson['surfaceId'],
-    title: surfaceJson['title'],
-    anchorSurfaceId: surfaceJson['anchorSurfaceId'],
   }
 }
 
@@ -134,21 +108,6 @@ export function toStatusSessionView(
 }
 
 export function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResponse {
-  if (runtime.transport === 'ghostty') {
-    const surface = requireGhosttySurface(runtime)
-    return {
-      runtimeId: runtime.runtimeId,
-      hostSessionId: runtime.hostSessionId,
-      transport: 'ghostty',
-      status: runtime.status,
-      supportsInFlightInput: runtime.supportsInflightInput,
-      surface: {
-        surfaceId: surface.surfaceId,
-        ...(surface.title ? { title: surface.title } : {}),
-      },
-    }
-  }
-
   if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
     return {
       runtimeId: runtime.runtimeId,

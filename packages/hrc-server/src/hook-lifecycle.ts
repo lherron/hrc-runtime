@@ -208,9 +208,7 @@ export function finalizeRunOnStopHook(
     generation: envelope.generation,
     runId: activeRunId,
     runtimeId: runtime.runtimeId,
-    ...(run.transport === 'sdk' || run.transport === 'tmux' || run.transport === 'ghostty'
-      ? { transport: run.transport }
-      : {}),
+    ...(run.transport === 'sdk' || run.transport === 'tmux' ? { transport: run.transport } : {}),
     payload: {
       success: true,
       source: 'hook_stop',
@@ -440,7 +438,7 @@ export function applyHookLifecycleEnvelope(
 
   const runtime = db.runtimes.getByRuntimeId(envelope.runtimeId)
   if (!runtime) return events
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') return events
+  if (runtime.transport !== 'tmux') return events
   if (isRuntimeUnavailableStatus(runtime.status)) return events
   if (runtime.activeRunId !== undefined) return events
 

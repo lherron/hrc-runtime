@@ -21,7 +21,7 @@ import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
-import { requireGhosttySurface, requireTmuxPane } from '../require-helpers.js'
+import { requireTmuxPane } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -38,7 +38,6 @@ import {
   timestamp,
 } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
-import type { TmuxPaneState } from '../tmux.js'
 
 // Broker/SDK buffers are token-stream chunks rather than terminal lines. A
 // generous fixed ratio preserves the requested line tail for normal streamed
@@ -195,7 +194,7 @@ export async function handleLiteralInputBySelector(
     })
   }
 
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
+  if (runtime.transport !== 'tmux') {
     throw new HrcRuntimeUnavailableError('runtime does not support literal input', {
       sessionRef,
       runtimeId: runtime.runtimeId,
@@ -217,22 +216,12 @@ export async function handleLiteralInputBySelector(
     })
   }
 
-  const pane = runtime.transport === 'tmux' ? requireTmuxPane(runtime) : undefined
-  const tmux = pane ? this.tmuxForPane(pane) : this.tmux
-  const surfaceId =
-    runtime.transport === 'ghostty' ? requireGhosttySurface(runtime).surfaceId : undefined
-  if (runtime.transport === 'ghostty') {
-    await this.ghostmux.sendLiteral(surfaceId as string, body['text'])
-    if (body['enter'] !== false) {
-      await this.ghostmux.sendEnter(surfaceId as string)
-    }
+  const pane = requireTmuxPane(runtime)
+  const tmux = this.tmuxForPane(pane)
+  if (body['enter'] !== false) {
+    await tmux.sendKeys(pane.paneId, body['text'])
   } else {
-    const paneId = (pane as TmuxPaneState).paneId
-    if (body['enter'] !== false) {
-      await tmux.sendKeys(paneId, body['text'])
-    } else {
-      await tmux.sendLiteral(paneId, body['text'])
-    }
+    await tmux.sendLiteral(pane.paneId, body['text'])
   }
 
   const now = timestamp()
@@ -486,7 +475,7 @@ export async function handleDispatchTurnBySelector(
   const transport = turnBody.transport
 
   let finalOutput: string | undefined
-  if (transport !== 'tmux' && transport !== 'ghostty') {
+  if (transport !== 'tmux') {
     const bufferedOutput = this.db.runtimeBuffers
       .listByRunId(turnBody.runId)
       .map((chunk) => chunk.text)

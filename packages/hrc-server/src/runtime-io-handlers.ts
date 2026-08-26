@@ -39,7 +39,6 @@ import {
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
-  requireGhosttySurface,
   requireKnownRuntime,
   requireRuntime,
   requireSession,
@@ -66,7 +65,7 @@ export async function captureRuntime(
   runtime: HrcRuntimeSnapshot
 ): Promise<Response> {
   const directPaneCapture = canUseDirectPaneFallback(runtime)
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty' && !directPaneCapture) {
+  if (runtime.transport !== 'tmux' && !directPaneCapture) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'cannot capture a non-interactive runtime; use the runtime event stream instead',
@@ -77,13 +76,8 @@ export async function captureRuntime(
     )
   }
 
-  let text: string
-  if (runtime.transport === 'ghostty') {
-    text = await this.ghostmux.capture(requireGhosttySurface(runtime).surfaceId)
-  } else {
-    const pane = requireTmuxPane(runtime)
-    text = await this.tmuxForPane(pane).capture(pane.paneId)
-  }
+  const pane = requireTmuxPane(runtime)
+  const text = await this.tmuxForPane(pane).capture(pane.paneId)
 
   const now = timestamp()
   this.db.runtimes.update(
@@ -258,27 +252,7 @@ export async function reconcileTmuxRuntimeLiveness(
     return requireKnownRuntime(this.db, runtime.runtimeId)
   }
 
-  if (runtime.transport !== 'tmux' || isRuntimeUnavailableStatus(runtime.status)) {
-    if (runtime.transport !== 'ghostty' || isRuntimeUnavailableStatus(runtime.status)) {
-      return runtime
-    }
-    const surfaceId = runtime.surfaceJson?.['surfaceId']
-    if (typeof surfaceId !== 'string') {
-      return runtime
-    }
-    const inspected = await this.ghostmux.inspectSurface(surfaceId)
-    if (inspected) {
-      return runtime
-    }
-
-    markRuntimeDead(this.db, requireSession(this.db, runtime.hostSessionId), runtime, 'ghostty', {
-      runtimeId: runtime.runtimeId,
-      surfaceId,
-      reason: 'ghostty_surface_missing',
-    })
-
-    return requireRuntime(this.db, runtime.runtimeId)
-  }
+  if (runtime.transport !== 'tmux' || isRuntimeUnavailableStatus(runtime.status)) return runtime
 
   const tmuxSessionTarget = getObservedTmuxSessionName(runtime)
   if (!tmuxSessionTarget) {
@@ -549,22 +523,8 @@ function isExplicitInteractiveTmuxBrokerStartIntent(intent: HrcRuntimeIntent): b
 export function attachRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
-  options: { allowLegacyOperatorAttach?: boolean } = {}
+  options: { allowLegacyTmuxAttach?: boolean } = {}
 ): Response {
-  if (runtime.transport === 'ghostty' && options.allowLegacyOperatorAttach === true) {
-    const surface = requireGhosttySurface(runtime)
-    return json({
-      transport: 'ghostty',
-      argv: this.ghostmux.getAttachDescriptor(surface.surfaceId).argv,
-      bindingFence: {
-        hostSessionId: runtime.hostSessionId,
-        runtimeId: runtime.runtimeId,
-        generation: runtime.generation,
-        surfaceId: surface.surfaceId,
-      },
-    } satisfies AttachDescriptorResponse)
-  }
-
   if (
     runtime.controllerKind === 'harness-broker' &&
     (runtime.transport === 'tmux' || canOperatorAttach(runtime))
@@ -605,7 +565,7 @@ export function attachRuntime(
       transport: runtime.transport,
     })
   }
-  if (options.allowLegacyOperatorAttach !== true) {
+  if (options.allowLegacyTmuxAttach !== true) {
     throw new HrcRuntimeUnavailableError('attach is only available for broker runtimes', {
       runtimeId: runtime.runtimeId,
       transport: runtime.transport,

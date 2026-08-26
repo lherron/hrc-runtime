@@ -26,7 +26,6 @@ import {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import type { GhostmuxManager } from './ghostmux.js'
 import type { HrcServerOptions } from './server-types.js'
 import { type TmuxManager as ServerTmuxManager, createTmuxManager } from './tmux.js'
 
@@ -226,7 +225,6 @@ async function withBudget<T>(
 export type FirstTurnBundleDeps = {
   db: HrcDatabase
   options: Pick<HrcServerOptions, 'runtimeRoot'>
-  ghostmux?: Pick<GhostmuxManager, 'inspectSurface'> | undefined
   /**
    * Pane-capture seam on the LEASED tmux socket. Defaults to a real tmux
    * manager; the server passes its broker factory so the capture always speaks
@@ -344,28 +342,6 @@ export async function assembleFirstTurnBundle(
     ...(tmuxSurfaces.hrcRole !== undefined ? { hrcRole: tmuxSurfaces.hrcRole } : {}),
   }
 
-  const ghosttySurfaceId = asString(runtime?.surfaceJson?.['surfaceId'])
-  if (ghosttySurfaceId !== undefined) {
-    surfaces.ghosttySurfaceId = ghosttySurfaceId
-    if (!generationStillCurrent(deps.db, watch)) {
-      failures['ghosttyWindowId'] = 'generation_rotated'
-    } else if (deps.ghostmux === undefined) {
-      failures['ghosttyWindowId'] = 'ghostmux_unavailable'
-    } else {
-      const inspected = await withBudget(
-        deps.ghostmux.inspectSurface(ghosttySurfaceId),
-        Math.min(1_500, remaining()),
-        'ghostty_inspect'
-      )
-      if (inspected.ok) {
-        const windowId = inspected.value?.windowId
-        if (windowId !== undefined) surfaces.ghosttyWindowId = windowId
-        else failures['ghosttyWindowId'] = 'surface_not_in_registry'
-      } else {
-        failures['ghosttyWindowId'] = inspected.error
-      }
-    }
-  }
   bundle.surfaces = surfaces
 
   // ── Pane capture (runtime-fenced probe on the LEASED tmux socket) ──────────

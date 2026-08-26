@@ -12,7 +12,6 @@ import { performExternalRegistrationHello } from '../external-registration-rende
 import type { ExternalParticipantRpcClient } from '../external-registration-rendezvous.js'
 import { hashRegistrationCredential } from '../registration-handlers.js'
 import {
-  terminateGhosttyRuntime,
   terminateHeadlessRuntime,
   terminateRuntime,
   terminateTmuxRuntime,
@@ -29,11 +28,7 @@ import {
   transitionRuntimeForAging,
 } from '../sweep-handlers.js'
 import { evaluatePruneDisposition } from '../sweep-helpers.js'
-import {
-  cleanupIdleClaudeGhosttyRuntimes,
-  reconcileActiveRunsOnce,
-  sweepZombieRunsOnce,
-} from '../sweep-reconcile.js'
+import { reconcileActiveRunsOnce, sweepZombieRunsOnce } from '../sweep-reconcile.js'
 
 const REGISTRATION_ID = 'registration-t07137'
 const CREDENTIAL = 'credential-t07137'
@@ -208,13 +203,6 @@ describe('T-07137 lifecycleOwner fencing', () => {
     await proveOperatorEviction((runtime) => terminateTmuxRuntime.call(server, runtime), 'tmux')
   })
 
-  test('direct Ghostty terminate cannot require or tear down a surface for an external owner', async () => {
-    await proveOperatorEviction(
-      (runtime) => terminateGhosttyRuntime.call(server, runtime),
-      'ghostty'
-    )
-  })
-
   test('direct headless terminate cannot dispose a broker or drop continuation for an external owner', async () => {
     await proveOperatorEviction(
       (runtime) =>
@@ -320,41 +308,11 @@ describe('T-07137 lifecycleOwner fencing', () => {
     })
   })
 
-  test('Ghostty idle cleanup keys on lifecycleOwner before legacy display fields', async () => {
-    db.sqlite
-      .query(
-        `UPDATE runtimes
-            SET transport = 'ghostty', harness = 'claude-code', status = 'ready',
-                last_activity_at = ?, updated_at = ?
-          WHERE runtime_id = ?`
-      )
-      .run(OLD, OLD, runtimeId)
-    let substrateCalls = 0
-    const ctx = {
-      db,
-      notifyEvent: () => undefined,
-      tmux: {},
-      ghostmux: {
-        sendKeys: async () => {
-          substrateCalls += 1
-        },
-        terminate: async () => {
-          substrateCalls += 1
-        },
-      },
-    } as unknown as ServerContext
-
-    await cleanupIdleClaudeGhosttyRuntimes(ctx)
-
-    expect(substrateCalls).toBe(0)
-    expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('ready')
-  })
-
   test('startup classification leaves external rows for EPR replay even with misleading projections', async () => {
     db.sqlite
       .query(
         `UPDATE runtimes
-            SET transport = 'ghostty', harness = 'claude-code', provider = 'anthropic'
+            SET transport = 'tmux', harness = 'claude-code', provider = 'anthropic'
           WHERE runtime_id = ?`
       )
       .run(runtimeId)
@@ -368,13 +326,7 @@ describe('T-07137 lifecycleOwner fencing', () => {
           return null
         },
       } as never,
-      {
-        inspectSurface: async () => {
-          substrateCalls += 1
-          return null
-        },
-      } as never,
-      { reconcileGhostty: true, runtimeRoot: join(root, 'run') }
+      { runtimeRoot: join(root, 'run') }
     )
 
     expect(substrateCalls).toBe(0)

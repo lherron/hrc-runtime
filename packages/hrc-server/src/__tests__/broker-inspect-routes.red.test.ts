@@ -10,14 +10,6 @@
  *       the InvocationInspectionSummary[] shape
  *     - must mutate ZERO DB state (no inserts / updates / events)
  *
- *  2. Non-broker ghostty fallback labeling (item #5, must-not-mislead gate)
- *     - for transport:'ghostty' + harness:'claude-code' with no broker:
- *       response must include source:'hrc-derived' (or derivedBy field)
- *       and a synthesized lifecycle.retention.computedRetireAt =
- *       lastActivityAt + 15 min (DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES)
- *     - HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES env override is honored
- *     - label MUST be present; plain broker-less inspect must never omit it
- *
  *  3. Pre-broker / adopted runtime fallback
  *     - adopted runtime (no controllerKind:'harness-broker') → same
  *       source:'hrc-derived' label, DB-only facts, no broker lifecycle synthesized
@@ -51,10 +43,6 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
-
-// ── constants matching production policy ─────────────────────────────────────
-const DEFAULT_GHOSTTY_IDLE_TTL_MINUTES = 15
-const DEFAULT_GHOSTTY_IDLE_TTL_MS = DEFAULT_GHOSTTY_IDLE_TTL_MINUTES * 60 * 1000
 
 // ── fixture wiring ────────────────────────────────────────────────────────────
 let fixture: HrcServerTestFixture
@@ -221,50 +209,6 @@ function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
         updatedAt: now,
       })
     }
-  } finally {
-    db.close()
-  }
-}
-
-type SeedGhosttyRuntimeOpts = {
-  runtimeId: string
-  hostSessionId: string
-  scopeRef: string
-  lastActivityAt?: string | undefined
-  adopted?: boolean | undefined
-}
-
-function seedGhosttyRuntime(opts: SeedGhosttyRuntimeOpts): void {
-  const now = fixture.now()
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    db.sessions.insert({
-      hostSessionId: opts.hostSessionId,
-      scopeRef: opts.scopeRef,
-      laneRef: 'main',
-      generation: 1,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: [],
-    })
-    db.runtimes.insert({
-      runtimeId: opts.runtimeId,
-      hostSessionId: opts.hostSessionId,
-      scopeRef: opts.scopeRef,
-      laneRef: 'main',
-      generation: 1,
-      transport: 'ghostty',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'ready',
-      supportsInflightInput: false,
-      adopted: opts.adopted ?? false,
-      // No controllerKind — not broker-managed
-      lastActivityAt: opts.lastActivityAt ?? now,
-      createdAt: now,
-      updatedAt: now,
-    })
   } finally {
     db.close()
   }
@@ -455,106 +399,6 @@ describe('[RED P3-1] POST /v1/runtimes/broker/inspect — broker-backed runtime'
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 2. NON-BROKER GHOSTTY FALLBACK LABELING (item #5 — must-not-mislead gate)
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe('[RED P3-2] Non-broker ghostty fallback: source labeled hrc-derived', () => {
-  it('ghostty runtime returns source:hrc-derived (not broker-reported)', async () => {
-    seedGhosttyRuntime({
-      runtimeId: 'rt-ghostty-src',
-      hostSessionId: 'hsid-ghostty-src',
-      scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01856:ghostty-src',
-    })
-
-    // RED: endpoint not yet wired; when wired, must return hrc-derived label
-    const res = await postBrokerInspect('rt-ghostty-src')
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { source?: string }
-    // Must be labeled as HRC-derived — never 'broker' or absent
-    expect(body.source).toBe('hrc-derived')
-  })
-
-  it('ghostty runtime synthesizes computedRetireAt = lastActivityAt + 15min (default policy)', async () => {
-    // Use a fixed lastActivityAt so we can assert the exact computedRetireAt
-    const lastActivityAt = '2026-06-03T10:00:00.000Z'
-    const expectedRetireAt = new Date(
-      new Date(lastActivityAt).getTime() + DEFAULT_GHOSTTY_IDLE_TTL_MS
-    ).toISOString() // = '2026-06-03T10:15:00.000Z'
-
-    seedGhosttyRuntime({
-      runtimeId: 'rt-ghostty-retire',
-      hostSessionId: 'hsid-ghostty-retire',
-      scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01856:ghostty-retire',
-      lastActivityAt,
-    })
-
-    // RED: endpoint not yet wired
-    const res = await postBrokerInspect('rt-ghostty-retire')
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as {
-      lifecycle?: { retention?: { computedRetireAt?: string; idleTtlMs?: number } }
-    }
-    expect(body.lifecycle?.retention?.computedRetireAt).toBe(expectedRetireAt)
-    expect(body.lifecycle?.retention?.idleTtlMs).toBe(DEFAULT_GHOSTTY_IDLE_TTL_MS)
-  })
-
-  it('ghostty runtime synthesizes idleTtlMs from HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES env override', async () => {
-    const customMinutes = 30
-    const expectedIdleTtlMs = customMinutes * 60 * 1000
-
-    const lastActivityAt = '2026-06-03T10:00:00.000Z'
-    const expectedRetireAt = new Date(
-      new Date(lastActivityAt).getTime() + expectedIdleTtlMs
-    ).toISOString()
-
-    seedGhosttyRuntime({
-      runtimeId: 'rt-ghostty-override',
-      hostSessionId: 'hsid-ghostty-override',
-      scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01856:ghostty-override',
-      lastActivityAt,
-    })
-
-    // Set env override to 30 min for this test
-    const origEnv = process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES']
-    process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = String(customMinutes)
-    try {
-      // RED: endpoint not yet wired
-      const res = await postBrokerInspect('rt-ghostty-override')
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as {
-        lifecycle?: { retention?: { computedRetireAt?: string; idleTtlMs?: number } }
-      }
-      expect(body.lifecycle?.retention?.computedRetireAt).toBe(expectedRetireAt)
-      expect(body.lifecycle?.retention?.idleTtlMs).toBe(expectedIdleTtlMs)
-    } finally {
-      if (origEnv === undefined) {
-        process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = undefined
-      } else {
-        process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = origEnv
-      }
-    }
-  })
-
-  it('ghostty fallback source label is present on every response — never absent', async () => {
-    // A response missing source:'hrc-derived' would mislead operators into thinking
-    // the lifecycle data is broker-reported when it is HRC-synthesized.
-    seedGhosttyRuntime({
-      runtimeId: 'rt-ghostty-label-always',
-      hostSessionId: 'hsid-ghostty-label-always',
-      scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01856:ghostty-label-always',
-    })
-
-    // RED: endpoint not yet wired
-    const res = await postBrokerInspect('rt-ghostty-label-always')
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as Record<string, unknown>
-    // The source MUST be present and MUST NOT be 'broker'
-    expect(body['source']).toBeDefined()
-    expect(body['source']).not.toBe('broker')
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
 // 3. PRE-BROKER / ADOPTED RUNTIME FALLBACK
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -575,8 +419,8 @@ describe('[RED P3-3] Non-broker adopted/pre-broker fallback: source labeled hrc-
 
   it('adopted runtime does NOT synthesize broker retention fields', async () => {
     // For an adopted (pre-broker) runtime, lifecycle can only come from
-    // runtime-DB facts. There is no idle-cleanup policy to apply (that only
-    // applies to ghostty/claude-code). The lifecycle.retention.mode must
+    // runtime-DB facts. There is no idle-cleanup policy to apply. The
+    // lifecycle.retention.mode must
     // reflect that this is DB-fact-only, not broker-reported.
     seedAdoptedHeadlessRuntime({
       runtimeId: 'rt-adopted-nosynth',

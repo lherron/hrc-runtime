@@ -61,7 +61,7 @@ export type TargetCapabilityView = {
 
 export type HrcTargetRuntimeView = {
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: string
   supportsLiteralSend: boolean
   supportsCapture: boolean
@@ -143,7 +143,7 @@ export type HrcMessageExecution = {
   coalescedIntoRunId?: string | undefined
   /** Zero-based position of this message within its carrying batch. */
   coalescedPosition?: number | undefined
-  transport?: 'sdk' | 'tmux' | 'headless' | 'ghostty' | undefined
+  transport?: 'sdk' | 'tmux' | 'headless' | undefined
   errorCode?: string | undefined
   errorMessage?: string | undefined
 }
@@ -290,7 +290,7 @@ export type DispatchTurnBySelectorResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  transport: 'sdk' | 'tmux' | 'headless'
   mode: 'headless' | 'interactive' | 'nonInteractive'
   status: 'completed' | 'started'
   finalOutput?: string | undefined

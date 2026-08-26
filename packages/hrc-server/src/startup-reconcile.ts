@@ -31,7 +31,6 @@ import {
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
-import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, requireSession } from './require-helpers.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
@@ -107,8 +106,7 @@ export {
 export async function reconcileStartupState(
   db: HrcDatabase,
   tmux: ServerTmuxManager,
-  ghostmux: ServerGhostmuxManager,
-  options: { reconcileGhostty: boolean; runtimeRoot: string }
+  options: { runtimeRoot: string }
 ): Promise<void> {
   // T-07155: an urgent-delivery contribution still `attempting` means the daemon
   // died mid-RPC. It cannot be retried — the harness may or may not have applied
@@ -169,9 +167,7 @@ export async function reconcileStartupState(
     const brokerTmuxLeaseRuntime =
       runtime.controllerKind === 'harness-broker' && hasLeasedBrokerSubstrate(runtime)
     if (
-      (runtime.transport !== 'tmux' &&
-        runtime.transport !== 'ghostty' &&
-        !brokerTmuxLeaseRuntime) ||
+      (runtime.transport !== 'tmux' && !brokerTmuxLeaseRuntime) ||
       runtime.status === 'terminated' ||
       runtime.status === 'dead'
     ) {
@@ -210,42 +206,21 @@ export async function reconcileStartupState(
         continue
       }
 
-      if (runtime.transport === 'ghostty') {
-        if (!options.reconcileGhostty) {
-          continue
-        }
-        const surfaceId = runtime.surfaceJson?.['surfaceId']
-        if (typeof surfaceId !== 'string') {
-          continue
-        }
-
-        const inspected = await ghostmux.inspectSurface(surfaceId)
-        if (inspected) {
-          continue
-        }
-
-        markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'ghostty', {
-          runtimeId: runtime.runtimeId,
-          surfaceId,
-          reason: 'ghostty_surface_missing',
-        })
-      } else {
-        const tmuxSessionName = getObservedTmuxSessionName(runtime)
-        if (!tmuxSessionName) {
-          continue
-        }
-
-        const inspected = await tmux.inspectSession(tmuxSessionName)
-        if (inspected) {
-          continue
-        }
-
-        markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'tmux', {
-          runtimeId: runtime.runtimeId,
-          sessionName: tmuxSessionName,
-          reason: 'tmux_session_missing',
-        })
+      const tmuxSessionName = getObservedTmuxSessionName(runtime)
+      if (!tmuxSessionName) {
+        continue
       }
+
+      const inspected = await tmux.inspectSession(tmuxSessionName)
+      if (inspected) {
+        continue
+      }
+
+      markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'tmux', {
+        runtimeId: runtime.runtimeId,
+        sessionName: tmuxSessionName,
+        reason: 'tmux_session_missing',
+      })
     } catch (error) {
       logStartupIssue('runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
     }

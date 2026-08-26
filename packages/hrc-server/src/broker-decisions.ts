@@ -15,7 +15,6 @@ import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
   HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
-  HRC_CLAUDE_GHOSTTY_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_GHOSTTY_VIEWERS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
@@ -106,8 +105,7 @@ function isHrcHarness(value: string): value is HrcHarness {
  * rather than the CLI route. Explicit agent-sdk always wins; explicit
  * agent-harness and pi-sdk are broker-owned and never enter the SDK fallback.
  * Id-less Anthropic intents keep the legacy SDK fallback only after the caller
- * has already selected the headless path. Normal Claude dispatch routes through
- * Ghostty only when HRC_CLAUDE_GHOSTTY=1 is set.
+ * has already selected the headless path.
  *
  * Exported for unit testing — single-source predicate for dispatch routing,
  * start routing, runtime harness label (`deriveSdkHarness` vs
@@ -496,10 +494,6 @@ export function resolveInteractiveBrokerAdmissionDriver(
     agentHarnessTmuxBrokerEnabled?: boolean | undefined
   }
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
-  if (shouldUseGhosttyTransport(intent)) {
-    return undefined
-  }
-
   if (
     options.claudeCodeTmuxBrokerEnabled &&
     intent.harness.provider === 'anthropic' &&
@@ -685,9 +679,7 @@ function brokerDriverKind(startRequest: InvocationStartRequest): string | undefi
 export function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
   const preferredMode = intent.execution?.preferredMode
   if (preferredMode === 'headless') return true
-  if (preferredMode === 'nonInteractive') {
-    return !(isClaudeGhosttyEnabled() && isGhosttyClaudeIntent(intent))
-  }
+  if (preferredMode === 'nonInteractive') return true
   return false
 }
 
@@ -695,26 +687,9 @@ export function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
   if (shouldUseHeadlessTransport(intent)) {
     return false
   }
-  if (shouldUseGhosttyTransport(intent)) {
-    return false
-  }
-
   return (
     intent.harness.interactive === false || intent.execution?.preferredMode === 'nonInteractive'
   )
-}
-
-export function shouldUseGhosttyTransport(intent: HrcRuntimeIntent): boolean {
-  if (!isClaudeGhosttyEnabled()) {
-    return false
-  }
-  if (intent.execution?.preferredMode === 'headless') {
-    return false
-  }
-  if (!isGhosttyClaudeIntent(intent)) {
-    return false
-  }
-  return true
 }
 
 export function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
@@ -1006,7 +981,7 @@ export function shouldDeferHeadlessToInteractiveBrokerReuse(
     latestRuntime !== null &&
     intent.execution?.allowInteractiveSurfaceReuse !== false &&
     latestRuntime.controllerKind === 'harness-broker' &&
-    (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
+    latestRuntime.transport === 'tmux' &&
     latestRuntime.hasLiveSurface &&
     latestRuntime.provider === intent.harness.provider &&
     !isRuntimeUnavailableStatus(latestRuntime.status)
@@ -1102,24 +1077,8 @@ export function isInteractiveTmuxBrokerIntent(intent: HrcRuntimeIntent): boolean
   return (
     intent.harness.interactive === true &&
     !shouldUseHeadlessTransport(intent) &&
-    !shouldUseSdkTransport(intent) &&
-    !shouldUseGhosttyTransport(intent)
+    !shouldUseSdkTransport(intent)
   )
-}
-
-export function isGhosttyClaudeIntent(intent: HrcRuntimeIntent): boolean {
-  if (intent.harness.provider !== 'anthropic') {
-    return false
-  }
-  return (
-    intent.harness.id !== 'agent-harness' &&
-    intent.harness.id !== 'agent-sdk' &&
-    intent.harness.id !== 'pi-sdk'
-  )
-}
-
-export function isClaudeGhosttyEnabled(): boolean {
-  return isTruthyFeatureFlag(process.env[HRC_CLAUDE_GHOSTTY_ENV])
 }
 
 export function isTruthyFeatureFlag(value: string | undefined): boolean {

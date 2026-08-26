@@ -18,19 +18,13 @@ export type InteractiveRuntimeSelectionView = {
 export function selectLatestInteractiveRuntime<T extends InteractiveRuntimeSelectionView>(
   runtimes: readonly T[]
 ): T | null {
-  return (
-    runtimes
-      .filter((runtime) => runtime.transport === 'tmux' || runtime.transport === 'ghostty')
-      .at(-1) ?? null
-  )
+  return runtimes.filter((runtime) => runtime.transport === 'tmux').at(-1) ?? null
 }
 
 export function selectDispatchInteractiveRuntime<T extends InteractiveRuntimeSelectionView>(
   runtimes: readonly T[]
 ): T | null {
-  const interactive = runtimes.filter(
-    (runtime) => runtime.transport === 'tmux' || runtime.transport === 'ghostty'
-  )
+  const interactive = runtimes.filter((runtime) => runtime.transport === 'tmux')
   const available = interactive.filter((runtime) => !isRuntimeUnavailableStatus(runtime.status))
   return available.at(-1) ?? interactive.at(-1) ?? null
 }
@@ -186,7 +180,7 @@ export function findLatestSessionRuntime(
 /**
  * Resolve the runtime that best represents a session for operator-facing views
  * (getTarget/doctor/who) and pane capture/peek: prefer the latest live
- * interactive (tmux/ghostty) runtime so a newer headless dm-runtime cannot
+ * interactive tmux runtime so a newer headless dm-runtime cannot
  * shadow the live TUI. Falls back to the latest available runtime of any
  * transport (headless/sdk buffer capture), then the latest runtime regardless
  * of status so callers can still report a stale/unavailable binding.
@@ -197,9 +191,7 @@ export function findBoundSessionRuntime(
 ): HrcRuntimeSnapshot | null {
   const runtimes = db.runtimes.listByHostSessionId(hostSessionId)
   const interactive = runtimes.filter(
-    (runtime) =>
-      (runtime.transport === 'tmux' || runtime.transport === 'ghostty') &&
-      !isRuntimeUnavailableStatus(runtime.status)
+    (runtime) => runtime.transport === 'tmux' && !isRuntimeUnavailableStatus(runtime.status)
   )
   if (interactive.length > 0) {
     return interactive.at(-1) ?? null

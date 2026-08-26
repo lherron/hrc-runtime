@@ -1149,8 +1149,7 @@ export async function deliverPersistedSemanticTurnHandoff(
     // T-01873: route the durable-tmux liveness gate through the runtime-hosting
     // choke point (hasLeasedBrokerSubstrate) instead of the `transport==='tmux'
     // && getBrokerRuntimeTmuxSocketPath` durability proxy. True iff the broker
-    // lives in a leased tmux session; false for a ghostty broker — preserving
-    // today's tmux-only reconcile.
+    // lives in a leased tmux session.
     if (
       liveTmuxRuntime?.controllerKind === 'harness-broker' &&
       hasLeasedBrokerSubstrate(liveTmuxRuntime)
@@ -1159,7 +1158,7 @@ export async function deliverPersistedSemanticTurnHandoff(
     }
     if (
       liveTmuxRuntime &&
-      (liveTmuxRuntime.transport === 'tmux' || liveTmuxRuntime.transport === 'ghostty') &&
+      liveTmuxRuntime.transport === 'tmux' &&
       !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
       // T-05358: row status `ready/stopping` are both non-unavailable, so add the
       // invocation-state gate — never deliver input to a runtime whose broker
@@ -1298,7 +1297,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
   }
 ): Promise<SemanticTurnHandoffStartedResponse | undefined> {
   const { session, runtime, request, payload, runId, sessionRef, fromSeq, responseFormat } = input
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
+  if (runtime.transport !== 'tmux') {
     return undefined
   }
 
@@ -1929,10 +1928,7 @@ export async function deliverFederationAcceptedMessage(
     const transport = persisted?.execution.transport
     if (
       (mode !== 'headless' && mode !== 'interactive' && mode !== 'nonInteractive') ||
-      (transport !== 'sdk' &&
-        transport !== 'tmux' &&
-        transport !== 'headless' &&
-        transport !== 'ghostty')
+      (transport !== 'sdk' && transport !== 'tmux' && transport !== 'headless')
     ) {
       throw new HrcRuntimeUnavailableError(
         'remote semantic turn started without complete lifecycle identity',
@@ -2341,13 +2337,12 @@ export async function deliverPersistedSemanticDm(
         }
       } else {
         // Semantic DMs are harness input. During broker cutover they must not
-        // literal-deliver into legacy tmux/ghostty runtimes; dispatch below
+        // literal-deliver into legacy tmux runtimes; dispatch below
         // will reuse only matching broker runtimes or reprovision.
         const liveInteractiveRuntime = findLatestRuntime(this.db, session.hostSessionId)
         if (
           liveInteractiveRuntime &&
-          (liveInteractiveRuntime.transport === 'tmux' ||
-            liveInteractiveRuntime.transport === 'ghostty') &&
+          liveInteractiveRuntime.transport === 'tmux' &&
           !isRuntimeUnavailableStatus(liveInteractiveRuntime.status)
         ) {
           if (liveInteractiveRuntime.controllerKind !== 'harness-broker') {

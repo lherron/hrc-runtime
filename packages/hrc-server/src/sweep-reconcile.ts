@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRunRecord,
@@ -24,12 +23,9 @@ import {
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
-import { requireGhosttySurface, requireSession } from './require-helpers.js'
 import { HRC_SERVER_RUN_COLUMNS } from './server-constants.js'
 import type { ServerContext } from './server-context.js'
 import { writeServerLog } from './server-log.js'
-import { finalizeRuntimeTermination } from './server-misc.js'
 import type {
   ActiveRunReconcileCandidate,
   ActiveRunReconcilePlan,
@@ -38,7 +34,7 @@ import type {
   ObservedRunActivity,
   ZombieRunCandidate,
 } from './server-types.js'
-import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
+import { timestamp } from './server-util.js'
 import { getObservedTmuxSessionName } from './startup-reconcile.js'
 import { mapServerRunRow, reconcileResultTransport } from './sweep-helpers.js'
 import { createTmuxManager } from './tmux.js'
@@ -256,8 +252,7 @@ async function zombieRun(
     ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
     ...(candidate.run.transport === 'sdk' ||
     candidate.run.transport === 'tmux' ||
-    candidate.run.transport === 'headless' ||
-    candidate.run.transport === 'ghostty'
+    candidate.run.transport === 'headless'
       ? { transport: candidate.run.transport }
       : {}),
     errorCode: HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
@@ -286,94 +281,6 @@ async function zombieRun(
     observedSource: candidate.observedSource,
     runtimeOwnershipCleared,
     ...(runtimeStatus ? { runtimeStatus } : {}),
-  }
-}
-
-export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Promise<void> {
-  const cleanupMinutes = resolveClaudeGhosttyIdleCleanupMinutes()
-  if (cleanupMinutes === 0) return
-
-  const nowMs = Date.now()
-  const cutoffMs = nowMs - cleanupMinutes * 60_000
-  for (const runtime of ctx.db.runtimes.listAll()) {
-    if (
-      isExternalLifecycleOwner(runtime) ||
-      runtime.transport !== 'ghostty' ||
-      runtime.harness !== 'claude-code' ||
-      runtime.activeRunId !== undefined ||
-      runtime.status === 'busy' ||
-      // T-01946: never idle-/quit a runtime parked on (or corruptly flagged for)
-      // a user prompt — a parked ask has no activity but is not idle.
-      runtime.status === 'awaiting_input' ||
-      runtime.status === 'starting' ||
-      isRuntimeUnavailableStatus(runtime.status)
-    ) {
-      continue
-    }
-
-    const activityMs = Date.parse(runtime.lastActivityAt ?? runtime.createdAt)
-    if (!Number.isFinite(activityMs) || activityMs > cutoffMs) continue
-
-    const latest = ctx.db.runtimes.getByRuntimeId(runtime.runtimeId)
-    if (
-      !latest ||
-      isExternalLifecycleOwner(latest) ||
-      latest.activeRunId !== undefined ||
-      latest.status === 'busy' ||
-      latest.status === 'awaiting_input' ||
-      latest.status === 'starting' ||
-      latest.generation !== runtime.generation
-    ) {
-      continue
-    }
-
-    const surface = requireGhosttySurface(latest)
-    const session = requireSession(ctx.db, latest.hostSessionId)
-    const startedAt = timestamp()
-    const startedEvent = appendHrcEvent(ctx.db, 'runtime.idle_cleanup_started', {
-      ts: startedAt,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: latest.runtimeId,
-      transport: 'ghostty',
-      payload: {
-        transport: 'ghostty',
-        surfaceId: surface.surfaceId,
-        reason: 'claude-ghostty-idle',
-        idleMinutes: cleanupMinutes,
-      },
-    })
-    ctx.notifyEvent(startedEvent)
-
-    try {
-      await ctx.ghostmux.sendKeys(surface.surfaceId, '/quit')
-      await delay(1_000)
-      await ctx.ghostmux.terminate(surface.surfaceId)
-    } catch (error) {
-      const inspected = await ctx.ghostmux.inspectSurface(surface.surfaceId).catch(() => null)
-      if (inspected) throw error
-    }
-
-    const completedAt = timestamp()
-    finalizeRuntimeTermination(ctx.db, latest, completedAt)
-    const terminatedEvent = appendHrcEvent(ctx.db, 'runtime.terminated', {
-      ts: completedAt,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: latest.runtimeId,
-      transport: 'ghostty',
-      payload: {
-        transport: 'ghostty',
-        surfaceId: surface.surfaceId,
-        reason: 'claude-ghostty-idle',
-        droppedContinuation: false,
-      },
-    })
-    ctx.notifyEvent(terminatedEvent)
   }
 }
 
@@ -500,12 +407,7 @@ function reconcileCorruptAwaitingRuntimes(ctx: ServerContext): ReconcileActiveRu
 }
 
 function reconcileRuntimeTransport(transport: string): ReconcileActiveRunResult['transport'] {
-  if (
-    transport === 'sdk' ||
-    transport === 'tmux' ||
-    transport === 'headless' ||
-    transport === 'ghostty'
-  ) {
+  if (transport === 'sdk' || transport === 'tmux' || transport === 'headless') {
     return transport
   }
   return 'headless'
@@ -519,7 +421,7 @@ function listActiveRunReconcileCandidates(
     .query<HrcServerRunRow, []>(
       `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
           WHERE status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
+            AND transport IN ('sdk', 'tmux', 'headless')
             AND runtime_id IS NOT NULL
             AND completed_at IS NULL
           ORDER BY updated_at ASC, run_id ASC`
@@ -888,8 +790,7 @@ function finalizeActiveRun(
     runtimeId: candidate.runtime.runtimeId,
     ...(candidate.run.transport === 'sdk' ||
     candidate.run.transport === 'tmux' ||
-    candidate.run.transport === 'headless' ||
-    candidate.run.transport === 'ghostty'
+    candidate.run.transport === 'headless'
       ? { transport: candidate.run.transport }
       : {}),
     payload: {
@@ -963,7 +864,7 @@ function reapActiveRun(
           WHERE run_id = ?
             AND runtime_id = ?
             AND status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
+            AND transport IN ('sdk', 'tmux', 'headless')
             AND completed_at IS NULL
             AND EXISTS (
               SELECT 1 FROM runtimes
@@ -1020,8 +921,7 @@ function reapActiveRun(
     runtimeId: candidate.runtime.runtimeId,
     ...(candidate.run.transport === 'sdk' ||
     candidate.run.transport === 'tmux' ||
-    candidate.run.transport === 'headless' ||
-    candidate.run.transport === 'ghostty'
+    candidate.run.transport === 'headless'
       ? { transport: candidate.run.transport }
       : {}),
     errorCode,

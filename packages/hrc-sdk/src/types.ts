@@ -309,7 +309,7 @@ export type SendInFlightInputResponse = {
 }
 
 export type AttachDescriptor = {
-  transport: 'tmux' | 'ghostty'
+  transport: 'tmux'
   argv: string[]
   bindingFence: {
     hostSessionId: string
@@ -318,7 +318,6 @@ export type AttachDescriptor = {
     windowId?: string | undefined
     tabId?: string | undefined
     paneId?: string | undefined
-    surfaceId?: string | undefined
   }
 }
 

@@ -49,7 +49,6 @@ import {
   type BridgeSurfaceHandlersMethods,
   bridgeSurfaceHandlersMethods,
 } from './bridge-surface-handlers.js'
-import { isClaudeGhosttyEnabled } from './broker-decisions.js'
 import {
   type BrokerHeadlessHandlersMethods,
   brokerHeadlessHandlersMethods,
@@ -823,8 +822,6 @@ class HrcServerInstance implements HrcServer {
   brokerLeaseGcInFlight: Promise<void> | undefined
   tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
   tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
-  idleCleanupTimer: ReturnType<typeof setInterval> | undefined
-  idleCleanupInFlight: Promise<void> | undefined
   sessionRetentionTimer: ReturnType<typeof setInterval> | undefined
   sessionRetentionInFlight: Promise<void> | undefined
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
@@ -1394,7 +1391,6 @@ class HrcServerInstance implements HrcServer {
     this.startActiveRunReconciler()
     this.startBrokerLeaseGc()
     this.startTmuxAging()
-    this.startClaudeGhosttyIdleCleanup()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
     this.startMailKicker()
@@ -1590,17 +1586,6 @@ class HrcServerInstance implements HrcServer {
         await this.tmuxAgingInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.tmux_aging_wait_failed', { error })
-      }
-    }
-    if (this.idleCleanupTimer) {
-      clearInterval(this.idleCleanupTimer)
-      this.idleCleanupTimer = undefined
-    }
-    if (this.idleCleanupInFlight) {
-      try {
-        await this.idleCleanupInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.idle_cleanup_wait_failed', { error })
       }
     }
     if (this.sessionRetentionTimer) {
@@ -2823,12 +2808,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     })
     await tmux.initialize()
     const ghostmux = createGhostmuxManager(resolvedOptions.ghostmuxOptions)
-    const claudeGhosttyEnabled = isClaudeGhosttyEnabled()
-    if (claudeGhosttyEnabled) {
-      await ghostmux.initialize().catch((error) => {
-        writeServerLog('WARN', 'server.start.ghostmux_unavailable', { error })
-      })
-    }
     db = openHrcDatabase(resolvedOptions.dbPath, {
       busyTimeoutMs: resolvedOptions.sqliteBusyTimeoutMs,
       slowStatementThresholdMs: resolveSqliteSlowStatementThresholdMs(),
@@ -2847,8 +2826,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
     await replaySpool(resolvedOptions, db)
-    await reconcileStartupState(db, tmux, ghostmux, {
-      reconcileGhostty: claudeGhosttyEnabled,
+    await reconcileStartupState(db, tmux, {
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
     server = new HrcServerInstance(

@@ -268,7 +268,7 @@ describe('RED test 5b: toTargetCapabilities — headless+tmux-tui POSITIVE miscl
   }
 
   it('sendReady should be true for headless+tmux-tui (RED — transport gate returns false)', () => {
-    // AT HEAD: `sendReady: runtime?.transport === 'tmux' || runtime?.transport === 'ghostty'`
+    // AT HEAD: send readiness follows the runtime's supported tmux transport.
     // → false (transport === 'headless')
     // AFTER FIX: gate on canOperatorAttach(runtime) → true (presentation='tmux-tui')
     const runtimeView = toTargetRuntimeView(tuiRuntime)

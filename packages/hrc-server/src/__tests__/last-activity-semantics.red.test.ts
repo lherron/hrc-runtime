@@ -17,7 +17,7 @@ import {
   reconcileDurableBrokerRuntimeReattach,
 } from '../startup-reconcile'
 import { markRuntimeStale } from '../startup-reconcile/runtime-mutations'
-import { cleanupIdleClaudeGhosttyRuntimes, reconcileActiveRunsOnce } from '../sweep-reconcile'
+import { reconcileActiveRunsOnce } from '../sweep-reconcile'
 import { toTargetRuntimeView } from '../target-view'
 import { type TmuxPaneState, createTmuxManager } from '../tmux'
 import {
@@ -60,7 +60,7 @@ function seedRuntime(
     runtimeId: string
     hostSessionId: string
     scopeRef: string
-    transport?: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+    transport?: 'sdk' | 'tmux' | 'headless'
     status?: string
     activeRunId?: string | undefined
     controllerKind?: 'harness-broker' | undefined
@@ -247,54 +247,6 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
     } finally {
       await fixture.cleanup()
     }
-  })
-
-  it('a recent housekeeping updatedAt cannot postpone ghostty cleanup keyed to lastActivityAt', async () => {
-    await withDatabase('hrc-last-activity-ghostty-', async (db) => {
-      const hostSessionId = 'hsid-last-activity-ghostty'
-      const scopeRef = 'agent:room-tester:project:hrc-runtime:task:last-activity-ghostty'
-      const runtimeId = 'rt-last-activity-ghostty'
-      seedSession(db, hostSessionId, scopeRef)
-      seedRuntime(db, {
-        runtimeId,
-        hostSessionId,
-        scopeRef,
-        transport: 'ghostty',
-        status: 'ready',
-        surfaceJson: { surfaceId: 'surface-last-activity' },
-        updatedAt: new Date().toISOString(),
-      })
-
-      const calls: string[] = []
-      const ctx = {
-        db,
-        tmux: {},
-        ghostmux: {
-          sendKeys: async () => {
-            calls.push('sendKeys')
-          },
-          terminate: async () => {
-            calls.push('terminate')
-          },
-          inspectSurface: async () => null,
-        },
-        notifyEvent: () => undefined,
-      } as unknown as ServerContext
-      const previousCleanupMinutes = process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES']
-      process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = '15'
-      try {
-        await cleanupIdleClaudeGhosttyRuntimes(ctx)
-      } finally {
-        if (previousCleanupMinutes === undefined) {
-          process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = undefined
-        } else {
-          process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = previousCleanupMinutes
-        }
-      }
-
-      expect(calls).toEqual(['sendKeys', 'terminate'])
-      expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('terminated')
-    })
   })
 
   it('concrete liveness spares an old live runtime while a recent mutation cannot spare a stale row', async () => {

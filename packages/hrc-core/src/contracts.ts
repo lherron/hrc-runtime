@@ -70,7 +70,7 @@ export type HrcEventCategory =
   | 'context'
   | 'app_session'
 
-export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless' | 'ghostty'
+export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
 
 export type HrcLifecycleEvent = {
   hrcSeq: number
@@ -908,8 +908,6 @@ export type HrcFirstTurnMissingBundle = {
         tmuxWindowId?: string | undefined
         tmuxPaneId?: string | undefined
         hrcRole?: string | undefined
-        ghosttyWindowId?: string | undefined
-        ghosttySurfaceId?: string | undefined
       }
     | undefined
   versions?:

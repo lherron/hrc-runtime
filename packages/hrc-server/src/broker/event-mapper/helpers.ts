@@ -27,7 +27,7 @@ export function omitRuntimeStateActiveRun(value: Record<string, unknown>): Recor
 }
 
 export function lifecycleTransportFromRuntime(value: string): HrcLifecycleTransport {
-  if (value === 'sdk' || value === 'tmux' || value === 'headless' || value === 'ghostty') {
+  if (value === 'sdk' || value === 'tmux' || value === 'headless') {
     return value
   }
   return 'headless'

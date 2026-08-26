@@ -16,7 +16,6 @@ import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
   isTerminalBrokerInvocationState,
-  requireGhosttySurface,
   requireSession,
   requireTmuxPane,
 } from '../require-helpers.js'
@@ -201,49 +200,9 @@ export async function interruptRuntime(
     return await this.terminateRuntime(runtime)
   }
 
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
-    return this.interruptHeadlessRuntime(runtime)
-  }
-
-  return runtime.transport === 'ghostty'
-    ? await this.interruptGhosttyRuntime(runtime)
-    : await this.interruptTmuxRuntime(runtime)
-}
-
-export async function interruptGhosttyRuntime(
-  this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
-): Promise<Response> {
-  const session = requireSession(this.db, runtime.hostSessionId)
-  const surface = requireGhosttySurface(runtime)
-
-  await this.ghostmux.interrupt(surface.surfaceId)
-
-  const now = timestamp()
-  this.db.runtimes.update(
-    runtime.runtimeId,
-    runtimeActivityPatch(this.db, runtime.runtimeId, {
-      source: 'turn',
-      occurredAt: now,
-      updatedAt: now,
-    })
-  )
-  const event = appendHrcEvent(this.db, 'runtime.interrupted', {
-    ...sessionEventBase(session, now),
-    runtimeId: runtime.runtimeId,
-    transport: 'ghostty',
-    payload: {
-      transport: 'ghostty',
-      surfaceId: surface.surfaceId,
-    },
-  })
-  this.notifyEvent(event)
-
-  return json({
-    ok: true,
-    hostSessionId: session.hostSessionId,
-    runtimeId: runtime.runtimeId,
-  } satisfies RuntimeActionResponse)
+  return runtime.transport === 'tmux'
+    ? await this.interruptTmuxRuntime(runtime)
+    : await this.interruptHeadlessRuntime(runtime)
 }
 
 export function tmuxForPane(
@@ -414,10 +373,6 @@ export async function terminateRuntime(
       ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
     })
   }
-  if (runtime.transport === 'ghostty') {
-    return await this.terminateGhosttyRuntime(runtime)
-  }
-
   const dropContinuation = opts.dropContinuation ?? runtime.activeRunId != null
   return await this.terminateHeadlessRuntime(runtime, {
     dropContinuation,
@@ -498,41 +453,6 @@ export async function terminateTmuxRuntime(
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       ...(opts.source !== undefined ? { source: opts.source } : {}),
       ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
-    },
-  })
-  this.notifyEvent(event)
-
-  return json({
-    ok: true,
-    hostSessionId: session.hostSessionId,
-    runtimeId: runtime.runtimeId,
-    droppedContinuation: false,
-  } satisfies TerminateRuntimeResponse)
-}
-
-export async function terminateGhosttyRuntime(
-  this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
-): Promise<Response> {
-  if (isExternalLifecycleOwner(runtime)) {
-    return await terminateExternalRuntime(this, runtime)
-  }
-  const session = requireSession(this.db, runtime.hostSessionId)
-  const surface = requireGhosttySurface(runtime)
-
-  const now = timestamp()
-  await this.ghostmux.terminate(surface.surfaceId)
-
-  finalizeRuntimeTermination(this.db, runtime, now)
-  cleanupTaskClaimCredential(this, runtime)
-  const event = appendHrcEvent(this.db, 'runtime.terminated', {
-    ...sessionEventBase(session, now),
-    runtimeId: runtime.runtimeId,
-    transport: 'ghostty',
-    payload: {
-      transport: 'ghostty',
-      surfaceId: surface.surfaceId,
-      droppedContinuation: false,
     },
   })
   this.notifyEvent(event)

@@ -2,8 +2,6 @@ import { buildScopeRef, normalizeLaneRef, parseScopeRef } from 'agent-scope'
 
 import { shortenProjectId } from './project-prefix.js'
 
-export type RestartStyle = 'reuse_pty' | 'fresh_pty'
-
 export type GhostmuxManagerOptions = {
   ghostmuxBin?: string | undefined
   runner?: GhostmuxRunner | undefined
@@ -60,20 +58,6 @@ export type GhostmuxWindowState = {
 }
 
 type GhostmuxSplitDirection = 'right' | 'down'
-
-export type GhostmuxRuntimeSurfaceOptions = {
-  cwd: string
-  title: string
-  runtimeId?: string | undefined
-  hostSessionId?: string | undefined
-  scopeRef?: string | undefined
-  generation?: number | undefined
-  projectId?: string | undefined
-}
-
-const CLAUDE_TAB_TITLE = 'Claude Surfaces'
-const CLAUDE_TAB_ROLE = 'claude-surfaces'
-const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
 
 /**
  * Consolidated headless-viewer presentation (T-05237, T-06321). Replaces the old
@@ -458,14 +442,6 @@ function parseGhostmuxSurfaceList(stdout: string): GhostmuxSurfaceState[] {
     .map((terminal) => parseGhostmuxSurfaceState(JSON.stringify(terminal)))
 }
 
-function metadataHasClaudeTabRole(metadata: unknown, projectId?: string | undefined): boolean {
-  if (!isRecord(metadata)) return false
-  if (metadata['hrc_role'] !== CLAUDE_TAB_ROLE) return false
-  if (projectId === undefined) return true
-  const metadataProject = metadata['hrc_project']
-  return metadataProject === undefined || metadataProject === projectId
-}
-
 function metadataIsWindowAnchor(metadata: unknown, windowKey: string): boolean {
   if (!isRecord(metadata) || metadata['hrc_role'] !== HEADLESS_WINDOW_ANCHOR_ROLE) return false
   return metadataWindowKey(metadata) === windowKey
@@ -552,87 +528,6 @@ export class GhostmuxManager {
 
   async initialize(): Promise<void> {
     await this.exec(['status', '--json'])
-  }
-
-  async ensureSurface(
-    hostSessionId: string,
-    restartStyle: RestartStyle,
-    options: GhostmuxRuntimeSurfaceOptions
-  ): Promise<GhostmuxSurfaceState> {
-    return this.createClaudeRuntimeSurface(hostSessionId, restartStyle, options)
-  }
-
-  async ensureClaudeTab(options: {
-    cwd: string
-    projectId?: string | undefined
-  }): Promise<GhostmuxSurfaceState> {
-    const existing = await this.findClaudeTab(options.projectId)
-    if (existing) return existing
-
-    const created = parseGhostmuxSurfaceState(
-      (
-        await this.exec([
-          'new',
-          '--tab',
-          '--cwd',
-          options.cwd,
-          '--title',
-          CLAUDE_TAB_TITLE,
-          '--json',
-        ])
-      ).stdout
-    )
-    await this.setMetadata(
-      created.surfaceId,
-      {
-        hrc_role: CLAUDE_TAB_ROLE,
-        ...(options.projectId ? { hrc_project: options.projectId } : {}),
-      },
-      true
-    )
-    return created
-  }
-
-  async createClaudeRuntimeSurface(
-    _hostSessionId: string,
-    restartStyle: RestartStyle,
-    options: GhostmuxRuntimeSurfaceOptions
-  ): Promise<GhostmuxSurfaceState> {
-    void restartStyle
-
-    const anchor = await this.ensureClaudeTab({
-      cwd: options.cwd,
-      projectId: options.projectId,
-    })
-    await this.equalizePanes(anchor.surfaceId)
-    const created = parseGhostmuxSurfaceState(
-      (
-        await this.exec([
-          'new-pane',
-          '-t',
-          anchor.surfaceId,
-          '-d',
-          selectSplitDirection(anchor),
-          '--cwd',
-          options.cwd,
-          '--json',
-        ])
-      ).stdout
-    )
-    await this.setTitle(created.surfaceId, options.title)
-    await this.setMetadata(created.surfaceId, {
-      hrc_role: CLAUDE_RUNTIME_ROLE,
-      ...(options.runtimeId ? { hrc_runtime_id: options.runtimeId } : {}),
-      ...(options.hostSessionId ? { hrc_host_session_id: options.hostSessionId } : {}),
-      ...(options.scopeRef ? { hrc_scope_ref: options.scopeRef } : {}),
-      ...(options.generation !== undefined ? { hrc_generation: options.generation } : {}),
-    })
-    await this.equalizePanes(created.surfaceId)
-    return {
-      ...created,
-      title: options.title,
-      anchorSurfaceId: anchor.surfaceId,
-    }
   }
 
   async inspectSurface(surfaceId: string): Promise<GhostmuxSurfaceState | null> {
@@ -1223,21 +1118,6 @@ export class GhostmuxManager {
       }
     }
     throw lastError instanceof Error ? lastError : new Error('ghostmux operation failed')
-  }
-
-  private async findClaudeTab(
-    projectId?: string | undefined
-  ): Promise<GhostmuxSurfaceState | null> {
-    const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
-    for (const surface of surfaces) {
-      const metadata = await this.getMetadata(surface.surfaceId, true).catch(() => undefined)
-      if (metadataHasClaudeTabRole(metadata, projectId)) return surface
-    }
-    return (
-      surfaces.find(
-        (surface) => surface.title === CLAUDE_TAB_TITLE || surface.name === CLAUDE_TAB_TITLE
-      ) ?? null
-    )
   }
 
   private async getMetadata(surfaceId: string, window = false): Promise<unknown> {

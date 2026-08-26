@@ -261,7 +261,6 @@ describe('T-06810 Wave 2 — live isolated hrcmail kicker', () => {
       cmd: [process.execPath, '-e', childSource],
       env: {
         ...process.env,
-        HRC_CLAUDE_GHOSTTY: '0',
         HRC_MAIL_CRASH_OPTIONS: JSON.stringify(childOptions),
         HRC_MAIL_CRASH_MARKER: markerPath,
       },

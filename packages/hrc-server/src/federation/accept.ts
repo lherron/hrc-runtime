@@ -170,10 +170,7 @@ function parseSemanticTurnSignal(value: unknown): FederationSemanticTurnSignal |
     !Number.isSafeInteger(generation) ||
     (generation as number) < 1 ||
     (mode !== 'headless' && mode !== 'interactive' && mode !== 'nonInteractive') ||
-    (transport !== 'sdk' &&
-      transport !== 'tmux' &&
-      transport !== 'headless' &&
-      transport !== 'ghostty')
+    (transport !== 'sdk' && transport !== 'tmux' && transport !== 'headless')
   ) {
     throw new InvalidFederationEnvelopeError()
   }
@@ -230,8 +227,7 @@ function parseInteractiveSignal(value: unknown): FederationInteractiveLifecycleS
     transport !== undefined &&
     transport !== 'sdk' &&
     transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'ghostty'
+    transport !== 'headless'
   ) {
     throw new InvalidFederationEnvelopeError()
   }

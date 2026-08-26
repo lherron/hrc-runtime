@@ -141,7 +141,6 @@ async function publishDiagnostics(
   const deps: FirstTurnBundleDeps = {
     db: server.db,
     options: { runtimeRoot: server.options.runtimeRoot },
-    ghostmux: server.ghostmux,
     ...(server.brokerTmuxManagerFactory !== undefined
       ? { tmuxManagerFactory: server.brokerTmuxManagerFactory }
       : {}),

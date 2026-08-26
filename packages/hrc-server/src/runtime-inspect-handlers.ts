@@ -8,7 +8,6 @@ import type {
 import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
-import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
@@ -197,33 +196,6 @@ export async function handleBrokerInspect(
 
   // Non-broker fallback — HRC-runtime-derived, NEVER broker-reported.
   const note = 'HRC-runtime-derived, not broker-reported'
-  const lastActivityAt = runtime.lastActivityAt ?? runtime.createdAt
-
-  // ghostty + claude-code: synthesize the HRC-side idle-cleanup lifecycle
-  // (cleanupIdleClaudeGhosttyRuntimes policy; computedRetireAt = lastActivityAt
-  // + HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES). This is a synthesized view, not
-  // a broker-enforced TTL — hence source:'hrc-derived'.
-  if (runtime.transport === 'ghostty' && runtime.harness === 'claude-code') {
-    const idleTtlMs = resolveClaudeGhosttyIdleCleanupMinutes() * 60_000
-    const activityMs = Date.parse(lastActivityAt)
-    const computedRetireAt = Number.isFinite(activityMs)
-      ? new Date(activityMs + idleTtlMs).toISOString()
-      : undefined
-    return json({
-      ...baseFacts,
-      source: 'hrc-derived',
-      lifecycle: {
-        retention: {
-          mode: 'hrc-idle-cleanup',
-          idleTtlMs,
-          idleSince: lastActivityAt,
-          ...(computedRetireAt ? { computedRetireAt } : {}),
-        },
-      },
-      note,
-    } satisfies BrokerInspectResponse)
-  }
-
   // pre-broker / adopted harness: runtime-DB facts ONLY. No idle policy applies,
   // so no synthesized TTL — mode reflects db-only, never a broker retention mode.
   return json({

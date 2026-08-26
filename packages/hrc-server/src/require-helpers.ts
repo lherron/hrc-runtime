@@ -18,7 +18,6 @@ import type {
 } from 'hrc-core'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import { isAskUserTool, isCorruptAwaitingRuntime } from './ask-bracket.js'
-import type { GhostmuxSurfaceState } from './ghostmux.js'
 import { isRecord } from './server-parsers.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import type { TmuxPaneState } from './tmux.js'
@@ -241,29 +240,6 @@ export function requireTmuxPane(runtime: HrcRuntimeSnapshot): TmuxPaneState {
     sessionId,
     windowId,
     paneId,
-  }
-}
-
-export function requireGhosttySurface(runtime: HrcRuntimeSnapshot): GhostmuxSurfaceState {
-  const surfaceId = runtime.surfaceJson?.['surfaceId']
-  const title = runtime.surfaceJson?.['title']
-  const anchorSurfaceId = runtime.surfaceJson?.['anchorSurfaceId']
-
-  if (typeof surfaceId !== 'string' || surfaceId.length === 0) {
-    throw new HrcRuntimeUnavailableError(
-      `runtime "${runtime.runtimeId}" is missing ghostty state`,
-      {
-        runtimeId: runtime.runtimeId,
-      }
-    )
-  }
-
-  return {
-    kind: 'ghostty',
-    surfaceId,
-    title: typeof title === 'string' ? title : undefined,
-    anchorSurfaceId: typeof anchorSurfaceId === 'string' ? anchorSurfaceId : undefined,
-    createdBy: 'ghostmux',
   }
 }
 

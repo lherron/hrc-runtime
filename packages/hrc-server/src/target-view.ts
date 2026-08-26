@@ -139,7 +139,6 @@ export function toTargetCapabilities(
   }
   if (
     runtime?.transport === 'tmux' ||
-    runtime?.transport === 'ghostty' ||
     runtime?.transport === 'headless' ||
     session.lastAppliedIntentJson?.harness.interactive === true
   ) {
@@ -166,8 +165,7 @@ export function toTargetRuntimeView(
   if (
     runtime.transport !== 'sdk' &&
     runtime.transport !== 'tmux' &&
-    runtime.transport !== 'headless' &&
-    runtime.transport !== 'ghostty'
+    runtime.transport !== 'headless'
   ) {
     return undefined
   }
@@ -196,8 +194,7 @@ export function toTargetRuntimeView(
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
     status: runtime.status,
-    supportsLiteralSend:
-      runtime.transport === 'tmux' || runtime.transport === 'ghostty' || operatorAttachable,
+    supportsLiteralSend: runtime.transport === 'tmux' || operatorAttachable,
     supportsCapture: runtime.transport !== 'headless' || operatorAttachable,
     activeRunId: runtime.activeRunId,
     lastActivityAt: runtime.lastActivityAt,

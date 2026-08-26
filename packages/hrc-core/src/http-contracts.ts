@@ -143,17 +143,13 @@ export type EnsureRuntimeRequest = {
 export type EnsureRuntimeResponse = {
   runtimeId: string
   hostSessionId: string
-  transport: 'tmux' | 'ghostty'
+  transport: 'tmux'
   status: string
   supportsInFlightInput: boolean
   tmux?: {
     sessionId: string
     windowId: string
     paneId: string
-  }
-  surface?: {
-    surfaceId: string
-    title?: string | undefined
   }
 }
 
@@ -421,7 +417,7 @@ export type DispatchTurnResponse = {
   generation: number
   /** Absent while a durably accepted turn is queued ahead of runtime allocation. */
   runtimeId?: string | undefined
-  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  transport: 'sdk' | 'tmux' | 'headless'
   stage: 'accepted' | 'turn_started' | 'terminal'
   status: 'accepted' | 'started' | DispatchTurnTerminalOutcome
   outcome?: DispatchTurnTerminalOutcome | undefined
@@ -456,7 +452,7 @@ export type DispatchTurnResponse = {
 }
 
 export type OperatorAttachDescriptor = {
-  transport: 'tmux' | 'ghostty'
+  transport: 'tmux'
   argv: string[]
   bindingFence: {
     hostSessionId: string
@@ -465,7 +461,6 @@ export type OperatorAttachDescriptor = {
     windowId?: string | undefined
     tabId?: string | undefined
     paneId?: string | undefined
-    surfaceId?: string | undefined
   }
 }
 
@@ -974,7 +969,7 @@ export type KillBrokerTmuxLeasesResponse = {
   errors: number
 }
 
-export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk' | 'ghostty'
+export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk'
 
 export type SweepRuntimesRequest = {
   transport?: SweepRuntimeTransport | undefined
@@ -1121,7 +1116,7 @@ export type ReconcileActiveRunResult = {
   runId: string
   hostSessionId: string
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  transport: 'sdk' | 'tmux' | 'headless'
   // `repaired` (T-04240): the run was finalized from durable broker terminal
   // evidence (completed/failed/cancelled), distinct from a `reaped` failure.
   status: 'reaped' | 'repaired' | 'matched' | 'suspect' | 'skipped' | 'error'
@@ -1429,7 +1424,7 @@ export type DispatchAppHarnessTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
 }

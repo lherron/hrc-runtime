@@ -57,10 +57,6 @@
  * ── Decision semantics (the disposition for each C-03007 @2378 shape):
  *
  *   Step 1 — resolve the target broker driver for the intent:
- *     · GHOSTTY guard FIRST: if the intent is a Ghostty Claude intent
- *       (HRC_CLAUDE_GHOSTTY on, shouldUseGhosttyTransport(intent)) → NO driver.
- *       Ghostty is an operator-diagnostic surface only, never semantic dispatch
- *       /reuse  → 'runtime-unavailable'  [C-03007 shape 1].
  *     · provider 'anthropic' AND harness.id ∈ {undefined, 'claude-code'} AND
  *       claudeCodeTmuxBrokerEnabled → 'claude-code-tmux'.
  *     · provider 'openai' AND harness.id ∈ {undefined, 'codex-cli'} AND
@@ -93,7 +89,7 @@
  *   · The decision union has NO 'legacy' / 'legacy-tmux' / 'legacy-exec' member —
  *     a supported harness can never produce a legacy outcome.
  */
-import { afterEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 
@@ -132,7 +128,6 @@ const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED
 const HRC_CODEX_CLI_TMUX_BROKER_ENABLED = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
 const HRC_PI_TUI_TMUX_BROKER_ENABLED = 'HRC_PI_TUI_TMUX_BROKER_ENABLED'
 const HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED = 'HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED'
-const HRC_CLAUDE_GHOSTTY = 'HRC_CLAUDE_GHOSTTY'
 
 const BOTH_FLAGS_ON = {
   claudeCodeTmuxBrokerEnabled: true,
@@ -287,20 +282,6 @@ describe('decideInteractiveBrokerAdmission — unsupported ids → runtime-unava
       expect(decision.decision).toBe('runtime-unavailable')
     })
   }
-})
-
-describe('decideInteractiveBrokerAdmission — Ghostty Claude → runtime-unavailable (operator-diagnostic only)', () => {
-  const prior = process.env[HRC_CLAUDE_GHOSTTY]
-  afterEach(() => {
-    if (prior === undefined) delete process.env[HRC_CLAUDE_GHOSTTY]
-    else process.env[HRC_CLAUDE_GHOSTTY] = prior
-  })
-
-  it('Ghostty Claude interactive (HRC_CLAUDE_GHOSTTY on) is NOT semantic broker dispatch → runtime-unavailable [shape 1]', () => {
-    process.env[HRC_CLAUDE_GHOSTTY] = '1'
-    const decision = decideInteractiveBrokerAdmission!(claudeInteractive, null, BOTH_FLAGS_ON)
-    expect(decision.decision).toBe('runtime-unavailable')
-  })
 })
 
 describe('decideInteractiveBrokerAdmission — flag OFF fails closed (test-only flags, NEVER legacy)', () => {

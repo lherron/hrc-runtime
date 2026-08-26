@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import type { ListMessagesResponse, SemanticTurnHandoffStartedResponse } from 'hrc-core'
+import type { SemanticTurnHandoffStartedResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { appendHrcEvent } from '../hrc-event-helper'
@@ -209,88 +209,6 @@ describe('hrcchat minimal server routes', () => {
     } finally {
       verifyDb.close()
     }
-  })
-
-  it('semantic turn handoff stales live non-broker Ghostty instead of literal delivery', async () => {
-    await ctx.restartServer({ claudeCodeTmuxBrokerEnabled: false })
-    const scopeRef = 'agent:handoff-live-ghostty:project:agent-spaces'
-    const sessionRef = `${scopeRef}/lane:default`
-    const { hostSessionId, generation } = await ctx.fixture.resolveSession(scopeRef)
-    const runtimeId = `rt-handoff-live-ghostty-${Date.now()}`
-    const timestamp = ctx.fixture.now()
-
-    const db = openHrcDatabase(ctx.fixture.dbPath)
-    try {
-      db.runtimes.insert({
-        runtimeId,
-        hostSessionId,
-        scopeRef,
-        laneRef: 'default',
-        generation,
-        transport: 'ghostty',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        surfaceJson: {
-          kind: 'ghostty',
-          surfaceId: 'surface-live-ghostty',
-          title: 'claude-code: handoff-live-ghostty',
-          createdBy: 'ghostmux',
-        },
-        supportsInflightInput: false,
-        adopted: false,
-        lastActivityAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    } finally {
-      db.close()
-    }
-
-    const handoffRes = await ctx.fixture.postJson('/v1/messages/turn-handoff', {
-      from: { kind: 'entity', entity: 'human' },
-      to: { kind: 'session', sessionRef },
-      body: 'must be sent to ghostty literally',
-      runtimeIntent: {
-        placement: {
-          agentRoot: '/tmp/agent',
-          projectRoot: '/tmp/project',
-          cwd: '/tmp/project',
-          runMode: 'task',
-          bundle: { kind: 'compose', compose: [] },
-          dryRun: true,
-        },
-        harness: {
-          provider: 'anthropic',
-          interactive: false,
-        },
-        execution: {
-          preferredMode: 'headless',
-        },
-      },
-    })
-    expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
-    expect(handoff.runtimeId).not.toBe(runtimeId)
-
-    const verifyDb = openHrcDatabase(ctx.fixture.dbPath)
-    try {
-      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
-    } finally {
-      verifyDb.close()
-    }
-
-    const requestListRes = await ctx.fixture.postJson('/v1/messages/query', {
-      thread: { rootMessageId: handoff.messageId },
-      phases: ['request'],
-    })
-    expect(requestListRes.status).toBe(200)
-    const requestList = (await requestListRes.json()) as ListMessagesResponse
-    const request = requestList.messages.find(
-      (message) => message.body === 'must be sent to ghostty literally'
-    )
-    expect(request?.execution.runtimeId).not.toBe(runtimeId)
-    expect(request?.execution.transport).not.toBe('ghostty')
   })
 
   it('stales live non-broker tmux dm targets instead of injecting reply hints', async () => {

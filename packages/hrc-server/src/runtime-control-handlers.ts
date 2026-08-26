@@ -18,11 +18,9 @@ import { joinShellCommand, shellIdentifier, shellQuote } from './dispatch-invoca
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import {
-  interruptGhosttyRuntime,
   interruptHeadlessRuntime,
   interruptRuntime,
   interruptTmuxRuntime,
-  terminateGhosttyRuntime,
   terminateHeadlessRuntime,
   terminateRuntime,
   terminateTmuxRuntime,
@@ -48,11 +46,9 @@ import type { TmuxPaneState } from './tmux.js'
 
 // Re-export moved handlers so the public surface of this module is unchanged.
 export {
-  interruptGhosttyRuntime,
   interruptHeadlessRuntime,
   interruptRuntime,
   interruptTmuxRuntime,
-  terminateGhosttyRuntime,
   terminateHeadlessRuntime,
   terminateRuntime,
   terminateTmuxRuntime,
@@ -277,13 +273,11 @@ export const runtimeControlHandlersMethods = {
   failCliStartPath,
   createHeadlessRuntimeForSession,
   interruptRuntime,
-  interruptGhosttyRuntime,
   tmuxForPane,
   interruptTmuxRuntime,
   interruptHeadlessRuntime,
   terminateRuntime,
   terminateTmuxRuntime,
-  terminateGhosttyRuntime,
   terminateHeadlessRuntime,
   ensureCommandRuntimeForSession,
   launchCommandSpecInPane,

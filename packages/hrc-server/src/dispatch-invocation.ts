@@ -15,7 +15,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { buildCliInvocation } from './agent-spaces-adapter/index.js'
-import { deriveInteractiveHarness, shouldUseGhosttyTransport } from './broker-decisions.js'
+import { deriveInteractiveHarness } from './broker-decisions.js'
 import { writeServerLog } from './server-log.js'
 
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
@@ -130,22 +130,12 @@ export async function buildDispatchInvocation(
 
   let buildError: unknown
   let unavailableCommand: string | undefined
-  const invocationIntent = shouldUseGhosttyTransport(intent)
-    ? {
-        ...intent,
-        harness: {
-          ...intent.harness,
-          interactive: true as const,
-        },
-      }
-    : intent
-
   try {
-    const invocation = await buildCliInvocation(invocationIntent, {
+    const invocation = await buildCliInvocation(intent, {
       ...(options.continuation ? { continuation: options.continuation } : {}),
     })
     env = invocation.env
-    cwd = await resolveDispatchCwd(invocation.cwd, invocationIntent)
+    cwd = await resolveDispatchCwd(invocation.cwd, intent)
     interactionMode = invocation.interactionMode
     ioMode = invocation.ioMode
     prompts = invocation.prompts

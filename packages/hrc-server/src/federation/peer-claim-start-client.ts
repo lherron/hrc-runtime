@@ -66,11 +66,10 @@ export function parsePeerClaimStartResult(body: Record<string, unknown>): StartR
   const claim = body['claim']
   const transport = body['transport']
   const tmux = body['tmux']
-  const surface = body['surface']
   if (
     typeof body['runtimeId'] !== 'string' ||
     typeof body['hostSessionId'] !== 'string' ||
-    (transport !== 'headless' && transport !== 'tmux' && transport !== 'ghostty') ||
+    (transport !== 'headless' && transport !== 'tmux') ||
     typeof body['status'] !== 'string' ||
     typeof body['supportsInFlightInput'] !== 'boolean' ||
     (tmux !== undefined &&
@@ -78,10 +77,6 @@ export function parsePeerClaimStartResult(body: Record<string, unknown>): StartR
         typeof tmux['sessionId'] !== 'string' ||
         typeof tmux['windowId'] !== 'string' ||
         typeof tmux['paneId'] !== 'string')) ||
-    (surface !== undefined &&
-      (!isRecord(surface) ||
-        typeof surface['surfaceId'] !== 'string' ||
-        (surface['title'] !== undefined && typeof surface['title'] !== 'string'))) ||
     !isRecord(claim) ||
     typeof claim['slot'] !== 'string' ||
     typeof claim['scopeRef'] !== 'string' ||
@@ -113,20 +108,6 @@ export function parsePeerClaimStartResult(body: Record<string, unknown>): StartR
     },
   }
   if (transport === 'headless') return { ...common, transport }
-  if (transport === 'ghostty') {
-    return {
-      ...common,
-      transport,
-      ...(surface === undefined
-        ? {}
-        : {
-            surface: {
-              surfaceId: surface['surfaceId'] as string,
-              ...(surface['title'] === undefined ? {} : { title: surface['title'] as string }),
-            },
-          }),
-    }
-  }
   return {
     ...common,
     transport,

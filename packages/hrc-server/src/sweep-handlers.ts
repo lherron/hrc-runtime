@@ -11,19 +11,14 @@ import type {
   SweepRuntimesResponse,
   SweepRuntimesSummary,
 } from 'hrc-core'
-import { isClaudeGhosttyEnabled } from './broker-decisions.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
 import { resolveFirstTurnEvalIntervalSeconds } from './first-turn-watch.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import {
-  resolveClaudeGhosttyIdleCleanupMinutes,
-  resolveSessionIdleArchiveDays,
-} from './option-resolvers.js'
+import { resolveSessionIdleArchiveDays } from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
 import {
   HRC_ACTIVE_RUN_RECONCILE_ENABLED,
-  HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS,
   HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV,
   HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS,
   HRC_TMUX_AGING_INTERVAL_SECONDS,
@@ -54,11 +49,7 @@ import {
   runtimeMatchesSweepRequest,
 } from './sweep-helpers.js'
 import type { RuntimeAgingDisposition, RuntimeAgingEvidence } from './sweep-helpers.js'
-import {
-  cleanupIdleClaudeGhosttyRuntimes,
-  reconcileActiveRunsOnce,
-  sweepZombieRunsOnce,
-} from './sweep-reconcile.js'
+import { reconcileActiveRunsOnce, sweepZombieRunsOnce } from './sweep-reconcile.js'
 import { archiveIdleSessions } from './target-message-handlers.js'
 import { createTmuxManager } from './tmux.js'
 
@@ -620,33 +611,6 @@ export async function runRecurringFirstTurnEval(this: HrcServerInstanceForHandle
   }
 }
 
-export function startClaudeGhosttyIdleCleanup(this: HrcServerInstanceForHandlers): void {
-  if (!isClaudeGhosttyEnabled()) return
-  if (resolveClaudeGhosttyIdleCleanupMinutes() === 0) return
-
-  void this.runClaudeGhosttyIdleCleanup()
-  this.idleCleanupTimer = setInterval(() => {
-    void this.runClaudeGhosttyIdleCleanup()
-  }, HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS)
-}
-
-export async function runClaudeGhosttyIdleCleanup(
-  this: HrcServerInstanceForHandlers
-): Promise<void> {
-  if (this.idleCleanupInFlight) return
-  const cleanup = cleanupIdleClaudeGhosttyRuntimes(this.ctx)
-  this.idleCleanupInFlight = cleanup
-  try {
-    await cleanup
-  } catch (error) {
-    writeServerLog('WARN', 'runtime.idle_cleanup_failed', { error })
-  } finally {
-    if (this.idleCleanupInFlight === cleanup) {
-      this.idleCleanupInFlight = undefined
-    }
-  }
-}
-
 export function appendSweepCompletedEvent(
   this: HrcServerInstanceForHandlers,
   summary: SweepRuntimesSummary,
@@ -755,8 +719,6 @@ export const sweepHandlersMethods = {
   runRecurringBrokerLeaseGc,
   startFirstTurnWatchdog,
   runRecurringFirstTurnEval,
-  startClaudeGhosttyIdleCleanup,
-  runClaudeGhosttyIdleCleanup,
   startSessionRetentionSweep,
   runRecurringSessionRetention,
   appendSweepCompletedEvent,

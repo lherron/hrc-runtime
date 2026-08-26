@@ -201,7 +201,7 @@ function formatClock(iso: string | undefined): string {
  * Pure formatter for the broker-pushed session summary. Returns the rendered
  * report block (with surrounding blank lines, trailing newline) or null when no
  * summary payload is present. Shared by `hrc run`'s post-detach report and
- * `hrc monitor session-report` (the headless-claude Ghostty viewer shutdown report,
+ * `hrc monitor session-report` (the headless viewer shutdown report,
  * T-01894) so the two surfaces never diverge.
  */
 function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string | null {

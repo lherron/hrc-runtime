@@ -147,13 +147,6 @@ describe('decideLegacyRuntimeStartupDisposition — legacy controllerKind unset 
     expect(decision).toEqual({ disposition: 'stale', reason: 'legacy_no_controller_kind' })
   })
 
-  it('controllerKind undefined + ghostty transport → stale (legacy_no_controller_kind)', () => {
-    const decision = decideLegacyRuntimeStartupDisposition!(
-      view({ controllerKind: undefined, transport: 'ghostty', brokerTmuxSocketPath: undefined })
-    )
-    expect(decision).toEqual({ disposition: 'stale', reason: 'legacy_no_controller_kind' })
-  })
-
   it('controllerKind undefined + headless transport → stale (legacy_no_controller_kind)', () => {
     const decision = decideLegacyRuntimeStartupDisposition!(
       view({ controllerKind: undefined, transport: 'headless', brokerTmuxSocketPath: undefined })

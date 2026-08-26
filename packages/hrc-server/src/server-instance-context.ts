@@ -172,8 +172,6 @@ type HrcServerInstanceDataForHandlers = {
   brokerLeaseGcInFlight: Promise<unknown> | undefined
   tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
   tmuxAgingInFlight: Promise<unknown> | undefined
-  idleCleanupTimer: ReturnType<typeof setInterval> | undefined
-  idleCleanupInFlight: Promise<void> | undefined
   sessionRetentionTimer: ReturnType<typeof setInterval> | undefined
   sessionRetentionInFlight: Promise<void> | undefined
   /** Immutable process release identity, captured once at construction. */

@@ -9,7 +9,6 @@ import {
   observePrecompileLaunchSpan,
 } from './precompile-launch-timing.js'
 import {
-  DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES,
   DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
   DEFAULT_HRC_MAIL_MAX_ROUNDS,
   DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
@@ -213,16 +212,6 @@ export async function startAspcFacadeBrokerClient(
     await client.close().catch(() => undefined)
     throw error
   }
-}
-
-export function resolveClaudeGhosttyIdleCleanupMinutes(): number {
-  const raw = process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES']
-  if (raw === undefined) return DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES
-  const minutes = Number.parseFloat(raw)
-  if (!Number.isFinite(minutes) || minutes < 0) {
-    return DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES
-  }
-  return minutes
 }
 
 /**
