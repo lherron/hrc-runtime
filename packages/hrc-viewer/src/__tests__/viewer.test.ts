@@ -232,4 +232,18 @@ describe('HrcViewer reconcile (§4.5 / §5.5)', () => {
       generation: 1,
     })
   })
+
+  test('normalizes an unprefixed legacy lane without aborting reconcile', async () => {
+    const harness = makeHarness({
+      rows: [presentationRow({ laneRef: 'viewer-smoke' })],
+    })
+    await harness.viewer.reconcile('start')
+    expect(harness.ensureCalls).toHaveLength(1)
+    expect(harness.ensureCalls[0]).toMatchObject({
+      laneRef: 'lane:viewer-smoke',
+    })
+    expect(
+      harness.logs.some((entry) => entry.event === 'broker_headless_viewer.reconcile_failed')
+    ).toBe(false)
+  })
 })

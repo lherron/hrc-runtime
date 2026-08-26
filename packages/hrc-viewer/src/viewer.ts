@@ -108,6 +108,13 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
+function normalizePresentationLaneRef(laneRef: string | undefined): string {
+  if (laneRef === undefined || laneRef === '' || laneRef === 'main' || laneRef === 'lane:main') {
+    return 'main'
+  }
+  return laneRef.startsWith('lane:') ? laneRef : `lane:${laneRef}`
+}
+
 function attachCommandFor(row: PresentationRuntimeRow, lingerSeconds: number): string | null {
   if (row.tmux === undefined) return null
   return [
@@ -118,7 +125,9 @@ function attachCommandFor(row: PresentationRuntimeRow, lingerSeconds: number): s
 }
 
 function titleFor(row: Pick<PresentationRuntimeRow, 'scopeRef' | 'laneRef' | 'title'>): string {
-  return row.title ?? defaultHeadlessPaneTitle(row.scopeRef, row.laneRef)
+  return (
+    row.title ?? defaultHeadlessPaneTitle(row.scopeRef, normalizePresentationLaneRef(row.laneRef))
+  )
 }
 
 function eventTimeMs(event: LifecycleEvent): number | undefined {
@@ -127,7 +136,8 @@ function eventTimeMs(event: LifecycleEvent): number | undefined {
 }
 
 function paneKeyFor(row: Pick<PresentationRuntimeRow, 'scopeRef' | 'laneRef'>): string {
-  return deriveHeadlessSessionIdentity(row.scopeRef, row.laneRef).paneKey
+  return deriveHeadlessSessionIdentity(row.scopeRef, normalizePresentationLaneRef(row.laneRef))
+    .paneKey
 }
 
 function latestByRuntime(events: LifecycleEvent[]): Map<string, LifecycleEvent> {
@@ -323,7 +333,7 @@ export class HrcViewer {
       runtimeId: event.runtimeId,
       hostSessionId: event.hostSessionId,
       scopeRef: event.scopeRef,
-      laneRef: event.laneRef,
+      laneRef: normalizePresentationLaneRef(event.laneRef),
       generation: event.generation,
       status: 'busy',
       presentation: {
@@ -341,8 +351,9 @@ export class HrcViewer {
   private async handleRetitleEvent(event: LifecycleEvent): Promise<void> {
     const payload = asRecord(event.payload)
     const requestedTitle = typeof payload['title'] === 'string' ? payload['title'] : undefined
-    const title = requestedTitle ?? defaultHeadlessPaneTitle(event.scopeRef, event.laneRef)
-    const paneKey = deriveHeadlessSessionIdentity(event.scopeRef, event.laneRef).paneKey
+    const laneRef = normalizePresentationLaneRef(event.laneRef)
+    const title = requestedTitle ?? defaultHeadlessPaneTitle(event.scopeRef, laneRef)
+    const paneKey = deriveHeadlessSessionIdentity(event.scopeRef, laneRef).paneKey
     const panes = await this.ghostmux.listHeadlessViewerPanes()
     const pane = panes.find(
       (candidate) =>
@@ -378,7 +389,7 @@ export class HrcViewer {
           ) {
             await this.ghostmux.rebindHeadlessViewerPane(pane.surfaceId, {
               scopeRef: row.scopeRef,
-              laneRef: row.laneRef,
+              laneRef: normalizePresentationLaneRef(row.laneRef),
               runtimeId: row.runtimeId,
               hostSessionId: row.hostSessionId,
               generation: row.generation,
@@ -442,13 +453,18 @@ export class HrcViewer {
     const state = latestEvent ? (viewerStateForEventKind(latestEvent.eventKind) ?? 'idle') : 'idle'
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: row.scopeRef,
-      laneRef: row.laneRef,
+      laneRef: normalizePresentationLaneRef(row.laneRef),
       runtimeId: row.runtimeId,
       hostSessionId: row.hostSessionId,
       generation: row.generation,
       attachCommand,
       title: titleFor(row),
-      statusBar: renderStatusBar(row.scopeRef, state, slug, row.laneRef),
+      statusBar: renderStatusBar(
+        row.scopeRef,
+        state,
+        slug,
+        normalizePresentationLaneRef(row.laneRef)
+      ),
       terminalBg: viewerTerminalBg(row.scopeRef),
       windowKey: row.presentation?.viewerWindow,
     })
@@ -473,7 +489,7 @@ export class HrcViewer {
     const slug = await defaultTaskSlugResolver()(row.scopeRef)
     await this.ghostmux.setStatusBar(
       surfaceId,
-      renderStatusBar(row.scopeRef, state, slug, row.laneRef)
+      renderStatusBar(row.scopeRef, state, slug, normalizePresentationLaneRef(row.laneRef))
     )
   }
 
