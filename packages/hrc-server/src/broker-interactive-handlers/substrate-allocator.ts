@@ -129,15 +129,30 @@ export type BrokerSubstrateAllocation = {
 }
 
 export function resolveBrokerBinary(driverKind: string): string {
-  if (driverKind === 'pi-sdk') return 'harness-broker-pi'
-  if (driverKind === 'agent-harness') return 'agent-harness'
+  const binary =
+    driverKind === 'pi-sdk'
+      ? {
+          env: 'HRC_HARNESS_BROKER_PI_CMD',
+          name: 'harness-broker-pi',
+        }
+      : driverKind === 'agent-harness' || driverKind === 'agent-harness-tmux'
+        ? {
+            env: 'HRC_AGENT_HARNESS_CMD',
+            name: 'agent-harness',
+          }
+        : {
+            env: 'HRC_HARNESS_BROKER_CMD',
+            name: 'harness-broker',
+          }
+  const override = process.env[binary.env]?.trim()
+  if (override !== undefined && override.length > 0) {
+    return override
+  }
 
-  // The daemon and broker must come from one coherent atomic release. Resolve
-  // the canonical broker beside this hrc-server package instead of relying on a
-  // separately maintained ~/.bun/bin link or the launchd PATH. The same shape
-  // works from a source checkout because its root node_modules/.bin occupies the
-  // corresponding location.
-  return resolve(import.meta.dir, '../../../../node_modules/.bin/harness-broker')
+  // The daemon and every broker kind must come from one coherent atomic
+  // release. This same shape works from a source checkout because the root
+  // node_modules/.bin occupies the corresponding location.
+  return resolve(import.meta.dir, '../../../../node_modules/.bin', binary.name)
 }
 
 export async function allocateBrokerSubstrate(

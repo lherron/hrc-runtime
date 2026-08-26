@@ -13,6 +13,7 @@ import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runt
 
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
+  HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_GHOSTTY_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
@@ -43,6 +44,9 @@ export function validateEnsureRuntimeIntent(
 export function deriveInteractiveHarness(
   harness: HrcRuntimeIntent['harness']
 ): HrcRuntimeSnapshot['harness'] {
+  if (harness.id === 'agent-harness') {
+    return 'agent-harness'
+  }
   if (harness.id === 'pi') {
     return 'pi'
   }
@@ -248,7 +252,11 @@ export function parseGhosttyViewerLingerSeconds(
   return Math.floor(parsed)
 }
 
-export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
+export type InteractiveTmuxBrokerDriver =
+  | 'claude-code-tmux'
+  | 'codex-cli-tmux'
+  | 'pi-tui-tmux'
+  | 'agent-harness-tmux'
 
 export type LatestRuntimeAdmissionView = {
   controllerKind: HrcRuntimeControllerKind | undefined
@@ -408,6 +416,7 @@ export function decideInteractiveBrokerAdmission(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    agentHarnessTmuxBrokerEnabled?: boolean | undefined
     /** T-07397 surface-ownership proof carried by the dispatch, if any. */
     establishedBrokerInvocationId?: string | undefined
   }
@@ -484,6 +493,7 @@ export function resolveInteractiveBrokerAdmissionDriver(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    agentHarnessTmuxBrokerEnabled?: boolean | undefined
   }
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
   if (shouldUseGhosttyTransport(intent)) {
@@ -523,6 +533,17 @@ export function resolveInteractiveBrokerAdmissionDriver(
     }
   }
 
+  if (
+    options.agentHarnessTmuxBrokerEnabled === true &&
+    intent.harness.provider === 'openai' &&
+    intent.harness.id === 'agent-harness'
+  ) {
+    return {
+      flagEnvName: HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'agent-harness-tmux',
+    }
+  }
+
   return undefined
 }
 
@@ -532,6 +553,7 @@ export function decideInteractiveTmuxBrokerStartRoute(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
+    agentHarnessTmuxBrokerEnabled?: boolean | undefined
   }
 ): InteractiveTmuxBrokerStartRoute {
   if (options.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
@@ -555,6 +577,17 @@ export function decideInteractiveTmuxBrokerStartRoute(
       route: 'broker',
       flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
       allowedBrokerDriver: 'pi-tui-tmux',
+    }
+  }
+
+  if (
+    options.agentHarnessTmuxBrokerEnabled === true &&
+    shouldConsiderAgentHarnessTmuxBrokerDispatch(intent)
+  ) {
+    return {
+      route: 'broker',
+      flagEnvName: HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'agent-harness-tmux',
     }
   }
 
@@ -841,13 +874,22 @@ export function shouldConsiderPiTuiTmuxBrokerDispatch(intent: HrcRuntimeIntent):
   )
 }
 
+export function shouldConsiderAgentHarnessTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
+  return (
+    isInteractiveTmuxBrokerIntent(intent) &&
+    intent.harness.provider === 'openai' &&
+    intent.harness.id === 'agent-harness'
+  )
+}
+
 export function isInteractiveTmuxBrokerDriver(
   brokerDriver: string | undefined
 ): brokerDriver is InteractiveTmuxBrokerDriver {
   return (
     brokerDriver === 'claude-code-tmux' ||
     brokerDriver === 'codex-cli-tmux' ||
-    brokerDriver === 'pi-tui-tmux'
+    brokerDriver === 'pi-tui-tmux' ||
+    brokerDriver === 'agent-harness-tmux'
   )
 }
 

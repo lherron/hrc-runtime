@@ -368,10 +368,10 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'hrc-durable-activation-'))
   db = openHrcDatabase(join(dir, 'state.sqlite'))
   seedSession(db)
-  // Neutralize the UNFIXED default stdio factory: if getHarnessBrokerController
-  // ignores the injected brokerClientFactory seam (RED), BrokerClient.start would
-  // otherwise spawn the REAL `harness-broker` binary. Point it at a nonexistent
-  // command so the real spawn fails fast instead of launching a live broker.
+  // Neutralize the default stdio factory: if getHarnessBrokerController ignores
+  // the injected brokerClientFactory seam, BrokerClient.start would otherwise
+  // spawn the real `harness-broker` binary. The durable allocator deliberately
+  // honors this override too, so its recorded command should name the stub.
   savedBrokerCmd = process.env['HRC_HARNESS_BROKER_CMD']
   process.env['HRC_HARNESS_BROKER_CMD'] = 'hrc-nonexistent-broker-stub-xyz'
 })
@@ -446,7 +446,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     expect(manager?.windowWithCommandCalls).toHaveLength(1)
     const brokerCall = manager?.windowWithCommandCalls[0]
     expect(brokerCall?.windowName).toBe('broker')
-    expect(brokerCall?.command).toContain('harness-broker')
+    expect(brokerCall?.command).toContain('hrc-nonexistent-broker-stub-xyz')
     expect(brokerCall?.command).toContain('--transport')
     expect(brokerCall?.command).toContain('unix')
     expect(manager?.orInspectCalls).toEqual([
@@ -559,7 +559,7 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     const manager = h.managers[0]
     const brokerCall = manager?.windowWithCommandCalls[0]
     expect(brokerCall?.windowName).toBe('broker')
-    expect(brokerCall?.command).toContain('harness-broker')
+    expect(brokerCall?.command).toContain('hrc-nonexistent-broker-stub-xyz')
     expect(brokerCall?.command).toContain('--transport')
     expect(brokerCall?.command).toContain('unix')
     // presentation='none': a headless runtime creates NO operator tui window.

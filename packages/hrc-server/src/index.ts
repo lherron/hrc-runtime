@@ -162,6 +162,7 @@ import {
 } from './mail-kicker-handlers.js'
 import { type MailHandlersMethods, mailHandlersMethods } from './mail/mail-handlers.js'
 import {
+  resolveAgentHarnessTmuxBrokerEnabled,
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
@@ -842,6 +843,7 @@ class HrcServerInstance implements HrcServer {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
+  readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcMailMaxRounds: number
@@ -1341,6 +1343,7 @@ class HrcServerInstance implements HrcServer {
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
+    this.agentHarnessTmuxBrokerEnabled = resolveAgentHarnessTmuxBrokerEnabled(options)
     this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
     this.hrcMailMaxRounds = resolveHrcMailMaxRounds(options)

@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { HrcRuntimeIntent, HrcSessionRecord, HrcTurnResponseFormat } from 'hrc-core'
 import { resolvePlacementContext } from 'spaces-config'
@@ -28,7 +30,7 @@ export type DirectAgentHarnessPlan = {
   identity: RuntimeIdentityAllocation
 }
 
-export async function buildDirectAgentHarnessPlan(input: {
+type DirectAgentHarnessPlanInput = {
   intent: HrcRuntimeIntent
   session: HrcSessionRecord
   runtimeId: string
@@ -39,7 +41,27 @@ export async function buildDirectAgentHarnessPlan(input: {
   resolveProfileYolo?:
     | ((placement: HrcRuntimeIntent['placement']) => Promise<boolean | undefined>)
     | undefined
-}): Promise<DirectAgentHarnessPlan> {
+}
+
+export async function buildDirectAgentHarnessPlan(
+  input: DirectAgentHarnessPlanInput
+): Promise<DirectAgentHarnessPlan> {
+  return await buildDirectAgentHarnessPlanVariant(input, { surface: 'headless' })
+}
+
+export async function buildDirectInteractiveAgentHarnessPlan(
+  input: DirectAgentHarnessPlanInput & { agentHarnessCommand: string }
+): Promise<DirectAgentHarnessPlan> {
+  return await buildDirectAgentHarnessPlanVariant(input, {
+    surface: 'interactive',
+    agentHarnessCommand: input.agentHarnessCommand,
+  })
+}
+
+async function buildDirectAgentHarnessPlanVariant(
+  input: DirectAgentHarnessPlanInput,
+  variant: { surface: 'headless' } | { surface: 'interactive'; agentHarnessCommand: string }
+): Promise<DirectAgentHarnessPlan> {
   const bundle = input.intent.placement['bundle'] as
     | { kind?: string; agentName?: string; projectRoot?: string }
     | undefined
@@ -92,24 +114,34 @@ export async function buildDirectAgentHarnessPlan(input: {
     typeof input.intent.placement['agentRoot'] === 'string'
       ? input.intent.placement['agentRoot']
       : undefined
+  const interactive = variant.surface === 'interactive'
+  const brokerDriver = interactive ? 'agent-harness-tmux' : 'agent-harness'
+  const controlSocketPath = interactive
+    ? buildAgentHarnessControlSocketPath(invocationId, input.runtimeId)
+    : undefined
   const spec = {
     specVersion: 'harness-broker.invocation/v1',
     invocationId,
     harness: {
       frontend: 'agent-harness',
       provider,
-      driver: 'agent-harness',
+      driver: brokerDriver,
     },
     process: {
-      command: 'in-process',
-      args: [],
+      command: interactive ? variant.agentHarnessCommand : 'in-process',
+      args: interactive ? ['tui', '--broker-control-socket', controlSocketPath] : [],
       cwd,
       lockedEnv: {},
-      harnessTransport: { kind: 'in-process' },
+      harnessTransport: { kind: interactive ? 'pty' : 'in-process' },
     },
-    interaction: { mode: 'service', turnConcurrency: 'single', inputQueue: 'fifo' },
+    interaction: {
+      mode: interactive ? 'interactive' : 'service',
+      turnConcurrency: 'single',
+      inputQueue: 'fifo',
+    },
     driver: {
-      kind: 'agent-harness',
+      kind: brokerDriver,
+      ...(interactive ? { terminalHost: 'tmux' as const } : {}),
       permissionPolicy: { mode: yolo ? 'allow' : 'deny' },
     },
     sdk: {
@@ -151,21 +183,30 @@ export async function buildDirectAgentHarnessPlan(input: {
       ? { responseFormat: input.responseFormat }
       : {}),
   }
-  const startRequest: InvocationStartRequest = { spec, initialInput }
+  const startRequest: InvocationStartRequest =
+    interactive && (input.intent.initialPrompt ?? '').length === 0
+      ? { spec }
+      : { spec, initialInput }
   const specHash = neutralSpecHash(spec)
   const startRequestHash = neutralStartRequestHash(startRequest)
-  const initialInputHash = hashValue(initialInput)
-  const profileId = `profile_${hashValue({ driver: 'agent-harness', startRequest: hashNeutralStartRequest(startRequest) }).slice(0, 32)}`
-  const compatibilityHash = hashValue({ driver: 'agent-harness', agentId, provider, modelId })
+  const initialInputHash = startRequest.initialInput
+    ? hashValue(startRequest.initialInput)
+    : undefined
+  const profileId = `profile_${hashValue({ driver: brokerDriver, startRequest: hashNeutralStartRequest(startRequest) }).slice(0, 32)}`
+  const compatibilityHash = hashValue({ driver: brokerDriver, agentId, provider, modelId })
+  const tmuxExposurePolicy = {
+    mode: 'broker-reports-target' as const,
+    targetKind: 'tmux-session' as const,
+  }
   const profileMaterial = {
     schemaVersion: 'agent-runtime-profile/v1' as const,
     profileId: profileId as BrokerExecutionProfile['profileId'],
     kind: 'harness-broker' as const,
-    interactionMode: 'nonInteractive' as const,
+    interactionMode: interactive ? ('interactive' as const) : ('nonInteractive' as const),
     expectedCapabilities: {
       input: {
         user: 'required' as const,
-        steer: 'optional' as const,
+        steer: interactive ? ('forbidden' as const) : ('optional' as const),
         appendContext: 'forbidden' as const,
         localImages: 'forbidden' as const,
         fileRefs: 'forbidden' as const,
@@ -195,9 +236,25 @@ export async function buildDirectAgentHarnessPlan(input: {
       },
     },
     brokerProtocol: 'harness-broker/0.2' as const,
-    brokerDriver: 'agent-harness',
+    brokerDriver,
     brokerOwnership: 'hrc-owned-process' as const,
-    harnessInvocation: { startRequest, specHash, startRequestHash, initialInputHash },
+    ...(interactive
+      ? {
+          brokerTerminal: {
+            host: 'tmux' as const,
+            startupMethod: 'create-terminal' as const,
+            turnDelivery: 'terminal-literal-input' as const,
+            operatorAttach: true,
+            exposurePolicy: tmuxExposurePolicy,
+          },
+        }
+      : {}),
+    harnessInvocation: {
+      startRequest,
+      specHash,
+      startRequestHash,
+      ...(initialInputHash !== undefined ? { initialInputHash } : {}),
+    },
     policy: {
       permissionPolicy: yolo
         ? {
@@ -213,10 +270,10 @@ export async function buildDirectAgentHarnessPlan(input: {
       inputPolicy: {
         readyInput: 'start-turn' as const,
         busy: { whenBusy: 'queue' as const, maxDepth: 32 },
-        supportedKinds: ['user', 'steer'] as const,
+        supportedKinds: interactive ? (['user'] as const) : (['user', 'steer'] as const),
         attachmentPolicy: { localImages: false, fileRefs: false },
       },
-      exposurePolicy: { mode: 'none' as const },
+      exposurePolicy: interactive ? tmuxExposurePolicy : { mode: 'none' as const },
     },
     observability: {
       correlation: {
@@ -254,7 +311,7 @@ export async function buildDirectAgentHarnessPlan(input: {
   const planMaterial = {
     schemaVersion: 'agent-runtime-plan/v1' as const,
     compiler: { name: 'agent-spaces' as const, version: 'agent-harness-direct/1' },
-    compileId: `compile_${hashValue({ agentId, provider, modelId }).slice(0, 32)}`,
+    compileId: `compile_${hashValue(interactive ? { agentId, provider, modelId, brokerDriver } : { agentId, provider, modelId }).slice(0, 32)}`,
     createdAt: input.now,
     identity,
     placement: input.intent.placement,
@@ -274,6 +331,14 @@ export async function buildDirectAgentHarnessPlan(input: {
   const planHash = (project(planMaterial, 'plan') as { planHash: string }).planHash
   const plan = { ...planMaterial, planHash } as unknown as CompiledRuntimePlan
   return { profile, startRequest, specHash, startRequestHash, plan, identity }
+}
+
+function buildAgentHarnessControlSocketPath(invocationId: string, runtimeId: string): string {
+  const token = createHash('sha256')
+    .update(`${invocationId}\0${runtimeId}`)
+    .digest('hex')
+    .slice(0, 16)
+  return join(tmpdir(), 'harness-broker', `agent-harness-control.${token}.sock`)
 }
 
 function hashValue(value: unknown): string {

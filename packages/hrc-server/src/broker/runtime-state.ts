@@ -327,7 +327,9 @@ export function runtimeHarness(
   runtime: string,
   brokerDriver?: string | undefined
 ): HrcRuntimeSnapshot['harness'] {
-  if (brokerDriver === 'agent-harness') return 'agent-harness'
+  if (brokerDriver === 'agent-harness' || brokerDriver === 'agent-harness-tmux') {
+    return 'agent-harness'
+  }
   if (runtime === 'codex-cli') return 'codex-cli'
   if (runtime === 'claude-code-cli') return 'claude-code'
   if (runtime === 'claude-agent-sdk') return 'agent-sdk'

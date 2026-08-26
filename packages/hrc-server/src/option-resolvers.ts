@@ -15,6 +15,7 @@ import {
   DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
   DEFAULT_SESSION_PROJECTION_DAYS,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
+  HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
   HRC_BROKER_DURABLE_IPC_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
@@ -112,6 +113,14 @@ export function resolvePiTuiTmuxBrokerEnabled(options: HrcServerOptions): boolea
   return resolveBooleanFlag(
     options.piTuiTmuxBrokerEnabled,
     process.env[HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
+}
+
+export function resolveAgentHarnessTmuxBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.agentHarnessTmuxBrokerEnabled,
+    process.env[HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV],
     { defaultOn: true }
   )
 }

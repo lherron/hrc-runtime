@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   HRC_QUEUED_TO_LIVE_HARNESS_WARNING,
@@ -16,6 +18,7 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { buildDirectInteractiveAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
 import {
   BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
   rejectedBrokerAdoptionPaths,
@@ -50,6 +53,7 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
+import { resolveBrokerBinary } from './broker-interactive-handlers/substrate-allocator.js'
 import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
@@ -1089,8 +1093,6 @@ export async function startInteractiveTmuxBrokerRuntime(
   const timing = createPrecompileLaunchTimingContext('interactive', runtimeId)
   this.db.sessions.updateIntent(session.hostSessionId, effectiveTurnIntent, now, timing)
 
-  const client = await startAspcFacadeBrokerClient(timing)
-  let handedOffToController = false
   const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(effectiveTurnIntent), effectiveTurnIntent.launch),
     db: this.db,
@@ -1099,47 +1101,78 @@ export async function startInteractiveTmuxBrokerRuntime(
     runtimeId,
     mailStopSocket: this.options.socketPath,
   })
+  const directPlan =
+    effectiveTurnIntent.harness.id === 'agent-harness'
+      ? await buildDirectInteractiveAgentHarnessPlan({
+          intent: effectiveTurnIntent,
+          session,
+          runtimeId,
+          runId: diagnosticRunId,
+          responseFormat: flagOptions.responseFormat,
+          dispatchEnv: hrcDispatchEnv,
+          now,
+          agentHarnessCommand: resolveBrokerBinary('agent-harness-tmux'),
+        })
+      : undefined
+  if (directPlan !== undefined && hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] === undefined) {
+    hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] = join(homedir(), '.pi', 'agent', 'auth.json')
+  }
+  const client = directPlan === undefined ? await startAspcFacadeBrokerClient(timing) : undefined
+  let handedOffToController = false
   try {
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: effectiveTurnIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        dispatchEnv: hrcDispatchEnv,
-        // T-01770 Phase D: arriving here means there is no live TUI to reuse
-        // (the reuse predicates return an already-live runtime first). A fresh
-        // first launch must NOT attempt continuation — passing session.continuation
-        // for codex would emit `codex resume <rollout>` (or `claude --continue`),
-        // replaying a transcript and, when the recorded cwd differs, blocking the
-        // TUI on a "choose working directory to resume" picker (commit 120eb7a).
-        // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
-        //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
-        //   - codex-cli-tmux + an openai/kind:session/UUID continuation ⇒
-        //     `codex resume <uuid>` (explicit-id form; NOT no-arg picker resume).
-        // decideInteractiveTmuxBrokerContinuation enforces those gates; all other
-        // cases (incl. pi-tui-tmux, non-UUID/non-session codex keys) stay undefined.
-        continuation: toRuntimeContinuationRef(
-          decideInteractiveTmuxBrokerContinuation({
-            allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-            sessionContinuation: session.continuation,
-          })
-        ),
-        responseFormat: flagOptions.responseFormat,
-      },
-      {
-        compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
-        timing,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => runtimeId,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => diagnosticRunId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
-      }
-    )
+    const compiled =
+      directPlan === undefined
+        ? await compileBrokerRuntimePlan(
+            {
+              intent: effectiveTurnIntent,
+              hostSessionId: session.hostSessionId,
+              generation: session.generation,
+              dispatchEnv: hrcDispatchEnv,
+              // T-01770 Phase D: arriving here means there is no live TUI to reuse
+              // (the reuse predicates return an already-live runtime first). A fresh
+              // first launch must NOT attempt continuation — passing session.continuation
+              // for codex would emit `codex resume <rollout>` (or `claude --continue`),
+              // replaying a transcript and, when the recorded cwd differs, blocking the
+              // TUI on a "choose working directory to resume" picker (commit 120eb7a).
+              // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
+              //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
+              //   - codex-cli-tmux + an openai/kind:session/UUID continuation ⇒
+              //     `codex resume <uuid>` (explicit-id form; NOT no-arg picker resume).
+              // decideInteractiveTmuxBrokerContinuation enforces those gates; all other
+              // cases (incl. pi-tui-tmux, non-UUID/non-session codex keys) stay undefined.
+              continuation: toRuntimeContinuationRef(
+                decideInteractiveTmuxBrokerContinuation({
+                  allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+                  sessionContinuation: session.continuation,
+                })
+              ),
+              responseFormat: flagOptions.responseFormat,
+            },
+            {
+              compileHarnessInvocation: (request) => {
+                if (client === undefined) {
+                  throw new Error('ASPC facade client is unavailable for compiler-backed launch')
+                }
+                return client.compileHarnessInvocation(request)
+              },
+              timing,
+              ids: {
+                requestId: () => `req-${randomUUID()}`,
+                operationId: () => `op-${randomUUID()}`,
+                runtimeId: () => runtimeId,
+                invocationId: () => `inv-${randomUUID()}`,
+                initialInputId: () => `input-${randomUUID()}`,
+                runId: () => diagnosticRunId,
+                traceId: () => `trace-${randomUUID()}`,
+              },
+            }
+          )
+        : {
+            admitted: true as const,
+            ...directPlan,
+            dispatchEnv: hrcDispatchEnv,
+            diagnostics: [],
+          }
 
     if (!compiled.admitted) {
       writeServerLog('WARN', 'broker.compile_admission_rejected', {
@@ -1209,15 +1242,22 @@ export async function startInteractiveTmuxBrokerRuntime(
       )
     }
 
-    const durableInteractiveRoute = decideBrokerDurableInteractiveRoute({
-      durableIpcEnabled: resolveBrokerDurableIpcEnabled(this.options),
-      endpointKind: 'unix-jsonrpc-ndjson',
-      interactionMode: 'interactive',
-    })
-    const brokerClient =
-      durableInteractiveRoute === 'durable-ipc' ? undefined : asBrokerClient(client)
+    const durableInteractiveRoute =
+      directPlan !== undefined
+        ? ('durable-ipc' as const)
+        : decideBrokerDurableInteractiveRoute({
+            durableIpcEnabled: resolveBrokerDurableIpcEnabled(this.options),
+            endpointKind: 'unix-jsonrpc-ndjson',
+            interactionMode: 'interactive',
+          })
+    let brokerClient: ReturnType<typeof asBrokerClient> | undefined
     if (durableInteractiveRoute === 'durable-ipc') {
-      await client.close().catch(() => undefined)
+      await client?.close().catch(() => undefined)
+    } else {
+      if (client === undefined) {
+        throw new Error('ASPC facade client is unavailable for legacy interactive broker launch')
+      }
+      brokerClient = asBrokerClient(client)
     }
 
     handedOffToController = true
@@ -1341,7 +1381,7 @@ export async function startInteractiveTmuxBrokerRuntime(
     return result.runtime
   } catch (error) {
     if (!handedOffToController) {
-      await client.close().catch(() => undefined)
+      await client?.close().catch(() => undefined)
     }
     throw error
   }

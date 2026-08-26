@@ -44,11 +44,13 @@
   },
   "dependencies": {
     "agent-scope": "latest",
+    "agent-harness": "latest",
     "agent-spaces": "latest",
     "cli-kit": "latest",
     "spaces-config": "latest",
     "spaces-execution": "latest",
     "spaces-harness-broker": "latest",
+    "spaces-harness-broker-pi-sdk": "latest",
     "spaces-harness-broker-client": "latest",
     "spaces-harness-broker-protocol": "latest",
     "spaces-runtime": "latest",

@@ -61,7 +61,11 @@ type InteractiveTmuxBrokerStartRoute =
   | {
       route: 'broker'
       flagEnvName: string
-      allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux'
+      allowedBrokerDriver:
+        | 'claude-code-tmux'
+        | 'codex-cli-tmux'
+        | 'pi-tui-tmux'
+        | 'agent-harness-tmux'
     }
   | { route: 'legacy-tmux' }
 
@@ -116,6 +120,8 @@ const decideInteractiveTmuxBrokerStartRoute = (
       options: {
         claudeCodeTmuxBrokerEnabled: boolean
         codexCliTmuxBrokerEnabled: boolean
+        piTuiTmuxBrokerEnabled?: boolean
+        agentHarnessTmuxBrokerEnabled?: boolean
       }
     ) => InteractiveTmuxBrokerStartRoute
   }
@@ -597,6 +603,23 @@ describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts
         }
       )
     ).toEqual({ route: 'legacy-tmux' })
+  })
+
+  it('selects the agent-harness tmux broker when its flag is enabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'openai', interactive: true, id: 'agent-harness' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: false,
+          codexCliTmuxBrokerEnabled: false,
+          agentHarnessTmuxBrokerEnabled: true,
+        }
+      )
+    ).toEqual({
+      route: 'broker',
+      flagEnvName: 'HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'agent-harness-tmux',
+    })
   })
 })
 
