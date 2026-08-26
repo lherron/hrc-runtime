@@ -1,0 +1,37 @@
+id: hrc-runtime.viewer-presentation-sidecar
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: Ghostty viewer presentation authority and runtime presentation facts
+predicate: >
+  HRC owns runtime lifecycle and the durable presentation facts needed to
+  reconstruct viewer intent, but after viewer cutover it never actuates Ghostty.
+  Each start or reuse publishes runtime.presentation with the invocation-local
+  operator-attach suppression decision, while the runtime generation persists
+  only operator attachability, latest viewer window, and monotone
+  viewerRequested intent. A store-only presentation read model exposes those
+  facts without probing or mutating runtimes. hrc-viewer alone actuates Ghostty
+  through ghostmux, keeps no persistent registry outside Ghostty pane metadata,
+  and keys the single global pane for a logical session by normalized
+  (scopeRef, laneRef), with runtime and generation fences for adoption and reap.
+  A pre-record generation is adopt-only and cannot cause a pane to be minted
+  until an invocation establishes presentation authority. Viewer absence,
+  death, lag, reconnect, reconciliation, and polling cannot mutate or finalize
+  runtime, run, or turn state and cannot delay or fail their lifecycle paths.
+authority: daedalus@hrc-runtime:primary architecture ruling, 2026-08-26
+source:
+  - hrcchat#21132
+  - docs/proposals/viewer-sidecar-spec.md
+  - packages/hrc-server/src/runtime-io-handlers.ts
+  - packages/hrc-server/src/ghostmux.ts
+  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
+required_tests:
+  - just architecture-records
+  - viewer side-effect-free HRC route and SDK allowlist gates
+  - viewer event, presentation read-model, restart, and reconciliation gates
+  - viewer pane identity, runtime-fenced reap, and role-qualified scope coexistence gates
+  - live Ghostty shadow matrix for start, run, reuse, retitle, terminate, and restart
+last_verified: 2026-08-26 design approval; implementation gates pending
+reopen_when: The Ghostty actuation owner, presentation authority or read model, invocation suppression lifetime, pane identity, upgrade adoption rule, lifecycle failure isolation, or ghostmux boundary changes.
+supersedes: []
+superseded_by: []

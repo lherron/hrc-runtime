@@ -37,3 +37,7 @@ Every atomic HRC release records its exact HRC build and locked ASP build in pra
 ## hrc-runtime.verify-gate
 
 The declared verify gate checks architecture records and their generated projections in addition to build, structural checks, lint, types, tests, and the fixture-owned federation loopback corpus.
+
+## hrc-runtime.viewer-presentation-sidecar
+
+HRC owns runtime lifecycle and the durable presentation facts needed to reconstruct viewer intent, but after viewer cutover it never actuates Ghostty. Each start or reuse publishes runtime.presentation with the invocation-local operator-attach suppression decision, while the runtime generation persists only operator attachability, latest viewer window, and monotone viewerRequested intent. A store-only presentation read model exposes those facts without probing or mutating runtimes. hrc-viewer alone actuates Ghostty through ghostmux, keeps no persistent registry outside Ghostty pane metadata, and keys the single global pane for a logical session by normalized (scopeRef, laneRef), with runtime and generation fences for adoption and reap. A pre-record generation is adopt-only and cannot cause a pane to be minted until an invocation establishes presentation authority. Viewer absence, death, lag, reconnect, reconciliation, and polling cannot mutate or finalize runtime, run, or turn state and cannot delay or fail their lifecycle paths.
