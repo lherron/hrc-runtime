@@ -207,23 +207,19 @@ export type OperatorPresentation = 'tmux-tui' | 'none'
  * (`operatorPresentation`), never the driver name: a codex-app-server profile
  * with NO policy stays ordinary headless (`none`). Driver identity is only the
  * APPLICABILITY gate — the policy can request a viewer ONLY for a driver that can
- * present one (codex-app-server). An env-set kill switch disables the viewer
- * regardless of policy. HARD CONSTRAINT (daedalus DM #8645): must NOT key off
- * hardcoded agent names, and must NOT treat `brokerDriver === 'codex-app-server'`
- * alone as sufficient.
+ * present one (codex-app-server). The operator-presentation substrate is a
+ * hosting decision and therefore does not depend on whether the in-daemon
+ * Ghostty viewer actuator is enabled. HARD CONSTRAINT (daedalus DM #8645): must
+ * NOT key off hardcoded agent names, and must NOT treat
+ * `brokerDriver === 'codex-app-server'` alone as sufficient.
  */
 export function decideCodexAppServerPresentation(input: {
   operatorPresentation: string | undefined
   brokerDriver: string
-  ghosttyViewersEnabled: boolean
 }): OperatorPresentation {
   // Applicability gate: only the codex-app-server driver can host a viewer. A
   // policy aimed at any other driver is inert (the policy is not APPLICABLE).
   if (input.brokerDriver !== 'codex-app-server') {
-    return 'none'
-  }
-  // The global viewer gate wins over any policy.
-  if (!input.ghosttyViewersEnabled) {
     return 'none'
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.

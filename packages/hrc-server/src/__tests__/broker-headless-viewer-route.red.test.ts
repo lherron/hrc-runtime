@@ -65,12 +65,12 @@ const NOW = '2026-06-18T10:00:00.000Z'
 
 /**
  * T-04921: pure route-decision function.
- * Inputs: { operatorPresentation?: 'tmux-tui' | 'none'; brokerDriver: string; ghosttyViewersEnabled: boolean }
+ * Inputs: { operatorPresentation?: 'tmux-tui' | 'none'; brokerDriver: string }
  * Output: 'tmux-tui' | 'none'
  *
  * HARD CONSTRAINT: trigger is the POLICY (operatorPresentation), NOT the driver
  * name alone. A codex-app-server profile with no policy → 'none'. A codex-app-server
- * profile with policy='tmux-tui' + viewers enabled → 'tmux-tui'. A non-codex-app-server
+ * profile with policy='tmux-tui' → 'tmux-tui'. A non-codex-app-server
  * driver with policy='tmux-tui' → 'none' (policy applicable only when driver can present).
  */
 const decideCodexAppServerPresentation = (
@@ -78,7 +78,6 @@ const decideCodexAppServerPresentation = (
     decideCodexAppServerPresentation?: (input: {
       operatorPresentation: string | undefined
       brokerDriver: string
-      ghosttyViewersEnabled: boolean
     }) => 'tmux-tui' | 'none'
     shouldSpawnGhosttyViewer?: (value?: string | undefined) => boolean
     parseGhosttyViewerLingerSeconds?: (value: string | undefined, defaultSeconds: number) => number
@@ -365,12 +364,11 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     expect(typeof decideCodexAppServerPresentation).toBe('function')
   })
 
-  it('policy=tmux-tui + driver=codex-app-server + no kill switch → "tmux-tui" (RED)', () => {
+  it('policy=tmux-tui + driver=codex-app-server → "tmux-tui" (RED)', () => {
     // The policy is the trigger, NOT the driver alone.
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'codex-app-server',
-      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('tmux-tui')
   })
@@ -380,18 +378,17 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: undefined,
       brokerDriver: 'codex-app-server',
-      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('none')
   })
 
-  it('viewer gate disabled → "none" regardless of policy (RED)', () => {
+  it('operator presentation stays tmux-tui independently of the viewer-spawn gate', () => {
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'codex-app-server',
-      ghosttyViewersEnabled: false,
     })
-    expect(result).toBe('none')
+    expect(result).toBe('tmux-tui')
+    expect(shouldSpawnGhosttyViewer!('0')).toBe(false)
   })
 
   it('policy=tmux-tui + non-codex-app-server driver → "none" (policy not applicable) (RED)', () => {
@@ -399,7 +396,6 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'claude-code-tmux',
-      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('none')
   })

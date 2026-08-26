@@ -37,7 +37,6 @@ import {
   decideCodexAppServerPresentation,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
-  shouldSpawnGhosttyViewer,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
@@ -562,12 +561,12 @@ export async function startHeadlessBrokerRuntime(
     // T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy for the
     // codex-app-server dual-tmux viewer route. The DEFAULT policy is sourced from
     // an env var (unset → ordinary headless, behaviour-preserving); the decision
-    // gates on driver applicability (codex-app-server only) and honours an env
-    // kill switch. The trigger is the POLICY, never the driver name alone.
+    // gates on driver applicability (codex-app-server only). The trigger is the
+    // POLICY, never the driver name alone; HRC_GHOSTTY_VIEWERS gates only the
+    // in-daemon Ghostty actuator, not this hosting decision.
     const operatorPresentation = decideCodexAppServerPresentation({
       operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
       brokerDriver: compiled.profile.brokerDriver,
-      ghosttyViewersEnabled: shouldSpawnGhosttyViewer(),
     })
     const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
     const result = await controller.start({
