@@ -29,7 +29,9 @@
  *   8. On success, the runtime's last_activity_at is updated to a timestamp
  *      >= the pre-request timestamp
  *
- * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 3
+ * Reference: wrkq T-00946 (agent-spaces/hrc/implementation-plan, archived).
+ * The plan document itself no longer exists; docs/hrc-server-architecture.md
+ * describes the shipped architecture.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'

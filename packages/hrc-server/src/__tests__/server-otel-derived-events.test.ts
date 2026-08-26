@@ -1,5 +1,6 @@
 /**
- * OTLP/HTTP JSON log ingest tests (CODEX_OTEL_HRC_SPEC.md §6-§10).
+ * OTLP/HTTP JSON log ingest tests. Spec: `agent-control-plane`
+ * `specs/archived/CODEX_OTEL_HRC_SPEC.md` §6-§10 (archived; ingest is shipped here).
  *
  * Coverage:
  *   1. Valid single-record batch appends one event with source='otel'

@@ -1,10 +1,12 @@
 /**
  * OTLP/HTTP JSON log ingest for HRC.
  *
- * Per CODEX_OTEL_HRC_SPEC.md §2, §6-§10. Listens on 127.0.0.1:<port>, accepts
- * OTLP/HTTP JSON at POST /v1/logs, validates per-launch auth against the
- * persisted launch artifact, normalizes OTLP log records, and appends one
- * HRC event per LogRecord with source='otel'.
+ * Listens on 127.0.0.1:<port>, accepts OTLP/HTTP JSON at POST /v1/logs,
+ * validates per-launch auth against the persisted launch artifact, normalizes
+ * OTLP log records, and appends one HRC event per LogRecord with source='otel'.
+ *
+ * Spec: `agent-control-plane` `specs/archived/CODEX_OTEL_HRC_SPEC.md` §2, §6-§10.
+ * The spec is archived in that repo; the ingest it describes ships here.
  */
 
 import type { HrcLaunchArtifact, HrcLaunchRecord } from 'hrc-core'

@@ -1,7 +1,8 @@
 /**
  * RED/GREEN TDD tests for HRC error codes and HTTP status mapping (T-00949)
  *
- * Spec reference: HRC_IMPLEMENTATION_PLAN.md § HTTP error model
+ * Spec reference: `packages/hrc-core/src/errors.ts` (`HrcErrorCode` is the
+ * authoritative error model; the original plan doc is gone — see wrkq T-00946).
  *
  * All non-streaming failures return:
  *   { error: { code: string, message: string, detail: {} } }

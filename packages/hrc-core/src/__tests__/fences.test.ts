@@ -1,7 +1,8 @@
 /**
  * RED/GREEN TDD tests for HRC fence validation (T-00949)
  *
- * Spec reference: HRC_IMPLEMENTATION_PLAN.md § Fences
+ * Spec reference: `packages/hrc-core/src/fences.ts` (the original plan doc is
+ * gone — see wrkq T-00946). Cursor fences are separate: docs/monitor-spec.md §6.
  *
  * Fences guard dispatch and in-flight mutation requests:
  *   - expectedHostSessionId: must match the current active hostSessionId

@@ -1,7 +1,8 @@
 /**
  * RED/GREEN TDD tests for HRC path resolution (T-00949)
  *
- * Spec reference: HRC_IMPLEMENTATION_PLAN.md § Runtime directories
+ * Spec reference: `packages/hrc-core/src/paths.ts` (the original plan doc is
+ * gone — see wrkq T-00946). Installed layout: docs/atomic-install.md.
  *
  * Path resolution precedence:
  *

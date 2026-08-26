@@ -1,7 +1,9 @@
 /**
  * RED/GREEN TDD tests for HRC selector parsing and normalization (T-00949)
  *
- * Spec reference: HRC_IMPLEMENTATION_PLAN.md § Selectors
+ * Spec reference: docs/target-handles.md (handle/scope-ref grammar) and
+ * docs/monitor-spec.md §5 (monitor selectors). The original plan doc is gone
+ * — see wrkq T-00946.
  *
  * Selectors identify sessions for HRC operations. Two kinds:
  *   - Stable selectors: { sessionRef } — used for mutating APIs (resolve, ensure, dispatch, clear-context)

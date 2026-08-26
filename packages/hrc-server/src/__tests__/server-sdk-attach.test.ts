@@ -22,7 +22,9 @@
  *   9. Runtime transitions: created → busy → ready after SDK dispatch
  *  10. harness_session_json persisted on runtime record after SDK turn
  *
- * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 2
+ * Reference: wrkq T-00946 (agent-spaces/hrc/implementation-plan, archived).
+ * The plan document itself no longer exists; docs/hrc-server-architecture.md
+ * describes the shipped architecture.
  */
 import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
