@@ -407,6 +407,9 @@ export async function handleHeadlessBrokerDispatchTurn(
       reusableRuntime.activeInvocationId !== undefined
     ) {
       assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime, options)
+      await this.publishPresentation(reusableRuntime, {
+        operatorAttachPending: false,
+      })
       if (this.db.runs.getByRunId(runId)?.status === 'queued') {
         return await this.dispatchQueuedHeadlessTurnInput(
           session,

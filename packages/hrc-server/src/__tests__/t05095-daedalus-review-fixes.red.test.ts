@@ -156,6 +156,19 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       capabilitiesJson: { input: { queue: true } },
     })
     const dispatchSpy = installDispatchInputSpy()
+    const presentationCalls: Array<{
+      runtimeId: string
+      operatorAttachPending: boolean | undefined
+    }> = []
+    ;(server as any).publishPresentation = async (
+      runtime: { runtimeId: string },
+      options?: { operatorAttachPending?: boolean }
+    ) => {
+      presentationCalls.push({
+        runtimeId: runtime.runtimeId,
+        operatorAttachPending: options?.operatorAttachPending,
+      })
+    }
     const runIdsBefore = runIdsForRuntime(runtimeId)
 
     const res = await fixture.postJson('/v1/turns', {
@@ -174,6 +187,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       runtimeId,
       policy: { whenBusy: 'queue' },
     })
+    expect(presentationCalls).toEqual([{ runtimeId, operatorAttachPending: false }])
   }, 15_000)
 
   it('T-05177: explicit false reuse veto keeps same-session codex dispatch on the headless broker route', async () => {
@@ -196,6 +210,19 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       transport: 'headless',
     })
     const dispatchSpy = installDispatchInputSpy()
+    const presentationCalls: Array<{
+      runtimeId: string
+      operatorAttachPending: boolean | undefined
+    }> = []
+    ;(server as any).publishPresentation = async (
+      runtime: { runtimeId: string },
+      options?: { operatorAttachPending?: boolean }
+    ) => {
+      presentationCalls.push({
+        runtimeId: runtime.runtimeId,
+        operatorAttachPending: options?.operatorAttachPending,
+      })
+    }
     const vetoedIntent: HrcRuntimeIntent = {
       ...codexHeadlessIntent(),
       execution: {
@@ -216,6 +243,9 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
     expect(body.runtimeId).toBe(headlessRuntimeId)
     expect(dispatchSpy.calls).toHaveLength(1)
     expect(dispatchSpy.calls[0]).toMatchObject({ runtimeId: headlessRuntimeId })
+    expect(presentationCalls).toEqual([
+      { runtimeId: headlessRuntimeId, operatorAttachPending: false },
+    ])
   }, 15_000)
 
   it('T-05177 guard: omitted reuse flag still delivers codex headless-preferred DM into the live TUI', async () => {

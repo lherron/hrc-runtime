@@ -1265,6 +1265,9 @@ async function dispatchAdmittedTurnForSession(
       assertRuntimeNotBusy(this.db, latestRuntime)
     }
     assertActuatorSplitRuntimeReuse(intent, latestRuntime)
+    await this.publishPresentation(latestRuntime, {
+      operatorAttachPending: options.attachBeforeInvocationStart !== undefined,
+    })
     return await withObservation(
       await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
         waitForCompletion:
