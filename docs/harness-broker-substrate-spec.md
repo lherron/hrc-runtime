@@ -687,7 +687,7 @@ isReusableHeadlessRuntime(runtime)
   -> transport/headless interaction semantics + compatible selected profile + live broker endpoint
 
 isInteractiveRuntime(runtime)
-  -> presentation.kind === 'tmux-tui' or legacy ghostty/tmux public route, depending on call site
+  -> presentation.kind === 'tmux-tui' or the legacy tmux public route, depending on call site
 
 isDurableBrokerRuntime(runtime)
   -> endpoint/substrate predicates only

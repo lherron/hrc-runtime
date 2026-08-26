@@ -15,14 +15,7 @@ export type HrcHarness =
   | 'pi'
   | 'pi-cli'
   | 'pi-sdk'
-export type HrcEventSource =
-  | 'agent-spaces'
-  | 'hook'
-  | 'hrc'
-  | 'otel'
-  | 'tmux'
-  | 'ghostty'
-  | 'broker'
+export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux' | 'broker'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 

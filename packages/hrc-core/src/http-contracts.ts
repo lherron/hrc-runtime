@@ -924,9 +924,11 @@ export type BrokerInspectResponse = {
   /** Present only when `recoverFinalSummary` was explicitly requested. */
   finalSummaryRecovery?: FinalSummaryRecoveryResult | undefined
   /**
-   * HRC-derived lifecycle view (non-broker fallback only). For ghostty/claude-code
-   * runtimes `retention.mode:'hrc-idle-cleanup'` with the HRC-side idle TTL; for
-   * pre-broker/adopted runtimes `retention.mode:'db-only'` (no synthesized TTL).
+   * HRC-derived lifecycle view (non-broker fallback only). Pre-broker/adopted
+   * runtimes report `retention.mode:'db-only'` (no synthesized TTL). The
+   * `'hrc-idle-cleanup'` mode belonged to the legacy in-Ghostty claude-code path
+   * and has had no producer since that path was deleted; readers must still
+   * tolerate it for rows minted before then.
    */
   lifecycle?:
     | {

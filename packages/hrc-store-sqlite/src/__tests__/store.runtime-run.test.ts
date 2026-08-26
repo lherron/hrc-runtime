@@ -191,7 +191,7 @@ describe('RuntimeRepository', () => {
         ancestorScopeRefs: [],
       })
       const surfaceJson = {
-        kind: 'ghostty',
+        kind: 'tmux-pane',
         surfaceId: 'surface-1',
         title: 'claude-code: cody@hrc-runtime:T-01588',
         createdBy: 'ghostmux',
@@ -202,7 +202,7 @@ describe('RuntimeRepository', () => {
         scopeRef: testScopeRef('scope-rt-surface'),
         laneRef: 'default',
         generation: 1,
-        transport: 'ghostty',
+        transport: 'tmux',
         harness: 'claude-code',
         provider: 'anthropic',
         status: 'ready',

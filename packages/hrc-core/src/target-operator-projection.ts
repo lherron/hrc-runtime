@@ -65,7 +65,7 @@ const TERMINAL_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Attachable = tmux/ghostty runtime with an attach descriptor
+ * Attachable = a runtime with an attach descriptor
  * (`operatorAttachable`) OR a broker runtime presenting a `tmux-tui`. Transport
  * alone (e.g. `tmux`) is NEVER sufficient; headless durable runtimes may live
  * in tmux internally and still be non-attachable.

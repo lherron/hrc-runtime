@@ -5,7 +5,6 @@ import {
   type PaneStatus,
   classifyReapExec,
   isAlreadyTerminatedError,
-  isLeftoverViewer,
   isQuitEligible,
   selectHeadlessPanes,
   skipReasons,
@@ -130,11 +129,11 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(reasons[0]).toContain('rt-ghost123')
   })
 
-  it('explains an already-terminated runtime (the leftover-viewer case)', () => {
+  it('explains an already-terminated runtime and defers the pane to hrc-viewer', () => {
     const reasons = skipReasons(eligibleStatus({ runtimeStatus: 'terminated' }))
     expect(reasons).toHaveLength(1)
     expect(reasons[0]).toMatch(/already terminated/i)
-    expect(reasons[0]).toMatch(/ghostmux/i)
+    expect(reasons[0]).toMatch(/hrc-viewer/i)
   })
 
   it('explains a busy runtime as a wait-and-retry case', () => {
@@ -180,50 +179,6 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(reasons.some((r) => /not tmux/i.test(r))).toBe(true)
     expect(reasons.some((r) => /active run/i.test(r))).toBe(true)
     expect(reasons.some((r) => /nothing has run/i.test(r))).toBe(true)
-  })
-})
-
-describe('isLeftoverViewer (already-dead pane to close)', () => {
-  it('is true for a resolved, already-terminated runtime', () => {
-    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated' }))).toBe(true)
-  })
-
-  it('is true for a stale runtime (no live broker left)', () => {
-    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'stale' }))).toBe(true)
-  })
-
-  it('is false for a live, reap-eligible runtime (that path reaps first)', () => {
-    expect(isLeftoverViewer(eligibleStatus())).toBe(false)
-  })
-
-  it('is false when no runtime resolved (orphaned viewer, not a known dead one)', () => {
-    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated', runtimeId: '' }))).toBe(
-      false
-    )
-  })
-
-  it('is false when a run is still active (never key-close an in-flight pane)', () => {
-    expect(
-      isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated', activeRunId: 'run-live' }))
-    ).toBe(false)
-  })
-
-  it('is false when the leftover pane has not been idle for more than 30 minutes', () => {
-    expect(
-      isLeftoverViewer(
-        eligibleStatus({
-          runtimeStatus: 'terminated',
-          lastEventUtc: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        })
-      )
-    ).toBe(false)
-  })
-
-  it('is disjoint from reap-eligibility (a pane is never both)', () => {
-    const terminated = eligibleStatus({ runtimeStatus: 'terminated' })
-    expect(isLeftoverViewer(terminated) && isQuitEligible(terminated)).toBe(false)
-    const ready = eligibleStatus()
-    expect(isLeftoverViewer(ready) && isQuitEligible(ready)).toBe(false)
   })
 })
 
@@ -346,9 +301,8 @@ describe('Phase C: reap eligibility matrix — presentation-aware predicate (T-0
 
   // ── REJECT: runtime lifecycle (regression guards) ────────────────────────────
 
-  it('rejects an already-terminated viewer pane — leftover-viewer path handles it (regression guard)', () => {
+  it('rejects an already-terminated viewer pane — hrc-viewer reaps the pane (regression guard)', () => {
     expect(isQuitEligible(ps(viewerStatus({ runtimeStatus: 'terminated' })))).toBe(false)
-    expect(isLeftoverViewer(ps(viewerStatus({ runtimeStatus: 'terminated' })))).toBe(true)
   })
 
   it('rejects a stale viewer pane (regression guard)', () => {
@@ -362,9 +316,8 @@ describe('Phase C: reap eligibility matrix — presentation-aware predicate (T-0
 
   // ── REJECT: orphaned viewer (regression guard) ───────────────────────────────
 
-  it('handles an orphaned viewer pane safely — no runtime to reap or close (regression guard)', () => {
+  it('handles an orphaned viewer pane safely — no runtime to reap (regression guard)', () => {
     expect(isQuitEligible(ps(viewerStatus({ runtimeId: '' })))).toBe(false)
-    expect(isLeftoverViewer(ps(viewerStatus({ runtimeId: '' })))).toBe(false)
   })
 
   // ── REJECT: active run / incomplete turn (regression guards) ─────────────────

@@ -92,7 +92,7 @@ message persistence, and the `hrcchat` directed-messaging selector surface.
 
 Turn dispatch chooses a transport per-turn via `broker-decisions.ts`:
 
-- **Interactive-tmux broker** — drives a real tmux/Ghostty pane; survives
+- **Interactive-tmux broker** — drives a real tmux pane; survives
   `hrc server restart`.
 - **Headless broker** — runs agents under a wrapper process; events flow via
   hooks and OTEL; does not survive a daemon restart.
@@ -140,8 +140,11 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
   enrich a status bar with a task slug; it never mutates wrkq state.
 - **Not the workflow engine.** Scheduling/runs/effects belong to wrkf; HRC
   executes individual agent turns, not the workflow orchestrator.
-- **Not a PTY multiplexer.** HRC drives real Ghostty/tmux panes by shelling
-  out to the `ghostmux` CLI; it does not implement the terminal multiplexer.
+- **Not a PTY multiplexer.** HRC drives real tmux panes by shelling out to
+  `tmux`; it does not implement the terminal multiplexer.
+- **Not the Ghostty actuator.** Since the viewer cutover, `hrc-viewer` alone
+  drives Ghostty through `ghostmux`; hrc publishes presentation facts and never
+  touches a surface.
 - **Not a headless agent SDK.** Programmatic agent-turn scripting is
   `@praesidium/agent-loop`; HRC is the local daemon those flows ultimately
   reach.

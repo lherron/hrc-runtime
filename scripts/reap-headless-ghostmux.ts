@@ -11,8 +11,6 @@ type Options = {
   assumeYes: boolean
   paneRole: string
   titleRegex: string
-  closePromptRegex: string
-  waitSeconds: number
   reapTimeoutMs: number
   hrcDbPath: string
   timing: boolean
@@ -74,8 +72,11 @@ function usage(): never {
 Find Ghostty headless-agent panes by their durable metadata role (hrc_role ==
 PANE_ROLE), print HRC status, ask for confirmation, then reap each eligible
 broker-tmux runtime over the broker RPC channel via 'hrc runtime terminate
---no-drop-continuation --reason operator_reap' (continuation preserved), wait,
-and send Enter only to panes whose captured contents match CLOSE_PROMPT_REGEX.
+--no-drop-continuation --reason operator_reap' (continuation preserved).
+
+This script decides WHICH idle runtimes to terminate. It does not touch panes:
+hrc-viewer owns pane lifecycle and reaps each surface itself after its linger
+window, including panes whose runtime died while the viewer was down.
 
 Discovery is by metadata role, NOT title — the consolidated "Headless Sessions"
 window (T-05237) renamed pane titles to '<proj> · <task> · <agent>', so the old
@@ -90,13 +91,11 @@ strictly more than ${MIN_IDLE_MINUTES} minutes ago.
 Environment:
   PANE_ROLE            Default: ${HEADLESS_PANE_ROLE} (ghostmux hrc_role metadata)
   TITLE_REGEX          Optional extra title filter (default: none)
-  CLOSE_PROMPT_REGEX   Default: Press (enter to exit|any key to close)
-  WAIT_SECONDS         Default: 10
   HRC_DB_PATH          Default: /Users/lherron/praesidium/var/state/hrc/state.sqlite
 
 Options:
   --dry-run            Print intended reap/ghostmux actions without running them.
-  --simulate           Run against built-in fake panes/captures; implies dry-run.
+  --simulate           Run against built-in fake panes; implies dry-run.
   -y, --yes            Skip the interactive confirmation before reaping.
   --timing             Print a phase + subprocess-spawn timing ledger to stderr.
 
@@ -107,15 +106,12 @@ Set REAP_TIMING=1 to enable the report without passing the flag.`)
 }
 
 function parseArgs(argv: string[]): Options {
-  const waitWasSet = process.env.WAIT_SECONDS !== undefined
   const options: Options = {
     dryRun: false,
     simulate: false,
     assumeYes: false,
     paneRole: process.env.PANE_ROLE ?? HEADLESS_PANE_ROLE,
     titleRegex: process.env.TITLE_REGEX ?? '',
-    closePromptRegex: process.env.CLOSE_PROMPT_REGEX ?? 'Press (enter to exit|any key to close)',
-    waitSeconds: Number(process.env.WAIT_SECONDS ?? '10'),
     // Per-runtime ceiling on `hrc runtime terminate`. A wedged broker never acks
     // the dispose RPC, and neither the SDK fetch nor `hrc` itself has a timeout —
     // so without this the whole SEQUENTIAL sweep freezes on one bad pane. 0
@@ -133,7 +129,6 @@ function parseArgs(argv: string[]): Options {
     } else if (arg === '--simulate') {
       options.simulate = true
       options.dryRun = true
-      if (!waitWasSet) options.waitSeconds = 0
     } else if (arg === '-y' || arg === '--yes') {
       options.assumeYes = true
     } else if (arg === '-h' || arg === '--help') {
@@ -143,9 +138,6 @@ function parseArgs(argv: string[]): Options {
     }
   }
 
-  if (!Number.isFinite(options.waitSeconds) || options.waitSeconds < 0) {
-    throw new Error(`WAIT_SECONDS must be a non-negative number, got ${options.waitSeconds}`)
-  }
   if (!Number.isFinite(options.reapTimeoutMs) || options.reapTimeoutMs < 0) {
     throw new Error('REAP_TIMEOUT_SECONDS must be a non-negative number')
   }
@@ -427,8 +419,7 @@ function skipReasons(status: PaneStatus): string[] {
     switch (status.runtimeStatus) {
       case 'terminated':
         reasons.push(
-          'runtime already terminated — nothing live to reap (leftover viewer pane only; ' +
-            'close it directly with ghostmux)'
+          'runtime already terminated — nothing live to reap (hrc-viewer reaps the pane)'
         )
         break
       case 'stale':
@@ -493,23 +484,6 @@ function skipReasons(status: PaneStatus): string[] {
 
 function isQuitEligible(status: PaneStatus): boolean {
   return skipReasons(status).length === 0
-}
-
-// A leftover viewer is a pane whose HRC runtime is already gone (terminated or
-// stale) — there is nothing live to reap, but the Ghostty terminal is often
-// still parked on the harness "Press enter to exit" close prompt. Such panes are
-// NOT reap-eligible (no live broker), yet we still want to send Enter to close
-// the dead terminal. The actual keystroke stays gated by the close-prompt regex
-// at send time, so a runtime-gone pane that is NOT showing the prompt is left
-// untouched. A pane with an active run is never a leftover viewer, and the same
-// strict 30-minute idle threshold used for live reaps applies before closing it.
-function isLeftoverViewer(status: PaneStatus): boolean {
-  return (
-    status.runtimeId !== '' &&
-    status.activeRunId === '' &&
-    isIdleLongerThanThreshold(status.lastEventUtc) &&
-    (status.runtimeStatus === 'terminated' || status.runtimeStatus === 'stale')
-  )
 }
 
 function simPanes(): DiscoveredPane[] {
@@ -842,18 +816,6 @@ function queryStatuses(panes: DiscoveredPane[], options: Options): PaneStatus[] 
   })
 }
 
-function capturePane(pane: Pane, options: Options): string {
-  if (options.simulate) {
-    return `[server exited]
-
-session summary
-  driver    claude-code-tmux    exit   /quit (prompt_input_exit)
-
-Press enter to exit`
-  }
-  return tryRun(['ghostmux', 'capture-pane', '-t', pane.id])
-}
-
 type ReapResult =
   | { kind: 'sent' }
   | { kind: 'dry-run' }
@@ -942,14 +904,6 @@ function classifyReapExec(outcome: ReapExecOutcome, argv: string[], timeoutMs: n
     : { kind: 'error', message }
 }
 
-function sendEnter(pane: Pane, options: Options): void {
-  if (options.dryRun) {
-    console.log(color.dim(`  dry-run: ghostmux send-key -t ${pane.id} Enter`))
-    return
-  }
-  run(['ghostmux', 'send-key', '-t', pane.id, 'Enter'])
-}
-
 function printStatus(statuses: PaneStatus[], options: Options): void {
   console.log(color.bold('HRC Headless Ghostty Cleanup'))
   const titleNote = options.titleRegex ? `  title=${options.titleRegex}` : ''
@@ -957,10 +911,10 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
     options.reapTimeoutMs > 0 ? `${Math.round(options.reapTimeoutMs / 1000)}s` : 'off'
   console.log(
     color.dim(
-      `role=${options.paneRole}${titleNote}  wait=${options.waitSeconds}s  reap-timeout=${reapTimeoutNote}  db=${options.hrcDbPath}`
+      `role=${options.paneRole}${titleNote}  reap-timeout=${reapTimeoutNote}  db=${options.hrcDbPath}`
     )
   )
-  if (options.dryRun) console.log(color.yellow('Mode: dry run, no keys will be sent'))
+  if (options.dryRun) console.log(color.yellow('Mode: dry run, nothing will be terminated'))
   console.log()
 
   if (statuses.length === 0) {
@@ -1001,12 +955,8 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
   })
 }
 
-async function confirm(
-  eligibleStatuses: PaneStatus[],
-  leftoverStatuses: PaneStatus[],
-  options: Options
-): Promise<void> {
-  if (eligibleStatuses.length === 0 && leftoverStatuses.length === 0) return
+async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promise<void> {
+  if (eligibleStatuses.length === 0) return
   if (options.dryRun) {
     console.log()
     console.log(color.dim('Confirmation skipped for dry-run.'))
@@ -1024,21 +974,13 @@ async function confirm(
     )
   }
 
-  // Word the prompt for exactly the work pending: reaping live runtimes,
-  // closing already-dead leftover viewer panes, or both.
-  const actions: string[] = []
-  if (eligibleStatuses.length > 0) {
-    actions.push(`reap ${eligibleStatuses.length} runtime(s) via hrc runtime terminate`)
-  }
-  if (leftoverStatuses.length > 0) {
-    actions.push(`close ${leftoverStatuses.length} leftover viewer pane(s)`)
-  }
-
   console.log()
   const readline = createInterface({ input: process.stdin, output: process.stdout })
   const answer = (
     await readline.question(
-      color.yellow(`${capitalize(actions.join(' and '))}? Press Enter to continue: `)
+      color.yellow(
+        `Reap ${eligibleStatuses.length} runtime(s) via hrc runtime terminate? Press Enter to continue: `
+      )
     )
   ).trim()
   readline.close()
@@ -1046,14 +988,6 @@ async function confirm(
     throw Object.assign(new Error('aborted before reaping'), { exitCode: 130 })
   }
   console.log(color.green('Confirmation accepted.'))
-}
-
-function capitalize(text: string): string {
-  return text.length === 0 ? text : text[0].toUpperCase() + text.slice(1)
-}
-
-function sleep(seconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, seconds * 1000))
 }
 
 // `cached` is the pane list from the initial discovery. Pass it ONLY when the
@@ -1196,12 +1130,6 @@ async function sweep(options: Options): Promise<number> {
   const panes = timePhase('discover', () => listPanes(options))
   const statuses = timePhase('query-status', () => queryStatuses(panes, options))
   const eligibleStatuses = statuses.filter(isQuitEligible)
-  // Already-dead viewer panes: no live runtime to reap, but still parked on the
-  // harness close prompt — close their Ghostty terminals in the same sweep.
-  const leftoverStatuses = statuses.filter(isLeftoverViewer)
-  // The close-prompt phase Enters BOTH the runtimes we just reaped and the
-  // already-dead leftover viewers.
-  const closeTargets = [...eligibleStatuses, ...leftoverStatuses]
   timePhase('print-status', () => printStatus(statuses, options))
   // The user-perceived "how long until I see the list" figure: everything up to
   // and including the status table hitting stdout. Everything after this point
@@ -1215,117 +1143,62 @@ async function sweep(options: Options): Promise<number> {
         `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
       )
     )
-    if (leftoverStatuses.length > 0) {
-      console.log(
-        color.dim(
-          `Leftover viewers: ${leftoverStatuses.length} already-terminated pane(s) will be closed if parked on the exit prompt.`
-        )
-      )
-    }
   }
   // Includes human think-time at the prompt — labelled so it is never mistaken
   // for script cost when reading the ledger.
-  await timePhaseAsync('confirm (human)', () =>
-    confirm(eligibleStatuses, leftoverStatuses, options)
-  )
+  await timePhaseAsync('confirm (human)', () => confirm(eligibleStatuses, options))
 
-  if (closeTargets.length === 0) {
-    console.log(color.yellow('No eligible runtimes and no leftover viewers; nothing to do.'))
-    // Nothing was reaped or closed on this path, so the discovered list is still
-    // current — reuse it rather than paying for a second discovery.
+  if (eligibleStatuses.length === 0) {
+    console.log(color.yellow('No eligible runtimes; nothing to do.'))
+    // Nothing was reaped on this path, so the discovered list is still current —
+    // reuse it rather than paying for a second discovery.
     timePhase('print-remaining', () => printRemaining(options, panes))
     return statuses.length
   }
 
-  if (eligibleStatuses.length === 0) {
-    console.log()
-    console.log(color.dim('No runtimes to reap; closing leftover viewer panes only.'))
-  }
-
-  if (eligibleStatuses.length > 0) {
-    console.log()
-    console.log(color.bold('Reaping (hrc runtime terminate --reason operator_reap)'))
-    // A failure on any single runtime warns and continues — never aborts the
-    // sweep, so the remaining eligible panes still get reaped and the
-    // close-prompt phase still runs.
-    let reapSent = 0
-    let reapWarned = 0
-    const reapStarted = performance.now()
-    for (const status of eligibleStatuses) {
-      const result = sendReap(status, options)
-      const suffix = `${color.dim(handleFromScope(status.scopeRef))} ${color.dim(shortRuntime(status.runtimeId))}`
-      if (result.kind === 'already-terminated') {
-        reapWarned += 1
-        console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)
-      } else if (result.kind === 'timed-out') {
-        reapWarned += 1
-        console.log(
-          `  ${color.cyan(status.id)} ${color.yellow(
-            `reap timed out after ${result.seconds}s`
-          )} ${suffix}`
-        )
-        console.log(
-          `    ${color.dim(
-            'broker likely wedged — left ready, continuation intact; investigate or retry'
-          )}`
-        )
-      } else if (result.kind === 'error') {
-        reapWarned += 1
-        console.log(`  ${color.cyan(status.id)} ${color.red('reap failed')} ${suffix}`)
-        console.log(`    ${color.red(result.message)}`)
-      } else {
-        reapSent += 1
-        console.log(`  ${color.cyan(status.id)} ${color.green('reap sent')} ${suffix}`)
-      }
-    }
-    phaseStats.push({ name: 'reap', ms: performance.now() - reapStarted })
-    if (reapWarned > 0) {
-      console.log(color.dim(`Reap summary: sent=${reapSent}, warned=${reapWarned}`))
-    }
-
-    console.log()
-    // The wait exists to let genuinely-reaped runtimes reach their close prompt.
-    // Under --dry-run no terminate was issued, so there is no state change to
-    // settle and the sleep is pure latency (it was ~10s of every dry run).
-    if (options.dryRun) {
-      console.log(
-        color.dim(`dry-run: skipping the ${options.waitSeconds}s settle wait (nothing reaped).`)
-      )
-    } else {
-      console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
-      await timePhaseAsync('settle-wait', () => sleep(options.waitSeconds))
-    }
-  }
-
   console.log()
-  console.log(color.bold('Closing viewer summaries'))
-  const closePrompt = new RegExp(options.closePromptRegex)
-  let closed = 0
-  let skipped = 0
-  const closeStarted = performance.now()
-  for (const status of closeTargets) {
-    const capture = capturePane(status, options)
-    if (closePrompt.test(capture)) {
-      console.log()
-      console.log(color.bold(`Final pane contents: ${status.id}`))
-      console.log(color.dim('─'.repeat(72)))
-      process.stdout.write(capture.endsWith('\n') ? capture : `${capture}\n`)
-      console.log(color.dim('─'.repeat(72)))
-      sendEnter(status, options)
-      closed += 1
-      console.log(`  ${color.cyan(status.id)} ${color.green('enter sent')}`)
-    } else {
-      skipped += 1
+  console.log(color.bold('Reaping (hrc runtime terminate --reason operator_reap)'))
+  // A failure on any single runtime warns and continues — never aborts the
+  // sweep, so the remaining eligible panes still get reaped.
+  let reapSent = 0
+  let reapWarned = 0
+  const reapStarted = performance.now()
+  for (const status of eligibleStatuses) {
+    const result = sendReap(status, options)
+    const suffix = `${color.dim(handleFromScope(status.scopeRef))} ${color.dim(shortRuntime(status.runtimeId))}`
+    if (result.kind === 'already-terminated') {
+      reapWarned += 1
+      console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)
+    } else if (result.kind === 'timed-out') {
+      reapWarned += 1
       console.log(
-        `  ${color.cyan(status.id)} ${color.yellow('skipped')} ${color.dim('no close prompt')}`
+        `  ${color.cyan(status.id)} ${color.yellow(
+          `reap timed out after ${result.seconds}s`
+        )} ${suffix}`
       )
+      console.log(
+        `    ${color.dim(
+          'broker likely wedged — left ready, continuation intact; investigate or retry'
+        )}`
+      )
+    } else if (result.kind === 'error') {
+      reapWarned += 1
+      console.log(`  ${color.cyan(status.id)} ${color.red('reap failed')} ${suffix}`)
+      console.log(`    ${color.red(result.message)}`)
+    } else {
+      reapSent += 1
+      console.log(`  ${color.cyan(status.id)} ${color.green('reap sent')} ${suffix}`)
     }
   }
-  phaseStats.push({ name: 'close-prompts', ms: performance.now() - closeStarted })
-  console.log(color.dim(`Summary: enter sent=${closed}, skipped=${skipped}`))
+  phaseStats.push({ name: 'reap', ms: performance.now() - reapStarted })
+  if (reapWarned > 0) {
+    console.log(color.dim(`Reap summary: sent=${reapSent}, warned=${reapWarned}`))
+  }
+  console.log()
+  console.log(color.dim('Panes are left to hrc-viewer, which reaps each after its linger window.'))
 
-  // A dry run issued no terminate and sent no Enter, so nothing can have closed;
-  // reuse the discovered list. A real sweep must re-discover to show what is left.
+  // A dry run issued no terminate, so nothing can have changed; reuse the
+  // discovered list. A real sweep must re-discover to show what is left.
   timePhase('print-remaining', () => printRemaining(options, options.dryRun ? panes : undefined))
   return statuses.length
 }
@@ -1362,7 +1235,6 @@ export {
   HEADLESS_PANE_ROLE,
   classifyReapExec,
   isAlreadyTerminatedError,
-  isLeftoverViewer,
   isQuitEligible,
   selectHeadlessPanes,
   skipReasons,

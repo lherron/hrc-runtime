@@ -152,8 +152,6 @@ export const SESSION_METADATA_EVENT_TYPES = [
   'harness_process_exited',
   'tmux_pane_bound',
   'tmux_pane_unbound',
-  'ghostty_surface_bound',
-  'ghostty_surface_unbound',
   'sdk_session_id',
 ] as const
 

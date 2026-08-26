@@ -192,7 +192,7 @@ must not independently decide whether a target is `busy`, `dormant`, or
 Attachability must not be inferred from `transport=tmux` alone. Use the
 operator attach surface:
 
-- `tmux` / `ghostty` runtime where HRC exposes an attach descriptor
+- `tmux` runtime where HRC exposes an attach descriptor
 - broker runtime with `presentation.kind = "tmux-tui"`
 
 Headless durable runtimes may live in tmux internally and still be

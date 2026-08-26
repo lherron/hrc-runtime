@@ -31,7 +31,7 @@ export type HrcTopFocusPanelModel = {
   lane: string
   hostSessionId?: string | undefined
   latestRuntimeId?: string | undefined
-  /** Selected runtime transport (sdk/tmux/headless/ghostty), when a runtime exists. */
+  /** Selected runtime transport (sdk/tmux/headless), when a runtime exists. */
   transport?: string | undefined
   /** Whether the operator can attach a TUI to the selected runtime. */
   operatorAttachable: boolean
