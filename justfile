@@ -173,6 +173,28 @@ install no-sync="" force-sync="" force-link="":
       --publish-channel="$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" \
       --source-root="$PWD"
 
+# Install and activate the per-user Ghostty presentation sidecar. This recipe
+# deliberately does not run as part of `just install`; viewer rollout is a
+# separate, reversible GUI-user decision.
+install-hrc-viewer-launchd:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source_plist="$(git rev-parse --show-toplevel)/launchd/com.praesidium.hrc-viewer.plist"
+    installed_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-viewer.plist"
+    service_target="gui/$(id -u)/com.praesidium.hrc-viewer"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs"
+    escaped_home="$(printf '%s' "$HOME" | sed 's/[\/&]/\\&/g')"
+    sed "s/__HOME__/$escaped_home/g" "$source_plist" > "$installed_plist.next"
+    plutil -lint "$installed_plist.next"
+    install -m 0644 "$installed_plist.next" "$installed_plist"
+    rm "$installed_plist.next"
+    if launchctl print "$service_target" >/dev/null 2>&1; then
+      launchctl bootout "$service_target"
+    fi
+    launchctl bootstrap "gui/$(id -u)" "$installed_plist"
+    launchctl print "$service_target" >/dev/null
+    echo "[install] activated $service_target"
+
 # Deploy the latest pushed main revision to the co-hosted lab logical node.
 deploy-lab:
     @just _deploy-node "lab@mini" "lab"

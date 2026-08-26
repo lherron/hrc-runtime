@@ -1,0 +1,36 @@
+{
+  "name": "hrc-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Per-user Ghostty presentation sidecar for HRC runtimes",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "hrc-viewer": "./bin/hrc-viewer.js"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout 10000"
+  },
+  "dependencies": {
+    "agent-scope": "latest",
+    "hrc-sdk": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

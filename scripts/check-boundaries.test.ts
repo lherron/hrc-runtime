@@ -2,11 +2,16 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   type Violation,
+  findHrcViewerSdkViolations,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
 } from './check-boundaries.ts'
 
 describe('check-boundaries diagnostics', () => {
+  test('hrc-viewer uses only its §5.4 side-effect-free SDK allowlist', async () => {
+    expect(await findHrcViewerSdkViolations()).toEqual([])
+  })
+
   test('forbidden layer imports teach fix, why, and exception path', () => {
     const violation: Violation = {
       file: 'packages/hrc-core/src/index.ts',

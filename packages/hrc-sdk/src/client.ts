@@ -686,6 +686,11 @@ export class HrcClient {
     return this.getJson<HealthResponse>('/v1/health')
   }
 
+  /** Side-effect-free health alias used by the presentation sidecar (§5.4). */
+  async health(): Promise<HealthResponse> {
+    return this.getHealth()
+  }
+
   async getStatus(options: {
     includeArchived?: boolean
     includePeerHealth?: boolean

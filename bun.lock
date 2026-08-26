@@ -192,6 +192,21 @@
         "typescript": "^5.8.3",
       },
     },
+    "packages/hrc-viewer": {
+      "name": "hrc-viewer",
+      "version": "0.1.0",
+      "bin": {
+        "hrc-viewer": "./bin/hrc-viewer.js",
+      },
+      "dependencies": {
+        "agent-scope": "latest",
+        "hrc-sdk": "*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/hrcchat-cli": {
       "name": "hrcchat-cli",
       "version": "0.1.0",
@@ -602,6 +617,8 @@
     "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
 
     "hrc-top": ["hrc-top@workspace:packages/hrc-top"],
+
+    "hrc-viewer": ["hrc-viewer@workspace:packages/hrc-viewer"],
 
     "hrcchat-cli": ["hrcchat-cli@workspace:packages/hrcchat-cli"],
 

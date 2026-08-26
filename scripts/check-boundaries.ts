@@ -37,6 +37,7 @@ const hrcPackages = [
   'hrc-capture-verifier',
   'hrc-server',
   'hrc-sdk',
+  'hrc-viewer',
   'hrc-top',
   'hrc-pi-top',
   'hrc-cli',
@@ -163,6 +164,36 @@ const mailIngressPaths = [
   'packages/hrc-server/src/mail/mail-ingress*.ts',
   'packages/hrc-server/src/mail/mail-handlers*.ts',
 ]
+
+const hrcViewerAllowedSdkMethods = new Set([
+  'health',
+  'tailEvents',
+  'watchBoundedEvents',
+  'listLatestEventBySession',
+  'listPresentationRuntimes',
+])
+
+async function findHrcViewerSdkViolations(): Promise<Violation[]> {
+  const violations: Violation[] = []
+  const files = (await collectTsFiles('packages/hrc-viewer/src'))
+    .filter((file) => !file.includes('/__tests__/'))
+    .sort()
+  const clientCallPattern = /\b(?:this\.)?(?:client|hrcClient)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/g
+  for (const file of files) {
+    const content = await readFile(file, 'utf8')
+    for (const match of content.matchAll(clientCallPattern)) {
+      const method = match[1]
+      if (method !== undefined && !hrcViewerAllowedSdkMethods.has(method)) {
+        violations.push({
+          file: relative(process.cwd(), file),
+          specifier: `HrcClient.${method}`,
+          reason: 'hrc-viewer may call only the five side-effect-free §5.4 SDK methods',
+        })
+      }
+    }
+  }
+  return violations
+}
 
 function resolvesToHrcLaunchExec(file: string, specifier: string): boolean {
   if (!specifier.startsWith('.')) {
@@ -317,10 +348,21 @@ async function collectBoundaryViolations(): Promise<Map<string, Violation[]>> {
     found.set('HRC mail ingress scoped', mailIngressViolations)
   }
 
+  const viewerSdkViolations = await findHrcViewerSdkViolations()
+  if (viewerSdkViolations.length > 0) {
+    found.set('HRC viewer SDK scoped', viewerSdkViolations)
+  }
+
   return found
 }
 
 function fixForViolation(layerName: string, violation: Violation): string {
+  if (layerName === 'HRC viewer SDK scoped') {
+    return [
+      `FIX: remove '${violation.specifier}' from ${violation.file}.`,
+      'Use only health, tailEvents, watchBoundedEvents, listLatestEventBySession, or listPresentationRuntimes.',
+    ].join(' ')
+  }
   if (layerName === 'HRC mail persistence scoped') {
     return [
       `FIX: remove the orchestration import '${violation.specifier}' from ${violation.file}.`,
@@ -354,6 +396,12 @@ function fixForViolation(layerName: string, violation: Violation): string {
 }
 
 function whyForViolation(layerName: string, violation: Violation): string {
+  if (layerName === 'HRC viewer SDK scoped') {
+    return [
+      'WHY: the presentation sidecar must be unable to reconcile or mutate runtime liveness.',
+      'Its exact §5.4 SDK allowlist consists only of store-backed, side-effect-free reads.',
+    ].join(' ')
+  }
   if (layerName === 'HRC mail persistence scoped') {
     return [
       'WHY: hrc-store-sqlite owns envelope persistence and state transitions, not execution.',
@@ -424,6 +472,7 @@ function reportBoundaryViolations(found: Map<string, Violation[]>): void {
 
 export {
   collectBoundaryViolations,
+  findHrcViewerSdkViolations,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
   reportBoundaryViolations,
@@ -438,6 +487,7 @@ if (import.meta.main) {
     console.log(`Broker-path scoped guard passed for: ${brokerScopedPaths.join(', ')}`)
     console.log(`Mail persistence scoped guard passed for: ${mailPersistencePaths.join(', ')}`)
     console.log(`Mail ingress scoped guard passed for: ${mailIngressPaths.join(', ')}`)
+    console.log('HRC viewer SDK scoped guard passed for: packages/hrc-viewer/src')
     process.exit(0)
   }
 
