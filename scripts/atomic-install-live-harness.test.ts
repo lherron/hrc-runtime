@@ -7,6 +7,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -164,6 +165,18 @@ function invokeInstalled(binPath: string): { exitCode: number; stderr: string; s
 }
 
 describe('T-06685 installed CLI continuity harness', () => {
+  test('real atomic-install entrypoints are executable before publication', async () => {
+    for (const entrypoint of [
+      'packages/hrc-cli/src/cli.ts',
+      'packages/hrcchat-cli/src/main.ts',
+      'packages/hrcmail-cli/src/main.ts',
+      'packages/hrc-viewer/src/main.ts',
+    ]) {
+      const metadata = await stat(join(import.meta.dir, '..', entrypoint))
+      expect(metadata.mode & 0o111, entrypoint).not.toBe(0)
+    }
+  })
+
   test('legacy checkout link deterministically exposes the dependency-gap failure', async () => {
     const fixture = await makeLegacyLinkedSurface()
 
