@@ -22,7 +22,6 @@ import type { ExternalParticipantClientFactory } from './external-registration-r
 import type { FederationConfig } from './federation/federation-config.js'
 import type { FederationOutboxRetryPolicy } from './federation/outbox-delivery.js'
 import type { PeerAcceptHandler } from './federation/peer-protocol.js'
-import type { GhostmuxManagerOptions } from './ghostmux.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
 
 export type HrcEventsRouteFilters = Omit<
@@ -390,7 +389,6 @@ export type HrcServerOptions = {
   externalParticipantProbeDeadlineMs?: number | undefined
   externalParticipantProbeFailureThreshold?: number | undefined
   externalParticipantLingerMs?: number | undefined
-  ghostmuxOptions?: GhostmuxManagerOptions | undefined
 }
 
 export type HrcServer = {

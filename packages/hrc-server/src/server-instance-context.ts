@@ -32,8 +32,6 @@ import type { CollectiveHistoryCoordinator } from './federation/collective-histo
 import type { FederationOriginOutbox } from './federation/origin-outbox.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
-import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
-import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
 import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { MailHandlersMethods } from './mail/mail-handlers.js'
@@ -143,7 +141,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly options: HrcServerOptions
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
-  readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
   /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
@@ -151,8 +148,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
-  /** Headless-viewer status-bar projection observer (T-04439). */
-  readonly headlessViewerStatus: HeadlessViewerStatusProjector
   /** HRC→ACP reason-coded event bridge observer (T-07236). */
   readonly acpEventBridge: AcpEventBridge
   readonly ctx: ServerContext

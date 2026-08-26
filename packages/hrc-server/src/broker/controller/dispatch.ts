@@ -41,9 +41,9 @@ import {
 } from '../runtime-state'
 import {
   allocateHeadlessSubstrate,
-  allocateHeadlessViewerSubstrate,
   allocateTmuxIfRequired,
-  isHeadlessViewerRoute,
+  allocateTmuxTuiSubstrate,
+  isTmuxTuiRoute,
 } from './allocation'
 import type { AllocationContext } from './allocation'
 import { BrokerControllerError } from './errors'
@@ -340,12 +340,12 @@ export async function startController(
       // a stdio daemon-child. Public/API identity stays transport='headless'.
       //
       // T-04921 (T-04905 Phase A): when the route decision selected the
-      // codex-app-server headless-viewer presentation, allocate the dual-tmux
+      // codex-app-server tmux-tui presentation, allocate the dual-tmux
       // VIEWER substrate instead (presentation='tmux-tui' + observer socket). The
       // profile is still headless and public transport stays 'headless'; only the
       // operator-attachable TUI pane + observer socket are added.
-      tmuxAllocation = isHeadlessViewerRoute(input)
-        ? await allocateHeadlessViewerSubstrate(ctx.allocationContext(), input)
+      tmuxAllocation = isTmuxTuiRoute(input)
+        ? await allocateTmuxTuiSubstrate(ctx.allocationContext(), input)
         : await allocateHeadlessSubstrate(ctx.allocationContext(), input)
       markPhase('broker-headless-substrate-alloc')
     }
@@ -522,35 +522,35 @@ export async function startController(
     // shim): the broker-window pane must never become a terminalSurface. Only
     // the interactive tmux-tui route carries the operator pane lease.
     //
-    // T-04921 (T-04905 Phase A) — the EXCEPTION is a headless-viewer runtime: it
+    // T-04921 (T-04905 Phase A) — the EXCEPTION is a tmux-tui runtime: it
     // is headless BUT carries the operator-attachable TUI pane lease, so it
     // dispatches `runtime.terminalSurface` = the TUI pane (NEVER the broker pane,
     // which has no lease) and `terminalSurfaceRequired=true` so the codex driver
     // hard-requires the presentation pane.
-    const headlessViewerRoute =
+    const tmuxTuiRoute =
       usesHeadlessBrokerSubstrate(input.profile) &&
-      isHeadlessViewerRoute(input) &&
+      isTmuxTuiRoute(input) &&
       tmuxAllocation?.lease !== undefined
     let dispatchRuntime: InvocationRuntimeContext | undefined
     if (
       tmuxAllocation !== undefined &&
       usesHeadlessBrokerSubstrate(input.profile) &&
-      !headlessViewerRoute
+      !tmuxTuiRoute
     ) {
       dispatchRuntime = undefined
-    } else if (headlessViewerRoute) {
+    } else if (tmuxTuiRoute) {
       const base = toDispatchRuntime(tmuxAllocation)
       dispatchRuntime = base ? { ...base, terminalSurfaceRequired: true as const } : undefined
     } else {
       dispatchRuntime = toDispatchRuntime(tmuxAllocation)
     }
 
-    // T-04921 — for the headless-viewer route HRC injects the SAME observer socket
+    // T-04921 — for the tmux-tui route HRC injects the SAME observer socket
     // path the broker launch command carries onto the renderer dispatch env
     // (HARNESS_BROKER_OBSERVER_SOCKET), so the renderer connects to the socket the
     // broker actually serves. ONE path, never two independent derivations.
     const dispatchEnv =
-      headlessViewerRoute && tmuxAllocation?.observerSocketPath
+      tmuxTuiRoute && tmuxAllocation?.observerSocketPath
         ? {
             ...(input.dispatchEnv ?? {}),
             HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath,

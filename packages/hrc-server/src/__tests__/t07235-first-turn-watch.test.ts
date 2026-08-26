@@ -109,7 +109,6 @@ function fakeServer(fixture: Fixture, notified: unknown[] = []): HrcServerInstan
   return {
     db: fixture.db,
     options: { runtimeRoot: fixture.runtimeRoot },
-    ghostmux: undefined,
     capturedRelease: { mode: 'unmanaged' },
     notifyEvent: (event: unknown) => {
       notified.push(event)

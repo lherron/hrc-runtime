@@ -554,7 +554,7 @@ async function planActiveRunReconcile(
   // a parallel headless broker). Probe the runtime's own socket + recorded leased
   // pane instead, mirroring reconcileTmuxRuntimeLiveness (runtime-io-handlers.ts).
   // Scoped via controllerKind + hasLeasedBrokerSubstrate (the hosting predicate),
-  // which is false for a ghostty broker, so this preserves the tmux-only reconcile.
+  // which is false for a broker without a managed tmux session, preserving tmux-only reconcile.
   if (runtime.controllerKind === 'harness-broker' && hasLeasedBrokerSubstrate(runtime)) {
     const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
     const leasedPaneId = runtime.tmuxJson?.['paneId']

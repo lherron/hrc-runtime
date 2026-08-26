@@ -3,38 +3,26 @@ import { mkdir } from 'node:fs/promises'
 
 import { dirname } from 'node:path'
 
-import type { HrcRuntimeSnapshot } from 'hrc-core'
-
 import {
   decideBrokerDurableInteractiveRoute,
-  getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
-  parseGhosttyViewerLingerSeconds,
-  shouldSpawnGhosttyViewer,
 } from '../broker-decisions.js'
 import { type BrokerTmuxAllocator, HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
-import { canOperatorAttach, hasLeasedBrokerSubstrate } from '../broker/runtime-hosting.js'
+import { hasLeasedBrokerSubstrate } from '../broker/runtime-hosting.js'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
-import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
-import { renderStatusBar, viewerTerminalBg } from '../headless-viewer-status.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
-import {
-  DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS,
-  HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV,
-} from '../server-constants.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
 import { getBrokerTmuxSocketPath } from '../tmux-socket.js'
 import { createTmuxManager } from '../tmux.js'
-import { defaultTaskSlugResolver } from '../wrkq-task-label.js'
 
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
-  createBrokerHeadlessViewerAllocator,
+  createBrokerTmuxTuiAllocator,
 } from './substrate-allocator.js'
 
 export function getHarnessBrokerController(
@@ -115,17 +103,14 @@ export function getHarnessBrokerController(
       generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
     }
   )
-  // T-04921 (T-04905 Phase A) — the durable HEADLESS-VIEWER substrate allocator
+  // T-04921 (T-04905 Phase A) — the durable TMUX-TUI substrate allocator
   // (presentation='tmux-tui' + observer socket). Selected by the controller ONLY
   // when the route decision sets operatorPresentation='tmux-tui' for the
   // codex-app-server driver; ordinary headless keeps headlessSubstrateAllocator.
-  const headlessViewerAllocator: BrokerTmuxAllocator = createBrokerHeadlessViewerAllocator(
-    this.options,
-    {
-      tmuxManagerFactory,
-      generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
-    }
-  )
+  const tmuxTuiAllocator: BrokerTmuxAllocator = createBrokerTmuxTuiAllocator(this.options, {
+    tmuxManagerFactory,
+    generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
+  })
   this.harnessBrokerController = new HarnessBrokerController({
     db: this.db,
     mapper: {
@@ -148,7 +133,7 @@ export function getHarnessBrokerController(
     },
     tmuxAllocator,
     headlessSubstrateAllocator,
-    headlessViewerAllocator,
+    tmuxTuiAllocator,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
       const windowName = allocation.lease?.windowName ?? allocation.windowName
@@ -215,144 +200,3 @@ export function getHarnessBrokerController(
   })
   return this.harnessBrokerController
 }
-
-/**
- * Best-effort: open a ghostmux viewer window attached to a freshly-started
- * headless broker runtime's TUI. Sends the same `tmux -S <socket>
- * attach-session -t <session>:tui` argv an operator attach uses (the `:tui`
- * target is the 7530bd4 fix — NOT the headless broker window). We send the tmux
- * argv directly rather than `hrc attach <id>`, which only prints the descriptor
- * JSON to a non-interactive invocation instead of attaching. Never throws — the
- * viewer is purely observational and must not gate the dispatch.
- */
-export type SpawnBrokerHeadlessViewerOptions = {
-  operatorAttachPending?: boolean | undefined
-}
-
-export async function spawnBrokerHeadlessViewer(
-  this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot,
-  options: SpawnBrokerHeadlessViewerOptions = {}
-): Promise<void> {
-  try {
-    if (!shouldSpawnGhosttyViewer()) {
-      writeServerLog('INFO', 'broker_headless_viewer.skipped_disabled', {
-        runtimeId: runtime.runtimeId,
-        scopeRef: runtime.scopeRef,
-      })
-      return
-    }
-    if (options.operatorAttachPending) {
-      writeServerLog('INFO', 'broker_headless_viewer.skipped_operator_attach_pending', {
-        runtimeId: runtime.runtimeId,
-        scopeRef: runtime.scopeRef,
-      })
-      return
-    }
-    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
-    if (!socketPath) {
-      writeServerLog('INFO', 'broker_headless_viewer.skipped_no_socket', {
-        runtimeId: runtime.runtimeId,
-        scopeRef: runtime.scopeRef,
-      })
-      return
-    }
-    if (!canOperatorAttach(runtime)) {
-      writeServerLog('INFO', 'broker_headless_viewer.skipped_no_presentation', {
-        runtimeId: runtime.runtimeId,
-        scopeRef: runtime.scopeRef,
-      })
-      return
-    }
-    const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
-    // The viewer window's whole lifetime is this one shell command line. HRC
-    // never kills the viewer surface itself, so on `/quit` the `tmux attach`
-    // exits and whatever follows runs before the window closes. We chain a
-    // `hrc monitor session-report --wait-key` (T-01894) so the operator sees the same
-    // shutdown report `hrc run` prints — driver/exit/duration/turns + the
-    // broker-recorded finalSummary — and the window holds for a keypress instead
-    // of vanishing. `hrc` is resolved off the viewer shell's PATH; if absent the
-    // shell errors and the window closes (today's behaviour) — graceful fallback.
-    // `session-report` is best-effort and always reaches the keypress gate, so a
-    // missing/slow summary never closes the window early or hangs it silently.
-    // The linger timeout bounds the post-/quit keypress hold. Termination also
-    // honors the same value before force-reaping the pane; set 0 for instant close.
-    const lingerSeconds = parseGhosttyViewerLingerSeconds(
-      process.env[HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV],
-      DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS
-    )
-    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc monitor session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout ${lingerSeconds}; exit`
-    // Best-effort wrkq task-slug enrichment for the status-bar center field
-    // (T-04977). Cosmetic only: a missing/slow/broken wrkq read resolves to null
-    // and must never delay or fail viewer creation or dispatch.
-    let slug: string | null = null
-    try {
-      slug = await defaultTaskSlugResolver()(runtime.scopeRef)
-    } catch {
-      slug = null
-    }
-    // A turn is being dispatched into this viewer, so the bar opens at `running`;
-    // the lifecycle projector takes over the right field from here (T-04439).
-    // Title is computed inside ensureHeadlessViewer as `<tab label> · <agent>`
-    // (e.g. `T-05177 · clod`), plus ` · <role>` for a role-qualified scope
-    // (T-06321), and set as the LAST write after the attach command (T-05237), so
-    // we no longer pass one here.
-    // Window placement hint (T-07118). Recovered from the SESSION record on
-    // every respawn rather than threaded through each call site, so a viewer
-    // that is re-created after a restart/reap lands back in the same window with
-    // zero dispatch-time plumbing. An absent hint is the implicit default key —
-    // today's "Headless Sessions" window, unchanged. Same best-effort discipline
-    // as the status bar and the wrkq slug: a placement hint is cosmetic, so a
-    // failed read degrades to the default window rather than costing the viewer.
-    let viewerWindow: string | undefined
-    try {
-      viewerWindow = this.db.sessions.getByHostSessionId(runtime.hostSessionId)
-        ?.lastAppliedIntentJson?.presentation?.viewerWindow
-    } catch {
-      viewerWindow = undefined
-    }
-    const result = await this.ghostmux.ensureHeadlessViewer({
-      scopeRef: runtime.scopeRef,
-      laneRef: runtime.laneRef,
-      runtimeId: runtime.runtimeId,
-      attachCommand,
-      statusBar: renderStatusBar(runtime.scopeRef, 'running', slug, runtime.laneRef),
-      terminalBg: viewerTerminalBg(runtime.scopeRef),
-      ...(viewerWindow !== undefined ? { windowKey: viewerWindow } : {}),
-    })
-    // Bind the viewer surface to the CURRENT runtime as the projector's primary
-    // cache. bind() upserts on (kind, surfaceId), so a reused window rebinds to
-    // the new runtime. Best-effort: a binding failure must not break the turn.
-    if (result.status !== 'failed') {
-      try {
-        this.db.surfaceBindings.bind({
-          surfaceKind: HEADLESS_VIEWER_SURFACE_KIND,
-          surfaceId: result.surfaceId,
-          hostSessionId: runtime.hostSessionId,
-          runtimeId: runtime.runtimeId,
-          generation: runtime.generation,
-          boundAt: timestamp(),
-        })
-      } catch (bindError) {
-        writeServerLog('WARN', 'broker_headless_viewer.bind_failed', {
-          runtimeId: runtime.runtimeId,
-          scopeRef: runtime.scopeRef,
-          error: bindError instanceof Error ? bindError.message : String(bindError),
-        })
-      }
-    }
-    writeServerLog('INFO', `broker_headless_viewer.${result.status}`, {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      ...(result.status === 'failed' ? { error: result.error } : { surfaceId: result.surfaceId }),
-    })
-  } catch (error) {
-    writeServerLog('WARN', 'broker_headless_viewer.unexpected_error', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      error: error instanceof Error ? error.message : String(error),
-    })
-  }
-}
-
-export const spawnHeadlessClaudeViewer = spawnBrokerHeadlessViewer

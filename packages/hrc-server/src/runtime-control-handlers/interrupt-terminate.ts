@@ -6,13 +6,11 @@ import {
   type RuntimeActionResponse,
   type TerminateRuntimeResponse,
 } from 'hrc-core'
-import { parseGhosttyViewerLingerSeconds } from '../broker-decisions.js'
 import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
 } from '../external-participant-lifecycle.js'
 import { cleanupRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
-import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
   isTerminalBrokerInvocationState,
@@ -20,10 +18,6 @@ import {
   requireTmuxPane,
 } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
-import {
-  DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS,
-  HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV,
-} from '../server-constants.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
@@ -54,7 +48,7 @@ interface BrokerInterrupter {
 /**
  * Normalize a runtime's transport into the `'headless' | 'sdk'` discriminant used
  * by the headless interrupt/terminate audit events. A durable headless runtime
- * (`transport === 'headless'`) audits as `'headless'`; every other non-tmux/ghostty
+ * (`transport === 'headless'`) audits as `'headless'`; every other non-tmux
  * transport (the SDK path) audits as `'sdk'`. Single source of the mapping.
  */
 function headlessAuditTransport(runtime: HrcRuntimeSnapshot): 'headless' | 'sdk' {
@@ -117,7 +111,7 @@ function cleanupTaskClaimCredential(
  * These runtimes look "headless" to the transport switch, so a naive terminate
  * routes them through {@link terminateHeadlessRuntime} which only finalizes HRC
  * state — leaving the live broker + renderer process and the operator viewer
- * pane orphaned (the reaper marks the runtime `terminated` but the Ghostty window
+ * pane orphaned (the reaper marks the runtime `terminated` but the terminal window
  * never exits). Such a runtime needs the SAME broker dispose + leased-tmux server
  * teardown that {@link terminateTmuxRuntime} performs for the interactive
  * broker-tmux profile.
@@ -182,7 +176,7 @@ async function disposeAndTeardownBrokerLeasedTmux(
 ): Promise<void> {
   await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
     ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
-    logMessage: 'broker runtime dispose failed during headless viewer terminate',
+    logMessage: 'broker runtime dispose failed during tmux-tui terminate',
   })
 
   await teardownBrokerLeasedTmux(runtime, {
@@ -465,92 +459,6 @@ export async function terminateTmuxRuntime(
   } satisfies TerminateRuntimeResponse)
 }
 
-/**
- * Runtime-bound, fenced reap of a terminating runtime's consolidated headless
- * viewer pane (T-05237, daedalus C4). Resolves the surface bound to THIS runtime
- * via the active surface binding, then asks ghostmux to kill it only if the live
- * pane metadata still maps it to this `runtimeId` and role `headless-agent-pane`
- * (so a stale terminal event cannot kill a pane already rebound to a newer
- * runtime). On a successful reap the binding is unbound. Never throws — purely
- * observational teardown that must not affect the terminate result.
- */
-async function reapHeadlessViewerPane(
-  this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot,
-  now: string
-): Promise<void> {
-  try {
-    const binding = this.db.surfaceBindings
-      .findByRuntime(runtime.runtimeId)
-      .find((record) => record.surfaceKind === HEADLESS_VIEWER_SURFACE_KIND)
-    if (!binding) return
-    const lingerSeconds = parseGhosttyViewerLingerSeconds(
-      process.env[HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV],
-      DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS
-    )
-    if (lingerSeconds > 0) {
-      writeServerLog('INFO', 'headless_viewer_reap.linger_scheduled', {
-        runtimeId: runtime.runtimeId,
-        scopeRef: runtime.scopeRef,
-        surfaceId: binding.surfaceId,
-        lingerSeconds,
-      })
-      const timer = setTimeout(() => {
-        void reapHeadlessViewerSurface.call(this, runtime, binding.surfaceId, timestamp())
-      }, lingerSeconds * 1000)
-      if (
-        typeof timer === 'object' &&
-        timer !== null &&
-        'unref' in timer &&
-        typeof timer.unref === 'function'
-      ) {
-        timer.unref()
-      }
-      return
-    }
-    await reapHeadlessViewerSurface.call(this, runtime, binding.surfaceId, now)
-  } catch (error) {
-    writeServerLog('WARN', 'headless_viewer_reap.unexpected_error', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      error: error instanceof Error ? error.message : String(error),
-    })
-  }
-}
-
-async function reapHeadlessViewerSurface(
-  this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot,
-  surfaceId: string,
-  now: string
-): Promise<void> {
-  try {
-    const result = await this.ghostmux.reapHeadlessAgentPane(surfaceId, runtime.runtimeId)
-    if (result.status === 'reaped') {
-      this.db.surfaceBindings.unbind(
-        HEADLESS_VIEWER_SURFACE_KIND,
-        surfaceId,
-        now,
-        'runtime_terminated'
-      )
-    }
-    writeServerLog('INFO', `headless_viewer_reap.${result.status}`, {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      surfaceId,
-      ...(result.status === 'reaped' ? { tabCollapsed: result.tabCollapsed } : {}),
-      ...(result.status === 'skipped' ? { reason: result.reason } : {}),
-      ...(result.status === 'failed' ? { error: result.error } : {}),
-    })
-  } catch (error) {
-    writeServerLog('WARN', 'headless_viewer_reap.unexpected_error', {
-      runtimeId: runtime.runtimeId,
-      scopeRef: runtime.scopeRef,
-      error: error instanceof Error ? error.message : String(error),
-    })
-  }
-}
-
 export async function terminateHeadlessRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
@@ -571,11 +479,10 @@ export async function terminateHeadlessRuntime(
     this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
   }
 
-  // Codex app-server dual-tmux viewer: a headless-transport broker runtime can
+  // Codex app-server tmux-tui route: a headless-transport broker runtime can
   // still own a leased tmux session hosting the broker + renderer windows.
   // Without this, terminate only finalizes HRC state and the renderer process +
-  // viewer pane are orphaned (the reaper reports `terminated` but the Ghostty
-  // window never exits). True daemon-child headless / SDK runtimes have no
+  // TUI process are orphaned. True daemon-child headless / SDK runtimes have no
   // leased tmux, so the predicate skips them and behavior is unchanged.
   if (runtime.controllerKind === 'harness-broker' && hasBrokerLeasedTmux(runtime)) {
     await disposeAndTeardownBrokerLeasedTmux.call(this, runtime, {
@@ -594,9 +501,6 @@ export async function terminateHeadlessRuntime(
   finalizeRuntimeTermination(this.db, runtime, now)
   cleanupTaskClaimCredential(this, runtime)
   settleBrokerRuntimeDisposed.call(this, runtime, now)
-  // Reap the consolidated headless viewer pane for THIS runtime (T-05237, C4).
-  // Runtime-fenced and best-effort; never affects the terminate result.
-  await reapHeadlessViewerPane.call(this, runtime, now)
   const transport = headlessAuditTransport(runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),

@@ -93,7 +93,6 @@ function fakeServer(): HrcServerInstanceForHandlers {
   return {
     db: fixture.db,
     options: { runtimeRoot: fixture.runtimeRoot },
-    ghostmux: undefined,
     capturedRelease: { mode: 'unmanaged' },
     notifyEvent: () => undefined,
   } as unknown as HrcServerInstanceForHandlers

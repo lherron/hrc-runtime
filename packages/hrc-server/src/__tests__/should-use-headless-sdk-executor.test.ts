@@ -38,7 +38,7 @@ const cases: Case[] = [
     expected: false,
   },
   {
-    name: 'explicit claude-code id → CLI executor for Ghostty runtime',
+    name: 'explicit claude-code id → CLI executor for interactive runtime',
     harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
     expected: false,
   },

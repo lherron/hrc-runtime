@@ -16,7 +16,6 @@ import {
   HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
-  HRC_GHOSTTY_VIEWERS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import { isRecord } from './server-parsers.js'
@@ -203,14 +202,14 @@ export type OperatorPresentation = 'tmux-tui' | 'none'
 
 /**
  * T-04921 (T-04905 Phase A) — pure route decision for the codex-app-server
- * headless-viewer route. The SEMANTIC TRIGGER is the POLICY
+ * tmux-tui route. The SEMANTIC TRIGGER is the POLICY
  * (`operatorPresentation`), never the driver name: a codex-app-server profile
  * with NO policy stays ordinary headless (`none`). Driver identity is only the
  * APPLICABILITY gate — the policy can request a viewer ONLY for a driver that can
  * present one (codex-app-server). The operator-presentation substrate is a
  * hosting decision and therefore does not depend on whether the in-daemon
- * Ghostty viewer actuator is enabled. HARD CONSTRAINT (daedalus DM #8645): must
- * NOT key off hardcoded agent names, and must NOT treat
+ * a presentation actuator is enabled. HARD CONSTRAINT (daedalus DM #8645):
+ * must NOT key off hardcoded agent names, and must NOT treat
  * `brokerDriver === 'codex-app-server'` alone as sufficient.
  */
 export function decideCodexAppServerPresentation(input: {
@@ -224,26 +223,6 @@ export function decideCodexAppServerPresentation(input: {
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.
   return input.operatorPresentation === 'tmux-tui' ? 'tmux-tui' : 'none'
-}
-
-export function shouldSpawnGhosttyViewer(
-  value: string | undefined = process.env[HRC_GHOSTTY_VIEWERS_ENV]
-): boolean {
-  return !isFalsyFeatureFlag(value)
-}
-
-export function parseGhosttyViewerLingerSeconds(
-  value: string | undefined,
-  defaultSeconds: number
-): number {
-  if (value === undefined || value.trim().length === 0) {
-    return defaultSeconds
-  }
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return defaultSeconds
-  }
-  return Math.floor(parsed)
 }
 
 export type InteractiveTmuxBrokerDriver =
@@ -1089,11 +1068,6 @@ export function isFalsyFeatureFlag(value: string | undefined): boolean {
     return false
   }
   return ['0', 'false', 'no', 'off', 'disabled'].includes(value.trim().toLowerCase())
-}
-
-export function isGhostmuxUnavailableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /cannot connect to Ghostty UDS|Ghostty API|api\.sock|ghostmux/i.test(message)
 }
 
 export function normalizeRuntimeProvisionIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {

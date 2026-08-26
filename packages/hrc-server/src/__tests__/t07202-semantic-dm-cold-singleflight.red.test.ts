@@ -119,7 +119,7 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         db.close()
       }
     }
-    ;(server as any).spawnBrokerHeadlessViewer = async () => undefined
+    ;(server as any).publishPresentation = async () => undefined
     ;(server as any).executeInteractiveBrokerInputTurn = async (
       session: { hostSessionId: string; generation: number },
       runtime: HrcRuntimeSnapshot,

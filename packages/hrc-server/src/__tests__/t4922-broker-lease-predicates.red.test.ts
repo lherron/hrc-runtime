@@ -566,9 +566,6 @@ describe('RED test 6b: reapBrokerTmuxLease transport gate — lease NOT killed f
         db,
         harnessBrokerController: undefined,
         notifyEvent: () => {},
-        ghostmux: {
-          ensureHeadlessViewer: async () => ({ status: 'failed', error: 'test-stub' }),
-        },
         // Key injection: factory is captured by controller-factory.ts line 39
         // `const tmuxManagerFactory = this.brokerTmuxManagerFactory ?? createTmuxManager`
         // and used in reapBrokerTmuxLease to create the lease tmux manager.

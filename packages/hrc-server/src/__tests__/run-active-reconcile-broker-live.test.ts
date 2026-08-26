@@ -9,7 +9,7 @@
  * attached viewer kept running. That false-dead row is invisible to dispatch
  * (selectDispatchInteractiveRuntime / getDurableHeadlessRuntimeForReattach skip
  * unavailable-status rows), so the next DM forked a parallel headless broker +
- * a "headless …" ghostmux viewer pane instead of delivering into the live TUI.
+ * a duplicate presentation pane instead of delivering into the live TUI.
  *
  * Daedalus ruling (architecture): substrate liveness and run ownership are
  * SEPARATE authorities. A live leased pane proves the broker surface is up, NOT

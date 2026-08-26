@@ -39,7 +39,7 @@ function externalRegistrationState(runtime: HrcRuntimeSnapshot): Record<string, 
  * This intentionally performs only HRC-owned effects: detach/finalize durable
  * state, revoke the attach token, close HRC's transport, and emit the audit
  * event. It never invokes a broker lifecycle RPC, signals a process, tears down
- * tmux/Ghostty substrate, drops continuation state, or mutates placement
+ * terminal substrate, drops continuation state, or mutates placement
  * authority.
  */
 export async function evictExternalParticipant(

@@ -140,13 +140,6 @@ import {
 } from './federation/summon-gate-server.js'
 import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
 import type { FirstTurnEvalSummary } from './first-turn-eval.js'
-import {
-  type GhostmuxManagerOptions,
-  HEADLESS_VIEWER_SURFACE_KIND,
-  type GhostmuxManager as ServerGhostmuxManager,
-  createGhostmuxManager,
-} from './ghostmux.js'
-import { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   type LaunchLifecycleHandlersMethods,
@@ -314,7 +307,6 @@ import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
-import { defaultTaskSlugResolver } from './wrkq-task-label.js'
 
 const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
 const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
@@ -409,7 +401,6 @@ export {
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   normalizeClaudeInteractiveBrokerIntent,
-  parseGhosttyViewerLingerSeconds,
   runHeadlessRoute,
   runInteractiveTmuxRoute,
   shouldBlockForBrokerTurnCompletion,
@@ -417,7 +408,6 @@ export {
   refusesSurfaceReuse,
   shouldDeferHeadlessToInteractiveBrokerReuse,
   shouldRedirectClaudeToInteractiveBroker,
-  shouldSpawnGhosttyViewer,
   shouldUseHeadlessSdkExecutor,
   shouldUseHeadlessTransport,
   shouldUseSdkTransport,
@@ -437,10 +427,6 @@ export type {
 export type TmuxManager = ServerTmuxManager
 export { createTmuxManager }
 export type { RestartStyle, TmuxManagerOptions }
-export type GhostmuxManager = ServerGhostmuxManager
-export { createGhostmuxManager }
-export type { GhostmuxManagerOptions }
-
 type CommandRunProcessResult = {
   exitCode: number | null
   signal: string | null
@@ -854,8 +840,6 @@ class HrcServerInstance implements HrcServer {
   harnessBrokerController: HarnessBrokerController | undefined
   /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
   brokerWarmupComplete?: Promise<void> | undefined
-  /** Headless-viewer status-bar projection observer (T-04439). */
-  readonly headlessViewerStatus: HeadlessViewerStatusProjector
   /** HRC→ACP reason-coded event bridge; disabled unless explicitly configured (T-07236). */
   readonly acpEventBridge: AcpEventBridge
   readonly ctx: ServerContext
@@ -1040,7 +1024,6 @@ class HrcServerInstance implements HrcServer {
     readonly options: HrcServerOptions,
     readonly db: HrcDatabase,
     readonly tmux: ServerTmuxManager,
-    readonly ghostmux: ServerGhostmuxManager,
     readonly lockHandle: ServerLockHandle
   ) {
     this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
@@ -1356,7 +1339,6 @@ class HrcServerInstance implements HrcServer {
     this.ctx = {
       db: this.db,
       tmux: this.tmux,
-      ghostmux: this.ghostmux,
       notifyEvent: (event) => this.notifyEvent(event),
     }
     // Node identity comes from CONFIGURATION, never from the hostname: the
@@ -1368,24 +1350,6 @@ class HrcServerInstance implements HrcServer {
         nodeId: options.federationConfig?.nodeId ?? deriveNodeIdFromHostname(),
         nodeIdProvenance: options.federationConfig?.nodeIdProvenance ?? 'derived',
       },
-    })
-    this.headlessViewerStatus = new HeadlessViewerStatusProjector({
-      resolveSurfaceId: (runtimeId) => {
-        const binding = this.db.surfaceBindings
-          .findByRuntime(runtimeId)
-          .find(
-            (record) =>
-              record.surfaceKind === HEADLESS_VIEWER_SURFACE_KIND && record.unboundAt === undefined
-          )
-        if (binding) return binding.surfaceId
-        return this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(runtimeId)
-      },
-      applyStatusBar: (surfaceId, spec) => this.ghostmux.setStatusBar(surfaceId, spec),
-      resolveSlug: defaultTaskSlugResolver(),
-      onError: (error) =>
-        writeServerLog('WARN', 'headless_viewer_statusbar.project_failed', {
-          error: error instanceof Error ? error.message : String(error),
-        }),
     })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
@@ -1650,7 +1614,6 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
-    this.headlessViewerStatus.dispose()
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
     this.harnessBrokerController?.shutdown?.()
@@ -2850,7 +2813,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       socketPath: getTmuxSocketPath(resolvedOptions),
     })
     await tmux.initialize()
-    const ghostmux = createGhostmuxManager(resolvedOptions.ghostmuxOptions)
     db = openHrcDatabase(resolvedOptions.dbPath, {
       busyTimeoutMs: resolvedOptions.sqliteBusyTimeoutMs,
       slowStatementThresholdMs: resolveSqliteSlowStatementThresholdMs(),
@@ -2872,13 +2834,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     await reconcileStartupState(db, tmux, {
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
-    server = new HrcServerInstance(
-      { ...resolvedOptions, federationConfig },
-      db,
-      tmux,
-      ghostmux,
-      lockHandle
-    )
+    server = new HrcServerInstance({ ...resolvedOptions, federationConfig }, db, tmux, lockHandle)
     await server.initializeEventTransport()
     // The constructor starts durable-broker reattachment concurrently. Wait
     // for its always-resolving barrier before placement repair so a refused

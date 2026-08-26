@@ -74,12 +74,12 @@ describe('launch inherited env scrubbing', () => {
         '/opt/tools',
         '/Users/test/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/path',
       ].join(':'),
-      TERM: 'xterm-ghostty',
+      TERM: 'xterm-256color',
     })
 
     expect(sanitized).toEqual({
       PATH: '/usr/bin:/opt/tools',
-      TERM: 'xterm-ghostty',
+      TERM: 'xterm-256color',
     })
   })
 })

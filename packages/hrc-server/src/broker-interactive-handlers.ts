@@ -88,13 +88,7 @@ import {
   toBrokerResponseFormat,
 } from './turn-response-format.js'
 
-// Imported for the brokerInteractiveHandlersMethods table below and re-exported
-// (export-list at end of file) so the public surface is preserved.
-import {
-  getHarnessBrokerController,
-  spawnBrokerHeadlessViewer,
-  spawnHeadlessClaudeViewer,
-} from './broker-interactive-handlers/controller-factory.js'
+import { getHarnessBrokerController } from './broker-interactive-handlers/controller-factory.js'
 
 type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
@@ -165,7 +159,7 @@ export {
   createBrokerDurableTmuxAllocator,
   type DurableTmuxManagerLike,
 } from './broker-interactive-handlers/substrate-allocator.js'
-export { getHarnessBrokerController, spawnBrokerHeadlessViewer, spawnHeadlessClaudeViewer }
+export { getHarnessBrokerController }
 
 export async function handleHeadlessDispatchTurn(
   this: HrcServerInstanceForHandlers,
@@ -1394,8 +1388,6 @@ export const brokerInteractiveHandlersMethods = {
   executeInteractiveBrokerInputTurn,
   deliverReassociatedBrokerTmuxInput,
   startInteractiveTmuxBrokerRuntime,
-  spawnBrokerHeadlessViewer,
-  spawnHeadlessClaudeViewer,
   getHarnessBrokerController,
 }
 

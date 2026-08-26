@@ -71,7 +71,7 @@ describe('POST /v1/terminate operator reap', () => {
       runtimeId: 'rt-reap',
       dropContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({
@@ -93,7 +93,7 @@ describe('POST /v1/terminate operator reap', () => {
       transport: 'tmux',
       droppedContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
 
     // Continuation preserved (the next turn resumes the session).
@@ -108,7 +108,7 @@ describe('POST /v1/terminate operator reap', () => {
       runtimeId: 'rt-reap2',
       dropContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
     expect(first.status).toBe(200)
 
@@ -116,7 +116,7 @@ describe('POST /v1/terminate operator reap', () => {
       runtimeId: 'rt-reap2',
       dropContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
     // The invariant is terminal audit/state idempotency, NOT HTTP response-shape
     // parity (daedalus #7535). At the HTTP layer the already-`terminated` runtime

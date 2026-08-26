@@ -58,7 +58,7 @@ function headlessBrokerIntent() {
 }
 
 describe('headless broker dispatch start single-flight', () => {
-  it('returns a detached dispatch without waiting for an observational viewer', async () => {
+  it('returns a detached dispatch without waiting for an observational presentation publisher', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const db = openHrcDatabase(fixture.dbPath)
     const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
@@ -92,9 +92,9 @@ describe('headless broker dispatch start single-flight', () => {
       createdAt: now,
       updatedAt: now,
     })
-    let viewerStarted = false
-    ;(server as any).spawnBrokerHeadlessViewer = async () => {
-      viewerStarted = true
+    let presentationStarted = false
+    ;(server as any).publishPresentation = async () => {
+      presentationStarted = true
       return await new Promise(() => undefined)
     }
 
@@ -107,12 +107,12 @@ describe('headless broker dispatch start single-flight', () => {
         { waitForCompletion: false }
       ) as Promise<Response>,
       Bun.sleep(250).then(() => {
-        throw new Error('detached dispatch waited for the observational viewer')
+        throw new Error('detached dispatch waited for the observational presentation publisher')
       }),
     ])
 
     expect(response.status).toBe(200)
-    expect(viewerStarted).toBe(true)
+    expect(presentationStarted).toBe(true)
   })
 
   it('converges crossing dispatches for one empty host session onto one broker start', async () => {

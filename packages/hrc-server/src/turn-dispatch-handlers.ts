@@ -655,8 +655,7 @@ async function finalizeHeadlessBrokerSessionOpen(
   runtime: HrcRuntimeSnapshot
 ): Promise<HrcRuntimeSnapshot> {
   // Session-open is a provisioning surface just like managed start and first-turn
-  // dispatch. Keep the viewer observational: the existing helper owns feature,
-  // socket, presentation, and Ghostmux failure gates and never fails the session.
+  // dispatch. Publish the presentation decision for the external viewer.
   void server.publishPresentation(runtime)
   return runtime
 }
@@ -1101,7 +1100,7 @@ async function dispatchAdmittedTurnForSession(
   // choke point. hasLeasedBrokerSubstrate replaces the `transport==='tmux' &&
   // getBrokerRuntimeTmuxSocketPath !== undefined` durability proxy — it is true
   // exactly when the broker process lives in a leased tmux session (the
-  // precondition reconcileTmuxRuntimeLiveness needs), and false for a ghostty
+  // precondition reconcileTmuxRuntimeLiveness needs), and false for an external
   // broker (no tmux substrate), preserving today's tmux-only reconcile.
   if (
     latestRuntime?.controllerKind === 'harness-broker' &&
@@ -1115,7 +1114,7 @@ async function dispatchAdmittedTurnForSession(
     assertActuatorSplitRouteAdmission(intent, 'interactive-broker')
   }
 
-  // A live, idle interactive (tmux/ghostty) broker runtime is the agent's real
+  // A live, idle interactive broker runtime is the agent's real
   // session — the TUI a human may be watching. A DM/turn for that scope must be
   // delivered INTO it via the broker-reuse path, never spawned as a competing
   // headless run: a headless codex-app-server start resumes the SAME continuation

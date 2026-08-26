@@ -36,13 +36,10 @@ const PAST = '2026-08-01T00:00:00.000Z'
 const BROKER_WINDOW = { sessionId: '$1', windowId: '@1', paneId: '%1' }
 const TUI_WINDOW = { sessionId: '$1', windowId: '@2', paneId: '%2' }
 
-type SpawnCall = { runtimeId: string; options: { operatorAttachPending?: boolean | undefined } }
-
 type Fixture = {
   db: ReturnType<typeof openHrcDatabase>
   dir: string
   notified: Array<HrcEventEnvelope | HrcLifecycleEvent>
-  spawns: SpawnCall[]
   server: HrcServerInstanceForHandlers
   cleanup: () => Promise<void>
 }
@@ -165,19 +162,10 @@ beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hrc-t07594-publish-'))
   const db = openHrcDatabase(join(dir, 'state.sqlite'))
   const notified: Array<HrcEventEnvelope | HrcLifecycleEvent> = []
-  const spawns: SpawnCall[] = []
   const server = {
     db,
     notifyEvent: (event: HrcEventEnvelope | HrcLifecycleEvent) => {
       notified.push(event)
-    },
-    // The in-daemon viewer spawn is the ONE seam stubbed here: it shells to
-    // ghostmux. Everything publishPresentation persists and appends is real.
-    spawnBrokerHeadlessViewer: async (
-      runtime: HrcRuntimeSnapshot,
-      options: { operatorAttachPending?: boolean | undefined } = {}
-    ) => {
-      spawns.push({ runtimeId: runtime.runtimeId, options })
     },
   } as unknown as HrcServerInstanceForHandlers
 
@@ -185,7 +173,6 @@ beforeEach(async () => {
     db,
     dir,
     notified,
-    spawns,
     server,
     cleanup: async () => {
       db.close()
@@ -323,18 +310,15 @@ describe('publishPresentation — runtime.presentation event (§5.2)', () => {
   })
 })
 
-describe('publishPresentation — behavior is unchanged until Phase 4', () => {
-  it('still invokes the in-daemon viewer spawn with the same options', async () => {
+describe('publishPresentation — Phase 4 daemon boundary', () => {
+  it('persists and publishes without an in-daemon presentation actuator', async () => {
     seedSession()
     const runtime = seedRuntime('tmux-tui')
 
     await publishPresentation.call(fixture.server, runtime, { operatorAttachPending: true })
     await publishPresentation.call(fixture.server, runtime, {})
 
-    expect(fixture.spawns).toEqual([
-      { runtimeId: RUNTIME_ID, options: { operatorAttachPending: true } },
-      { runtimeId: RUNTIME_ID, options: {} },
-    ])
+    expect(ledgerCount('runtime.presentation')).toBe(2)
   })
 
   it('a new generation starts with no record — monotone is per generation', async () => {

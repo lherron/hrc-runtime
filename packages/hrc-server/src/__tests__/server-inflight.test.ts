@@ -53,7 +53,7 @@ async function resolveSession(scope: string): Promise<string> {
 }
 
 /** Build a non-interactive (SDK) runtime intent.
- * Uses an explicit SDK harness id so Anthropic's default Ghostty routing does
+ * Uses an explicit SDK harness id so Anthropic's default interactive routing does
  * not capture SDK-specific assertions. */
 function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   return {

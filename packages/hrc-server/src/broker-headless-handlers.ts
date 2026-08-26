@@ -562,8 +562,7 @@ export async function startHeadlessBrokerRuntime(
     // codex-app-server dual-tmux viewer route. The DEFAULT policy is sourced from
     // an env var (unset → ordinary headless, behaviour-preserving); the decision
     // gates on driver applicability (codex-app-server only). The trigger is the
-    // POLICY, never the driver name alone; HRC_GHOSTTY_VIEWERS gates only the
-    // in-daemon Ghostty actuator, not this hosting decision.
+    // POLICY, never the driver name alone.
     const operatorPresentation = decideCodexAppServerPresentation({
       operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
       brokerDriver: compiled.profile.brokerDriver,
@@ -588,7 +587,7 @@ export async function startHeadlessBrokerRuntime(
         headlessRoute: 'durable-leased',
         brokerTransport: 'unix-jsonrpc-ndjson',
         // The presenter policy the controller routes on: 'tmux-tui' selects the
-        // headless-viewer allocator + observer socket; 'none' is ordinary headless.
+        // tmux-tui allocator + observer socket; 'none' is ordinary headless.
         operatorPresentation,
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({

@@ -285,7 +285,6 @@ describe('T-07137 lifecycleOwner fencing', () => {
       db,
       notifyEvent: () => undefined,
       tmux: {},
-      ghostmux: {},
     } as unknown as ServerContext
 
     const zombie = await sweepZombieRunsOnce(ctx, {

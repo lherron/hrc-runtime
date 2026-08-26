@@ -180,9 +180,9 @@ function installDispatchInputFailFast() {
   return calls
 }
 
-function installHeadlessViewerSpy() {
+function installPresentationPublishSpy() {
   const runtimeIds: string[] = []
-  ;(server as any).spawnBrokerHeadlessViewer = async (runtime: { runtimeId: string }) => {
+  ;(server as any).publishPresentation = async (runtime: { runtimeId: string }) => {
     runtimeIds.push(runtime.runtimeId)
   }
   return runtimeIds
@@ -192,7 +192,7 @@ describe('POST /v1/broker-sessions/open', () => {
   it('opens an invocation-level broker session without creating a turn run', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
-    const viewerRuntimeIds = installHeadlessViewerSpy()
+    const presentationRuntimeIds = installPresentationPublishSpy()
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
       hostSessionId: resolved.hostSessionId,
@@ -216,7 +216,7 @@ describe('POST /v1/broker-sessions/open', () => {
       generation: resolved.generation,
     })
     expect(body.observation.broker.selector.runId).toBeUndefined()
-    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
+    expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
@@ -229,12 +229,12 @@ describe('POST /v1/broker-sessions/open', () => {
     }
   })
 
-  it('returns without waiting for an observational viewer that never settles', async () => {
+  it('returns without waiting for an observational presentation publisher that never settles', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
-    let viewerStarted = false
-    ;(server as any).spawnBrokerHeadlessViewer = async () => {
-      viewerStarted = true
+    let presentationStarted = false
+    ;(server as any).publishPresentation = async () => {
+      presentationStarted = true
       return await new Promise(() => undefined)
     }
 
@@ -244,21 +244,21 @@ describe('POST /v1/broker-sessions/open', () => {
         runtimeIntent: headlessBrokerIntent(),
       }),
       Bun.sleep(250).then(() => {
-        throw new Error('broker session open waited for the observational viewer')
+        throw new Error('broker session open waited for the observational presentation publisher')
       }),
     ])
 
     expect(res.status).toBe(200)
-    expect(viewerStarted).toBe(true)
+    expect(presentationStarted).toBe(true)
   })
 
-  it('ensures the viewer after recovering a durable broker session', async () => {
+  it('publishes presentation after recovering a durable broker session', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
       durable: true,
       status: 'stale',
     })
-    const viewerRuntimeIds = installHeadlessViewerSpy()
+    const presentationRuntimeIds = installPresentationPublishSpy()
     ;(server as any).reattachDurableBrokerSessionForOpen = async (runtime: {
       runtimeId: string
       runtimeStateJson?: Record<string, unknown>
@@ -285,7 +285,7 @@ describe('POST /v1/broker-sessions/open', () => {
       status: 'ready',
       startIdentity: { kind: 'broker', invocationId: INVOCATION_ID },
     })
-    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
+    expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
   })
 
   it('reuses a busy queue-capable broker session without turn side effects', async () => {
@@ -330,7 +330,7 @@ describe('POST /v1/broker-sessions/open', () => {
       capabilitiesJson: { input: { queue: false } },
     })
     const dispatchInputCalls = installDispatchInputFailFast()
-    const viewerRuntimeIds = installHeadlessViewerSpy()
+    const presentationRuntimeIds = installPresentationPublishSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
@@ -350,7 +350,7 @@ describe('POST /v1/broker-sessions/open', () => {
       sideEffects: before,
       dispatchInputCalls: 0,
     })
-    expect(viewerRuntimeIds).toEqual([])
+    expect(presentationRuntimeIds).toEqual([])
   })
 
   it('still rejects corrupt awaiting_input broker session reuse before queue capability is considered', async () => {
@@ -359,7 +359,7 @@ describe('POST /v1/broker-sessions/open', () => {
       status: 'awaiting_input',
     })
     const dispatchInputCalls = installDispatchInputFailFast()
-    const viewerRuntimeIds = installHeadlessViewerSpy()
+    const presentationRuntimeIds = installPresentationPublishSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
@@ -379,12 +379,12 @@ describe('POST /v1/broker-sessions/open', () => {
       sideEffects: before,
       dispatchInputCalls: 0,
     })
-    expect(viewerRuntimeIds).toEqual([])
+    expect(presentationRuntimeIds).toEqual([])
   })
 
   it('starts a new broker invocation with profile priming allowed and no HRC run', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
-    const viewerRuntimeIds = installHeadlessViewerSpy()
+    const presentationRuntimeIds = installPresentationPublishSpy()
     const captured: {
       intentInitialPrompt?: unknown
       intentCorrelation?: unknown
@@ -431,7 +431,7 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(captured.prompt).toBe('')
     expect(captured.runId?.startsWith('broker-session-open-')).toBe(true)
     expect(captured.allowCompilerInitialInputWithoutIdentity).toBe(true)
-    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
+    expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
     try {

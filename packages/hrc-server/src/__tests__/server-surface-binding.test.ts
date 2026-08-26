@@ -253,7 +253,7 @@ describe('POST /v1/surfaces/bind', () => {
     const { hostSessionId, generation, runtimeId } = await ensureRuntime('bind-test')
 
     const res = await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-001',
       runtimeId,
       hostSessionId,
@@ -262,7 +262,7 @@ describe('POST /v1/surfaces/bind', () => {
 
     expect(res.status).toBe(200)
     const binding = (await res.json()) as HrcSurfaceBindingRecord
-    expect(binding.surfaceKind).toBe('ghostty')
+    expect(binding.surfaceKind).toBe('operator-terminal')
     expect(binding.surfaceId).toBe('ghost-001')
     expect(binding.runtimeId).toBe(runtimeId)
     expect(binding.hostSessionId).toBe(hostSessionId)
@@ -276,7 +276,7 @@ describe('POST /v1/surfaces/bind', () => {
     const { hostSessionId, generation, runtimeId } = await ensureRuntime('bound-event-test')
 
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-evt',
       runtimeId,
       hostSessionId,
@@ -287,7 +287,7 @@ describe('POST /v1/surfaces/bind', () => {
     const boundEvent = events.find((e) => e.eventKind === 'surface.bound')
     expect(boundEvent).toBeDefined()
     const ej = boundEvent!.payload as Record<string, unknown>
-    expect(ej['surfaceKind']).toBe('ghostty')
+    expect(ej['surfaceKind']).toBe('operator-terminal')
     expect(ej['surfaceId']).toBe('ghost-evt')
     expect(ej['runtimeId']).toBe(runtimeId)
   })
@@ -298,7 +298,7 @@ describe('POST /v1/surfaces/bind', () => {
 
     // Bind once
     const res1 = await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-noop',
       runtimeId,
       hostSessionId,
@@ -308,7 +308,7 @@ describe('POST /v1/surfaces/bind', () => {
 
     // Bind again — same runtime — should be no-op
     const res2 = await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-noop',
       runtimeId,
       hostSessionId,
@@ -337,7 +337,7 @@ describe('POST /v1/surfaces/bind', () => {
 
     // Bind to rt1
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-rebind',
       runtimeId: rt1.runtimeId,
       hostSessionId: rt1.hostSessionId,
@@ -346,7 +346,7 @@ describe('POST /v1/surfaces/bind', () => {
 
     // Rebind to rt2
     const res = await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-rebind',
       runtimeId: rt2.runtimeId,
       hostSessionId: rt2.hostSessionId,
@@ -371,7 +371,7 @@ describe('POST /v1/surfaces/bind', () => {
     const { runtimeId } = await ensureRuntime('stale-fence-test')
 
     const res = await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-stale',
       runtimeId,
       hostSessionId: 'wrong-hsid',
@@ -400,7 +400,7 @@ describe('POST /v1/surfaces/unbind', () => {
 
     // Bind first
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-unbind',
       runtimeId,
       hostSessionId,
@@ -409,7 +409,7 @@ describe('POST /v1/surfaces/unbind', () => {
 
     // Unbind
     const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-unbind',
       reason: 'tab-closed',
     })
@@ -424,7 +424,7 @@ describe('POST /v1/surfaces/unbind', () => {
     const unboundEvent = events.find((e) => e.eventKind === 'surface.unbound')
     expect(unboundEvent).toBeDefined()
     const ej = unboundEvent!.payload as Record<string, unknown>
-    expect(ej['surfaceKind']).toBe('ghostty')
+    expect(ej['surfaceKind']).toBe('operator-terminal')
     expect(ej['surfaceId']).toBe('ghost-unbind')
     expect(ej['reason']).toBe('tab-closed')
   })
@@ -433,7 +433,7 @@ describe('POST /v1/surfaces/unbind', () => {
     server = await createHrcServer(serverOpts())
 
     const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'nonexistent',
     })
 
@@ -447,7 +447,7 @@ describe('POST /v1/surfaces/unbind', () => {
     const { hostSessionId, generation, runtimeId } = await ensureRuntime('unbind-idem')
 
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-idem',
       runtimeId,
       hostSessionId,
@@ -456,13 +456,13 @@ describe('POST /v1/surfaces/unbind', () => {
 
     // Unbind once
     await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-idem',
     })
 
     // Unbind again — should return same record, not error
     const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'ghost-idem',
     })
     expect(res.status).toBe(200)
@@ -487,14 +487,14 @@ describe('GET /v1/surfaces', () => {
 
     // Bind two surfaces
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'list-1',
       runtimeId,
       hostSessionId,
       generation,
     })
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'list-2',
       runtimeId,
       hostSessionId,
@@ -513,14 +513,14 @@ describe('GET /v1/surfaces', () => {
     const { hostSessionId, generation, runtimeId } = await ensureRuntime('list-exclude-test')
 
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'still-bound',
       runtimeId,
       hostSessionId,
       generation,
     })
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'was-bound',
       runtimeId,
       hostSessionId,
@@ -528,7 +528,7 @@ describe('GET /v1/surfaces', () => {
     })
 
     await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'was-bound',
     })
 
@@ -566,7 +566,7 @@ describe('restart survival', () => {
     )
 
     await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'ghostty',
+      surfaceKind: 'operator-terminal',
       surfaceId: 'restart-surf',
       runtimeId,
       hostSessionId,

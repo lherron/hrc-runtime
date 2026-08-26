@@ -51,7 +51,7 @@ export function getBrokerIpcSocketPath(
 
 /**
  * T-04921 (T-04905 Phase A) — allocate the per-runtime broker OBSERVER socket
- * path for the codex-app-server headless-viewer route. The read-only observer
+ * path for the codex-app-server tmux-tui route. The read-only observer
  * socket is HRC-owned and lives UNDER THE SAME owner-only `bipc/<hash>/` leaf as
  * the broker IPC socket (`b.sock`), so HRC selects ONE path it passes to BOTH the
  * durable Unix broker launch (`--experimental-observer-socket <path>`) and the

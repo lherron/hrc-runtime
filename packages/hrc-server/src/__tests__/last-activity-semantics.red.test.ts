@@ -309,7 +309,6 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
         const ctx = {
           db,
           tmux: createTmuxManager({ socketPath: defaultSocket }),
-          ghostmux: {},
           notifyEvent: () => undefined,
         } as unknown as ServerContext
         const result = await reconcileActiveRunsOnce(ctx, {

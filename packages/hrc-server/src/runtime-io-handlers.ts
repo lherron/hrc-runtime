@@ -280,7 +280,7 @@ export async function startRuntimeForSession(
   restartStyle: RestartStyle,
   options: {
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
-    suppressHeadlessViewer?: boolean | undefined
+    operatorAttachPending?: boolean | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
@@ -307,8 +307,7 @@ export async function startRuntimeForSession(
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
     const presentationOptions = {
       operatorAttachPending:
-        options.attachBeforeInvocationStart !== undefined ||
-        options.suppressHeadlessViewer === true,
+        options.attachBeforeInvocationStart !== undefined || options.operatorAttachPending === true,
     }
     if (shouldUseHeadlessTransport(startIntent)) {
       const now = timestamp()
@@ -690,7 +689,7 @@ export async function attachRuntimeEffectfully(
       interactiveIntent,
       'reuse_pty',
       {
-        suppressHeadlessViewer: true,
+        operatorAttachPending: true,
       }
     )
     return this.attachRuntime(requireKnownRuntime(this.db, brokerRuntime.runtimeId))

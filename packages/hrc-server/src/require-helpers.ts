@@ -343,7 +343,7 @@ export function isTerminalBrokerInvocationState(state: string | undefined): bool
  * A runtime whose active invocation is terminal (gone) or in a control-transition
  * state (`starting`/`stopping`) cannot — selecting it for a turn would dispatch
  * input the broker rejects (`Cannot accept input in state: …`), which is exactly
- * the turn-boundary race this task fixes. The interactive (tmux/ghostty) dispatch
+ * the turn-boundary race this task fixes. The interactive dispatch
  * gates select by runtime-row status (`isRuntimeUnavailableStatus`), which does
  * NOT cover the transient invocation states, so they must layer this check on top
  * — mirroring the headless reuse selector. Non-broker runtimes and broker runtimes

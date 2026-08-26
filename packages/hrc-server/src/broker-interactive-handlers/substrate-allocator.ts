@@ -517,7 +517,7 @@ export function createBrokerDurableHeadlessAllocator(
 }
 
 /**
- * T-04921 (T-04905 Phase A) — durable HEADLESS-VIEWER broker allocator for the
+ * T-04921 (T-04905 Phase A) — durable TMUX-TUI broker allocator for the
  * codex-app-server dual-tmux viewer route. A thin adapter over
  * {@link allocateBrokerSubstrate} with presentation='tmux-tui' — so it carves the
  * SAME two-window leased substrate (broker window over Unix IPC + an
@@ -533,7 +533,7 @@ export function createBrokerDurableHeadlessAllocator(
  * The hashed CodexAppServerDriverSpec / startRequest are UNCHANGED: the viewer is
  * a runtime-side routing decision, never a profile mutation.
  */
-export function createBrokerHeadlessViewerAllocator(
+export function createBrokerTmuxTuiAllocator(
   options: Pick<HrcServerOptions, 'runtimeRoot'>,
   deps: BrokerDurableTmuxAllocatorDeps
 ): BrokerTmuxAllocator {
@@ -564,8 +564,8 @@ export function createBrokerHeadlessViewerAllocator(
       // an unchecked `as` cast (T-04755).
       const tuiWindow = sub.tuiWindow
       const lease = sub.tuiLease
-      assertCompleteBrokerWindowIdentity(tuiWindow, 'headless-viewer allocation tuiWindow')
-      assertCompleteBrokerTmuxLease(lease, 'headless-viewer allocation tuiLease')
+      assertCompleteBrokerWindowIdentity(tuiWindow, 'tmux-tui allocation tuiWindow')
+      assertCompleteBrokerTmuxLease(lease, 'tmux-tui allocation tuiLease')
       return {
         ...projectBaseAllocation(sub),
         lease,

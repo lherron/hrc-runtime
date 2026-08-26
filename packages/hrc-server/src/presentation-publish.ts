@@ -2,8 +2,8 @@
  * Publish one invocation's viewer-presentation decision (T-07594; durable law
  * `hrc-runtime.viewer-presentation-sidecar` §5.1–5.2).
  *
- * This is the single point every start/reuse invocation that would spawn an
- * in-daemon Ghostty viewer now goes through. It does three things, in order:
+ * This is the single point every start/reuse invocation publishes its viewer
+ * presentation decision. It does two things, in order:
  *
  *  1. folds this invocation into the runtime row's DURABLE presentation record
  *     — `operatorAttachable` from the hosting state, and monotone
@@ -13,12 +13,8 @@
  *     `operatorAttachPending` (which is deliberately NEVER persisted) plus the
  *     tmux coordinates a consumer would otherwise have to obtain from an
  *     EFFECTFUL read;
- *  3. calls the existing in-daemon `spawnBrokerHeadlessViewer` with the same
- *     options, so behavior is unchanged until Phase 4 deletes it.
- *
  * Publishing is observational and must never gate a dispatch: every step is
- * wrapped, and a failure degrades to a log line, exactly as the viewer spawn
- * it fronts already does.
+ * wrapped, and a failure degrades to a log line.
  */
 import type { HrcRuntimePresentationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 
@@ -115,9 +111,6 @@ export async function publishPresentation(
       error: error instanceof Error ? error.message : String(error),
     })
   }
-
-  // Until Phase 4 removes the in-daemon viewer, the publish still fronts it.
-  await this.spawnBrokerHeadlessViewer(runtime, options)
 }
 
 export const presentationPublishMethods = {

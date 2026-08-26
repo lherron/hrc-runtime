@@ -9,7 +9,7 @@
  * 'tmux-tui' over a leased-tmux substrate). Before the fix, `terminateRuntime`
  * routed it to `terminateHeadlessRuntime`, which only called
  * `finalizeRuntimeTermination` + emitted `runtime.terminated` — leaving the live
- * broker + renderer process and the operator Ghostty viewer pane orphaned (the
+ * broker + renderer process and the operator terminal surface orphaned (the
  * reaper marked the runtime `terminated` but the window never exited).
  *
  * These tests pin: (a) a leased-tmux viewer disposes the broker on terminate and
@@ -207,7 +207,7 @@ describe('terminateRuntime: codex-app-server leased-tmux viewer', () => {
     ).call(makeFakeThis(disposeCalls), runtime, {
       dropContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
 
     expect(res.status).toBe(200)
@@ -221,7 +221,7 @@ describe('terminateRuntime: codex-app-server leased-tmux viewer', () => {
       transport: 'headless',
       droppedContinuation: false,
       reason: 'operator_reap',
-      source: 'close-headless-ghostmux',
+      source: 'close-operator-surface',
     })
   })
 

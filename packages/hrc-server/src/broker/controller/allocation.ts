@@ -14,7 +14,7 @@ import type { BrokerControllerStartInput, BrokerTmuxAllocation, BrokerTmuxAlloca
 export type AllocationContext = {
   tmuxAllocator: BrokerTmuxAllocator | undefined
   headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
-  headlessViewerAllocator: BrokerTmuxAllocator | undefined
+  tmuxTuiAllocator: BrokerTmuxAllocator | undefined
   env: Record<string, string | undefined> | undefined
   now: () => string
 }
@@ -24,10 +24,10 @@ export type AllocationContext = {
  * the dispatch `routeDecision`. The handler layer computes it via
  * `decideCodexAppServerPresentation` (policy is the trigger, driver applicability
  * is the gate) and stamps `operatorPresentation` here. Returns `'tmux-tui'` ONLY
- * when the route explicitly selected the headless viewer; anything else (no route
+ * when the route explicitly selected tmux-tui presentation; anything else (no route
  * decision, no field, or `'none'`) is ordinary headless.
  */
-export function isHeadlessViewerRoute(input: BrokerControllerStartInput): boolean {
+export function isTmuxTuiRoute(input: BrokerControllerStartInput): boolean {
   const routeDecision = input.routeDecision
   if (typeof routeDecision !== 'object' || routeDecision === null) {
     return false
@@ -102,28 +102,28 @@ export async function allocateHeadlessSubstrate(
 }
 
 /**
- * T-04921 (T-04905 Phase A) — allocate the durable HEADLESS-VIEWER substrate
+ * T-04921 (T-04905 Phase A) — allocate the durable TMUX-TUI substrate
  * (presentation='tmux-tui' + observer socket) for the codex-app-server dual-tmux
  * viewer route. Requires the injected viewer allocator (production wires
- * `createBrokerHeadlessViewerAllocator`); unlike the ordinary headless path there
- * is NO in-process synthesis fallback — a viewer runtime without an allocator is
+ * `createBrokerTmuxTuiAllocator`); unlike the ordinary headless path there
+ * is NO in-process synthesis fallback — a tmux-tui runtime without an allocator is
  * a wiring error, not a route we silently degrade.
  */
-export async function allocateHeadlessViewerSubstrate(
+export async function allocateTmuxTuiSubstrate(
   ctx: AllocationContext,
   input: BrokerControllerStartInput
 ): Promise<BrokerTmuxAllocation> {
-  if (!ctx.headlessViewerAllocator) {
+  if (!ctx.tmuxTuiAllocator) {
     throw new BrokerControllerError(
-      'broker_headless_viewer_allocator_unavailable',
-      'codex-app-server headless-viewer route requires an HRC headless-viewer allocator',
+      'broker_tmux_tui_allocator_unavailable',
+      'codex-app-server tmux-tui route requires an HRC tmux-tui allocator',
       {
         runtimeId: String(input.identity.runtimeId),
         brokerDriver: input.profile.brokerDriver,
       }
     )
   }
-  return allocateSubstrateVia(ctx, ctx.headlessViewerAllocator, input)
+  return allocateSubstrateVia(ctx, ctx.tmuxTuiAllocator, input)
 }
 
 export async function allocateSubstrateVia(

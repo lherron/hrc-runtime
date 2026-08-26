@@ -1,36 +1,36 @@
 /**
- * RED tests — T-04921 / T-04905 Phase A: Codex app-server headless viewer route.
+ * RED tests — T-04921 / T-04905 Phase A: Codex app-server tmux-tui route.
  *
  * Four test groups (daedalus's required tests 1-4). ALL FAIL at HEAD:
  *
  * 1. Pure route-decision: `decideCodexAppServerPresentation` does not exist in
  *    broker-decisions.ts → namespace reference is undefined → typeof check fails.
  *
- * 2. Controller allocation/dispatch for viewer route:
- *    - `createBrokerHeadlessViewerAllocator` does not exist in substrate-allocator.ts
- *    - Even if wired, controller ignores viewer presentation for headless profiles
+ * 2. Controller allocation/dispatch for tmux-tui route:
+ *    - `createBrokerTmuxTuiAllocator` does not exist in substrate-allocator.ts
+ *    - Even if wired, controller ignores tmux-tui presentation for headless profiles
  *      (dispatch.ts line 258 forces dispatchRuntime=undefined for all headless)
- *    - transport='tmux' for interactive allocations; headless viewer must stay 'headless'
+ *    - transport='tmux' for interactive allocations; tmux-tui must stay 'headless'
  *    - terminalSurfaceRequired: true is not set in dispatchRuntime today
  *
  * 3. Negative headless (guard — RED via new symbol test):
  *    - `decideCodexAppServerPresentation` is undefined → typeof check fails.
- *    - Guards that ordinary headless (no operatorPresentation) MUST NOT get viewer route.
+ *    - Guards that ordinary headless (no operatorPresentation) MUST NOT get tmux-tui route.
  *
  * 4. Observer integration:
  *    - `getBrokerObserverSocketPath` does not exist in tmux-socket.ts → undefined.
- *    - brokerCommand in the viewer allocation does NOT include
+ *    - brokerCommand in the tmux-tui allocation does NOT include
  *      `--experimental-observer-socket` today.
- *    - dispatchEnv for viewer route does NOT include `HARNESS_BROKER_OBSERVER_SOCKET`.
+ *    - dispatchEnv for tmux-tui route does NOT include `HARNESS_BROKER_OBSERVER_SOCKET`.
  *    - MUST FAIL if only the renderer env is set but broker does not serve the socket.
  *
  * Governing task: T-04921 (Phase A subtask, T-04905). Architecture: daedalus DM #8645.
  *
  * Implementation targets (symbols that do NOT exist at HEAD):
  *   - `decideCodexAppServerPresentation` in broker-decisions.ts
- *   - `createBrokerHeadlessViewerAllocator` in broker-interactive-handlers/substrate-allocator.ts
+ *   - `createBrokerTmuxTuiAllocator` in broker-interactive-handlers/substrate-allocator.ts
  *   - `getBrokerObserverSocketPath` in tmux-socket.ts
- *   - `headlessViewerAllocator` slot on HarnessBrokerController / AllocationContext
+ *   - `tmuxTuiAllocator` slot on HarnessBrokerController / AllocationContext
  *   - `operatorPresentation` field routing in allocation.ts + dispatch.ts
  *   - Observer socket flag in brokerCommand + HARNESS_BROKER_OBSERVER_SOCKET in dispatchEnv
  */
@@ -79,35 +79,23 @@ const decideCodexAppServerPresentation = (
       operatorPresentation: string | undefined
       brokerDriver: string
     }) => 'tmux-tui' | 'none'
-    shouldSpawnGhosttyViewer?: (value?: string | undefined) => boolean
-    parseGhosttyViewerLingerSeconds?: (value: string | undefined, defaultSeconds: number) => number
   }
 ).decideCodexAppServerPresentation
-const shouldSpawnGhosttyViewer = (
-  brokerDecisions as unknown as {
-    shouldSpawnGhosttyViewer?: (value?: string | undefined) => boolean
-  }
-).shouldSpawnGhosttyViewer
-const parseGhosttyViewerLingerSeconds = (
-  brokerDecisions as unknown as {
-    parseGhosttyViewerLingerSeconds?: (value: string | undefined, defaultSeconds: number) => number
-  }
-).parseGhosttyViewerLingerSeconds
 
 /**
- * T-04921: viewer substrate allocator factory.
+ * T-04921: tmux-tui substrate allocator factory.
  * Analogous to createBrokerDurableTmuxAllocator but persists transport='headless'
  * and returns a BrokerTmuxAllocation that carries lease + tuiWindow (for
  * runtime.terminalSurface) while NEVER setting transport='tmux'.
  */
-const createBrokerHeadlessViewerAllocator = (
+const createBrokerTmuxTuiAllocator = (
   substrateAllocator as unknown as {
-    createBrokerHeadlessViewerAllocator?: (
+    createBrokerTmuxTuiAllocator?: (
       options: { runtimeRoot: string },
       deps: Record<string, unknown>
     ) => { allocate: (...args: unknown[]) => Promise<Record<string, unknown>> }
   }
-).createBrokerHeadlessViewerAllocator
+).createBrokerTmuxTuiAllocator
 
 /**
  * T-04921: HRC-owned observer socket path helper.
@@ -124,7 +112,7 @@ const _getBrokerObserverSocketPath = (
   }
 ).getBrokerObserverSocketPath
 
-// ── Shared viewer profile fixture (headless codex-app-server) ─────────────────
+// ── Shared tmux-tui profile fixture (headless codex-app-server) ─────────────────
 // HARD CONSTRAINT: hashed CodexAppServerDriverSpec / startRequest UNCHANGED.
 // The profile is identical to ordinary headless — only the route decision differs.
 
@@ -132,7 +120,7 @@ function makeViewerProfile(identity: ReturnType<typeof makeIdentity>): {
   profile: BrokerExecutionProfile
   startRequest: InvocationStartRequest
 } {
-  // Same as makeBrokerProfile — no new fields. The viewer route is HRC-side routing
+  // Same as makeBrokerProfile — no new fields. The tmux-tui route is HRC-side routing
   // via routeDecision / operatorPresentation, NOT a profile-level marker.
   return makeBrokerProfile(identity, { brokerDriver: 'codex-app-server' })
 }
@@ -285,7 +273,7 @@ async function makeFixture(): Promise<Fixture> {
 }
 
 // ── Viewer allocation stub ─────────────────────────────────────────────────────
-// What createBrokerHeadlessViewerAllocator.allocate() should return:
+// What createBrokerTmuxTuiAllocator.allocate() should return:
 // - presentation='tmux-tui' (has tuiWindow + lease)
 // - brokerCommand includes --experimental-observer-socket <observerSocketPath>
 // - observerSocketPath same as in dispatch env
@@ -374,21 +362,12 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
   })
 
   it('no policy (undefined operatorPresentation) → "none" — ordinary headless preserved (RED)', () => {
-    // CRITICAL: no policy → no viewer route. Driver alone is NOT enough.
+    // CRITICAL: no policy → no tmux-tui route. Driver alone is NOT enough.
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: undefined,
       brokerDriver: 'codex-app-server',
     })
     expect(result).toBe('none')
-  })
-
-  it('operator presentation stays tmux-tui independently of the viewer-spawn gate', () => {
-    const result = decideCodexAppServerPresentation!({
-      operatorPresentation: 'tmux-tui',
-      brokerDriver: 'codex-app-server',
-    })
-    expect(result).toBe('tmux-tui')
-    expect(shouldSpawnGhosttyViewer!('0')).toBe(false)
   })
 
   it('policy=tmux-tui + non-codex-app-server driver → "none" (policy not applicable) (RED)', () => {
@@ -400,26 +379,8 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     expect(result).toBe('none')
   })
 
-  it('HRC_GHOSTTY_VIEWERS defaults on and honors falsy values (RED)', () => {
-    expect(typeof shouldSpawnGhosttyViewer).toBe('function')
-    expect(shouldSpawnGhosttyViewer!(undefined)).toBe(true)
-    expect(shouldSpawnGhosttyViewer!('0')).toBe(false)
-    expect(shouldSpawnGhosttyViewer!('false')).toBe(false)
-    expect(shouldSpawnGhosttyViewer!('off')).toBe(false)
-    expect(shouldSpawnGhosttyViewer!('1')).toBe(true)
-  })
-
-  it('parses HRC_GHOSTTY_VIEWER_LINGER_SECONDS with default fallback (RED)', () => {
-    expect(typeof parseGhosttyViewerLingerSeconds).toBe('function')
-    expect(parseGhosttyViewerLingerSeconds!(undefined, 300)).toBe(300)
-    expect(parseGhosttyViewerLingerSeconds!('', 300)).toBe(300)
-    expect(parseGhosttyViewerLingerSeconds!('0', 300)).toBe(0)
-    expect(parseGhosttyViewerLingerSeconds!('12.9', 300)).toBe(12)
-    expect(parseGhosttyViewerLingerSeconds!('-1', 300)).toBe(300)
-  })
-
   it('profile/spec/startRequest hashes are UNCHANGED for viewer vs ordinary headless (RED via symbol)', () => {
-    // The profile is identical between viewer + ordinary headless: the viewer route
+    // The profile is identical between tmux-tui + ordinary headless: the tmux-tui route
     // is a routing decision, not a profile mutation. Verify spec/startRequest hash
     // are computed the same way (this checks the invariant is testable via the symbol).
     expect(typeof decideCodexAppServerPresentation).toBe('function')
@@ -435,7 +396,7 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const { profile: viewerProfile } = makeViewerProfile(identity)
 
     // Same profile: identical specHash, startRequestHash.
-    // The viewer route decision does NOT touch these hashes.
+    // The tmux-tui route decision does NOT touch these hashes.
     expect(viewerProfile.harnessInvocation.specHash).toBe(
       ordinaryProfile.harnessInvocation.specHash
     )
@@ -445,9 +406,9 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
   })
 })
 
-// ── Test 2: Controller allocation/dispatch (viewer route) ─────────────────────
+// ── Test 2: Controller allocation/dispatch (tmux-tui route) ─────────────────────
 
-describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RED)', () => {
+describe('T-04921 Test 2 — controller allocation/dispatch for tmux-tui route (RED)', () => {
   let fixture: Fixture
 
   beforeEach(async () => {
@@ -457,11 +418,11 @@ describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RE
     await fixture.cleanup()
   })
 
-  it('createBrokerHeadlessViewerAllocator is exported from substrate-allocator (RED — does not exist)', () => {
-    expect(typeof createBrokerHeadlessViewerAllocator).toBe('function')
+  it('createBrokerTmuxTuiAllocator is exported from substrate-allocator (RED — does not exist)', () => {
+    expect(typeof createBrokerTmuxTuiAllocator).toBe('function')
   })
 
-  it('viewer route: transport="headless", presentation="tmux-tui", brokerWindow + tuiWindow, terminalSurfaceRequired=true (RED)', async () => {
+  it('tmux-tui route: transport="headless", presentation="tmux-tui", brokerWindow + tuiWindow, terminalSurfaceRequired=true (RED)', async () => {
     const identity = makeIdentity({
       runtimeId: 'runtime_viewer' as ReturnType<typeof makeIdentity>['runtimeId'],
       invocationId: 'invocation_viewer' as ReturnType<typeof makeIdentity>['invocationId'],
@@ -489,14 +450,14 @@ describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RE
       // T-04921: inject viewer allocator (new slot — undefined at HEAD, hence RED).
       // The viewer allocator returns presentation='tmux-tui' + tuiWindow + lease
       // while keeping transport='headless' (not 'tmux').
-      headlessViewerAllocator: {
+      tmuxTuiAllocator: {
         allocate: async () => viewerAllocationStub(fixture.dir, String(identity.runtimeId)),
       },
       // headlessSubstrateAllocator is NOT the viewer allocator (it has presentation='none').
-      // The controller must pick headlessViewerAllocator when routeDecision.operatorPresentation='tmux-tui'.
+      // The controller must pick tmuxTuiAllocator when routeDecision.operatorPresentation='tmux-tui'.
       headlessSubstrateAllocator: {
         allocate: async () => {
-          throw new Error('headlessSubstrateAllocator must NOT be called for viewer route')
+          throw new Error('headlessSubstrateAllocator must NOT be called for tmux-tui route')
         },
       },
       now: () => NOW,
@@ -520,7 +481,7 @@ describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RE
       },
     } as unknown as Parameters<typeof controller.start>[0])
 
-    // RED: at HEAD, headlessViewerAllocator is unknown → controller falls through to
+    // RED: at HEAD, tmuxTuiAllocator is unknown → controller falls through to
     // headlessSubstrateAllocator (presentation='none') → dispatchRuntime=undefined → no terminalSurface.
     expect(result.ok).toBe(true)
 
@@ -579,4 +540,4 @@ describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RE
   })
 })
 
-// ── Test 3: Negative headless (ordinary headless must NOT get viewer route) ───
+// ── Test 3: Negative headless (ordinary headless must NOT get tmux-tui route) ───

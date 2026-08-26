@@ -1,7 +1,6 @@
 import type { HrcEventEnvelope, HrcLifecycleEvent } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 
 /**
@@ -16,6 +15,5 @@ import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 export interface ServerContext {
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
-  readonly ghostmux: ServerGhostmuxManager
   notifyEvent(event: HrcEventEnvelope | HrcLifecycleEvent): void
 }
