@@ -1,6 +1,6 @@
 # Viewer Sidecar Spec: Extracting Ghostty Presentation from hrc-server
 
-Status: DRAFT rev 2 — resubmitted to daedalus (rev 1 REJECTED, three flaws; see §10)  
+Status: DRAFT rev 3 — resubmitted to daedalus (rev 1, rev 2 REJECTED; see §10)  
 Date: 2026-08-26  
 Author: mable@hrc-runtime  
 Primary systems: hrc-server (event ledger, runtime lifecycle), new `packages/hrc-viewer`, `ghostmux` CLI, ScriptableGhostty
@@ -80,7 +80,7 @@ Every input arrives on one of two surfaces, both side-effect-free by contract (�
 | Need | Source |
 |---|---|
 | runtime identity (`runtimeId`, `hostSessionId`, `scopeRef`, `laneRef`, `generation`) | `runtime.presentation` event (§5.2) / presentation read model (§5.3) |
-| operator-attachability; whether an operator terminal will attach (suppression); requested viewer window key | same — persisted on the runtime row by hrc at start (§5.1) |
+| operator-attachability; whether *this invocation's* operator terminal will attach (suppression); requested viewer window key | `runtime.presentation` event per invocation (§5.2); the monotone `viewerRequested` fact persisted on the runtime row (§5.1) for reconcile |
 | tmux socket path + attach target (`<session>:tui`) | same — hrc derives them from the persisted hosting/tmux state when it emits/projects; the viewer never calls `/v1/runtimes/:id/attach` |
 | session title | `session.retitled` event (§5.2) and the `title` column of the read model |
 | task label for the tab | wrkq lookup **in the viewer** (moves out of hrc); falls back to the raw task id |
@@ -91,8 +91,8 @@ Every input arrives on one of two surfaces, both side-effect-free by contract (�
 
 | Event | Viewer action |
 |---|---|
-| `runtime.presentation` with `operatorAttachable === true` and `operatorAttachPending !== true` | `ensurePane(record)` (find-or-create; §4.4). The event carries the socket path and attach target, so no further hrc call is needed. |
-| `runtime.presentation` with `operatorAttachPending === true` | skip, and the fact is persisted (§5.1), so reconcile skips it too (today's `skipped_operator_attach_pending`) |
+| `runtime.presentation` with `operatorAttachable === true` and `operatorAttachPending === false` | `ensurePane(record)` (find-or-create; §4.4). The event carries the socket path and attach target, so no further hrc call is needed. Emitted once per start/reuse invocation, so a detached `hrc start` that reuses an `hrc run` runtime mints the pane exactly as today (`runtime-io-handlers.ts:352-368`, `:451-463`). |
+| `runtime.presentation` with `operatorAttachPending === true` | skip this invocation only (today's `skipped_operator_attach_pending`, `controller-factory.ts:232-251`). Nothing is remembered about the skip; a later non-pending invocation on the same runtime proceeds. |
 | `runtime.created` / `runtime.ensured` / `runtime.adopted` | **no viewer action** — these fire before the tmux `:tui` window exists on some paths and not at all on the broker path; `runtime.presentation` is the only spawn trigger |
 | `surface.bound` for an operator terminal on a runtime that has a viewer pane | no-op (both may coexist; today's behavior) |
 | `turn.started` / `turn.input_resumed` | status bar → `running` |
@@ -123,10 +123,10 @@ These rules are the shipped T-05237 / T-07118 / T-07121 behavior, moved out of c
 Run on viewer start, on every reconnect, and on a slow timer (default 5 min). Uses only §5.4 reads.
 
 1. `ghostmux list-surfaces --json` → panes with `hrc_role=headless-agent-pane`.
-2. `GET /v1/presentation/runtimes` (§5.3) → every non-terminal runtime with its persisted presentation record. This is a db-only projection: no liveness reconcile runs, no runtime can be marked dead by the call.
-3. Record with `operatorAttachable && !operatorAttachPending` and no pane → `ensurePane`. Pane whose `hrc_runtime_id` is absent from the read model (terminal or unknown) and whose reap linger has elapsed → reap. Pane whose session is present with a newer generation → rebind metadata. Titles re-applied from the `title` column.
+2. `GET /v1/presentation/runtimes` (§5.3) → every non-terminal runtime with its persisted presentation record (or none). This is a db-only projection: no liveness reconcile runs, no runtime can be marked dead by the call.
+3. Record with `viewerRequested === true` and `operatorAttachable === true` and no pane → `ensurePane`. Record with `viewerRequested === false`, or **no record** (§5.5 upgrade rule) → never mint; an existing pane for it is still adopted, status-painted and reaped. Pane whose `hrc_runtime_id` is absent from the read model (terminal or unknown) and whose reap linger has elapsed → reap. Pane whose session is present with a newer generation → rebind metadata. Titles re-applied from the `title` column.
 
-Because attachability, suppression, window key, socket path, attach target and title are all persisted by hrc and projected by the read model, a viewer that starts or reconnects *after* a runtime exists reconstructs exactly the state the event path would have produced. Suppression is per runtime generation: a runtime born for `hrc run` never acquires a viewer pane on a later reconcile (identical to today, where nothing spawns after start either).
+`viewerRequested` is exactly the fact the in-daemon path acts on today: ensure is find-or-create and reap happens only on terminate, so "a pane should exist" ⇔ "at least one non-suppressed invocation has run for this generation". Reconcile therefore reproduces the event path's cumulative outcome, not a snapshot of one invocation. A runtime born for `hrc run` and never reused stays pane-less; once a detached invocation reuses it, `viewerRequested` flips and both the event and the next reconcile mint the pane — identical to today.
 
 This is the first time viewer panes are reconciled after a daemon restart at all (hrc-server does not do it today; it relies on lazy re-adoption at the next spawn). A ScriptableGhostty restart wipes the in-memory window registry; reconcile re-adopts by design ("degraded, never broken").
 
@@ -145,23 +145,27 @@ This is the first time viewer panes are reconciled after a daemon restart at all
 
 ```ts
 presentation?: {
-  operatorAttachable: boolean   // == canOperatorAttach(runtime) when the :tui substrate is known
-  operatorAttachPending: boolean // invoker's terminal will attach (hrc run / hrc attach-by-id)
-  viewerWindow?: string          // from lastAppliedIntentJson.presentation.viewerWindow
+  operatorAttachable: boolean   // == canOperatorAttach(runtime) once the :tui substrate is known
+  viewerRequested: boolean      // MONOTONE within a generation: false → true on the first
+                                // non-suppressed start/reuse invocation; never cleared
+  viewerWindow?: string          // from lastAppliedIntentJson.presentation.viewerWindow (latest wins)
 }
 ```
 
-Written once, at the point where hrc today calls `spawnBrokerHeadlessViewer` — i.e. where `runtime-io-handlers.ts:335-337` already computes `operatorAttachPending` and `controller-factory.ts:232-260` already evaluates `canOperatorAttach` and the window key. Persisted alongside the runtime (`broker/controller/persistence.ts` on the broker path; the runtime record update on the managed-start paths). Never mutated afterwards; a new generation gets a new record.
+`operatorAttachPending` is **not** persisted. It is an invocation-local predicate (`runtime-io-handlers.ts:302-338`) and stays one: it travels on the per-invocation event (§5.2) and nowhere else. What is persisted is its cumulative consequence, `viewerRequested`, which is what today's find-or-create + reap-on-terminate behavior actually depends on.
+
+Written by a single `publishPresentation(runtime, { operatorAttachPending })` helper at the point where each of the seven spawn call sites lives today — every fresh start *and* every reuse invocation (`runtime-io-handlers.ts:368,402,463,485`, `broker-headless-handlers.ts:745`, `broker-interactive-handlers.ts:596`, `turn-dispatch-handlers.ts:660`). The helper: computes `operatorAttachable`; if `operatorAttachPending === false` sets `viewerRequested = true`; updates `viewerWindow`; persists (`broker/controller/persistence.ts` on the broker path; the runtime-record update on the managed-start paths); then appends the event. A new generation starts with no record.
 
 ### 5.2 Two event kinds
 
-**`runtime.presentation`** (category `runtime`). Appended and notified at the same single point as §5.1 — which is the moment the tmux `:tui` window exists and hrc has decided attachability. This collapses the seven current spawn call sites (`runtime-io-handlers.ts:368,402,463,485`, `broker-headless-handlers.ts:745`, `broker-interactive-handlers.ts:596`, `turn-dispatch-handlers.ts:660`) into one `publishPresentation(runtime, { operatorAttachPending })`. It is a *new* append, not a field on `runtime.created`: the broker path persists its runtime directly (`persistence.ts:103-148`) and never appends `runtime.created`, so there is nothing there to extend. Payload:
+**`runtime.presentation`** (category `runtime`). Appended and notified by `publishPresentation` on **every** start/reuse invocation — the moment the tmux `:tui` window exists and hrc has decided attachability for that invocation. It is a *new* append, not a field on `runtime.created`: the broker path persists its runtime directly (`persistence.ts:103-148`) and never appends `runtime.created`, and reuse invocations append no runtime event at all today. Payload:
 
 ```ts
 {
-  presentation: { operatorAttachable, operatorAttachPending, viewerWindow? },
-  tmux?: { socketPath: string, attachTarget: string },   // present iff operatorAttachable
-  title?: string                                          // current session title, if any
+  invocation: { operatorAttachPending: boolean },          // this invocation only
+  presentation: { operatorAttachable, viewerRequested, viewerWindow? },  // persisted record after this invocation
+  tmux?: { socketPath: string, attachTarget: string },     // present iff operatorAttachable
+  title?: string                                           // current session title, if any
 }
 ```
 
@@ -173,7 +177,7 @@ Both kinds are added to `KIND_CATEGORIES` (`hrc-event-helper.ts:18-77`).
 
 ### 5.3 Presentation read model
 
-`GET /v1/presentation/runtimes` returns, for every runtime whose status is non-terminal, one row with the same shape as the `runtime.presentation` payload plus identity (`runtimeId`, `hostSessionId`, `scopeRef`, `laneRef`, `generation`, `status`). It is a **projection over the store only**: it reads runtime rows, the persisted §5.1 record, hosting/tmux state and `session_titles`, and returns. It does **not** call `reconcileTmuxRuntimeLiveness`, probe tmux, attach, or append events. SDK: `HrcClient.listPresentationRuntimes()`.
+`GET /v1/presentation/runtimes` returns, for every runtime whose status is non-terminal, one row: identity (`runtimeId`, `hostSessionId`, `scopeRef`, `laneRef`, `generation`, `status`), `presentation` (the persisted record, or absent for pre-Phase-2 generations), `tmux`, `title`. No invocation-local field appears here; the read model carries only durable facts. It is a **projection over the store only**: it reads runtime rows, the persisted §5.1 record, hosting/tmux state and `session_titles`, and returns. It does **not** call `reconcileTmuxRuntimeLiveness`, probe tmux, attach, or append events. SDK: `HrcClient.listPresentationRuntimes()`.
 
 ### 5.4 Side-effect-free read contract
 
@@ -184,6 +188,17 @@ The viewer is permitted exactly these hrc routes: `GET /v1/events/tail`, `GET /v
 
 Routes that reconcile liveness as a side effect of reading (`GET /v1/runtimes` via `runtime-list-adopt-handlers.ts:186-198`, `GET /v1/runtimes/:id/attach` via `index.ts:2277-2280`) are unchanged and remain off-limits to the viewer.
 
+### 5.5 Upgrade rule for pre-Phase-2 generations
+
+Runtime generations created before Phase 2 ships have no persisted record and — because today's `operatorAttachPending` was never recorded — no authority exists to reconstruct whether a viewer should exist for them. The spec does not invent one:
+
+- The read model returns `presentation: undefined` for them; the viewer **never mints** a pane for a record-less row.
+- A pane that the in-daemon path already created for such a runtime carries the same Ghostty metadata keys, so the viewer **adopts** it: status painting, retitle, rebind and reap all apply.
+- The next start/reuse invocation on that runtime runs `publishPresentation`, which writes the record and emits the event, from which point the runtime is fully governed.
+- Generations rotate every 24 h, so the record-less population is bounded and self-clears.
+
+This is parity with today: the in-daemon path also never re-creates a pane for an existing runtime except on a new invocation.
+
 ## 6. Phases and gates
 
 Each phase lands independently on `main`; none requires the next.
@@ -192,9 +207,9 @@ Each phase lands independently on `main`; none requires the next.
 |---|---|---|
 | **1. Delete legacy A** | Remove `transport:'ghostty'` spawn-dead tail, `HRC_CLAUDE_GHOSTTY*`, `cleanupIdleClaudeGhosttyRuntimes`, `reconcileGhostty`, legacy attach descriptor, legacy select/transport predicates. Closes T-07201, T-07207 (both dormant behind the deleted flag). | `rg -i 'claude.?ghostty\|transport === .ghostty' packages/hrc-server/src` empty (excluding tests deleted with it); full suite green; `just install` + graceful restart; `hrc runtime list` and one `hrc start` + `hrcchat dm` round-trip unchanged. |
 | **2. Persist, publish, project** | §5.1–5.4: persisted presentation record, `runtime.presentation` + `session.retitled` kinds, the read model route + SDK method, the side-effect-free contract tests. The seven spawn call sites collapse to one `publishPresentation` call that (until Phase 4) still invokes the in-daemon viewer behind it. | `runtime.presentation` visible in `hrc monitor watch --json` on a live `hrc start` (with `tmux`) and on `hrc run` (with `operatorAttachPending: true`); `session.retitled` on `hrc session retitle`; `GET /v1/presentation/runtimes` returns the same records; §5.4 contract tests green. |
-| **3. Build hrc-viewer; shadow-validate** | New package + LaunchAgent; `ghostmux.ts` viewer portion, `headless-viewer-status.ts`, theme/prefix/label modules and their tests move across. On `hrc-dev` (or the hrcdev VM), run the daemon with `HRC_GHOSTTY_VIEWERS=0` and the viewer enabled. | For each of: `hrc start` (headless codex + claude), `hrc run` (viewer must be **suppressed**, including after a viewer restart + reconcile while the run is live), `hrcchat dm` to a cold scope, two role-qualified scopes for one agent/task (two panes), `hrc session retitle`, `hrc runtime terminate` (pane survives `linger` then dies), daemon graceful restart, viewer restart, Ghostty quit/reopen — the resulting `ghostmux list-windows/list-surfaces --json` topology is identical to what the in-daemon path produced, screenshots attached to the task. Additionally: with the viewer running against a runtime whose tmux socket has been removed, the runtime's status does not change until hrc's own sweep runs. |
+| **3. Build hrc-viewer; shadow-validate** | New package + LaunchAgent; `ghostmux.ts` viewer portion, `headless-viewer-status.ts`, theme/prefix/label modules and their tests move across. On `hrc-dev` (or the hrcdev VM), run the daemon with `HRC_GHOSTTY_VIEWERS=0` and the viewer enabled. | For each of: `hrc start` (headless codex + claude), `hrc run` (viewer must be **suppressed**, including after a viewer restart + reconcile while the run is live), then a detached `hrc start` reusing that runtime (viewer **must appear**), `hrcchat dm` to a cold scope, two role-qualified scopes for one agent/task (two panes), `hrc session retitle`, `hrc runtime terminate` (pane survives `linger` then dies), daemon graceful restart, viewer restart, Ghostty quit/reopen — the resulting `ghostmux list-windows/list-surfaces --json` topology is identical to what the in-daemon path produced, screenshots attached to the task. Additionally: with the viewer running against a runtime whose tmux socket has been removed, the runtime's status does not change until hrc's own sweep runs. |
 | **4. Delete B from hrc; rename C** | Remove everything in §3 rows 1–10 and the dedicated modules; rename `headlessViewerRoute` / `isHeadlessViewerRoute` / `createBrokerHeadlessViewerAllocator` to `tmuxTuiRoute` / `isOperatorPresentationRoute` / `createBrokerTmuxTuiAllocator`. Terminate becomes synchronous. | `rg -i ghostty packages/hrc-server/src` matches only the `GHOSTTY_SURFACE_UUID` CLI-side operator-surface read and docs; suite green; Phase-3 matrix re-run against the deleted daemon on `hrc-dev`. |
-| **5. Fleet rollout** | Install LaunchAgent on max3 (lherron), mini (lherron; decide svc/lab), rolling daemon rotation. | Post-rollout `ghostmux list-surfaces --json` on each node shows live-runtime panes; no `broker_headless_viewer.*` lines in hrc-server logs. |
+| **5. Fleet rollout** | Install LaunchAgent on max3 (lherron), mini (lherron; decide svc/lab), rolling daemon rotation. | Post-rollout `ghostmux list-surfaces --json` on each node shows a pane for every live runtime with `viewerRequested === true`, and every pre-rollout pane still present is adopted (metadata `hrc_runtime_id` matches a live runtime or is reaped after linger); no `broker_headless_viewer.*` lines in hrc-server logs. |
 
 Rollback at any phase ≤ 3: stop the LaunchAgent, leave `HRC_GHOSTTY_VIEWERS` unset (default on). After Phase 4 the rollback is the viewer itself.
 
@@ -203,14 +218,15 @@ Rollback at any phase ≤ 3: stop the LaunchAgent, leave `HRC_GHOSTTY_VIEWERS` u
 1. hrc-server never invokes `ghostmux` (post Phase 4).
 2. hrc-server's runtime lifecycle has no code path whose outcome depends on Ghostty state.
 3. The viewer calls only the §5.4 routes, each of which is a store read with no reconcile or mutation, proven by contract test. "Read-only" means side-effect-free, not merely `GET`.
-4. Ghostty metadata is the sole viewer registry; the viewer keeps no state that must survive its own restart. Everything needed to reconstruct a pane (attachability, suppression, window key, socket, target, title) is persisted by hrc and served by §5.3.
+4. Ghostty metadata is the sole viewer registry; the viewer keeps no state that must survive its own restart. Everything needed to reconstruct a pane (attachability, the cumulative `viewerRequested` fact, window key, socket, target, title) is persisted by hrc and served by §5.3; invocation-local facts are never persisted and never needed for reconstruction (§5.5).
 5. At most one live viewer pane per hrc session, keyed by normalized `(scopeRef, laneRef)`, same as today.
 6. Viewer absence, death, lag, or polling can never change runtime state, finalize a run, delay a turn, or fail a start — a consequence of invariant 3.
 
 ## 8. Risks
 
 - **Readiness race.** Eliminated by construction: `runtime.presentation` is appended at the exact point the in-daemon spawn happens today, i.e. after the `:tui` substrate exists, and it carries the socket and target.
-- **Suppression is fixed at start.** If an operator attaches *later* (`hrc attach` to a running runtime), the viewer pane already exists and both coexist — identical to today. A runtime born suppressed stays viewer-less for its generation — also identical to today.
+- **Suppression is per invocation.** An `hrc run` runtime later reused by a detached `hrc start` gains a pane (today's behavior, now explicit). If an operator attaches *later* to a runtime that already has a pane, both coexist — identical to today.
+- **Record-less generations after upgrade** get no new panes until their next invocation or rotation (§5.5). Bounded by the 24 h generation rotation; parity with today.
 - **Stale read model rows.** The read model deliberately does not reconcile liveness, so it can list a runtime whose tmux has died until hrc's own sweep marks it. The viewer's pane then shows a dead attach until the `runtime.dead`/`stale` event arrives — the same window that exists today between substrate death and sweep.
 - **wrkq read moves to the viewer.** The viewer needs `wrkq` reachable for tab labels; on failure it falls back to the raw task id (same as today's resolver).
 - **Two processes to keep alive instead of one.** Mitigated by `KeepAlive` and the fact that the failure mode is cosmetic.
@@ -226,3 +242,8 @@ The HRCMac campaign (T-07334..37) embeds libghostty and attaches to broker-tmux 
 - *Flaw 1 — viewer reads were effectful.* `hrc runtime list` and `GET /v1/runtimes/:id/attach` run `reconcileTmuxRuntimeLiveness`, which can mark a runtime dead. Rev 2 removes both from the viewer entirely: socket path and attach target ride on the `runtime.presentation` event and the new db-only `GET /v1/presentation/runtimes` (§5.2–5.3); §5.4 enumerates the permitted routes and adds a contract test proving each is side-effect-free; invariants 3 and 6 are restated accordingly.
 - *Flaw 2 — pane key changed silently.* Rev 1 wrote `(tabKey, agentId)`; the shipped key is normalized `(scopeRef, laneRef)`. Rev 2 restores it verbatim (§4.4), names `agentId` as presentation-only, and adds the two-roles-one-agent case to the Phase 3 matrix.
 - *Flaw 3 — no reconstruction contract.* Rev 1 relied on runtime-list rows that carry no presentation fields, a session-title `GET` that does not exist, and a `runtime.created` append the broker path never makes. Rev 2 persists the presentation record on the runtime row (§5.1), introduces `runtime.presentation` as a new append at the single point where the seven spawn sites live today (§5.2), serves title from the read model (§5.3), and makes reconcile honour persisted suppression (§4.5).
+
+**rev 2 → rev 3** (daedalus REJECT, DM #21131):
+
+- *Flaw 1 — invocation-local `operatorAttachPending` promoted to immutable generation state.* Today the predicate is computed per start/reuse invocation and only skips that invocation; a detached `hrc start` reusing an `hrc run` runtime mints a viewer. Rev 3 stops persisting `operatorAttachPending`; it rides only on the per-invocation `runtime.presentation` event (§5.2), which is now emitted on every start *and reuse* invocation. The persisted record carries the cumulative fact the in-daemon path actually acts on — monotone `viewerRequested` (§5.1) — and reconcile keys on it (§4.5), reproducing the event path's cumulative outcome. The reuse-after-run case is added to the Phase 3 gate.
+- *Flaw 1b — no authority for pre-upgrade generations.* Rev 3 adds §5.5: record-less rows are never minted, existing panes are adopted, the next invocation writes the record, and 24 h rotation bounds the population. The Phase 5 gate is restated to what can actually be asserted.
