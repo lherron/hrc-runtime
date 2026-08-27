@@ -633,6 +633,45 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(1)
   })
 
+  it('holds a still-presented envelope inside its redelivery floor, doubling per round', async () => {
+    const envelope = say()
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => deterministic.calls() === 1, 'first drive')
+
+    const db = (server as any).db as HrcDatabase
+    await completeRun(server as HrcServer, await startedRunId(db, 0))
+    await waitUntil(() => ledger.roundEndedCalls.length > 0, 'round advanced')
+    expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(1)
+
+    // A turn that ends in seconds must NOT be able to burn the bound in
+    // seconds. The envelope was presented moments ago, so it is floored.
+    ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
+    await (server as any).runMailKickerSweep()
+    await Bun.sleep(50)
+    expect(deterministic.calls()).toBe(1)
+
+    // Age the receipt past the round-1 floor (2m) and it drives again.
+    const aged = ledger.envelopes.get(envelope.id)
+    const receipt = aged?.presentedTo[aged.presentedTo.length - 1]
+    if (receipt !== undefined) {
+      receipt.presentedAt = new Date(Date.now() - 5 * 60_000).toISOString()
+    }
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await waitUntil(() => deterministic.calls() === 2, 'drive resumed past the floor')
+  })
+
+  it('never floors an envelope the addressee has not been shown', async () => {
+    say()
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    // A pending envelope has no receipt to wait from: the floor is about
+    // RE-delivery, and delaying a first presentation would just be latency.
+    await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
+  })
+
   it('B2.1: a daemon kill after the slot CAS recovers one attempt and one START', async () => {
     const markerPath = join(fixture.tmpDir, 'claimed.json')
     const serverEntry = resolve(import.meta.dir, '..', 'index.ts')

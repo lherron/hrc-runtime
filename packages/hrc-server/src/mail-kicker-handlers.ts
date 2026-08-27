@@ -56,6 +56,17 @@ const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
 /** One presentation carries a room's worth of obligations, not an inbox dump. */
 const MAX_PRESENTED_PER_ATTEMPT = 20
 /**
+ * The floor between re-presentations of a still-undisposed envelope, doubling
+ * per round: 1m, 2m, 4m, 8m, 16m — so exhausting the bound takes at least 31
+ * minutes of wall clock (mable's erratum on T-07612 §6, ruled on T-07615).
+ *
+ * Without it the bound counts TURNS, not time, and a target whose turns end in
+ * seconds burns all five rounds in under a minute: EN-00040 dead-lettered 40
+ * seconds after it was written, while its addressee had done nothing wrong.
+ * The round semantics are unchanged and there is still no maximum age.
+ */
+const REDELIVERY_FLOOR_BASE_MS = 60_000
+/**
  * Bounded page for the wake tail. The limit bounds RAW ledger rows scanned, not
  * matches, so a busy ledger costs more ticks rather than one unbounded read.
  */
@@ -221,7 +232,27 @@ async function readActionableEnvelopes(
       repended: view.repended,
     })
   }
-  return view.items.slice(0, MAX_PRESENTED_PER_ATTEMPT)
+  const now = Date.now()
+  return view.items
+    .filter((envelope) => !isWithinRedeliveryFloor(envelope, now))
+    .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+}
+
+/**
+ * Is this envelope still inside its redelivery floor?
+ *
+ * Only a PRESENTED envelope can be: one that has never been shown has nothing
+ * to wait for, and neither does one with no receipt to measure from.
+ */
+function isWithinRedeliveryFloor(envelope: WrkqEnvelope, now: number): boolean {
+  if (envelope.state !== 'presented') return false
+  const lastPresentedAt = envelope.presentedTo.reduce<number>((newest, receipt) => {
+    const at = Date.parse(receipt.presentedAt)
+    return Number.isNaN(at) ? newest : Math.max(newest, at)
+  }, 0)
+  if (lastPresentedAt === 0) return false
+  const floorMs = REDELIVERY_FLOOR_BASE_MS * 2 ** Math.max(envelope.roundCount, 0)
+  return now - lastPresentedAt < floorMs
 }
 
 /** Only a `reply_required` obligation is worth a turn, let alone a birth (§5). */
