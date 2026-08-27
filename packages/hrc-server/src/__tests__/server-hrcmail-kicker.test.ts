@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { access, readFile } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import type { DispatchTurnResponse, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
@@ -31,10 +31,27 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 let ledger: FakeWrkqLedger
 let crashChild: ReturnType<typeof Bun.spawn> | undefined
+let originalCwd: string
+let originalAgentsRoot: string | undefined
+let agentsRoot: string
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-mail-kicker-')
   ledger = new FakeWrkqLedger()
+
+  // The kicker BUILDS the runtime intent for a cold target from the agent's own
+  // profile on this node, because wrkq stores only the verbatim directive block.
+  // So the target has to have a real agent home for a cold summon to be possible
+  // at all -- which is the same thing production requires.
+  originalCwd = process.cwd()
+  originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
+  const workspaceRoot = await realpath(fixture.tmpDir)
+  agentsRoot = join(workspaceRoot, 'collective', 'var', 'agents')
+  await mkdir(join(workspaceRoot, 'collective', 'hrc-runtime', '.git'), { recursive: true })
+  await mkdir(join(agentsRoot, 'kicker-proof'), { recursive: true })
+  await writeFile(join(agentsRoot, 'kicker-proof', 'agent-profile.toml'), 'version = 3\n')
+  process.chdir(join(workspaceRoot, 'collective'))
+  process.env['ASP_AGENTS_ROOT'] = agentsRoot
 })
 
 afterEach(async () => {
@@ -47,35 +64,17 @@ afterEach(async () => {
     await crashChild.exited.catch(() => undefined)
     crashChild = undefined
   }
+  process.chdir(originalCwd)
+  if (originalAgentsRoot === undefined) {
+    Reflect.deleteProperty(process.env, 'ASP_AGENTS_ROOT')
+  } else {
+    process.env['ASP_AGENTS_ROOT'] = originalAgentsRoot
+  }
   await fixture.cleanup()
 })
 
-function intent(): HrcRuntimeIntent {
-  return {
-    placement: {
-      agentRoot: fixture.tmpDir,
-      projectRoot: fixture.tmpDir,
-      cwd: fixture.tmpDir,
-      runMode: 'task',
-      bundle: { kind: 'compose', compose: [] },
-      dryRun: true,
-    },
-    harness: {
-      provider: 'openai',
-      id: 'codex-cli',
-      interactive: false,
-    },
-    execution: { preferredMode: 'nonInteractive' },
-  }
-}
-
 function say(overrides: Partial<Parameters<FakeWrkqLedger['say']>[0]> = {}) {
-  return ledger.say({
-    toScopeRef: SCOPE,
-    fromScopeRef: SENDER,
-    materializationIntent: JSON.stringify(intent()),
-    ...overrides,
-  })
+  return ledger.say({ toScopeRef: SCOPE, fromScopeRef: SENDER, ...overrides })
 }
 
 async function startServer(options: Record<string, unknown> = {}): Promise<HrcServer> {
@@ -618,9 +617,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
         import { FakeWrkqLedger } from ${JSON.stringify(ledgerEntry)};
         const options = JSON.parse(process.env.HRC_MAIL_CRASH_OPTIONS);
         const markerPath = process.env.HRC_MAIL_CRASH_MARKER;
-        const intent = process.env.HRC_MAIL_CRASH_INTENT;
         const ledger = new FakeWrkqLedger();
-        ledger.say({ toScopeRef: ${JSON.stringify(SCOPE)}, fromScopeRef: ${JSON.stringify(SENDER)}, materializationIntent: intent });
+        ledger.say({ toScopeRef: ${JSON.stringify(SCOPE)}, fromScopeRef: ${JSON.stringify(SENDER)} });
         const server = await createHrcServer({
           ...options,
           wrkqLedger: ledger,
@@ -638,7 +636,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
         ...process.env,
         HRC_MAIL_CRASH_OPTIONS: JSON.stringify(childOptions),
         HRC_MAIL_CRASH_MARKER: markerPath,
-        HRC_MAIL_CRASH_INTENT: JSON.stringify(intent()),
+        ASP_AGENTS_ROOT: agentsRoot,
       },
       stdout: 'ignore',
       stderr: 'ignore',

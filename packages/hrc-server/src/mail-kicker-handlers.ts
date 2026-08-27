@@ -2,13 +2,13 @@ import type {
   DispatchTurnResponse,
   HrcLifecycleEvent,
   HrcRunRecord,
-  HrcRuntimeIntent,
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import { formatSessionRef } from './messages.js'
-import { parseRuntimeIntent } from './parsers/runtime.js'
+import { parseSessionRef } from './server-parsers.js'
+
 import { isRunActive } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -18,6 +18,7 @@ import {
   type PresentableEnvelope,
   formatEnvelopePresentations,
 } from './wrkq/envelope-presentation.js'
+import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 import { WrkqLedgerUnavailableError } from './wrkq/ledger-client.js'
 import { targetSessionRefForLedgerScope } from './wrkq/ledger-scope.js'
 import type {
@@ -219,20 +220,16 @@ async function readActionableEnvelopes(
 }
 
 /**
- * Birth directives ride the envelope verbatim (`+node=`, `+model=`): wrkq stores
- * the string and never parses it, and HRC parses it here, at kick time.
+ * The birth directive block the ledger carried, if any envelope carried one.
+ *
+ * wrkq stores it VERBATIM (`+node=svc`) and never parses it — that vocabulary
+ * is HRC's. It is a string, not an intent: the intent is assembled at kick time
+ * from the target agent's own profile on this node.
  */
-function actionableIntent(envelopes: readonly WrkqEnvelope[]): HrcRuntimeIntent | undefined {
+function actionableDirectives(envelopes: readonly WrkqEnvelope[]): string | undefined {
   for (const envelope of envelopes) {
-    const raw = envelope.materializationIntent
-    if (raw === undefined || raw.trim().length === 0) continue
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (isRecord(parsed)) return parseRuntimeIntent(parsed)
-    } catch {
-      // A malformed intent must not strand the envelope: fall through to the
-      // session's own last applied intent, which is what an ordinary DM uses.
-    }
+    const raw = envelope.materializationIntent?.trim()
+    if (raw !== undefined && raw.length > 0) return raw
   }
   return undefined
 }
@@ -336,10 +333,14 @@ async function driveMailTargetOnce(
 
   if (attempt === undefined) {
     if (session !== undefined && targetHasRunningTurn(server, session)) return
+    const directives = actionableDirectives(actionable)
     const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
       envelopeIds: actionable.map((envelope) => envelope.id),
       ...(() => {
-        const intent = actionableIntent(actionable)
+        const intent = buildKickRuntimeIntent(
+          parseSessionRef(targetSessionRef).scopeRef,
+          directives
+        )
         return intent === undefined ? {} : { materializationIntent: intent }
       })(),
     })
@@ -368,9 +369,11 @@ async function driveMailTargetOnce(
   try {
     const materializationIntent = session?.lastAppliedIntentJson ?? attempt.materializationIntent
     if (materializationIntent === undefined) {
+      // Placement is HRC's, so a missing intent means this node could not find
+      // the target agent's profile — not that the sender forgot something.
       server.db.mailDrives.recordError(
         attempt.driveAttemptId,
-        'target is unborn and the envelope has no materialization intent'
+        `no runtime intent for ${targetSessionRef}: this node cannot resolve the agent's placement`
       )
       return
     }

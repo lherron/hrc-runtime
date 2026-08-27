@@ -12,16 +12,18 @@ export {
   parseDotEnvContent,
   warnAutoLoadedCredentials,
 } from './dotenv-local.js'
+// Re-exported from hrc-core, where the assembly now lives so the daemon can
+// reach it too (T-07615). Every existing `from 'hrc-sdk'` import is unchanged.
 export {
   applyProvisionDirectives,
   buildHrcRuntimeIntent,
   harnessFrontendToHrcHarness,
   resolveAgentHarness,
-} from './resolve-intent.js'
+} from 'hrc-core'
 export type {
   BuildHrcRuntimeIntentInput,
   ResolvedAgentHarness,
-} from './resolve-intent.js'
+} from 'hrc-core'
 export { resolveProfileAwareScopeInput } from './resolve-scope.js'
 export type {
   ProfileAwareScopeDefaults,

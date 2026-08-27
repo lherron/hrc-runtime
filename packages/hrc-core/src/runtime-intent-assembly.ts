@@ -18,7 +18,6 @@ import { join } from 'node:path'
 
 import { DENIED_PROVISION_OVERRIDE_KEYS } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
-import type { HrcExecutionMode, HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
   type RuntimePlacement,
   type TargetDefinition,
@@ -30,6 +29,7 @@ import {
   resolveAgentPrimingPrompt,
   resolveHarnessProvider,
 } from 'spaces-config'
+import type { HrcExecutionMode, HrcHarness, HrcRuntimeIntent } from './contracts.js'
 
 export type ResolvedAgentHarness = {
   provider: 'anthropic' | 'openai'

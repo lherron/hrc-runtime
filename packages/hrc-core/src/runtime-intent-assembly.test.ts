@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildHrcRuntimeIntent, resolveAgentHarness } from './resolve-intent.js'
+import { buildHrcRuntimeIntent, resolveAgentHarness } from './runtime-intent-assembly.js'
 
 const tempRoots: string[] = []
 

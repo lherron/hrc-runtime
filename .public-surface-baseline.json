@@ -231,6 +231,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "applyProvisionDirectives",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|applyProvisionDirectives|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "AppSessionFreshnessFence",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -363,6 +371,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
       "hash": "hrc-core|BuildHrcInvocationExposureInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "buildHrcRuntimeIntent",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|buildHrcRuntimeIntent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BuildHrcRuntimeIntentInput",
+      "kind": "type",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|BuildHrcRuntimeIntentInput|type",
       "count": 1
     },
     {
@@ -971,6 +995,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|GetTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "harnessFrontendToHrcHarness",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|harnessFrontendToHrcHarness|value",
       "count": 1
     },
     {
@@ -3351,10 +3383,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "resolveAgentHarness",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|resolveAgentHarness|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "resolveControlSocketPath",
       "kind": "value",
       "file": "packages/hrc-core/src/paths.ts",
       "hash": "hrc-core|resolveControlSocketPath|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolvedAgentHarness",
+      "kind": "type",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|ResolvedAgentHarness|type",
       "count": 1
     },
     {
@@ -4161,7 +4209,7 @@
       "package": "hrc-sdk",
       "symbol": "applyProvisionDirectives",
       "kind": "value",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|applyProvisionDirectives|value",
       "count": 1
     },
@@ -4225,7 +4273,7 @@
       "package": "hrc-sdk",
       "symbol": "buildHrcRuntimeIntent",
       "kind": "value",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|buildHrcRuntimeIntent|value",
       "count": 1
     },
@@ -4233,7 +4281,7 @@
       "package": "hrc-sdk",
       "symbol": "BuildHrcRuntimeIntentInput",
       "kind": "type",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|BuildHrcRuntimeIntentInput|type",
       "count": 1
     },
@@ -4425,7 +4473,7 @@
       "package": "hrc-sdk",
       "symbol": "harnessFrontendToHrcHarness",
       "kind": "value",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|harnessFrontendToHrcHarness|value",
       "count": 1
     },
@@ -4777,7 +4825,7 @@
       "package": "hrc-sdk",
       "symbol": "resolveAgentHarness",
       "kind": "value",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|resolveAgentHarness|value",
       "count": 1
     },
@@ -4785,7 +4833,7 @@
       "package": "hrc-sdk",
       "symbol": "ResolvedAgentHarness",
       "kind": "type",
-      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
       "hash": "hrc-sdk|ResolvedAgentHarness|type",
       "count": 1
     },

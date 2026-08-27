@@ -542,3 +542,21 @@ export type {
   LocateSkew,
   ScopeLocation,
 } from './federation-contracts.js'
+
+/**
+ * Runtime-intent assembly from a resolved agent placement (T-07615 moved this
+ * here from hrc-sdk). It lives in hrc-core because the DAEMON needs it too:
+ * the wrkq kicker must birth a target the ledger addressed, and wrkq stores
+ * only the verbatim `+node=`/`+model=` directive block, never an intent. A
+ * server reaching into the client SDK to assemble one would be backwards.
+ */
+export {
+  applyProvisionDirectives,
+  buildHrcRuntimeIntent,
+  harnessFrontendToHrcHarness,
+  resolveAgentHarness,
+} from './runtime-intent-assembly.js'
+export type {
+  BuildHrcRuntimeIntentInput,
+  ResolvedAgentHarness,
+} from './runtime-intent-assembly.js'
