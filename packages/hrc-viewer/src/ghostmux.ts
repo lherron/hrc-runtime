@@ -57,6 +57,12 @@ export type GhostmuxWindowState = {
   terminalIds: string[]
 }
 
+/** One managed window as answered by `list-windows` (T-07603 adoption scan). */
+export type GhostmuxManagedWindow = {
+  windowId: string
+  metadata: Record<string, unknown>
+}
+
 type GhostmuxSplitDirection = 'right' | 'down'
 
 /**
@@ -103,6 +109,15 @@ const HEADLESS_AGENT_PANE_ROLE = 'headless-agent-pane'
  */
 export const DEFAULT_HEADLESS_WINDOW_KEY = 'default'
 
+/**
+ * Window key for the operator's INTERACTIVE window (T-07603) — the one that is
+ * not the headless pile. Resolved by adoption (`adoptInteractiveWindow`), never
+ * by an operator metadata stamp: the T-07118 stamp lived in Ghostty's in-memory
+ * window metadata, so it was wiped on every Ghostty restart and in practice was
+ * never reapplied, which is what left HRC minting a second empty window.
+ */
+export const INTERACTIVE_WINDOW_KEY = 'console'
+
 /** Keep a caller-supplied window key inside the safe metadata-key alphabet. */
 export function normalizeWindowKey(windowKey: string | undefined): string {
   const trimmed = (windowKey ?? '').trim()
@@ -115,6 +130,18 @@ function metadataWindowKey(metadata: unknown): string {
   if (!isRecord(metadata)) return DEFAULT_HEADLESS_WINDOW_KEY
   const raw = metadata['hrc_window_key']
   return typeof raw === 'string' && raw.length > 0 ? raw : DEFAULT_HEADLESS_WINDOW_KEY
+}
+
+/**
+ * The EXPLICIT window key on live metadata, or undefined when the window carries
+ * none. Distinct from `metadataWindowKey`, which folds an absent key to the
+ * implicit default: adoption must tell an UNTAGGED window (adoptable) apart from
+ * one already tagged `default` (the headless pile, never adoptable).
+ */
+function explicitWindowKey(metadata: unknown): string | undefined {
+  if (!isRecord(metadata)) return undefined
+  const raw = metadata['hrc_window_key']
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
 }
 
 /** Presentation-only window title derived from the key. */
@@ -223,6 +250,40 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
     ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
     label: `${prefix} · ${scopeToken}`,
   }
+}
+
+/**
+ * Default window placement for a tab identity (T-07603).
+ *
+ * Machine-dispatched worker lanes (`task:T-XXXXX`, role-qualified seats
+ * included) belong in the headless pile. Everything the operator summoned by
+ * name — `primary`, roster slugs, `minisvc`/`minilab`, hand-named lanes such as
+ * `viewrca` — belongs in the window they are actually working in.
+ *
+ * The classification is `deriveHeadlessTabIdentity`'s, unchanged: this reads the
+ * tabKey it already produced rather than re-testing the scope. So window
+ * placement and tab grouping can never disagree, and `isRealTaskId` keeps its
+ * single definition.
+ *
+ * An UNPARSEABLE scope routes to the HEADLESS window. That branch returns before
+ * `isRealTaskId` is ever reached, so keying off a bare taskId would send junk
+ * panes into the operator's window; malformed input belongs in the background.
+ */
+export function defaultWindowKeyForTab(tab: HeadlessTabIdentity): string {
+  if (tab.tabKey.startsWith('task:')) return DEFAULT_HEADLESS_WINDOW_KEY
+  if (tab.tabKey.startsWith('unparsed:')) return DEFAULT_HEADLESS_WINDOW_KEY
+  return INTERACTIVE_WINDOW_KEY
+}
+
+/**
+ * Effective window key for a placement. An explicit `--viewer-window` hint always
+ * wins; absent a hint the key comes from scope shape (T-07603) instead of always
+ * folding to the headless window as it did under T-07118.
+ */
+export function resolveWindowKey(hint: string | undefined, tab: HeadlessTabIdentity): string {
+  const trimmed = (hint ?? '').trim()
+  if (trimmed.length > 0) return sanitizeKeyFragment(trimmed)
+  return defaultWindowKeyForTab(tab)
 }
 
 /**
@@ -445,6 +506,25 @@ export function parseGhostmuxWindowState(stdout: string): GhostmuxWindowState {
   }
 }
 
+/**
+ * Parse `ghostmux list-windows --json` (T-07603 adoption scan).
+ *
+ * Order is PRESERVED. The server answers in creation order, so the first match
+ * is the oldest — the only tiebreak adoption uses. `list-windows` exposes no
+ * timestamp, so this ordering is the sole age signal; accepted as best-effort
+ * (Lance, 2026-08-27), bounded because a wrong pick lasts one Ghostty lifetime.
+ */
+export function parseGhostmuxWindowList(stdout: string): GhostmuxManagedWindow[] {
+  const parsed = parseJson(stdout)
+  const windows = isRecord(parsed) && Array.isArray(parsed['windows']) ? parsed['windows'] : []
+  return windows.filter(isRecord).flatMap((window) => {
+    const windowId = getString(window, 'id', 'window_id', 'windowId')
+    if (!windowId) return []
+    const metadata = window['metadata']
+    return [{ windowId, metadata: isRecord(metadata) ? metadata : {} }]
+  })
+}
+
 function parseGhostmuxSurfaceList(stdout: string): GhostmuxSurfaceState[] {
   const parsed = parseJson(stdout)
   const terminals =
@@ -630,7 +710,7 @@ export class GhostmuxManager {
   }): Promise<HeadlessViewerResult> {
     const identity = deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef)
     const tab = identity.tab
-    const windowKey = normalizeWindowKey(options.windowKey)
+    const windowKey = resolveWindowKey(options.windowKey, tab)
     const paneTitle = options.title ?? defaultHeadlessPaneTitle(options.scopeRef, options.laneRef)
     // Serialize per COMPOSITE tab key `(windowKey, tabKey)` (T-07118): concurrent
     // same-task dispatches must not both miss-then-create a duplicate tab, and two
@@ -836,17 +916,14 @@ export class GhostmuxManager {
       windowKey?: string | undefined
     }
   ): Promise<void> {
-    await this.stampAgentPaneMetadata(
-      surfaceId,
-      deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef),
-      {
-        scopeRef: options.scopeRef,
-        runtimeId: options.runtimeId,
-        windowKey: normalizeWindowKey(options.windowKey),
-        hostSessionId: options.hostSessionId,
-        generation: options.generation,
-      }
-    )
+    const identity = deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef)
+    await this.stampAgentPaneMetadata(surfaceId, identity, {
+      scopeRef: options.scopeRef,
+      runtimeId: options.runtimeId,
+      windowKey: resolveWindowKey(options.windowKey, identity.tab),
+      hostSessionId: options.hostSessionId,
+      generation: options.generation,
+    })
   }
 
   /** Retitle an adopted pane; callers compute the title from durable session facts. */
@@ -980,6 +1057,13 @@ export class GhostmuxManager {
   private async ensureHeadlessWindow(windowKey: string): Promise<HeadlessWindowTarget> {
     if (await this.supportsWindowsApi()) {
       try {
+        // T-07603: the INTERACTIVE window is adopted from what the operator already
+        // has open, so it needs a find-only pass before find-or-CREATE. The headless
+        // pile keeps the plain atomic find-or-create below, byte-for-byte unchanged.
+        if (windowKey !== DEFAULT_HEADLESS_WINDOW_KEY) {
+          const adopted = await this.adoptInteractiveWindow(windowKey)
+          if (adopted !== undefined) return { kind: 'managed', windowId: adopted }
+        }
         const window = await this.withGhostmuxBackoff(async () =>
           parseGhostmuxWindowState(
             (
@@ -1010,6 +1094,74 @@ export class GhostmuxManager {
       }
     }
     return { kind: 'anchor', anchor: await this.ensureLegacyWindowAnchor(windowKey) }
+  }
+
+  /**
+   * Resolve the operator's interactive window WITHOUT an operator metadata stamp
+   * (T-07603).
+   *
+   * 1. A window already tagged with this key wins, found by a server-side `--meta`
+   *    filter — the steady state after the first adoption, one cheap read.
+   * 2. Otherwise adopt the OLDEST untagged window and stamp it, so every later
+   *    lookup is an ordinary tagged hit.
+   * 3. No untagged window at all ⇒ undefined, and the caller creates one.
+   *
+   * There is deliberately no "skip windows whose surfaces are all HRC-owned"
+   * guard. The headless window is stamped atomically at creation by
+   * `find-or-create-by`, so it is never untagged and step 2 cannot select it; and
+   * a Ghostty restart that wipes tags also destroys every surface, so no
+   * untagged-window-with-stale-panes case exists. Such a guard would protect
+   * nothing reachable while rejecting the operator's real working window whenever
+   * it happened to hold only agent panes — reproducing the exact defect this
+   * change fixes.
+   *
+   * Serialized on the `window:<key>` lock so two concurrent first-placements
+   * cannot adopt two different windows. Any failure degrades to undefined, i.e.
+   * to the pre-T-07603 behavior of creating a fresh keyed window.
+   */
+  private adoptInteractiveWindow(windowKey: string): Promise<string | undefined> {
+    return this.withHeadlessLock(`window:${windowKey}`, async () => {
+      try {
+        // Steady state — the window was adopted on an earlier placement and wears
+        // the key. One server-side filtered read, no client scan.
+        const tagged = parseGhostmuxWindowList(
+          (await this.exec(['list-windows', '--meta', `hrc_window_key=${windowKey}`, '--json']))
+            .stdout
+        )
+        const hit = tagged[0]
+        if (hit !== undefined) return hit.windowId
+
+        // First interactive placement of this Ghostty lifetime: scan and adopt.
+        const windows = parseGhostmuxWindowList(
+          (await this.exec(['list-windows', '--json'])).stdout
+        )
+        const untagged = windows.find((window) => explicitWindowKey(window.metadata) === undefined)
+        if (untagged === undefined) return undefined
+
+        await this.setWindowMetadata(untagged.windowId, {
+          hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE,
+          hrc_window_key: windowKey,
+        })
+        return untagged.windowId
+      } catch {
+        return undefined
+      }
+    })
+  }
+
+  /** Write first-class managed-window metadata by window id (T-07121 surface). */
+  private async setWindowMetadata(
+    windowId: string,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    await this.exec([
+      'metadata',
+      'set',
+      '--window-id',
+      windowId,
+      JSON.stringify(metadata),
+      '--json',
+    ])
   }
 
   /**

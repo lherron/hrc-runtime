@@ -92,13 +92,21 @@ function makeFakeGhostmux(options: { windowsApi?: boolean } = {}) {
   /** `metadata get|set`, in both the surface scope and the managed-window scope. */
   const runMetadata = (args: string[]) => {
     const write = args[1] === 'set'
+    // Pick the JSON-object POSITIONAL wherever the flags put it. Real usage is
+    // `metadata set --window-id <id> '<json>'`, so a fixed index silently reads the
+    // window id as the payload.
+    const payload = () =>
+      JSON.parse(args.slice(2).find((a) => a.trim().startsWith('{')) ?? '{}') as Record<
+        string,
+        unknown
+      >
     const windowId = argAfter(args, '--window-id')
     if (windowId !== undefined) {
       if (!windowsApi) throw new Error(WINDOWS_UNSUPPORTED)
       const window = windows.get(windowId)
       if (!window) throw new Error(`error: window_not_found: ${windowId}`)
       if (!write) return { stdout: JSON.stringify({ data: window.metadata }), stderr: '' }
-      window.metadata = { ...window.metadata, ...(JSON.parse(args[3] ?? '{}') as object) }
+      window.metadata = { ...window.metadata, ...payload() }
       return { stdout: '{}', stderr: '' }
     }
     const surface = surfaces.get(argAfter(args, '-t') ?? '')
@@ -108,9 +116,9 @@ function makeFakeGhostmux(options: { windowsApi?: boolean } = {}) {
       return { stdout: JSON.stringify({ data: meta ?? {} }), stderr: '' }
     }
     if (surface) {
-      const payload = JSON.parse(args[4] ?? '{}') as Record<string, unknown>
-      if (windowScope) surface.windowMeta = { ...surface.windowMeta, ...payload }
-      else surface.surfaceMeta = { ...surface.surfaceMeta, ...payload }
+      const written = payload()
+      if (windowScope) surface.windowMeta = { ...surface.windowMeta, ...written }
+      else surface.surfaceMeta = { ...surface.surfaceMeta, ...written }
     }
     return { stdout: '{}', stderr: '' }
   }
@@ -153,8 +161,17 @@ function makeFakeGhostmux(options: { windowsApi?: boolean } = {}) {
 
     if (args[0] === 'list-windows') {
       if (!windowsApi) throw new Error(WINDOWS_UNSUPPORTED)
+      // `--meta <key>=<value>`, repeatable and AND-ed, as the real surface does.
+      const filters = args
+        .map((arg, index) => (arg === '--meta' ? args[index + 1] : undefined))
+        .filter((pair): pair is string => pair !== undefined)
+        .map((pair) => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)])
+      const matching = [...windows.entries()]
+        .sort((a, b) => a[1].seq - b[1].seq)
+        .filter(([, w]) => filters.every(([k, v]) => w.metadata[k ?? ''] === v))
+        .map(([id]) => id)
       return {
-        stdout: JSON.stringify({ windows: [...windows.keys()].map(windowJson) }),
+        stdout: JSON.stringify({ windows: matching.map(windowJson) }),
         stderr: '',
       }
     }
@@ -246,7 +263,14 @@ function makeFakeGhostmux(options: { windowsApi?: boolean } = {}) {
 const CLOD = 'agent:clod:project:hrc-runtime:task:primary'
 const CURLY = 'agent:curly:project:hrc-runtime:task:primary'
 const MOE = 'agent:moe:project:hrc-runtime:task:primary'
-const TAB_KEY = 'project:hrc-runtime:primary'
+/**
+ * T-07603: an absent hint now routes a `:primary` scope to the INTERACTIVE window,
+ * so exercising DEFAULT-window placement needs `T-` task scopes. They share one
+ * tabKey, which is the property these tests rely on; only the scope shape moved.
+ */
+const CLOD_TASK = 'agent:clod:project:hrc-runtime:task:T-01234'
+const CURLY_TASK = 'agent:curly:project:hrc-runtime:task:T-01234'
+const TASK_TAB_KEY = 'task:T-01234'
 
 const findOrCreateCalls = (calls: string[][]) =>
   calls.filter((c) => c[0] === 'new' && c.includes('--find-or-create-by'))
@@ -258,8 +282,24 @@ describe('T-07121 windows-API capability probe', () => {
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    // Pre-adopted interactive window, so the console placement resolves through
+    // adoption's filtered read and never falls back to the full scan (T-07603).
+    const console = fake.allocWindow(
+      { hrc_role: 'headless-sessions-window', hrc_window_key: 'console' },
+      'Lance console'
+    )
+    fake.allocSurface(console, 'a real tab Lance uses')
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
     await manager.ensureHeadlessViewer({
       scopeRef: MOE,
       runtimeId: 'rt-3',
@@ -267,7 +307,11 @@ describe('T-07121 windows-API capability probe', () => {
       windowKey: 'console',
     })
 
-    expect(fake.calls.filter((c) => c[0] === 'list-windows')).toHaveLength(1)
+    // Bare `list-windows` is the capability probe alone; adoption's own read is
+    // `--meta`-filtered and is counted separately.
+    expect(fake.calls.filter((c) => c[0] === 'list-windows' && !c.includes('--meta'))).toHaveLength(
+      1
+    )
     // No anchor pane is ever created or stamped on the managed path.
     expect(fake.anchors()).toHaveLength(0)
     expect(fake.calls.filter((c) => c.includes('--parent'))).toHaveLength(0)
@@ -315,8 +359,16 @@ describe('T-07121 windows-API capability probe', () => {
       return fake.runner(args)
     })
 
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
 
     // First dispatch fell back to legacy; the second re-probed and went managed.
     expect(findOrCreateCalls(fake.calls)).toHaveLength(1)
@@ -369,7 +421,10 @@ describe('T-07121 keyed window find-or-create', () => {
       windowKey: 'console',
     })
 
-    expect(findOrCreateCalls(fake.calls)).toHaveLength(2)
+    // T-07603: the FIRST console placement finds no untagged window and falls
+    // through to find-or-create; the second resolves through adoption's filtered
+    // read, so exactly one find-or-create is issued for the pair.
+    expect(findOrCreateCalls(fake.calls)).toHaveLength(1)
     expect(fake.windows.size).toBe(1)
     // Same tabKey in the same window ⇒ one tab, two panes.
     expect(windowIdTabCalls(fake.calls)).toHaveLength(1)
@@ -408,9 +463,13 @@ describe('T-07121 keyed window find-or-create', () => {
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
     await manager.ensureHeadlessViewer({
-      scopeRef: CURLY,
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
       runtimeId: 'rt-2',
       attachCommand: 'a2',
       windowKey: 'console',
@@ -419,7 +478,7 @@ describe('T-07121 keyed window find-or-create', () => {
     expect(fake.windows.size).toBe(2)
     expect(fake.calls.filter((c) => c[0] === 'new-pane')).toHaveLength(0)
     const panes = fake.agentPanes()
-    expect(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key'])).toEqual([TAB_KEY, TAB_KEY])
+    expect(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key'])).toEqual([TASK_TAB_KEY, TASK_TAB_KEY])
     expect(new Set(panes.map(([, s]) => s.windowId)).size).toBe(2)
   })
 
@@ -460,7 +519,11 @@ describe('T-07121 residency-fenced split target (daedalus #17988)', () => {
       attachCommand: 'a1',
       windowKey: 'console',
     })
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
 
     const consoleWindow = fake.windowFor('console')
     const defaultWindow = fake.windowFor('default')
@@ -616,7 +679,11 @@ describe('T-07121 untouched paths', () => {
       attachCommand: 'a1',
       windowKey: 'console',
     })
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
     const consolePane = fake
       .agentPanes()
       .find(([, s]) => s.surfaceMeta['hrc_window_key'] === 'console')?.[0]

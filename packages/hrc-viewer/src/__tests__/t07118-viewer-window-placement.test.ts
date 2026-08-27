@@ -132,6 +132,14 @@ function makeFakeGhostmux() {
 
 const CLOD = 'agent:clod:project:hrc-runtime:task:primary'
 const CURLY = 'agent:curly:project:hrc-runtime:task:primary'
+/**
+ * T-07603 changed what an ABSENT hint means: a `:primary` scope now routes to the
+ * interactive window, so the scopes that exercise DEFAULT-window placement have to
+ * be `T-` task scopes. They still share one tabKey (`task:T-01234`), which is the
+ * property every test below actually depends on — only the scope shape moved.
+ */
+const CLOD_TASK = 'agent:clod:project:hrc-runtime:task:T-01234'
+const CURLY_TASK = 'agent:curly:project:hrc-runtime:task:T-01234'
 
 describe('T-07118 normalizeWindowKey', () => {
   it('maps absent/blank to the implicit default key', () => {
@@ -147,12 +155,20 @@ describe('T-07118 normalizeWindowKey', () => {
 })
 
 describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
-  it('an absent hint reproduces today’s topology exactly', async () => {
+  it('an absent hint on a TASK scope reproduces today’s topology exactly', async () => {
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
 
     expect(fake.anchors()).toHaveLength(1)
     expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
@@ -168,10 +184,14 @@ describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
-    // Same tabKey (`project:hrc-runtime:primary`), different window keys.
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
+    // Same tabKey (`task:T-01234`), different window keys.
     await manager.ensureHeadlessViewer({
-      scopeRef: CURLY,
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
       runtimeId: 'rt-2',
       attachCommand: 'a2',
       windowKey: 'console',
@@ -180,7 +200,7 @@ describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
     const panes = fake.agentPanes()
     expect(panes).toHaveLength(2)
     expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key']))).toEqual(
-      new Set(['project:hrc-runtime:primary'])
+      new Set(['task:T-01234'])
     )
     expect(panes.map(([, s]) => s.surfaceMeta['hrc_window_key']).sort()).toEqual([
       'console',
@@ -278,13 +298,17 @@ describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
     if (!legacyPaneSurf) throw new Error('fixture surface missing')
     legacyPaneSurf.surfaceMeta = {
       hrc_role: 'headless-agent-pane',
-      hrc_tab_key: 'project:hrc-runtime:primary',
-      hrc_pane_key: `${CLOD}#main`,
+      hrc_tab_key: 'task:T-01234',
+      hrc_pane_key: `${CLOD_TASK}#main`,
       hrc_runtime_id: 'rt-old',
     }
 
     // An unhinted new agent joins that legacy tab — no new window, no new tab.
-    await manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
 
     expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(0)
     expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--tab'))).toHaveLength(0)
@@ -321,10 +345,18 @@ describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
     await Promise.all([
-      manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' }),
-      manager.ensureHeadlessViewer({ scopeRef: CURLY, runtimeId: 'rt-2', attachCommand: 'a2' }),
       manager.ensureHeadlessViewer({
-        scopeRef: 'agent:moe:project:hrc-runtime:task:primary',
+        scopeRef: CLOD_TASK,
+        runtimeId: 'rt-1',
+        attachCommand: 'a1',
+      }),
+      manager.ensureHeadlessViewer({
+        scopeRef: CURLY_TASK,
+        runtimeId: 'rt-2',
+        attachCommand: 'a2',
+      }),
+      manager.ensureHeadlessViewer({
+        scopeRef: 'agent:moe:project:hrc-runtime:task:T-01234',
         runtimeId: 'rt-3',
         attachCommand: 'a3',
         windowKey: 'console',
@@ -343,9 +375,13 @@ describe('T-07118 composite (windowKey, tabKey) tab identity', () => {
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
 
-    await manager.ensureHeadlessViewer({ scopeRef: CLOD, runtimeId: 'rt-1', attachCommand: 'a1' })
     await manager.ensureHeadlessViewer({
-      scopeRef: CURLY,
+      scopeRef: CLOD_TASK,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: CURLY_TASK,
       runtimeId: 'rt-2',
       attachCommand: 'a2',
       windowKey: 'console',
