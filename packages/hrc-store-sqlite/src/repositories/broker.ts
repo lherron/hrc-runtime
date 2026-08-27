@@ -357,6 +357,28 @@ export function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvoc
 export function mapBrokerInvocationEventRow(
   row: BrokerInvocationEventRow
 ): HrcBrokerInvocationEventRecord {
+  let brokerEnvelopeJson = row.broker_envelope_json
+  if (brokerEnvelopeJson !== null) {
+    try {
+      const envelope = JSON.parse(brokerEnvelopeJson) as unknown
+      if (
+        typeof envelope === 'object' &&
+        envelope !== null &&
+        !Array.isArray(envelope) &&
+        !Object.prototype.hasOwnProperty.call(envelope, 'payload')
+      ) {
+        brokerEnvelopeJson = JSON.stringify({
+          ...envelope,
+          payload: JSON.parse(row.broker_event_json) as unknown,
+        })
+      }
+    } catch {
+      // Preserve the historical pass-through behaviour for malformed legacy
+      // rows. Valid payload-less envelopes are reconstructed above; old rows
+      // that already embed payload remain byte-for-byte unchanged.
+    }
+  }
+
   return {
     id: row.id,
     invocationId: row.invocation_id,
@@ -368,7 +390,7 @@ export function mapBrokerInvocationEventRow(
     ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
     ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
     brokerEventJson: row.broker_event_json,
-    ...(row.broker_envelope_json !== null ? { brokerEnvelopeJson: row.broker_envelope_json } : {}),
+    ...(brokerEnvelopeJson !== null ? { brokerEnvelopeJson } : {}),
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),

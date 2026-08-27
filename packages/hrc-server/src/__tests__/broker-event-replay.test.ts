@@ -40,12 +40,36 @@ import {
   INVOCATION_ID,
   RUNTIME_ID,
   RUN_ID,
+  envelope,
   headlessSequence,
 } from './broker-event-mapper-fixtures'
 
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture.js'
 
 const harness = createBrokerEventMapperTestFixture()
+
+describe('broker envelope payload dedupe', () => {
+  it('persists envelope metadata only and reconstructs the pre-change observer shape', () => {
+    const input = envelope('invocation.ready', 2, {
+      state: 'ready',
+      nested: { content: ['large', 'payload', 'authority'] },
+    })
+    const projected = harness.makeMapper().apply(input)
+
+    const stored = harness.fixture.db.sqlite
+      .query<{ broker_event_json: string; broker_envelope_json: string }, [string, number]>(
+        `SELECT broker_event_json, broker_envelope_json
+           FROM broker_invocation_events
+          WHERE invocation_id = ? AND seq = ?`
+      )
+      .get(input.invocationId, input.seq)
+
+    expect(stored).not.toBeNull()
+    expect(JSON.parse(stored!.broker_event_json)).toEqual(input.payload)
+    expect(JSON.parse(stored!.broker_envelope_json)).not.toHaveProperty('payload')
+    expect(JSON.parse(projected.brokerEvent.brokerEnvelopeJson!)).toEqual(input)
+  })
+})
 
 describe('replay (end-to-end idempotency)', () => {
   it('produces no state change when the full sequence is replayed', () => {

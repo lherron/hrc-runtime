@@ -224,7 +224,12 @@ export class BrokerEventMapper {
     // broker seq and continue through projection + live fanout, leaving durable
     // seq gaps. The transient record preserves the existing in-memory observer
     // contract without writing the row. The kill switch restores the old path.
-    const brokerEnvelopeJson = JSON.stringify(persistedEnvelope)
+    // `broker_event_json` is the payload authority. Keeping payload inside the
+    // envelope as well duplicated the largest broker values byte-for-byte, so
+    // persist only the envelope metadata and let the store row mapper restore
+    // the full observer shape on reads.
+    const { payload: _payload, ...persistedEnvelopeWithoutPayload } = persistedEnvelope
+    const persistedBrokerEnvelopeJson = JSON.stringify(persistedEnvelopeWithoutPayload)
     const appended = shouldPersistBrokerEvent(persistedEnvelope)
       ? db.brokerInvocationEvents.appendEvent({
           invocationId: envelope.invocationId,
@@ -248,7 +253,7 @@ export class BrokerEventMapper {
           // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
           // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
           // that agent-loop's projector reconstructs.
-          envelopeJson: brokerEnvelopeJson,
+          envelopeJson: persistedBrokerEnvelopeJson,
         })
       : undefined
     const brokerEvent: HrcBrokerInvocationEventRecord = appended?.record ?? {
@@ -265,7 +270,10 @@ export class BrokerEventMapper {
         ? { turnAttempt: persistedEnvelope.turnAttempt }
         : {}),
       brokerEventJson: JSON.stringify(persistedEnvelope.payload ?? null),
-      brokerEnvelopeJson,
+      // Raw deltas are deliberately not persisted. Their transient observer
+      // record therefore retains the payload directly instead of relying on a
+      // store read to reconstruct it.
+      brokerEnvelopeJson: JSON.stringify(persistedEnvelope),
       projectionStatus: 'pending',
       createdAt: envelope.time,
     }

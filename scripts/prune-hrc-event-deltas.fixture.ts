@@ -7,7 +7,11 @@ import { Database } from 'bun:sqlite'
 export { Database }
 import { afterEach } from 'bun:test'
 
-export { parsePruneStateRetentionArgs, pruneStateRetention } from './prune-hrc-event-deltas'
+export {
+  parsePruneStateRetentionArgs,
+  pruneStateRetention,
+  stripEnvelopePayloads,
+} from './prune-hrc-event-deltas'
 
 export const SCRIPT_PATH = join(import.meta.dir, 'prune-hrc-event-deltas.ts')
 export const NOW = new Date('2026-07-18T12:00:00.000Z')
@@ -66,11 +70,15 @@ export function makeStore(incrementalAutoVacuum = true): {
     CREATE TABLE broker_invocation_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       invocation_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
       time TEXT NOT NULL,
       type TEXT NOT NULL,
       run_id TEXT,
       runtime_id TEXT,
-      source_ref TEXT
+      source_ref TEXT,
+      broker_event_json TEXT NOT NULL,
+      broker_envelope_json TEXT,
+      UNIQUE(invocation_id, seq)
     );
     CREATE TABLE runtime_buffers (
       runtime_id TEXT NOT NULL,
@@ -151,6 +159,7 @@ export function insertBrokerEvent(
   db: Database,
   invocationId: string,
   options: {
+    seq?: number
     time?: string
     type?: string
     runId?: string
@@ -158,15 +167,25 @@ export function insertBrokerEvent(
     sourceRef?: string
   } = {}
 ): number {
+  const seq =
+    options.seq ??
+    db
+      .query<{ seq: number }, [string]>(
+        'SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM broker_invocation_events WHERE invocation_id = ?'
+      )
+      .get(invocationId)?.seq ??
+    1
   return Number(
     db
       .prepare(
         `INSERT INTO broker_invocation_events
-          (invocation_id, time, type, run_id, runtime_id, source_ref)
-         VALUES (?, ?, ?, ?, ?, ?)`
+          (invocation_id, seq, time, type, run_id, runtime_id, source_ref,
+           broker_event_json, broker_envelope_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '{}', '{}')`
       )
       .run(
         invocationId,
+        seq,
         options.time ?? OLD,
         options.type ?? 'turn.message',
         options.runId ?? null,

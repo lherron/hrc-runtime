@@ -465,6 +465,58 @@ describe('BrokerInvocationEventRepository.appendEvent idempotency', () => {
       db.close()
     }
   })
+
+  it('reconstructs payload-less stored envelopes while preserving legacy embedded payloads', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const payload = {
+        result: {
+          content: [{ type: 'text', text: 'sampled tool output' }],
+          details: { nested: true },
+        },
+      }
+      const envelope = {
+        invocationId: 'inv-env-dedupe',
+        seq: 8,
+        time: ts(),
+        type: 'tool.call.completed',
+        itemId: 'item-dedupe',
+        driver: { kind: 'codex-app-server', rawType: 'item/completed' },
+        payload,
+      }
+      const { payload: _payload, ...envelopeWithoutPayload } = envelope
+
+      const deduped = db.brokerInvocationEvents.appendEvent({
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        time: envelope.time,
+        type: envelope.type,
+        runtimeId: 'rt-env-dedupe',
+        payload,
+        envelopeJson: JSON.stringify(envelopeWithoutPayload),
+      })
+      const legacyEnvelope = {
+        ...envelope,
+        invocationId: 'inv-env-legacy',
+        seq: 9,
+      }
+      const legacy = db.brokerInvocationEvents.appendEvent({
+        invocationId: legacyEnvelope.invocationId,
+        seq: legacyEnvelope.seq,
+        time: legacyEnvelope.time,
+        type: legacyEnvelope.type,
+        runtimeId: 'rt-env-dedupe',
+        payload,
+        envelopeJson: JSON.stringify(legacyEnvelope),
+      })
+
+      expect(JSON.parse(deduped.record.brokerEnvelopeJson!)).toEqual(envelope)
+      expect(deduped.record.brokerEnvelopeJson).toBe(JSON.stringify(envelope))
+      expect(legacy.record.brokerEnvelopeJson).toBe(JSON.stringify(legacyEnvelope))
+    } finally {
+      db.close()
+    }
+  })
 })
 
 describe('broker record repositories round-trip', () => {

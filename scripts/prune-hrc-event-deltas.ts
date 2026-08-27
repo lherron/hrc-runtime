@@ -60,6 +60,7 @@ const TERMINAL_RUNTIME_STATUSES_SQL = "'terminated', 'dead', 'stale', 'crashed'"
 const TERMINAL_INVOCATION_STATES_SQL = "'exited', 'failed', 'disposed'"
 const DELTA_EVENT_TYPES_SQL = "'assistant.message.delta', 'tool.call.delta'"
 const PURGE_DELTA_BACKLOG_OPERATION = 'purge-delta-backlog'
+const STRIP_ENVELOPE_PAYLOADS_OPERATION = 'strip-envelope-payloads'
 const T07040_BACKFILL_SOURCE_REF = 'backfill-T-07040'
 const T07040_EXPECTED_BACKFILL_ROWS = 822
 
@@ -239,7 +240,7 @@ const PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL = `
   )
 `
 
-export type PruneOperation = 'retention' | 'purge-delta-backlog'
+export type PruneOperation = 'retention' | 'purge-delta-backlog' | 'strip-envelope-payloads'
 
 export type PruneStateRetentionOptions = {
   dbPath: string
@@ -319,6 +320,32 @@ export type PruneStateRetentionResult = {
   }
 }
 
+export type StripEnvelopePayloadsResult = {
+  operation: 'strip-envelope-payloads'
+  eligibleCount: number | null
+  stripped: number
+  remainingEligibleCount: number | null
+  stopReason: PrunePhaseStop
+  deadlineExceeded: boolean
+  elapsedMillis: number
+  pausedMillis: number
+  busyRetries: number
+  writeSteps: number
+  heldMillis: number
+  maxObservedWriteHoldMillis: number
+  batchSize: number
+  lastInvocationId: string | null
+  lastSeq: number | null
+  autoVacuumMode: number
+  freelistBeforePages: number
+  freelistBeforeVacuumPages: number
+  freelistAfterPages: number
+  reclaimedPages: number
+  vacuumChunkPages: number
+  vacuumStopReason: PrunePhaseStop
+  checkpointed: boolean
+}
+
 type RetentionTable = keyof PruneStateRetentionResult['tables']
 
 const RETENTION_TABLES: readonly RetentionTable[] = [
@@ -366,9 +393,12 @@ function usage(): string {
     '                                      broker.* mirrors plus terminal/orphaned',
     '                                      broker invocation deltas; requires exactly',
     '                                      822 backfill-T-07040 authority rows',
+    '  --strip-envelope-payloads           remove duplicate payloads from stored broker',
+    '                                      envelopes; payloads remain authoritative in',
+    '                                      broker_event_json',
     '  --tables <a,b|all>                  tables to prune (default: runtime_buffers)',
-    '  --apply                             delete eligible rows',
-    '  --batch-size <n>                    rows per DELETE (default: 10000)',
+    '  --apply                             apply the selected maintenance operation',
+    '  --batch-size <n>                    rows per write batch (default: 10000)',
     '  --event-retention-days <n>          event TTL; only applies to event tables named',
     '                                      via --tables (default: 3)',
     '  --runtime-buffer-retention-days <n> terminal buffer TTL (default: 1)',
@@ -531,13 +561,16 @@ export function parsePruneStateRetentionArgs(
   }
 
   const apply = args.includes('--apply')
-  const operation: PruneOperation = args.includes('--purge-delta-backlog')
-    ? PURGE_DELTA_BACKLOG_OPERATION
-    : 'retention'
-  if (operation === PURGE_DELTA_BACKLOG_OPERATION && readArgValue(args, '--tables') !== undefined) {
-    throw new Error(
-      '--tables cannot be combined with --purge-delta-backlog; its table set is fixed'
-    )
+  const requestedOperations = [
+    ...(args.includes('--purge-delta-backlog') ? [PURGE_DELTA_BACKLOG_OPERATION] : []),
+    ...(args.includes('--strip-envelope-payloads') ? [STRIP_ENVELOPE_PAYLOADS_OPERATION] : []),
+  ]
+  if (requestedOperations.length > 1) {
+    throw new Error('--purge-delta-backlog and --strip-envelope-payloads are mutually exclusive')
+  }
+  const operation: PruneOperation = requestedOperations[0] ?? 'retention'
+  if (operation !== 'retention' && readArgValue(args, '--tables') !== undefined) {
+    throw new Error(`--tables cannot be combined with --${operation}; its table set is fixed`)
   }
 
   return {
@@ -574,7 +607,9 @@ export function parsePruneStateRetentionArgs(
     tables:
       operation === PURGE_DELTA_BACKLOG_OPERATION
         ? ['events', 'broker_invocation_events']
-        : parseRetentionTables(readArgValue(args, '--tables')),
+        : operation === STRIP_ENVELOPE_PAYLOADS_OPERATION
+          ? ['broker_invocation_events']
+          : parseRetentionTables(readArgValue(args, '--tables')),
     eventRetentionDays: parsePositiveNumber(
       readArgValue(args, '--event-retention-days') ?? env['HRC_EVENT_RETENTION_DAYS'],
       DEFAULT_EVENT_RETENTION_DAYS,
@@ -753,6 +788,115 @@ function deleteBatch(db: Database, plan: TablePlan, batchSize: number): number {
         )`
     )
     .run(plan.predicateValue, batchSize).changes
+}
+
+type EnvelopePayloadKey = {
+  invocation_id: string
+  seq: number
+}
+
+type StripEnvelopePayloadBatch = {
+  selected: number
+  stripped: number
+  lastKey: EnvelopePayloadKey | null
+}
+
+const ENVELOPE_PAYLOAD_PRESENT_SQL = `
+  broker_envelope_json IS NOT NULL
+  AND json_type(broker_envelope_json, '$.payload') IS NOT NULL
+`
+
+function countEnvelopePayloads(db: Database): number {
+  return (
+    db
+      .query<{ count: number }, []>(
+        `SELECT COUNT(*) AS count
+           FROM broker_invocation_events
+          WHERE ${ENVELOPE_PAYLOAD_PRESENT_SQL}`
+      )
+      .get()?.count ?? 0
+  )
+}
+
+function createStripEnvelopePayloadBatch(
+  db: Database
+): (
+  afterInvocationId: string | null,
+  afterSeq: number,
+  batchSize: number
+) => StripEnvelopePayloadBatch {
+  const select = db.query<
+    EnvelopePayloadKey,
+    [string | null, string | null, string | null, number, number]
+  >(
+    `SELECT invocation_id, seq
+       FROM broker_invocation_events
+      WHERE ${ENVELOPE_PAYLOAD_PRESENT_SQL}
+        AND (
+          ? IS NULL
+          OR invocation_id > ?
+          OR (invocation_id = ? AND seq > ?)
+        )
+      ORDER BY invocation_id ASC, seq ASC
+      LIMIT ?`
+  )
+  const update = db.prepare<
+    never,
+    [string | null, string | null, string | null, number, string, string, number]
+  >(
+    `UPDATE broker_invocation_events
+        SET broker_envelope_json = json_remove(broker_envelope_json, '$.payload')
+      WHERE ${ENVELOPE_PAYLOAD_PRESENT_SQL}
+        AND (
+          ? IS NULL
+          OR invocation_id > ?
+          OR (invocation_id = ? AND seq > ?)
+        )
+        AND (
+          invocation_id < ?
+          OR (invocation_id = ? AND seq <= ?)
+        )`
+  )
+  const transaction = db.transaction(
+    (
+      afterInvocationId: string | null,
+      afterSeq: number,
+      batchSize: number
+    ): StripEnvelopePayloadBatch => {
+      const rows = select.all(
+        afterInvocationId,
+        afterInvocationId,
+        afterInvocationId,
+        afterSeq,
+        batchSize
+      )
+      const lastKey = rows.at(-1) ?? null
+      const stripped =
+        lastKey === null
+          ? 0
+          : update.run(
+              afterInvocationId,
+              afterInvocationId,
+              afterInvocationId,
+              afterSeq,
+              lastKey.invocation_id,
+              lastKey.invocation_id,
+              lastKey.seq
+            ).changes
+      if (stripped !== rows.length) {
+        throw new Error(
+          `envelope payload strip batch selected ${rows.length} rows but updated ${stripped}`
+        )
+      }
+      return {
+        selected: rows.length,
+        stripped,
+        lastKey,
+      }
+    }
+  )
+  return (afterInvocationId, afterSeq, batchSize) =>
+    transaction.immediate(afterInvocationId, afterSeq, batchSize)
 }
 
 type T07040BackfillInvariant = {
@@ -984,9 +1128,201 @@ function worstStopReason(reasons: PrunePhaseStop[]): PrunePhaseStop {
   return 'complete'
 }
 
+/**
+ * Remove the payload copy embedded in historical broker envelopes. The
+ * `(invocation_id, seq)` cursor advances only after an immediate transaction
+ * commits, so a deadline, SQLITE_BUSY exit, or process restart can safely
+ * resume from the first still-eligible row. The eligibility predicate makes
+ * the operation idempotent across repeated runs.
+ */
+export async function stripEnvelopePayloads(
+  options: PruneStateRetentionOptions
+): Promise<StripEnvelopePayloadsResult> {
+  if (options.operation !== STRIP_ENVELOPE_PAYLOADS_OPERATION) {
+    throw new Error('stripEnvelopePayloads requires --strip-envelope-payloads')
+  }
+  if (!existsSync(options.dbPath)) {
+    throw new Error(`HRC store does not exist: ${options.dbPath}`)
+  }
+
+  const budget = createWriteBudget(options)
+  const db = new Database(options.dbPath)
+  try {
+    db.exec('PRAGMA busy_timeout = 5000;')
+
+    let autoVacuumMode: number
+    try {
+      autoVacuumMode = (await runWriteStep(budget, () => readPragmaNumber(db, 'auto_vacuum'))).value
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error
+      }
+      return {
+        operation: STRIP_ENVELOPE_PAYLOADS_OPERATION,
+        eligibleCount: null,
+        stripped: 0,
+        remainingEligibleCount: null,
+        stopReason: 'busy',
+        deadlineExceeded: budget.deadlineExceeded,
+        elapsedMillis: Date.now() - budget.startedAtMillis,
+        pausedMillis: budget.pausedMillis,
+        busyRetries: budget.busyRetries,
+        writeSteps: budget.writeSteps,
+        heldMillis: budget.heldMillis,
+        maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
+        batchSize: options.batchSize,
+        lastInvocationId: null,
+        lastSeq: null,
+        autoVacuumMode: 0,
+        freelistBeforePages: 0,
+        freelistBeforeVacuumPages: 0,
+        freelistAfterPages: 0,
+        reclaimedPages: 0,
+        vacuumChunkPages: options.incrementalVacuumChunkPages,
+        vacuumStopReason: 'busy',
+        checkpointed: false,
+      }
+    }
+    if (options.apply) {
+      assertIncrementalAutoVacuum(autoVacuumMode)
+    }
+
+    const eligibleCount = options.countEligible
+      ? tolerateBusy(() => countEnvelopePayloads(db), null).value
+      : null
+    const freelistBeforePages = tolerateBusy(() => readPragmaNumber(db, 'freelist_count'), 0).value
+    let stripped = 0
+    let stopReason: PrunePhaseStop = 'complete'
+    let batchSize = Math.min(INITIAL_DELETE_BATCH_SIZE, options.batchSize)
+    let lastKey: EnvelopePayloadKey | null = null
+    let checkpointed = false
+    let freelistBeforeVacuumPages = freelistBeforePages
+    let vacuumChunkPages = options.incrementalVacuumChunkPages
+    let vacuumStopReason: PrunePhaseStop = 'complete'
+
+    if (options.apply) {
+      const stripBatch = createStripEnvelopePayloadBatch(db)
+      while (true) {
+        if (deadlineReached(budget)) {
+          stopReason = 'deadline'
+          break
+        }
+        const requestedRows = batchSize
+        let batch: StripEnvelopePayloadBatch
+        let holdMillis: number
+        try {
+          const step = await runWriteStep(budget, () =>
+            stripBatch(lastKey?.invocation_id ?? null, lastKey?.seq ?? -1, requestedRows)
+          )
+          batch = step.value
+          holdMillis = step.holdMillis
+        } catch (error) {
+          if (!isBusyError(error)) {
+            throw error
+          }
+          stopReason = 'busy'
+          break
+        }
+
+        stripped += batch.stripped
+        if (batch.lastKey !== null) {
+          lastKey = batch.lastKey
+        }
+        if (batch.selected < requestedRows) {
+          const remaining = tolerateBusy(() => countEnvelopePayloads(db), null)
+          if (remaining.busy || remaining.value === null) {
+            stopReason = 'busy'
+            break
+          }
+          if (remaining.value === 0) {
+            stopReason = 'complete'
+            break
+          }
+          // A pre-cutover writer may have inserted an eligible key behind the
+          // cursor. Start another keyset pass; rows already stripped no longer
+          // match, so this remains bounded by the deadline and idempotent.
+          lastKey = null
+        }
+        batchSize = adaptStepSize(
+          requestedRows,
+          holdMillis,
+          budget.maxWriteHoldMillis,
+          MIN_DELETE_BATCH_SIZE,
+          options.batchSize
+        )
+        await pauseAfterWrite(budget, holdMillis)
+      }
+
+      if (options.checkpoint) {
+        try {
+          await runWriteStep(budget, () => db.exec('PRAGMA wal_checkpoint(PASSIVE);'))
+          checkpointed = true
+        } catch (error) {
+          if (!isBusyError(error)) {
+            throw error
+          }
+        }
+      }
+      freelistBeforeVacuumPages = tolerateBusy(
+        () => readPragmaNumber(db, 'freelist_count'),
+        freelistBeforePages
+      ).value
+      if (stopReason === 'complete') {
+        const vacuum = await incrementalVacuum(
+          db,
+          budget,
+          options.incrementalVacuumPages,
+          options.incrementalVacuumChunkPages
+        )
+        vacuumStopReason = vacuum.stopReason
+        vacuumChunkPages = vacuum.chunkPages
+      } else {
+        vacuumStopReason = stopReason
+      }
+    }
+
+    const remainingEligibleCount = tolerateBusy(() => countEnvelopePayloads(db), null).value
+    const freelistAfterPages = tolerateBusy(
+      () => readPragmaNumber(db, 'freelist_count'),
+      freelistBeforeVacuumPages
+    ).value
+
+    return {
+      operation: STRIP_ENVELOPE_PAYLOADS_OPERATION,
+      eligibleCount,
+      stripped,
+      remainingEligibleCount,
+      stopReason: worstStopReason([stopReason, vacuumStopReason]),
+      deadlineExceeded: budget.deadlineExceeded,
+      elapsedMillis: Date.now() - budget.startedAtMillis,
+      pausedMillis: budget.pausedMillis,
+      busyRetries: budget.busyRetries,
+      writeSteps: budget.writeSteps,
+      heldMillis: budget.heldMillis,
+      maxObservedWriteHoldMillis: budget.maxObservedWriteHoldMillis,
+      batchSize,
+      lastInvocationId: lastKey?.invocation_id ?? null,
+      lastSeq: lastKey?.seq ?? null,
+      autoVacuumMode,
+      freelistBeforePages,
+      freelistBeforeVacuumPages,
+      freelistAfterPages,
+      reclaimedPages: Math.max(0, freelistBeforeVacuumPages - freelistAfterPages),
+      vacuumChunkPages,
+      vacuumStopReason,
+      checkpointed,
+    }
+  } finally {
+    db.close()
+  }
+}
+
 export async function pruneStateRetention(
   options: PruneStateRetentionOptions
 ): Promise<PruneStateRetentionResult> {
+  if (options.operation === STRIP_ENVELOPE_PAYLOADS_OPERATION) {
+    throw new Error('--strip-envelope-payloads must run through stripEnvelopePayloads')
+  }
   assertPurgeDeltaBacklogGuardrails(options)
   if (!existsSync(options.dbPath)) {
     throw new Error(`HRC store does not exist: ${options.dbPath}`)
@@ -1287,7 +1623,10 @@ export async function pruneStateRetention(
 if (import.meta.main) {
   try {
     const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
-    const result = await pruneStateRetention(options)
+    const result =
+      options.operation === STRIP_ENVELOPE_PAYLOADS_OPERATION
+        ? await stripEnvelopePayloads(options)
+        : await pruneStateRetention(options)
     console.log(
       JSON.stringify(
         {
