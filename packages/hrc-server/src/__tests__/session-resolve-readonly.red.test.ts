@@ -254,4 +254,16 @@ describe('[GREEN 4] resolve with create:true still creates as before', () => {
     expect(second.body.created).toBe(false)
     expect(second.body.hostSessionId).toBe(first.body.hostSessionId)
   })
+
+  it('repeated create:true resolves an existing session without emitting a new event', async () => {
+    const scopeRef = 'agent:test-resolve-create-no-audit-storm:project:t07608'
+    const sessionRef = `${scopeRef}/lane:main`
+    const first = await postResolve(sessionRef, { create: true })
+    expect(first.body.created).toBe(true)
+    const eventsAfterCreate = listEventsByScopeRef(scopeRef)
+
+    const second = await postResolve(sessionRef, { create: true })
+    expect(second.body.created).toBe(false)
+    expect(listEventsByScopeRef(scopeRef)).toEqual(eventsAfterCreate)
+  })
 })

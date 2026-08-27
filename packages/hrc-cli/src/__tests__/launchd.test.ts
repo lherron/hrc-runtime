@@ -176,7 +176,9 @@ describe('hrc delta-prune LaunchAgent', () => {
     expect(plist).not.toContain('<string>events</string>')
     expect(plist).not.toContain('<string>hrc_events</string>')
     expect(plist).not.toContain('<string>broker_invocation_events</string>')
-    expect(plist).toContain('<string>--incremental-vacuum-pages</string>')
+    expect(plist).toContain(
+      '<string>--incremental-vacuum-pages</string>\n\t\t<string>20000</string>'
+    )
     // Writer-lock guards: the job shares state.sqlite with the live daemon.
     expect(plist).toContain('<string>--deadline-minutes</string>')
     expect(plist).toContain('<string>--pace-millis</string>')

@@ -4,6 +4,12 @@ import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcSessionRecord } from 'hrc-core'
 import { createHrcServer } from '../index.js'
+import {
+  HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV,
+  HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS,
+} from '../server-constants.js'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { startSessionRetentionSweep } from '../sweep-handlers.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -128,6 +134,44 @@ describe('T-07575 session retention', () => {
     withDb(fixture, seedRows)
     return { fixture, server }
   }
+
+  test('runs once at boot and then schedules the 24-hour cadence', () => {
+    const originalSetInterval = globalThis.setInterval
+    const originalEnabled = process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV]
+    let scheduledDelay: number | undefined
+    let scheduledCallback: (() => void) | undefined
+    let ticks = 0
+
+    globalThis.setInterval = ((callback: () => void, delay?: number) => {
+      scheduledCallback = callback
+      scheduledDelay = delay
+      return 1 as unknown as ReturnType<typeof setInterval>
+    }) as typeof setInterval
+    delete process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV]
+
+    const context = {
+      sessionRetentionTimer: undefined,
+      runRecurringSessionRetention: async () => {
+        ticks += 1
+      },
+    } as unknown as HrcServerInstanceForHandlers
+
+    try {
+      startSessionRetentionSweep.call(context)
+      expect(ticks).toBe(1)
+      expect(scheduledDelay).toBe(HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS)
+
+      scheduledCallback?.()
+      expect(ticks).toBe(2)
+    } finally {
+      globalThis.setInterval = originalSetInterval
+      if (originalEnabled === undefined) {
+        delete process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV]
+      } else {
+        process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV] = originalEnabled
+      }
+    }
+  })
 
   test('an unscoped read is bounded to the projection window, and says what it withheld', async () => {
     const { fixture, server } = await boot('hrc-t07575-bound-', (db) => {

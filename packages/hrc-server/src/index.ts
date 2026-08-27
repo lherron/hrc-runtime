@@ -1878,11 +1878,6 @@ class HrcServerInstance implements HrcServer {
         // exists. A retired scope must not regain authority merely because a
         // pre-retirement session/runtime row survived the fence installation.
         await assertScopeNotRetired(this, { scopeRef, path: 'resolve-session' })
-
-        const event = this.appendEvent(existing, 'session.resolved', {
-          created: false,
-        })
-        this.notifyEvent(event)
       }
 
       return json({

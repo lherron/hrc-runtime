@@ -672,6 +672,7 @@ export function resolveSweepSummarySession(
  */
 export function startSessionRetentionSweep(this: HrcServerInstanceForHandlers): void {
   if (process.env[HRC_SESSION_RETENTION_SWEEP_ENABLED_ENV] === '0') return
+  void this.runRecurringSessionRetention()
   this.sessionRetentionTimer = setInterval(() => {
     void this.runRecurringSessionRetention()
   }, HRC_SESSION_RETENTION_SWEEP_INTERVAL_MS)

@@ -27,7 +27,7 @@
 		<string>--runtime-buffer-retention-days</string>
 		<string>1</string>
 		<string>--incremental-vacuum-pages</string>
-		<string>0</string>
+		<string>20000</string>
 		<string>--deadline-minutes</string>
 		<string>30</string>
 		<string>--pace-millis</string>
