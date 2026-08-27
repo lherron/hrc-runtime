@@ -355,8 +355,10 @@ export function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvoc
 }
 
 export function mapBrokerInvocationEventRow(
-  row: BrokerInvocationEventRow
+  row: BrokerInvocationEventRow,
+  hydrateBrokerEventJson: (value: string) => string = (value) => value
 ): HrcBrokerInvocationEventRecord {
+  const brokerEventJson = hydrateBrokerEventJson(row.broker_event_json)
   let brokerEnvelopeJson = row.broker_envelope_json
   if (brokerEnvelopeJson !== null) {
     try {
@@ -369,7 +371,7 @@ export function mapBrokerInvocationEventRow(
       ) {
         brokerEnvelopeJson = JSON.stringify({
           ...envelope,
-          payload: JSON.parse(row.broker_event_json) as unknown,
+          payload: JSON.parse(brokerEventJson) as unknown,
         })
       }
     } catch {
@@ -389,7 +391,7 @@ export function mapBrokerInvocationEventRow(
     runtimeId: row.runtime_id,
     ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
     ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
-    brokerEventJson: row.broker_event_json,
+    brokerEventJson,
     ...(brokerEnvelopeJson !== null ? { brokerEnvelopeJson } : {}),
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,

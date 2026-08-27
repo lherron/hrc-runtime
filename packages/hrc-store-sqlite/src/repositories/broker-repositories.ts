@@ -1,12 +1,16 @@
 import type { Database } from 'bun:sqlite'
-import type {
-  HrcBrokerInvocationEventRecord,
-  HrcBrokerInvocationRecord,
-  HrcCompiledRuntimePlanRecord,
-  HrcLifecyclePolicyRecord,
-  HrcPermissionDecisionRecord,
-  HrcRuntimeArtifactRecord,
-  HrcRuntimeOperationRecord,
+import {
+  type HrcBrokerInvocationEventRecord,
+  type HrcBrokerInvocationRecord,
+  type HrcCompiledRuntimePlanRecord,
+  type HrcLifecyclePolicyRecord,
+  type HrcPermissionDecisionRecord,
+  type HrcRuntimeArtifactRecord,
+  type HrcRuntimeOperationRecord,
+  brokerToolResultBlobId,
+  createToolResultSpillStub,
+  readToolResultSpillDescriptor,
+  toolResultExceedsSpillThreshold,
 } from 'hrc-core'
 import {
   BROKER_INVOCATION_COLUMNS,
@@ -38,6 +42,11 @@ import {
   execute,
   requireRecord,
 } from './shared.js'
+import { ToolResultBlobRepository } from './tool-result-blob-repository.js'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 export class LifecyclePolicyRepository {
   constructor(private readonly db: Database) {}
@@ -505,10 +514,18 @@ export class BrokerInvocationEventRepository {
     input: BrokerInvocationEventAppendInput
   ) => BrokerInvocationEventAppendResult
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly toolResultBlobs = new ToolResultBlobRepository(db)
+  ) {
     this.appendInTransaction = db.transaction(
       (input: BrokerInvocationEventAppendInput): BrokerInvocationEventAppendResult => {
-        const brokerEventJson = JSON.stringify(input.payload ?? null)
+        const inputBrokerEventJson = JSON.stringify(input.payload ?? null)
+        const brokerEventJson = this.persistedBrokerEventJson(
+          input.type,
+          input.runtimeId,
+          input.payload
+        )
         const brokerEnvelopeJson = this.enrichEnvelopeJsonWithRepairCorrelation(
           input.envelopeJson,
           input.runId
@@ -530,14 +547,15 @@ export class BrokerInvocationEventRepository {
           // a different run / generation / attempt is divergent and must conflict
           // (no silent idempotent return). Null-safe compare throughout.
           const sameIdentity =
-            existing.broker_event_json === brokerEventJson &&
+            this.toolResultBlobs.hydrateBrokerEventJson(existing.broker_event_json) ===
+              inputBrokerEventJson &&
             (existing.run_id ?? null) === (input.runId ?? null) &&
             (existing.harness_generation ?? null) === (input.harnessGeneration ?? null) &&
             (existing.turn_attempt ?? null) === (input.turnAttempt ?? null)
           if (!sameIdentity) {
             throw new BrokerInvocationEventConflictError(input.invocationId, input.seq)
           }
-          return { record: mapBrokerInvocationEventRow(existing), idempotent: true }
+          return { record: this.mapRow(existing), idempotent: true }
         }
 
         execute(
@@ -582,6 +600,50 @@ export class BrokerInvocationEventRepository {
         return { record: stored, idempotent: false }
       }
     )
+  }
+
+  private mapRow(
+    row: BrokerInvocationEventRow,
+    options: { hydrate?: boolean } = {}
+  ): HrcBrokerInvocationEventRecord {
+    return mapBrokerInvocationEventRow(
+      row,
+      options.hydrate === false
+        ? (value) => value
+        : (value) => this.toolResultBlobs.hydrateBrokerEventJson(value)
+    )
+  }
+
+  private persistedBrokerEventJson(
+    type: string,
+    runtimeId: string,
+    payload: unknown,
+    createdAt?: string
+  ): string {
+    if (!isRecord(payload) || type !== 'tool.call.completed') return JSON.stringify(payload ?? null)
+    const result = payload['result']
+    if (readToolResultSpillDescriptor(result) || !toolResultExceedsSpillThreshold(result)) {
+      return JSON.stringify(payload)
+    }
+    const toolCallId = payload['toolCallId']
+    if (typeof toolCallId !== 'string' || toolCallId.length === 0) {
+      throw new Error('large tool.call.completed result requires toolCallId')
+    }
+    const resultJson = JSON.stringify(result)
+    const bytes = Buffer.byteLength(resultJson, 'utf8')
+    const blobId = brokerToolResultBlobId(runtimeId, toolCallId)
+    this.toolResultBlobs.insert({
+      blobId,
+      runtimeId,
+      kind: 'broker_raw',
+      bytes,
+      resultJson,
+      createdAt,
+    })
+    return JSON.stringify({
+      ...payload,
+      result: createToolResultSpillStub(result, { blobId, bytes, kind: 'broker_raw' }),
+    })
   }
 
   private enrichEnvelopeJsonWithRepairCorrelation(
@@ -645,7 +707,7 @@ export class BrokerInvocationEventRepository {
         )
         .get(input.sourceRef, input.originSeq)
       if (existing) {
-        const stored = mapBrokerInvocationEventRow(existing)
+        const stored = this.mapRow(existing, { hydrate: false })
         const comparable = ({
           id: _id,
           sourceRef: _sourceRef,
@@ -661,6 +723,31 @@ export class BrokerInvocationEventRepository {
         return { record: stored, idempotent: true }
       }
 
+      let persistedBrokerEventJson = input.event.brokerEventJson
+      try {
+        const payload = JSON.parse(input.event.brokerEventJson) as unknown
+        persistedBrokerEventJson = this.persistedBrokerEventJson(
+          input.event.type,
+          input.event.runtimeId,
+          payload,
+          input.event.createdAt
+        )
+      } catch (error) {
+        if (error instanceof SyntaxError) persistedBrokerEventJson = input.event.brokerEventJson
+        else throw error
+      }
+      let persistedEnvelopeJson = input.event.brokerEnvelopeJson
+      if (persistedEnvelopeJson !== undefined) {
+        try {
+          const envelope = JSON.parse(persistedEnvelopeJson) as unknown
+          if (isRecord(envelope)) {
+            const { payload: _payload, ...withoutPayload } = envelope
+            persistedEnvelopeJson = JSON.stringify(withoutPayload)
+          }
+        } catch {
+          // Preserve malformed historical envelope text.
+        }
+      }
       execute(
         this.db,
         `INSERT INTO broker_invocation_events (
@@ -676,8 +763,8 @@ export class BrokerInvocationEventRepository {
         input.event.runtimeId,
         input.event.harnessGeneration ?? null,
         input.event.turnAttempt ?? null,
-        input.event.brokerEventJson,
-        input.event.brokerEnvelopeJson ?? null,
+        persistedBrokerEventJson,
+        persistedEnvelopeJson ?? null,
         input.event.projectionError ?? null,
         input.sourceRef,
         input.originSeq,
@@ -697,7 +784,7 @@ export class BrokerInvocationEventRepository {
           WHERE source_ref = ? AND origin_seq = ?`
       )
       .get(sourceRef, originSeq)
-    return row ? mapBrokerInvocationEventRow(row) : null
+    return row ? this.mapRow(row) : null
   }
 
   listBySourceRef(sourceRef: string): HrcBrokerInvocationEventRecord[] {
@@ -707,17 +794,21 @@ export class BrokerInvocationEventRepository {
           WHERE source_ref = ? ORDER BY origin_seq ASC`
       )
       .all(sourceRef)
-      .map(mapBrokerInvocationEventRow)
+      .map((row) => this.mapRow(row))
   }
 
-  listLocalFromId(afterId: number, limit: number): HrcBrokerInvocationEventRecord[] {
+  listLocalFromId(
+    afterId: number,
+    limit: number,
+    options: { hydrate?: boolean } = {}
+  ): HrcBrokerInvocationEventRecord[] {
     return this.db
       .query<BrokerInvocationEventRow, [number, number]>(
         `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
           WHERE source_ref IS NULL AND id > ? ORDER BY id ASC LIMIT ?`
       )
       .all(afterId, limit)
-      .map(mapBrokerInvocationEventRow)
+      .map((row) => this.mapRow(row, options))
   }
 
   getByInvocationAndSeq(invocationId: string, seq: number): HrcBrokerInvocationEventRecord | null {
@@ -728,7 +819,7 @@ export class BrokerInvocationEventRepository {
       )
       .get(invocationId, seq)
 
-    return row ? mapBrokerInvocationEventRow(row) : null
+    return row ? this.mapRow(row) : null
   }
 
   listByInvocationId(invocationId: string): HrcBrokerInvocationEventRecord[] {
@@ -740,7 +831,7 @@ export class BrokerInvocationEventRepository {
       )
       .all(invocationId)
 
-    return rows.map(mapBrokerInvocationEventRow)
+    return rows.map((row) => this.mapRow(row))
   }
 
   listByRuntimeId(runtimeId: string): HrcBrokerInvocationEventRecord[] {
@@ -752,7 +843,7 @@ export class BrokerInvocationEventRepository {
       )
       .all(runtimeId)
 
-    return rows.map(mapBrokerInvocationEventRow)
+    return rows.map((row) => this.mapRow(row))
   }
 
   maxBrokerSeq(invocationId: string): number {
@@ -790,7 +881,7 @@ export class BrokerInvocationEventRepository {
             )
             .all(selector.invocationId, selector.runtimeId, selector.afterSeq)
 
-    return rows.map(mapBrokerInvocationEventRow)
+    return rows.map((row) => this.mapRow(row))
   }
 
   /** Record projection outcome (hrc event seq + status) after the mapper runs. */

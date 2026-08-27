@@ -1972,6 +1972,38 @@ const hrcEventLedgerIncarnationMigration: HrcMigration = {
   },
 }
 
+/** T-07610 — transactional, hash-free storage for large tool results. */
+const toolResultBlobsMigration: HrcMigration = {
+  id: '0045_tool_result_blobs',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE tool_result_blobs (
+        blob_id TEXT PRIMARY KEY,
+        runtime_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('broker_raw','lifecycle_canonical')),
+        bytes INTEGER NOT NULL,
+        complete INTEGER NOT NULL DEFAULT 1,
+        result_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_tool_result_blobs_runtime
+        ON tool_result_blobs(runtime_id);
+
+      CREATE TABLE tool_result_blob_parts (
+        blob_id TEXT NOT NULL,
+        part INTEGER NOT NULL,
+        parts INTEGER NOT NULL,
+        runtime_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        chunk TEXT NOT NULL,
+        PRIMARY KEY (blob_id, part)
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2012,4 +2044,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   firstTurnWatchMigration,
   dispatchOriginAndAcpBridgeMigration,
   hrcEventLedgerIncarnationMigration,
+  toolResultBlobsMigration,
 ]

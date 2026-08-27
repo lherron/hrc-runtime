@@ -343,6 +343,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "brokerToolResultBlobId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|brokerToolResultBlobId|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "buildHrcInvocationExposure",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
@@ -363,6 +371,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
       "hash": "hrc-core|canonicalCorrelationJson|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CanonicalToolResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|CanonicalToolResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CanonicalToolResultContentBlock",
+      "kind": "type",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|CanonicalToolResultContentBlock|type",
       "count": 1
     },
     {
@@ -483,6 +507,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/monitor/index.ts",
       "hash": "hrc-core|createMonitorReader|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "createToolResultSpillStub",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|createToolResultSpillStub|value",
       "count": 1
     },
     {
@@ -2679,6 +2711,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcToolResultBlobPart",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcToolResultBlobPart|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcTurnAdmissionCloseRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -2859,6 +2899,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
       "hash": "hrc-core|lifecycleKindForBrokerEvent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "lifecycleToolResultBlobId",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|lifecycleToolResultBlobId|value",
       "count": 1
     },
     {
@@ -3203,6 +3251,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|PruneRuntimesSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "readToolResultSpillDescriptor",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|readToolResultSpillDescriptor|value",
       "count": 1
     },
     {
@@ -3739,6 +3795,62 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|TerminateRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TOOL_RESULT_SPILL_HEAD_CHARS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|TOOL_RESULT_SPILL_HEAD_CHARS|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TOOL_RESULT_SPILL_TAIL_CHARS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|TOOL_RESULT_SPILL_TAIL_CHARS|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TOOL_RESULT_SPILL_THRESHOLD_BYTES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|TOOL_RESULT_SPILL_THRESHOLD_BYTES|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ToolResultBlobKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|ToolResultBlobKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "toolResultExceedsSpillThreshold",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|toolResultExceedsSpillThreshold|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "toolResultFromBrokerResult",
+      "kind": "value",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|toolResultFromBrokerResult|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ToolResultSpillDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/tool-result-storage.ts",
+      "hash": "hrc-core|ToolResultSpillDescriptor|type",
       "count": 1
     },
     {

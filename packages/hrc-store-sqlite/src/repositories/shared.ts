@@ -889,7 +889,10 @@ export function mapEventRow(row: EventRow): HrcEventEnvelope {
   }
 }
 
-export function mapHrcEventRow(row: HrcEventRow): HrcLifecycleEvent {
+export function mapHrcEventRow(
+  row: HrcEventRow,
+  hydratePayload: (value: unknown) => unknown = (value) => value
+): HrcLifecycleEvent {
   return {
     hrcSeq: row.hrc_seq,
     streamSeq: row.stream_seq,
@@ -910,7 +913,7 @@ export function mapHrcEventRow(row: HrcEventRow): HrcLifecycleEvent {
     transport: row.transport ?? undefined,
     errorCode: row.error_code ?? undefined,
     replayed: row.replayed !== 0,
-    payload: parseJson<unknown>(row.payload_json, 'payload_json'),
+    payload: hydratePayload(parseJson<unknown>(row.payload_json, 'payload_json')),
   }
 }
 

@@ -30,7 +30,18 @@ export type SqliteSlowStatementMetricRecord = {
   callerTag: string
 }
 
-export type ServerMetricRecord = ServerRequestMetricRecord | SqliteSlowStatementMetricRecord
+export type ServerCounterMetricRecord = {
+  v: 1
+  kind: 'counter'
+  ts: string
+  name: 'ledger.blob_miss'
+  value: number
+}
+
+export type ServerMetricRecord =
+  | ServerRequestMetricRecord
+  | SqliteSlowStatementMetricRecord
+  | ServerCounterMetricRecord
 
 export type ResponseByteMeasurement = { bytes: number } | { stream: true }
 

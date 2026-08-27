@@ -8,6 +8,7 @@ import { parseDurationMs } from 'hrc-server'
 import type { ServerMetricRecord } from 'hrc-server'
 
 type ServerRequestMetricRecord = Extract<ServerMetricRecord, { kind: 'server' }>
+type ServerCounterMetricRecord = Extract<ServerMetricRecord, { kind: 'counter' }>
 
 type CliRpcMetric = {
   id: string
@@ -46,6 +47,8 @@ export type RouteMetricGroup = {
   bytes: ByteStats
 }
 
+export type CounterMetricGroup = { name: string; count: number }
+
 export type SlowInvocation = {
   command: string
   ts: string
@@ -77,6 +80,7 @@ export type MetricsReport = {
   }
   commands: CommandMetricGroup[]
   routes: RouteMetricGroup[]
+  counters: CounterMetricGroup[]
   slowest: SlowInvocation[]
   largest: { cli: LargestCliMetric[]; server: LargestServerMetric[] }
   uncorrelatedServerCount: number
@@ -173,6 +177,24 @@ function parseServerMetric(value: unknown): ServerRequestMetricRecord | undefine
   }
 }
 
+function parseCounterMetric(value: unknown): ServerCounterMetricRecord | undefined {
+  if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'counter') return undefined
+  if (
+    typeof value['ts'] !== 'string' ||
+    value['name'] !== 'ledger.blob_miss' ||
+    !isFiniteNonNegative(value['value'])
+  ) {
+    return undefined
+  }
+  return {
+    v: 1,
+    kind: 'counter',
+    ts: value['ts'],
+    name: value['name'],
+    value: value['value'],
+  }
+}
+
 function percentileStats(samples: number[]): NumberStats {
   const sorted = [...samples].sort((a, b) => a - b)
   if (sorted.length === 0) return { p50: 0, p95: 0, max: 0 }
@@ -203,7 +225,8 @@ async function readMetricFile(
   path: string,
   cutoff: number,
   cli: CliMetricRecord[],
-  server: ServerRequestMetricRecord[]
+  server: ServerRequestMetricRecord[],
+  counters: ServerCounterMetricRecord[]
 ): Promise<void> {
   const lines = createInterface({
     input: createReadStream(path),
@@ -218,12 +241,14 @@ async function readMetricFile(
       } catch {
         continue
       }
-      const record = parseCliMetric(parsed) ?? parseServerMetric(parsed)
+      const record =
+        parseCliMetric(parsed) ?? parseServerMetric(parsed) ?? parseCounterMetric(parsed)
       if (!record) continue
       const timestamp = Date.parse(record.ts)
       if (!Number.isFinite(timestamp) || timestamp < cutoff) continue
       if (record.kind === 'cli') cli.push(record)
-      else server.push(record)
+      else if (record.kind === 'server') server.push(record)
+      else counters.push(record)
     }
   } catch {
     // Metrics files are observational and may rotate or disappear while reading.
@@ -282,10 +307,11 @@ export async function readMetricsReport(
   const names = await readdir(metricsDir).catch(() => [])
   const cli: CliMetricRecord[] = []
   const server: ServerRequestMetricRecord[] = []
+  const counterRecords: ServerCounterMetricRecord[] = []
 
   const selectedNames = names.filter((entry) => fileCouldContainWindow(entry, cutoff)).sort()
   for (const name of selectedNames) {
-    await readMetricFile(join(metricsDir, name), cutoff, cli, server)
+    await readMetricFile(join(metricsDir, name), cutoff, cli, server, counterRecords)
   }
 
   const cliRpcIds = new Set(cli.flatMap((record) => record.rpc.map((rpc) => rpc.id)))
@@ -351,6 +377,14 @@ export async function readMetricsReport(
     },
     commands: groupCommands(cli),
     routes: groupRoutes(server),
+    counters: [
+      ...counterRecords.reduce((groups, record) => {
+        groups.set(record.name, (groups.get(record.name) ?? 0) + record.value)
+        return groups
+      }, new Map<string, number>()),
+    ]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
     slowest,
     largest: { cli: largestCli, server: largestServer },
     uncorrelatedServerCount: server.filter(

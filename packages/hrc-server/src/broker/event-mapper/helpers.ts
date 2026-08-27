@@ -11,8 +11,8 @@ import {
   type HrcEventEnvelope,
   type HrcLifecycleEvent,
   type HrcLifecycleTransport,
+  toolResultFromBrokerResult,
 } from 'hrc-core'
-import type { ContentBlock, ToolResult } from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 // Canonical definition now lives in broker/json.ts (F5 / T-04738); re-exported
@@ -54,25 +54,7 @@ export function permissionIdentityKey(input: {
  * `{output, exitCode}`); the lifecycle stream uses the hook-derived
  * `{content: ContentBlock[]}` shape consumers already know how to render.
  */
-export function toolResultFromBrokerResult(result: unknown): ToolResult {
-  if (isRecord(result) && Array.isArray(result['content'])) {
-    const content = result['content']
-    if (content.every((item) => isRecord(item) && typeof item['type'] === 'string')) {
-      return result as unknown as ToolResult
-    }
-  }
-  const text =
-    typeof result === 'string'
-      ? result
-      : isRecord(result) && typeof result['output'] === 'string'
-        ? result['output']
-        : result === undefined || result === null
-          ? ''
-          : safeStringify(result)
-  const block: ContentBlock = { type: 'text', text }
-  const details = isRecord(result) ? result : undefined
-  return details === undefined ? { content: [block] } : { content: [block], details }
-}
+export { toolResultFromBrokerResult }
 
 export function safeStringify(value: unknown): string {
   try {

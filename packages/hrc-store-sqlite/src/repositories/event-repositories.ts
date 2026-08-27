@@ -1,5 +1,15 @@
 import type { Database } from 'bun:sqlite'
-import type { HrcEventEnvelope, HrcEventTail, HrcLifecycleEvent } from 'hrc-core'
+import {
+  type HrcEventEnvelope,
+  type HrcEventTail,
+  type HrcLifecycleEvent,
+  type ToolResultBlobKind,
+  brokerToolResultBlobId,
+  createToolResultSpillStub,
+  lifecycleToolResultBlobId,
+  readToolResultSpillDescriptor,
+  toolResultExceedsSpillThreshold,
+} from 'hrc-core'
 import type { EventRow, HrcEventRow } from './rows.js'
 import {
   EVENT_COLUMNS,
@@ -14,6 +24,11 @@ import {
   mapEventRow,
   mapHrcEventRow,
 } from './shared.js'
+import { ToolResultBlobRepository } from './tool-result-blob-repository.js'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 /**
  * Curated "milestone" event kinds for `--milestone` filtering (T-04232):
@@ -212,7 +227,10 @@ export type ScanHrcLifecycleReplayResult = {
 export class HrcLifecycleEventRepository {
   private readonly appendInTransaction: (event: HrcLifecycleEventInput) => HrcLifecycleEvent
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly toolResultBlobs = new ToolResultBlobRepository(db)
+  ) {
     this.appendInTransaction = db.transaction((event: HrcLifecycleEventInput) => {
       const streamSeq = allocateStreamSeq(this.db)
       execute(
@@ -262,6 +280,14 @@ export class HrcLifecycleEventRepository {
         throw new Error('failed to read inserted hrc event sequence')
       }
 
+      this.spillPersistedResult(
+        inserted.seq,
+        event.eventKind,
+        event.runtimeId,
+        event.payload,
+        event.ts
+      )
+
       const stored = this.db
         .query<HrcEventRow, [number]>(
           `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`
@@ -271,8 +297,67 @@ export class HrcLifecycleEventRepository {
         throw new Error(`failed to reload hrc event ${inserted.seq}`)
       }
 
-      return mapHrcEventRow(stored)
+      return this.mapRow(stored)
     })
+  }
+
+  private mapRow(row: HrcEventRow, options: { hydrate?: boolean } = {}): HrcLifecycleEvent {
+    return mapHrcEventRow(
+      row,
+      options.hydrate === false
+        ? (value) => value
+        : (value) => this.toolResultBlobs.hydrateLifecyclePayload(value)
+    )
+  }
+
+  private spillPersistedResult(
+    hrcSeq: number,
+    eventKind: string,
+    runtimeId: string | undefined,
+    payload: unknown,
+    createdAt: string
+  ): void {
+    if (eventKind !== 'turn.tool_result' || !isRecord(payload)) return
+    if (!Object.prototype.hasOwnProperty.call(payload, 'result')) return
+    const result = payload['result']
+    if (readToolResultSpillDescriptor(result) || !toolResultExceedsSpillThreshold(result)) return
+    if (!runtimeId) throw new Error('large turn.tool_result requires runtimeId')
+    const resultJson = JSON.stringify(result)
+    const canonicalBytes = Buffer.byteLength(resultJson, 'utf8')
+    const toolUseId = payload['toolUseId']
+    const brokerBlobId =
+      typeof toolUseId === 'string' && toolUseId.length > 0
+        ? brokerToolResultBlobId(runtimeId, toolUseId)
+        : undefined
+    const brokerBlob = brokerBlobId ? this.toolResultBlobs.get(brokerBlobId) : null
+    let blobId: string
+    let kind: ToolResultBlobKind
+    if (brokerBlob) {
+      blobId = brokerBlob.blobId
+      kind = 'broker_raw'
+    } else {
+      blobId = lifecycleToolResultBlobId(this.ledgerIncarnationId(), hrcSeq)
+      kind = 'lifecycle_canonical'
+      this.toolResultBlobs.insert({
+        blobId,
+        runtimeId,
+        kind,
+        bytes: canonicalBytes,
+        resultJson,
+        createdAt,
+      })
+    }
+    const persistedPayload = JSON.stringify({
+      ...payload,
+      result: createToolResultSpillStub(result, {
+        blobId,
+        bytes: brokerBlob?.bytes ?? canonicalBytes,
+        kind,
+      }),
+    })
+    this.db
+      .query<never, [string, number]>('UPDATE hrc_events SET payload_json = ? WHERE hrc_seq = ?')
+      .run(persistedPayload, hrcSeq)
   }
 
   append(event: HrcLifecycleEventInput): HrcLifecycleEvent {
@@ -312,7 +397,7 @@ export class HrcLifecycleEventRepository {
       const truncated = rows.length > limit
       if (truncated) rows.pop()
       return {
-        events: rows.reverse().map(mapHrcEventRow),
+        events: rows.reverse().map((row) => this.mapRow(row)),
         ledgerIncarnationId,
         headHrcSeq,
         truncated,
@@ -356,7 +441,7 @@ export class HrcLifecycleEventRepository {
         .iterate(...values)
       let complete = true
       for (const row of rows) {
-        if (!visitNewestFirst(mapHrcEventRow(row))) {
+        if (!visitNewestFirst(this.mapRow(row))) {
           complete = false
           break
         }
@@ -380,7 +465,7 @@ export class HrcLifecycleEventRepository {
         )
         .get(input.sourceRef, input.originSeq)
       if (existing) {
-        const stored = mapHrcEventRow(existing)
+        const stored = this.mapRow(existing, { hydrate: false })
         const comparable = ({
           hrcSeq: _hrcSeq,
           streamSeq: _streamSeq,
@@ -422,6 +507,19 @@ export class HrcLifecycleEventRepository {
         input.event.replayed ? 1 : 0,
         JSON.stringify(input.event.payload ?? {})
       )
+      const inserted = this.db
+        .query<{ hrc_seq: number }, [string, number]>(
+          'SELECT hrc_seq FROM hrc_events WHERE source_ref = ? AND origin_seq = ?'
+        )
+        .get(input.sourceRef, input.originSeq)
+      if (!inserted) throw new Error(`failed to reload imported hrc event ${input.sourceRef}`)
+      this.spillPersistedResult(
+        inserted.hrc_seq,
+        input.event.eventKind,
+        input.event.runtimeId,
+        input.event.payload,
+        input.event.ts
+      )
       const row = this.db
         .query<HrcEventRow, [string, number]>(
           `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
@@ -429,7 +527,7 @@ export class HrcLifecycleEventRepository {
         )
         .get(input.sourceRef, input.originSeq)
       if (!row) throw new Error(`failed to reload imported hrc event ${input.sourceRef}`)
-      return { event: mapHrcEventRow(row), idempotent: false }
+      return { event: this.mapRow(row), idempotent: false }
     })
     return append.immediate()
   }
@@ -443,9 +541,10 @@ export class HrcLifecycleEventRepository {
 
   listFromStreamSeq(
     fromStreamSeq = 1,
-    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> = {}
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> = {},
+    options: { hydrate?: boolean } = {}
   ): HrcLifecycleEvent[] {
-    return this.runQuery({ ...filters, fromStreamSeq }, 'stream_seq')
+    return this.runQuery({ ...filters, fromStreamSeq }, 'stream_seq', options)
   }
 
   listByRun(
@@ -486,7 +585,7 @@ export class HrcLifecycleEventRepository {
       )
       .get(...values)
 
-    return row ? mapHrcEventRow(row) : null
+    return row ? this.mapRow(row) : null
   }
 
   listByScope(
@@ -587,7 +686,7 @@ export class HrcLifecycleEventRepository {
       )
       .all(...values)
 
-    return rows.map(mapHrcEventRow)
+    return rows.map((row) => this.mapRow(row))
   }
 
   /**
@@ -636,12 +735,13 @@ export class HrcLifecycleEventRepository {
       )
       .all(...values)
 
-    return rows.map(mapHrcEventRow)
+    return rows.map((row) => this.mapRow(row))
   }
 
   private runQuery(
     filters: HrcLifecycleQueryFilters,
-    orderColumn: 'hrc_seq' | 'stream_seq'
+    orderColumn: 'hrc_seq' | 'stream_seq',
+    options: { hydrate?: boolean } = {}
   ): HrcLifecycleEvent[] {
     const { where, values } = buildLifecycleWhere(filters, { includeSeqPredicates: true })
 
@@ -659,6 +759,6 @@ export class HrcLifecycleEventRepository {
       )
       .all(...values)
 
-    return rows.map(mapHrcEventRow)
+    return rows.map((row) => this.mapRow(row, options))
   }
 }

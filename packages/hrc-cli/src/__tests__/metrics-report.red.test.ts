@@ -137,6 +137,7 @@ describe('metrics report reader', () => {
       },
       commands: [],
       routes: [],
+      counters: [],
       slowest: [],
       largest: { cli: [], server: [] },
       uncorrelatedServerCount: 0,
@@ -147,6 +148,19 @@ describe('metrics report reader', () => {
     expect(report.commands).toHaveLength(1)
     expect(report.routes).toHaveLength(1)
     expect(JSON.stringify(report)).not.toContain('NaN')
+  })
+
+  test('aggregates ledger.blob_miss counters', async () => {
+    await writeMetrics(
+      [],
+      [
+        { v: 1, kind: 'counter', ts: NOW.toISOString(), name: 'ledger.blob_miss', value: 1 },
+        { v: 1, kind: 'counter', ts: NOW.toISOString(), name: 'ledger.blob_miss', value: 1 },
+      ]
+    )
+    expect((await readMetricsReport({ since: '7d', now: NOW })).counters).toEqual([
+      { name: 'ledger.blob_miss', count: 2 },
+    ])
   })
 
   test('distinguishes a missing metrics directory from an empty readable directory', async () => {

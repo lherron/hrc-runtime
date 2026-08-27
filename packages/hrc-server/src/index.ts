@@ -2899,6 +2899,20 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
           resolvedOptions.stateRoot,
           process.env['HRC_METRICS'] !== '0'
         ),
+      onLedgerBlobMiss: (miss) => {
+        if (process.env['HRC_METRICS'] === '0') return
+        writeServerMetric(
+          {
+            v: 1,
+            kind: 'counter',
+            ts: new Date().toISOString(),
+            name: miss.metric,
+            value: 1,
+          },
+          new Date(),
+          resolvedOptions.stateRoot
+        )
+      },
     })
     const backfilledContinuationClears = backfillLegacyContinuationClearBarriers(db)
     if (backfilledContinuationClears > 0) {

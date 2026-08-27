@@ -27,6 +27,8 @@ function printNdjson(report: MetricsReport): void {
     process.stdout.write(`${JSON.stringify({ kind: 'command', ...row })}\n`)
   for (const row of report.routes)
     process.stdout.write(`${JSON.stringify({ kind: 'route', ...row })}\n`)
+  for (const row of report.counters)
+    process.stdout.write(`${JSON.stringify({ kind: 'counter', ...row })}\n`)
   for (const row of report.slowest)
     process.stdout.write(`${JSON.stringify({ kind: 'slowest', ...row })}\n`)
   for (const row of report.largest.cli) {
@@ -59,6 +61,10 @@ function printHuman(report: MetricsReport): void {
     process.stdout.write(
       `${row.route} count=${row.count} ms[p50=${row.ms.p50} p95=${row.ms.p95} max=${row.ms.max}] bytes[total=${row.bytes.total} max=${row.bytes.max}]\n`
     )
+  }
+  process.stdout.write('\nCounters\n')
+  for (const row of report.counters) {
+    process.stdout.write(`${row.name} count=${row.count}\n`)
   }
   process.stdout.write('\nSlowest invocations\n')
   for (const row of report.slowest) {

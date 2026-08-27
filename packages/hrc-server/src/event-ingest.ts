@@ -6,6 +6,7 @@ import type {
   HrcEventIngestAck,
   HrcEventIngestBatch,
   HrcLifecycleEvent,
+  HrcToolResultBlobPart,
 } from 'hrc-core'
 import { resolveIngestSocketPath } from 'hrc-core'
 import {
@@ -52,12 +53,14 @@ export type EventForwarder = {
 
 type ForwardCursors = {
   version: 1
+  toolResultBlobs: number
   hrcEvents: number
   brokerInvocationEvents: number
 }
 
 const INITIAL_CURSORS: ForwardCursors = {
   version: 1,
+  toolResultBlobs: 0,
   hrcEvents: 0,
   brokerInvocationEvents: 0,
 }
@@ -99,7 +102,11 @@ function validateBatch(value: unknown): HrcEventIngestBatch {
   if (typeof batch.sourceRef !== 'string' || batch.sourceRef.trim().length === 0) {
     throw new Error('sourceRef must be non-empty')
   }
-  if (batch.feed !== 'hrc_events' && batch.feed !== 'broker_invocation_events') {
+  if (
+    batch.feed !== 'tool_result_blobs' &&
+    batch.feed !== 'hrc_events' &&
+    batch.feed !== 'broker_invocation_events'
+  ) {
     throw new Error('unknown ingest feed')
   }
   if (!Array.isArray(batch.events) || batch.events.length < 1) {
@@ -108,8 +115,35 @@ function validateBatch(value: unknown): HrcEventIngestBatch {
   if (batch.events.length > HRC_INGEST_MAX_BATCH_EVENTS) {
     throw new Error('ingest batch exceeds event limit')
   }
+  if (batch.feed === 'tool_result_blobs') {
+    for (const item of batch.events) {
+      if (
+        !item ||
+        typeof item !== 'object' ||
+        typeof item.blobId !== 'string' ||
+        item.blobId.length === 0 ||
+        typeof item.runtimeId !== 'string' ||
+        item.runtimeId.length === 0 ||
+        (item.kind !== 'broker_raw' && item.kind !== 'lifecycle_canonical') ||
+        !Number.isSafeInteger(item.bytes) ||
+        item.bytes < 0 ||
+        !Number.isSafeInteger(item.part) ||
+        item.part < 0 ||
+        !Number.isSafeInteger(item.parts) ||
+        item.parts < 1 ||
+        item.part >= item.parts ||
+        typeof item.chunk !== 'string' ||
+        Buffer.byteLength(item.chunk, 'utf8') > 256 * 1024
+      ) {
+        throw new Error(
+          'each blob event requires valid addressed part metadata and a <=256 KiB chunk'
+        )
+      }
+    }
+    return batch as HrcEventIngestBatch
+  }
   let prior = 0
-  for (const item of batch.events) {
+  for (const item of batch.events as Array<{ originSeq: number; event: unknown }>) {
     if (
       !item ||
       typeof item !== 'object' ||
@@ -213,9 +247,15 @@ function createIngestHandler(options: {
 
       let inserted = 0
       let duplicates = 0
-      for (const item of batch.events) {
+      for (const rawItem of batch.events) {
         try {
-          if (batch.feed === 'hrc_events') {
+          if (batch.feed === 'tool_result_blobs') {
+            const item = rawItem as HrcToolResultBlobPart
+            const result = options.db.toolResultBlobs.ingestPart(item)
+            if (result.duplicate) duplicates += 1
+            else inserted += 1
+          } else if (batch.feed === 'hrc_events') {
+            const item = rawItem as { originSeq: number; event: HrcLifecycleEvent }
             const result = options.db.hrcEvents.appendImported({
               sourceRef: batch.sourceRef,
               originSeq: item.originSeq,
@@ -227,6 +267,10 @@ function createIngestHandler(options: {
               options.onLifecycleEvent?.(result.event)
             }
           } else {
+            const item = rawItem as {
+              originSeq: number
+              event: HrcBrokerInvocationEventRecord
+            }
             const result = options.db.brokerInvocationEvents.appendImported({
               sourceRef: batch.sourceRef,
               originSeq: item.originSeq,
@@ -250,7 +294,10 @@ function createIngestHandler(options: {
                 feed: batch.feed,
                 code: 'divergent_duplicate',
                 message: error.message,
-                rejectedOriginSeq: item.originSeq,
+                rejectedOriginSeq:
+                  batch.feed === 'tool_result_blobs'
+                    ? undefined
+                    : (rawItem as { originSeq: number }).originSeq,
               },
               409
             )
@@ -262,7 +309,10 @@ function createIngestHandler(options: {
               feed: batch.feed,
               code: 'ingest_error',
               message: error instanceof Error ? error.message : String(error),
-              rejectedOriginSeq: item.originSeq,
+              rejectedOriginSeq:
+                batch.feed === 'tool_result_blobs'
+                  ? undefined
+                  : (rawItem as { originSeq: number }).originSeq,
             },
             500
           )
@@ -270,7 +320,11 @@ function createIngestHandler(options: {
       }
       options.counters.accepted += inserted
       options.counters.duplicates += duplicates
-      const ackedThrough = batch.events.at(-1)?.originSeq
+      const last = batch.events.at(-1)
+      const ackedThrough =
+        batch.feed === 'tool_result_blobs'
+          ? (last as HrcToolResultBlobPart | undefined)?.part
+          : (last as { originSeq: number } | undefined)?.originSeq
       if (ackedThrough === undefined) throw new Error('validated ingest batch was empty')
       return jsonResponse(
         {
@@ -356,7 +410,14 @@ async function readCursors(path: string): Promise<ForwardCursors> {
       Number.isSafeInteger(parsed.hrcEvents) &&
       Number.isSafeInteger(parsed.brokerInvocationEvents)
     ) {
-      return parsed as ForwardCursors
+      return {
+        version: 1,
+        toolResultBlobs: Number.isSafeInteger(parsed.toolResultBlobs)
+          ? (parsed.toolResultBlobs as number)
+          : 0,
+        hrcEvents: parsed.hrcEvents as number,
+        brokerInvocationEvents: parsed.brokerInvocationEvents as number,
+      }
     }
   } catch {
     // Missing or invalid cursor state starts at the ledger beginning.
@@ -376,10 +437,28 @@ function serializeBatch(batch: HrcEventIngestBatch): string {
 }
 
 function takeBatchPrefix(batch: HrcEventIngestBatch, eventCount: number): HrcEventIngestBatch {
+  if (batch.feed === 'tool_result_blobs') {
+    return { ...batch, events: batch.events.slice(0, eventCount) }
+  }
   if (batch.feed === 'hrc_events') {
     return { ...batch, events: batch.events.slice(0, eventCount) }
   }
   return { ...batch, events: batch.events.slice(0, eventCount) }
+}
+
+function chunkUtf8(value: string, maximumBytes = 256 * 1024): string[] {
+  const bytes = Buffer.from(value, 'utf8')
+  if (bytes.length === 0) return ['']
+  const chunks: string[] = []
+  let start = 0
+  while (start < bytes.length) {
+    let end = Math.min(bytes.length, start + maximumBytes)
+    while (end < bytes.length && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1
+    if (end === start) throw new Error('failed to split UTF-8 tool-result blob')
+    chunks.push(bytes.subarray(start, end).toString('utf8'))
+    start = end
+  }
+  return chunks
 }
 
 function prepareBoundedBatch(batch: HrcEventIngestBatch): {
@@ -412,7 +491,10 @@ function prepareBoundedBatch(batch: HrcEventIngestBatch): {
   }
 
   if (best === undefined) {
-    const originSeq = batch.events[0]?.originSeq
+    const originSeq =
+      batch.feed === 'tool_result_blobs'
+        ? undefined
+        : (batch.events[0] as { originSeq: number } | undefined)?.originSeq
     throw new Error(
       `ingest event${originSeq === undefined ? '' : ` at originSeq ${originSeq}`} exceeds byte limit and cannot be split`
     )
@@ -456,10 +538,41 @@ export async function forwardAvailableEvents(options: {
   const cursors = await readCursors(options.cursorPath)
   let forwarded = 0
 
-  const lifecycle = options.db.hrcEvents.listFromStreamSeq(cursors.hrcEvents + 1, {
-    sourceRef: null,
-    limit: batchSize,
-  })
+  const blobs = options.db.toolResultBlobs.listLocalFromRowid(cursors.toolResultBlobs, batchSize)
+  for (const blob of blobs) {
+    const chunks = chunkUtf8(blob.resultJson)
+    for (const [part, chunk] of chunks.entries()) {
+      const { ack } = await postBatch(options.target, {
+        version: 1,
+        sourceRef: options.sourceRef,
+        feed: 'tool_result_blobs',
+        events: [
+          {
+            blobId: blob.blobId,
+            runtimeId: blob.runtimeId,
+            kind: blob.kind,
+            bytes: blob.bytes,
+            part,
+            parts: chunks.length,
+            chunk,
+          },
+        ],
+      })
+      if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
+      forwarded += 1
+    }
+    cursors.toolResultBlobs = blob.rowid
+    await writeCursors(options.cursorPath, cursors)
+  }
+
+  const lifecycle = options.db.hrcEvents.listFromStreamSeq(
+    cursors.hrcEvents + 1,
+    {
+      sourceRef: null,
+      limit: batchSize,
+    },
+    { hydrate: false }
+  )
   if (lifecycle.length > 0) {
     const { ack, eventCount } = await postBatch(options.target, {
       version: 1,
@@ -475,7 +588,8 @@ export async function forwardAvailableEvents(options: {
 
   const broker = options.db.brokerInvocationEvents.listLocalFromId(
     cursors.brokerInvocationEvents,
-    batchSize
+    batchSize,
+    { hydrate: false }
   )
   if (broker.length > 0) {
     const events = broker.map((event) => {

@@ -47,6 +47,10 @@ import {
   SessionRepository,
 } from './repositories/session-repositories.js'
 import { SteerContributionRepository } from './repositories/steer-contribution-repository.js'
+import {
+  type LedgerBlobMiss,
+  ToolResultBlobRepository,
+} from './repositories/tool-result-blob-repository.js'
 import { RosterClaimRepository } from './roster-claim-repository.js'
 import { SessionIndexRepository } from './session-index-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
@@ -57,6 +61,7 @@ export type OpenHrcDatabaseOptions = {
   busyTimeoutMs?: number | undefined
   slowStatementThresholdMs?: number | undefined
   onSlowStatement?: ((statement: SqliteSlowStatement) => void) | undefined
+  onLedgerBlobMiss?: ((miss: LedgerBlobMiss) => void) | undefined
 }
 
 export type HrcDatabase = {
@@ -104,6 +109,7 @@ export type HrcDatabase = {
   permissionDecisions: PermissionDecisionRepository
   firstTurnWatch: FirstTurnWatchRepository
   acpBridgeEmissions: AcpBridgeEmissionRepository
+  toolResultBlobs: ToolResultBlobRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -143,6 +149,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
           onSlowStatement: options.onSlowStatement,
         })
   runMigrations(sqlite)
+  const toolResultBlobs = new ToolResultBlobRepository(sqlite, options.onLedgerBlobMiss)
 
   return {
     sqlite,
@@ -165,7 +172,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     runs: new RunRepository(sqlite),
     launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
-    hrcEvents: new HrcLifecycleEventRepository(sqlite),
+    hrcEvents: new HrcLifecycleEventRepository(sqlite, toolResultBlobs),
     localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
@@ -186,10 +193,11 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
     steerContributions: new SteerContributionRepository(sqlite),
-    brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite),
+    brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite, toolResultBlobs),
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
     permissionDecisions: new PermissionDecisionRepository(sqlite),
     firstTurnWatch: new FirstTurnWatchRepository(sqlite),
     acpBridgeEmissions: new AcpBridgeEmissionRepository(sqlite),
+    toolResultBlobs,
   }
 }

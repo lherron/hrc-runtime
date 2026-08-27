@@ -389,6 +389,59 @@ describe('T-06838 dedicated observational ingest', () => {
     db.close()
   })
 
+  test('forwards addressed blob parts before stubbed ledgers and hydrates on the receiver', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'hrc-forward-blobs-'))
+    roots.push(sourceRoot)
+    const source = openHrcDatabase(join(sourceRoot, 'state.sqlite'))
+    const body = `federated-full-result:${'f'.repeat(700_000)}`
+    const native = source.hrcEvents.append({
+      ts: lifecycle().ts,
+      hostSessionId: lifecycle().hostSessionId,
+      scopeRef: lifecycle().scopeRef,
+      laneRef: lifecycle().laneRef,
+      generation: lifecycle().generation,
+      runtimeId: 'blob-runtime',
+      category: 'tool',
+      eventKind: 'turn.tool_result',
+      transport: 'headless',
+      replayed: false,
+      payload: {
+        toolUseId: 'blob-tool',
+        toolName: 'exec',
+        result: { content: [{ type: 'text', text: body }] },
+      },
+    })
+    expect(
+      (native.payload as { result: { content: Array<{ text: string }> } }).result.content[0]?.text
+    ).toBe(body)
+
+    const host = await fixture()
+    const sourceRef = 'devbox-room:T-07610:blob-forward'
+    const result = await forwardAvailableEvents({
+      db: source,
+      sourceRef,
+      target: { kind: 'unix', socketPath: host.listener.socketPath },
+      cursorPath: join(sourceRoot, 'event-forward-cursors.json'),
+    })
+    expect(result.forwarded).toBeGreaterThan(3)
+    expect(result.cursors.toolResultBlobs).toBeGreaterThan(0)
+
+    const imported = host.db.hrcEvents.listFromHrcSeq(1, { sourceRef })[0]!
+    expect(
+      (imported.payload as { result: { content: Array<{ text: string }> } }).result.content[0]?.text
+    ).toBe(body)
+    expect(
+      host.db.sqlite
+        .query<{ count: number }, []>('SELECT COUNT(*) count FROM tool_result_blob_parts')
+        .get()?.count
+    ).toBe(0)
+    expect(host.db.toolResultBlobs.listLocalFromRowid(0, 10)).toEqual([])
+
+    await host.listener.stop()
+    host.db.close()
+    source.close()
+  })
+
   test('salvage drain forwards both dead-ledger tails and re-drain is a no-op', async () => {
     const deadRoot = await mkdtemp(join(tmpdir(), 'hrc-drain-dead-'))
     roots.push(deadRoot)

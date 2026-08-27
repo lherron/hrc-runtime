@@ -830,7 +830,17 @@ export type BrokerForensicsResponse = {
   events: BrokerForensicsEvent[]
 }
 
-export type HrcEventIngestFeed = 'hrc_events' | 'broker_invocation_events'
+export type HrcEventIngestFeed = 'tool_result_blobs' | 'hrc_events' | 'broker_invocation_events'
+
+export type HrcToolResultBlobPart = {
+  blobId: string
+  runtimeId: string
+  kind: 'broker_raw' | 'lifecycle_canonical'
+  bytes: number
+  part: number
+  parts: number
+  chunk: string
+}
 
 export type HrcLifecycleIngestItem = {
   originSeq: number
@@ -843,6 +853,12 @@ export type HrcBrokerIngestItem = {
 }
 
 export type HrcEventIngestBatch =
+  | {
+      version: 1
+      sourceRef: string
+      feed: 'tool_result_blobs'
+      events: HrcToolResultBlobPart[]
+    }
   | {
       version: 1
       sourceRef: string

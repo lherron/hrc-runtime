@@ -110,6 +110,12 @@ function countTable(db: ReturnType<typeof openHrcDatabase>, table: string): numb
 }
 
 function createPhaseFourBlobTables(db: ReturnType<typeof openHrcDatabase>): void {
+  const alreadyMigrated = db.sqlite
+    .query<{ present: number }, []>(
+      "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_result_blobs') AS present"
+    )
+    .get()?.present
+  if (alreadyMigrated === 1) return
   db.sqlite.exec(`
     CREATE TABLE tool_result_blobs (
       blob_id TEXT PRIMARY KEY,

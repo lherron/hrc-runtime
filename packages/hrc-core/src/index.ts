@@ -87,6 +87,24 @@ export {
   lifecycleKindForBrokerEvent,
 } from './broker-lifecycle-policy.js'
 
+export {
+  TOOL_RESULT_SPILL_HEAD_CHARS,
+  TOOL_RESULT_SPILL_TAIL_CHARS,
+  TOOL_RESULT_SPILL_THRESHOLD_BYTES,
+  brokerToolResultBlobId,
+  createToolResultSpillStub,
+  lifecycleToolResultBlobId,
+  readToolResultSpillDescriptor,
+  toolResultExceedsSpillThreshold,
+  toolResultFromBrokerResult,
+} from './tool-result-storage.js'
+export type {
+  CanonicalToolResult,
+  CanonicalToolResultContentBlock,
+  ToolResultBlobKind,
+  ToolResultSpillDescriptor,
+} from './tool-result-storage.js'
+
 export type {
   HrcAppCommandSessionSpec,
   HrcAppHarnessSessionSpec,
@@ -213,6 +231,7 @@ export type {
   HrcEventIngestBatch,
   HrcEventIngestFeed,
   HrcLifecycleIngestItem,
+  HrcToolResultBlobPart,
   BrokerInspectResponse,
   FinalSummaryRecoveryResult,
   FinalSummaryRecoveryState,
