@@ -701,6 +701,83 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
   })
 
+  it('declines a busy target visibly, and drives it the moment its turn ends', async () => {
+    await startServer()
+    const resolved = await fixture.resolveSession(SCOPE)
+    const db = (server as any).db as HrcDatabase
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-busy-visible',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'busy',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      activeRunId: 'run-busy-visible',
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.runs.insert({
+      runId: 'run-busy-visible',
+      hostSessionId: resolved.hostSessionId,
+      runtimeId: 'rt-busy-visible',
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      status: 'started',
+      acceptedAt: now,
+      startedAt: now,
+      updatedAt: now,
+    })
+    const deterministic = installDeterministicStart(server as HrcServer)
+
+    say()
+    const captured = await captureServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      await (server as any).drainMailKickerTarget(TARGET)
+    })
+    expect(deterministic.calls()).toBe(0)
+    // A silent decline is indistinguishable from a dead kicker. It must say so.
+    const busy = captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))
+    expect(busy).not.toHaveLength(0)
+    expect(busy[busy.length - 1]).toContain('run-busy-visible')
+
+    await completeRun(server as HrcServer, 'run-busy-visible')
+    await waitUntil(() => deterministic.calls() === 1, 'delivered once the turn ended')
+  })
+
+  it('releases the scope slot when this node cannot resolve the target placement', async () => {
+    const stranded = 'agent:not-an-agent-here:project:wrkq:task:T-00001'
+    const strandedTarget = `${stranded}/lane:main`
+    await startServer()
+    ledger.say({ toScopeRef: stranded, fromScopeRef: SENDER })
+
+    const captured = await captureServerLog(async () => {
+      ;(server as any).requestMailKickerWake(strandedTarget, 'insert')
+      await (server as any).drainMailKickerTarget(strandedTarget)
+    })
+    expect(captured.lines.some((line) => line.includes('wrkq.kicker.placement_unresolvable'))).toBe(
+      true
+    )
+
+    // The attempt must be FINISHED, not merely annotated: a `claimed` attempt
+    // owns the slot, and the scope would be undrivable for as long as it lives.
+    const db = (server as any).db as HrcDatabase
+    expect(db.mailDrives.getSlot(strandedTarget)?.activeDriveAttemptId).toBeUndefined()
+    expect(db.mailDrives.listInFlightTargets()).not.toContain(strandedTarget)
+    const attempts = db.mailDrives.listAttempts(strandedTarget)
+    expect(attempts).toHaveLength(1)
+    expect(attempts[0]?.state).toBe('failed')
+  })
+
   it('B2.1: a daemon kill after the slot CAS recovers one attempt and one START', async () => {
     const markerPath = join(fixture.tmpDir, 'claimed.json')
     const serverEntry = resolve(import.meta.dir, '..', 'index.ts')

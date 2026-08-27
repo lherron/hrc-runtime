@@ -109,6 +109,17 @@ function targetHasRunningTurn(
   return false
 }
 
+/** The run a session is currently busy on, for the busy-decline log line. */
+function activeRunIdFor(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord
+): string | undefined {
+  for (const runtime of server.db.runtimes.listByHostSessionId(session.hostSessionId)) {
+    if (runtime.activeRunId !== undefined) return runtime.activeRunId
+  }
+  return undefined
+}
+
 function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -390,7 +401,19 @@ async function driveMailTargetOnce(
   }
 
   if (attempt === undefined) {
-    if (session !== undefined && targetHasRunningTurn(server, session)) return
+    if (session !== undefined && targetHasRunningTurn(server, session)) {
+      // Not a failure: a busy target keeps its obligation until its own turn
+      // ends, and the turn-completion wake picks it up. Logged because a
+      // SILENT decline is indistinguishable from a dead kicker — which is
+      // exactly the conclusion two readers reached from its absence.
+      writeServerLog('INFO', 'wrkq.kicker.target_busy', {
+        targetSessionRef,
+        wakeReason,
+        pending: actionable.length,
+        activeRunId: activeRunIdFor(server, session),
+      })
+      return
+    }
     // A fyi is presented into a live generation if there is one, and otherwise
     // waits. It is NEVER the reason a session is born (§5), so a wake set that
     // holds nothing else stops here rather than at the summon gate.
@@ -433,10 +456,19 @@ async function driveMailTargetOnce(
     if (materializationIntent === undefined) {
       // Placement is HRC's, so a missing intent means this node could not find
       // the target agent's profile — not that the sender forgot something.
-      server.db.mailDrives.recordError(
-        attempt.driveAttemptId,
-        `no runtime intent for ${targetSessionRef}: this node cannot resolve the agent's placement`
-      )
+      //
+      // The attempt must be FINISHED, not merely annotated. `recordError` alone
+      // leaves it `claimed`, and a claimed attempt owns the scope's slot: the
+      // target is then permanently undrivable by this daemon, silently, for as
+      // long as the row exists. Observed live — a smoketest scope this node
+      // cannot place held its slot for 80 minutes.
+      const reason = `no runtime intent for ${targetSessionRef}: this node cannot resolve the agent's placement`
+      server.db.mailDrives.failWithoutStart(attempt.driveAttemptId, reason)
+      writeServerLog('WARN', 'wrkq.kicker.placement_unresolvable', {
+        targetSessionRef,
+        driveAttemptId: attempt.driveAttemptId,
+        wakeReason,
+      })
       return
     }
 
