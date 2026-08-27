@@ -54,8 +54,21 @@ const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
 
 /** One presentation carries a room's worth of obligations, not an inbox dump. */
 const MAX_PRESENTED_PER_ATTEMPT = 20
-/** Bounded page for the wake tail; the sweep covers whatever a page misses. */
-const LEDGER_TAIL_PAGE_LIMIT = 200
+/**
+ * Bounded page for the wake tail. The limit bounds RAW ledger rows scanned, not
+ * matches, so a busy ledger costs more ticks rather than one unbounded read.
+ */
+const LEDGER_TAIL_PAGE_LIMIT = 500
+/** One `pendingView` carries at most this many scopes. */
+const LEDGER_SWEEP_SCOPE_BATCH = 100
+/**
+ * Sweep ticks between full ledger reads.
+ *
+ * The tail runs every tick because it IS the wake-latency path and costs one
+ * indexed read from the head of the log. The sweep is the backstop, and a
+ * backstop that runs every second is a load problem rather than a safety one.
+ */
+const LEDGER_SWEEP_TICKS = 30
 
 type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
 
@@ -487,26 +500,27 @@ export function drainMailKickerTarget(
 /**
  * The periodic sweep: the correctness backstop behind the ledger tail.
  *
- * Its candidate set is every scope this node has ever driven or been asked to
- * drive, which survives a restart because a drive-slot row is never deleted.
- * wrkq then answers which of those actually hold obligations — one read for the
- * whole node — so the sweep costs one call, not one per candidate.
+ * Its candidate set is deliberately NARROW — the scopes this node is currently
+ * seating, plus any drive attempt still in flight. That is what "scopes this
+ * node homes" means in practice, and it keeps one bounded `pendingView` per
+ * sweep instead of a query that grows with every scope the daemon has ever
+ * seen. Discovering a scope with no live seat is the TAIL's job: it resumes
+ * from a persisted cursor, so an envelope written while HRC was down is
+ * replayed rather than swept for.
  */
 export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return Promise.resolve()
   if (this.mailKickerSweepInFlight !== undefined) return this.mailKickerSweepInFlight
 
   const sweep = (async () => {
-    const candidates = this.db.mailDrives.listCandidateTargets()
-    const targets = new Set<string>()
-    for (const attempt of this.db.mailDrives.listAttempts()) {
-      if (attempt.state === 'claimed' || attempt.state === 'started') {
-        targets.add(attempt.targetSessionRef)
-      }
-    }
-    if (candidates.length > 0) {
+    const targets = new Set<string>(this.db.mailDrives.listInFlightTargets())
+    const seated = this.db.runtimes.listLiveSessionRefs()
+    for (const batch of chunk(seated, LEDGER_SWEEP_SCOPE_BATCH)) {
       try {
-        const view = await this.wrkqLedger.pendingView({ scopes: candidates })
+        const view = await this.wrkqLedger.pendingView({ scopes: batch })
+        if (view.repended > 0) {
+          writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', { repended: view.repended })
+        }
         for (const envelope of view.items) {
           const scopeRef = envelope.to?.scopeRef
           if (scopeRef === undefined) continue
@@ -517,8 +531,9 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
         writeServerLog(
           error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
           'wrkq.kicker.sweep_pending_view_failed',
-          { candidates: candidates.length, error: errorText(error) }
+          { scopes: batch.length, error: errorText(error) }
         )
+        break
       }
     }
     for (const targetSessionRef of targets) {
@@ -532,6 +547,14 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
   })
   this.mailKickerSweepInFlight = sweep
   return sweep
+}
+
+function chunk<T>(values: readonly T[], size: number): T[][] {
+  const batches: T[][] = []
+  for (let index = 0; index < values.length; index += size) {
+    batches.push(values.slice(index, index + size))
+  }
+  return batches
 }
 
 /**
@@ -560,9 +583,6 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
       for (const event of page.items) {
         const target = wakeTargetForEvent(event)
         if (target === undefined) continue
-        // Remember the scope even when the drive is refused: the sweep is the
-        // backstop, and it can only cover what it knows about.
-        this.db.mailDrives.rememberTarget(target)
         this.requestMailKickerWake(target, 'insert')
       }
       if (page.highWater > cursor) this.db.wrkqLedgerCursors.advance(page.highWater)
@@ -622,10 +642,13 @@ function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
 
 export function startMailKicker(this: HrcServerInstanceForHandlers): void {
   if (!this.hrcMailKickerEnabled || this.mailKickerSweepTimer !== undefined) return
+  let tick = 0
   this.mailKickerSweepTimer = setInterval(() => {
     void this.runWrkqLedgerTail().catch((error: unknown) => {
       writeServerLog('WARN', 'wrkq.kicker.tail_tick_failed', { error: errorText(error) })
     })
+    tick += 1
+    if (tick % LEDGER_SWEEP_TICKS !== 0) return
     void this.runMailKickerSweep().catch((error: unknown) => {
       writeServerLog('WARN', 'wrkq.kicker.periodic_sweep_failed', { error: errorText(error) })
     })

@@ -225,35 +225,17 @@ export class HrcMailDriveRepository {
     return row === null ? undefined : mapAttempt(row)
   }
 
-  /**
-   * Every scope this node has ever driven or been asked to drive.
-   *
-   * This is the sweep's CANDIDATE set, not its work list: the kicker asks wrkq
-   * which of these actually hold obligations. A slot row is created on the first
-   * wake for a target and never deleted, so the candidate set survives a restart
-   * -- which is what lets a sweep rediscover a scope whose wake arrived while
-   * the daemon was down.
-   */
-  listCandidateTargets(): string[] {
+  /** Scopes with an attempt still in flight; the sweep must observe these. */
+  listInFlightTargets(): string[] {
     return this.db
       .query<{ target_session_ref: string }, []>(
-        `SELECT target_session_ref
-         FROM hrcmail_drive_slots
-         ORDER BY target_session_ref ASC`
+        `SELECT DISTINCT target_session_ref
+           FROM hrcmail_drive_attempts
+          WHERE state IN ('claimed', 'started')
+          ORDER BY target_session_ref ASC`
       )
       .all()
       .map((row) => row.target_session_ref)
-  }
-
-  /** Register a target as a sweep candidate without claiming its slot. */
-  rememberTarget(targetSessionRef: string): void {
-    this.db
-      .query(
-        `INSERT OR IGNORE INTO hrcmail_drive_slots (
-           target_session_ref, active_drive_attempt_id, updated_at
-         ) VALUES (?, NULL, ?)`
-      )
-      .run(normalizeTarget(targetSessionRef), new Date().toISOString())
   }
 
   claim(

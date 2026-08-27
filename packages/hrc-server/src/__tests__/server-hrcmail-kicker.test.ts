@@ -486,25 +486,65 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.calls()).toBe(1)
   })
 
-  it('keeps a woken scope sweepable across a restart', async () => {
+  it('resumes the tail from the persisted cursor rather than sweeping for a cold scope', async () => {
     await startServer()
     await (server as any).runWrkqLedgerTail()
-    say()
-    await (server as any).runWrkqLedgerTail()
     const db = (server as any).db as HrcDatabase
-    await waitUntil(
-      () => db.mailDrives.listCandidateTargets().includes(TARGET),
-      'target remembered'
-    )
+    const cursorBefore = db.wrkqLedgerCursors.get() as number
     await (server as unknown as HrcServer).stop()
     server = undefined
 
-    const reopened = openHrcDatabase(fixture.dbPath)
-    try {
-      expect(reopened.mailDrives.listCandidateTargets()).toContain(TARGET)
-    } finally {
-      reopened.close()
+    // The envelope arrives while this node is DOWN. Nothing local knows the
+    // scope, so the sweep -- which only covers seated scopes -- cannot find it.
+    say()
+
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const reopened = (server as any).db as HrcDatabase
+    expect(reopened.wrkqLedgerCursors.get()).toBe(cursorBefore)
+
+    await (server as any).runWrkqLedgerTail()
+    await waitUntil(() => deterministic.calls() === 1, 'tail replayed the downtime gap')
+  })
+
+  it('sweeps only the scopes this node is seating, plus attempts in flight', async () => {
+    await startServer()
+    const db = (server as any).db as HrcDatabase
+    const scopes: string[][] = []
+    const realPendingView = ledger.pendingView.bind(ledger)
+    ledger.pendingView = async (params) => {
+      if (params.scopes !== undefined) scopes.push(params.scopes)
+      return realPendingView(params)
     }
+
+    // A pending envelope for a scope with no seat here: the sweep must not go
+    // looking for it, because a sweep that widens with history is a load bug.
+    say()
+    await (server as any).runMailKickerSweep()
+    expect(scopes.flat()).not.toContain(TARGET)
+
+    const resolved = await fixture.resolveSession(SCOPE)
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-seated',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const deterministic = installDeterministicStart(server as HrcServer)
+    await (server as any).runMailKickerSweep()
+    await waitUntil(() => deterministic.calls() === 1, 'seated scope swept')
   })
 
   it('leaves a busy target alone until its turn completes', async () => {

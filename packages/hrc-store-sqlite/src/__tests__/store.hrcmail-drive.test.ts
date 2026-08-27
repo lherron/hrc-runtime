@@ -165,18 +165,20 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
   })
 
-  it('keeps every driven scope as a sweep candidate across a restart', () => {
-    const other = 'agent:mable:project:wrkq:task:primary/lane:main'
-    db.mailDrives.claim(target, 'insert', actionable('EN-00001'), {
-      driveAttemptId: 'drive-candidate',
-      runId: 'run-candidate',
-    })
-    // A wake for a scope this node has never driven still has to be sweepable:
-    // the tail may deliver it once and never again.
-    db.mailDrives.rememberTarget(other)
+  it('reports only attempts still in flight as sweep targets', () => {
+    expect(db.mailDrives.listInFlightTargets()).toEqual([])
 
+    db.mailDrives.claim(target, 'insert', actionable('EN-00001'), {
+      driveAttemptId: 'drive-inflight',
+      runId: 'run-inflight',
+    })
+    // An in-flight attempt survives a restart and must still be observed: it
+    // owns a scope slot nothing else can claim until it finishes.
     db.close()
     db = openHrcDatabase(dbPath)
-    expect(db.mailDrives.listCandidateTargets().sort()).toEqual([target, other].sort())
+    expect(db.mailDrives.listInFlightTargets()).toEqual([target])
+
+    db.mailDrives.completeNoOp('drive-inflight')
+    expect(db.mailDrives.listInFlightTargets()).toEqual([])
   })
 })

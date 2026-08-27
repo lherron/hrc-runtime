@@ -210,6 +210,26 @@ export class RuntimeRepository {
     return rows.map(mapRuntimeRow)
   }
 
+  /**
+   * The scopes this node is currently seating, as `<scopeRef>/lane:<laneRef>`.
+   *
+   * "Live" is deliberately the narrow set — a stale or terminated runtime is a
+   * historical row, not a seat. This bounds the wrkq kicker's periodic sweep to
+   * scopes something can actually be presented into; the ledger tail, which
+   * resumes from a persisted cursor, is what discovers the rest.
+   */
+  listLiveSessionRefs(): string[] {
+    return this.db
+      .query<{ session_ref: string }, []>(
+        `SELECT DISTINCT scope_ref || '/lane:' || lane_ref AS session_ref
+           FROM runtimes
+          WHERE status IN ('starting', 'ready', 'busy', 'awaiting_input', 'stopping')
+          ORDER BY session_ref ASC`
+      )
+      .all()
+      .map((row) => row.session_ref)
+  }
+
   listAll(): HrcRuntimeSnapshot[] {
     const rows = this.db
       .query<RuntimeRow, []>(
