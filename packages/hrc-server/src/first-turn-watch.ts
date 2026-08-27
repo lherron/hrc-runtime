@@ -13,6 +13,7 @@
  */
 import {
   HRC_FIRST_TURN_MISSING_LATE_START_EVENT,
+  HrcErrorCode,
   type HrcLifecycleEvent,
   type HrcLifecycleTransport,
   type HrcRunRecord,
@@ -229,13 +230,38 @@ export function disarmFirstTurnWatch(
 }
 
 /**
+ * Is this run's terminality the WATCHDOG'S OWN work?
+ *
+ * `first_turn_missing.late_start` says one specific thing: the watchdog
+ * answered this run terminal because its first turn never arrived, and the
+ * turn then showed up anyway. Two independent disqualifiers, both read off the
+ * run row the caller already holds:
+ *
+ *   - a run whose first turn DID start cannot be missing one; and
+ *   - terminality the watchdog did not cause is not the watchdog's to report.
+ *
+ * Without this, every ordinary post-terminal `turn.started` — a completed turn
+ * the harness follows with another bracket, a cancelled run, a `run_mismatch`
+ * — was published as a first-turn liveness failure. On the fleet at the time
+ * of T-07630 that was 531 of 545 late-start rows.
+ */
+export function isFirstTurnMissingTerminalRun(run: HrcRunRecord): boolean {
+  if (run.startedAt !== undefined) return false
+  return run.errorCode === HrcErrorCode.FIRST_TURN_MISSING
+}
+
+/**
  * A `turn.started` arrived for a run that is ALREADY terminal. The run's
  * terminal answer to its caller never changes — no surface can observe a
  * resurrected run — but the turn itself is real and proceeds normally on the
- * still-live runtime, so it is recorded as a linked informational row rather
- * than dropped. Emitted by the event-mapper's terminality guard.
+ * still-live runtime. Called by the event-mapper's terminality guard.
+ *
+ * Returns the linked informational row when the watchdog owns the terminality,
+ * and null otherwise: an ordinary post-terminal turn is logged for the record
+ * but is NOT a first-turn fact, so it is neither warned about nor appended to
+ * the ledger nor offered to the ACP bridge (T-07630).
  */
-export function emitFirstTurnLateStart(
+export function noteTurnStartedOnTerminalRun(
   db: HrcDatabase,
   ctx: {
     runtimeId: string
@@ -247,7 +273,17 @@ export function emitFirstTurnLateStart(
   },
   run: HrcRunRecord,
   input: { invocationId: string; seq: number; occurredAt: string; now: string }
-): HrcLifecycleEvent {
+): HrcLifecycleEvent | null {
+  if (!isFirstTurnMissingTerminalRun(run)) {
+    writeServerLog('INFO', 'runtime.turn_started_after_run_terminal', {
+      runtimeId: ctx.runtimeId,
+      generation: ctx.generation,
+      runId: run.runId,
+      terminalStatus: run.status,
+      terminalErrorCode: run.errorCode,
+    })
+    return null
+  }
   const watch = db.firstTurnWatch.get(ctx.runtimeId, ctx.generation)
   writeServerLog('WARN', 'runtime.first_turn_missing_late_start', {
     runtimeId: ctx.runtimeId,

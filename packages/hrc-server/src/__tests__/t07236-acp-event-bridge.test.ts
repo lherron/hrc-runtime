@@ -17,7 +17,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { HRC_FIRST_TURN_MISSING_EVENT, type HrcLifecycleEvent } from 'hrc-core'
+import {
+  HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT,
+  HRC_FIRST_TURN_MISSING_EVENT,
+  HRC_FIRST_TURN_MISSING_LATE_START_EVENT,
+  type HrcLifecycleEvent,
+} from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import {
@@ -444,6 +449,40 @@ describe('T-07236 emission', () => {
     expect(fetchStub.calls).toHaveLength(1)
     expect(fetchStub.calls[0]?.url).toBe(ENABLED_ENV['HRC_ACP_WEBHOOK_URL'])
     expect(vendoredParseAcpWebhookEvent(fetchStub.calls[0]?.body).ok).toBe(true)
+  })
+
+  it('does not bridge the first_turn_missing SIBLING kinds (T-07630)', async () => {
+    // The allowlist is exact-match on eventKind, so `first_turn_missing` never
+    // covers `first_turn_missing.late_start` / `.diagnostics`. T-07630's false
+    // late starts were therefore never bridged; this pins that so a future
+    // prefix-matching "convenience" cannot quietly widen the wire face.
+    const fetchStub = stubFetch(() => ({ ok: true, status: 204 }))
+    const bridge = new AcpEventBridge({
+      db: fixture.db,
+      node: DECLARED_MAX3,
+      env: ENABLED_ENV,
+      fetchImpl: fetchStub.impl,
+    })
+
+    for (const kind of [
+      HRC_FIRST_TURN_MISSING_LATE_START_EVENT,
+      HRC_FIRST_TURN_MISSING_DIAGNOSTICS_EVENT,
+    ]) {
+      bridge.observe(
+        appendHrcEvent(fixture.db, kind, {
+          ts: '2026-08-27T21:28:17.665Z',
+          hostSessionId: HOST_SESSION_ID,
+          scopeRef: SCOPE_REF,
+          laneRef: LANE_REF,
+          generation: 1,
+          runtimeId: RUNTIME_ID,
+          payload: {},
+        })
+      )
+    }
+    await bridge.drain()
+
+    expect(fetchStub.calls).toHaveLength(0)
   })
 
   it('sends nothing at all when disabled', async () => {

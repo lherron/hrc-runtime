@@ -76,8 +76,8 @@ import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '.
 import {
   disarmFirstTurnWatch,
   disarmFirstTurnWatchOnContinuationCleared,
-  emitFirstTurnLateStart,
   noteFirstTurnStarted,
+  noteTurnStartedOnTerminalRun,
 } from '../first-turn-watch'
 import { runtimeActivityPatch } from '../runtime-activity'
 import {
@@ -953,19 +953,22 @@ export class BrokerEventMapper {
           // completedAt. The turn itself still proceeds normally on the
           // still-live runtime (observe-only policy): the runtime claims
           // ownership, monitors see the real turn, and only the run's terminal
-          // answer to its caller is immutable.
+          // answer to its caller is immutable. Reaching the guard says nothing
+          // about first-turn liveness on its own — classification lives in
+          // `noteTurnStartedOnTerminalRun` (T-07630).
           const run = db.runs.getByRunId(runId)
           if (run?.completedAt === undefined) {
             db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
           } else {
-            this.pendingLateStartEvents.push(
-              emitFirstTurnLateStart(db, ctx, run, {
-                invocationId,
-                seq: envelope.seq,
-                occurredAt,
-                now,
-              })
-            )
+            // Only the watchdog's OWN terminality is a late start (T-07630);
+            // every other post-terminal turn is logged and dropped there.
+            const lateStart = noteTurnStartedOnTerminalRun(db, ctx, run, {
+              invocationId,
+              seq: envelope.seq,
+              occurredAt,
+              now,
+            })
+            if (lateStart !== null) this.pendingLateStartEvents.push(lateStart)
           }
           claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now)
         }

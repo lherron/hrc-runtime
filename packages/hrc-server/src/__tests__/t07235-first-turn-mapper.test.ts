@@ -9,13 +9,16 @@
  *   3. run-terminal monotonicity: a LATE `turn.started` can never resurrect a
  *      run already answered as terminal. It emits
  *      `first_turn_missing.late_start` instead, and the turn proceeds.
+ *
+ * T-07630 narrows (3): monotonicity is unchanged for EVERY terminal run, but
+ * only a run the watchdog itself answered terminal is a first-turn late start.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { HRC_FIRST_TURN_MISSING_LATE_START_EVENT, HrcErrorCode } from 'hrc-core'
+import { HRC_FIRST_TURN_MISSING_LATE_START_EVENT, HrcErrorCode, type HrcRunRecord } from 'hrc-core'
 import type { InvocationEventEnvelope, InvocationEventType } from 'spaces-harness-broker-protocol'
 
 import { BrokerEventMapper } from '../broker/event-mapper'
-import { armFirstTurnWatch } from '../first-turn-watch'
+import { armFirstTurnWatch, isFirstTurnMissingTerminalRun } from '../first-turn-watch'
 
 import {
   GENERATION,
@@ -184,5 +187,123 @@ describe('run-terminal monotonicity under a late start', () => {
     expect(run?.status).toBe('running')
     expect(run?.startedAt).toBe(ts(1))
     expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
+  })
+})
+
+describe('post-terminal turn.started that the watchdog never caused (T-07630)', () => {
+  /**
+   * The run-d69d0ad6 shape, replayed through the mapper rather than hand-
+   * stamped: a dispatched run starts, completes normally, and the harness
+   * opens another turn bracket on the still-live runtime moments later (on the
+   * fleet, 75ms later). The run is terminal, so the guard fires — but nothing
+   * here is a first-turn liveness failure.
+   */
+  function completeOneHealthyTurn(): void {
+    mapper.apply(env('turn.started', 1, { turnId: 'turn-1' }))
+    mapper.apply(env('turn.completed', 2, { turnId: 'turn-1' }))
+  }
+
+  it('emits no late-start row for a run that started and completed', () => {
+    arm(fixture)
+    completeOneHealthyTurn()
+    const before = fixture.db.runs.getByRunId(RUN_ID)
+    expect(before?.status).toBe('completed')
+    expect(before?.startedAt).toBe(ts(1))
+
+    const result = mapper.apply(env('turn.started', 3, { turnId: 'turn-2' }))
+
+    expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
+    expect(
+      result.lifecycleEvents.some(
+        (event) => event.eventKind === HRC_FIRST_TURN_MISSING_LATE_START_EVENT
+      )
+    ).toBe(false)
+  })
+
+  it('still refuses to resurrect the terminal run', () => {
+    arm(fixture)
+    completeOneHealthyTurn()
+    mapper.apply(env('turn.started', 3, { turnId: 'turn-2' }))
+
+    const run = fixture.db.runs.getByRunId(RUN_ID)
+    expect(run?.status).toBe('completed')
+    expect(run?.completedAt).toBe(ts(2))
+    expect(run?.startedAt).toBe(ts(1))
+  })
+
+  it('emits no late-start row for a cancelled run that never started', () => {
+    arm(fixture)
+    fixture.db.runs.markCompleted(RUN_ID, {
+      status: 'cancelled',
+      completedAt: ts(5),
+      updatedAt: ts(5),
+    })
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+
+    expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
+    expect(fixture.db.runs.getByRunId(RUN_ID)?.status).toBe('cancelled')
+  })
+
+  it('emits no late-start row for a run terminal under another reason code', () => {
+    arm(fixture)
+    fixture.db.runs.markCompleted(RUN_ID, {
+      status: 'failed',
+      completedAt: ts(5),
+      updatedAt: ts(5),
+      errorCode: HrcErrorCode.RUN_MISMATCH,
+      errorMessage: 'run_mismatch',
+    })
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+
+    expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
+  })
+
+  it('the turn still proceeds on the still-live runtime', () => {
+    arm(fixture)
+    completeOneHealthyTurn()
+    mapper.apply(env('turn.started', 3, { turnId: 'turn-2' }))
+
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.status).toBe('busy')
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.invocationState).toBe(
+      'turn_active'
+    )
+  })
+})
+
+describe('isFirstTurnMissingTerminalRun', () => {
+  function run(overrides: Partial<HrcRunRecord>): HrcRunRecord {
+    return {
+      runId: RUN_ID,
+      hostSessionId: HOST_SESSION_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      transport: 'headless',
+      status: 'failed',
+      updatedAt: ts(5),
+      ...overrides,
+    } as HrcRunRecord
+  }
+
+  it("accepts only the watchdog's own terminality", () => {
+    expect(isFirstTurnMissingTerminalRun(run({ errorCode: HrcErrorCode.FIRST_TURN_MISSING }))).toBe(
+      true
+    )
+  })
+
+  it('rejects a run whose first turn already started', () => {
+    expect(
+      isFirstTurnMissingTerminalRun(
+        run({ errorCode: HrcErrorCode.FIRST_TURN_MISSING, startedAt: ts(1) })
+      )
+    ).toBe(false)
+  })
+
+  it('rejects terminality the watchdog did not cause', () => {
+    expect(isFirstTurnMissingTerminalRun(run({ status: 'completed', startedAt: ts(1) }))).toBe(
+      false
+    )
+    expect(isFirstTurnMissingTerminalRun(run({ status: 'cancelled' }))).toBe(false)
+    expect(isFirstTurnMissingTerminalRun(run({ errorCode: HrcErrorCode.RUN_MISMATCH }))).toBe(false)
   })
 })
