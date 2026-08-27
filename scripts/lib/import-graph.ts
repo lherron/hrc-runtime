@@ -52,11 +52,9 @@ export const hrcPackages = [
   'hrc-core',
   'hrc-events',
   'hrc-frame-render',
-  'hrc-pi-top',
   'hrc-sdk',
   'hrc-server',
   'hrc-store-sqlite',
-  'hrc-top',
   'hrcchat-cli',
   'hrcmail-cli',
 ]
@@ -111,13 +109,7 @@ export const layers: Layer[] = [
   },
   {
     name: 'HRC Operator CLIs',
-    roots: [
-      'packages/hrc-cli/src',
-      'packages/hrcchat-cli/src',
-      'packages/hrcmail-cli/src',
-      'packages/hrc-top/src',
-      'packages/hrc-pi-top/src',
-    ],
+    roots: ['packages/hrc-cli/src', 'packages/hrcchat-cli/src', 'packages/hrcmail-cli/src'],
     forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
 ]

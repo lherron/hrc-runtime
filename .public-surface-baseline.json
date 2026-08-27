@@ -2639,30 +2639,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "HrcTargetOperatorDisplayState",
-      "kind": "type",
-      "file": "packages/hrc-core/src/target-operator-projection.ts",
-      "hash": "hrc-core|HrcTargetOperatorDisplayState|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcTargetOperatorProjection",
-      "kind": "type",
-      "file": "packages/hrc-core/src/target-operator-projection.ts",
-      "hash": "hrc-core|HrcTargetOperatorProjection|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcTargetOperatorProjectionFacts",
-      "kind": "type",
-      "file": "packages/hrc-core/src/target-operator-projection.ts",
-      "hash": "hrc-core|HrcTargetOperatorProjectionFacts|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "HrcTargetRuntimeView",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -3195,14 +3171,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|PrepareAttachedRunResponse|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "projectTargetOperatorState",
-      "kind": "value",
-      "file": "packages/hrc-core/src/target-operator-projection.ts",
-      "hash": "hrc-core|projectTargetOperatorState|value",
       "count": 1
     },
     {

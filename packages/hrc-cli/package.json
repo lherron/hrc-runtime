@@ -24,11 +24,9 @@
     "hrc-capture-verifier": "*",
     "hrc-core": "*",
     "hrc-events": "*",
-    "hrc-pi-top": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*",
-    "hrc-top": "*",
     "spaces-config": "latest",
     "spaces-execution": "latest"
   },

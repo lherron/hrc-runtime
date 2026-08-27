@@ -68,15 +68,6 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
   })
 
-  it('hrc top --help exits 0 with Usage and project scope options', async () => {
-    const result = await runCli(['top', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
-    expect(result.stdout).toContain('--project')
-    expect(result.stdout).toContain('--all-projects')
-    expect(result.stdout).toContain('--pi')
-  })
-
   it('hrc capture --help exits nonzero with the runtime capture pointer', async () => {
     const result = await runCli(['capture', '--help'])
     expect(result.exitCode).toBe(2)

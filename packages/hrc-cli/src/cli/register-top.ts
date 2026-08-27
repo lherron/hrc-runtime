@@ -1,6 +1,4 @@
 import { type Command, Option } from 'commander'
-import { runHrcPiTop } from 'hrc-pi-top'
-import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
@@ -35,24 +33,6 @@ function annotateTop(program: Command, name: string, metadata: CommandMetadataIn
 
 export function registerTopLevelCommands(program: Command): void {
   // -- top-level commands (commander, Phase 6 T2b) -----------------------------
-
-  program
-    .command('top')
-    .description('open the HRC session navigator')
-    .option('--project <id>', 'override project scope')
-    .option('--all-projects', 'show targets across all projects')
-    .option('--lane <lane>', 'filter by lane')
-    .option('--pi', 'use the Pi TUI replacement candidate')
-    .action(
-      async (opts: { project?: string; allProjects?: boolean; lane?: string; pi?: boolean }) => {
-        const runTop = opts.pi || process.env['HRC_TOP_IMPL'] === 'pi' ? runHrcPiTop : runHrcTop
-        await runTop({
-          projectId: opts.project ?? process.env['ASP_PROJECT'],
-          allProjects: opts.allProjects,
-          lane: opts.lane,
-        })
-      }
-    )
 
   program
     .command('start')
@@ -593,10 +573,6 @@ The output always names the resolved kind and the concrete ID(s).
   registerMovedCommandShim(program, 'bridge', 'hrc admin bridge')
 
   annotateCommand(admin, { audience: 'human' })
-  annotateTop(program, 'top', {
-    audience: 'human',
-    humanExample: 'hrc top',
-  })
   annotateTop(program, 'run', {
     audience: 'both',
     humanExample: 'hrc run <target>',

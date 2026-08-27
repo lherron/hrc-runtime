@@ -38,8 +38,6 @@ const hrcPackages = [
   'hrc-server',
   'hrc-sdk',
   'hrc-viewer',
-  'hrc-top',
-  'hrc-pi-top',
   'hrc-cli',
   'hrcchat-cli',
   'hrcmail-cli',
