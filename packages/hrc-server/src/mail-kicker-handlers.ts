@@ -233,26 +233,43 @@ async function readActionableEnvelopes(
     })
   }
   const now = Date.now()
-  return view.items
-    .filter((envelope) => !isWithinRedeliveryFloor(envelope, now))
-    .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+  const actionable: WrkqEnvelope[] = []
+  const floored: { envelope: string; remainingMs: number }[] = []
+  for (const envelope of view.items) {
+    const remainingMs = redeliveryFloorRemainingMs(envelope, now)
+    if (remainingMs > 0) {
+      floored.push({ envelope: envelope.id, remainingMs })
+      continue
+    }
+    actionable.push(envelope)
+  }
+  if (floored.length > 0) {
+    // A skip that only shows up as "the claim came back clear" is a proxy for
+    // the thing, not the thing. This says which envelope was held and for how
+    // much longer, so the floor is observable rather than inferred.
+    writeServerLog('INFO', 'wrkq.kicker.redelivery_floored', {
+      targetSessionRef,
+      floored,
+    })
+  }
+  return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
 }
 
 /**
- * Is this envelope still inside its redelivery floor?
+ * How much longer this envelope is held by its redelivery floor, or 0.
  *
- * Only a PRESENTED envelope can be: one that has never been shown has nothing
- * to wait for, and neither does one with no receipt to measure from.
+ * Only a PRESENTED envelope can be held: one that has never been shown has
+ * nothing to wait from, and neither does one with no receipt to measure from.
  */
-function isWithinRedeliveryFloor(envelope: WrkqEnvelope, now: number): boolean {
-  if (envelope.state !== 'presented') return false
+function redeliveryFloorRemainingMs(envelope: WrkqEnvelope, now: number): number {
+  if (envelope.state !== 'presented') return 0
   const lastPresentedAt = envelope.presentedTo.reduce<number>((newest, receipt) => {
     const at = Date.parse(receipt.presentedAt)
     return Number.isNaN(at) ? newest : Math.max(newest, at)
   }, 0)
-  if (lastPresentedAt === 0) return false
+  if (lastPresentedAt === 0) return 0
   const floorMs = REDELIVERY_FLOOR_BASE_MS * 2 ** Math.max(envelope.roundCount, 0)
-  return now - lastPresentedAt < floorMs
+  return Math.max(floorMs - (now - lastPresentedAt), 0)
 }
 
 /** Only a `reply_required` obligation is worth a turn, let alone a birth (§5). */

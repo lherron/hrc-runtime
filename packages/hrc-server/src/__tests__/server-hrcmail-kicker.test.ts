@@ -120,6 +120,29 @@ async function startedRunId(db: HrcDatabase, index: number): Promise<string> {
   return startedAttempts(db)[index]?.runId as string
 }
 
+/**
+ * Capture the daemon's own stderr for one bounded window, so a "skipped and
+ * logged" claim can be checked rather than inferred. Scoped to the call and
+ * restored afterwards: swapping stderr for a whole file swallows every other
+ * test's diagnostics.
+ */
+async function captureServerLog<T>(run: () => Promise<T>): Promise<{
+  result: T
+  lines: string[]
+}> {
+  const lines: string[] = []
+  const original = process.stderr.write.bind(process.stderr)
+  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
+    lines.push(String(chunk))
+    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
+  }) as typeof process.stderr.write
+  try {
+    return { result: await run(), lines }
+  } finally {
+    process.stderr.write = original
+  }
+}
+
 function queryCount(db: HrcDatabase, table: string): number {
   const row = db.sqlite.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()
   return row?.count ?? 0
@@ -647,10 +670,16 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     // A turn that ends in seconds must NOT be able to burn the bound in
     // seconds. The envelope was presented moments ago, so it is floored.
-    ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
-    await (server as any).runMailKickerSweep()
-    await Bun.sleep(50)
+    const captured = await captureServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
+      await (server as any).drainMailKickerTarget(TARGET)
+    })
     expect(deterministic.calls()).toBe(1)
+    // The hold is OBSERVABLE, not inferred from a claim that came back clear.
+    const held = captured.lines.filter((line) => line.includes('wrkq.kicker.redelivery_floored'))
+    expect(held).not.toHaveLength(0)
+    expect(held[held.length - 1]).toContain(envelope.id)
+    expect(held[held.length - 1]).toContain('remainingMs')
 
     // Age the receipt past the round-1 floor (2m) and it drives again.
     const aged = ledger.envelopes.get(envelope.id)
