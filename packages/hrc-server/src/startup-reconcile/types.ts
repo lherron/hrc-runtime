@@ -40,6 +40,8 @@ export type RendererControlSocketSweepResult = {
   skippedHeld: number
   skippedWithinGrace: number
   errors: number
+  /** Wall time of the single `lsof` holder enumeration, when one was run. */
+  holderEnumerationMs?: number
 }
 
 /**

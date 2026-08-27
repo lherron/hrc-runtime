@@ -317,6 +317,15 @@ export type { ServerMetricRecord } from './request-metrics.js'
 
 const DEFAULT_SQLITE_SLOW_STATEMENT_THRESHOLD_MS = 250
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000
+/**
+ * How long `stop()` lets an already-running request handler finish before it
+ * closes the store underneath it. A courtesy window for work that is about to
+ * complete (a broker start drains in ~1.2-1.8s), not a wait for completion: a
+ * handler can legitimately park indefinitely (a dispatch blocked on turn
+ * completion) and neither `hrc server stop` nor a test teardown may inherit
+ * that. A straggler past the bound is logged, not swallowed.
+ */
+const SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS = 3_000
 
 export function resolveSqliteBusyTimeoutMs(
   optionValue?: number,
@@ -802,6 +811,14 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  /**
+   * Every request handler currently executing, as a promise that settles when
+   * the handler does. `Bun.serve().stop(true)` closes the SOCKET, not the
+   * handler: a handler parked on an await (broker precompile, tmux allocate)
+   * resumes afterwards and would otherwise run a statement against a store
+   * `stop()` had already closed. Drained before `db.close()`.
+   */
+  private readonly inFlightRequests = new Set<Promise<void>>()
   readonly attachedRunOperations = new Map<string, PendingAttachedRunOperation>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
@@ -1032,7 +1049,7 @@ class HrcServerInstance implements HrcServer {
       idleTimeout: 255,
       fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => {
         server.timeout(request, 0)
-        return this.handleRequest(request)
+        return this.trackInFlightRequest(this.handleRequest(request))
       },
     } as unknown as Parameters<typeof Bun.serve>[0])
 
@@ -1469,6 +1486,67 @@ class HrcServerInstance implements HrcServer {
     })
   }
 
+  /**
+   * Register a handler promise for the shutdown drain. Returns the ORIGINAL
+   * promise so response semantics are untouched; the tracked copy absorbs
+   * rejection so tracking can never mint an unhandled rejection of its own.
+   */
+  private trackInFlightRequest(response: Promise<Response>): Promise<Response> {
+    const settled: Promise<void> = response.then(
+      () => {
+        this.inFlightRequests.delete(settled)
+      },
+      () => {
+        this.inFlightRequests.delete(settled)
+      }
+    )
+    this.inFlightRequests.add(settled)
+    return response
+  }
+
+  /**
+   * Let request handlers that were already executing when the stop began finish
+   * before the store handle closes. Without this a handler parked on an await
+   * resumes against a closed database and throws `RangeError: Cannot use a
+   * closed database` out of the sqlite statement layer, which under load lands
+   * as an unrelated red in whichever test was running.
+   *
+   * Scope is deliberately request handlers only. `runtimeStartOperations` are
+   * NOT drained: a START intentionally continues past `status: started` and an
+   * attached start waits for an operator attach that may never come, so
+   * awaiting one blocks shutdown on work that is not trying to finish.
+   */
+  private async drainInFlightRequests(): Promise<void> {
+    const pending = [...this.inFlightRequests]
+    if (pending.length === 0) {
+      return
+    }
+
+    const startedAt = performance.now()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let outcome: 'drained' | 'timeout'
+    try {
+      outcome = await Promise.race([
+        Promise.all(pending).then(() => 'drained' as const),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer)
+      }
+    }
+
+    writeServerLog(outcome === 'timeout' ? 'WARN' : 'INFO', 'server.stop.request_drain', {
+      outcome,
+      drained: pending.length,
+      stillRunning: this.inFlightRequests.size,
+      durMs: performance.now() - startedAt,
+      timeoutMs: SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS,
+    })
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) {
       return
@@ -1614,6 +1692,10 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    // Handlers that were already running when the stop began keep executing
+    // after the socket closes; let them finish (bounded) before the store goes
+    // away underneath them.
+    await this.drainInFlightRequests()
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
     this.harnessBrokerController?.shutdown?.()

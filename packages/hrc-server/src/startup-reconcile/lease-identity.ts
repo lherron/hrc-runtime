@@ -38,7 +38,19 @@ import type {
 } from './types.js'
 
 const LEASE_SOCKET_INSPECT_TIMEOUT_MS = 750
-const RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS = 10_000
+/**
+ * Ceiling on the single machine-wide `lsof -U` holder enumeration.
+ *
+ * Two reasons this is well under ten seconds. It runs on the daemon's STARTUP
+ * critical path for a best-effort cleanup whose documented failure mode is
+ * "preserve every candidate", so it must never be able to add ten seconds to
+ * `createHrcServer`. And the hrc-server suite runs `bun test --timeout 10000`:
+ * at an equal ten seconds the abort branch below was unreachable from a test —
+ * bun killed the test first, so a slow enumeration could only ever surface as an
+ * opaque 10008ms timeout instead of the `holder_enumeration_failed` WARN this
+ * code exists to emit. Keep this strictly under that budget. (T-07604)
+ */
+const RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS = 5_000
 const RENDERER_CONTROL_SOCKET_PREFIX = 'codex-app-server-renderer-control.'
 // The btmux directory also contains Codex app renderer-control Unix sockets.
 // They are not tmux servers, so the orphan lease sweeper must not probe them.
@@ -76,9 +88,12 @@ export async function sweepOrphanedRendererControlSockets(
   }
 
   let heldPaths: Set<string>
+  const enumerationStartedAt = performance.now()
   try {
     heldPaths = await enumerateHeldUnixSocketPaths()
+    result.holderEnumerationMs = performance.now() - enumerationStartedAt
   } catch (error) {
+    result.holderEnumerationMs = performance.now() - enumerationStartedAt
     // Holder state is mandatory evidence for removal. If it cannot be collected,
     // preserve every candidate rather than falling back to age-only cleanup.
     result.errors = entries.length
