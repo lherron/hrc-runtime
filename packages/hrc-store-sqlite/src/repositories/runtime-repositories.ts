@@ -1,5 +1,11 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
-import type { HrcErrorCode, HrcLaunchRecord, HrcRunRecord, HrcRuntimeSnapshot } from 'hrc-core'
+import type {
+  HrcErrorCode,
+  HrcLaunchRecord,
+  HrcRunRecord,
+  HrcRuntimeSnapshot,
+  RuntimePruneDeleteCounts,
+} from 'hrc-core'
 import type { LaunchRow, RunRow, RuntimeRow } from './rows.js'
 import {
   LAUNCH_COLUMNS,
@@ -326,8 +332,218 @@ export class RuntimeRepository {
    * process/tmux) before invoking it. Returns true when the runtime row was
    * removed, false when it was already absent.
    */
-  pruneRuntime(runtimeId: string): boolean {
+  countPruneRows(
+    runtimeIds: readonly string[],
+    options: { includeLedgers?: boolean | undefined } = {}
+  ): RuntimePruneDeleteCounts {
+    const selectedJson = JSON.stringify(runtimeIds)
+    const count = (sql: string): number =>
+      this.db.query<{ count: number }, [string]>(sql).get(selectedJson)?.count ?? 0
+    const tableExists = (table: string): boolean =>
+      this.db
+        .query<{ present: number }, [string]>(
+          "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?"
+        )
+        .get(table)?.present === 1
+    const selected = 'SELECT value AS runtime_id FROM json_each(?)'
+    const counts: RuntimePruneDeleteCounts = {
+      broker_invocation_events: 0,
+      hrc_events: 0,
+      broker_invocations: 0,
+      runtime_operations: 0,
+      runtime_first_turn_watch: 0,
+      runtime_artifacts: 0,
+      tool_result_blob_parts: 0,
+      tool_result_blobs: 0,
+      compiled_runtime_plans: 0,
+      events: count(
+        `WITH selected AS (${selected})
+         SELECT COUNT(*) AS count FROM events
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)
+            OR run_id IN (
+              SELECT run_id FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)
+            )`
+      ),
+      runtime_buffers: count(
+        `WITH selected AS (${selected})
+         SELECT COUNT(*) AS count FROM runtime_buffers
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)
+            OR run_id IN (
+              SELECT run_id FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)
+            )`
+      ),
+      surface_bindings: count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM surface_bindings
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      ),
+      local_bridges: count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM local_bridges
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      ),
+      launches: count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM launches
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      ),
+      runs: count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM runs
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      ),
+      runtimes: count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM runtimes
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      ),
+    }
+
+    if (!options.includeLedgers) return counts
+
+    counts.broker_invocation_events = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM broker_invocation_events
+       WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.hrc_events = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM hrc_events
+       WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.broker_invocations = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM broker_invocations
+       WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.runtime_operations = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM runtime_operations
+       WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.runtime_first_turn_watch = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM runtime_first_turn_watch
+       WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+    )
+    counts.runtime_artifacts = count(
+      `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM runtime_artifacts
+       WHERE operation_id IN (
+         SELECT operation_id FROM runtime_operations
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)
+       )`
+    )
+    if (tableExists('tool_result_blob_parts')) {
+      counts.tool_result_blob_parts = count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM tool_result_blob_parts
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      )
+    }
+    if (tableExists('tool_result_blobs')) {
+      counts.tool_result_blobs = count(
+        `WITH selected AS (${selected}) SELECT COUNT(*) AS count FROM tool_result_blobs
+         WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+      )
+    }
+    counts.compiled_runtime_plans = count(
+      `WITH selected AS (${selected}),
+            candidates AS (
+              SELECT plan_hash FROM runtimes
+              WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
+              UNION
+              SELECT plan_hash FROM runtime_operations
+              WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
+            )
+       SELECT COUNT(*) AS count
+       FROM compiled_runtime_plans AS plan
+       WHERE plan.plan_hash IN (SELECT plan_hash FROM candidates)
+         AND NOT EXISTS (
+           SELECT 1 FROM runtimes AS runtime
+           WHERE runtime.plan_hash = plan.plan_hash
+             AND runtime.runtime_id NOT IN (SELECT runtime_id FROM selected)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM runtime_operations AS operation
+           WHERE operation.plan_hash = plan.plan_hash
+             AND operation.runtime_id NOT IN (SELECT runtime_id FROM selected)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM broker_invocations AS invocation
+           JOIN runtime_operations AS operation
+             ON operation.operation_id = invocation.operation_id
+           WHERE operation.plan_hash = plan.plan_hash
+             AND invocation.runtime_id NOT IN (SELECT runtime_id FROM selected)
+         )`
+    )
+
+    return counts
+  }
+
+  pruneRuntime(runtimeId: string, options: { includeLedgers?: boolean | undefined } = {}): boolean {
     const prune = this.db.transaction((id: string): boolean => {
+      if (options.includeLedgers) {
+        execute(this.db, 'DELETE FROM broker_invocation_events WHERE runtime_id = ?', id)
+        execute(this.db, 'DELETE FROM hrc_events WHERE runtime_id = ?', id)
+        execute(
+          this.db,
+          `DELETE FROM runtime_artifacts
+           WHERE operation_id IN (
+             SELECT operation_id FROM runtime_operations WHERE runtime_id = ?
+           )`,
+          id
+        )
+        execute(this.db, 'DELETE FROM broker_invocations WHERE runtime_id = ?', id)
+        execute(this.db, 'DELETE FROM runtime_first_turn_watch WHERE runtime_id = ?', id)
+
+        // Phase 4 creates these tables. Phase 3 must be deployable before that
+        // migration, so each delete is guarded by sqlite_master existence.
+        const hasBlobParts =
+          this.db
+            .query<{ present: number }, []>(
+              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'tool_result_blob_parts'"
+            )
+            .get()?.present === 1
+        if (hasBlobParts) {
+          execute(this.db, 'DELETE FROM tool_result_blob_parts WHERE runtime_id = ?', id)
+        }
+        const hasBlobs =
+          this.db
+            .query<{ present: number }, []>(
+              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'tool_result_blobs'"
+            )
+            .get()?.present === 1
+        if (hasBlobs) {
+          execute(this.db, 'DELETE FROM tool_result_blobs WHERE runtime_id = ?', id)
+        }
+
+        // Remove plans owned only by this runtime. Broker invocations reference
+        // plans through their operation; target-runtime references are being
+        // removed in this transaction, while any foreign runtime reference
+        // keeps the content-addressed plan alive.
+        execute(
+          this.db,
+          `DELETE FROM compiled_runtime_plans AS plan
+           WHERE plan.plan_hash IN (
+             SELECT plan_hash FROM runtimes WHERE runtime_id = ? AND plan_hash IS NOT NULL
+             UNION
+             SELECT plan_hash FROM runtime_operations
+             WHERE runtime_id = ? AND plan_hash IS NOT NULL
+           )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtimes AS runtime
+               WHERE runtime.plan_hash = plan.plan_hash AND runtime.runtime_id <> ?
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtime_operations AS operation
+               WHERE operation.plan_hash = plan.plan_hash AND operation.runtime_id <> ?
+             )
+             AND NOT EXISTS (
+               SELECT 1
+               FROM broker_invocations AS invocation
+               JOIN runtime_operations AS operation
+                 ON operation.operation_id = invocation.operation_id
+               WHERE operation.plan_hash = plan.plan_hash AND invocation.runtime_id <> ?
+             )`,
+          id,
+          id,
+          id,
+          id,
+          id
+        )
+        execute(this.db, 'DELETE FROM runtime_operations WHERE runtime_id = ?', id)
+      }
+
       // Tables that FK-reference runs(run_id): clear by either edge (a row may
       // pin to this runtime's run while carrying a null/foreign runtime_id) so
       // no run-level FK survives the DELETE FROM runs below.

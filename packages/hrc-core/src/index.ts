@@ -305,6 +305,7 @@ export type {
   PruneRuntimeResult,
   PruneRuntimesRequest,
   PruneRuntimesResponse,
+  RuntimePruneDeleteCounts,
   PruneRuntimesSummary,
   SweepRuntimeResult,
   SweepZombieRunResult,

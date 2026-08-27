@@ -168,6 +168,19 @@ A clean interactive `/quit` ends the run normally (the broker reaps the tmux lea
 
 Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, and `hrc admin worktrees audit|prune [--project <id>] [--root <path>] [--json]`. Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
+The ledger-inclusive runtime prune is a fenced, manifest-only administrative
+surface for the T-07598 mneme burst cleanup:
+
+```bash
+hrc admin runtime prune --runtime-ids-file <file> --include-ledgers --dry-run --yes
+hrc admin runtime prune --runtime-ids-file <file> --include-ledgers --yes
+```
+
+The daemon refuses the entire manifest unless every runtime is orphan-safe and
+its exact scope is one of the three approved signal-pipeline scopes. Dry-run
+prints aggregate per-table delete counts; it does not weaken the required
+`--yes` acknowledgement.
+
 External registration retirement is operator-only:
 
 ```bash

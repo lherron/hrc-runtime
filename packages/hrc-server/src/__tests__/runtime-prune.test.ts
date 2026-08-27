@@ -150,6 +150,90 @@ function countRuntimeEvents(runtimeId: string): number {
   }
 }
 
+function seedLedgerRows(runtimeId: string, streamSeq: number): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) throw new Error(`missing runtime ${runtimeId}`)
+  const now = fixture.now()
+  const operationId = `op-${runtimeId}`
+  const invocationId = `inv-${runtimeId}`
+  const planHash = `plan-${runtimeId}`
+  try {
+    db.compiledRuntimePlans.insert({
+      planHash,
+      compileId: `compile-${runtimeId}`,
+      schemaVersion: '1',
+      compilerName: 'test',
+      compilerVersion: '1',
+      planProjectionJson: '{}',
+      createdAt: now,
+    })
+    db.runtimes.update(runtimeId, { planHash, updatedAt: now })
+    db.runtimeOperations.insert({
+      operationId,
+      runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      operationKind: 'broker_invocation',
+      controller: 'harness-broker',
+      planHash,
+      startupMethod: 'test',
+      status: 'completed',
+      routeDecisionJson: '{}',
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.brokerInvocations.insert({
+      invocationId,
+      operationId,
+      runtimeId,
+      brokerProtocol: 'test/1',
+      brokerDriver: 'test',
+      invocationState: 'completed',
+      capabilitiesJson: '{}',
+      specHash: `spec-${runtimeId}`,
+      startRequestHash: `request-${runtimeId}`,
+      selectedProfileHash: `profile-${runtimeId}`,
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.sqlite
+      .query(
+        `INSERT INTO broker_invocation_events (
+           invocation_id, seq, time, type, runtime_id, broker_event_json,
+           projection_status, created_at
+         ) VALUES (?, 1, ?, 'turn.completed', ?, '{}', 'applied', ?)`
+      )
+      .run(invocationId, now, runtimeId, now)
+    db.sqlite
+      .query(
+        `INSERT INTO hrc_events (
+           stream_seq, ts, host_session_id, scope_ref, lane_ref, generation,
+           runtime_id, category, event_kind, payload_json
+         ) VALUES (?, ?, ?, ?, 'default', 1, ?, 'turn', 'turn.completed', '{}')`
+      )
+      .run(streamSeq, now, runtime.hostSessionId, runtime.scopeRef, runtimeId)
+  } finally {
+    db.close()
+  }
+}
+
+function countRows(table: string, runtimeId?: string): number {
+  const db = new Database(fixture.dbPath)
+  try {
+    if (runtimeId) {
+      return (
+        db
+          .query<{ n: number }, [string]>(`SELECT COUNT(*) AS n FROM ${table} WHERE runtime_id = ?`)
+          .get(runtimeId)?.n ?? 0
+      )
+    }
+    return db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? 0
+  } finally {
+    db.close()
+  }
+}
+
 async function prune(body: PruneRuntimesRequest = {}): Promise<PruneRuntimesResponse> {
   const res = await fixture.postJson('/v1/runtimes/prune', body)
   expect(res.status).toBe(200)
@@ -395,5 +479,95 @@ describe('POST /v1/runtimes/prune', () => {
 
     const second = await prune({ transport: 'headless', olderThan: '1h', yes: true })
     expect(second.summary).toMatchObject({ matched: 0, pruned: 0, skipped: 0, errors: 0 })
+  })
+
+  it('dry-runs and applies an exact allowlisted ledger-inclusive manifest', async () => {
+    seedRuntime({
+      runtimeId: 'rt-mneme-manifest',
+      hostSessionId: 'hsid-mneme-manifest',
+      scopeRef: 'agent:mneme:project:signal-pipeline:task:signal-cluster',
+      transport: 'headless',
+      status: 'terminated',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedLedgerRows('rt-mneme-manifest', 1)
+
+    const dryRun = await prune({
+      runtimeIds: ['rt-mneme-manifest'],
+      includeLedgers: true,
+      dryRun: true,
+      yes: true,
+    })
+    expect(dryRun.summary).toMatchObject({ matched: 1, pruned: 1, skipped: 0, errors: 0 })
+    expect(dryRun.deleteCounts).toMatchObject({
+      runtimes: 1,
+      broker_invocation_events: 1,
+      hrc_events: 1,
+      broker_invocations: 1,
+      runtime_operations: 1,
+      compiled_runtime_plans: 1,
+    })
+    expect(getRuntime('rt-mneme-manifest')).not.toBeNull()
+    expect(countRows('broker_invocation_events', 'rt-mneme-manifest')).toBe(1)
+
+    const applied = await prune({
+      runtimeIds: ['rt-mneme-manifest'],
+      includeLedgers: true,
+      yes: true,
+    })
+    expect(applied.summary).toMatchObject({ matched: 1, pruned: 1, skipped: 0, errors: 0 })
+    expect(applied.deleteCounts).toEqual(dryRun.deleteCounts)
+    expect(getRuntime('rt-mneme-manifest')).toBeNull()
+    expect(countRows('broker_invocation_events', 'rt-mneme-manifest')).toBe(0)
+    expect(countRows('hrc_events', 'rt-mneme-manifest')).toBe(0)
+    expect(countRows('broker_invocations', 'rt-mneme-manifest')).toBe(0)
+    expect(countRows('runtime_operations', 'rt-mneme-manifest')).toBe(0)
+    expect(countRows('compiled_runtime_plans')).toBe(0)
+  })
+
+  it('refuses the whole manifest when any runtime fails scope or orphan gates', async () => {
+    seedRuntime({
+      runtimeId: 'rt-allowed-orphan',
+      hostSessionId: 'hsid-allowed-orphan',
+      scopeRef: 'agent:mneme:project:signal-pipeline:task:signal-score',
+      transport: 'headless',
+      status: 'terminated',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedRuntime({
+      runtimeId: 'rt-wrong-scope',
+      hostSessionId: 'hsid-wrong-scope',
+      scopeRef: 'agent:mneme:project:signal-pipeline:task:signal-brief',
+      transport: 'headless',
+      status: 'terminated',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedRuntime({
+      runtimeId: 'rt-active-manifest',
+      hostSessionId: 'hsid-active-manifest',
+      scopeRef: 'agent:mneme:project:signal-pipeline:task:signal-summarize',
+      transport: 'headless',
+      status: 'stale',
+      activeRunId: 'run-active-manifest',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedLedgerRows('rt-allowed-orphan', 1)
+
+    const response = await fixture.postJson('/v1/runtimes/prune', {
+      runtimeIds: ['rt-allowed-orphan', 'rt-wrong-scope', 'rt-active-manifest'],
+      includeLedgers: true,
+      yes: true,
+    })
+
+    expect(response.status).toBe(409)
+    const error = (await response.json()) as {
+      error: { detail: { failureCount: number; failures: Array<{ reasons: string[] }> } }
+    }
+    expect(error.error.detail.failureCount).toBe(2)
+    expect(error.error.detail.failures.flatMap((failure) => failure.reasons)).toEqual(
+      expect.arrayContaining(['scope_not_allowlisted', 'active_run'])
+    )
+    expect(getRuntime('rt-allowed-orphan')).not.toBeNull()
+    expect(countRows('broker_invocation_events', 'rt-allowed-orphan')).toBe(1)
   })
 })

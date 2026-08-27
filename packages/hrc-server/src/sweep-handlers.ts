@@ -1,4 +1,4 @@
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcConflictError, HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -52,6 +52,12 @@ import type { RuntimeAgingDisposition, RuntimeAgingEvidence } from './sweep-help
 import { reconcileActiveRunsOnce, sweepZombieRunsOnce } from './sweep-reconcile.js'
 import { archiveIdleSessions } from './target-message-handlers.js'
 import { createTmuxManager } from './tmux.js'
+
+const MNEME_LEDGER_PRUNE_SCOPE_ALLOWLIST = new Set([
+  'agent:mneme:project:signal-pipeline:task:signal-cluster',
+  'agent:mneme:project:signal-pipeline:task:signal-summarize',
+  'agent:mneme:project:signal-pipeline:task:signal-score',
+])
 
 export async function handleSweepRuntimes(
   this: HrcServerInstanceForHandlers,
@@ -335,6 +341,13 @@ export async function handlePruneRuntimes(
   request: Request
 ): Promise<Response> {
   const body = parsePruneRuntimesRequest(await parseJsonBody(request))
+  if (body.runtimeIds && body.includeLedgers === true) {
+    return handleLedgerManifestPrune.call(this, body.runtimeIds, {
+      dryRun: body.dryRun === true,
+      yes: body.yes === true,
+    })
+  }
+
   const statuses = body.status ?? ['stale']
   const nowMs = Date.now()
   const cutoffMs = nowMs - parseSweepDurationMs(body.olderThan ?? '24h')
@@ -417,6 +430,104 @@ export async function handlePruneRuntimes(
     ok: true,
     results,
     summary,
+  } satisfies PruneRuntimesResponse)
+}
+
+async function handleLedgerManifestPrune(
+  this: HrcServerInstanceForHandlers,
+  runtimeIds: string[],
+  options: { dryRun: boolean; yes: boolean }
+): Promise<Response> {
+  const mutate = !options.dryRun && options.yes
+  const byRuntimeId = new Map(
+    this.db.runtimes.listAll().map((runtime) => [runtime.runtimeId, runtime] as const)
+  )
+  const matched: HrcRuntimeSnapshot[] = []
+  const gateFailures: Array<{
+    runtimeId: string
+    scopeRef?: string | undefined
+    reasons: string[]
+  }> = []
+
+  // This complete preflight is the all-or-nothing boundary. No repository
+  // mutation occurs until every manifest row passes both gates.
+  for (const runtimeId of runtimeIds) {
+    const runtime = byRuntimeId.get(runtimeId)
+    if (!runtime) {
+      gateFailures.push({ runtimeId, reasons: ['unknown_runtime'] })
+      continue
+    }
+
+    const reasons: string[] = []
+    if (!MNEME_LEDGER_PRUNE_SCOPE_ALLOWLIST.has(runtime.scopeRef)) {
+      reasons.push('scope_not_allowlisted')
+    }
+    try {
+      const disposition = await evaluatePruneDisposition(runtime, this.tmux)
+      if (!disposition.prunable) reasons.push(disposition.reason ?? 'not_prunable')
+    } catch (error) {
+      reasons.push(`safety_gate_error:${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    if (reasons.length > 0) {
+      gateFailures.push({ runtimeId, scopeRef: runtime.scopeRef, reasons })
+    } else {
+      matched.push(runtime)
+    }
+  }
+
+  if (gateFailures.length > 0) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `ledger-inclusive runtime prune refused: ${gateFailures.length} of ${runtimeIds.length} manifest runtimes failed the all-or-nothing safety gate`,
+      {
+        manifestCount: runtimeIds.length,
+        failureCount: gateFailures.length,
+        failures: gateFailures,
+      }
+    )
+  }
+
+  const deleteCounts = this.db.runtimes.countPruneRows(runtimeIds, { includeLedgers: true })
+  if (mutate) {
+    const pruneAll = this.db.sqlite.transaction(() => {
+      for (const runtime of matched) {
+        const removed = this.db.runtimes.pruneRuntime(runtime.runtimeId, {
+          includeLedgers: true,
+        })
+        if (!removed) {
+          throw new HrcConflictError(
+            HrcErrorCode.STALE_CONTEXT,
+            `ledger-inclusive runtime prune lost runtime during apply: ${runtime.runtimeId}`,
+            { runtimeId: runtime.runtimeId }
+          )
+        }
+      }
+    })
+    pruneAll()
+  }
+
+  const results: PruneRuntimeResult[] = matched.map((runtime) => ({
+    type: 'runtime',
+    runtimeId: runtime.runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    transport: runtime.transport as SweepRuntimeTransport,
+    status: 'pruned',
+    ...(mutate ? {} : { reason: 'dry_run' }),
+  }))
+  const summary: PruneRuntimesSummary = {
+    type: 'summary',
+    matched: matched.length,
+    pruned: matched.length,
+    skipped: 0,
+    errors: 0,
+  }
+
+  return json({
+    ok: true,
+    results,
+    summary,
+    deleteCounts,
   } satisfies PruneRuntimesResponse)
 }
 

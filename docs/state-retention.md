@@ -164,13 +164,19 @@ The command split from T-06500 is intentional:
 - Manual `runtime sweep` uses the same liveness gate and resolved default age
   boundary; its filters remain available for operator-directed aging.
 - `runtime prune` reaps rows, defaults to `stale`, and is gated per T-05441.
+- The T-07598 one-off mneme burst cleanup is an explicit exception: `hrc admin
+  runtime prune --runtime-ids-file <file> --include-ledgers --yes` deletes the
+  selected runtimes' keep-forever ledgers only after an all-or-nothing orphan
+  gate and exact three-scope allow-list check. It is not a standing retention
+  policy or timer.
 
 `runtime prune` is the only stale-row-reaping surface.
 
 ## Registry-row retention — keep forever
 
-Terminated `runtimes` rows are keep-forever history: no TTL and no pruning, ever.
-Lance's 2026-07-18 ruling is recorded in T-06531 comment C-10793.
+Terminated `runtimes` rows are keep-forever history: no TTL and no pruning under
+the standing policy. Lance's 2026-07-18 ruling is recorded in T-06531 comment
+C-10793; the fenced T-07598 manifest cleanup above is the sole named exception.
 
 Federation binding-registry retirement rows and node-local epoch fences are
 also keep-forever authority. They have no TTL: expiring either would turn an

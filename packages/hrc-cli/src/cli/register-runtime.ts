@@ -136,6 +136,23 @@ function registerAdminRuntimeCommands(admin: Command): void {
     .action(async (runtimeId) => {
       await cmdAdopt([runtimeId])
     })
+
+  adminRuntime
+    .command('prune')
+    .description('prune an exact allowlisted runtime manifest, including durable ledgers')
+    .requiredOption('--runtime-ids-file <file>', 'newline-delimited exact runtime IDs')
+    .requiredOption('--include-ledgers', 'delete keep-forever ledgers and broker projections')
+    .option('--dry-run', 'preview per-table delete counts without deleting')
+    .requiredOption('--yes', 'confirm the destructive manifest operation')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      await cmdRuntimePrune(
+        toLegacyArgv([], cmd.opts(), {
+          strings: ['runtime-ids-file'],
+          booleans: ['include-ledgers', 'dry-run', 'yes', 'json'],
+        })
+      )
+    })
 }
 
 function registerAdminBrokerVerify(admin: Command): void {

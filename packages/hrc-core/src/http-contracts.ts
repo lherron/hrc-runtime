@@ -1022,8 +1022,31 @@ export type PruneRuntimesRequest = {
   olderThan?: string | undefined
   status?: string[] | undefined
   scope?: string | undefined
+  /** Exact runtime manifest used by the one-off ledger-inclusive admin prune. */
+  runtimeIds?: string[] | undefined
+  /** Delete keep-forever ledgers and broker projections in addition to runtime satellites. */
+  includeLedgers?: boolean | undefined
   dryRun?: boolean | undefined
   yes?: boolean | undefined
+}
+
+export type RuntimePruneDeleteCounts = {
+  broker_invocation_events: number
+  hrc_events: number
+  broker_invocations: number
+  runtime_operations: number
+  runtime_first_turn_watch: number
+  runtime_artifacts: number
+  tool_result_blob_parts: number
+  tool_result_blobs: number
+  compiled_runtime_plans: number
+  events: number
+  runtime_buffers: number
+  surface_bindings: number
+  local_bridges: number
+  launches: number
+  runs: number
+  runtimes: number
 }
 
 export type PruneRuntimeResult = {
@@ -1054,6 +1077,8 @@ export type PruneRuntimesResponse = {
   ok: true
   results: PruneRuntimeResult[]
   summary: PruneRuntimesSummary
+  /** Aggregate rows deleted, or that would be deleted, by table. */
+  deleteCounts?: RuntimePruneDeleteCounts | undefined
 }
 
 export type SweepZombieRunsRequest = {

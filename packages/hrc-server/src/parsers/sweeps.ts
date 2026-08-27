@@ -120,14 +120,67 @@ export function parsePruneRuntimesRequest(input: unknown): PruneRuntimesRequest 
     )
   }
 
+  const runtimeIds = input['runtimeIds']
+  if (runtimeIds !== undefined && !Array.isArray(runtimeIds)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeIds must be an array', {
+      field: 'runtimeIds',
+    })
+  }
+  const parsedRuntimeIds = runtimeIds?.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `runtimeIds[${index}] must be a non-empty string`,
+        { field: `runtimeIds[${index}]` }
+      )
+    }
+    return entry.trim()
+  })
+  if (parsedRuntimeIds?.length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeIds must not be empty', {
+      field: 'runtimeIds',
+    })
+  }
+  if (parsedRuntimeIds && new Set(parsedRuntimeIds).size !== parsedRuntimeIds.length) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIds must not contain duplicates',
+      { field: 'runtimeIds' }
+    )
+  }
+
   const dryRun = readOptionalBooleanField(input, 'dryRun')
   const yes = readOptionalBooleanField(input, 'yes')
+  const includeLedgers = readOptionalBooleanField(input, 'includeLedgers')
+
+  if ((parsedRuntimeIds !== undefined) !== (includeLedgers === true)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIds and includeLedgers:true must be supplied together',
+      { fields: ['runtimeIds', 'includeLedgers'] }
+    )
+  }
+  if (
+    parsedRuntimeIds !== undefined &&
+    (transport !== undefined ||
+      olderThan !== undefined ||
+      parsedStatus !== undefined ||
+      scope !== undefined)
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIds manifest mode does not accept transport, olderThan, status, or scope filters',
+      { field: 'runtimeIds' }
+    )
+  }
 
   return {
     ...(transport ? { transport: transport as SweepRuntimeTransport } : {}),
     ...(olderThan ? { olderThan: olderThan.trim() } : {}),
     ...(parsedStatus ? { status: parsedStatus } : {}),
     ...(scope ? { scope: scope.trim() } : {}),
+    ...(parsedRuntimeIds ? { runtimeIds: parsedRuntimeIds } : {}),
+    ...(includeLedgers === true ? { includeLedgers: true } : {}),
     ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
     ...(typeof yes === 'boolean' ? { yes } : {}),
   }
