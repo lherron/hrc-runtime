@@ -173,9 +173,13 @@ export class ToolResultBlobRepository {
       }
       const assembled = this.db
         .query<{ result_json: string | null }, [string]>(
-          `SELECT group_concat(chunk, '' ORDER BY part) AS result_json
-             FROM tool_result_blob_parts
-            WHERE blob_id = ?`
+          `SELECT group_concat(chunk, '') AS result_json
+             FROM (
+               SELECT chunk
+                 FROM tool_result_blob_parts
+                WHERE blob_id = ?
+                ORDER BY part ASC
+             )`
         )
         .get(input.blobId)?.result_json
       if (assembled === undefined || assembled === null) {
