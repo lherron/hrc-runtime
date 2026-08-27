@@ -36,15 +36,13 @@ function detail(error: unknown): string {
 
 function parseCapabilities(value: unknown): FederationPeerCapabilities | undefined {
   if (!isRecord(value)) return undefined
-  if (
-    typeof value['accept'] !== 'boolean' ||
-    typeof value['locate'] !== 'boolean' ||
-    typeof value['health'] !== 'boolean'
-  ) {
+  // T-07616: `accept` was a REQUIRED capability until the flag day deleted the
+  // federation MESSAGE routes. Requiring it now would make every peer running
+  // the new build answer `invalid-response` to its neighbours' health probes.
+  if (typeof value['locate'] !== 'boolean' || typeof value['health'] !== 'boolean') {
     return undefined
   }
   return {
-    accept: value['accept'],
     locate: value['locate'],
     health: value['health'],
     ...(typeof value['establish'] === 'boolean' ? { establish: value['establish'] } : {}),

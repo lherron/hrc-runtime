@@ -425,10 +425,7 @@ async function steerUrgentIntoBusyTarget(
   // construction — so this only has to be good enough to dispatch with.
   const intent =
     session.lastAppliedIntentJson ??
-    buildKickRuntimeIntent(
-      parseSessionRef(targetSessionRef).scopeRef,
-      actionableDirectives(urgent)
-    )
+    buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, actionableDirectives(urgent))
   if (intent === undefined) {
     // No intent to dispatch with. Honest decline, not a silent skip.
     writeServerLog('WARN', 'wrkq.kicker.urgent_steer_unavailable', {

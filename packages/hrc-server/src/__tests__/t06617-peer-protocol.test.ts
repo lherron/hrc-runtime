@@ -46,7 +46,7 @@ function handler() {
     }),
     health: () => ({
       startedAt: '2026-07-20T00:00:00.000Z',
-      capabilities: { accept: false, locate: true, health: true },
+      capabilities: { locate: true, health: true },
     }),
   })
 }
@@ -164,7 +164,7 @@ describe('T-06617 narrow peer routes', () => {
       protocolVersion: PEER_PROTOCOL_VERSION,
       nodeId: 'lab',
       startedAt: '2026-07-20T00:00:00.000Z',
-      capabilities: { accept: false, locate: true, health: true },
+      capabilities: { locate: true, health: true },
     })
   })
 
@@ -190,67 +190,20 @@ describe('T-06617 narrow peer routes', () => {
     })
   })
 
-  test('accept has a typed visible 501 until T-06618 injects the durable receiver', async () => {
+  test('the federation MESSAGE route is gone, not merely disabled (T-07616)', async () => {
+    // Flag day: agent talk is the shared wrkq ledger, so the peer protocol has
+    // no accept verb at all. A peer still on the old build sees the
+    // unmatched-path 404, which its outbox treats as terminal rather than
+    // retrying a route that will never come back.
     const response = await handler()(
       request('/v1/federation/accept', {
         method: 'POST',
         token: CURRENT_TOKEN,
         version: PEER_PROTOCOL_VERSION,
-        body: { envelope: { messageId: 'msg-future-shape' }, futureField: 'ignored' },
+        body: { envelope: { messageId: 'msg-any' } },
       })
     )
-    expect(response.status).toBe(501)
-    expect(await response.json()).toMatchObject({
-      ok: false,
-      protocolVersion: PEER_PROTOCOL_VERSION,
-      error: { code: 'accept_not_enabled', retryable: false },
-    })
-  })
-
-  test('enabled accept passes authenticated peer/version/envelope to T-06618 and returns an ACK', async () => {
-    const accepted: unknown[] = []
-    const serve = createPeerProtocolRequestHandler({
-      localNodeId: 'lab',
-      peers: new Map([
-        [
-          'svc',
-          {
-            nodeId: 'svc',
-            endpoint: 'http://svc.example.ts.net:18490',
-            token: new PeerToken(CURRENT_TOKEN),
-          },
-        ],
-      ]),
-      locate: async () => ({}),
-      health: () => ({
-        startedAt: '2026-07-20T00:00:00.000Z',
-        capabilities: { accept: true, locate: true, health: true },
-      }),
-      accept: async (input) => {
-        accepted.push(input)
-        return { outcome: 'accepted', messageId: 'msg-1' }
-      },
-    })
-    const response = await serve(
-      request('/v1/federation/accept', {
-        method: 'POST',
-        token: CURRENT_TOKEN,
-        version: '1.7',
-        body: { envelope: { messageId: 'msg-1', future: true } },
-      })
-    )
-    expect(response.status).toBe(200)
-    expect(accepted).toEqual([
-      {
-        authenticatedNodeId: 'svc',
-        protocolVersion: '1.7',
-        envelope: { messageId: 'msg-1', future: true },
-      },
-    ])
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      ack: { outcome: 'accepted', messageId: 'msg-1' },
-    })
+    expect(response.status).toBe(404)
   })
 
   test('establish has a schema-exact authority-only request and exact binding response', async () => {
@@ -270,7 +223,7 @@ describe('T-06617 narrow peer routes', () => {
       locate: async () => ({}),
       health: () => ({
         startedAt: '2026-07-20T00:00:00.000Z',
-        capabilities: { accept: true, establish: true, locate: true, health: true },
+        capabilities: { establish: true, locate: true, health: true },
       }),
       establish: async (input) => {
         established.push(input)
@@ -349,7 +302,7 @@ describe('T-06617 narrow peer routes', () => {
       locate: async () => ({}),
       health: () => ({
         startedAt: '2026-07-20T00:00:00.000Z',
-        capabilities: { accept: true, rosterStart: true, locate: true, health: true },
+        capabilities: { rosterStart: true, locate: true, health: true },
       }),
       rosterStart: async (input) => {
         received.push(input)

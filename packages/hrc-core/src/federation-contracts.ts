@@ -290,7 +290,6 @@ export type FederationOutboxDeliveryRecord = FederationOutboxDeliveryCommon &
 
 /** Capabilities reported by the authenticated peer-protocol health route. */
 export type FederationPeerCapabilities = {
-  readonly accept: boolean
   readonly locate: boolean
   readonly health: boolean
   /** Authority-only remote policy establishment. */
@@ -303,12 +302,6 @@ export type FederationPeerCapabilities = {
   readonly runtimeProjection?: boolean | undefined
   /** Additive v1 capability; required before forwarding semantic turn handoffs. */
   readonly semanticTurnHandoff?: boolean | undefined
-  /**
-   * T-07155 — the peer exposes `/v1/federation/accept-urgent` and will honour
-   * preemptive delivery. Advisory only: the distinct route is the fail-closed
-   * fence, this just produces a clearer refusal sooner.
-   */
-  readonly urgentDelivery?: boolean | undefined
 }
 
 /** One bounded on-demand peer probe. Tokens and other transport secrets never enter this DTO. */

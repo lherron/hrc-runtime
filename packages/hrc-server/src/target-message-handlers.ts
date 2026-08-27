@@ -15,10 +15,6 @@ import {
 import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
-  FederationMessageEnvelope,
-  FederationOutboxDeliveryRecord,
-  FederationOutboxState,
-  FederationSemanticTurnSignal,
   HrcDeliveryOutcome,
   HrcDeliveryWarning,
   HrcDispatchOrigin,
@@ -34,7 +30,6 @@ import type {
   ListMessagesResponse,
   SemanticDmRequest,
   SemanticDmResponse,
-  SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffStartedResponse,
   TraceMessageRequest,
@@ -46,9 +41,6 @@ import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
-import type { FederationTargetPlacement } from './federation/origin-outbox.js'
-import { FederationOutboxCancelError } from './federation/outbox-delivery.js'
-import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
   assertProvisionDirectiveAdmissible,
@@ -81,7 +73,7 @@ import {
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import { normalizeOptionalQuery, parseJsonBody, parseSessionRef } from './server-parsers.js'
+import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
 import {
   isRuntimeUnavailableStatus,
   json,
@@ -462,21 +454,6 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function semanticTurnSignalFromRecord(
-  record: HrcMessageRecord
-): FederationSemanticTurnSignal | undefined {
-  const value = record.metadataJson?.['federationSemanticTurnSignal']
-  if (
-    !isObjectRecord(value) ||
-    value['version'] !== 1 ||
-    (value['type'] !== 'started' && value['type'] !== 'terminal') ||
-    !isObjectRecord(value['identity'])
-  ) {
-    return undefined
-  }
-  return value as FederationSemanticTurnSignal
-}
-
 function federationOriginNodeId(record: HrcMessageRecord): string | undefined {
   const ingress = record.metadataJson?.['federationIngress']
   if (!isObjectRecord(ingress)) return undefined
@@ -783,36 +760,6 @@ export function assertReplyScopeMatches(
   })
 }
 
-function failFederatedSemanticTurnAdmission(
-  server: HrcServerInstanceForHandlers,
-  record: HrcMessageRecord,
-  delivery: FederationOutboxDeliveryRecord,
-  cancellationAttempted: boolean
-): never {
-  const errorCode =
-    delivery.lastError?.code ?? delivery.lastErrorCode ?? HrcErrorCode.RUNTIME_UNAVAILABLE
-  const detail =
-    delivery.lastError?.message ??
-    delivery.lastErrorMessage ??
-    'remote semantic turn delivery failed before admission'
-  server.db.messages.updateExecution(record.messageId, {
-    state: 'failed',
-    errorCode,
-    errorMessage: detail,
-  })
-  throw new HrcRuntimeUnavailableError(detail, {
-    messageId: record.messageId,
-    reason: 'timeout',
-    deliveryId: delivery.deliveryId,
-    deliveryState: delivery.state,
-    cancellation: {
-      attempted: cancellationAttempted,
-      outcome: errorCode === 'operator_cancelled' ? 'cancelled' : 'terminally_failed',
-      reason: delivery.lastError?.reason ?? errorCode,
-    },
-  })
-}
-
 export async function handleSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -843,35 +790,23 @@ export async function handleSemanticTurnHandoff(
     to: Extract<HrcMessageAddress, { kind: 'session' }>
   } = { ...body, to: body.to }
   const targetScopeRef = scopeRefOf(targetSessionRef)
-  let resolvedPlacement: FederationTargetPlacement | undefined
-  let remoteTarget = false
-  let routingError: unknown
-  if (this.federationOriginOutbox !== undefined) {
-    try {
-      resolvedPlacement = await this.federationOriginOutbox.resolveTargetPlacement(body)
-      remoteTarget = resolvedPlacement.outcome !== 'local'
-    } catch (error) {
-      routingError = error
-    }
-  }
-  if (!remoteTarget) {
-    assertLocalPersonaAllowed(this, targetScopeRef)
-    await assertScopeNotRetired(this, {
-      scopeRef: targetScopeRef,
-      path: 'archived-successor',
-      advisoryCoveredByDownstreamGate: () => {
-        const session = findTargetSession(this.db, targetSessionRef)
-        if (session?.status === 'archived' && session.continuation?.key) return true
-        return (
-          session === undefined &&
-          body.createIfMissing !== false &&
-          body.runtimeIntent !== undefined &&
-          !isCodexAppOwnedScopeRef(targetSessionRef)
-        )
-      },
-    })
-  }
-  if (routingError !== undefined) throw routingError
+  // T-07612 §10: the federation MESSAGE path is deleted, so every turn target
+  // this daemon admits is local. Cross-node work travels the wrkq ledger.
+  assertLocalPersonaAllowed(this, targetScopeRef)
+  await assertScopeNotRetired(this, {
+    scopeRef: targetScopeRef,
+    path: 'archived-successor',
+    advisoryCoveredByDownstreamGate: () => {
+      const session = findTargetSession(this.db, targetSessionRef)
+      if (session?.status === 'archived' && session.continuation?.key) return true
+      return (
+        session === undefined &&
+        body.createIfMissing !== false &&
+        body.runtimeIntent !== undefined &&
+        !isCodexAppOwnedScopeRef(targetSessionRef)
+      )
+    },
+  })
 
   const parent =
     body.replyToMessageId !== undefined
@@ -892,7 +827,6 @@ export async function handleSemanticTurnHandoff(
   if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
 
   const respondTo = body.respondTo ?? body.from
-  const originFromSeq = this.db.hrcEvents.maxHrcSeq() + 1
   const record = this.insertAndNotifyMessage({
     messageId: `msg-${randomUUID()}`,
     kind: 'dm',
@@ -916,145 +850,8 @@ export async function handleSemanticTurnHandoff(
         respondTo,
         ...(body.freshContext === true ? { freshContext: true } : {}),
       },
-      ...(remoteTarget ? { federationSemanticTurnOrigin: true } : {}),
     },
   })
-
-  const federationRoute = await this.federationOriginOutbox?.route(
-    body,
-    record,
-    resolvedPlacement,
-    { semanticTurnHandoff: true }
-  )
-  if (federationRoute?.outcome === 'queued') {
-    const started = await this.waitForMessage(
-      {
-        replyToMessageId: record.messageId,
-        kinds: ['system'],
-        phases: ['response'],
-        afterSeq: record.messageSeq,
-        limit: 1,
-        order: 'asc',
-      },
-      30_000,
-      record.messageId
-    )
-    if (!started.matched) {
-      if (started.reason === 'delivery_failed') {
-        const detail = `${started.errorCode}${
-          started.errorMessage ? `: ${started.errorMessage}` : ''
-        }`
-        this.db.messages.updateExecution(record.messageId, {
-          state: 'failed',
-          errorCode: started.errorCode,
-          errorMessage: detail,
-        })
-        throw new HrcRuntimeUnavailableError(detail, {
-          messageId: record.messageId,
-          reason: started.reason,
-        })
-      }
-
-      const outbox = this.federationOriginOutbox
-      let delivery =
-        outbox?.list().find((row) => row.deliveryId === federationRoute.delivery.deliveryId) ??
-        federationRoute.delivery
-      let cancellation: SemanticTurnHandoffPendingResponse['delivery']['cancellation']
-
-      if (delivery.state === 'dead_letter') {
-        failFederatedSemanticTurnAdmission(this, record, delivery, false)
-      }
-
-      const deliveryWasPreAck =
-        delivery.state === 'pending' ||
-        delivery.state === 'retry_scheduled' ||
-        delivery.state === 'peer_unreachable'
-      if (deliveryWasPreAck && outbox !== undefined) {
-        let cancellationError: unknown
-        try {
-          delivery = outbox.cancel(delivery.deliveryId)
-        } catch (error) {
-          cancellationError = error
-        }
-        if (cancellationError === undefined) {
-          failFederatedSemanticTurnAdmission(this, record, delivery, true)
-        } else {
-          delivery = outbox.list().find((row) => row.deliveryId === delivery.deliveryId) ?? delivery
-          if (cancellationError instanceof FederationOutboxCancelError) {
-            cancellation = {
-              attempted: true,
-              outcome: 'attempt_in_flight',
-              reason: cancellationError.reason,
-            }
-          } else if (delivery.state === 'delivered') {
-            cancellation = {
-              attempted: true,
-              outcome: 'not_cancellable',
-              reason: 'delivered',
-            }
-          } else {
-            cancellation = {
-              attempted: true,
-              outcome: 'failed',
-              reason:
-                cancellationError instanceof Error
-                  ? cancellationError.message
-                  : String(cancellationError),
-            }
-          }
-        }
-      } else if (delivery.state === 'delivered') {
-        cancellation = {
-          attempted: false,
-          outcome: 'not_cancellable',
-          reason: 'delivered',
-        }
-      } else {
-        cancellation = {
-          attempted: false,
-          outcome: 'failed',
-          reason: 'outbox_unavailable',
-        }
-      }
-
-      if (delivery.state === 'dead_letter') {
-        failFederatedSemanticTurnAdmission(this, record, delivery, true)
-      }
-
-      const pending = {
-        status: 'pending',
-        outcome: 'unknown',
-        messageId: record.messageId,
-        fromSeq: originFromSeq,
-        delivery: {
-          deliveryId: delivery.deliveryId,
-          state: delivery.state,
-          cancellation,
-        },
-      } satisfies SemanticTurnHandoffPendingResponse
-      writeServerLog('WARN', 'federation.semantic_turn.admission_unknown', pending)
-      return json(pending, 202)
-    }
-    const signal = semanticTurnSignalFromRecord(started.record)
-    if (signal?.type !== 'started') {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        'remote semantic turn returned an invalid admission signal',
-        { messageId: record.messageId }
-      )
-    }
-    return json({
-      messageId: record.messageId,
-      sessionRef: signal.identity.sessionRef,
-      scopeRef: signal.identity.scopeRef,
-      laneRef: signal.identity.laneRef,
-      hostSessionId: signal.identity.hostSessionId,
-      runtimeId: signal.identity.runtimeId,
-      runId: signal.identity.runId,
-      generation: signal.identity.generation,
-      fromSeq: originFromSeq,
-    } satisfies SemanticTurnHandoffStartedResponse)
-  }
 
   return json(await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo))
 }
@@ -1363,6 +1160,20 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
   return undefined
 }
 
+/**
+ * `POST /v1/messages/dm` — local semantic DM.
+ *
+ * T-07612 flag day (T-07616): agent-to-agent TALK left this route. `hrcchat dm`
+ * forwards to `wrkc say`, ACP writes the wrkq ledger, and the federated half of
+ * this path is deleted, so nothing in the collective addresses it any more.
+ *
+ * The route itself is NOT fenced this wave, deliberately. It carries the
+ * daedalus-ratified steer-class contract (T-07203 r7 / T-07214) that the wrkq
+ * kicker's `--urgent` actuation is built on, and fencing a route no caller
+ * reaches would buy nothing observable while stranding that contract's
+ * coverage. It retires in wave 5 (T-07617) together with the delivery machinery
+ * below it and the `messages` table itself.
+ */
 export async function handleSemanticDm(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -1405,7 +1216,6 @@ export async function handleSemanticDm(
         }
       : { ...parsedBody, runtimeIntent: requireCompleteRuntimeIntent(parsedBody.runtimeIntent) }
 
-  let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
     body.replyToMessageId !== undefined
       ? this.db.messages.getById(body.replyToMessageId)
@@ -1460,37 +1270,11 @@ export async function handleSemanticDm(
     // route first so a reconciled loser can originate a DM to the winner. If
     // routing is unavailable/unbound, preserve the more specific local
     // retirement refusal before surfacing the routing error.
-    let remoteTarget =
-      parent !== undefined && this.federationOriginOutbox?.canRouteResponseToPeer(parent) === true
-    let routingError: unknown
-    if (!remoteTarget && this.federationOriginOutbox !== undefined) {
-      try {
-        resolvedPlacement = await this.federationOriginOutbox.resolveTargetPlacement(body)
-        remoteTarget = resolvedPlacement.outcome !== 'local'
-      } catch (error) {
-        routingError = error
-      }
-    }
-    if (!remoteTarget) {
-      assertLocalPersonaAllowed(this, scopeRef)
-      await assertLocalTargetNotRetired()
-    }
-    if (routingError !== undefined) throw routingError
-    // T-07214 (spec r5): STRICT steer to a remote-homed scope refuses typed
-    // BEFORE any message, envelope, ACK, or outbox entry — urgent admission
-    // cannot be proven over store-and-forward delivery, and the strict class
-    // may never be acknowledged without admission proof. The best-effort
-    // class rides ordinary carriage and floors honestly instead.
-    if (remoteTarget && body.whenBusy === 'steer') {
-      throw new HrcDomainError(
-        HrcErrorCode.URGENT_DELIVERY_UNROUTABLE,
-        "the target's scope is homed on a peer node; urgent admission cannot be proven over store-and-forward delivery. Resend without --steer for best-effort delivery, or address a locally-homed scope",
-        {
-          sessionRef: body.to.kind === 'session' ? body.to.sessionRef : undefined,
-          route: 'semantic-dm',
-        }
-      )
-    }
+    // T-07612 §10 (flag day T-07616): the federation MESSAGE path is deleted,
+    // so there is no remote branch left — every target this daemon admits is
+    // local, and cross-node work travels the wrkq ledger.
+    assertLocalPersonaAllowed(this, scopeRef)
+    await assertLocalTargetNotRetired()
   }
 
   // T-07398 — provisioning is decided at BIRTH. A directive block arriving at a
@@ -1518,19 +1302,11 @@ export async function handleSemanticDm(
     },
   })
 
-  // Interactive broker reply correlation can terminalize the just-inserted
-  // response and attach its federated terminal signal. Route the durable fresh
-  // row so that projection metadata crosses the response fence.
-  const routableRecord = this.db.messages.getById(record.messageId) ?? record
-  const federationRoute = await this.federationOriginOutbox?.route(
+  const { execution, reply, warnings, delivery } = await this.deliverPersistedSemanticDm(
     body,
-    routableRecord,
-    resolvedPlacement
+    record,
+    respondTo
   )
-  const { execution, reply, warnings, delivery } =
-    federationRoute?.outcome === 'queued'
-      ? {}
-      : await this.deliverPersistedSemanticDm(body, record, respondTo)
 
   // Handle --wait
   let waited: WaitMessageResponse | undefined
@@ -1565,25 +1341,6 @@ export async function handleSemanticDm(
   } satisfies SemanticDmResponse)
 }
 
-/**
- * Layer a provision-only intent onto the target session's own birth intent.
- *
- * The dm sender omits placement for an existing scope on purpose (T-07151:
- * existing-scope delivery must stay usable against a drifted checkout), so when
- * a handle carries a `+` block the wire value is a fragment: `provision` and
- * nothing else. Every downstream consumer — dispatch, auto-summon, the archived
- * successor — needs a whole intent, so the fragment is completed here from the
- * session's `lastAppliedIntentJson` rather than being pushed onto them.
- *
- * The runtime's own intent is the base and only `provision` rides on top, which
- * is what keeps birth-only stickiness true: the directive is visible to the
- * admissibility check and to `directivesApplied`, and it changes nothing about
- * what the live runtime already is.
- *
- * With no session to complete it from, the fragment resolves to `undefined` —
- * exactly what this path sent before directives existed, so a directive can
- * never become authority to birth a scope from a placement-less intent.
- */
 export function completeDirectiveOnlyIntent(
   server: HrcServerInstanceForHandlers,
   sessionRef: string,
@@ -1631,558 +1388,6 @@ function targetHasLiveRuntime(
 }
 
 /** Filterable durable delivery projection consumed by the F3 operator CLI. */
-export function handleFederationOutboxList(this: HrcServerInstanceForHandlers, url: URL): Response {
-  const messageId = normalizeOptionalQuery(url.searchParams.get('messageId'))
-  const peerNodeId = normalizeOptionalQuery(url.searchParams.get('peerNodeId'))
-  const stateFilter = normalizeOptionalQuery(url.searchParams.get('state'))
-  const allowedStates = new Set<FederationOutboxState>([
-    'pending',
-    'retry_scheduled',
-    'peer_unreachable',
-    'delivered',
-    'dead_letter',
-  ])
-  const states = stateFilter?.split(',').map((state) => state.trim()) ?? []
-  const invalidState = states.find(
-    (state): state is string => !allowedStates.has(state as FederationOutboxState)
-  )
-  if (invalidState !== undefined) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      `unknown federation outbox state "${invalidState}"`,
-      { field: 'state', allowed: [...allowedStates] }
-    )
-  }
-  const deliveries = this.federationOriginOutbox?.list() ?? []
-  return json(
-    deliveries.filter(
-      (delivery) =>
-        (messageId === undefined || delivery.messageId === messageId) &&
-        (peerNodeId === undefined || delivery.peerNodeId === peerNodeId) &&
-        (states.length === 0 || states.includes(delivery.state))
-    )
-  )
-}
-
-/** Replay one terminal dead-letter through a fresh retry window. */
-export async function handleFederationOutboxReplay(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (
-    !isObjectRecord(body) ||
-    typeof body['deliveryId'] !== 'string' ||
-    body['deliveryId'].trim().length === 0
-  ) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
-      field: 'deliveryId',
-    })
-  }
-  if (this.federationOriginOutbox === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'federation origin outbox is not enabled on this node'
-    )
-  }
-  const outbox = this.federationOriginOutbox
-  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
-  if (delivery === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `unknown federation delivery ${body['deliveryId']}`,
-      { deliveryId: body['deliveryId'] }
-    )
-  }
-  if (delivery.state !== 'dead_letter') {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `delivery ${delivery.deliveryId} is not dead-lettered`,
-      { deliveryId: delivery.deliveryId, state: delivery.state }
-    )
-  }
-  return json(outbox.replay(delivery.deliveryId))
-}
-
-/** Replay every exhausted delivery for one peer with one fresh retry window. */
-export async function handleFederationOutboxReplayPeer(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (
-    !isObjectRecord(body) ||
-    typeof body['peerNodeId'] !== 'string' ||
-    body['peerNodeId'].trim().length === 0
-  ) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'peerNodeId is required', {
-      field: 'peerNodeId',
-    })
-  }
-  if (this.federationOriginOutbox === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'federation origin outbox is not enabled on this node'
-    )
-  }
-  return json(this.federationOriginOutbox.replayPeer(body['peerNodeId']))
-}
-
-/** Permanently remove one terminal dead-letter row after CLI-owned confirmation. */
-export async function handleFederationOutboxDrop(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (
-    !isObjectRecord(body) ||
-    typeof body['deliveryId'] !== 'string' ||
-    body['deliveryId'].trim().length === 0
-  ) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
-      field: 'deliveryId',
-    })
-  }
-  const outbox = this.federationOriginOutbox
-  if (outbox === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'federation origin outbox is not enabled on this node'
-    )
-  }
-  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
-  if (delivery === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `unknown federation delivery ${body['deliveryId']}`,
-      { deliveryId: body['deliveryId'] }
-    )
-  }
-  if (delivery.state !== 'dead_letter') {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `delivery ${delivery.deliveryId} is not dead-lettered`,
-      { deliveryId: delivery.deliveryId, state: delivery.state }
-    )
-  }
-  return json(outbox.dropDeadLetter(delivery.deliveryId))
-}
-
-/** Terminalize one scheduled delivery through the engine's in-flight fence. */
-export async function handleFederationOutboxCancel(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (
-    !isObjectRecord(body) ||
-    typeof body['deliveryId'] !== 'string' ||
-    body['deliveryId'].trim().length === 0
-  ) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
-      field: 'deliveryId',
-    })
-  }
-  const outbox = this.federationOriginOutbox
-  if (outbox === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      'federation origin outbox is not enabled on this node'
-    )
-  }
-  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
-  if (delivery === undefined) {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `unknown federation delivery ${body['deliveryId']}`,
-      { deliveryId: body['deliveryId'] }
-    )
-  }
-  if (delivery.state === 'delivered' || delivery.state === 'dead_letter') {
-    throw new HrcConflictError(
-      HrcErrorCode.STALE_CONTEXT,
-      `delivery ${delivery.deliveryId} is terminal (${delivery.state})`,
-      { deliveryId: delivery.deliveryId, state: delivery.state }
-    )
-  }
-  try {
-    return json(outbox.cancel(delivery.deliveryId))
-  } catch (error) {
-    if (error instanceof FederationOutboxCancelError) {
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, error.message, {
-        deliveryId: error.deliveryId,
-        reason: error.reason,
-      })
-    }
-    throw error
-  }
-}
-
-export async function deliverFederationAcceptedMessage(
-  this: HrcServerInstanceForHandlers,
-  envelope: FederationMessageEnvelope,
-  record: HrcMessageRecord
-): Promise<void> {
-  const originNodeId = federationOriginNodeId(record)
-  const targetScopeRef =
-    envelope.to.kind === 'session' ? parseSessionRef(envelope.to.sessionRef).scopeRef : undefined
-  writeServerLog('INFO', 'federation.accept.local_delivery_started', {
-    messageId: record.messageId,
-    phase: envelope.phase,
-    rootMessageId: envelope.rootMessageId,
-    replyToMessageId: envelope.replyToMessageId,
-    originNodeId,
-    targetScopeRef,
-  })
-  this.notifyMessageSubscribers(record)
-  this.maybeCompleteInteractiveSemanticTurn(record)
-  if (envelope.interactiveSignal !== undefined) {
-    const signal = envelope.interactiveSignal
-    const alreadyProjected = this.db.hrcEvents
-      .listByRun(signal.event.runId, { eventKind: signal.event.eventKind })
-      .some(
-        (event) =>
-          isObjectRecord(event.payload) &&
-          event.payload['federationSignalMessageId'] === record.messageId
-      )
-    if (!alreadyProjected) {
-      const projected = appendHrcEvent(this.db, signal.event.eventKind, {
-        ts: signal.event.ts,
-        hostSessionId: signal.event.hostSessionId,
-        scopeRef: signal.event.scopeRef,
-        laneRef: signal.event.laneRef,
-        generation: signal.event.generation,
-        ...(signal.event.runtimeId === undefined ? {} : { runtimeId: signal.event.runtimeId }),
-        runId: signal.event.runId,
-        ...(signal.event.transport === undefined ? {} : { transport: signal.event.transport }),
-        payload: {
-          ...signal.event.payload,
-          ...(signal.acpRunId === undefined ? {} : { acpRunId: signal.acpRunId }),
-          federationSignalMessageId: record.messageId,
-          federationSourceHrcSeq: signal.sourceHrcSeq,
-        },
-      })
-      this.notifyEvent(projected)
-      writeServerLog('INFO', 'federation.interactive_signal.projected', {
-        signalMessageId: record.messageId,
-        requestMessageId: envelope.replyToMessageId,
-        sourceHrcSeq: signal.sourceHrcSeq,
-        projectedHrcSeq: projected.hrcSeq,
-        acpRunId: signal.acpRunId,
-        scopeRef: signal.event.scopeRef,
-        runId: signal.event.runId,
-        runtimeId: signal.event.runtimeId,
-      })
-    }
-    return
-  }
-  if (envelope.semanticTurnSignal !== undefined) {
-    projectFederatedSemanticTurnSignal.call(this, record, envelope.semanticTurnSignal)
-    return
-  }
-  if (
-    envelope.phase === 'request' &&
-    envelope.to.kind === 'session' &&
-    envelope.delivery?.semanticTurnHandoff !== undefined
-  ) {
-    const delivery = envelope.delivery
-    const runtimeIntent =
-      delivery.runtimeIntent === undefined
-        ? undefined
-        : localizeFederatedRuntimeIntent(
-            parseSessionRef(envelope.to.sessionRef).scopeRef,
-            delivery.runtimeIntent,
-            this.runtimeIntentLocalizationOptions
-          )
-    const body: SemanticTurnHandoffRequest & {
-      to: Extract<HrcMessageAddress, { kind: 'session' }>
-    } = {
-      from: envelope.from,
-      to: envelope.to,
-      body: envelope.body,
-      ...(envelope.replyToMessageId === undefined
-        ? {}
-        : { replyToMessageId: envelope.replyToMessageId }),
-      ...(runtimeIntent === undefined ? {} : { runtimeIntent }),
-      ...(delivery.createIfMissing === undefined
-        ? {}
-        : { createIfMissing: delivery.createIfMissing }),
-      ...(delivery.parsedScopeJson === undefined
-        ? {}
-        : { parsedScopeJson: { ...delivery.parsedScopeJson } }),
-      ...(delivery.respondTo === undefined ? {} : { respondTo: delivery.respondTo }),
-      ...(delivery.responseFormat === undefined ? {} : { responseFormat: delivery.responseFormat }),
-      ...(delivery.allowStaleGeneration === undefined
-        ? {}
-        : { allowStaleGeneration: delivery.allowStaleGeneration }),
-      ...(delivery.semanticTurnHandoff?.version === 2 ? { freshContext: true } : {}),
-    }
-    const handoff = await deliverPersistedSemanticTurnHandoff.call(
-      this,
-      body,
-      record,
-      body.respondTo ?? body.from
-    )
-    const persisted = this.db.messages.getById(record.messageId)
-    const mode = persisted?.execution.mode
-    const transport = persisted?.execution.transport
-    if (
-      (mode !== 'headless' && mode !== 'interactive' && mode !== 'nonInteractive') ||
-      (transport !== 'sdk' && transport !== 'tmux' && transport !== 'headless')
-    ) {
-      throw new HrcRuntimeUnavailableError(
-        'remote semantic turn started without complete lifecycle identity',
-        { messageId: record.messageId }
-      )
-    }
-    const signal: FederationSemanticTurnSignal = {
-      version: 1,
-      type: 'started',
-      sourceHrcSeq: handoff.fromSeq,
-      identity: {
-        sessionRef: handoff.sessionRef,
-        scopeRef: handoff.scopeRef,
-        laneRef: handoff.laneRef,
-        hostSessionId: handoff.hostSessionId,
-        runtimeId: handoff.runtimeId,
-        runId: handoff.runId,
-        generation: handoff.generation,
-        mode,
-        transport,
-      },
-    }
-    const signalRecord = this.insertAndNotifyMessage({
-      messageId: `msg-${randomUUID()}`,
-      kind: 'system',
-      phase: 'response',
-      from: record.to,
-      to: body.respondTo ?? body.from,
-      body: '',
-      replyToMessageId: record.messageId,
-      rootMessageId: record.rootMessageId,
-      execution: {
-        state: 'started',
-        mode,
-        sessionRef: handoff.sessionRef,
-        scopeRef: handoff.scopeRef,
-        laneRef: handoff.laneRef,
-        hostSessionId: handoff.hostSessionId,
-        generation: handoff.generation,
-        runtimeId: handoff.runtimeId,
-        runId: handoff.runId,
-        transport,
-      },
-      metadataJson: { federationSemanticTurnSignal: signal },
-    })
-    await this.federationOriginOutbox?.routeResponse(signalRecord)
-    const observedAt = timestamp()
-    this.db.messages.updateMetadata(record.messageId, {
-      federationDelivery: { outcome: 'runtime_delivery', observedAt },
-    })
-    writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
-      messageId: record.messageId,
-      phase: envelope.phase,
-      rootMessageId: envelope.rootMessageId,
-      originNodeId,
-      targetScopeRef,
-      executionState: persisted?.execution.state,
-      runtimeId: handoff.runtimeId,
-      runId: handoff.runId,
-      transport,
-      deliveryOutcome: 'runtime_delivery',
-      semanticTurnHandoff: true,
-      lifecycleSignalMessageId: signalRecord.messageId,
-      observedAt,
-    })
-    return
-  }
-  if (envelope.phase !== 'request' && envelope.delivery === undefined) {
-    // A response envelope without delivery context is a daemon-bridged
-    // turn-final reply. Locally those are durable-insert only (never injected
-    // into the origin runtime), so the federated path must match — injecting
-    // them would also let two headless recipients auto-reply to each other
-    // forever. Explicit --reply-to responses carry delivery context and fall
-    // through to runtime delivery below.
-    const observedAt = timestamp()
-    this.db.messages.updateMetadata(record.messageId, {
-      federationDelivery: {
-        outcome: 'store_only',
-        reason: 'response_without_delivery_context',
-        observedAt,
-      },
-    })
-    writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
-      messageId: record.messageId,
-      phase: envelope.phase,
-      rootMessageId: envelope.rootMessageId,
-      replyToMessageId: envelope.replyToMessageId,
-      originNodeId,
-      executionState: record.execution.state,
-      deliveryOutcome: 'store_only',
-      storeOnlyReason: 'response_without_delivery_context',
-      observedAt,
-    })
-    return
-  }
-
-  const delivery = envelope.delivery
-  const runtimeIntent =
-    delivery?.runtimeIntent === undefined || envelope.to.kind !== 'session'
-      ? undefined
-      : localizeFederatedRuntimeIntent(
-          parseSessionRef(envelope.to.sessionRef).scopeRef,
-          delivery.runtimeIntent,
-          this.runtimeIntentLocalizationOptions
-        )
-  // T-07214: the tolerant best-effort class is honoured only for origin peers
-  // this node has authorized for urgent delivery (the same default-deny gate
-  // accept-urgent consults). Unauthorized or absent -> the ordinary floor.
-  const federatedWhenBusy =
-    delivery?.whenBusy === 'steer_else_queue' &&
-    originNodeId !== undefined &&
-    this.isPeerUrgentDeliveryAuthorized?.(originNodeId) === true
-      ? ('steer_else_queue' as const)
-      : undefined
-  const body: CompleteSemanticDmRequest = {
-    from: envelope.from,
-    to: envelope.to,
-    body: envelope.body,
-    ...(envelope.replyToMessageId === undefined
-      ? {}
-      : { replyToMessageId: envelope.replyToMessageId }),
-    ...(federatedWhenBusy === undefined ? {} : { whenBusy: federatedWhenBusy }),
-    ...(runtimeIntent === undefined ? {} : { runtimeIntent }),
-    ...(delivery?.createIfMissing === undefined
-      ? {}
-      : { createIfMissing: delivery.createIfMissing }),
-    ...(delivery?.parsedScopeJson === undefined
-      ? {}
-      : { parsedScopeJson: { ...delivery.parsedScopeJson } }),
-    ...(delivery?.respondTo === undefined ? {} : { respondTo: delivery.respondTo }),
-    ...(delivery?.responseFormat === undefined ? {} : { responseFormat: delivery.responseFormat }),
-    ...(delivery?.allowStaleGeneration === undefined
-      ? {}
-      : { allowStaleGeneration: delivery.allowStaleGeneration }),
-  }
-  const delivered = await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
-  const persisted = this.db.messages.getById(record.messageId)
-  const execution = persisted?.execution
-  const observedAt = timestamp()
-  this.db.messages.updateMetadata(record.messageId, {
-    federationDelivery: { outcome: 'runtime_delivery', observedAt },
-  })
-  writeServerLog(
-    execution?.state === 'failed' ? 'WARN' : 'INFO',
-    'federation.accept.local_delivery_completed',
-    {
-      messageId: record.messageId,
-      phase: envelope.phase,
-      rootMessageId: envelope.rootMessageId,
-      replyToMessageId: envelope.replyToMessageId,
-      originNodeId,
-      targetScopeRef,
-      executionState: execution?.state,
-      runtimeId: execution?.runtimeId,
-      runId: execution?.runId,
-      transport: execution?.transport,
-      errorCode: execution?.errorCode,
-      errorMessage: execution?.errorMessage,
-      replyMessageId: delivered.reply?.messageId,
-      deliveryOutcome: 'runtime_delivery',
-      observedAt,
-    }
-  )
-  // Only a request's turn-final output routes back as a federated response.
-  // A reply-to-a-response would be refused at the peer's accept fence
-  // (repliedTo must be request-phase) and jam the outbox in retry.
-  if (envelope.phase === 'request' && delivered.reply !== undefined) {
-    await this.federationOriginOutbox?.routeResponse(delivered.reply)
-  }
-}
-
-function projectFederatedSemanticTurnSignal(
-  this: HrcServerInstanceForHandlers,
-  record: HrcMessageRecord,
-  signal: FederationSemanticTurnSignal
-): void {
-  const request =
-    record.replyToMessageId === undefined
-      ? undefined
-      : this.db.messages.getById(record.replyToMessageId)
-  if (request === undefined || request.metadataJson?.['federationSemanticTurnOrigin'] !== true) {
-    return
-  }
-
-  const identity = signal.identity
-  const state =
-    signal.type === 'started' ? 'started' : signal.outcome === 'completed' ? 'completed' : 'failed'
-  const execution = {
-    state,
-    mode: identity.mode,
-    sessionRef: identity.sessionRef,
-    scopeRef: identity.scopeRef,
-    laneRef: identity.laneRef,
-    hostSessionId: identity.hostSessionId,
-    generation: identity.generation,
-    runtimeId: identity.runtimeId,
-    runId: identity.runId,
-    transport: identity.transport,
-    ...(signal.type === 'terminal' && signal.errorCode !== undefined
-      ? { errorCode: signal.errorCode }
-      : {}),
-    ...(signal.type === 'terminal' && signal.errorMessage !== undefined
-      ? { errorMessage: signal.errorMessage }
-      : {}),
-  } as const
-  const requestAlreadyTerminal =
-    request.execution.state === 'completed' || request.execution.state === 'failed'
-  if (signal.type !== 'started' || !requestAlreadyTerminal) {
-    this.db.messages.updateExecution(request.messageId, execution)
-  }
-  this.db.messages.updateExecution(record.messageId, execution)
-
-  const runEvents = this.db.hrcEvents.listByRun(identity.runId)
-  const alreadyProjected = runEvents.some(
-    (event) =>
-      isObjectRecord(event.payload) &&
-      event.payload['federationSignalMessageId'] === record.messageId
-  )
-  const terminalAlreadyProjected =
-    signal.type === 'started' && runEvents.some((event) => event.eventKind === 'turn.completed')
-  if (alreadyProjected || terminalAlreadyProjected) return
-
-  const projected = appendHrcEvent(
-    this.db,
-    signal.type === 'started' ? 'turn.started' : 'turn.completed',
-    {
-      ts: timestamp(),
-      hostSessionId: identity.hostSessionId,
-      scopeRef: identity.scopeRef,
-      laneRef: identity.laneRef,
-      generation: identity.generation,
-      runtimeId: identity.runtimeId,
-      runId: identity.runId,
-      transport: identity.transport,
-      ...(signal.type === 'terminal' && signal.errorCode !== undefined
-        ? { errorCode: signal.errorCode }
-        : {}),
-      payload: {
-        federated: true,
-        federationSignalMessageId: record.messageId,
-        federationSourceHrcSeq: signal.sourceHrcSeq,
-        ...(signal.type === 'terminal'
-          ? {
-              success: signal.outcome === 'completed',
-              body: record.body,
-              replyMessageId: record.messageId,
-            }
-          : {}),
-      },
-    }
-  )
-  this.notifyEvent(projected)
-}
-
 export async function deliverPersistedSemanticDm(
   this: HrcServerInstanceForHandlers,
   body: CompleteSemanticDmRequest,
@@ -2726,12 +1931,6 @@ export const targetMessageHandlersMethods = {
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
-  handleFederationOutboxList,
-  handleFederationOutboxReplay,
-  handleFederationOutboxReplayPeer,
-  handleFederationOutboxDrop,
-  handleFederationOutboxCancel,
-  deliverFederationAcceptedMessage,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,
   steerBusyHeadlessSemanticDm,

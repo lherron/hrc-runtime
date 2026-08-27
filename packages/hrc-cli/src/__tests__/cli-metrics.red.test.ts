@@ -342,7 +342,10 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
     expect(waitLine.raw).not.toContain(conditionMarker)
   }, 15_000)
 
-  test('records hrcchat RPC latency, status, bytes, and request ID', async () => {
+  // Retargeted at the T-07616 flag day: this was `hrcchat messages`, which is
+  // now a moved-shim and issues no RPC. `hrc ls messages` is the same read
+  // against the same route, and the recorder is shared by both binaries.
+  test('records RPC latency, status, bytes, and request ID', async () => {
     const sandbox = await createSandbox()
     const responseBody = { messages: [] }
     let requestId: string | null = null
@@ -352,17 +355,16 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
     })
 
     try {
-      const result = await runEntry(HRCCHAT_ENTRY, ['--json', 'messages'], sandbox)
+      const result = await runEntry(HRC_ENTRY, ['ls', 'messages', '--json'], sandbox)
       const line = await readOnlyMetric(sandbox.stateRoot)
 
       expect(result.exitCode).toBe(0)
       expectBaseMetric(line, {
-        bin: 'hrcchat',
-        cmd: 'messages',
+        bin: 'hrc',
+        cmd: 'ls',
         exitCode: 0,
         stdoutBytes: result.stdout.byteLength,
       })
-      expect(line.record.flags).toEqual(['--json'])
       expect(line.record.rpc).toHaveLength(1)
       expect(requestId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i

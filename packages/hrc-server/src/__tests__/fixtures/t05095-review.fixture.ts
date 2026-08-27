@@ -86,7 +86,7 @@ export function createT05095Helpers(
 
   function installDispatchInputSpy(): { calls: Array<Record<string, unknown>> } {
     const state = { calls: [] as Array<Record<string, unknown>> }
-    ;(getServer() as any).getHarnessBrokerController = () => ({
+    ;(getServer() as unknown as Record<string, unknown>).getHarnessBrokerController = () => ({
       dispatchInput: async (request: Record<string, unknown>) => {
         state.calls.push(request)
         return {
@@ -105,7 +105,7 @@ export function createT05095Helpers(
 
   function installMapperBackedDispatchInputSpy(): { calls: Array<Record<string, unknown>> } {
     const state = { calls: [] as Array<Record<string, unknown>> }
-    ;(getServer() as any).getHarnessBrokerController = () => ({
+    ;(getServer() as unknown as Record<string, unknown>).getHarnessBrokerController = () => ({
       dispatchInput: async (request: {
         runtimeId: string
         input: { inputId: string; metadata?: { runId?: string; repairCorrelationJson?: string } }
@@ -126,7 +126,10 @@ export function createT05095Helpers(
             time: now,
             type: 'input.accepted',
             inputId: request.input.inputId as InvocationEventEnvelope['inputId'],
-            payload: { inputId: request.input.inputId, accepted: true } as any,
+            payload: {
+              inputId: request.input.inputId,
+              accepted: true,
+            } as InvocationEventEnvelope['payload'],
           } as InvocationEventEnvelope
           const completed: InvocationEventEnvelope = {
             invocationId: runtime.activeInvocationId,
@@ -134,7 +137,10 @@ export function createT05095Helpers(
             time: now,
             type: 'turn.completed',
             inputId: request.input.inputId as InvocationEventEnvelope['inputId'],
-            payload: { status: 'completed', finalOutput: 'repair complete' } as any,
+            payload: {
+              status: 'completed',
+              finalOutput: 'repair complete',
+            } as InvocationEventEnvelope['payload'],
           } as InvocationEventEnvelope
 
           // The broker did not provide correlation. HRC owns json_repair

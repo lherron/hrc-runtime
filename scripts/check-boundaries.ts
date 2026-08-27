@@ -40,7 +40,6 @@ const hrcPackages = [
   'hrc-viewer',
   'hrc-cli',
   'hrcchat-cli',
-  'hrcmail-cli',
   'hrc-frame-render',
 ]
 
@@ -158,10 +157,6 @@ const brokerScopedPaths = [
 ]
 
 const mailPersistencePaths = ['packages/hrc-store-sqlite/src/mail']
-const mailIngressPaths = [
-  'packages/hrc-server/src/mail/mail-ingress*.ts',
-  'packages/hrc-server/src/mail/mail-handlers*.ts',
-]
 
 const hrcViewerAllowedSdkMethods = new Set([
   'health',
@@ -250,37 +245,23 @@ function resolvesWithin(file: string, specifier: string, root: string): boolean 
   return resolved === absoluteRoot || resolved.startsWith(`${absoluteRoot}/`)
 }
 
-function findMailScopedViolation(
-  scope: 'persistence' | 'ingress',
-  file: string,
-  specifier: string
-): string | undefined {
-  if (scope === 'persistence') {
-    if (
-      specifier === 'hrc-server' ||
-      specifier.startsWith('hrc-server/') ||
-      resolvesWithin(file, specifier, 'packages/hrc-server/src')
-    ) {
-      return 'mail persistence must not import server runtime/orchestration code'
-    }
-    return undefined
-  }
-
-  const normalized = specifier.toLowerCase()
+/**
+ * The companion mail-INGRESS guard went with `hrc-server/src/mail` at the
+ * T-07612 flag day (T-07616). Only envelope persistence still has files, kept
+ * read-only for lookback until wave 5 drops the tables.
+ */
+function findMailScopedViolation(file: string, specifier: string): string | undefined {
   if (
-    normalized.includes('kicker') ||
-    normalized.includes('dispatch') ||
-    normalized.includes('summon')
+    specifier === 'hrc-server' ||
+    specifier.startsWith('hrc-server/') ||
+    resolvesWithin(file, specifier, 'packages/hrc-server/src')
   ) {
-    return 'mail ingress must persist only; it must not import kicker, dispatch, or summon paths'
+    return 'mail persistence must not import server runtime/orchestration code'
   }
   return undefined
 }
 
-async function findMailScopedViolations(
-  scope: 'persistence' | 'ingress',
-  paths: string[]
-): Promise<Violation[]> {
+async function findMailScopedViolations(paths: string[]): Promise<Violation[]> {
   const violations: Violation[] = []
   const files = (await collectExistingTsFiles(paths)).sort()
   for (const file of files) {
@@ -288,7 +269,7 @@ async function findMailScopedViolations(
     for (const match of content.matchAll(importPattern)) {
       const specifier = match[1] ?? match[2]
       if (!specifier) continue
-      const reason = findMailScopedViolation(scope, file, specifier)
+      const reason = findMailScopedViolation(file, specifier)
       if (reason) {
         violations.push({ file: relative(process.cwd(), file), specifier, reason })
       }
@@ -333,17 +314,9 @@ async function collectBoundaryViolations(): Promise<Map<string, Violation[]>> {
     found.set('HRC broker-path scoped', brokerScopedViolations)
   }
 
-  const mailPersistenceViolations = await findMailScopedViolations(
-    'persistence',
-    mailPersistencePaths
-  )
+  const mailPersistenceViolations = await findMailScopedViolations(mailPersistencePaths)
   if (mailPersistenceViolations.length > 0) {
     found.set('HRC mail persistence scoped', mailPersistenceViolations)
-  }
-
-  const mailIngressViolations = await findMailScopedViolations('ingress', mailIngressPaths)
-  if (mailIngressViolations.length > 0) {
-    found.set('HRC mail ingress scoped', mailIngressViolations)
   }
 
   const viewerSdkViolations = await findHrcViewerSdkViolations()
@@ -367,7 +340,7 @@ function fixForViolation(layerName: string, violation: Violation): string {
       'Keep the envelope repository as a pure SQLite state machine; wake/dispatch policy belongs in hrc-server.',
     ].join(' ')
   }
-  if (layerName === 'HRC mail ingress scoped') {
+  if (false as boolean) {
     return [
       `FIX: remove the execution-path import '${violation.specifier}' from ${violation.file}.`,
       'Mail ingress may validate, persist, and return a receipt only; the kicker owns execution decisions.',
@@ -404,12 +377,6 @@ function whyForViolation(layerName: string, violation: Violation): string {
     return [
       'WHY: hrc-store-sqlite owns envelope persistence and state transitions, not execution.',
       'Importing server runtime code would collapse the embedded-store boundary and make persistence capable of dispatch.',
-    ].join(' ')
-  }
-  if (layerName === 'HRC mail ingress scoped') {
-    return [
-      'WHY: ingress-never-provisions is an hrcmail safety invariant.',
-      'Only the kicker may summon or dispatch; a send must commit a receipt without creating sessions or runtimes.',
     ].join(' ')
   }
   if (violation.reason) {
@@ -484,7 +451,6 @@ if (import.meta.main) {
     console.log('Boundary check passed.')
     console.log(`Broker-path scoped guard passed for: ${brokerScopedPaths.join(', ')}`)
     console.log(`Mail persistence scoped guard passed for: ${mailPersistencePaths.join(', ')}`)
-    console.log(`Mail ingress scoped guard passed for: ${mailIngressPaths.join(', ')}`)
     console.log('HRC viewer SDK scoped guard passed for: packages/hrc-viewer/src')
     process.exit(0)
   }

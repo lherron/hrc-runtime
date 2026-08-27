@@ -13,10 +13,6 @@ import { toLegacyArgv } from './argv.js'
 import { annotateCommand } from './command-metadata.js'
 import {
   cmdDoctor,
-  cmdFederationOutboxCancel,
-  cmdFederationOutboxDrop,
-  cmdFederationOutboxList,
-  cmdFederationOutboxReplay,
   cmdFederationRebind,
   cmdTargetBindings,
   cmdTargetLocate,
@@ -24,25 +20,6 @@ import {
 
 export function registerFederationCommands(program: Command): void {
   const federation = program.command('federation').description('inspect and operate federation')
-  const outbox = federation
-    .command('outbox')
-    .description('inspect, cancel, replay, and drop durable origin deliveries')
-
-  outbox
-    .command('list')
-    .description('list pending and dead-letter deliveries grouped by peer')
-    .option('--peer <node>', 'filter by destination node')
-    .option(
-      '--state <csv>',
-      'filter states (pending,retry_scheduled,peer_unreachable,delivered,dead_letter)'
-    )
-    .option('--json', 'output full delivery records as JSON')
-    .action(async (_opts, cmd: Command) => {
-      await cmdFederationOutboxList(
-        toLegacyArgv([], cmd.opts(), { strings: ['peer', 'state'], booleans: ['json'] })
-      )
-    })
-
   const rebind = federation
     .command('rebind')
     .description('manually move one fenced placement binding from old E to new E+1')
@@ -70,45 +47,6 @@ export function registerFederationCommands(program: Command): void {
   addRebindStep('revoke', 'fence the exact old tuple after draining its runtimes')
   addRebindStep('cas', 'CAS the registry only after observing old-home revocation')
   addRebindStep('activate', 'activate the exact rebound tuple on its new home')
-
-  outbox
-    .command('replay')
-    .argument('[delivery-id]', 'one dead-letter delivery id')
-    .description('replay one dead-letter, or every dead-letter for one peer')
-    .option('--peer <node>', 'destination node (required with --all)')
-    .option('--all', 'replay every dead-letter for --peer')
-    .option('--json', 'output replayed delivery records as JSON')
-    .action(async (deliveryId: string | undefined, _opts, cmd: Command) => {
-      await cmdFederationOutboxReplay(
-        toLegacyArgv(deliveryId === undefined ? [] : [deliveryId], cmd.opts(), {
-          strings: ['peer'],
-          booleans: ['all', 'json'],
-        })
-      )
-    })
-
-  outbox
-    .command('cancel')
-    .argument('<delivery-id>', 'scheduled delivery id')
-    .description('dead-letter one scheduled delivery unless its send attempt is in flight')
-    .option('--json', 'output the cancelled delivery record as JSON')
-    .action(async (deliveryId: string, _opts, cmd: Command) => {
-      await cmdFederationOutboxCancel(
-        toLegacyArgv([deliveryId], cmd.opts(), { strings: [], booleans: ['json'] })
-      )
-    })
-
-  outbox
-    .command('drop')
-    .argument('<delivery-id>', 'terminal dead-letter delivery id')
-    .description('permanently delete one dead-letter delivery')
-    .option('--yes', 'confirm permanent deletion')
-    .option('--json', 'output the deleted delivery record as JSON')
-    .action(async (deliveryId: string, _opts, cmd: Command) => {
-      await cmdFederationOutboxDrop(
-        toLegacyArgv([deliveryId], cmd.opts(), { strings: [], booleans: ['yes', 'json'] })
-      )
-    })
 
   const target = program.command('target').description('inspect where scopes live (placement)')
 
@@ -164,7 +102,7 @@ export function registerFederationCommands(program: Command): void {
       'after',
       [
         '',
-        'Checks: hrc-daemon, node-identity, federation-config, placement-skew, federation-outbox.',
+        'Checks: hrc-daemon, node-identity, federation-config, placement-skew.',
         'With a <target>, also: target-lookup, target-health, dm-capability, runtime.',
         '',
         'Placement skew is reported as a WARNING, not a failure: a skewed binding is a',

@@ -25,7 +25,6 @@ const PACKAGES = [
   // hrc-cli cannot resolve without it (devbox T-06833).
   'packages/hrc-cli',
   'packages/hrcchat-cli',
-  'packages/hrcmail-cli',
 ] as const
 
 type Manifest = {

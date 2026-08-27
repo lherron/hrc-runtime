@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
-import { HrcConflictError } from 'hrc-core'
 import {
   createPlacementLedgerRepository,
   openBindingRegistry,
@@ -19,7 +17,6 @@ import {
   type ExternalParticipantRpcClient,
   performExternalRegistrationHello,
 } from '../external-registration-rendezvous.js'
-import { assertExternalParticipantFederatedEgress } from '../federation/origin-outbox.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { hashRegistrationCredential } from '../registration-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -28,7 +25,6 @@ import type { HrcServerOptions } from '../server-types.js'
 const REGISTRATION_ID = 'registration-t07138'
 const CREDENTIAL = 'credential-t07138'
 const SCOPE = 'agent:arris:project:arris:task:reg-t07138'
-const SESSION = `${SCOPE}/lane:main`
 
 class HelloClient implements ExternalParticipantRpcClient {
   async request(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -332,21 +328,6 @@ describe('T-07138 post-mint collective establishment', () => {
     expect(server.externalRegistrationEstablishmentOperations.has(REGISTRATION_ID)).toBe(false)
     await Bun.sleep(5)
     expect(consultAttempts).toBe(3)
-
-    const record = { from: { kind: 'session' as const, sessionRef: SESSION } }
-    let error: unknown
-    try {
-      assertExternalParticipantFederatedEgress(db, 'svc', record)
-    } catch (caught) {
-      error = caught
-    }
-    expect(error).toBeInstanceOf(HrcConflictError)
-    expect((error as HrcConflictError).detail).toMatchObject({
-      reason: 'collective_establishment_quarantined',
-      retryable: false,
-      attemptCount: 3,
-      attemptBudget: 3,
-    })
   })
 
   test('resumes the monotonic registration attempt count after controller restart', async () => {
@@ -462,36 +443,5 @@ describe('T-07138 post-mint collective establishment', () => {
       placementEpoch: 1,
     })
     expect(registry.get(SCOPE)?.homeNodeId).toBe('svc')
-  })
-
-  test('sender-home fence refuses pending and noncanonical egress, then admits canonical egress', async () => {
-    const record = { from: { kind: 'session' as const, sessionRef: SESSION } }
-    let error: unknown
-    try {
-      assertExternalParticipantFederatedEgress(db, 'svc', record)
-    } catch (caught) {
-      error = caught
-    }
-    expect(error).toBeInstanceOf(HrcConflictError)
-    expect((error as HrcConflictError).detail).toMatchObject({ reason: 'binding_unbound' })
-
-    await reconcileExternalRegistrationCollectiveEstablishment(
-      reconciliationServer(registryClient(registry), async () => ({
-        claimsTask: false,
-        placement: { pins: { 'arris:reg-t07138': 'lab' }, homes: {} },
-      })),
-      REGISTRATION_ID
-    )
-    expect(() => assertExternalParticipantFederatedEgress(db, 'svc', record)).toThrow(
-      'placement_refused'
-    )
-
-    registry.close()
-    registry = openBindingRegistry(join(root, 'canonical-registry.sqlite'))
-    await reconcileExternalRegistrationCollectiveEstablishment(
-      reconciliationServer(registryClient(registry)),
-      REGISTRATION_ID
-    )
-    expect(() => assertExternalParticipantFederatedEgress(db, 'svc', record)).not.toThrow()
   })
 })

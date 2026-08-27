@@ -29,12 +29,10 @@ import type {
   ExternalRegistrationRendezvousMethods,
 } from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
-import type { FederationOriginOutbox } from './federation/origin-outbox.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
 import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
-import type { MailHandlersMethods } from './mail/mail-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
 import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
 import type { RegistrationHandlersMethods } from './registration-handlers.js'
@@ -62,6 +60,7 @@ import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 import type { TurnAdmissionGate } from './turn-admission-gate.js'
 import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
+import type { WrkqStopGateHandlersMethods } from './wrkq/stop-gate-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
@@ -88,7 +87,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   ExternalRegistrationRendezvousMethods &
   LaunchLifecycleHandlersMethods &
   MailKickerHandlersMethods &
-  MailHandlersMethods &
+  WrkqStopGateHandlersMethods &
   PresentationPublishMethods &
   RosterClaimHandlersMethods &
   ExactClaimHandlersMethods &
@@ -142,7 +141,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly options: HrcServerOptions
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
-  readonly federationOriginOutbox: FederationOriginOutbox | undefined
   /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly federationRegistryClient: BindingRegistryClient | undefined

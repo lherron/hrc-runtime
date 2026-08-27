@@ -118,7 +118,7 @@ describe('T-06875 container-local persona allowlist', () => {
     expect(db.runtimes.listAll()).toHaveLength(ALLOWED.length)
   })
 
-  test('direct local DM, turn handoff, and runtime start reject a pre-existing outside scope', async () => {
+  test('turn handoff and runtime start reject a pre-existing outside scope', async () => {
     fixture.seedSession('hsid-t06875-outside', OUTSIDE_SCOPE)
     server = await createHrcServer(
       fixture.serverOpts({
@@ -128,11 +128,6 @@ describe('T-06875 container-local persona allowlist', () => {
     )
 
     const requests = [
-      fixture.postJson('/v1/messages/dm', {
-        from: { kind: 'entity', entity: 'human' },
-        to: { kind: 'session', sessionRef: OUTSIDE_SESSION },
-        body: 'must not deliver',
-      }),
       fixture.postJson('/v1/messages/turn-handoff', {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: OUTSIDE_SESSION },

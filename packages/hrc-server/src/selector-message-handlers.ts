@@ -20,6 +20,7 @@ import {
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
+
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
@@ -406,6 +407,16 @@ export async function handleEnsureTarget(
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }
 
+/**
+ * `POST /v1/messages` — direct write to the `messages` table.
+ *
+ * T-07612 flag day (T-07616): like `/v1/messages/dm`, this keeps working while
+ * having no caller left in the collective. Fencing an unreachable route buys
+ * nothing observable and would strand the `hrc show` message-selector reads
+ * that use it to seed. The writers that actually carried collaboration —
+ * hrcmail and the federation accept path — are deleted outright. This route,
+ * the DM route, and the table retire together in wave 5 (T-07617).
+ */
 export async function handleCreateMessage(
   this: HrcServerInstanceForHandlers,
   request: Request

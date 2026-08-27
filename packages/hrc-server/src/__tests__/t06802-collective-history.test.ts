@@ -134,7 +134,6 @@ describe('T-06802 collective message read model', () => {
       health: () => ({
         startedAt: '2026-07-24T00:00:00.000Z',
         capabilities: {
-          accept: true,
           locate: true,
           health: true,
           collectiveHistory: true,

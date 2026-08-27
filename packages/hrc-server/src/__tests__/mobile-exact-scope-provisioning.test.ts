@@ -342,7 +342,7 @@ describe('T-07302 exact-start peer route', () => {
       locate: async () => ({}),
       health: () => ({
         startedAt: '2026-08-18T00:00:00.000Z',
-        capabilities: { accept: false, locate: true, health: true },
+        capabilities: { locate: true, health: true },
       }),
       ...(options.exactStart === false
         ? {}

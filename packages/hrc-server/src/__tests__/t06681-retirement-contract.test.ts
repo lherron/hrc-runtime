@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-
-import {
-  createPlacementLedgerRepository,
-  createScopeRetirementRepository,
-  openHrcDatabase,
-} from 'hrc-store-sqlite'
 import type { PlacementBinding, RegistryRetirementRecord } from 'hrc-store-sqlite'
 
-import { createFederationAcceptHandler } from '../federation/accept.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { evaluateSummonGate } from '../federation/summon-gate.js'
 import type { SummonGateDeps } from '../federation/summon-gate.js'
@@ -169,82 +162,5 @@ describe('T-06681 summon gate retirement semantics', () => {
     })
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
     expect(result.evaluation.diagnostic).toContain('claim-succession')
-  })
-})
-
-describe('T-06681 retired-home accept fence', () => {
-  function envelope() {
-    return {
-      protocolVersion: '1.0',
-      messageId: 'msg-81818181-8181-4181-8181-818181818181',
-      kind: 'dm' as const,
-      phase: 'request' as const,
-      from: { kind: 'session' as const, sessionRef: 'agent:mable:project:hrc-runtime:task:origin' },
-      to: { kind: 'session' as const, sessionRef: `${SCOPE}/lane:main` },
-      body: 'stale cached delivery',
-      rootMessageId: 'msg-81818181-8181-4181-8181-818181818181',
-      expected: { homeNodeId: 'svc', placementEpoch: 1 },
-    }
-  }
-
-  test('stale cached traffic is redirected to the successor epoch before insertion', async () => {
-    const db = openHrcDatabase(':memory:')
-    try {
-      createPlacementLedgerRepository(db.sqlite).installActive(binding())
-      createScopeRetirementRepository(db.sqlite).retire({
-        scopeRef: SCOPE,
-        retiredNodeId: 'svc',
-        retiredPlacementEpoch: 1,
-        successorNodeId: 'lab',
-        reason: 'namespace_reconciliation',
-        retiredAt: '2026-07-20T00:01:00.000Z',
-      })
-      const accept = createFederationAcceptHandler({ db, localNodeId: 'svc' })
-      expect(
-        await accept({
-          authenticatedNodeId: 'lab',
-          protocolVersion: '1.0',
-          envelope: envelope(),
-        })
-      ).toEqual({
-        outcome: 'refused',
-        code: 'stale_placement',
-        retryable: true,
-        status: 409,
-        redirect: { homeNodeId: 'lab', placementEpoch: 2 },
-      })
-      expect(db.messages.getById(envelope().messageId)).toBeUndefined()
-    } finally {
-      db.close()
-    }
-  })
-
-  test('terminal fences refuse without a redirect', async () => {
-    const db = openHrcDatabase(':memory:')
-    try {
-      createScopeRetirementRepository(db.sqlite).retire({
-        scopeRef: SCOPE,
-        retiredNodeId: 'svc',
-        retiredPlacementEpoch: 1,
-        successorNodeId: null,
-        reason: 'namespace_reconciliation',
-        retiredAt: '2026-07-20T00:01:00.000Z',
-      })
-      const accept = createFederationAcceptHandler({ db, localNodeId: 'svc' })
-      expect(
-        await accept({
-          authenticatedNodeId: 'lab',
-          protocolVersion: '1.0',
-          envelope: envelope(),
-        })
-      ).toEqual({
-        outcome: 'refused',
-        code: 'scope_retired_terminal',
-        retryable: false,
-        status: 409,
-      })
-    } finally {
-      db.close()
-    }
   })
 })

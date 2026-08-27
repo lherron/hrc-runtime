@@ -108,7 +108,7 @@ describe('T-06683 retired routed target selection', () => {
     }
   })
 
-  test('semantic DM refuses before selecting the active viewer or creating a runtime', async () => {
+  test('turn handoff refuses before selecting the active viewer or creating a runtime', async () => {
     const captured: string[] = []
     const original = process.stderr.write.bind(process.stderr)
     process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
@@ -118,7 +118,7 @@ describe('T-06683 retired routed target selection', () => {
 
     let response: Response
     try {
-      response = await fixture.postJson('/v1/messages/dm', {
+      response = await fixture.postJson('/v1/messages/turn-handoff', {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: SESSION_REF },
         body: 'retired routed target probe',
@@ -193,7 +193,7 @@ describe('T-06683 retired routed target selection', () => {
 
     let response: Response
     try {
-      response = await fixture.postJson('/v1/messages/dm', {
+      response = await fixture.postJson('/v1/messages/turn-handoff', {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: SESSION_REF },
         body: 'advisory active viewer observation probe',
@@ -203,7 +203,10 @@ describe('T-06683 retired routed target selection', () => {
       process.stderr.write = original
     }
 
-    expect(response.status).toBe(200)
+    // Advisory OBSERVES and does not fence: what matters is that the retirement
+    // gate did not refuse (409 stale_context), not that the turn went on to
+    // succeed — this fixture has no runtime for it to hand off to.
+    expect(response.status).not.toBe(409)
     const refusalLines = captured.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
     expect(refusalLines).toHaveLength(1)
     expect(refusalLines[0]).toContain('"path":"archived-successor"')
@@ -243,7 +246,7 @@ describe('T-06683 retired routed target selection', () => {
 
     let response: Response
     try {
-      response = await fixture.postJson('/v1/messages/dm', {
+      response = await fixture.postJson('/v1/messages/turn-handoff', {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: SESSION_REF },
         body: 'enforce archived successor observation probe',
@@ -301,7 +304,7 @@ describe('T-06683 retired routed target selection', () => {
 
     let response: Response
     try {
-      response = await fixture.postJson('/v1/messages/dm', {
+      response = await fixture.postJson('/v1/messages/turn-handoff', {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: SESSION_REF },
         body: 'advisory archived successor observation probe',
@@ -311,7 +314,10 @@ describe('T-06683 retired routed target selection', () => {
       process.stderr.write = original
     }
 
-    expect(response.status).toBe(200)
+    // Advisory OBSERVES and does not fence: what matters is that the retirement
+    // gate did not refuse (409 stale_context), not that the turn went on to
+    // succeed — this fixture has no runtime for it to hand off to.
+    expect(response.status).not.toBe(409)
     const refusalLines = captured.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
     expect(refusalLines).toHaveLength(1)
     expect(refusalLines[0]).toContain('"path":"archived-successor"')

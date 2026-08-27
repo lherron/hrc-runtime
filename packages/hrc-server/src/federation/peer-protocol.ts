@@ -30,7 +30,6 @@ export type PeerProtocolHealth = {
   /** Timestamp at which this node read its local projection. */
   readonly observedAt?: string | undefined
   readonly capabilities: {
-    readonly accept: boolean
     readonly establish?: boolean | undefined
     readonly rosterStart?: boolean | undefined
     readonly exactStart?: boolean | undefined
@@ -39,7 +38,6 @@ export type PeerProtocolHealth = {
     readonly runtimeProjection?: boolean | undefined
     readonly collectiveHistory?: boolean | undefined
     readonly semanticTurnHandoff?: boolean | undefined
-    readonly urgentDelivery?: boolean | undefined
   }
   /** Additive F3 projection, returned only when the caller asks for it. */
   readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
@@ -49,32 +47,6 @@ export type PeerProtocolHealthRequest = {
   readonly includeRuntimes: boolean
   readonly url: URL
 }
-
-export type PeerAcceptRequest = {
-  readonly authenticatedNodeId: string
-  readonly protocolVersion: string
-  /** T-06618 owns the envelope schema and durable/idempotent acceptance. */
-  readonly envelope: Readonly<Record<string, unknown>>
-}
-
-export type PeerAcceptResult =
-  | {
-      readonly outcome: 'accepted' | 'duplicate'
-      readonly messageId: string
-      /** Internal effect queued only after the durable ACK response is built. */
-      readonly afterAck?: (() => Promise<void> | void) | undefined
-    }
-  | {
-      readonly outcome: 'refused'
-      readonly code: string
-      readonly retryable: boolean
-      readonly status?: number | undefined
-      readonly redirect?:
-        | { readonly homeNodeId: string; readonly placementEpoch: number }
-        | undefined
-    }
-
-export type PeerAcceptHandler = (request: PeerAcceptRequest) => Promise<PeerAcceptResult>
 
 export type PeerEstablishRequest = {
   readonly authenticatedNodeId: string
@@ -146,16 +118,8 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly health: (
     request: PeerProtocolHealthRequest
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
-  readonly accept?: PeerAcceptHandler | undefined
   readonly sessionPage?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
   readonly sessionFacets?: ((request: { readonly url: URL }) => Promise<Response>) | undefined
-  /**
-   * T-07155 — urgent (preemptive) delivery. A DISTINCT handler behind a distinct
-   * route so that routing and urgent admission are one operation: a peer without
-   * the feature never parses the envelope at all, which is what makes the
-   * fail-closed guarantee hold across version skew. See handleUrgentAccept.
-   */
-  readonly acceptUrgent?: PeerAcceptHandler | undefined
   readonly establish?: PeerEstablishHandler | undefined
   readonly rosterStart?: PeerRosterStartHandler | undefined
   /**
@@ -583,118 +547,13 @@ export function createPeerProtocolRequestHandler(
       })
       if (claimStartResponse !== undefined) return claimStartResponse
 
-      // T-07155 — urgent delivery rides its OWN route, never /v1/federation/accept.
-      //
-      // The ordinary accept path builds the durable ACK and schedules afterAck
-      // local delivery BEFORE returning, so the origin can only observe an echo
-      // after the destination has already crossed the actuation boundary. Any
-      // field-level marker on that route is therefore unsafe: a peer that
-      // silently drops it durably ACKs an ordinary DM and actuates it, and the
-      // origin learns too late.
-      //
-      // A separate route removes the window instead of shortening it. A peer
-      // without this feature falls through to the unmatched-path refusal below
-      // (404 not_found) without parsing an envelope, constructing an ACK, or
-      // scheduling afterAck; a peer with the route but the feature disabled
-      // refuses explicitly. There is no ordinary-actuation branch here in any
-      // version, so the downgrade would require a reader that cannot exist.
-      if (request.method === 'POST' && url.pathname === '/v1/federation/accept-urgent') {
-        const body = await requestRecord(request)
-        if (!isRecord(body['envelope'])) throw new InvalidPeerRequest()
-        if (options.acceptUrgent === undefined) {
-          return refusal(404, 'peer_upgrade_required', { retryable: false })
-        }
-        const result = await options.acceptUrgent({
-          authenticatedNodeId: peer.nodeId,
-          protocolVersion: requestVersion,
-          envelope: body['envelope'],
-        })
-        if (result.outcome === 'refused') {
-          return refusal(result.status ?? 409, result.code, {
-            retryable: result.retryable,
-            ...(result.redirect === undefined ? {} : { redirect: result.redirect }),
-          })
-        }
-        // Reached only after the destination has admitted the order AS URGENT:
-        // authorization, envelope validation and target steer-capability are all
-        // resolved before this point, so the ACK means "admitted as urgent and
-        // steerable" rather than merely "durably stored".
-        const response = responseJson(
-          {
-            ok: true,
-            protocolVersion: PEER_PROTOCOL_VERSION,
-            ack: { outcome: result.outcome, messageId: result.messageId, delivery: 'urgent' },
-          },
-          200
-        )
-        writeServerLog('INFO', 'federation.accept_urgent.ack', {
-          localNodeId: options.localNodeId,
-          peerNodeId: peer.nodeId,
-          messageId: result.messageId,
-          outcome: result.outcome,
-        })
-        if (result.outcome === 'accepted' && result.afterAck !== undefined) {
-          setTimeout(() => {
-            Promise.resolve(result.afterAck?.()).catch((error: unknown) => {
-              writeServerLog('WARN', 'federation.accept_urgent.post_ack_delivery_failed', {
-                messageId: result.messageId,
-                peerNodeId: peer.nodeId,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            })
-          }, 0)
-        }
-        return response
-      }
-
-      if (request.method === 'POST' && url.pathname === '/v1/federation/accept') {
-        const body = await requestRecord(request)
-        if (!isRecord(body['envelope'])) throw new InvalidPeerRequest()
-        if (options.accept === undefined) {
-          return refusal(501, 'accept_not_enabled', { retryable: false })
-        }
-        const result = await options.accept({
-          authenticatedNodeId: peer.nodeId,
-          protocolVersion: requestVersion,
-          envelope: body['envelope'],
-        })
-        if (result.outcome === 'refused') {
-          return refusal(result.status ?? 409, result.code, {
-            retryable: result.retryable,
-            ...(result.redirect === undefined ? {} : { redirect: result.redirect }),
-          })
-        }
-        const response = responseJson(
-          {
-            ok: true,
-            protocolVersion: PEER_PROTOCOL_VERSION,
-            ack: { outcome: result.outcome, messageId: result.messageId },
-          },
-          200
-        )
-        writeServerLog('INFO', 'federation.accept.ack', {
-          localNodeId: options.localNodeId,
-          peerNodeId: peer.nodeId,
-          messageId: result.messageId,
-          outcome: result.outcome,
-        })
-        if (result.outcome === 'accepted' && result.afterAck !== undefined) {
-          setTimeout(() => {
-            Promise.resolve(result.afterAck?.()).catch((error: unknown) => {
-              // The message is already durable and ACKed. The row remains the
-              // receiver's queue; never turn a post-ACK local-delivery failure
-              // into a transport retry or an unhandled rejection.
-              writeServerLog('WARN', 'federation.accept.post_ack_delivery_failed', {
-                messageId: result.messageId,
-                peerNodeId: peer.nodeId,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            })
-          }, 0)
-        }
-        return response
-      }
-
+      // T-07612 §10 (flag day T-07616): the federation MESSAGE routes
+      // (/v1/federation/accept and /v1/federation/accept-urgent) are DELETED,
+      // not disabled. Cross-node agent talk is the shared wrkq ledger, which
+      // both nodes already read over rpc://; federation keeps birth, placement,
+      // summon and locate authority only. A peer still on the old build gets the
+      // unmatched-path 404 below, which its outbox treats as a terminal refusal
+      // rather than a retry.
       const historyResponse = await handleCollectiveHistoryRequest({
         request,
         url,

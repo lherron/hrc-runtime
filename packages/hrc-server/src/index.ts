@@ -93,7 +93,6 @@ import {
   externalRegistrationRendezvousMethods,
   markExternalParticipantDetached,
 } from './external-registration-rendezvous.js'
-import { createFederationAcceptHandler } from './federation/accept.js'
 import { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import {
   deriveNodeIdFromHostname,
@@ -102,10 +101,6 @@ import {
   summarizeFederationConfig,
 } from './federation/federation-config.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
-import {
-  type FederationOriginOutbox,
-  createFederationOriginOutbox,
-} from './federation/origin-outbox.js'
 import { locatePeerScope, probePeerHealth } from './federation/peer-observer.js'
 import {
   PEER_PROTOCOL_VERSION,
@@ -135,7 +130,6 @@ import {
   preflightExactScope,
   preflightSuffixRosterFamily,
   repairLiveUnboundPlacements,
-  resolvePlacementOnServer,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js'
@@ -153,7 +147,6 @@ import {
   type MailKickerHandlersMethods,
   mailKickerHandlersMethods,
 } from './mail-kicker-handlers.js'
-import { type MailHandlersMethods, mailHandlersMethods } from './mail/mail-handlers.js'
 import {
   resolveAgentHarnessTmuxBrokerEnabled,
   resolveClaudeCodeTmuxBrokerEnabled,
@@ -308,6 +301,10 @@ import {
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
 import { type WrkqLedgerClient, WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
+import {
+  type WrkqStopGateHandlersMethods,
+  wrkqStopGateHandlersMethods,
+} from './wrkq/stop-gate-handlers.js'
 
 const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
 const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
@@ -768,7 +765,7 @@ interface HrcServerInstance
     SelectorWaitHandlersMethods,
     LaunchLifecycleHandlersMethods,
     MailKickerHandlersMethods,
-    MailHandlersMethods,
+    WrkqStopGateHandlersMethods,
     RosterClaimHandlersMethods,
     ExactClaimHandlersMethods,
     RegistrationGcHandlersMethods,
@@ -791,7 +788,6 @@ class HrcServerInstance implements HrcServer {
   public readonly federationRegistryEndpoint: string | undefined
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
-  readonly federationOriginOutbox: FederationOriginOutbox | undefined
   /**
    * T-07214 — per-peer remote-preemption authority, the same default-deny
    * predicate the accept-urgent fence consults, exposed so federation ingress
@@ -989,16 +985,6 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
     [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
       this.handleSemanticTurnHandoff(request),
-    [exactRouteKey('GET', '/v1/federation/outbox')]: (_request, url) =>
-      this.handleFederationOutboxList(url),
-    [exactRouteKey('POST', '/v1/federation/outbox/replay')]: (request) =>
-      this.handleFederationOutboxReplay(request),
-    [exactRouteKey('POST', '/v1/federation/outbox/replay-peer')]: (request) =>
-      this.handleFederationOutboxReplayPeer(request),
-    [exactRouteKey('POST', '/v1/federation/outbox/drop')]: (request) =>
-      this.handleFederationOutboxDrop(request),
-    [exactRouteKey('POST', '/v1/federation/outbox/cancel')]: (request) =>
-      this.handleFederationOutboxCancel(request),
     [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => this.handleEnsureTarget(request),
     [exactRouteKey('POST', '/v1/messages')]: (request) => this.handleCreateMessage(request),
     [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>
@@ -1009,12 +995,9 @@ class HrcServerInstance implements HrcServer {
       this.handleDispatchTurnBySelector(request),
     [exactRouteKey('POST', '/v1/messages/wait')]: (request) => this.handleWaitMessage(request),
     [exactRouteKey('POST', '/v1/messages/watch')]: (request) => this.handleWatchMessages(request),
-    [exactRouteKey('POST', '/v1/mail/send')]: (request) => this.handleMailSend(request),
-    [exactRouteKey('POST', '/v1/mail/inbox')]: (request) => this.handleMailInbox(request),
-    [exactRouteKey('POST', '/v1/mail/ack')]: (request) => this.handleMailAck(request),
-    [exactRouteKey('POST', '/v1/mail/defer')]: (request) => this.handleMailDefer(request),
-    [exactRouteKey('POST', '/v1/mail/cat')]: (request) => this.handleMailCat(request),
-    [exactRouteKey('POST', '/v1/mail/list')]: (request) => this.handleMailList(request),
+    // T-07612 §8 stop gate (wave 3). The `mail` spelling is historical: the
+    // predicate is a wrkq query and the hook scripts on four nodes call this
+    // path by name, so renaming it is a separate coordinated change.
     [exactRouteKey('POST', '/v1/internal/mail/stop-decision')]: (request) =>
       this.handleMailStopDecision(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
@@ -1118,17 +1101,6 @@ class HrcServerInstance implements HrcServer {
       this.federationPeerEndpoint = undefined
     } else {
       try {
-        const peerAcceptHandler =
-          options.peerAcceptHandler ??
-          createFederationAcceptHandler({
-            db: this.db,
-            localNodeId: federationConfig.nodeId,
-            registry: this.federationRegistryClient,
-            onAccepted: ({ envelope, record }) =>
-              this.deliverFederationAcceptedMessage(envelope, record),
-            onMailAccepted: ({ envelope }) =>
-              this.requestMailKickerWake(envelope.mail.request.targetSessionRef, 'insert'),
-          })
         this.peerProtocolEndpoint = startPeerProtocolEndpoint({
           listener: federationConfig.peerListener,
           options: {
@@ -1139,7 +1111,6 @@ class HrcServerInstance implements HrcServer {
               startedAt: this.startedAt,
               observedAt: new Date().toISOString(),
               capabilities: {
-                accept: true,
                 establish: true,
                 rosterStart: true,
                 exactStart: true,
@@ -1148,7 +1119,6 @@ class HrcServerInstance implements HrcServer {
                 runtimeProjection: true,
                 collectiveHistory: collectiveHistory?.isAuthority === true,
                 semanticTurnHandoff: true,
-                urgentDelivery: true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
@@ -1230,7 +1200,6 @@ class HrcServerInstance implements HrcServer {
               })
               return { ...toStartRuntimeResponse(runtime), claim }
             },
-            accept: peerAcceptHandler,
             sessionPage: ({ url }) => {
               const localUrl = new URL(url)
               localUrl.searchParams.set('nodes', 'local')
@@ -1240,30 +1209,6 @@ class HrcServerInstance implements HrcServer {
               const localUrl = new URL(url)
               localUrl.searchParams.set('nodes', 'local')
               return this.handleSessionFacetsLocal(localUrl)
-            },
-            // T-07155 — urgent delivery is authorized PER PEER by this node, and
-            // defaults to deny. The sending node is the only authenticated
-            // identity on this path; `envelope.from` is caller-asserted display
-            // identity and is attribution, never authority. Refusing here happens
-            // BEFORE any durable ACK or local delivery is scheduled, so a peer
-            // that is not permitted to preempt never gets its order stored either.
-            acceptUrgent: async (input) => {
-              const peer = [...federationConfig.peers.values()].find(
-                (candidate) => String(candidate.nodeId) === String(input.authenticatedNodeId)
-              )
-              if (peer?.allowUrgentDelivery !== true) {
-                writeServerLog('WARN', 'federation.accept_urgent.peer_not_authorized', {
-                  localNodeId: federationConfig.nodeId,
-                  peerNodeId: input.authenticatedNodeId,
-                })
-                return {
-                  outcome: 'refused' as const,
-                  status: 403,
-                  code: 'urgent_delivery_not_authorized',
-                  retryable: false,
-                }
-              }
-              return await peerAcceptHandler(input)
             },
             ...(collectiveHistory?.isAuthority !== true
               ? {}
@@ -1303,51 +1248,6 @@ class HrcServerInstance implements HrcServer {
             )
             return peer?.allowUrgentDelivery === true
           }
-    try {
-      this.federationOriginOutbox =
-        federationConfig === undefined
-          ? undefined
-          : createFederationOriginOutbox({
-              db: this.db,
-              config: federationConfig,
-              localRegistryClient: this.bindingRegistryEndpoint?.registryClient,
-              resolvePlacement: ({ scopeRef, body }) =>
-                resolvePlacementOnServer(this, {
-                  scopeRef,
-                  path: 'ensure-target',
-                  intent: 'implicit',
-                  origin: 'local',
-                  capabilityHint: {
-                    ...(body.runtimeIntent?.placement === undefined
-                      ? {}
-                      : { placement: body.runtimeIntent.placement }),
-                    ...(body.runtimeIntent?.harness === undefined
-                      ? {}
-                      : { harness: body.runtimeIntent.harness }),
-                  },
-                  ...(body.runtimeIntent?.provision === undefined
-                    ? {}
-                    : { provision: body.runtimeIntent.provision }),
-                  ...(body.birthCredential === undefined
-                    ? {}
-                    : { birthCredential: body.birthCredential }),
-                }),
-              ...(options.federationOutboxRetryPolicy === undefined
-                ? {}
-                : { retryPolicy: options.federationOutboxRetryPolicy }),
-              ...(options.federationOutboxPollIntervalMs === undefined
-                ? {}
-                : { pollIntervalMs: options.federationOutboxPollIntervalMs }),
-            })
-    } catch (error) {
-      try {
-        this.peerProtocolEndpoint?.stop()
-        this.bindingRegistryEndpoint?.stop()
-      } finally {
-        this.server.stop(true)
-      }
-      throw error
-    }
 
     this.collectiveHistory?.start()
 
@@ -1573,7 +1473,6 @@ class HrcServerInstance implements HrcServer {
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
     this.collectiveHistory?.stop()
-    await this.federationOriginOutbox?.stop()
     if (this.peerProtocolEndpoint) {
       try {
         this.peerProtocolEndpoint.stop()
@@ -2855,7 +2754,7 @@ Object.assign(
   selectorWaitHandlersMethods,
   launchLifecycleHandlersMethods,
   mailKickerHandlersMethods,
-  mailHandlersMethods,
+  wrkqStopGateHandlersMethods,
   runtimeInspectHandlersMethods,
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
@@ -3042,19 +2941,6 @@ export type {
   NodeIdProvenance,
   PeerEntry,
 } from './federation/federation-config.js'
-export {
-  createFederationAcceptHandler,
-  parseFederationMessageEnvelope,
-} from './federation/accept.js'
-export type {
-  CreateFederationAcceptHandlerOptions,
-  FederationAcceptedMessage,
-} from './federation/accept.js'
-export { sendFederationEnvelope } from './federation/accept-client.js'
-export type {
-  PeerAcceptClientResult,
-  SendFederationEnvelopeOptions,
-} from './federation/accept-client.js'
 export { sendRemoteEstablish } from './federation/establish-client.js'
 export type { SendRemoteEstablishOptions } from './federation/establish-client.js'
 export {
@@ -3066,9 +2952,6 @@ export {
   startPeerProtocolEndpoint,
 } from './federation/peer-protocol.js'
 export type {
-  PeerAcceptHandler,
-  PeerAcceptRequest,
-  PeerAcceptResult,
   PeerEstablishHandler,
   PeerEstablishRequest,
   PeerEstablishResult,

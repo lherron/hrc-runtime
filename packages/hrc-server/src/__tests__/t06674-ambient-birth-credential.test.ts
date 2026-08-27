@@ -10,7 +10,6 @@ import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const HRC_MAIN = join(import.meta.dir, '..', '..', '..', 'hrc-cli', 'src', 'cli.ts')
-const HRCCHAT_MAIN = join(import.meta.dir, '..', '..', '..', 'hrcchat-cli', 'src', 'main.ts')
 const PARENT_SCOPE = 'agent:cody:project:hrc-runtime:task:primary'
 const HRC_TASK = 'T-06674-hrc-operator'
 const CHAT_TASK = 'T-06674-chat-operator'
@@ -157,7 +156,7 @@ describe('T-06674 ambient birth credential reach', () => {
           ['session', 'resolve', '--scope', HRC_SCOPE, '--lane', 'main', '--create'],
           env
         ),
-        runCli(HRCCHAT_MAIN, ['summon', '--json', `clod@hrc-runtime:${CHAT_TASK}`], env),
+        runCli(HRC_MAIN, ['summon', '--json', `clod@hrc-runtime:${CHAT_TASK}`], env),
       ])
 
       expect(hrcResult.exitCode).not.toBe(0)

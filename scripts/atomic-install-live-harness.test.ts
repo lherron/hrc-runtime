@@ -68,7 +68,6 @@ async function writeCliSources(releasePath: string, generation: string): Promise
   for (const [packageName, entrypoint] of [
     ['hrc-cli', 'cli.ts'],
     ['hrcchat-cli', 'main.ts'],
-    ['hrcmail-cli', 'main.ts'],
     ['hrc-viewer', 'main.ts'],
   ] as const) {
     const sourceDir = join(releasePath, 'packages', packageName, 'src')
@@ -169,7 +168,6 @@ describe('T-06685 installed CLI continuity harness', () => {
     for (const entrypoint of [
       'packages/hrc-cli/src/cli.ts',
       'packages/hrcchat-cli/src/main.ts',
-      'packages/hrcmail-cli/src/main.ts',
       'packages/hrc-viewer/src/main.ts',
     ]) {
       const metadata = await stat(join(import.meta.dir, '..', entrypoint))

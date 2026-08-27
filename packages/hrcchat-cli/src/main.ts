@@ -4,22 +4,11 @@ import { Command, CommanderError, Option } from 'commander'
 import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
 import { HrcClient, discoverSocket, loadDotEnvLocal } from 'hrc-sdk'
 
-import { assertBackchannelFollowAllowed } from './backchannel-route.js'
-import { cmdDm } from './commands/dm.js'
-import { cmdDoctor } from './commands/doctor.js'
 import { cmdInfo } from './commands/info.js'
-import { MESSAGE_SELECTOR_SYNTAX } from './commands/message-selector.js'
-import { cmdMessages } from './commands/messages.js'
-import { cmdPeek } from './commands/peek.js'
-import { cmdSend } from './commands/send.js'
-import { cmdShow } from './commands/show.js'
-import { cmdSummon } from './commands/summon.js'
-import { cmdThread } from './commands/thread.js'
-import { cmdTrace } from './commands/trace.js'
 import { TurnExitError, cmdTurn } from './commands/turn.js'
-import { cmdWho } from './commands/who.js'
 import { formatHrcDomainError } from './domain-error-format.js'
-import { resolveAddress } from './normalize.js'
+import { registerMovedCommandShim } from './moved-command.js'
+import { forwardDmToWrkc } from './wrkc-spawn.js'
 
 // Shared context-only .env.local loader (hrc-sdk): walks up to the nearest
 // git root, real env wins, credential-class keys are refused with a warning.
@@ -46,6 +35,26 @@ const PHANTOM_COMMAND_SUGGESTIONS = new Map([
   ['seq', 'show'],
 ])
 
+/**
+ * Verbs retired at the T-07612 flag day, with where each one went. Talk moved to
+ * `wrkc` because wrkq owns collaboration; live-runtime verbs moved to `hrc`
+ * because HRC owns execution. `trace` and `who` are simply gone: `trace` traced
+ * a message across the federation message path this flag day deletes, and `who`
+ * listed federation targets that `hrc target locate` and `wrkc members` cover
+ * between them.
+ */
+const MOVED_VERBS: ReadonlyArray<readonly [string, string]> = [
+  ['show', 'wrkc show <EN-xxxxx|room>'],
+  ['thread', 'wrkc log <room>'],
+  ['messages', 'wrkc ls / wrkc log <room>'],
+  ['summon', 'hrc summon'],
+  ['send', 'hrc send'],
+  ['peek', 'hrc peek'],
+  ['doctor', 'hrc doctor'],
+  ['trace', 'wrkc show EN-xxxxx (the federation message path it traced is deleted)'],
+  ['who', 'hrc target locate / wrkc members <room>'],
+]
+
 function throwCommanderError(this: Command, err: CommanderError): never {
   commanderErrorCommands.set(err, this)
   throw err
@@ -59,6 +68,11 @@ function collectVisibleCommandNames(command: Command | undefined): string[] {
     names.push(candidate.name())
     const alias = candidate.alias()
     if (alias) names.push(alias)
+  }
+  // Moved verbs are hidden from help but stay in the suggestion pool: an agent
+  // who typed `shwo` needs to be told the verb moved, not that it never existed.
+  if (command === program) {
+    for (const [name] of MOVED_VERBS) names.push(name)
   }
   return Array.from(new Set(names))
 }
@@ -151,243 +165,81 @@ function globalOpts(): GlobalOptions {
 
 program
   .command('info')
-  .description('show CLI/runtime info')
+  .description('show the hrcchat -> wrkc / hrc migration map')
   .action(() => {
     cmdInfo(program)
   })
 
-// -- who ----------------------------------------------------------------------
-
-program
-  .command('who')
-  .description('list visible targets')
-  .option('--discover', 'include discoverable targets')
-  .option('--all-projects', 'list targets across all projects')
-  .action(async (opts) => {
-    const client = createClient()
-    const g = globalOpts()
-    await cmdWho(client, { ...opts, json: g.json, project: g.project })
-  })
-
-// -- summon -------------------------------------------------------------------
-
-program
-  .command('summon')
-  .description('materialize/pre-warm a target; turn auto-summons when needed')
-  .argument('<target>', 'target handle')
-  .action(async (target) => {
-    const client = createClient()
-    await cmdSummon(client, { json: globalOpts().json }, [target])
-  })
-
-// -- dm -----------------------------------------------------------------------
+// -- dm: the one forwarding shim ---------------------------------------------
+//
+// T-07612 §9.2. Every other verb is a hard fence, but `dm` is scripted in dozens
+// of places across the collective, so it forwards to `wrkc say` for the burn-in
+// window and tells the caller, on stderr, exactly what it forwarded.
 
 const dmCmd = program
   .command('dm')
-  .description('send a durable DM/status note; pass --follow <duration> to stream tracked progress')
-  .argument('<target>', 'target handle, "human", or "system"')
+  .description('DEPRECATED: forwards to `wrkc say`; call wrkc directly')
+  .argument('<target>', 'target handle or "human"')
   .argument('[message]', 'message body (use - for stdin)')
-  .option(
-    '--as <principal>',
-    'explicit sender ("human" or an agent handle); required for scripted sends with no session envelope'
-  )
-  .option('--respond-to <kind>', 'human|agent|system')
-  .option('--reply-to <id>', 'reply to a specific message ID')
-  .option(
-    '--cross-scope-reply',
-    'allow --reply-to to thread across conversation scopes (blocked by default)'
-  )
-  .option(
-    '--steer',
-    "STRICT steer: deliver into the target's ACTIVE turn (admission-proven on headless targets; pane-presented on interactive ones) or fail typed — never downgraded, refused typed for remote-homed scopes. Mutex against --wait. NOTE: a bare dm already best-effort-steers; this flag makes failure typed instead of falling back to the queue."
-  )
-  .option(
-    '--queue',
-    'DEFERRED delivery: queue behind the active turn (the pre-T-07214 default). Use when the message must become its own turn (e.g. consult submissions expecting a reply turn).'
-  )
-  .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
-  .option('--mode <mode>', 'auto|headless|nonInteractive')
+  .option('--as <principal>', 'sender principal ("human" or an agent name)')
+  .option('--respond-to <kind>', 'human|agent|system (human maps to agent:lance)')
+  .option('--reply-to <id>', 'accepted and dropped: in a room the reply is the ack')
+  .option('--cross-scope-reply', 'accepted and dropped')
+  .option('--steer', 'maps to `wrkc say --urgent`')
+  .addOption(new Option('--urgent', 'alias for --steer').hideHelp())
+  .option('--queue', 'accepted and dropped: queued delivery is the wrkc default')
+  .option('--mode <mode>', 'accepted and dropped: use +node=/+model= on the target')
   .option('--file <path>', 'read body from file')
-  .option(
-    '--follow <duration>',
-    'STREAMING (human/debug): dispatch as a tracked turn and stream turn_stacked ndjson progress at this interval'
-  )
-  .option(
-    '--wait <mode>',
-    'FINAL-ONLY (Codex): block quietly for the final correlated run response, then emit one compact JSON object (mode: response)'
-  )
-  .option('--timeout <duration>', 'wait budget for --wait response (default 20m)')
-  .option(
-    '--quiet',
-    'suppress all progress/heartbeat output while --wait blocks (default in wait mode)'
-  )
+  .option('--follow <duration>', 'refused: use `hrc monitor watch EN-xxxxx`')
+  .option('--wait <mode>', 'maps to `wrkc say --wait`')
+  .option('--timeout <duration>', 'wait budget')
+  .option('--quiet', 'accepted and dropped')
   .action(async (target, message, opts) => {
-    const client = createClient()
-    const g = globalOpts()
-    if (opts.follow !== undefined && opts.wait !== undefined) {
-      throw new CliUsageError(
-        '--follow (streaming) and --wait (final-only) are mutually exclusive; pass one'
-      )
-    }
-    if (opts.follow !== undefined) {
-      const routedTarget = resolveAddress(target, process.env['HRC_SESSION_REF'])
-      if (routedTarget.kind === 'session') {
-        await assertBackchannelFollowAllowed(routedTarget.sessionRef)
-      }
-      await cmdTurn(
-        client,
-        {
-          follow: opts.follow,
-          ...(opts.as ? { as: opts.as } : {}),
-          ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
-          ...(opts.crossScopeReply ? { crossScopeReply: true } : {}),
-        },
-        [target, ...(message !== undefined ? [message] : [])]
-      )
-      return
-    }
-    await cmdDm(client, { ...opts, json: g.json, project: g.project }, [
-      target,
-      ...(message !== undefined ? [message] : []),
-    ])
+    await forwardDmToWrkc(target, message, { ...opts, json: globalOpts().json })
   })
 
 dmCmd.addHelpText(
   'before',
-  "Send a durable DM/status note.\n\nSTREAMING (human/debug): --follow <duration> dispatches as a tracked turn and streams turn_stacked\nndjson progress on that interval (suitable for Claude Code's Monitor tool).\n\nFINAL-ONLY (Codex token-efficient): --wait response [--timeout 20m] [--quiet] blocks quietly with no\nprogress output. For session targets with a dispatched run, it waits for the run to finish and returns\nthe newest durable response directly replying to the outgoing request. It then emits ONE compact JSON\nobject {status, sentMessageId, target, elapsedMs, correlation, response|lastSeq}. status is\nresponded|timeout|error|cancelled.\n"
+  `hrcchat dm forwards to \`wrkc say\` and is removed after the burn-in window.
+
+  hrcchat dm <target> <body>            ->  wrkc say <target> --to <target> <body>
+  hrcchat dm human <body>               ->  wrkc say lance --to lance <body>
+  hrcchat dm <t> --wait response        ->  wrkc say <t> --to <t> --wait
+  hrcchat dm <t> --steer                ->  wrkc say <t> --to <t> --urgent
+  hrcchat dm <t> --follow <d>           ->  hrc monitor watch EN-xxxxx (refused here)
+
+`
 )
 
-// -- send ---------------------------------------------------------------------
-
-const sendCmd = program
-  .command('send')
-  .description(
-    'inject literal input into a live tmux runtime; bypasses semantic dispatch; not for tracked work'
-  )
-  .argument('<target>', 'target handle')
-  .argument('[message]', 'text to send (use - for stdin)')
-  .option('--enter', 'send enter key after text (default)')
-  .option('--no-enter', 'do not send enter key')
-  .option('--file <path>', 'read body from file')
-  .action(async (target, message, opts) => {
-    const client = createClient()
-    await cmdSend(client, { ...opts, json: globalOpts().json }, [
-      target,
-      ...(message !== undefined ? [message] : []),
-    ])
-  })
-
-sendCmd.addHelpText(
-  'before',
-  'Inject literal text into a live tmux runtime (raw keystrokes; bypasses semantic dispatch). NOT a turn \u2014 use hrcchat turn for work.\n'
-)
-
-// -- show ---------------------------------------------------------------------
-
-program
-  .command('show')
-  .description('show one message by collective seq, node-local seq, or message ID')
-  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
-  .action(async (seqOrId) => {
-    const client = createClient()
-    await cmdShow(client, { json: globalOpts().json }, [seqOrId])
-  })
-
-// -- thread -------------------------------------------------------------------
-
-program
-  .command('thread')
-  .description('reconstruct one full untruncated reply thread from any member message')
-  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
-  .action(async (seqOrId) => {
-    const client = createClient()
-    await cmdThread(client, { json: globalOpts().json }, [seqOrId])
-  })
-
-// -- trace --------------------------------------------------------------------
-
-program
-  .command('trace')
-  .description('trace one message across origin outbox, peer ACK, and destination delivery')
-  .argument('<seq-or-id>', MESSAGE_SELECTOR_SYNTAX)
-  .action(async (seqOrId) => {
-    const client = createClient()
-    await cmdTrace(client, { json: globalOpts().json }, [seqOrId])
-  })
-
-// -- messages -----------------------------------------------------------------
-
-program
-  .command('messages')
-  .description('query durable directed message history')
-  .argument('[target]', 'filter by participant (matches sender or recipient)')
-  .option(
-    '--with <address>',
-    'filter by participant (matches sender or recipient); alias for the positional target'
-  )
-  .option('--to <address>', 'filter by recipient')
-  .option('--responses-to <address>', 'alias for --to')
-  .option('--from <address>', 'filter by sender')
-  .option('--thread <id>', 'filter by thread root message ID')
-  .option('--after <cursor>', "messages after @collective seq or quoted '#node-local seq'")
-  .option('--limit <n>', 'max messages to return', '50')
-  .action(async (target, opts) => {
-    const client = createClient()
-    await cmdMessages(client, { ...opts, json: globalOpts().json }, target ? [target] : [])
-  })
-
-// -- peek ---------------------------------------------------------------------
-
-program
-  .command('peek')
-  .description('tail live tmux pane of a bound runtime')
-  .argument('<target>', 'target handle')
-  .option('--lines <n>', 'number of lines to capture', '80')
-  .action(async (target, opts) => {
-    const client = createClient()
-    await cmdPeek(client, { ...opts, json: globalOpts().json }, [target])
-  })
-
-// -- turn ---------------------------------------------------------------------
+// -- turn: retained as the implementation behind `hrc turn` -------------------
+//
+// Dispatching tracked work and streaming its progress is EXECUTION, which HRC
+// owns under the §2 boundary rule, and `wrkc say --wait` is not a substitute
+// for it: it returns a reply body, not a live turn. `hrc turn` is the public
+// spelling and forwards here; this registration is hidden and warns, and wave 5
+// (T-07617) must absorb the implementation into hrc-cli before the hrcchat
+// package is deleted.
 
 const turnCmd = program
-  .command('turn')
-  .description('dispatch tracked work to an agent and stream progress')
+  .command('turn', { hidden: true })
+  .description('internal: implementation behind `hrc turn`')
   .argument('<target>', 'target handle or scopeRef')
   .argument('[prompt]', 'prompt text (use - for stdin)')
-  .option(
-    '--as <principal>',
-    'explicit sender ("human" or an agent handle); required for scripted sends with no session envelope'
-  )
+  .option('--as <principal>', 'explicit sender principal')
   .option('--fresh-context, --new', 'clear context before dispatching (clean slate)')
   .option('--dry-run', 'resolve and print the dispatch plan without dispatching')
   .option('--format <format>', 'output format: tree, compact, ndjson, json')
   .option('--pretty', 'force the human-facing terminal render even on non-TTY')
   .option('--stall-after <duration>', 'abort if idle for this long', '1h')
-  .option(
-    '--stacked <duration>',
-    'emit bounded turn_stacked ndjson progress (interval lines plus phase/stall/final/error/permission force-flushes; implies ndjson)'
-  )
+  .option('--stacked <duration>', 'emit bounded turn_stacked ndjson progress')
   .option('--follow <duration>', 'alias for --stacked')
-  .option(
-    '--wait <mode>',
-    'FINAL-ONLY (Codex): block quietly until terminal, then emit one compact JSON object (mode: final)'
-  )
+  .option('--wait <mode>', 'block quietly until terminal, then emit one JSON object')
   .option('--timeout <duration>', 'wait budget for --wait final (default 45m)')
-  .option('--quiet', 'suppress all progress output while --wait blocks (default in wait mode)')
+  .option('--quiet', 'suppress all progress output while --wait blocks')
   .option('--reply-to <id>', 'reply to a specific message ID')
-  .option(
-    '--cross-scope-reply',
-    'allow --reply-to to thread across conversation scopes (blocked by default)'
-  )
-  .option(
-    '--steer',
-    "STRICT steer: deliver into the target's ACTIVE turn (admission-proven on headless targets; pane-presented on interactive ones) or fail typed — never downgraded, refused typed for remote-homed scopes. Mutex against --wait. NOTE: a bare dm already best-effort-steers; this flag makes failure typed instead of falling back to the queue."
-  )
-  .option(
-    '--queue',
-    'DEFERRED delivery: queue behind the active turn (the pre-T-07214 default). Use when the message must become its own turn (e.g. consult submissions expecting a reply turn).'
-  )
+  .option('--cross-scope-reply', 'allow --reply-to to thread across conversation scopes')
+  .option('--steer', 'STRICT steer: deliver into the active turn or fail typed')
+  .option('--queue', 'DEFERRED delivery: queue behind the active turn')
   .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
   .option('--file <path>', 'read prompt from file')
   .option(
@@ -395,50 +247,48 @@ const turnCmd = program
     'request JSON Schema constrained final response (inline JSON object or file path)'
   )
   .action(async (target, prompt, opts) => {
+    if (process.env['HRC_TURN_FORWARDED'] !== '1') {
+      process.stderr.write(
+        'hrcchat turn is internal; use `hrc turn` (T-07612 flag day). Talk is `wrkc say`.\n'
+      )
+    }
     const client = createClient()
     await cmdTurn(client, { ...opts }, [target, ...(prompt !== undefined ? [prompt] : [])])
   })
 
-turnCmd.addHelpText(
-  'before',
-  'Dispatch work to an agent.\n\nSTREAMING (human/debug): --follow <duration> (alias --stacked) emits one turn_stacked ndjson line\nper interval plus force-flush lines on phase/stall/final/error/permission. Terminal frames\n(phase:final|error) also carry "taskState": the live wrkq state of the scoped task\n(e.g. "completed"|"in_progress"), or null for a non-task-scoped handle (:primary) or when wrkq is\nunavailable. Mutex against --format tree|compact and --pretty.\n\nFINAL-ONLY (Codex token-efficient): --wait final [--timeout 45m] [--quiet] blocks quietly with no\nprogress output, then emits ONE compact JSON object {status, sentMessageId, target, elapsedMs,\ncorrelation, response|lastSeq}. status is responded|timeout|error|cancelled. Mutex against\n--follow/--stacked/--format tree|compact/--pretty.\n'
-)
+void turnCmd
 
-// -- doctor -------------------------------------------------------------------
+// -- moved verbs --------------------------------------------------------------
+//
+// Talk moved to wrkc because wrkq owns collaboration; live-runtime verbs moved
+// to hrc because HRC owns execution. `trace` and `who` are simply gone: `trace`
+// traced a message across the federation message path, which this flag day
+// deletes, and `who` listed federation targets that `hrc target locate` and
+// `wrkc members` cover between them.
 
-program
-  .command('doctor')
-  .description('run connectivity and target health checks')
-  .argument('[target]', 'target handle')
-  .action(async (target) => {
-    const client = createClient()
-    await cmdDoctor(client, { json: globalOpts().json }, target ? [target] : [])
-  })
+for (const [name, replacement] of MOVED_VERBS) {
+  registerMovedCommandShim(program, name, replacement)
+}
 
 // -- Grouped help index -------------------------------------------------------
 
 program.addHelpText(
   'after',
   `
-WORK
-  turn        dispatch tracked work to an agent and stream progress
+hrcchat is retired (T-07612). wrkq owns collaboration; HRC owns execution.
 
-MESSAGES
-  dm          send a durable DM/status note; pass --follow <duration> for tracked progress
-  show        show one message by selector, seq, or message ID
-  thread      reconstruct a full untruncated reply thread from any member message
-  trace       trace one message across origin outbox, peer ACK, and destination delivery
-  messages    query durable directed message history
+TALK -> wrkc                            LIVE RUNTIMES -> hrc
+  dm        wrkc say <ref> --to <a>       summon    hrc summon
+  show      wrkc show <EN|room>           send      hrc send
+  thread    wrkc log <room>               peek      hrc peek
+  messages  wrkc ls / wrkc log <room>     doctor    hrc doctor
+                                          turn      hrc turn
+GONE
+  trace     the federation message path it traced is deleted
+  who       hrc target locate / wrkc members <room>
 
-LIVE
-  send        inject literal input into a live tmux runtime; bypasses semantic dispatch; not for tracked work
-  summon      materialize/pre-warm a target; turn auto-summons when needed
-  peek        tail live tmux pane of a bound runtime
-
-UTILITY
-  who         list visible targets
-  doctor      run connectivity and target health checks
-  info        show CLI/runtime info
+Only \`--to\` fires: a wrkc say without it is a room log entry, not a delivery.
+Run \`wrkc info\` for the room/envelope model.
 `
 )
 

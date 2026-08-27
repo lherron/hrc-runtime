@@ -263,6 +263,9 @@ describe('two-listener route isolation', () => {
           })
         ).status
       ).toBe(200)
+      // T-07616 flag day: the federation MESSAGE route is DELETED, so the peer
+      // listener must 404 it. Kept as a fence — an accept route that comes back
+      // is a federated message path coming back with it.
       expect(
         (
           await fetch(`${peerBind}/v1/federation/accept`, {
@@ -271,7 +274,7 @@ describe('two-listener route isolation', () => {
             body: JSON.stringify({ envelope: {} }),
           })
         ).status
-      ).not.toBe(404)
+      ).toBe(404)
 
       for (const path of ['/v1/federation/accept', '/v1/federation/locate']) {
         expect((await fetch(`${registryBind}${path}`, { method: 'POST', headers })).status).toBe(

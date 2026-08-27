@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import type { FederationPlacementBinding, SemanticDmRequest } from 'hrc-core'
-
 import {
   createPlacementLedgerRepository,
   openBindingRegistry,
@@ -10,7 +8,6 @@ import {
 
 import { sendRemoteEstablish } from '../federation/establish-client.js'
 import type { FederationConfig } from '../federation/federation-config.js'
-import { FederationOriginOutbox } from '../federation/origin-outbox.js'
 import { PeerToken } from '../federation/peer-token.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import {
@@ -24,10 +21,8 @@ const CORRELATION = 'establish-msg-11111111-1111-4111-8111-111111111111'
 
 describe('T-06805 authenticated remote policy establishment', () => {
   const closeables: Array<{ close(): void }> = []
-  const outboxes: FederationOriginOutbox[] = []
 
-  afterEach(async () => {
-    await Promise.all(outboxes.splice(0).map((outbox) => outbox.stop()))
+  afterEach(() => {
     for (const closeable of closeables.splice(0)) closeable.close()
   })
 
@@ -196,7 +191,7 @@ describe('T-06805 authenticated remote policy establishment', () => {
       request,
       fetch: async () => {
         calls += 1
-        return Response.json({ capabilities: { accept: true, locate: true, health: true } })
+        return Response.json({ capabilities: { locate: true, health: true } })
       },
     })
     expect(omitted).toMatchObject({
@@ -221,131 +216,5 @@ describe('T-06805 authenticated remote policy establishment', () => {
       reason: 'peer_upgrade_required',
       retryable: false,
     })
-  })
-
-  test('origin advances one durable row from establishment to registry-fenced accept', async () => {
-    const db = openHrcDatabase(':memory:')
-    closeables.push(db)
-    let binding: FederationPlacementBinding | undefined
-    const wire: Array<{ path: string; body: Record<string, unknown> }> = []
-    const peerServer = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      async fetch(request) {
-        const path = new URL(request.url).pathname
-        const body =
-          request.method === 'POST'
-            ? ((await request.json()) as Record<string, unknown>)
-            : ({} as Record<string, unknown>)
-        wire.push({ path, body })
-        if (path.endsWith('/health')) {
-          return Response.json({ capabilities: { establish: true } })
-        }
-        if (path.endsWith('/establish')) {
-          binding = {
-            scopeRef: SCOPE,
-            homeNodeId: 'lab',
-            placementEpoch: 1,
-            birthClass: 'policy-born',
-            authorityProvenance: { kind: 'policy', source: 'pin' },
-            establishmentProvenance: 'pin',
-            createdAt: '2026-07-22T20:00:00.000Z',
-            updatedAt: '2026-07-22T20:00:00.000Z',
-          }
-          return Response.json({
-            outcome: 'established',
-            correlationId: body['correlationId'],
-            binding,
-          })
-        }
-        const envelope = (body['envelope'] as Record<string, unknown>) ?? {}
-        return Response.json({
-          ack: { outcome: 'accepted', messageId: envelope['messageId'] },
-        })
-      },
-    })
-    try {
-      const peer = {
-        nodeId: 'lab' as never,
-        endpoint: peerServer.url.toString(),
-        token: new PeerToken('test-token'),
-      }
-      const registryClient: BindingRegistryClient = {
-        async consult() {
-          return binding === undefined ? { outcome: 'unbound' } : { outcome: 'bound', binding }
-        },
-        async establish() {
-          throw new Error('origin must not establish receiver authority')
-        },
-      }
-      const outbox = new FederationOriginOutbox({
-        db,
-        config: {
-          nodeId: 'svc',
-          nodeIdProvenance: 'declared',
-          sourcePath: '/isolated/svc/federation.json',
-          sourceExists: true,
-          peers: new Map([['lab', peer]]),
-          registry: { bind: 'http://svc.example.ts.net:18491/' },
-          gate: { mode: 'enforce', registryHost: 'svc' },
-          warnings: [],
-        } as FederationConfig,
-        localRegistryClient: registryClient,
-        pollIntervalMs: 10,
-      })
-      outboxes.push(outbox)
-      const body: SemanticDmRequest = {
-        from: { kind: 'entity', entity: 'human' },
-        to: { kind: 'session', sessionRef: `${SCOPE}/lane:main` },
-        body: 'ping',
-        createIfMissing: true,
-      }
-      const inserted = db.messages.insert({
-        messageId: 'msg-remote-establish-outbox',
-        kind: 'dm',
-        phase: 'request',
-        from: body.from,
-        to: body.to,
-        body: body.body,
-      })
-      const routed = await outbox.route(body, inserted, {
-        outcome: 'remote-establish',
-        scopeRef: SCOPE,
-        candidateHomeNodeId: 'lab',
-        policyProvenance: 'pin',
-      })
-      expect(routed.outcome).toBe('queued')
-      if (routed.outcome !== 'queued') throw new Error('expected durable remote delivery')
-
-      let delivery = db.federationOutbox.get(routed.delivery.deliveryId)
-      for (let attempt = 0; attempt < 100 && delivery?.state !== 'delivered'; attempt += 1) {
-        await Bun.sleep(5)
-        delivery = db.federationOutbox.get(routed.delivery.deliveryId)
-      }
-      expect(delivery).toMatchObject({
-        deliveryId: routed.delivery.deliveryId,
-        messageId: inserted.messageId,
-        stage: 'delivering',
-        state: 'delivered',
-        peerNodeId: 'lab',
-        envelope: { expected: { homeNodeId: 'lab', placementEpoch: 1 } },
-      })
-      expect(db.federationOutbox.list()).toHaveLength(1)
-      expect(wire.map((request) => request.path)).toEqual([
-        '/v1/federation/health',
-        '/v1/federation/establish',
-        '/v1/federation/accept',
-      ])
-      expect(wire[1]?.body).toEqual({
-        scopeRef: SCOPE,
-        intent: 'implicit',
-        correlationId: `establish-${routed.delivery.deliveryId}`,
-      })
-      expect(wire[2]?.body).toMatchObject({
-        envelope: { expected: { homeNodeId: 'lab', placementEpoch: 1 } },
-      })
-    } finally {
-      peerServer.stop(true)
-    }
   })
 })
