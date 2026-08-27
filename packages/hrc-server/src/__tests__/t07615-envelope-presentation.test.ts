@@ -53,7 +53,7 @@ describe('T-07612 §7 presentation', () => {
       [
         '[T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]',
         'the body',
-        "reply: wrkc say T-07604 --to cody - <<'EOF'",
+        "reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'",
         '…',
         'EOF',
       ].join('\n')
@@ -113,7 +113,32 @@ describe('T-07612 §7 presentation', () => {
     expect(rendered).toContain(
       '[R-00012 "T-07603 landed" · mable@hrc-runtime:primary (gen 7) → you · reply required]'
     )
-    expect(rendered).toContain("reply: wrkc say R-00012 --to mable - <<'EOF'")
+    expect(rendered).toContain("reply: wrkc say R-00012 --to mable@hrc-runtime:primary - <<'EOF'")
+  })
+
+  // T-07638, observed live on T-07616: a bare `--to clod` in task room T-07616
+  // resolves to the ROOM default `clod@hrc-runtime:T-07616`, so a reply meant
+  // for a differently-scoped clod seat landed on the wrong scope and, because
+  // reply-is-ack keys on the counterparty scope, silently failed to ack.
+  it('addresses the exact sender scope, not the room-default seat of that agent', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({
+        envelope: envelope({
+          roomKey: 'T-07616',
+          from: {
+            principalRef: 'agent:clod',
+            scopeRef: 'clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab',
+          },
+        }),
+      }),
+      NOW
+    )
+    expect(rendered).toContain(
+      "reply: wrkc say T-07616 --to clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab - <<'EOF'"
+    )
+    // The bare name is exactly what misresolved; it must not survive anywhere
+    // in the reply line.
+    expect(rendered).not.toContain('--to clod ')
   })
 
   it('addresses a scope-less human sender by their principal', () => {

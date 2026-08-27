@@ -39,6 +39,8 @@ export type SeedEnvelope = {
   roomKey?: string
   roomKind?: WrkqEnvelope['roomKind']
   materializationIntent?: string
+  /** T-07616: an urgent envelope steers into a busy target. */
+  urgent?: boolean
 }
 
 export class FakeWrkqLedger implements WrkqLedgerClient {
@@ -74,7 +76,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       state: 'pending',
       terminal: false,
       roundCount: 0,
-      urgent: false,
+      urgent: seed.urgent ?? false,
       ...(seed.materializationIntent === undefined
         ? {}
         : { materializationIntent: seed.materializationIntent }),

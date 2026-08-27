@@ -355,7 +355,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const prompt = deterministic.prompts()[0] ?? ''
     expect(prompt).toContain('[T-07615 · mable@hrc-runtime:T-07615 → you · reply required]')
     expect(prompt).toContain('the body that must be injected verbatim')
-    expect(prompt).toContain("reply: wrkc say T-07615 --to mable - <<'EOF'")
+    expect(prompt).toContain("reply: wrkc say T-07615 --to mable@hrc-runtime:T-07615 - <<'EOF'")
     // The envelope id is INTERNAL: inbox/show/log surface it, injection must not.
     expect(prompt).not.toContain(envelope.id)
     // No room history is ever injected; the first message in a room has no cue.

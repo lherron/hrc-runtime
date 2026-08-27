@@ -6,7 +6,7 @@ import type { WrkqEnvelope } from './ledger-types.js'
  *   [T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]
  *   history: wrkc log T-07604   (14 messages · last 2h ago)
  *   <body>
- *   reply: wrkc say T-07604 --to cody - <<'EOF'
+ *   reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'
  *   …
  *   EOF
  *
@@ -135,6 +135,19 @@ function formatElapsed(elapsedMs: number): string {
  * The reply line, which is also the ack: saying back into the room with `--to`
  * discharges every presented obligation from that sender (section 6). An `fyi`
  * is auto-acked at its own presentation and therefore carries no reply line.
+ *
+ * T-07638: it addresses the sender's EXACT scope, never the bare agent name.
+ * A bare name resolves against the ROOM, and the room default is not always the
+ * sender: in a task room `--to clod` resolves to `clod@<project>:<roomKey>`, so
+ * a reply to any other clod-named seat in that room lands on the wrong scope
+ * and — because reply-is-ack keys on the counterparty SCOPE — silently fails to
+ * ack. Observed live on T-07616 (mable's reply to EN-00078 went to :T-07616).
+ *
+ * The exact scope is used unconditionally rather than only when it differs from
+ * the room default, because deciding "differs" would mean reimplementing wrkq's
+ * addressee resolver here. wrkq owns addressing; HRC owns the injection text.
+ * Predicting that resolver and getting it wrong reintroduces exactly this bug,
+ * in the silent direction.
  */
 function formatReplyLine(envelope: WrkqEnvelope): string | undefined {
   if (envelope.obligation !== 'reply_required') return undefined
@@ -145,7 +158,8 @@ function formatReplyLine(envelope: WrkqEnvelope): string | undefined {
 
 function replyAddressee(envelope: WrkqEnvelope): string | undefined {
   const scope = envelope.from.scopeRef
-  if (scope !== undefined && scope.trim().length > 0) return agentNameFromScope(scope)
+  if (scope !== undefined && scope.trim().length > 0) return formatScopeHandle(scope)
+  // A human is a scope-less principal: `--to lance` is already exact.
   return formatPrincipalName(envelope.from.principalRef)
 }
 

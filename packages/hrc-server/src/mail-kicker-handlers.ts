@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   DispatchTurnResponse,
   HrcLifecycleEvent,
@@ -373,6 +375,160 @@ function senderGenerationFor(
   return session === null ? {} : { senderGeneration: session.generation }
 }
 
+/**
+ * T-07616 — actuate `--urgent` instead of declining on a busy target.
+ *
+ * Spec §5 always said HRC actuates urgent as "steer-or-fail-typed"; nothing
+ * read the flag, so an urgent envelope queued behind a long turn exactly like
+ * an ordinary one and the documented lever did nothing. Ruled by mable on
+ * T-07616: route it through the ratified T-07203 r7 steer classes unchanged.
+ *
+ * Three properties this path must hold, each the resolution of a named ruling:
+ *
+ * - SUCCESS IS ANY HONEST CLASS. `admitted_into_active_turn` (actuator proved
+ *   turn admission), `presented_to_live_harness` (tmux: only a pane write is
+ *   provable, and that is still an honest success) and `started_fresh_turn`
+ *   (the target went idle underneath us) all count. Only a state where none of
+ *   them can be proven is a failure, and it is never downgraded into a queue.
+ *
+ * - A STEER DOES NOT ADVANCE THE REDELIVERY BOUND. `roundEnded` is deliberately
+ *   NOT called here: rounds measure "shown by a kicker-driven turn and then
+ *   ignored", and a mid-turn steer is the weakest possible evidence that anyone
+ *   read it. It writes a `presented_to` receipt and nothing else.
+ *
+ * - ONCE PER ACTIVE RUN. Because rounds never advance, the ordinary floor would
+ *   re-steer the same envelope every 60s forever while it stays undisposed. An
+ *   envelope already steered into THIS run is skipped, so the target is
+ *   interrupted at most once per turn for a given envelope; when that turn
+ *   ends, the ordinary kicker-driven path takes over and does advance rounds.
+ */
+async function steerUrgentIntoBusyTarget(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  session: HrcSessionRecord,
+  actionable: readonly WrkqEnvelope[],
+  wakeReason: HrcMailDriveWakeReason
+): Promise<boolean> {
+  const activeRunId = activeRunIdFor(server, session)
+  const urgent = actionable.filter(
+    (envelope) =>
+      envelope.urgent &&
+      // Already interrupted this turn with this envelope: saying it twice into
+      // one turn is noise, not urgency.
+      !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
+  )
+  if (urgent.length === 0) return false
+
+  // Same intent resolution the drive path uses: the session's applied intent
+  // when it has one, otherwise built from the target agent's own profile on
+  // this node. A steer never mints a session — the target is live by
+  // construction — so this only has to be good enough to dispatch with.
+  const intent =
+    session.lastAppliedIntentJson ??
+    buildKickRuntimeIntent(
+      parseSessionRef(targetSessionRef).scopeRef,
+      actionableDirectives(urgent)
+    )
+  if (intent === undefined) {
+    // No intent to dispatch with. Honest decline, not a silent skip.
+    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_unavailable', {
+      targetSessionRef,
+      wakeReason,
+      reason: 'no_runtime_intent_available',
+      envelopes: urgent.map((envelope) => envelope.id),
+    })
+    return false
+  }
+
+  const driveAttemptId = `steer-${randomUUID()}`
+  // Rendered WITHOUT the history cue: the cue is wrkq's decision and only a
+  // RECORDING `present` yields it, and a receipt written before a steer that
+  // then fails typed would put a presentation in the collaboration ledger that
+  // never happened. The cue is the one line an agent can always replace with
+  // `wrkc log`; a false receipt is not recoverable.
+  const presentables: PresentableEnvelope[] = []
+  for (const envelope of urgent) {
+    presentables.push({
+      envelope,
+      historyHint: false,
+      messageCount: 0,
+      ...(await roomSubjectFor(server, envelope)),
+      ...senderGenerationFor(server, envelope),
+    })
+  }
+
+  let delivery: DispatchTurnResponse['delivery']
+  let steeredRunId: string | undefined
+  try {
+    const response = await server.dispatchTurnForSession(
+      session,
+      intent,
+      formatEnvelopePresentations(presentables),
+      { whenBusy: 'steer', waitForCompletion: false }
+    )
+    const body = (await response.json()) as DispatchTurnResponse
+    delivery = body.delivery
+    steeredRunId =
+      delivery?.code === 'admitted_into_active_turn'
+        ? delivery.mergedIntoRunId
+        : delivery?.code === 'presented_to_live_harness'
+          ? delivery.presentedDuringRunId
+          : body.runId
+  } catch (error) {
+    // Typed failure: nothing honest can be claimed, so nothing is recorded and
+    // the envelope stays exactly as pending as it was. NOT a downgrade to the
+    // queue — the queue is simply where it already was.
+    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_failed', {
+      targetSessionRef,
+      wakeReason,
+      driveAttemptId,
+      activeRunId,
+      envelopes: urgent.map((envelope) => envelope.id),
+      error: errorText(error),
+    })
+    return false
+  }
+
+  if (delivery === undefined) {
+    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_failed', {
+      targetSessionRef,
+      wakeReason,
+      driveAttemptId,
+      activeRunId,
+      envelopes: urgent.map((envelope) => envelope.id),
+      error: 'dispatch returned no delivery outcome',
+    })
+    return false
+  }
+
+  const runtimeId = server.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .find((runtime) => runtime.status !== 'exited')?.runtimeId
+  for (const envelope of urgent) {
+    await server.wrkqLedger.present({
+      envelope: envelope.id,
+      node: server.federationNodeId,
+      hostSessionId: session.hostSessionId,
+      generation: String(session.generation),
+      driveAttemptId,
+      ...(steeredRunId === undefined ? {} : { runId: steeredRunId }),
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+    })
+  }
+
+  writeServerLog('INFO', 'wrkq.kicker.urgent_steered', {
+    targetSessionRef,
+    wakeReason,
+    driveAttemptId,
+    // The outcome CLASS is the whole point of the T-07203 contract: it says
+    // what was actually proven, not merely that something was sent.
+    outcome: delivery.code,
+    runId: steeredRunId,
+    envelopes: urgent.map((envelope) => envelope.id),
+  })
+  return true
+}
+
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
@@ -402,11 +558,22 @@ async function driveMailTargetOnce(
 
   if (attempt === undefined) {
     if (session !== undefined && targetHasRunningTurn(server, session)) {
+      // An urgent envelope does not wait for the turn to end (T-07616): it
+      // steers into the live turn through the ratified steer classes, or fails
+      // typed and stays pending. Everything else falls through to the decline.
+      const steered = await steerUrgentIntoBusyTarget(
+        server,
+        targetSessionRef,
+        session,
+        actionable,
+        wakeReason
+      )
       // Not a failure: a busy target keeps its obligation until its own turn
       // ends, and the turn-completion wake picks it up. Logged because a
       // SILENT decline is indistinguishable from a dead kicker — which is
       // exactly the conclusion two readers reached from its absence.
       writeServerLog('INFO', 'wrkq.kicker.target_busy', {
+        ...(steered ? { urgentSteered: true } : {}),
         targetSessionRef,
         wakeReason,
         pending: actionable.length,
