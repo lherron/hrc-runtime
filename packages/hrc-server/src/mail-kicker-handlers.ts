@@ -209,7 +209,12 @@ async function readActionableEnvelopes(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string
 ): Promise<WrkqEnvelope[]> {
-  const view = await server.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
+  const view = await server.wrkqLedger.pendingView({
+    scopes: [targetSessionRef],
+    // T-07627: fyi rows ride the same read. They never summon (§5) and never
+    // block a turn end, but a seated addressee should still be shown them.
+    includeFyi: true,
+  })
   if (view.repended > 0) {
     writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', {
       targetSessionRef,
@@ -217,6 +222,11 @@ async function readActionableEnvelopes(
     })
   }
   return view.items.slice(0, MAX_PRESENTED_PER_ATTEMPT)
+}
+
+/** Only a `reply_required` obligation is worth a turn, let alone a birth (§5). */
+function summonsATurn(envelope: WrkqEnvelope): boolean {
+  return envelope.obligation === 'reply_required'
 }
 
 /**
@@ -264,7 +274,7 @@ async function recordPresentations(
       envelope: result.envelope,
       historyHint: result.historyHint,
       messageCount: result.messageCount,
-      ...(result.lastMessage === undefined ? {} : { lastMessage: result.lastMessage }),
+      ...(result.lastMessageAt === undefined ? {} : { lastMessageAt: result.lastMessageAt }),
       ...(await roomSubjectFor(server, result.envelope)),
       ...senderGenerationFor(server, result.envelope),
     })
@@ -333,6 +343,10 @@ async function driveMailTargetOnce(
 
   if (attempt === undefined) {
     if (session !== undefined && targetHasRunningTurn(server, session)) return
+    // A fyi is presented into a live generation if there is one, and otherwise
+    // waits. It is NEVER the reason a session is born (§5), so a wake set that
+    // holds nothing else stops here rather than at the summon gate.
+    if (session === undefined && !actionable.some(summonsATurn)) return
     const directives = actionableDirectives(actionable)
     const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
       envelopeIds: actionable.map((envelope) => envelope.id),
@@ -416,7 +430,7 @@ async function driveMailTargetOnce(
 
     // An `fyi` is auto-acked at its own presentation and never summons; if that
     // was everything this attempt held, there is no turn to dispatch.
-    if (presentables.every((presentable) => presentable.envelope.obligation !== 'reply_required')) {
+    if (!presentables.some((presentable) => summonsATurn(presentable.envelope))) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
       return
     }
@@ -520,7 +534,9 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
     const seated = this.db.runtimes.listLiveSessionRefs()
     for (const batch of chunk(seated, LEDGER_SWEEP_SCOPE_BATCH)) {
       try {
-        const view = await this.wrkqLedger.pendingView({ scopes: batch })
+        // includeFyi here too: a seated addressee should be shown a fyi on the
+        // next sweep, which is §5's "otherwise on X's next attend".
+        const view = await this.wrkqLedger.pendingView({ scopes: batch, includeFyi: true })
         if (view.repended > 0) {
           writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', { repended: view.repended })
         }

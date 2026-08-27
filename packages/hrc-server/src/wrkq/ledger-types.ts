@@ -81,6 +81,11 @@ export type WrkqRoomView = {
 
 export type WrkqEnvelopePendingViewParams = {
   scopes?: string[] | undefined
+  /**
+   * Include pending `fyi` rows in `items` (T-07627). `blocking` is unchanged:
+   * a fyi is auto-acked at its own presentation and never gates a turn end.
+   */
+  includeFyi?: boolean | undefined
   principalRef?: string | undefined
   scopeRef?: string | undefined
 }
@@ -118,7 +123,13 @@ export type WrkqEnvelopePresentResult = {
    */
   historyHint: boolean
   messageCount: number
-  lastMessage?: string | undefined
+  /**
+   * The wire field is `lastMessageAt`. Spelling it `lastMessage` here once cost
+   * the `history:` line its "last 2h ago" clause silently, and no fixture could
+   * have caught it: a double written from this same declaration agrees with the
+   * mistake. Only the real server disagrees.
+   */
+  lastMessageAt?: string | undefined
 }
 
 export type WrkqEnvelopeRoundParams = {

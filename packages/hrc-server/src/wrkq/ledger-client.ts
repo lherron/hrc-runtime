@@ -291,9 +291,25 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
     const error = record['error']
     if (typeof error === 'object' && error !== null) {
       const detail = error as Record<string, unknown>
+      const message =
+        typeof detail['message'] === 'string' ? detail['message'] : 'wrkq rejected the request'
+      if (isStaleSessionError(message)) {
+        // Observed live when the canonical wrkqd restarted underneath us: the
+        // transport reconnects but its remote session is gone, and every later
+        // call on this child inherits the fault. It is a TRANSPORT problem
+        // wearing an error frame, so the child is dropped and the next call
+        // gets a fresh one -- one failed tick instead of a permanent wedge.
+        const stale = new WrkqLedgerUnavailableError(
+          `the wrkq ledger transport lost its session: ${message}`,
+          call.method
+        )
+        call.reject(stale)
+        this.teardown(stale)
+        return
+      }
       call.reject(
         new WrkqLedgerRequestError(
-          typeof detail['message'] === 'string' ? detail['message'] : 'wrkq rejected the request',
+          message,
           call.method,
           typeof detail['code'] === 'number' ? detail['code'] : 0,
           detail['data']
@@ -343,6 +359,18 @@ function mapMonitorEvent(raw: unknown): WrkqMonitorEvent {
     eventType: typeof row['event_type'] === 'string' ? row['event_type'] : '',
     ...(typeof row['payload'] === 'string' ? { payload: row['payload'] } : {}),
   }
+}
+
+/**
+ * Does this error frame mean "your session is gone", rather than "no"?
+ *
+ * The distinction matters because only the first is worth dropping the child
+ * over. Matching on the message is unlovely, but the alternative — sending
+ * `rpc.initialize` on every child — is the protocol-schema pin this client
+ * exists to avoid.
+ */
+function isStaleSessionError(message: string): boolean {
+  return /rpc\.initialize/i.test(message) || /transport failure/i.test(message)
 }
 
 function errorText(error: unknown): string {

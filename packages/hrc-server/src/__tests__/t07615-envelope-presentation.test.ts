@@ -73,7 +73,7 @@ describe('T-07612 §7 presentation', () => {
       presentable({
         historyHint: true,
         messageCount: 14,
-        lastMessage: '2026-08-27T10:00:00Z',
+        lastMessageAt: '2026-08-27T10:00:00Z',
       }),
       NOW
     )

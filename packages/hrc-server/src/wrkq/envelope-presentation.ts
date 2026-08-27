@@ -27,7 +27,7 @@ export type PresentableEnvelope = {
   /** wrkq's cue decision, keyed to the RUNTIME rather than the generation. */
   historyHint: boolean
   messageCount: number
-  lastMessage?: string | undefined
+  lastMessageAt?: string | undefined
   /**
    * The ad-hoc room's subject, so a pair room's header is distinguishable.
    * Derived rooms have none: their key already IS the work identity.
@@ -111,7 +111,7 @@ function formatHistoryLine(presentable: PresentableEnvelope, now: Date): string 
   const key = presentable.envelope.roomKey
   const count = presentable.messageCount
   const messages = `${count} ${count === 1 ? 'message' : 'messages'}`
-  const last = formatLastMessageClause(presentable.lastMessage, now)
+  const last = formatLastMessageClause(presentable.lastMessageAt, now)
   return `history: wrkc log ${key}   (${messages}${last})`
 }
 

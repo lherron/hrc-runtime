@@ -126,15 +126,20 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   async pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView> {
     this.guard('wrkq.envelope.pendingView')
     const scopes = params.scopes ?? []
+    // T-07627: `includeFyi` widens `items` only. `blocking` stays reply_required
+    // and presented, because a fyi is auto-acked at its own presentation.
+    const obligations = params.includeFyi === true ? ['reply_required', 'fyi'] : ['reply_required']
     const items = [...this.envelopes.values()].filter(
       (envelope) =>
-        envelope.obligation === 'reply_required' &&
+        obligations.includes(envelope.obligation) &&
         (envelope.state === 'pending' || envelope.state === 'presented') &&
         this.matchesScope(envelope, scopes)
     )
     return {
       items,
-      blocking: items.filter((e) => e.state === 'presented').map((e) => e.id),
+      blocking: items
+        .filter((e) => e.obligation === 'reply_required' && e.state === 'presented')
+        .map((e) => e.id),
       repended: 0,
     }
   }
@@ -185,7 +190,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       recorded: !alreadyRecorded,
       historyHint,
       messageCount,
-      lastMessage: envelope.createdAt,
+      lastMessageAt: envelope.createdAt,
     }
   }
 

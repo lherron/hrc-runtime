@@ -393,6 +393,41 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.prompts()[2]).toContain('history: wrkc log T-07615')
   })
 
+  it('presents a fyi into a seat that already exists, and acks it there', async () => {
+    await startServer()
+    const resolved = await fixture.resolveSession(SCOPE)
+    const db = (server as any).db as HrcDatabase
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-fyi-seat',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const envelope = say({ obligation: 'fyi', body: 'for your information only' })
+
+    await (server as any).runMailKickerSweep()
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.state === 'acked',
+      'fyi presented and auto-acked'
+    )
+    // Presented, but no turn: a fyi is not work, it is a notice.
+    expect(deterministic.calls()).toBe(0)
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+  })
+
   it('never summons for a fyi, and completes the attempt as a no-op', async () => {
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
@@ -403,10 +438,14 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     // A fyi is not a wake at all: the tail skips it, so nothing is provisioned.
     await (server as any).runWrkqLedgerTail()
+    // And a SWEEP that finds only a fyi for an unseated scope must not birth
+    // one either — §5 says a fyi never summons, full stop.
+    await (server as any).runMailKickerSweep()
     await Bun.sleep(50)
     const db = (server as any).db as HrcDatabase
     expect(deterministic.calls()).toBe(0)
     expect(queryCount(db, 'sessions')).toBe(0)
+    expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(0)
   })
 
   it('summons a reply_required target through the gate and advances its round on a bare turn', async () => {
