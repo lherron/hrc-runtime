@@ -234,7 +234,7 @@ hrc monitor stats <runtimeId|invocationId|scope> --json
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
 - **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
 - **`monitor wait`** — `<selector...>` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
-- **`monitor transcript`** — an invocation activity transcript (tool starts,
+- **`monitor transcript`** — an invocation activity transcript (tool starts/results,
   completed assistant messages, and driver notices), not conversation readback.
   It can include user activity and supports `--previous [n]` plus `--tail <n>`
   for bounded recap.

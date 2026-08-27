@@ -491,6 +491,36 @@ describe('hrc monitor events', () => {
 })
 
 describe('hrc monitor transcript', () => {
+  it('renders completed tool results and preserves the full body with --full', async () => {
+    appendEvent(fixture, {
+      seq: 13,
+      type: 'tool.call.completed',
+      turnId: 'turn-2',
+      payload: {
+        toolCallId: 'tool-4',
+        toolName: 'Bash',
+        result: { output: LONG_MESSAGE },
+      },
+    })
+
+    const clipped = await runCli(
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '13..13'],
+      cliEnv(fixture)
+    )
+    const full = await runCli(
+      ['monitor', 'transcript', RUNTIME_ID, '--seq', '13..13', '--full'],
+      cliEnv(fixture)
+    )
+
+    expect(clipped.exitCode).toBe(0)
+    expect(clipped.stdout).toMatch(/^13 RESULT Bash \| /m)
+    expect(clipped.stdout).not.toContain(LONG_TAIL)
+    expect(clipped.stdout).toMatch(/\[clipped(?:[^\]]*)\]/i)
+    expect(full.exitCode).toBe(0)
+    expect(full.stdout).toMatch(/^13 RESULT Bash \| /m)
+    expect(full.stdout).toContain(LONG_TAIL)
+  })
+
   it('renders user.message as USER by default and clips it unless --full is supplied', async () => {
     appendEvent(fixture, {
       seq: 13,
@@ -640,7 +670,7 @@ describe('hrc monitor transcript', () => {
     expect(result.stderr).toContain('--tail must be a positive integer')
   })
 
-  it('drops tool.call.completed duration and outcome details from the transcript', async () => {
+  it('renders tool.call.completed rows even when the result is absent', async () => {
     appendEvent(fixture, {
       seq: 13,
       type: 'tool.call.completed',
@@ -659,6 +689,6 @@ describe('hrc monitor transcript', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toBe('')
+    expect(result.stdout).toBe('13 RESULT (unknown) | null\n')
   })
 })

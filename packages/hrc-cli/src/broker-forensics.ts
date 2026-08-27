@@ -242,10 +242,9 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
 
 function transcriptKind(type: string): TranscriptKind | undefined {
   if (type === 'user.message') return 'user'
-  if (type === 'tool.call.started') return 'exec'
+  if (type === 'tool.call.started' || type === 'tool.call.completed') return 'exec'
   if (type === 'assistant.message.completed') return 'cot'
   if (type === 'driver.notice') return 'notice'
-  // tool.call.completed duration/outcome pairing is welcome-but-optional and intentionally absent today.
   return undefined
 }
 
@@ -290,7 +289,7 @@ function extractText(value: unknown): string | undefined {
   }
   const record = asRecord(value)
   if (!record) return undefined
-  for (const key of ['text', 'content', 'message', 'notice']) {
+  for (const key of ['text', 'content', 'output', 'message', 'notice']) {
     const text = extractText(record[key])
     if (text !== undefined) return text
   }
@@ -307,6 +306,30 @@ function renderTranscriptEvent(event: BrokerForensicsEvent, full: boolean): stri
   if (event.type === 'tool.call.started') {
     const tool = summarizeTool(event, full)
     return `${event.seq} EXEC ${tool.name} | ${tool.input}`
+  }
+  if (event.type === 'tool.call.completed') {
+    const payload = asRecord(event.payload)
+    const name =
+      (typeof payload?.['name'] === 'string' && payload['name']) ||
+      (typeof payload?.['toolName'] === 'string' && payload['toolName']) ||
+      '(unknown)'
+    const result = payload?.['result']
+    let text: string
+    if (event.parseError) {
+      text = payloadText(event, full)
+    } else {
+      const extracted = extractText(result)
+      if (extracted !== undefined) {
+        text = extracted
+      } else {
+        try {
+          text = JSON.stringify(result ?? null)
+        } catch {
+          text = '[unrenderable result]'
+        }
+      }
+    }
+    return `${event.seq} RESULT ${name} | ${clipHuman(oneLine(text), full)}`
   }
   if (event.type === 'assistant.message.completed') {
     const text = event.parseError

@@ -64,7 +64,7 @@ function registerBrokerReads(monitor: Command): void {
   monitor
     .command('transcript')
     .description(
-      'render an invocation activity transcript (tool starts, completed assistant messages, driver notices)'
+      'render an invocation activity transcript (tool starts/results, completed assistant messages, driver notices)'
     )
     .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
     .option('--source-ref <ref>', 'select imported rows by exact source_ref')
