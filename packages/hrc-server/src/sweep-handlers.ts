@@ -490,21 +490,14 @@ async function handleLedgerManifestPrune(
 
   const deleteCounts = this.db.runtimes.countPruneRows(runtimeIds, { includeLedgers: true })
   if (mutate) {
-    const pruneAll = this.db.sqlite.transaction(() => {
-      for (const runtime of matched) {
-        const removed = this.db.runtimes.pruneRuntime(runtime.runtimeId, {
-          includeLedgers: true,
-        })
-        if (!removed) {
-          throw new HrcConflictError(
-            HrcErrorCode.STALE_CONTEXT,
-            `ledger-inclusive runtime prune lost runtime during apply: ${runtime.runtimeId}`,
-            { runtimeId: runtime.runtimeId }
-          )
-        }
-      }
-    })
-    pruneAll()
+    const removed = this.db.runtimes.pruneRuntimes(runtimeIds, { includeLedgers: true })
+    if (removed !== matched.length) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `ledger-inclusive runtime prune lost runtimes during apply: expected ${matched.length}, removed ${removed}`,
+        { expected: matched.length, removed }
+      )
+    }
   }
 
   const results: PruneRuntimeResult[] = matched.map((runtime) => ({

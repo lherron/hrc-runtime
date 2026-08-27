@@ -345,7 +345,7 @@ export class RuntimeRepository {
           "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?"
         )
         .get(table)?.present === 1
-    const selected = 'SELECT value AS runtime_id FROM json_each(?)'
+    const selected = 'SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)'
     const counts: RuntimePruneDeleteCounts = {
       broker_invocation_events: 0,
       hrc_events: 0,
@@ -436,114 +436,52 @@ export class RuntimeRepository {
       )
     }
     counts.compiled_runtime_plans = count(
-      `WITH selected AS (${selected}),
-            candidates AS (
+      `WITH selected AS MATERIALIZED (${selected}),
+            candidates AS MATERIALIZED (
               SELECT plan_hash FROM runtimes
               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
               UNION
               SELECT plan_hash FROM runtime_operations
               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
+            ),
+            referenced_elsewhere AS MATERIALIZED (
+              SELECT runtime.plan_hash
+              FROM runtimes AS runtime
+              JOIN candidates ON candidates.plan_hash = runtime.plan_hash
+              LEFT JOIN selected ON selected.runtime_id = runtime.runtime_id
+              WHERE selected.runtime_id IS NULL
+              UNION
+              SELECT operation.plan_hash
+              FROM runtime_operations AS operation
+              JOIN candidates ON candidates.plan_hash = operation.plan_hash
+              LEFT JOIN selected ON selected.runtime_id = operation.runtime_id
+              WHERE selected.runtime_id IS NULL
+              UNION
+              SELECT operation.plan_hash
+              FROM broker_invocations AS invocation
+              JOIN runtime_operations AS operation
+                ON operation.operation_id = invocation.operation_id
+              JOIN candidates ON candidates.plan_hash = operation.plan_hash
+              LEFT JOIN selected ON selected.runtime_id = invocation.runtime_id
+              WHERE selected.runtime_id IS NULL
             )
        SELECT COUNT(*) AS count
        FROM compiled_runtime_plans AS plan
-       WHERE plan.plan_hash IN (SELECT plan_hash FROM candidates)
-         AND NOT EXISTS (
-           SELECT 1 FROM runtimes AS runtime
-           WHERE runtime.plan_hash = plan.plan_hash
-             AND runtime.runtime_id NOT IN (SELECT runtime_id FROM selected)
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM runtime_operations AS operation
-           WHERE operation.plan_hash = plan.plan_hash
-             AND operation.runtime_id NOT IN (SELECT runtime_id FROM selected)
-         )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM broker_invocations AS invocation
-           JOIN runtime_operations AS operation
-             ON operation.operation_id = invocation.operation_id
-           WHERE operation.plan_hash = plan.plan_hash
-             AND invocation.runtime_id NOT IN (SELECT runtime_id FROM selected)
-         )`
+       JOIN candidates ON candidates.plan_hash = plan.plan_hash
+       LEFT JOIN referenced_elsewhere AS reference
+         ON reference.plan_hash = plan.plan_hash
+       WHERE reference.plan_hash IS NULL`
     )
 
     return counts
   }
 
   pruneRuntime(runtimeId: string, options: { includeLedgers?: boolean | undefined } = {}): boolean {
+    if (options.includeLedgers) {
+      return this.pruneRuntimes([runtimeId], options) === 1
+    }
+
     const prune = this.db.transaction((id: string): boolean => {
-      if (options.includeLedgers) {
-        execute(this.db, 'DELETE FROM broker_invocation_events WHERE runtime_id = ?', id)
-        execute(this.db, 'DELETE FROM hrc_events WHERE runtime_id = ?', id)
-        execute(
-          this.db,
-          `DELETE FROM runtime_artifacts
-           WHERE operation_id IN (
-             SELECT operation_id FROM runtime_operations WHERE runtime_id = ?
-           )`,
-          id
-        )
-        execute(this.db, 'DELETE FROM broker_invocations WHERE runtime_id = ?', id)
-        execute(this.db, 'DELETE FROM runtime_first_turn_watch WHERE runtime_id = ?', id)
-
-        // Phase 4 creates these tables. Phase 3 must be deployable before that
-        // migration, so each delete is guarded by sqlite_master existence.
-        const hasBlobParts =
-          this.db
-            .query<{ present: number }, []>(
-              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'tool_result_blob_parts'"
-            )
-            .get()?.present === 1
-        if (hasBlobParts) {
-          execute(this.db, 'DELETE FROM tool_result_blob_parts WHERE runtime_id = ?', id)
-        }
-        const hasBlobs =
-          this.db
-            .query<{ present: number }, []>(
-              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'tool_result_blobs'"
-            )
-            .get()?.present === 1
-        if (hasBlobs) {
-          execute(this.db, 'DELETE FROM tool_result_blobs WHERE runtime_id = ?', id)
-        }
-
-        // Remove plans owned only by this runtime. Broker invocations reference
-        // plans through their operation; target-runtime references are being
-        // removed in this transaction, while any foreign runtime reference
-        // keeps the content-addressed plan alive.
-        execute(
-          this.db,
-          `DELETE FROM compiled_runtime_plans AS plan
-           WHERE plan.plan_hash IN (
-             SELECT plan_hash FROM runtimes WHERE runtime_id = ? AND plan_hash IS NOT NULL
-             UNION
-             SELECT plan_hash FROM runtime_operations
-             WHERE runtime_id = ? AND plan_hash IS NOT NULL
-           )
-             AND NOT EXISTS (
-               SELECT 1 FROM runtimes AS runtime
-               WHERE runtime.plan_hash = plan.plan_hash AND runtime.runtime_id <> ?
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM runtime_operations AS operation
-               WHERE operation.plan_hash = plan.plan_hash AND operation.runtime_id <> ?
-             )
-             AND NOT EXISTS (
-               SELECT 1
-               FROM broker_invocations AS invocation
-               JOIN runtime_operations AS operation
-                 ON operation.operation_id = invocation.operation_id
-               WHERE operation.plan_hash = plan.plan_hash AND invocation.runtime_id <> ?
-             )`,
-          id,
-          id,
-          id,
-          id,
-          id
-        )
-        execute(this.db, 'DELETE FROM runtime_operations WHERE runtime_id = ?', id)
-      }
-
       // Tables that FK-reference runs(run_id): clear by either edge (a row may
       // pin to this runtime's run while carrying a null/foreign runtime_id) so
       // no run-level FK survives the DELETE FROM runs below.
@@ -562,6 +500,152 @@ export class RuntimeRepository {
       return (result.changes ?? 0) > 0
     })
     return prune(runtimeId)
+  }
+
+  /**
+   * Set-based ledger-inclusive cascade for an already safety-gated manifest.
+   * The JSON manifest is materialized independently by each statement so the
+   * entire operation remains pure SQL inside one SQLite transaction without
+   * constructing an unbounded placeholder list.
+   */
+  pruneRuntimes(
+    runtimeIds: readonly string[],
+    options: { includeLedgers?: boolean | undefined } = {}
+  ): number {
+    if (!options.includeLedgers) {
+      let removed = 0
+      const pruneAll = this.db.transaction(() => {
+        for (const runtimeId of runtimeIds) {
+          if (this.pruneRuntime(runtimeId)) removed += 1
+        }
+      })
+      pruneAll()
+      return removed
+    }
+
+    const selectedJson = JSON.stringify(runtimeIds)
+    const selected =
+      'WITH selected AS MATERIALIZED (SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?))'
+    const executeSelected = (sql: string): void =>
+      execute(this.db, `${selected} ${sql}`, selectedJson)
+    const tableExists = (table: string): boolean =>
+      this.db
+        .query<{ present: number }, [string]>(
+          "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?"
+        )
+        .get(table)?.present === 1
+
+    const pruneAll = this.db.transaction((): number => {
+      const present = this.db
+        .query<{ count: number }, [string]>(
+          `${selected} SELECT COUNT(*) AS count FROM runtimes
+           WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+        )
+        .get(selectedJson)?.count
+      if (present !== runtimeIds.length) {
+        throw new Error(
+          `runtime prune manifest changed before apply: expected ${runtimeIds.length}, found ${present ?? 0}`
+        )
+      }
+
+      executeSelected(
+        'DELETE FROM broker_invocation_events WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected(
+        'DELETE FROM hrc_events WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected(
+        `DELETE FROM runtime_artifacts
+         WHERE operation_id IN (
+           SELECT operation_id FROM runtime_operations
+           WHERE runtime_id IN (SELECT runtime_id FROM selected)
+         )`
+      )
+      executeSelected(
+        'DELETE FROM broker_invocations WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected(
+        'DELETE FROM runtime_first_turn_watch WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+
+      // Phase 4 creates these tables. Phase 3 must be deployable before that
+      // migration, so each delete is guarded by sqlite_master existence.
+      if (tableExists('tool_result_blob_parts')) {
+        executeSelected(
+          'DELETE FROM tool_result_blob_parts WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+        )
+      }
+      if (tableExists('tool_result_blobs')) {
+        executeSelected(
+          'DELETE FROM tool_result_blobs WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+        )
+      }
+
+      execute(
+        this.db,
+        `WITH selected AS MATERIALIZED (
+               SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)
+             ),
+             candidates AS MATERIALIZED (
+               SELECT plan_hash FROM runtimes
+               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
+               UNION
+               SELECT plan_hash FROM runtime_operations
+               WHERE runtime_id IN (SELECT runtime_id FROM selected) AND plan_hash IS NOT NULL
+             ),
+             referenced_elsewhere AS MATERIALIZED (
+               SELECT runtime.plan_hash
+               FROM runtimes AS runtime
+               JOIN candidates ON candidates.plan_hash = runtime.plan_hash
+               LEFT JOIN selected ON selected.runtime_id = runtime.runtime_id
+               WHERE selected.runtime_id IS NULL
+               UNION
+               SELECT operation.plan_hash
+               FROM runtime_operations AS operation
+               JOIN candidates ON candidates.plan_hash = operation.plan_hash
+               LEFT JOIN selected ON selected.runtime_id = operation.runtime_id
+               WHERE selected.runtime_id IS NULL
+               UNION
+               SELECT operation.plan_hash
+               FROM broker_invocations AS invocation
+               JOIN runtime_operations AS operation
+                 ON operation.operation_id = invocation.operation_id
+               JOIN candidates ON candidates.plan_hash = operation.plan_hash
+               LEFT JOIN selected ON selected.runtime_id = invocation.runtime_id
+               WHERE selected.runtime_id IS NULL
+             )
+         DELETE FROM compiled_runtime_plans AS plan
+         WHERE plan.plan_hash IN (SELECT plan_hash FROM candidates)
+           AND plan.plan_hash NOT IN (SELECT plan_hash FROM referenced_elsewhere)`,
+        selectedJson
+      )
+      executeSelected(
+        'DELETE FROM runtime_operations WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+
+      const runScoped = `runtime_id IN (SELECT runtime_id FROM selected)
+        OR run_id IN (
+          SELECT run_id FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)
+        )`
+      executeSelected(`DELETE FROM events WHERE ${runScoped}`)
+      executeSelected(`DELETE FROM runtime_buffers WHERE ${runScoped}`)
+      executeSelected(
+        'DELETE FROM surface_bindings WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected(
+        'DELETE FROM local_bridges WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected('DELETE FROM launches WHERE runtime_id IN (SELECT runtime_id FROM selected)')
+      executeSelected('DELETE FROM runs WHERE runtime_id IN (SELECT runtime_id FROM selected)')
+      const result = this.db
+        .query(
+          `${selected} DELETE FROM runtimes WHERE runtime_id IN (SELECT runtime_id FROM selected)`
+        )
+        .run(selectedJson) as { changes?: number }
+      return result.changes ?? 0
+    })
+
+    return pruneAll()
   }
 }
 

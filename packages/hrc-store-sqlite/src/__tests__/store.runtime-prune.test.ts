@@ -196,7 +196,7 @@ function seedLedgerDependents(
       `INSERT INTO hrc_events (
          stream_seq, ts, host_session_id, scope_ref, lane_ref, generation,
          runtime_id, category, event_kind, payload_json
-       ) VALUES (1, ?, ?, ?, 'default', 1, ?, 'turn', 'turn.completed', '{}')`
+       ) VALUES ((SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM hrc_events), ?, ?, ?, 'default', 1, ?, 'turn', 'turn.completed', '{}')`
     )
     .run(now, runtime.hostSessionId, runtime.scopeRef, runtimeId)
   db.firstTurnWatch.arm({
@@ -391,6 +391,31 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
 
       expect(countTable(db, 'compiled_runtime_plans')).toBe(1)
       expect(db.runtimes.getByRuntimeId('rt-plan-peer')).not.toBeNull()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('prunes a ledger manifest as one set and refuses a partially missing set', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      seedRuntimeWithDependents(db, 'rt-batch-one')
+      seedRuntimeWithDependents(db, 'rt-batch-two')
+      seedLedgerDependents(db, 'rt-batch-one')
+      seedLedgerDependents(db, 'rt-batch-two')
+
+      expect(() =>
+        db.runtimes.pruneRuntimes(['rt-batch-one', 'rt-missing'], { includeLedgers: true })
+      ).toThrow('runtime prune manifest changed before apply')
+      expect(db.runtimes.getByRuntimeId('rt-batch-one')).not.toBeNull()
+      expect(countTable(db, 'broker_invocation_events')).toBe(2)
+
+      expect(
+        db.runtimes.pruneRuntimes(['rt-batch-one', 'rt-batch-two'], { includeLedgers: true })
+      ).toBe(2)
+      expect(countTable(db, 'runtimes')).toBe(0)
+      expect(countTable(db, 'broker_invocation_events')).toBe(0)
+      expect(countTable(db, 'compiled_runtime_plans')).toBe(0)
     } finally {
       db.close()
     }
