@@ -383,21 +383,19 @@ async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promis
 }
 
 /**
- * After a sync advances the resolved versions, bun.lock is the only tracked file
- * that changed. Commit it immediately (lockfile-only pathspec commit) so worktrees
- * stay clean for whoever runs next. Failure is tolerated (mid-rebase, concurrent
- * index lock, ...) — the next sync run retries. Opt out with
- * PRAESIDIUM_SYNC_NO_COMMIT=1.
+ * Commit the advanced bun.lock as one lockfile-only pathspec commit. Reached ONLY
+ * from `commitSyncedLockfile`, i.e. from this repo's own deliberate `just
+ * pull-deps` — a sync never commits on its own (T-07629): an install driven from
+ * a producer repo must not write git history in a repo it does not own.
+ * Failure is tolerated (mid-rebase, concurrent index lock, ...).
  *
  * Skipped entirely when GIT_INDEX_FILE is set: that means we were invoked from a
  * git hook (a pre-commit that builds → syncs), and committing here would move
  * HEAD out from under the in-flight commit and abort it with "cannot lock ref
- * 'HEAD'". The outer commit will carry the lock change instead; if not, the next
- * top-level sync commits it.
+ * 'HEAD'". The outer commit will carry the lock change instead.
  */
 function commitLockfile(label: string, summary: string): void {
-  const { PRAESIDIUM_SYNC_NO_COMMIT, GIT_INDEX_FILE } = process.env
-  if (PRAESIDIUM_SYNC_NO_COMMIT === '1') return
+  const { GIT_INDEX_FILE } = process.env
   if (GIT_INDEX_FILE) return
   const status = run('git', ['status', '--porcelain', '--', 'bun.lock'])
   if (status.status !== 0 || status.out.trim() === '') return
@@ -416,6 +414,20 @@ function commitLockfile(label: string, summary: string): void {
   }
 }
 
+/**
+ * A sync leaves its bun.lock change UNCOMMITTED and says so. The repo that
+ * dirtied it is not necessarily the repo that ran the sync — a producer's
+ * `just install` drives this in each consumer — so the commit belongs to
+ * whoever owns this checkout, on their next landing (T-07629).
+ */
+function announceDirtyLockfile(label: string): void {
+  const status = run('git', ['status', '--porcelain', '--', 'bun.lock'])
+  if (status.status !== 0 || status.out.trim() === '') return
+  console.log(
+    `LOCK_DIRTY  bun.lock (${label} sync) — uncommitted; commit it with your next landing`
+  )
+}
+
 export async function commitSyncedLockfile(groups: readonly CoherenceGroup[]): Promise<void> {
   const locked = await lockfileVersions()
   commitLockfile('dependency', summaryForGroups(groups, locked))
@@ -431,9 +443,9 @@ export async function commitSyncedLockfile(groups: readonly CoherenceGroup[]): P
  * restore the tag specifier and reinstall so bun.lock records "latest" again.
  * (bun won't re-resolve a tag already satisfied by the lock, and `bun update`
  * both rewrites package.json and re-resolves tags outside our coherence check —
- * hence the pin/restore dance.) The resulting lockfile-only change is
- * auto-committed. Serialized by a repo-root lock dir so concurrent syncs of the
- * same stream don't collide.
+ * hence the pin/restore dance.) The resulting lockfile-only change is left
+ * uncommitted and announced. Serialized by a repo-root lock dir so concurrent
+ * syncs of the same stream don't collide.
  *
  * Steady state (installed == latest, manifests already tagged) does zero
  * installs and zero writes. A republish between resolveLatest and the reconcile
@@ -464,9 +476,9 @@ export async function syncFromVerdaccio(spec: SyncSpec): Promise<void> {
       await bunInstallFromVerdaccio(spec.label, tmpPrefix)
     }
     await verifyInstalled(latest, spec.label)
-    // Only commit churn this run produced — a bun.lock dirtied by someone
-    // else's in-flight work is theirs to commit.
-    if (stale || normalized.changed) commitLockfile(spec.label, summary)
+    // Only report churn this run produced — a bun.lock dirtied by someone
+    // else's in-flight work is theirs to speak for.
+    if (stale || normalized.changed) announceDirtyLockfile(spec.label)
     console.log(`${spec.label}_SYNC  ${summary}`)
   })
 }

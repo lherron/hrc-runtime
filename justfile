@@ -323,8 +323,8 @@ pull-deps:
     #!/usr/bin/env bash
     set -euo pipefail
     git diff --quiet -- bun.lock && git diff --cached --quiet -- bun.lock || { echo "pull-deps: bun.lock must be clean before pulling" >&2; exit 1; }
-    PRAESIDIUM_SYNC_NO_COMMIT=1 bun scripts/sync-asp-from-verdaccio.ts --pull
-    PRAESIDIUM_SYNC_NO_COMMIT=1 bun scripts/sync-wrkq-from-verdaccio.ts --pull
+    bun scripts/sync-asp-from-verdaccio.ts --pull
+    bun scripts/sync-wrkq-from-verdaccio.ts --pull
     bun scripts/commit-verdaccio-lock.ts
 
 check-deps:
