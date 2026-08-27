@@ -2,6 +2,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
+import { environmentWithoutGitOverrides } from 'hrc-core'
+
 export type GitFixture = {
   workTree?: string
   gitDir: string
@@ -21,16 +23,6 @@ type GitFixtureOptions = {
 const DEFAULT_IDENTITY = {
   name: 'HRC Git Fixture',
   email: 'hrc-git-fixture@example.test',
-}
-
-export function environmentWithoutGitOverrides(
-  inheritedEnvironment: Record<string, string | undefined> = process.env
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(inheritedEnvironment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined && !entry[0].startsWith('GIT_')
-    )
-  )
 }
 
 function assertOutsideExistingCheckout(path: string): void {

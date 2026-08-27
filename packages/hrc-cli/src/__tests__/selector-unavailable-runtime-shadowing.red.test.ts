@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
+
+import { createGitFixture } from '../../../../test-support/git-fixture.js'
 
 import { cmdRuntimeList } from '../cli/handlers-runtime.js'
 import {
@@ -29,12 +30,10 @@ let originalProjectSearchRoots: string | undefined
 
 beforeEach(() => {
   projectSearchRoot = mkdtempSync(join(tmpdir(), 'hrc-selector-projects-'))
-  const projectRoot = join(projectSearchRoot, 'taskboard')
-  mkdirSync(projectRoot, { recursive: true })
-  const init = spawnSync('git', ['init', '-q'], { cwd: projectRoot, stdio: 'ignore' })
-  if (init.status !== 0) {
-    throw new Error('failed to provision canonical checkout fixture for taskboard')
-  }
+  // createGitFixture, not a bare `git init`: an ambient GIT_DIR outranks cwd, so
+  // a bare spawn re-initializes the hook's repository and leaves this dir without
+  // a `.git` at all. That took three shared checkouts down (T-07635).
+  createGitFixture(join(projectSearchRoot, 'taskboard'))
   originalProjectSearchRoots = process.env['HRC_PROJECT_SEARCH_ROOTS']
   process.env['HRC_PROJECT_SEARCH_ROOTS'] = projectSearchRoot
 })

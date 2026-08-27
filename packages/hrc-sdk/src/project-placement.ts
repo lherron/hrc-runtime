@@ -3,6 +3,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { environmentWithoutGitOverrides } from 'hrc-core'
 import {
   type ResolveAgentPlacementPathsOptions,
   type ResolvedAgentPlacementPaths,
@@ -187,11 +188,7 @@ function listGitWorktrees(
   canonicalRoot: string,
   explicitEnv: Record<string, string | undefined>
 ): GitWorktree[] {
-  const ambientEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined && !entry[0].startsWith('GIT_')
-    )
-  )
+  const ambientEnv = environmentWithoutGitOverrides()
   const result = spawnSync('git', ['-C', canonicalRoot, 'worktree', 'list', '--porcelain'], {
     encoding: 'utf8',
     env: { ...ambientEnv, ...explicitEnv },

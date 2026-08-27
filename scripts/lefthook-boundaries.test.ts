@@ -3,6 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { environmentWithoutGitOverrides } from 'hrc-core'
+
 interface HookCommandConfig {
   files?: string
   run: string
@@ -48,10 +50,14 @@ afterEach(async () => {
   )
 })
 
+// The fixture's git commands mean the FIXTURE repo. Inheriting the ambient GIT_*
+// would point them at the caller's repository instead — under a git hook, which is
+// exactly where this suite runs, `git init` would re-initialize the real checkout
+// and write core.bare into the config it shares with every worktree (T-07635).
 function run(command: string[], cwd: string, env: Record<string, string | undefined> = {}): string {
   const result = Bun.spawnSync(command, {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...environmentWithoutGitOverrides(), ...env },
     stdout: 'pipe',
     stderr: 'pipe',
   })

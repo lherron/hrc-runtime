@@ -9,6 +9,7 @@ import {
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
   HrcRuntimeUnavailableError,
+  environmentWithoutGitOverrides,
 } from 'hrc-core'
 import { type InvocationStartRequest, isCredentialEnvKey } from 'spaces-harness-broker-protocol'
 
@@ -494,11 +495,7 @@ function assertTargetContainment(
 }
 
 async function gitValue(workspaceRoot: string, args: string[], reason: string): Promise<string> {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined && !entry[0].startsWith('GIT_')
-    )
-  )
+  const env = environmentWithoutGitOverrides()
   const child = Bun.spawn(['git', '-C', workspaceRoot, ...args], {
     env,
     stdout: 'pipe',

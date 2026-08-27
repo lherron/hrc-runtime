@@ -15,7 +15,11 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type { PraesidiumBuild, PraesidiumReleaseManifest } from 'hrc-core'
+import {
+  type PraesidiumBuild,
+  type PraesidiumReleaseManifest,
+  environmentWithoutGitOverrides,
+} from 'hrc-core'
 
 import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
 import { readCoherentInstalledAspBuild, readPublishedHrcBuild } from './lib/praesidium-build'
@@ -387,7 +391,8 @@ async function copyCanonicalSourceSnapshot(
     await runCommand(
       'git',
       ['archive', '--format=tar', `--output=${archivePath}`, sourceCommit],
-      sourceRoot
+      sourceRoot,
+      environmentWithoutGitOverrides()
     )
     await runCommand('tar', ['-xf', archivePath, '-C', releasePath], sourceRoot)
   } finally {
@@ -402,6 +407,7 @@ async function worktreePublishVersion(sourceRoot: string): Promise<string> {
   const gitResult = spawnSync('git', ['rev-parse', '--short=12', 'HEAD'], {
     cwd: sourceRoot,
     encoding: 'utf8',
+    env: environmentWithoutGitOverrides(),
   })
   if (gitResult.status !== 0 || !gitResult.stdout.trim()) {
     throw new Error(`cannot resolve worktree publish SHA: ${gitResult.stderr || gitResult.stdout}`)

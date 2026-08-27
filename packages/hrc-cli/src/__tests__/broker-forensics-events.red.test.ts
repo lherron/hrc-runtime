@@ -9,8 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +17,7 @@ import { createHrcServer } from 'hrc-server'
 import type { HrcServer } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { createGitFixture } from '../../../../test-support/git-fixture.js'
 import { createHrcTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
 import { main } from '../cli'
@@ -367,12 +367,10 @@ let projectSearchRoot: string | undefined
 function provisionProjectSearchRoot(projectIds: readonly string[]): string {
   const root = mkdtempSync(join(tmpdir(), 'hrc-forensics-projects-'))
   for (const projectId of projectIds) {
-    const projectRoot = join(root, projectId)
-    mkdirSync(projectRoot, { recursive: true })
-    const init = spawnSync('git', ['init', '-q'], { cwd: projectRoot, stdio: 'ignore' })
-    if (init.status !== 0) {
-      throw new Error(`failed to provision canonical checkout fixture for ${projectId}`)
-    }
+    // createGitFixture, not a bare `git init`: an ambient GIT_DIR outranks cwd,
+    // so a bare spawn re-initializes the hook's repository and leaves this dir
+    // without a `.git` at all. That took three shared checkouts down (T-07635).
+    createGitFixture(join(root, projectId))
   }
   return root
 }

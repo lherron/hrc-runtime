@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import type { PraesidiumBuild } from 'hrc-core'
+import { type PraesidiumBuild, environmentWithoutGitOverrides } from 'hrc-core'
 
 import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
 
@@ -201,12 +201,7 @@ function resolveTag(_version: string, options: Options): string {
 }
 
 function run(cmd: string, args: string[], cwd = ROOT): { status: number; out: string } {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && (cmd !== 'git' || !entry[0].startsWith('GIT_'))
-    )
-  )
+  const env = cmd === 'git' ? environmentWithoutGitOverrides() : process.env
   const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', env })
   return {
     status: result.status ?? -1,

@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
+import * as nodeChildProcess from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const originalFetch = globalThis.fetch
+// Snapshotted before any mock.module call, so the delegate below cannot recurse
+// into the stub that replaces the module.
+const realChildProcess = { ...nodeChildProcess }
 
 afterEach(() => {
   globalThis.fetch = originalFetch
@@ -13,12 +17,19 @@ let syncModule: Promise<typeof import('./lib/verdaccio-sync')> | undefined
 
 async function loadSyncModule(): Promise<typeof import('./lib/verdaccio-sync')> {
   syncModule ??= (async () => {
+    // Fake ONLY the `bun install` spawn, and delegate everything else to the
+    // real module. `mock.module` is global to the bun test process and is never
+    // torn down, so a blanket spawnSync stub silently breaks every later file in
+    // the same run — it was already reaching into install-dirty-guard.test.ts.
     mock.module('node:child_process', () => ({
-      spawnSync: () => ({
-        status: 42,
-        stdout: '',
-        stderr: 'fake bun install reached\n',
-      }),
+      ...realChildProcess,
+      spawnSync: (command: string, ...rest: unknown[]) =>
+        command === 'bun'
+          ? { status: 42, stdout: '', stderr: 'fake bun install reached\n' }
+          : (realChildProcess.spawnSync as unknown as (...args: unknown[]) => unknown)(
+              command,
+              ...rest
+            ),
     }))
     return await import('./lib/verdaccio-sync')
   })()

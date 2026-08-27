@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { environmentWithoutGitOverrides } from 'hrc-core'
+
 // scripts/lib/ -> repo root
 const ROOT = resolve(import.meta.dir, '..', '..')
 // Destructure rather than index/property access: consumers span tsconfigs that
@@ -69,7 +71,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 function run(cmd: string, args: string[]): { status: number; out: string } {
-  const result = spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', stdio: 'pipe' })
+  const result = spawnSync(cmd, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: 'pipe',
+    ...(cmd === 'git' ? { env: environmentWithoutGitOverrides() } : {}),
+  })
   return { status: result.status ?? -1, out: `${result.stdout || ''}${result.stderr || ''}` }
 }
 

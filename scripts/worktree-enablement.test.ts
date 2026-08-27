@@ -26,7 +26,13 @@ function command(name: 'prep' | 'install' | 'test'): string {
 }
 
 function recipeBody(name: string): string {
-  const match = justfileText.match(new RegExp(`^${name}[^\\n]*:\\n((?:[ \\t].*\\n|\\s*\\n)*)`, 'm'))
+  // (?=[ \t:]) anchors the recipe NAME, not a prefix of it: without it,
+  // recipeBody('install') matched `installed-live-test` — the first line that
+  // merely starts with "install" — and every assertion below was silently
+  // reading the wrong recipe.
+  const match = justfileText.match(
+    new RegExp(`^${name}(?=[ \\t:])[^\\n]*:\\n((?:[ \\t].*\\n|\\s*\\n)*)`, 'm')
+  )
   expect(match, `justfile recipe '${name}' must exist`).not.toBeNull()
   return match?.[1] ?? ''
 }

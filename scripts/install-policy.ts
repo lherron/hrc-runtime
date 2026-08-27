@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, normalize, resolve } from 'node:path'
 
+import { environmentWithoutGitOverrides } from 'hrc-core'
+
 import { type InstallOptions, parseInstallOptions, truthy } from './install-options'
 
 export type InstallContext = 'main' | 'linked-worktree'
@@ -24,7 +26,11 @@ type InstallPolicyInput = {
 }
 
 function git(args: string[], cwd: string): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: environmentWithoutGitOverrides(),
+  })
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`)
   }

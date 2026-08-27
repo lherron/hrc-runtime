@@ -8,6 +8,8 @@ export {
 } from './federation.js'
 export type { HrcBirthCredential } from './federation.js'
 
+export { environmentWithoutGitOverrides } from './git-environment.js'
+
 export {
   HrcBadRequestError,
   HrcConflictError,
