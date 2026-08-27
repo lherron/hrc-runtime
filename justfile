@@ -16,6 +16,7 @@ info:
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
     @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
+    @echo "  just install   - Atomic install; refuses a dirty tree unless allow-dirty=1"
     @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
     @echo "  just env-down  - Tear that environment down"
     @echo "  just e2e       - Run the suite against the provisioned environment"
@@ -159,12 +160,20 @@ rebuild:
 
 # Install dependencies
 # Dependency pulls are explicit via `just pull-deps`; install never advances bun.lock.
+# Options are name=value tokens in any order: no-sync=1, force-sync=1, force-link=1,
+# allow-dirty=1. `just` arguments are positional, so they are passed through opaquely
+# and parsed by scripts/install-options.ts rather than bound to recipe parameters.
 # Linked Git worktrees auto-disable the global wrapper cutover unless force-link=1 is passed explicitly.
 # Linked worktrees publish HRC packages to the isolated worktree tag/channel.
-install no-sync="" force-sync="" force-link="":
+# An install builds and publishes the tree on disk, so it refuses a worktree with
+# tracked modifications (staged or unstaged; untracked files are ignored) before
+# it builds anything. Pass allow-dirty=1 to install uncommitted work deliberately.
+install *options:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(bun scripts/install-policy.ts shell --no-sync="{{ no-sync }}" --force-sync="{{ force-sync }}" --force-link="{{ force-link }}")"
+    bun scripts/install-dirty-guard.ts --source-root="$PWD" {{ options }}
+    policy="$(bun scripts/install-policy.ts shell {{ options }})"
+    eval "$policy"
     echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
     echo "[install] dependency pulls are explicit; preserving bun.lock"
     bun scripts/atomic-install.ts \

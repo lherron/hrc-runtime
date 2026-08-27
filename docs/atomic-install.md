@@ -4,6 +4,40 @@
 cuts the installed `hrc`, `hrcchat`, and `hrcmail` commands over only after dependency
 installation, build, entrypoint smoke checks, and package publication succeed.
 
+## Dirty-worktree guard
+
+An install builds and publishes the tree on disk, not the commit. Before any
+policy is computed or anything is built, `just install` runs
+`scripts/install-dirty-guard.ts`, which refuses (exit 1, nothing built) when
+`git status --porcelain=v1 --untracked-files=no` reports tracked modifications,
+listing every dirty path. Untracked files are ignored: the install never packs
+them and scratch files in a checkout are normal. Pass `allow-dirty=1` to install
+uncommitted work deliberately:
+
+```bash
+just install                 # refuses if tracked files are modified
+just install allow-dirty=1   # installs the working tree as-is
+```
+
+Install options are `name=value` tokens (`no-sync=1`, `force-sync=1`,
+`force-link=1`, `allow-dirty=1`) accepted in any order. `just` recipe arguments
+are positional, so the recipe forwards them opaquely and
+`scripts/install-options.ts` parses them by name; an unrecognized token is an
+error rather than a silently mis-assigned option.
+
+No exclusion list is needed, because the install churns no tracked file: its
+output is untracked or ignored (`dist/`, `node_modules/`, `asp_modules/`,
+`asp-lock.json`), it runs `bun install --frozen-lockfile` so `bun.lock` is never
+advanced, and the publish step's rewrite of each `package.json` is restored in a
+`finally` before the recipe returns. A `package.json` still modified when the
+guard runs is the residue of a failed publish, which is exactly what should be
+refused.
+
+The guard is not the canonical-publication check. A main-checkout install still
+proves its publication source separately and more strictly (untracked files
+included) after the guard passes; the guard is what covers the linked-worktree
+install path, which publishes to the worktree channel without that proof.
+
 ## Installed layout
 
 The active commands use one stable indirection:

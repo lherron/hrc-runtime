@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, normalize, resolve } from 'node:path'
 
+import { type InstallOptions, parseInstallOptions, truthy } from './install-options'
+
 export type InstallContext = 'main' | 'linked-worktree'
 export type PublishChannel = 'dev' | 'worktree'
 export type SideEffectMode = 'on' | 'off' | 'forced'
@@ -19,12 +21,6 @@ type InstallPolicyInput = {
   noSync?: string | boolean | undefined
   forceSync?: string | boolean | undefined
   forceLink?: string | boolean | undefined
-}
-
-function truthy(value: string | boolean | undefined): boolean {
-  if (typeof value === 'boolean') return value
-  if (value === undefined || value === '') return false
-  return !['0', 'false', 'no', 'off'].includes(value.toLowerCase())
 }
 
 function git(args: string[], cwd: string): string {
@@ -96,33 +92,17 @@ function emitShell(policy: InstallPolicy): void {
   console.log(`PRAESIDIUM_INSTALL_PUBLISH_TAG=${shellValue(policy.publishTag)}`)
 }
 
-function parseCli(argv: string[]): {
-  command: 'shell'
-  noSync?: string
-  forceSync?: string
-  forceLink?: string
-} {
+function parseCli(argv: string[]): InstallOptions {
   const [command = 'shell', ...rest] = argv
   if (command !== 'shell') throw new Error(`Unknown command: ${command}`)
-
-  const options: { command: 'shell'; noSync?: string; forceSync?: string; forceLink?: string } = {
-    command,
-  }
-  for (const arg of rest) {
-    if (arg.startsWith('--no-sync=')) options.noSync = arg.slice('--no-sync='.length)
-    else if (arg.startsWith('--force-sync=')) options.forceSync = arg.slice('--force-sync='.length)
-    else if (arg.startsWith('--force-link=')) options.forceLink = arg.slice('--force-link='.length)
-    else throw new Error(`Unknown argument: ${arg}`)
-  }
-  return options
+  return parseInstallOptions(rest)
 }
 
 if (import.meta.main) {
   const options = parseCli(process.argv.slice(2))
-  const context = detectInstallContext()
   emitShell(
     computeInstallPolicy({
-      context,
+      context: detectInstallContext(),
       noSync: options.noSync,
       forceSync: options.forceSync,
       forceLink: options.forceLink,

@@ -34,6 +34,9 @@ gateway-discord through the RenderFrame contract.
 `just install` builds an immutable release away from the checkout and atomically
 advances the shared `hrc` / `hrcchat` indirection only after build, entrypoint
 smoke, and publication succeed ([docs/atomic-install.md](docs/atomic-install.md)).
+`just install` refuses a worktree with tracked modifications before it builds
+anything, listing the dirty paths; pass `allow-dirty=1` to install uncommitted
+work deliberately.
 **Install does not reload the daemon.** Build, publish, install, and restart are
 separate states — record each. After runtime changes: `just install`, `hrc server
 restart`, `hrc server status`; the readback must name the new release in
