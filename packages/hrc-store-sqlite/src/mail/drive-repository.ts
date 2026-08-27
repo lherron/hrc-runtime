@@ -1,7 +1,20 @@
 import { randomUUID } from 'node:crypto'
 
 import type { Database } from 'bun:sqlite'
-import type { HrcMailEnvelope, HrcRuntimeIntent } from 'hrc-core'
+import type { HrcRuntimeIntent } from 'hrc-core'
+
+/**
+ * The per-scope drive slot: HRC's EXECUTION state for driving the wrkq
+ * collaboration ledger (T-07612 §2, §10).
+ *
+ * wrkq owns the envelopes. This repository owns only what references a run: the
+ * per-scope slot that serialises drives, the `driveAttemptId` that makes a
+ * presentation exactly-once across a crash, and the local receipt of which
+ * envelope ids an attempt presented. It NO LONGER READS ANY ENVELOPE TABLE --
+ * the actionable set is passed in by the kicker, which read it from wrkq. That
+ * is the whole shape of the re-point: the slot machinery is unchanged, and the
+ * ledger it drives moved out of this store.
+ */
 
 export type HrcMailDriveWakeReason = 'insert' | 'turn_completion' | 'periodic' | 'recovery'
 
@@ -41,8 +54,8 @@ export type HrcMailDriveClaimResult =
 
 export type CompleteHrcMailDriveResult = {
   attempt: HrcMailDriveAttempt
-  roundsAdvanced: number
-  deadLettered: number
+  /** The envelope ids this attempt presented; the caller advances their rounds in wrkq. */
+  presentedEnvelopeIds: string[]
 }
 
 type DriveAttemptRow = {
@@ -120,8 +133,24 @@ function normalizeTarget(targetSessionRef: string): string {
   return target
 }
 
-function drivePrompt(count: number): string {
-  return `${count} ${count === 1 ? 'envelope' : 'envelopes'} pending; check \`hrcmail inbox\``
+/**
+ * The actionable set for one target, as the kicker read it from wrkq. The
+ * repository never derives this: it is the ledger's answer, not HRC's.
+ */
+export type HrcMailDriveActionable = {
+  /** Envelope ids (`EN-xxxxx`) in presentation order. */
+  envelopeIds: readonly string[]
+  /** Birth directives carried verbatim by the oldest actionable envelope. */
+  materializationIntent?: HrcRuntimeIntent | undefined
+}
+
+/**
+ * The placeholder prompt a claim carries until presentation composes the real
+ * one. A claim happens before the target is even born, so the injected text --
+ * which is the section 7 presentation of concrete envelopes -- cannot exist yet.
+ */
+function claimPlaceholderPrompt(count: number): string {
+  return `${count} ${count === 1 ? 'envelope' : 'envelopes'} pending; check \`wrkc inbox\``
 }
 
 export class HrcMailDriveRepository {
@@ -196,52 +225,47 @@ export class HrcMailDriveRepository {
     return row === null ? undefined : mapAttempt(row)
   }
 
-  actionableCount(targetSessionRef: string): number {
-    const row = this.db
-      .query<{ count: number }, [string]>(
-        `SELECT COUNT(*) AS count
-         FROM hrcmail_envelopes
-         WHERE target_session_ref = ?
-           AND payload_kind = 'request'
-           AND state IN ('pending', 'presented')`
-      )
-      .get(normalizeTarget(targetSessionRef))
-    return row?.count ?? 0
-  }
-
-  listWakeTargets(now = new Date().toISOString()): string[] {
+  /**
+   * Every scope this node has ever driven or been asked to drive.
+   *
+   * This is the sweep's CANDIDATE set, not its work list: the kicker asks wrkq
+   * which of these actually hold obligations. A slot row is created on the first
+   * wake for a target and never deleted, so the candidate set survives a restart
+   * -- which is what lets a sweep rediscover a scope whose wake arrived while
+   * the daemon was down.
+   */
+  listCandidateTargets(): string[] {
     return this.db
-      .query<{ target_session_ref: string }, [string]>(
+      .query<{ target_session_ref: string }, []>(
         `SELECT target_session_ref
          FROM hrcmail_drive_slots
-         WHERE active_drive_attempt_id IS NOT NULL
-         UNION
-         SELECT target_session_ref
-         FROM hrcmail_envelopes
-         WHERE payload_kind = 'request'
-           AND state IN ('pending', 'presented')
-         UNION
-         SELECT target_session_ref
-         FROM hrcmail_envelopes
-         WHERE state = 'deferred'
-           AND retry_at IS NOT NULL
-           AND retry_at <= ?
          ORDER BY target_session_ref ASC`
       )
-      .all(now)
+      .all()
       .map((row) => row.target_session_ref)
+  }
+
+  /** Register a target as a sweep candidate without claiming its slot. */
+  rememberTarget(targetSessionRef: string): void {
+    this.db
+      .query(
+        `INSERT OR IGNORE INTO hrcmail_drive_slots (
+           target_session_ref, active_drive_attempt_id, updated_at
+         ) VALUES (?, NULL, ?)`
+      )
+      .run(normalizeTarget(targetSessionRef), new Date().toISOString())
   }
 
   claim(
     targetSessionRef: string,
     wakeReason: HrcMailDriveWakeReason,
+    actionable: HrcMailDriveActionable,
     ids: { driveAttemptId?: string | undefined; runId?: string | undefined } = {}
   ): HrcMailDriveClaimResult {
     const target = normalizeTarget(targetSessionRef)
     return this.db
       .transaction(() => {
         const now = new Date().toISOString()
-        this.settlePendingConversational(target, now)
         this.db
           .query(
             `INSERT OR IGNORE INTO hrcmail_drive_slots (
@@ -253,32 +277,12 @@ export class HrcMailDriveRepository {
         const active = this.getActiveAttempt(target)
         if (active !== undefined) return { outcome: 'active', attempt: active }
 
-        const actionable = this.db
-          .query<{ count: number; materialization_intent_json: string | null }, [string, string]>(
-            `SELECT
-               COUNT(*) AS count,
-               (
-                 SELECT materialization_intent_json
-                 FROM hrcmail_envelopes
-                 WHERE target_session_ref = ?
-                   AND payload_kind = 'request'
-                   AND state IN ('pending', 'presented')
-                   AND materialization_intent_json IS NOT NULL
-                 ORDER BY envelope_seq ASC
-                 LIMIT 1
-               ) AS materialization_intent_json
-             FROM hrcmail_envelopes
-             WHERE target_session_ref = ?
-               AND payload_kind = 'request'
-               AND state IN ('pending', 'presented')`
-          )
-          .get(target, target)
-        const count = actionable?.count ?? 0
+        const count = actionable.envelopeIds.length
         if (count === 0) return { outcome: 'clear' }
 
         const driveAttemptId = ids.driveAttemptId ?? `drive-${randomUUID()}`
         const runId = ids.runId ?? `run-${driveAttemptId.slice('drive-'.length)}`
-        const prompt = drivePrompt(count)
+        const prompt = claimPlaceholderPrompt(count)
         this.db
           .query(
             `INSERT INTO hrcmail_drive_attempts (
@@ -293,7 +297,9 @@ export class HrcMailDriveRepository {
             runId,
             wakeReason,
             prompt,
-            actionable?.materialization_intent_json ?? null,
+            actionable.materializationIntent === undefined
+              ? null
+              : JSON.stringify(actionable.materializationIntent),
             now,
             now
           )
@@ -313,11 +319,18 @@ export class HrcMailDriveRepository {
       .immediate() as HrcMailDriveClaimResult
   }
 
-  presentForAttempt(
-    driveAttemptId: string,
-    loadEnvelope: (envelopeId: string) => HrcMailEnvelope,
-    limit = 100
-  ): HrcMailEnvelope[] {
+  /**
+   * Record, locally and idempotently, that this attempt is presenting these
+   * envelopes, and return the ids in presentation order.
+   *
+   * The receipt is written BEFORE the ledger is told, and the same
+   * `driveAttemptId` goes to `wrkq.envelope.present`, which is itself
+   * exactly-once. That ordering is what survives a kill between persisting the
+   * attempt and dispatching it: the retry replays the same attempt id, the
+   * local receipt already exists, and wrkq answers `recorded: false` rather than
+   * writing a second presentation.
+   */
+  presentForAttempt(driveAttemptId: string, envelopeIds: readonly string[]): string[] {
     return this.db
       .transaction(() => {
         const attempt = this.requireAttempt(driveAttemptId)
@@ -325,57 +338,37 @@ export class HrcMailDriveRepository {
         if (slot?.activeDriveAttemptId !== driveAttemptId) {
           throw new Error(`mail drive attempt ${driveAttemptId} does not own its scope slot`)
         }
-        if (attempt.state !== 'claimed') {
-          return this.presentationEnvelopeIds(driveAttemptId).map(loadEnvelope)
-        }
+        if (attempt.state !== 'claimed') return this.presentationEnvelopeIds(driveAttemptId)
 
         const now = new Date().toISOString()
-        this.settlePendingConversational(attempt.targetSessionRef, now)
-        const rows = this.db
-          .query<{ envelope_id: string; state: 'pending' | 'presented' }, [string, number]>(
-            `SELECT envelope_id, state
-             FROM hrcmail_envelopes
-             WHERE target_session_ref = ?
-               AND payload_kind = 'request'
-               AND state IN ('pending', 'presented')
-             ORDER BY envelope_seq ASC
-             LIMIT ?`
-          )
-          .all(attempt.targetSessionRef, Math.min(Math.max(limit, 1), 1000))
-
-        for (const row of rows) {
-          if (row.state === 'pending') {
-            this.db
-              .query(
-                `UPDATE hrcmail_envelopes
-                 SET state = 'presented',
-                     presented_at = COALESCE(presented_at, ?),
-                     updated_at = ?
-                 WHERE envelope_id = ? AND state = 'pending'`
-              )
-              .run(now, now, row.envelope_id)
-          }
+        for (const envelopeId of envelopeIds) {
           this.db
             .query(
               `INSERT OR IGNORE INTO hrcmail_drive_presentations (
                  drive_attempt_id, envelope_id, presented_at
                ) VALUES (?, ?, ?)`
             )
-            .run(driveAttemptId, row.envelope_id, now)
+            .run(driveAttemptId, envelopeId, now)
         }
-
-        const prompt = drivePrompt(rows.length)
-        this.db
-          .query(
-            `UPDATE hrcmail_drive_attempts
-             SET prompt = ?, presented_count = ?, updated_at = ?
-             WHERE drive_attempt_id = ? AND state = 'claimed'`
-          )
-          .run(prompt, rows.length, now, driveAttemptId)
-
-        return rows.map((row) => loadEnvelope(row.envelope_id))
+        return this.presentationEnvelopeIds(driveAttemptId)
       })
-      .immediate() as HrcMailEnvelope[]
+      .immediate() as string[]
+  }
+
+  /**
+   * Install the composed section 7 injection text on a claimed attempt.
+   *
+   * The prompt is only knowable after presentation, because it IS the presented
+   * envelopes: header, optional history cue, body, reply line.
+   */
+  recordPresentation(driveAttemptId: string, prompt: string, presentedCount: number): void {
+    this.db
+      .query(
+        `UPDATE hrcmail_drive_attempts
+         SET prompt = ?, presented_count = ?, updated_at = ?
+         WHERE drive_attempt_id = ? AND state = 'claimed'`
+      )
+      .run(prompt, presentedCount, new Date().toISOString(), driveAttemptId)
   }
 
   recordSession(
@@ -446,18 +439,22 @@ export class HrcMailDriveRepository {
     return this.finishWithoutRounds(driveAttemptId, 'failed', error)
   }
 
+  /**
+   * Close a started attempt and report which envelopes it presented.
+   *
+   * Round accounting moved to wrkq with the ledger: the caller calls
+   * `wrkq.envelope.roundEnded` for each returned id. Only a still-`presented`
+   * envelope advances there, so a clear-inbox no-op turn still burns nothing --
+   * the rule is unchanged, its enforcement is just on the owning side now.
+   */
   completeStartedAttempt(
     runId: string,
-    terminalEventKind: string,
-    maxRounds: number
+    terminalEventKind: string
   ): CompleteHrcMailDriveResult | undefined {
-    if (!Number.isSafeInteger(maxRounds) || maxRounds <= 0) {
-      throw new Error('maxRounds must be a positive integer')
-    }
     const current = this.getAttemptByRunId(runId)
     if (current === undefined) return undefined
     if (current.state === 'completed') {
-      return { attempt: current, roundsAdvanced: 0, deadLettered: 0 }
+      return { attempt: current, presentedEnvelopeIds: [] }
     }
     if (current.state !== 'started' || current.startHrcSeq === undefined) {
       return {
@@ -466,8 +463,7 @@ export class HrcMailDriveRepository {
           'failed',
           `terminal ${terminalEventKind} observed without turn.started`
         ),
-        roundsAdvanced: 0,
-        deadLettered: 0,
+        presentedEnvelopeIds: [],
       }
     }
 
@@ -476,48 +472,12 @@ export class HrcMailDriveRepository {
         const attempt = this.getAttemptByRunId(runId)
         if (attempt === undefined) return undefined
         if (attempt.state === 'completed') {
-          return { attempt, roundsAdvanced: 0, deadLettered: 0 }
+          return { attempt, presentedEnvelopeIds: [] }
         }
         if (attempt.state !== 'started' || attempt.startHrcSeq === undefined) return undefined
 
         const now = new Date().toISOString()
-        let roundsAdvanced = 0
-        let deadLettered = 0
-        for (const envelopeId of this.presentationEnvelopeIds(attempt.driveAttemptId)) {
-          const before = this.db
-            .query<{ round_count: number }, [string]>(
-              `SELECT round_count
-               FROM hrcmail_envelopes
-               WHERE envelope_id = ? AND state = 'presented'`
-            )
-            .get(envelopeId)
-          if (before === null) continue
-
-          const nextRound = before.round_count + 1
-          const shouldDeadLetter = nextRound >= maxRounds
-          const changed = this.db
-            .query(
-              `UPDATE hrcmail_envelopes
-               SET round_count = ?,
-                   state = CASE WHEN ? = 1 THEN 'dead' ELSE state END,
-                   dead_at = CASE WHEN ? = 1 THEN ? ELSE dead_at END,
-                   updated_at = ?
-               WHERE envelope_id = ? AND state = 'presented'`
-            )
-            .run(
-              nextRound,
-              shouldDeadLetter ? 1 : 0,
-              shouldDeadLetter ? 1 : 0,
-              now,
-              now,
-              envelopeId
-            )
-          if (changed.changes === 1) {
-            roundsAdvanced += 1
-            if (shouldDeadLetter) deadLettered += 1
-          }
-        }
-
+        const presentedEnvelopeIds = this.presentationEnvelopeIds(attempt.driveAttemptId)
         this.db
           .query(
             `UPDATE hrcmail_drive_attempts
@@ -527,11 +487,7 @@ export class HrcMailDriveRepository {
           )
           .run(terminalEventKind, now, now, attempt.driveAttemptId)
         this.releaseSlot(attempt.targetSessionRef, attempt.driveAttemptId, now)
-        return {
-          attempt: this.requireAttempt(attempt.driveAttemptId),
-          roundsAdvanced,
-          deadLettered,
-        }
+        return { attempt: this.requireAttempt(attempt.driveAttemptId), presentedEnvelopeIds }
       })
       .immediate() as CompleteHrcMailDriveResult | undefined
   }
@@ -585,21 +541,6 @@ export class HrcMailDriveRepository {
          WHERE target_session_ref = ? AND active_drive_attempt_id = ?`
       )
       .run(now, targetSessionRef, driveAttemptId)
-  }
-
-  private settlePendingConversational(targetSessionRef: string, now: string): void {
-    this.db
-      .query(
-        `UPDATE hrcmail_envelopes
-         SET state = 'acked',
-             presented_at = COALESCE(presented_at, ?),
-             acked_at = COALESCE(acked_at, ?),
-             updated_at = ?
-         WHERE target_session_ref = ?
-           AND payload_kind = 'conversational'
-           AND state IN ('pending', 'presented')`
-      )
-      .run(now, now, now, targetSessionRef)
   }
 
   private requireAttempt(driveAttemptId: string): HrcMailDriveAttempt {

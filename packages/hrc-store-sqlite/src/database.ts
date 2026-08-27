@@ -56,6 +56,7 @@ import { SessionIndexRepository } from './session-index-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 import { SessionTitleRepository } from './session-title-repository.js'
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
+import { WrkqLedgerCursorRepository } from './wrkq/ledger-cursor-repository.js'
 
 export type OpenHrcDatabaseOptions = {
   busyTimeoutMs?: number | undefined
@@ -95,6 +96,7 @@ export type HrcDatabase = {
   mailFederatedOrigins: HrcMailFederatedOriginRepository
   mailDrives: HrcMailDriveRepository
   mailStopRefusals: HrcMailStopRefusalRepository
+  wrkqLedgerCursors: WrkqLedgerCursorRepository
   federationAcceptedRequests: FederationAcceptedRequestRepository
   federationPeerAcceptances: FederationPeerAcceptanceRepository
   federationOutbox: FederationOutboxRepository
@@ -184,6 +186,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     mailFederatedOrigins: new HrcMailFederatedOriginRepository(sqlite),
     mailDrives: new HrcMailDriveRepository(sqlite),
     mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
+    wrkqLedgerCursors: new WrkqLedgerCursorRepository(sqlite),
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     federationPeerAcceptances: new FederationPeerAcceptanceRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),

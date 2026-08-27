@@ -1,13 +1,28 @@
 import type { Database } from 'bun:sqlite'
-import type { HrcMailActor, HrcMailEnvelopeState } from 'hrc-core'
 
 export const HRC_MAIL_STOP_REFUSAL_CAP = 3
 export const HRC_MAIL_STOP_HARD_CAP = 50
 
+/**
+ * The stop-hook's refusal ledger (T-07612 §8, carried unchanged in mechanics
+ * from T-06810).
+ *
+ * The PREDICATE is a wrkq query — `pendingView.blocking`, which names only what
+ * was actually presented and left neither replied nor deferred — and is passed
+ * in. What lives here is the part that references a run: how many times this
+ * turn has already been refused, and against which obligation, so the count
+ * resets when new mail arrives and the hard cap can never trap a turn forever.
+ *
+ * That split is the boundary rule: the obligation is collaboration and belongs
+ * to wrkq; the refusal count is execution and belongs to HRC.
+ */
+
+/** One blocking obligation, as wrkq reported it. */
 export type HrcMailStopEnvelopeSummary = {
   envelopeId: string
-  from: HrcMailActor
-  state: Extract<HrcMailEnvelopeState, 'pending' | 'presented'>
+  /** The sender, already rendered for a human reader. */
+  from: string
+  roomKey: string
   body: string
 }
 
@@ -48,19 +63,6 @@ type StopRefusalRow = {
   updated_at: string
 }
 
-type UnackedAggregateRow = {
-  unacked_count: number
-  newest_envelope_seq: number | null
-}
-
-type UnackedSummaryRow = {
-  envelope_id: string
-  from_kind: HrcMailActor['kind']
-  from_ref: string
-  state: Extract<HrcMailEnvelopeState, 'pending' | 'presented'>
-  body: string
-}
-
 export class HrcMailStopRefusalRepository {
   constructor(private readonly db: Database) {}
 
@@ -86,21 +88,28 @@ export class HrcMailStopRefusalRepository {
         }
   }
 
-  evaluate(runId: string, targetSessionRef: string, summaryLimit = 8): HrcMailStopDecision {
+  /**
+   * Decide whether this turn may end, given wrkq's blocking set.
+   *
+   * `newestEnvelopeSeq` is the marker for "have I already refused over this
+   * obligation, or is it new?" — the numeric tail of the newest blocking
+   * `EN-xxxxx` id, which is monotonic for the same reason an envelope sequence
+   * would be. An empty blocking set is `clear`: an obligation the agent was
+   * never shown must not trap its turn, and neither must one it has answered.
+   */
+  evaluate(
+    runId: string,
+    targetSessionRef: string,
+    blocking: readonly HrcMailStopEnvelopeSummary[],
+    newestEnvelopeSeq: number,
+    summaryLimit = 8
+  ): HrcMailStopDecision {
     const limit = Math.min(Math.max(summaryLimit, 1), 20)
     return this.db
       .transaction(() => {
-        const aggregate = this.db
-          .query<UnackedAggregateRow, [string]>(
-            `SELECT COUNT(*) AS unacked_count, MAX(envelope_seq) AS newest_envelope_seq
-             FROM hrcmail_envelopes
-             WHERE target_session_ref = ? AND state IN ('pending', 'presented')`
-          )
-          .get(targetSessionRef)
-        const unackedCount = aggregate?.unacked_count ?? 0
-        const newestEnvelopeSeq = aggregate?.newest_envelope_seq ?? null
+        const unackedCount = blocking.length
         const previous = this.get(runId)
-        if (unackedCount === 0 || newestEnvelopeSeq === null) {
+        if (unackedCount === 0) {
           return {
             decision: 'allow',
             reason: 'clear',
@@ -145,16 +154,7 @@ export class HrcMailStopRefusalRepository {
             now
           )
 
-        const envelopes = this.db
-          .query<UnackedSummaryRow, [string, number]>(
-            `SELECT envelope_id, from_kind, from_ref, state, body
-             FROM hrcmail_envelopes
-             WHERE target_session_ref = ? AND state IN ('pending', 'presented')
-             ORDER BY envelope_seq ASC
-             LIMIT ?`
-          )
-          .all(targetSessionRef, limit)
-          .map(mapSummary)
+        const envelopes = blocking.slice(0, limit)
 
         if (totalRefusalCount >= HRC_MAIL_STOP_HARD_CAP) {
           return {
@@ -185,17 +185,5 @@ export class HrcMailStopRefusalRepository {
         }
       })
       .immediate() as HrcMailStopDecision
-  }
-}
-
-function mapSummary(row: UnackedSummaryRow): HrcMailStopEnvelopeSummary {
-  return {
-    envelopeId: row.envelope_id,
-    from:
-      row.from_kind === 'scope'
-        ? { kind: 'scope', sessionRef: row.from_ref }
-        : { kind: 'operator', principal: row.from_ref },
-    state: row.state,
-    body: row.body,
   }
 }

@@ -53,6 +53,7 @@ import type { HrcClient } from 'hrc-sdk'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { printJson } from '../print.js'
+import { targetDoctorChecks } from '../target/live-commands.js'
 import { hasFlag, parseFlag } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
@@ -545,6 +546,7 @@ function outboxChecks(deliveries: FederationOutboxDeliveryRecord[]): DoctorCheck
 export async function cmdDoctor(args: string[]): Promise<void> {
   const client = createClient()
   const { checks, reachable } = await checkDaemon(client)
+  const target = args.find((arg) => !arg.startsWith('--'))
 
   if (reachable) {
     try {
@@ -566,6 +568,12 @@ export async function cmdDoctor(args: string[]): Promise<void> {
         status: 'warn',
         detail: `could not read origin deliveries: ${error instanceof Error ? error.message : String(error)}`,
       })
+    }
+    // T-07612 §9.2: `hrc doctor <target>` absorbs hrcchat's target checks, so
+    // "is this node healthy" and "can I reach this target" are one question
+    // with one answer rather than two commands with two exit codes.
+    if (target !== undefined) {
+      checks.push(...(await targetDoctorChecks(client, target)))
     }
   }
 

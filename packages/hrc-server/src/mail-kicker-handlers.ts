@@ -2,15 +2,47 @@ import type {
   DispatchTurnResponse,
   HrcLifecycleEvent,
   HrcRunRecord,
+  HrcRuntimeIntent,
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import { formatSessionRef } from './messages.js'
+import { parseRuntimeIntent } from './parsers/runtime.js'
 import { isRunActive } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import { isRecord } from './server-parsers.js'
 import { findTargetSession } from './target-view.js'
+import {
+  type PresentableEnvelope,
+  formatEnvelopePresentations,
+} from './wrkq/envelope-presentation.js'
+import { WrkqLedgerUnavailableError } from './wrkq/ledger-client.js'
+import { targetSessionRefForLedgerScope } from './wrkq/ledger-scope.js'
+import type {
+  WrkqEnvelope,
+  WrkqEnvelopeCreatedPayload,
+  WrkqMonitorEvent,
+} from './wrkq/ledger-types.js'
+
+/**
+ * The kicker, re-pointed at the wrkq collaboration ledger (T-07612 §10, T-07615).
+ *
+ * What did NOT change: the per-scope drive slot, the stable `driveAttemptId`,
+ * the summon gate as the sole message-traffic provisioning door, and the rule
+ * that a clear-inbox no-op turn burns no round. What changed is where the
+ * obligations live. HRC reads them from wrkq, presents them per §7, and records
+ * the presentation back into wrkq — it keeps no durable copy of an envelope.
+ *
+ * Three wake sources, per §10:
+ *  - `envelope.created` on the wrkq event ledger, tailed from a persisted
+ *    cursor over the rpc:// channel HRC already holds;
+ *  - turn completion, so a scope that just finished picks up what arrived
+ *    while it was busy;
+ *  - a periodic sweep, which is the correctness backstop that makes tail
+ *    latency never load-bearing.
+ */
 
 const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
   'turn.completed',
@@ -19,6 +51,11 @@ const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
   'turn.zombied',
   'turn.reaped',
 ])
+
+/** One presentation carries a room's worth of obligations, not an inbox dump. */
+const MAX_PRESENTED_PER_ATTEMPT = 20
+/** Bounded page for the wake tail; the sweep covers whatever a page misses. */
+const LEDGER_TAIL_PAGE_LIMIT = 200
 
 type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
 
@@ -55,23 +92,43 @@ function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | unde
   return undefined
 }
 
-function publishTerminalPresentations(
+/**
+ * Advance the redelivery bound for every envelope a finished attempt presented.
+ *
+ * Rounds belong to wrkq now, and only a still-`presented` envelope advances
+ * there, so a turn that replied or deferred costs nothing. Failures are logged
+ * and dropped: a missed round makes an obligation live longer, which is the
+ * safe direction.
+ */
+function advanceRoundsForAttempt(
   server: HrcServerInstanceForHandlers,
-  driveAttemptId: string
+  driveAttemptId: string,
+  envelopeIds: readonly string[]
 ): void {
-  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(driveAttemptId)) {
-    const envelope = server.db.mailEnvelopes.get(envelopeId)
-    if (envelope === undefined || (envelope.state !== 'acked' && envelope.state !== 'dead')) {
-      continue
+  if (envelopeIds.length === 0) return
+  void (async () => {
+    for (const envelope of envelopeIds) {
+      try {
+        const advanced = await server.wrkqLedger.roundEnded({
+          envelope,
+          maxRounds: server.hrcMailMaxRounds,
+        })
+        if (advanced.state === 'dead') {
+          writeServerLog('INFO', 'wrkq.kicker.envelope_dead', {
+            driveAttemptId,
+            envelope,
+            roundCount: advanced.roundCount,
+          })
+        }
+      } catch (error) {
+        writeServerLog('WARN', 'wrkq.kicker.round_ended_failed', {
+          driveAttemptId,
+          envelope,
+          error: errorText(error),
+        })
+      }
     }
-    void server.publishFederatedMailDisposition(envelope).catch((error: unknown) => {
-      writeServerLog('WARN', 'hrcmail.federation.disposition_failed', {
-        envelopeId,
-        driveAttemptId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    })
-  }
+  })()
 }
 
 function observeAttempt(
@@ -95,13 +152,13 @@ function observeAttempt(
 
   const terminal = terminalRunEvent(events)
   if (terminal !== undefined) {
-    const completed = server.db.mailDrives.completeStartedAttempt(
-      current.runId,
-      terminal.eventKind,
-      server.hrcMailMaxRounds
-    )
+    const completed = server.db.mailDrives.completeStartedAttempt(current.runId, terminal.eventKind)
     if (completed !== undefined) {
-      publishTerminalPresentations(server, completed.attempt.driveAttemptId)
+      advanceRoundsForAttempt(
+        server,
+        completed.attempt.driveAttemptId,
+        completed.presentedEnvelopeIds
+      )
     }
     return 'finished'
   }
@@ -113,15 +170,128 @@ function observeAttempt(
   if (run.completedAt !== undefined || run.status === 'completed' || run.status === 'failed') {
     const completed = server.db.mailDrives.completeStartedAttempt(
       current.runId,
-      `run.${run.status}`,
-      server.hrcMailMaxRounds
+      `run.${run.status}`
     )
     if (completed !== undefined) {
-      publishTerminalPresentations(server, completed.attempt.driveAttemptId)
+      advanceRoundsForAttempt(
+        server,
+        completed.attempt.driveAttemptId,
+        completed.presentedEnvelopeIds
+      )
     }
     return 'finished'
   }
   return 'waiting'
+}
+
+/**
+ * Ask wrkq what stands against one target.
+ *
+ * `pendingView` is the wake set and the stop-hook predicate in one read, and its
+ * sweep re-pends due deferrals — so calling it here IS the periodic-sweep half
+ * of §5's wake routing.
+ */
+async function readActionableEnvelopes(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string
+): Promise<WrkqEnvelope[]> {
+  const view = await server.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
+  if (view.repended > 0) {
+    writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', {
+      targetSessionRef,
+      repended: view.repended,
+    })
+  }
+  return view.items.slice(0, MAX_PRESENTED_PER_ATTEMPT)
+}
+
+/**
+ * Birth directives ride the envelope verbatim (`+node=`, `+model=`): wrkq stores
+ * the string and never parses it, and HRC parses it here, at kick time.
+ */
+function actionableIntent(envelopes: readonly WrkqEnvelope[]): HrcRuntimeIntent | undefined {
+  for (const envelope of envelopes) {
+    const raw = envelope.materializationIntent
+    if (raw === undefined || raw.trim().length === 0) continue
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (isRecord(parsed)) return parseRuntimeIntent(parsed)
+    } catch {
+      // A malformed intent must not strand the envelope: fall through to the
+      // session's own last applied intent, which is what an ordinary DM uses.
+    }
+  }
+  return undefined
+}
+
+/**
+ * Tell wrkq each envelope was presented, and collect what §7 needs to render it.
+ *
+ * `present` is exactly-once per `driveAttemptId`: a replayed attempt returns
+ * `recorded: false` and leaves one receipt. `historyHint` is wrkq's cue
+ * decision, keyed to the RUNTIME rather than the generation, so a post-`/quit`
+ * runtime inside the same generation is correctly treated as cold.
+ */
+async function recordPresentations(
+  server: HrcServerInstanceForHandlers,
+  envelopes: readonly WrkqEnvelope[],
+  attempt: HrcMailDriveAttempt,
+  session: HrcSessionRecord,
+  runtimeId: string | undefined
+): Promise<PresentableEnvelope[]> {
+  const presentables: PresentableEnvelope[] = []
+  for (const envelope of envelopes) {
+    const result = await server.wrkqLedger.present({
+      envelope: envelope.id,
+      node: server.federationNodeId,
+      hostSessionId: session.hostSessionId,
+      generation: String(session.generation),
+      runId: attempt.runId,
+      driveAttemptId: attempt.driveAttemptId,
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+    })
+    presentables.push({
+      envelope: result.envelope,
+      historyHint: result.historyHint,
+      messageCount: result.messageCount,
+      ...(result.lastMessage === undefined ? {} : { lastMessage: result.lastMessage }),
+      ...(await roomSubjectFor(server, result.envelope)),
+      ...senderGenerationFor(server, result.envelope),
+    })
+  }
+  return presentables
+}
+
+/** An ad-hoc room's subject, for the §7 header. Absent is not an error. */
+async function roomSubjectFor(
+  server: HrcServerInstanceForHandlers,
+  envelope: WrkqEnvelope
+): Promise<{ roomSubject?: string }> {
+  if (envelope.roomKind !== 'adhoc') return {}
+  try {
+    const room = await server.wrkqLedger.roomShow({ room: envelope.roomKey })
+    return room.subject === undefined ? {} : { roomSubject: room.subject }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The sender's generation, when this node homes the sender.
+ *
+ * It is execution state, so it comes from HRC and never from the ledger — and
+ * it is omitted rather than guessed when the sender lives on another node.
+ */
+function senderGenerationFor(
+  server: HrcServerInstanceForHandlers,
+  envelope: WrkqEnvelope
+): { senderGeneration?: number } {
+  const scopeRef = envelope.from.scopeRef
+  if (scopeRef === undefined) return {}
+  const sessionRef = targetSessionRefForLedgerScope(scopeRef)
+  if (sessionRef === undefined) return {}
+  const session = findTargetSession(server.db, sessionRef)
+  return session === null ? {} : { senderGeneration: session.generation }
 }
 
 async function driveMailTargetOnce(
@@ -137,9 +307,29 @@ async function driveMailTargetOnce(
   }
 
   let session = findTargetSession(server.db, targetSessionRef) ?? undefined
+  let actionable: WrkqEnvelope[]
+  try {
+    actionable = await readActionableEnvelopes(server, targetSessionRef)
+  } catch (error) {
+    // wrkq owns the obligations. Unreachable means HRC does not know what to
+    // drive, which is a reason to do nothing, never a reason to guess.
+    writeServerLog(
+      error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
+      'wrkq.kicker.pending_view_failed',
+      { targetSessionRef, wakeReason, error: errorText(error) }
+    )
+    return
+  }
+
   if (attempt === undefined) {
     if (session !== undefined && targetHasRunningTurn(server, session)) return
-    const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason)
+    const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
+      envelopeIds: actionable.map((envelope) => envelope.id),
+      ...(() => {
+        const intent = actionableIntent(actionable)
+        return intent === undefined ? {} : { materializationIntent: intent }
+      })(),
+    })
     if (claim.outcome === 'clear') return
     attempt = claim.attempt
     if (claim.outcome === 'active') {
@@ -149,9 +339,9 @@ async function driveMailTargetOnce(
       try {
         await server.options.hrcMailKickerAfterClaim?.(attempt)
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorText(error)
         server.db.mailDrives.recordError(attempt.driveAttemptId, message)
-        writeServerLog('WARN', 'hrcmail.kicker.after_claim_failed', {
+        writeServerLog('WARN', 'wrkq.kicker.after_claim_failed', {
           targetSessionRef,
           driveAttemptId: attempt.driveAttemptId,
           runId: attempt.runId,
@@ -174,7 +364,8 @@ async function driveMailTargetOnce(
 
     if (session === undefined) {
       // This is the only message-traffic provisioning path. ensureTargetSession
-      // enters the normal summon/placement gate before it mints anything.
+      // enters the normal summon/placement gate before it mints anything, so a
+      // scope this node does not home is refused here rather than pre-filtered.
       session = await server.ensureTargetSession(targetSessionRef, materializationIntent)
     }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
@@ -184,16 +375,32 @@ async function driveMailTargetOnce(
 
     if (targetHasRunningTurn(server, session)) return
 
-    const presented = server.db.mailDrives.presentForAttempt(attempt.driveAttemptId, (envelopeId) =>
-      server.db.mailEnvelopes.require(envelopeId)
+    // The local receipt is written FIRST, then the ledger is told with the same
+    // attempt id. A kill in between replays into an exactly-once `present`.
+    const envelopeIds = server.db.mailDrives.presentForAttempt(
+      attempt.driveAttemptId,
+      actionable.map((envelope) => envelope.id)
     )
-    for (const envelope of presented) {
-      if (envelope.state === 'acked' || envelope.state === 'dead') {
-        await server.publishFederatedMailDisposition(envelope)
-      }
+    if (envelopeIds.length === 0) {
+      server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
+      return
     }
+
+    const runtimeId = server.db.runtimes
+      .listByHostSessionId(session.hostSessionId)
+      .find((runtime) => runtime.status !== 'exited')?.runtimeId
+    const byId = new Map(actionable.map((envelope) => [envelope.id, envelope]))
+    const ordered = envelopeIds
+      .map((id) => byId.get(id))
+      .filter((envelope): envelope is WrkqEnvelope => envelope !== undefined)
+    const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
+    const prompt = formatEnvelopePresentations(presentables)
+    server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
-    if (presented.length === 0) {
+
+    // An `fyi` is auto-acked at its own presentation and never summons; if that
+    // was everything this attempt held, there is no turn to dispatch.
+    if (presentables.every((presentable) => presentable.envelope.obligation !== 'reply_required')) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
       return
     }
@@ -215,17 +422,17 @@ async function driveMailTargetOnce(
       runtimeId: body.runtimeId,
     })
     observeAttempt(server, attempt)
-    writeServerLog('INFO', 'hrcmail.kicker.turn_dispatched', {
+    writeServerLog('INFO', 'wrkq.kicker.turn_dispatched', {
       targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
       runId: attempt.runId,
-      presentedCount: presented.length,
+      presentedCount: presentables.length,
       wakeReason,
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorText(error)
     server.db.mailDrives.recordError(attempt.driveAttemptId, message)
-    writeServerLog('WARN', 'hrcmail.kicker.drive_failed', {
+    writeServerLog('WARN', 'wrkq.kicker.drive_failed', {
       targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
       runId: attempt.runId,
@@ -244,10 +451,10 @@ export function requestMailKickerWake(
   this.mailKickerPendingTargets.set(targetSessionRef, wakeReason)
   queueMicrotask(() => {
     void this.drainMailKickerTarget(targetSessionRef).catch((error: unknown) => {
-      writeServerLog('WARN', 'hrcmail.kicker.wake_failed', {
+      writeServerLog('WARN', 'wrkq.kicker.wake_failed', {
         targetSessionRef,
         wakeReason,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       })
     })
   })
@@ -277,18 +484,48 @@ export function drainMailKickerTarget(
   return operation
 }
 
+/**
+ * The periodic sweep: the correctness backstop behind the ledger tail.
+ *
+ * Its candidate set is every scope this node has ever driven or been asked to
+ * drive, which survives a restart because a drive-slot row is never deleted.
+ * wrkq then answers which of those actually hold obligations — one read for the
+ * whole node — so the sweep costs one call, not one per candidate.
+ */
 export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return Promise.resolve()
   if (this.mailKickerSweepInFlight !== undefined) return this.mailKickerSweepInFlight
 
   const sweep = (async () => {
-    this.db.mailEnvelopes.requeueDeferredDue()
-    const targets = this.db.mailDrives.listWakeTargets()
+    const candidates = this.db.mailDrives.listCandidateTargets()
+    const targets = new Set<string>()
+    for (const attempt of this.db.mailDrives.listAttempts()) {
+      if (attempt.state === 'claimed' || attempt.state === 'started') {
+        targets.add(attempt.targetSessionRef)
+      }
+    }
+    if (candidates.length > 0) {
+      try {
+        const view = await this.wrkqLedger.pendingView({ scopes: candidates })
+        for (const envelope of view.items) {
+          const scopeRef = envelope.to?.scopeRef
+          if (scopeRef === undefined) continue
+          const sessionRef = targetSessionRefForLedgerScope(scopeRef)
+          if (sessionRef !== undefined) targets.add(sessionRef)
+        }
+      } catch (error) {
+        writeServerLog(
+          error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
+          'wrkq.kicker.sweep_pending_view_failed',
+          { candidates: candidates.length, error: errorText(error) }
+        )
+      }
+    }
     for (const targetSessionRef of targets) {
       this.mailKickerPendingTargets.set(targetSessionRef, 'periodic')
     }
     await Promise.all(
-      targets.map((targetSessionRef) => this.drainMailKickerTarget(targetSessionRef))
+      [...targets].map((targetSessionRef) => this.drainMailKickerTarget(targetSessionRef))
     )
   })().finally(() => {
     if (this.mailKickerSweepInFlight === sweep) this.mailKickerSweepInFlight = undefined
@@ -297,13 +534,100 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
   return sweep
 }
 
+/**
+ * Follow wrkq's event ledger for `envelope.created`, from a PERSISTED cursor.
+ *
+ * Always explicit: a read with no cursor replays the whole log (T-07620). The
+ * first tail on a virgin store resolves "now" from row identity via `lastN`
+ * rather than by arithmetic on a high-water mark.
+ */
+export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Promise<void> {
+  if (!this.hrcMailKickerEnabled || this.stopping) return
+  if (this.wrkqLedgerTailInFlight !== undefined) return this.wrkqLedgerTailInFlight
+
+  const tail = (async () => {
+    try {
+      let cursor = this.db.wrkqLedgerCursors.get()
+      if (cursor === undefined) {
+        cursor = this.db.wrkqLedgerCursors.advance(await resolveTailStartCursor(this))
+        writeServerLog('INFO', 'wrkq.kicker.tail_started', { cursor })
+      }
+      const page = await this.wrkqLedger.eventsView({
+        cursor,
+        eventTypes: ['envelope.created'],
+        limit: LEDGER_TAIL_PAGE_LIMIT,
+      })
+      for (const event of page.items) {
+        const target = wakeTargetForEvent(event)
+        if (target === undefined) continue
+        // Remember the scope even when the drive is refused: the sweep is the
+        // backstop, and it can only cover what it knows about.
+        this.db.mailDrives.rememberTarget(target)
+        this.requestMailKickerWake(target, 'insert')
+      }
+      if (page.highWater > cursor) this.db.wrkqLedgerCursors.advance(page.highWater)
+    } catch (error) {
+      writeServerLog(
+        error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
+        'wrkq.kicker.tail_failed',
+        { error: errorText(error) }
+      )
+    }
+  })().finally(() => {
+    if (this.wrkqLedgerTailInFlight === tail) this.wrkqLedgerTailInFlight = undefined
+  })
+  this.wrkqLedgerTailInFlight = tail
+  return tail
+}
+
+/**
+ * "Now", resolved from row identity rather than arithmetic.
+ *
+ * A daemon that has never tailed must start at the CURRENT end of the log:
+ * replaying it would re-drive every historical envelope, and guessing a cursor
+ * would skip whatever arrived in the gap. `lastN` resolves the row just before
+ * the newest one, and one bounded page past it reports that newest row's id as
+ * its high water — which is exactly the end. An empty ledger stays at 0, so the
+ * very first envelope ever written is still seen.
+ */
+async function resolveTailStartCursor(server: HrcServerInstanceForHandlers): Promise<number> {
+  const beforeLast = await server.wrkqLedger.eventsView({ cursor: 0, lastN: 1 })
+  const start = Math.max(beforeLast.highWater, 0)
+  const end = await server.wrkqLedger.eventsView({ cursor: start, limit: 1 })
+  return Math.max(end.highWater, start)
+}
+
+/**
+ * The target an `envelope.created` wakes, or undefined for one that never kicks.
+ *
+ * A `fyi` NEVER summons (§5): it rides into a live generation or waits for the
+ * addressee's next attend, so it is not a wake. A scope-less addressee (a human
+ * principal) is never kicked either — ACP presents those.
+ */
+function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
+  if (event.eventType !== 'envelope.created' || event.payload === undefined) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(event.payload)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(parsed)) return undefined
+  const payload = parsed as WrkqEnvelopeCreatedPayload
+  if (payload.obligation !== 'reply_required') return undefined
+  const scopeRef = payload.to_scope_ref
+  if (typeof scopeRef !== 'string') return undefined
+  return targetSessionRefForLedgerScope(scopeRef)
+}
+
 export function startMailKicker(this: HrcServerInstanceForHandlers): void {
   if (!this.hrcMailKickerEnabled || this.mailKickerSweepTimer !== undefined) return
   this.mailKickerSweepTimer = setInterval(() => {
+    void this.runWrkqLedgerTail().catch((error: unknown) => {
+      writeServerLog('WARN', 'wrkq.kicker.tail_tick_failed', { error: errorText(error) })
+    })
     void this.runMailKickerSweep().catch((error: unknown) => {
-      writeServerLog('WARN', 'hrcmail.kicker.periodic_sweep_failed', {
-        error: error instanceof Error ? error.message : String(error),
-      })
+      writeServerLog('WARN', 'wrkq.kicker.periodic_sweep_failed', { error: errorText(error) })
     })
   }, this.hrcMailKickerSweepIntervalMs)
   this.mailKickerSweepTimer.unref?.()
@@ -329,10 +653,15 @@ export function observeMailDriveLifecycleEvent(
   this.requestMailKickerWake(formatSessionRef(event.scopeRef, event.laneRef), 'turn_completion')
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export const mailKickerHandlersMethods = {
   requestMailKickerWake,
   drainMailKickerTarget,
   runMailKickerSweep,
+  runWrkqLedgerTail,
   startMailKicker,
   observeMailDriveLifecycleEvent,
 }

@@ -26,13 +26,16 @@ import {
   sessionRefFor,
 } from 'hrc-core'
 import { HrcMailRepositoryError } from 'hrc-store-sqlite'
+import type { HrcMailStopEnvelopeSummary } from 'hrc-store-sqlite'
 
 import type { FederationTargetPlacement } from '../federation/origin-outbox.js'
 import { normalizeTargetSessionRef } from '../messages.js'
 import { parseRuntimeIntent } from '../parsers/runtime.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { writeServerLog } from '../server-log.js'
 import { isRecord, parseJsonBody } from '../server-parsers.js'
 import { json } from '../server-util.js'
+import { envelopeIdSequence } from '../wrkq/ledger-types.js'
 import { persistMailIngress } from './mail-ingress.js'
 
 const MAIL_STATES = new Set<HrcMailEnvelopeState>([
@@ -433,6 +436,19 @@ export async function handleMailList(
   return json({ envelopes } satisfies HrcMailListResponse)
 }
 
+/**
+ * The Stop-hook gate (T-07612 §8): refuse a turn end while presented
+ * `reply_required` envelopes addressed to this scope are neither replied nor
+ * deferred.
+ *
+ * The predicate is a wrkq query. `pendingView.blocking` is exactly the §8 set —
+ * PRESENTED and undisposed — so an obligation the agent was never shown cannot
+ * trap its turn. Caps are unchanged (refusal cap 3, reset on new arrival, hard
+ * max 50 per turn) and live in HRC, because a refusal count references a run.
+ *
+ * FAIL-OPEN. If wrkq is unreachable, the turn ends. A collaboration ledger that
+ * is down must not be able to hold every agent on the fleet inside its turn.
+ */
 export async function handleMailStopDecision(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -457,9 +473,44 @@ export async function handleMailStopDecision(
   }
 
   const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
+  let blocking: HrcMailStopEnvelopeSummary[]
+  try {
+    // The scope ref goes RAW, lane suffix and all: wrkq strips the lane and
+    // keeps the scope, and trimming it here would be HRC guessing at a grammar
+    // it does not own.
+    const view = await this.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
+    const blockingIds = new Set(view.blocking)
+    blocking = view.items
+      .filter((envelope) => blockingIds.has(envelope.id))
+      .map((envelope) => ({
+        envelopeId: envelope.id,
+        from: envelope.from.scopeRef ?? envelope.from.principalRef,
+        roomKey: envelope.roomKey,
+        body: envelope.body,
+      }))
+  } catch (error) {
+    writeServerLog('WARN', 'wrkq.stop_hook.fail_open', {
+      runId: run.runId,
+      targetSessionRef,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return json({
+      decision: 'allow',
+      reason: 'ledger_unavailable',
+      runId: run.runId,
+      targetSessionRef,
+    })
+  }
+
+  const newestEnvelopeSeq = blocking.reduce(
+    (newest, envelope) => Math.max(newest, envelopeIdSequence(envelope.envelopeId)),
+    0
+  )
   const decision = this.db.mailStopRefusals.evaluate(
     run.runId,
     targetSessionRef,
+    blocking,
+    newestEnvelopeSeq,
     MAIL_STOP_SUMMARY_LIMIT
   )
   if (decision.decision === 'allow') {
@@ -496,19 +547,18 @@ function formatMailStopReason(
   >
 ): string {
   const lines = [
-    `Turn finish paused: ${decision.unackedCount} unacknowledged hrcmail ${decision.unackedCount === 1 ? 'envelope' : 'envelopes'} remain (refusal ${decision.refusalCount}/3).`,
+    `Turn finish paused: ${decision.unackedCount} unanswered ${decision.unackedCount === 1 ? 'envelope' : 'envelopes'} remain (refusal ${decision.refusalCount}/3).`,
   ]
   for (const envelope of decision.envelopes) {
-    const from = envelope.from.kind === 'scope' ? envelope.from.sessionRef : envelope.from.principal
     lines.push(
-      `- ${clip(envelope.envelopeId, 80)} [${envelope.state}] from ${clip(from, 120)}: ${clip(normalizePreview(envelope.body), MAIL_STOP_BODY_PREVIEW_CHARS)}`
+      `- ${clip(envelope.roomKey, 80)} from ${clip(envelope.from, 120)}: ${clip(normalizePreview(envelope.body), MAIL_STOP_BODY_PREVIEW_CHARS)}`
     )
   }
   if (decision.unackedCount > decision.envelopes.length) {
     lines.push(`- … and ${decision.unackedCount - decision.envelopes.length} more`)
   }
   lines.push(
-    'Run `hrcmail inbox`, then ack or defer every envelope before stopping. Deferred envelopes leave this gate.'
+    'Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender>`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate.'
   )
   return clip(lines.join('\n'), MAIL_STOP_REASON_MAX_CHARS)
 }

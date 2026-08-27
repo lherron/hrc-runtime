@@ -23,6 +23,7 @@ import type { FederationConfig } from './federation/federation-config.js'
 import type { FederationOutboxRetryPolicy } from './federation/outbox-delivery.js'
 import type { PeerAcceptHandler } from './federation/peer-protocol.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
+import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 
 export type HrcEventsRouteFilters = Omit<
   HrcLifecycleQueryFilters,
@@ -277,6 +278,13 @@ export type HrcServerOptions = {
    * before summon/presentation/dispatch; throwing leaves the attempt recoverable.
    */
   hrcMailKickerAfterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
+  /**
+   * The wrkq collaboration ledger this daemon consumes (T-07612 wave 3).
+   * Production spawns the installed `wrkq rpc --stdio` under the daemon's own
+   * wrkq authority; tests inject a fake so the kicker is exercisable without a
+   * wrkqd. It is a SEAM, not a flag: the kicker's own flag still gates the loop.
+   */
+  wrkqLedger?: WrkqLedgerClient | undefined
   /**
    * Preferred port for the OTLP/HTTP log ingest listener on 127.0.0.1. Falls
    * back to an OS-chosen ephemeral port if occupied. Defaults to 4318.

@@ -1,6 +1,7 @@
 import { type Command, Option } from 'commander'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
+import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import {
   assertNoUnknownOptions,
@@ -24,6 +25,7 @@ import {
 import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
+import { createClient } from './shared.js'
 
 function annotateTop(program: Command, name: string, metadata: CommandMetadataInput): void {
   const command = program.commands.find((candidate) => candidate.name() === name)
@@ -392,6 +394,54 @@ The output always names the resolved kind and the concrete ID(s).
       await execHrcchatTurn(forwarded)
     })
 
+  // -- live-runtime verbs absorbed from hrcchat (T-07612 §9.2) ----------------
+  //
+  // These are execution: materialize a target, inject keystrokes, read a pane,
+  // check reachability. Messaging moves the other way, to `wrkc`, because it is
+  // collaboration and wrkq owns that.
+
+  program
+    .command('summon')
+    .description('materialize/pre-warm a target; message traffic auto-summons when needed')
+    .argument('<target>', 'target handle')
+    .option('--json', 'emit the ensure-target result as JSON')
+    .action(async (target, opts) => {
+      await cmdSummon(createClient(), { json: opts.json === true }, [target])
+    })
+
+  const sendCmd = program
+    .command('send')
+    .description(
+      'inject literal input into a live tmux runtime; bypasses the ledger; not for tracked work'
+    )
+    .argument('<target>', 'target handle')
+    .argument('[message]', 'text to send (use - for stdin)')
+    .option('--enter', 'send enter key after text (default)')
+    .option('--no-enter', 'do not send enter key')
+    .option('--file <path>', 'read body from file')
+    .option('--json', 'emit the delivery result as JSON')
+    .action(async (target, message, opts) => {
+      await cmdSend(createClient(), { ...opts, json: opts.json === true }, [
+        target,
+        ...(message !== undefined ? [message] : []),
+      ])
+    })
+
+  sendCmd.addHelpText(
+    'before',
+    'Inject literal text into a live tmux runtime (raw keystrokes).\n\nBYPASSES THE LEDGER: what you send here becomes no envelope, no obligation, and\nno record anyone can read afterwards. Use `wrkc say` for anything that should\nsurvive the runtime.\n'
+  )
+
+  program
+    .command('peek')
+    .description('tail the live tmux pane of a bound runtime')
+    .argument('<target>', 'target handle')
+    .option('--lines <n>', 'number of lines to capture', '80')
+    .option('--json', 'emit the capture as JSON')
+    .action(async (target, opts) => {
+      await cmdPeek(createClient(), { ...opts, json: opts.json === true }, [target])
+    })
+
   registerMovedCommandShim(program, 'inflight', 'hrc runtime send')
   registerMovedCommandShim(program, 'capture', 'hrc runtime capture')
 
@@ -622,6 +672,31 @@ The output always names the resolved kind and the concrete ID(s).
       example: 'hrc ls runtimes --status busy --json',
       exitCodes: '0 success; 2 invalid noun/flags; 1 read failure',
       output: 'noun-specific structured output; narrow large runtime lists with filters',
+    },
+  })
+  annotateTop(program, 'summon', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc summon cody@hrc-runtime:T-07011',
+      exitCodes: '0 target materialized or already live; 2 usage; 1 summon refused or failed',
+      output: 'sessionRef, state, generation, and the dm/send/peek capability triple',
+    },
+  })
+  annotateTop(program, 'send', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc send cody@hrc-runtime:T-07011 "y"',
+      exitCodes: '0 delivered; 2 usage; 1 no live runtime to inject into',
+      output:
+        'raw keystrokes into a live pane; BYPASSES THE LEDGER, so nothing sent here is durable — use `wrkc say` for that',
+    },
+  })
+  annotateTop(program, 'peek', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc peek cody@hrc-runtime:T-07011 --lines 40',
+      exitCodes: '0 captured; 2 usage; 1 no bound runtime',
+      output: 'the pane text as captured; --json wraps it with capture metadata',
     },
   })
   annotateTop(program, 'turn', {

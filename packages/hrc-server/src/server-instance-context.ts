@@ -61,6 +61,7 @@ import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 import type { TurnAdmissionGate } from './turn-admission-gate.js'
 import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
+import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
@@ -191,6 +192,9 @@ type HrcServerInstanceDataForHandlers = {
   readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
+  readonly wrkqLedger: WrkqLedgerClient
+  readonly federationNodeId: string
+  wrkqLedgerTailInFlight: Promise<void> | undefined
   readonly hrcMailMaxRounds: number
   harnessBrokerController: HarnessBrokerController | undefined
   /**

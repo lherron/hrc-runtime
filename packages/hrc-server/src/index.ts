@@ -307,6 +307,7 @@ import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
+import { type WrkqLedgerClient, WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
 
 const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
 const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
@@ -838,6 +839,7 @@ class HrcServerInstance implements HrcServer {
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
   mailKickerSweepInFlight: Promise<void> | undefined
+  wrkqLedgerTailInFlight: Promise<void> | undefined
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
   // Stale-generation auto-rotation policy. Resolved once at construction
@@ -854,6 +856,13 @@ class HrcServerInstance implements HrcServer {
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcMailMaxRounds: number
+  /**
+   * HRC's client for the wrkq collaboration ledger (T-07612 §10). wrkq owns
+   * rooms and envelopes; this is the ONLY door HRC reads or writes them through.
+   */
+  readonly wrkqLedger: WrkqLedgerClient
+  /** Node identity from CONFIGURATION, recorded on every presentation receipt. */
+  readonly federationNodeId: string
   harnessBrokerController: HarnessBrokerController | undefined
   /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
   brokerWarmupComplete?: Promise<void> | undefined
@@ -1353,6 +1362,8 @@ class HrcServerInstance implements HrcServer {
     this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
     this.hrcMailMaxRounds = resolveHrcMailMaxRounds(options)
+    this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
+    this.wrkqLedger = options.wrkqLedger ?? new WrkqStdioLedgerClient()
     this.ctx = {
       db: this.db,
       tmux: this.tmux,
@@ -1662,10 +1673,22 @@ class HrcServerInstance implements HrcServer {
         writeServerLog('WARN', 'server.stop.mail_kicker_sweep_wait_failed', { error })
       }
     }
+    if (this.wrkqLedgerTailInFlight) {
+      try {
+        await this.wrkqLedgerTailInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.wrkq_ledger_tail_wait_failed', { error })
+      }
+    }
     const mailTargetOperations = [...this.mailKickerTargetOperations.values()]
     if (mailTargetOperations.length > 0) {
       await Promise.allSettled(mailTargetOperations)
     }
+    // The ledger transport is a child process; leaving it behind would strand a
+    // `wrkq rpc --stdio` per daemon restart.
+    await this.wrkqLedger.close().catch((error: unknown) => {
+      writeServerLog('WARN', 'server.stop.wrkq_ledger_close_failed', { error })
+    })
     for (const client of this.externalParticipantClients.values()) {
       await client.close().catch(() => undefined)
     }

@@ -3,17 +3,22 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcMailActor, HrcRuntimeIntent } from 'hrc-core'
+import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { openHrcDatabase } from '../index.js'
 import type { HrcDatabase } from '../index.js'
 
-const target = 'agent:cody:project:hrc-runtime:task:T-06810/lane:main'
-const actor: HrcMailActor = { kind: 'scope', sessionRef: target }
-const sender: HrcMailActor = {
-  kind: 'scope',
-  sessionRef: 'agent:mable:project:hrc-runtime:task:T-06810/lane:main',
-}
+/**
+ * The drive slot after the wrkq re-point (T-07615).
+ *
+ * What this repository owns is now exactly the execution half: one slot per
+ * scope, a stable `driveAttemptId` and run id across a crash, and the local
+ * receipt of which envelopes an attempt presented. The obligations themselves —
+ * their state, their rounds, their dead-lettering — live in wrkq, so nothing
+ * here asserts about them: the actionable set arrives as an argument.
+ */
+
+const target = 'agent:cody:project:hrc-runtime:task:T-07615/lane:main'
 const intent: HrcRuntimeIntent = {
   placement: {
     agentRoot: '/tmp/cody',
@@ -46,14 +51,8 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
-function send(ingressId: string, kind: 'request' | 'conversational' = 'request') {
-  return db.mailEnvelopes.create({
-    ingressId,
-    from: sender,
-    targetSessionRef: target,
-    payload: { kind, body: `${kind} ${ingressId}` },
-    materializationIntent: intent,
-  }).envelope
+function actionable(...envelopeIds: string[]) {
+  return { envelopeIds, materializationIntent: intent }
 }
 
 function startAttempt(runId: string, hrcSeq: number) {
@@ -68,31 +67,27 @@ function startAttempt(runId: string, hrcSeq: number) {
 }
 
 describe('HrcMailDriveRepository', () => {
-  it('backfills a missing materialization hint on an idempotent pre-Wave-2 retry', () => {
-    const base = {
-      ingressId: 'drive-intent-backfill',
-      from: sender,
-      targetSessionRef: target,
-      payload: { kind: 'request' as const, body: 'same semantic envelope' },
-    }
-    const original = db.mailEnvelopes.create(base)
-    const retried = db.mailEnvelopes.create({ ...base, materializationIntent: intent })
-    expect(retried.receipt).toEqual(original.receipt)
-
-    const claim = db.mailDrives.claim(target, 'insert')
+  it('carries the ledger-supplied materialization intent onto the claim', () => {
+    const claim = db.mailDrives.claim(target, 'insert', actionable('EN-00001'))
     expect(claim.outcome).toBe('acquired')
     expect('attempt' in claim ? claim.attempt.materializationIntent : undefined).toEqual(intent)
   })
 
+  it('is clear when wrkq reports no obligations, and claims nothing', () => {
+    const claim = db.mailDrives.claim(target, 'insert', { envelopeIds: [] })
+    expect(claim.outcome).toBe('clear')
+    expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
+    expect(db.mailDrives.listAttempts(target)).toHaveLength(0)
+  })
+
   it('linearizes racing wakes through one durable scope slot and stable attempt', () => {
-    send('drive-race')
     const other = openHrcDatabase(dbPath)
     try {
-      const first = db.mailDrives.claim(target, 'insert', {
+      const first = db.mailDrives.claim(target, 'insert', actionable('EN-00001'), {
         driveAttemptId: 'drive-stable',
         runId: 'run-stable',
       })
-      const raced = other.mailDrives.claim(target, 'periodic')
+      const raced = other.mailDrives.claim(target, 'periodic', actionable('EN-00001'))
 
       expect(first.outcome).toBe('acquired')
       expect(raced.outcome).toBe('active')
@@ -109,8 +104,7 @@ describe('HrcMailDriveRepository', () => {
   })
 
   it('survives restart after slot persistence and recovers the same run identity', () => {
-    send('drive-restart')
-    const claimed = db.mailDrives.claim(target, 'insert', {
+    const claimed = db.mailDrives.claim(target, 'insert', actionable('EN-00001'), {
       driveAttemptId: 'drive-before-kill',
       runId: 'run-before-kill',
     })
@@ -123,77 +117,66 @@ describe('HrcMailDriveRepository', () => {
       runId: 'run-before-kill',
       state: 'claimed',
     })
-    const recovered = db.mailDrives.claim(target, 'recovery')
+    const recovered = db.mailDrives.claim(target, 'recovery', actionable('EN-00001'))
     expect(recovered.outcome).toBe('active')
     expect('attempt' in recovered ? recovered.attempt.runId : undefined).toBe('run-before-kill')
     expect(db.mailDrives.listAttempts(target)).toHaveLength(1)
   })
 
-  it('counts only unresolved presentations and dead-letters on the fifth completed round', () => {
-    const acknowledged = send('drive-acked')
-    const stuck = send('drive-stuck')
-    send('drive-conversation', 'conversational')
-
-    const first = db.mailDrives.claim(target, 'insert', {
-      driveAttemptId: 'drive-round-1',
-      runId: 'run-round-1',
+  it('records one presentation receipt per envelope no matter how often the attempt replays', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00001', 'EN-00002'), {
+      driveAttemptId: 'drive-replay',
+      runId: 'run-replay',
     })
-    expect(first.outcome).toBe('acquired')
-    const firstPresented = db.mailDrives.presentForAttempt('drive-round-1', (id) =>
-      db.mailEnvelopes.require(id)
-    )
-    expect(firstPresented.map((envelope) => envelope.envelopeId)).toEqual([
-      acknowledged.envelopeId,
-      stuck.envelopeId,
-    ])
-    expect(db.mailEnvelopes.list({ state: 'acked' })).toHaveLength(1)
+    const first = db.mailDrives.presentForAttempt('drive-replay', ['EN-00001', 'EN-00002'])
+    expect(first).toEqual(['EN-00001', 'EN-00002'])
 
-    db.mailEnvelopes.ack({ actor, envelopeIds: [acknowledged.envelopeId] })
-    startAttempt('run-round-1', 101)
-    const completed = db.mailDrives.completeStartedAttempt('run-round-1', 'turn.completed', 5)
-    expect(completed).toMatchObject({ roundsAdvanced: 1, deadLettered: 0 })
-    expect(db.mailEnvelopes.require(acknowledged.envelopeId).roundCount).toBe(0)
-    expect(db.mailEnvelopes.require(stuck.envelopeId)).toMatchObject({
-      state: 'presented',
-      roundCount: 1,
+    // The kill-between-persist-and-dispatch replay: same attempt, same ids.
+    const replayed = db.mailDrives.presentForAttempt('drive-replay', ['EN-00001', 'EN-00002'])
+    expect(replayed).toEqual(['EN-00001', 'EN-00002'])
+    expect(db.mailDrives.presentationEnvelopeIds('drive-replay')).toEqual(['EN-00001', 'EN-00002'])
+  })
+
+  it('reports the presented envelopes on completion and releases the slot', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00007'), {
+      driveAttemptId: 'drive-complete',
+      runId: 'run-complete',
     })
+    db.mailDrives.presentForAttempt('drive-complete', ['EN-00007'])
+    db.mailDrives.recordPresentation('drive-complete', '[T-07615 · mable@wrkq:primary → you]', 1)
+    startAttempt('run-complete', 101)
 
-    for (let round = 2; round <= 5; round += 1) {
-      const driveAttemptId = `drive-round-${round}`
-      const runId = `run-round-${round}`
-      const claim = db.mailDrives.claim(target, 'turn_completion', {
-        driveAttemptId,
-        runId,
-      })
-      expect(claim.outcome).toBe('acquired')
-      db.mailDrives.presentForAttempt(driveAttemptId, (id) => db.mailEnvelopes.require(id))
-      startAttempt(runId, 100 + round)
-      db.mailDrives.completeStartedAttempt(runId, 'turn.completed', 5)
-    }
-
-    expect(db.mailEnvelopes.require(stuck.envelopeId)).toMatchObject({
-      state: 'dead',
-      roundCount: 5,
-    })
+    const completed = db.mailDrives.completeStartedAttempt('run-complete', 'turn.completed')
+    // Rounds are wrkq's; HRC reports WHICH envelopes the finished turn presented
+    // and lets the owner decide whether any of them burns a round.
+    expect(completed?.presentedEnvelopeIds).toEqual(['EN-00007'])
+    expect(completed?.attempt.state).toBe('completed')
+    expect(completed?.attempt.prompt).toBe('[T-07615 · mable@wrkq:primary → you]')
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
   })
 
-  it('releases a clear/no-start attempt without consuming a round', () => {
-    const envelope = send('drive-clear')
-    const claim = db.mailDrives.claim(target, 'insert', {
+  it('releases a no-op attempt without reporting anything to advance', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00009'), {
       driveAttemptId: 'drive-clear',
       runId: 'run-clear',
     })
-    expect(claim.outcome).toBe('acquired')
-    db.mailDrives.presentForAttempt('drive-clear', (id) => db.mailEnvelopes.require(id))
-    db.mailEnvelopes.ack({ actor, envelopeIds: [envelope.envelopeId] })
-
     const noOp = db.mailDrives.completeNoOp('drive-clear')
     expect(noOp.state).toBe('no_op')
-    expect(db.mailEnvelopes.require(envelope.envelopeId)).toMatchObject({
-      state: 'acked',
-      roundCount: 0,
-    })
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
+  })
+
+  it('keeps every driven scope as a sweep candidate across a restart', () => {
+    const other = 'agent:mable:project:wrkq:task:primary/lane:main'
+    db.mailDrives.claim(target, 'insert', actionable('EN-00001'), {
+      driveAttemptId: 'drive-candidate',
+      runId: 'run-candidate',
+    })
+    // A wake for a scope this node has never driven still has to be sweepable:
+    // the tail may deliver it once and never again.
+    db.mailDrives.rememberTarget(other)
+
+    db.close()
+    db = openHrcDatabase(dbPath)
+    expect(db.mailDrives.listCandidateTargets().sort()).toEqual([target, other].sort())
   })
 })

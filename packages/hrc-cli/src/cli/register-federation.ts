@@ -156,7 +156,8 @@ export function registerFederationCommands(program: Command): void {
 
   const doctor = program
     .command('doctor')
-    .description('check daemon health, node identity, and placement skew')
+    .description('check daemon health, node identity, placement skew, and one target')
+    .argument('[target]', 'also check this target handle for reachability')
     .option('--json', 'output as JSON')
     .option('--strict', 'exit 1 on warnings as well as failures')
     .addHelpText(
@@ -164,6 +165,7 @@ export function registerFederationCommands(program: Command): void {
       [
         '',
         'Checks: hrc-daemon, node-identity, federation-config, placement-skew, federation-outbox.',
+        'With a <target>, also: target-lookup, target-health, dm-capability, runtime.',
         '',
         'Placement skew is reported as a WARNING, not a failure: a skewed binding is a',
         'live, correctly-serving scope whose declaration has drifted. Use --strict to',
@@ -174,8 +176,13 @@ export function registerFederationCommands(program: Command): void {
         '  1  a failing check (or any warning under --strict)',
       ].join('\n')
     )
-    .action(async (_opts, cmd: Command) => {
-      await cmdDoctor(toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json', 'strict'] }))
+    .action(async (target, _opts, cmd: Command) => {
+      await cmdDoctor(
+        toLegacyArgv(target === undefined ? [] : [target], cmd.opts(), {
+          strings: [],
+          booleans: ['json', 'strict'],
+        })
+      )
     })
 
   annotateCommand(federation, { audience: 'human' })
@@ -191,9 +198,10 @@ export function registerFederationCommands(program: Command): void {
   annotateCommand(doctor, {
     audience: 'both',
     agentUsage: {
-      example: 'hrc doctor --json --strict',
+      example: 'hrc doctor cody@hrc-runtime:T-07011 --json',
       exitCodes: '0 healthy; 1 failing check or warning under --strict; 2 usage',
-      output: '--json emits one check report',
+      output:
+        '--json emits one check report; a <target> adds its reachability checks to the same report',
     },
   })
 }

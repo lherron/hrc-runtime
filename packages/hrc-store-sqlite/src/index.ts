@@ -150,6 +150,10 @@ export {
 } from './mail/envelope-repository.js'
 export { HrcMailDriveRepository } from './mail/drive-repository.js'
 export {
+  WRKQ_ENVELOPE_STREAM,
+  WrkqLedgerCursorRepository,
+} from './wrkq/ledger-cursor-repository.js'
+export {
   HRC_MAIL_STOP_HARD_CAP,
   HRC_MAIL_STOP_REFUSAL_CAP,
   HrcMailStopRefusalRepository,
@@ -161,6 +165,7 @@ export type {
 } from './mail/stop-refusal-repository.js'
 export type {
   CompleteHrcMailDriveResult,
+  HrcMailDriveActionable,
   HrcMailDriveAttempt,
   HrcMailDriveAttemptState,
   HrcMailDriveClaimResult,

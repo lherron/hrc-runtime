@@ -2004,6 +2004,58 @@ const toolResultBlobsMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07615 (T-07612 wave 3) — HRC becomes a consumer of the wrkq collaboration
+ * ledger.
+ *
+ * Two things change in HRC's own store, and only these: the ledger itself lives
+ * in wrkq and no table here mirrors it.
+ *
+ * 1. `hrcmail_drive_presentations` loses its foreign key to `hrcmail_envelopes`.
+ *    A presentation receipt now names an `EN-xxxxx` row that lives in wrkq, so
+ *    the local FK asserted a join that cannot exist. Everything else about the
+ *    table -- its identity as the exactly-once record of "this drive attempt
+ *    presented this envelope" -- is unchanged, and existing rows carry over.
+ * 2. `wrkq_ledger_cursors` records the high-water mark of the ledger tail the
+ *    kicker wakes on. It is persisted so a restart resumes where it stopped
+ *    rather than replaying the log or silently skipping the gap.
+ */
+const wrkqLedgerConsumerMigration: HrcMigration = {
+  id: '0046_wrkq_ledger_consumer',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_drive_presentations_wrkq (
+        drive_attempt_id TEXT NOT NULL,
+        envelope_id TEXT NOT NULL,
+        presented_at TEXT NOT NULL,
+        PRIMARY KEY (drive_attempt_id, envelope_id),
+        FOREIGN KEY (drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id) ON DELETE CASCADE
+      );
+
+      INSERT OR IGNORE INTO hrcmail_drive_presentations_wrkq (
+        drive_attempt_id, envelope_id, presented_at
+      )
+      SELECT drive_attempt_id, envelope_id, presented_at
+      FROM hrcmail_drive_presentations;
+
+      DROP TABLE hrcmail_drive_presentations;
+
+      ALTER TABLE hrcmail_drive_presentations_wrkq
+        RENAME TO hrcmail_drive_presentations;
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_drive_presentations_envelope
+        ON hrcmail_drive_presentations(envelope_id, drive_attempt_id);
+
+      CREATE TABLE IF NOT EXISTS wrkq_ledger_cursors (
+        stream TEXT PRIMARY KEY,
+        high_water INTEGER NOT NULL CHECK (high_water >= 0),
+        updated_at TEXT NOT NULL
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2045,4 +2097,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   dispatchOriginAndAcpBridgeMigration,
   hrcEventLedgerIncarnationMigration,
   toolResultBlobsMigration,
+  wrkqLedgerConsumerMigration,
 ]

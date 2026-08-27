@@ -27,6 +27,7 @@ import { matchStringFlag, parseNonNegativeInteger, parsePositiveInteger } from '
 import { numberField, stringField } from '../monitor-fields.js'
 import { type MonitorStateBuildResult, buildMonitorStateBeforeDeadline } from './arm-phase.js'
 import { runMonitorUntilPlan } from './engine.js'
+import { isEnvelopeSelector, resolveEnvelopeSelectors } from './envelope-selector.js'
 import {
   type MonitorOutputFormat,
   parseMonitorOutputFormat,
@@ -88,8 +89,23 @@ export async function cmdMonitorWatch(
   deps?: MonitorWatchDeps
 ): Promise<number | undefined> {
   const parsedArgs = Array.isArray(argsOrArgv) ? parseArgv(argsOrArgv) : argsOrArgv
-  const args = applyFanInDefaults(parsedArgs)
-  const io = deps ?? defaultDeps(args)
+  let args: MonitorWatchArgs
+  let io: MonitorWatchDeps
+  try {
+    // An EN- selector is a wrkq row id. It is resolved to the runtime its
+    // presentation receipt names BEFORE anything derives from the selector set,
+    // so store filters and fan-in defaults never see a foreign grammar.
+    args = applyFanInDefaults(await withResolvedEnvelopeSelectors(parsedArgs))
+    io = deps ?? defaultDeps(args)
+  } catch (error) {
+    const io = deps ?? { stdout: process.stdout, stderr: process.stderr }
+    if (error instanceof CliUsageError) {
+      io.stderr.write(`error: ${error.message}\n`)
+      if (!deps) process.exit(2)
+      return 2
+    }
+    throw error
+  }
 
   try {
     const exitCode = await runWatch(args, io, deps === undefined)
@@ -312,6 +328,21 @@ function withTargetedConditionSource(
       }
       return source.buildMonitorState(signal)
     },
+  }
+}
+
+/**
+ * Rewrite any envelope selector in place so every later derivation -- store
+ * filters, fan-in defaults, condition plans -- reads one resolved selector set.
+ */
+async function withResolvedEnvelopeSelectors(args: MonitorWatchArgs): Promise<MonitorWatchArgs> {
+  const raw = selectorArgs(args)
+  if (!raw.some(isEnvelopeSelector)) return args
+  const resolved = await resolveEnvelopeSelectors(raw)
+  return {
+    ...args,
+    ...(args.selectors && args.selectors.length > 0 ? { selectors: resolved } : {}),
+    ...(args.selector !== undefined ? { selector: resolved[0] ?? args.selector } : {}),
   }
 }
 
