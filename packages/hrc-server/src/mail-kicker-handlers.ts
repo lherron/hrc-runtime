@@ -87,6 +87,17 @@ const LEDGER_SWEEP_TICKS = 30
 
 type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
 
+/**
+ * How an in-flight attempt was discovered.
+ *
+ * `active-attempt` is the ordinary path: the slot was already held when the
+ * wake arrived. `claim` is the RACE: two wakes for one scope, where
+ * `getActiveAttempt` saw nothing and the claim CAS then reported the slot
+ * already active. Both decline for the same reason, so both must decline the
+ * same way — steer an urgent envelope, and say so.
+ */
+type InFlightDeclineRoute = 'active-attempt' | 'claim'
+
 function isDurablyActiveRun(run: HrcRunRecord): boolean {
   return run.status === 'queued' || isRunActive(run)
 }
@@ -509,6 +520,12 @@ async function steerUrgentIntoBusyTarget(
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
       driveAttemptId,
+      // The outcome CLASS goes on the RECEIPT, not only on the log line below
+      // (C-16526, ruled again on T-07644 C-16658). A log line rotates and is
+      // grepped from one node; the receipt is the durable record of how this
+      // delivery landed, readable by anyone holding the envelope. It is written
+      // only here, so a receipt carrying it is by construction a steer.
+      deliveryOutcome: delivery.code,
       ...(steeredRunId === undefined ? {} : { runId: steeredRunId }),
       ...(runtimeId === undefined ? {} : { runtimeId }),
     })
@@ -561,7 +578,8 @@ async function declineForInFlightAttempt(
   attempt: HrcMailDriveAttempt,
   session: HrcSessionRecord | undefined,
   actionable: readonly WrkqEnvelope[],
-  wakeReason: HrcMailDriveWakeReason
+  wakeReason: HrcMailDriveWakeReason,
+  route: { via: InFlightDeclineRoute; observation: AttemptObservation }
 ): Promise<void> {
   // No session means the drive that owns the slot has not reached one yet;
   // there is no live turn to steer into, so the decline is all there is.
@@ -575,6 +593,12 @@ async function declineForInFlightAttempt(
     wakeReason,
     driveAttemptId: attempt.driveAttemptId,
     runId: attempt.runId,
+    // Which route found the attempt, and what it observed. Without these the
+    // line reproduces one level down the ambiguity it exists to remove: two
+    // branches decline for the same reason and a single counter cannot say
+    // which, nor tell a `waiting` decline from a `finished` one.
+    via: route.via,
+    observation: route.observation,
   })
 }
 
@@ -740,7 +764,9 @@ function skipForeignHomedTarget(
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
-  wakeReason: HrcMailDriveWakeReason
+  wakeReason: HrcMailDriveWakeReason,
+  /** Bounded re-entry for the claim race; see the `finished` branch below. */
+  redriveDepth = 0
 ): Promise<void> {
   // Placement first, before the drive slot, the ledger read, or the gate. A
   // scope homed on another node cannot be driven from here by any wake reason,
@@ -786,7 +812,8 @@ async function driveMailTargetOnce(
       inFlight,
       session,
       actionable,
-      wakeReason
+      wakeReason,
+      { via: 'active-attempt', observation: 'waiting' }
     )
     return
   }
@@ -834,8 +861,44 @@ async function driveMailTargetOnce(
     if (claim.outcome === 'clear') return
     attempt = claim.attempt
     if (claim.outcome === 'active') {
+      // The CLAIM race (T-07644 C-16642): `getActiveAttempt` saw no attempt at
+      // the top of this function, and the claim CAS then found the slot already
+      // held — two wakes racing for one scope. This tests the identical
+      // condition as the top branch, so it must answer identically. It used to
+      // be a bare `return` that subsumed BOTH live observations: `waiting`, the
+      // very state this task exists to instrument, and `finished`, which the
+      // top of this function deliberately treats as re-drivable.
       const observation = observeAttempt(server, attempt)
-      if (observation !== 'dispatch') return
+      if (observation === 'finished') {
+        // `observeAttempt` has just completed it and released the slot, so the
+        // wake is still live work rather than something to drop. Re-enter, the
+        // way the top branch re-drives a finished attempt.
+        //
+        // Bounded at one: the second pass sees a released slot by construction,
+        // and retrying a state that did not change is a spin, not a fix.
+        if (redriveDepth > 0) {
+          writeServerLog('WARN', 'wrkq.kicker.claim_redrive_exhausted', {
+            targetSessionRef,
+            wakeReason,
+            driveAttemptId: attempt.driveAttemptId,
+          })
+          return
+        }
+        await driveMailTargetOnce(server, targetSessionRef, wakeReason, redriveDepth + 1)
+        return
+      }
+      if (observation !== 'dispatch') {
+        await declineForInFlightAttempt(
+          server,
+          targetSessionRef,
+          attempt,
+          session,
+          actionable,
+          wakeReason,
+          { via: 'claim', observation }
+        )
+        return
+      }
     } else {
       try {
         await server.options.hrcMailKickerAfterClaim?.(attempt)

@@ -223,8 +223,13 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
 
     // The ledger carries the receipt, and the redelivery bound did NOT move:
     // a mid-turn steer is the weakest possible evidence anyone read it.
-    expect(ledger.envelopes.get(urgent.id)?.presentedTo).toHaveLength(1)
+    const receipts = ledger.envelopes.get(urgent.id)?.presentedTo ?? []
+    expect(receipts).toHaveLength(1)
     expect(ledger.roundEndedCalls).not.toContain(urgent.id)
+    // The outcome class is DURABLE on the receipt, not only on a log line: a
+    // log rotates and is grepped from one node, the receipt travels with the
+    // envelope (C-16526, re-ruled on C-16658).
+    expect(receipts[0]?.deliveryOutcome).toBe('presented_to_live_harness')
 
     const steered = lines.filter((line) => line.includes('wrkq.kicker.urgent_steered'))
     expect(steered).toHaveLength(1)
@@ -235,6 +240,8 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).toContain('"urgentSteered":true')
     expect(inFlight[0]).toContain(TARGET)
+    expect(inFlight[0]).toContain('"via":"active-attempt"')
+    expect(inFlight[0]).toContain('"observation":"waiting"')
   })
 
   it('declines an ordinary envelope out loud instead of returning silently', async () => {
@@ -267,6 +274,11 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(inFlight[0]).toContain('"driveAttemptId"')
     expect(inFlight[0]).toContain('"runId"')
     expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
+
+    // Only a steer carries the class, so a receipt that has one IS a steer.
+    // The ordinary summon that opened this turn must not have acquired one.
+    const opening = [...ledger.envelopes.values()].find((e) => e.presentedTo.length > 0)
+    expect(opening?.presentedTo[0]?.deliveryOutcome).toBeUndefined()
   })
 
   it('interrupts the kicker-driven turn at most once for the same envelope', async () => {
@@ -309,8 +321,140 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(ledger.envelopes.get(urgent.id)?.presentedTo).toEqual([])
     expect(ledger.envelopes.get(urgent.id)?.state).toBe('pending')
     expect(lines.filter((line) => line.includes('wrkq.kicker.urgent_steer_failed'))).toHaveLength(1)
+    // And no receipt means no class: the outcome is written with the
+    // presentation or not at all, never as a standalone claim.
+    expect(lines.filter((line) => line.includes('deliveryOutcome'))).toHaveLength(0)
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).not.toContain('urgentSteered')
+  })
+})
+
+/**
+ * The CLAIM route (T-07644 C-16642).
+ *
+ * `getActiveAttempt` runs at the top of the drive; the claim CAS runs thirty
+ * lines further down. Between them another wake can take the slot, so the claim
+ * reports `active` for an attempt the top of the function never saw. That
+ * branch used to be a bare `if (observation !== 'dispatch') return`, which
+ * subsumed BOTH live observations: `waiting` — the state this whole task exists
+ * to instrument, with the steer unreachable behind it exactly as at the old
+ * :538 — and `finished`, which the top of the same function deliberately
+ * re-drives.
+ *
+ * The setup below is the real shape rather than a contrived one: an attempt
+ * holding the slot over a run row that is still active, while the runtime shows
+ * `ready` with no `activeRunId`. That is a state observed live on max3
+ * (T-07653), and it is also the only way the claim race is reachable at all —
+ * `targetHasRunningTurn` must be false, or the busy branch answers first.
+ */
+describe('T-07644 — the claim route answers the same way the active-attempt route does', () => {
+  /** A slot held by an attempt whose run is active, over a NOT-busy runtime. */
+  async function holdTheSlotViaClaim(runStatus: 'started' | 'completed'): Promise<void> {
+    const instance = server as HrcServer
+    const db = serverInternals(instance).db
+    const resolved = await fixture.resolveSession(SCOPE)
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-idle',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const held = say({ body: 'the envelope the racing wake claimed for' })
+    const claim = db.mailDrives.claim(TARGET, 'insert', { envelopeIds: [held.id] })
+    if (claim.outcome === 'clear') throw new Error('fixture failed to claim the slot')
+    db.runs.insert({
+      runId: claim.attempt.runId,
+      hostSessionId: resolved.hostSessionId,
+      runtimeId: 'rt-idle',
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      status: 'started',
+      acceptedAt: now,
+      startedAt: now,
+      updatedAt: now,
+    })
+    if (runStatus === 'completed') {
+      db.runs.markCompleted(claim.attempt.runId, {
+        status: 'completed',
+        completedAt: now,
+        updatedAt: now,
+      })
+    }
+    // The race itself, reproduced exactly: the drive's read at the top of the
+    // function misses, and the claim CAS -- which does its own read a moment
+    // later -- finds the slot already held. Missing only the FIRST read is what
+    // makes this the race rather than a broken repository.
+    const realGetActiveAttempt = db.mailDrives.getActiveAttempt.bind(db.mailDrives)
+    let missOnce = true
+    db.mailDrives.getActiveAttempt = (target: string) => {
+      if (missOnce) {
+        missOnce = false
+        return undefined
+      }
+      return realGetActiveAttempt(target)
+    }
+  }
+
+  it('steers an urgent envelope discovered through the claim race', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    await holdTheSlotViaClaim('started')
+
+    const urgent = say({ urgent: true, body: 'urgent through the claim race' })
+    const lines = await withServerLog(async (captured) => {
+      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      await waitUntil(
+        () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
+        'claim-route decline logged'
+      )
+    })
+
+    const steers = calls().filter((call) => call.whenBusy === 'steer')
+    expect(steers).toHaveLength(1)
+    expect(steers[0]?.prompt ?? '').toContain('urgent through the claim race')
+
+    const receipts = ledger.envelopes.get(urgent.id)?.presentedTo ?? []
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]?.deliveryOutcome).toBe('presented_to_live_harness')
+
+    // The discriminators are what make the two routes tellable apart in a log.
+    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
+    expect(inFlight).toHaveLength(1)
+    expect(inFlight[0]).toContain('"via":"claim"')
+    expect(inFlight[0]).toContain('"observation":"waiting"')
+    expect(inFlight[0]).toContain('"urgentSteered":true')
+  })
+
+  it('re-drives a finished attempt found by the claim, instead of dropping the wake', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    await holdTheSlotViaClaim('completed')
+
+    say({ body: 'work that must not be dropped by the race' })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    // The finished attempt released the slot, so the re-entry claims a fresh
+    // one and drives. Dropping the wake here would strand the envelope until
+    // some unrelated later traffic happened to wake the scope again.
+    await waitUntil(
+      () => calls().filter((call) => call.whenBusy !== 'steer').length === 1,
+      'wake re-driven after the finished attempt'
+    )
+    const db = serverInternals(server as HrcServer).db
+    expect(db.mailDrives.listAttempts(TARGET).length).toBeGreaterThan(1)
   })
 })

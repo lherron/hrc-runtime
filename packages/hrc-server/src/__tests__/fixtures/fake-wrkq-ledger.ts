@@ -175,6 +175,11 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
         ...(params.generation === undefined ? {} : { generation: params.generation }),
         ...(params.runId === undefined ? {} : { runId: params.runId }),
         ...(params.driveAttemptId === undefined ? {} : { driveAttemptId: params.driveAttemptId }),
+        // Stored opaquely and never validated, exactly as wrkq does it: the
+        // steer class is HRC's vocabulary and the ledger does not learn it.
+        ...(params.deliveryOutcome === undefined
+          ? {}
+          : { deliveryOutcome: params.deliveryOutcome }),
         presentedAt: new Date().toISOString(),
       })
       if (envelope.state === 'pending') envelope.state = 'presented'

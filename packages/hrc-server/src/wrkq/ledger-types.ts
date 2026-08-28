@@ -35,6 +35,8 @@ export type WrkqEnvelopePresentation = {
   generation?: string | undefined
   runId?: string | undefined
   driveAttemptId?: string | undefined
+  /** HRC's own class for HOW this delivery landed; wrkq never validates it. */
+  deliveryOutcome?: string | undefined
   presentedAt: string
 }
 
@@ -109,6 +111,17 @@ export type WrkqEnvelopePresentParams = {
   runId?: string | undefined
   /** One drive attempt presents an envelope exactly once. */
   driveAttemptId?: string | undefined
+  /**
+   * The T-07203 outcome class for a steer, written DURABLY on the receipt
+   * rather than only on a log line (T-07638 added the field; T-07644 C-16658
+   * ruled that the class belongs on the presentation, per C-16526).
+   *
+   * wrkq stores it opaquely and never validates the vocabulary, which is the
+   * right split: the class is HRC's execution vocabulary and the ledger is not
+   * the place to teach it. Absent stays null on the receipt, so an ordinary
+   * kicker-driven presentation carries nothing here and only a steer does.
+   */
+  deliveryOutcome?: string | undefined
   principalRef?: string | undefined
 }
 
