@@ -238,6 +238,44 @@ export class HrcMailDriveRepository {
       .map((row) => row.target_session_ref)
   }
 
+  /**
+   * Targets whose LAST attempt failed before it ever reached a session
+   * (T-07661).
+   *
+   * This is the node's own durable record of "mail arrived for a scope I could
+   * not open", and it is the only local source for the `none` designation class
+   * — a virgin scope whose sender named no scope, so the registry designated
+   * nothing and tier 5 stayed local. There is no designation row to enumerate
+   * for those, and no seat, so without this row they have no second wake source
+   * at all.
+   *
+   * `host_session_id IS NULL` is what makes it a REFUSED BIRTH rather than any
+   * failed drive: the column is written by `recordSession`, immediately after
+   * `ensureTargetSession` returns, so a null one means the failure happened at
+   * or before the summon gate. A drive that failed after the session existed is
+   * a delivery problem and the ordinary seated-scope sweep already covers it.
+   *
+   * The LAST attempt, not any: a target that failed once and has since been
+   * driven successfully is not owed a birth, and reading "ever failed" would
+   * keep every such scope in the candidate set for the life of the store.
+   */
+  listRefusedBirthTargets(): string[] {
+    return this.db
+      .query<{ target_session_ref: string }, []>(
+        `SELECT target_session_ref FROM hrcmail_drive_attempts a
+          WHERE a.state = 'failed'
+            AND a.host_session_id IS NULL
+            AND a.claimed_at = (
+              SELECT MAX(b.claimed_at) FROM hrcmail_drive_attempts b
+               WHERE b.target_session_ref = a.target_session_ref
+            )
+          GROUP BY target_session_ref
+          ORDER BY target_session_ref ASC`
+      )
+      .all()
+      .map((row) => row.target_session_ref)
+  }
+
   claim(
     targetSessionRef: string,
     wakeReason: HrcMailDriveWakeReason,

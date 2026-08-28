@@ -848,6 +848,7 @@ class HrcServerInstance implements HrcServer {
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
   readonly mailKickerForeignHomeAnnounced = new Map<string, string>()
   readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
+  readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
   shadowTeardownInFlight: Promise<void> | undefined

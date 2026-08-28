@@ -86,6 +86,20 @@ export interface BindingRegistryClient {
     options?: { signal?: AbortSignal }
   ): Promise<BirthDesignationResult>
   /**
+   * T-07661 — the virgin births THIS node still owes: live designations naming
+   * it whose scope has never been established.
+   *
+   * It is a READ of decisions the host already took, never a way to take one:
+   * the host answers only about the authenticated caller, so no node can learn
+   * of, or be handed, a birth designated to somebody else. The kicker's
+   * periodic sweep uses it as a candidate source for scopes NOBODY seats, which
+   * is the one class its seated-scopes candidate set can never contain.
+   */
+  listUnbornDesignations?(
+    homeNodeId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BirthDesignationRecord[]>
+  /**
    * The READ-ONLY companion, for `hrc target locate`. It never records a
    * designation: a report that decided placement as a side effect of being read
    * would change the very thing it reports.
@@ -300,6 +314,16 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
       }
       throw classifyUnreachable(error)
     }
+  }
+
+  /**
+   * The host's own answer, in-process. Refused for any node but this one, for
+   * the same reason the HTTP route is: the answer is scoped to the asker, so it
+   * can never be read as an instruction to birth somebody else's scope.
+   */
+  async listUnbornDesignations(homeNodeId: string): Promise<BirthDesignationRecord[]> {
+    if (homeNodeId !== this.#localNodeId) throw new RegistryRefusedError(400, 'invalid_request')
+    return this.#registry.listUnbornDesignationsForNode(homeNodeId)
   }
 
   async readDesignation(scopeRef: string): Promise<RegistryDesignationRead> {
@@ -902,6 +926,65 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
       )
     }
     return { kind: 'designated', designation }
+  }
+
+  async listUnbornDesignations(
+    homeNodeId: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<BirthDesignationRecord[]> {
+    if (!isNonemptyString(homeNodeId)) throw new RegistryRefusedError(400, 'invalid_request')
+    const deadline = this.#now() + this.#totalTimeoutMs
+    const url = new URL('/v1/federation/registry/unborn-designations', this.#endpoint)
+    url.searchParams.set('homeNodeId', homeNodeId)
+    const response = await this.#runAttempt(
+      deadline,
+      async (signal) =>
+        await this.#fetch(url.toString(), {
+          method: 'GET',
+          headers: { authorization: this.#authorizationHeader },
+          redirect: 'error',
+          signal,
+        }),
+      options.signal
+    )
+    const refused = refusedForStatus(response.status)
+    if (refused !== undefined) throw refused
+    // Same rollout rule as designateBirth and readDesignation: a host that
+    // predates T-07661 does not serve this route, and a host that owes this
+    // node no virgin births is exactly what that means. Treating it as
+    // unreachable instead would put a WARN on every sweep of every upgraded
+    // node for the whole length of a rollout window, for a backstop that is
+    // simply not there yet.
+    if (response.status === 404) return []
+    if (response.status !== 200) {
+      throw new RegistryUnreachableError(
+        `federation binding registry returned unexpected status ${response.status}`
+      )
+    }
+    const body = await this.#responseBody(response)
+    const raw = isRecord(body) ? body['designations'] : undefined
+    if (!Array.isArray(raw)) {
+      throw new RegistryUnreachableError(
+        'federation binding registry returned an invalid unborn-designation list'
+      )
+    }
+    const designations: BirthDesignationRecord[] = []
+    for (const entry of raw) {
+      const scopeRef = isRecord(entry) ? entry['scopeRef'] : undefined
+      if (typeof scopeRef !== 'string') {
+        throw new RegistryUnreachableError(
+          'federation binding registry returned an invalid unborn-designation list'
+        )
+      }
+      const parsed = parseDesignation(entry, scopeRef)
+      if (parsed === undefined) {
+        throw new RegistryUnreachableError(
+          'federation binding registry returned an invalid unborn-designation list'
+        )
+      }
+      designations.push(parsed)
+    }
+    return designations
   }
 
   async readDesignation(

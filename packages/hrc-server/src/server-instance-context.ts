@@ -210,6 +210,22 @@ type HrcServerInstanceDataForHandlers = {
    * re-arms the line after a tier-1-4 establishment supersedes a designation.
    */
   readonly mailKickerBirthDeferredAnnounced: Map<string, string>
+  /**
+   * T-07661 — the per-target retry bound for sweep-driven VIRGIN births, keyed
+   * by targetSessionRef.
+   *
+   * The redelivery floor cannot bound these: it measures from a `presented_to`
+   * receipt, and a scope that was never born was never presented anything. So a
+   * scope whose birth refuses permanently would be re-attempted on every sweep
+   * forever. This carries the SAME doubling shape (1m, 2m, 4m, 8m, 16m) applied
+   * to birth attempts instead of presentations.
+   *
+   * Process-local, like `foreignHomeMemo` and for the same reason: a restart is
+   * precisely when a refused birth deserves an immediate retry, so losing the
+   * bound at one is correct rather than a gap. Entries are pruned whenever the
+   * scope leaves the candidate set, which is what a successful birth does.
+   */
+  readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number

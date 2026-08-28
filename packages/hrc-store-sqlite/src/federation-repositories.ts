@@ -896,6 +896,40 @@ export class BindingRegistry {
     return row === null ? undefined : mapDesignation(row)
   }
 
+  /**
+   * Live designations naming a node whose scope has NEVER been established
+   * (T-07661).
+   *
+   * This is the registry's answer to "which virgin births does that node still
+   * owe?", and it exists because a designated scope whose establish was refused
+   * has no other wake source: the ledger tail's insert wake is consumed once,
+   * and the kicker's periodic sweep only looks at scopes a node already seats.
+   * Nobody seats a scope that was never born, so without this the retry
+   * depended on unrelated later traffic arriving.
+   *
+   * `NOT EXISTS ... binding_registry` is deliberately unfiltered by state. A
+   * designation stays `live` after the tier-5 birth it authorised — nothing
+   * supersedes it — so keying on `state = 'active'` alone would keep every born
+   * scope in the answer forever, and a RETIRED scope is not a virgin birth
+   * either. A row in that table at all means this scope has been established
+   * once, which is exactly what "unborn" denies.
+   */
+  listUnbornDesignationsForNode(homeNodeId: string, limit = 200): BirthDesignationRecord[] {
+    return this.sqlite
+      .query<DesignationRow, [string, number]>(
+        `SELECT ${DESIGNATION_COLUMNS} FROM birth_designation d
+          WHERE d.state = 'live'
+            AND d.home_node_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM binding_registry b WHERE b.scope_ref = d.scope_ref
+            )
+          ORDER BY d.scope_ref
+          LIMIT ?`
+      )
+      .all(homeNodeId, limit)
+      .map(mapDesignation)
+  }
+
   /** Every designation a scope has ever had, oldest first. Locate reads it. */
   designationHistory(scopeRef: string): BirthDesignationRecord[] {
     return this.sqlite

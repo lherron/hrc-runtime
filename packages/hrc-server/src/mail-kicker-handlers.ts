@@ -91,6 +91,16 @@ const LEDGER_SWEEP_SCOPE_BATCH = 100
  * backstop that runs every second is a load problem rather than a safety one.
  */
 const LEDGER_SWEEP_TICKS = 30
+/**
+ * How far the virgin-birth retry bound doubles before it flattens (T-07661).
+ *
+ * Five rounds is the redelivery floor's own shape — 1m, 2m, 4m, 8m, 16m — and
+ * it is reused rather than reinvented so a refused birth and an undisposed
+ * presentation age at the same rate. It FLATTENS rather than expiring: an
+ * obligation does not stop being owed because its birth is hard, and a
+ * sixteen-minute retry is not a spin.
+ */
+const BIRTH_SWEEP_MAX_BACKOFF_ROUNDS = 5
 
 type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
 
@@ -1184,6 +1194,12 @@ export function drainMailKickerTarget(
  * jumped past its `envelope.created`. The one-time cold-start catch-up below
  * (`runMailKickerColdStartCatchup`, T-07643) closes exactly that case; this
  * comment previously asserted a backstop that did not exist in it.
+ *
+ * The candidate set gained a THIRD source in T-07661: the virgin births this
+ * node owes. Both of the sources above key on a scope this node already HAS —
+ * a seat or an attempt — and a virgin scope whose one insert wake ended in a
+ * refusal has neither, so it had no second chance at all until unrelated later
+ * traffic re-woke the kicker. See `unbornBirthWakeCandidates`.
  */
 export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return Promise.resolve()
@@ -1192,7 +1208,8 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
   const sweep = (async () => {
     const targets = new Set<string>(this.db.mailDrives.listInFlightTargets())
     const seated = this.db.runtimes.listLiveSessionRefs()
-    for (const batch of chunk(seated, LEDGER_SWEEP_SCOPE_BATCH)) {
+    const unborn = await unbornBirthWakeCandidates(this, seated)
+    for (const batch of chunk([...seated, ...unborn], LEDGER_SWEEP_SCOPE_BATCH)) {
       try {
         // includeFyi here too: a seated addressee should be shown a fyi on the
         // next sweep, which is §5's "otherwise on X's next attend".
@@ -1210,6 +1227,7 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
         break
       }
     }
+    chargeBirthSweepRetries(this, unborn, targets)
     for (const targetSessionRef of targets) {
       this.mailKickerPendingTargets.set(targetSessionRef, 'periodic')
     }
@@ -1221,6 +1239,158 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
   })
   this.mailKickerSweepInFlight = sweep
   return sweep
+}
+
+/**
+ * The VIRGIN BIRTHS this node owes, as sweep candidates (T-07661).
+ *
+ * THE GAP. The kicker's two wake sources both need the scope to exist already.
+ * The ledger tail is an INSERT wake consumed once — after it, the cursor is
+ * past that `envelope.created` forever — and the sweep's candidate sources are
+ * the scopes this node seats and the attempts it holds. A virgin scope whose
+ * one insert wake ended in a refusal (a registry 503, a designated home that
+ * was momentarily unreachable, a capability failure, or the wire-enum bug that
+ * actually produced T-07658) is in none of them, so nothing ever tried again.
+ * The obligation stayed visible in the ledger the whole time — nothing was
+ * lost — but delivery waited on unrelated traffic arriving. On T-07658 that
+ * took 21 minutes and a daemon restart.
+ *
+ * TWO SOURCES, because the designation has two classes and they are discovered
+ * from opposite ends:
+ *
+ *  - DESIGNATED. The registry host holds a live designation naming this node,
+ *    for a scope it has never established. That is the collective's own record
+ *    of a birth this node owes, and it is authoritative: a node asks only about
+ *    ITSELF, so this can never make a non-designated node claim a scope. It
+ *    also covers the case no local record can — a designated node that never
+ *    saw the insert at all, because it was down when the wake fired.
+ *
+ *  - `none` CLASS. A sender that names no scope (a human) designates NOTHING,
+ *    and tier 5 stays local on every node — the pre-T-07655 law, explicitly out
+ *    of that task's scope. There is no designation row to read, so the only
+ *    record is this node's own refused drive attempt.
+ *
+ * WHAT IT MUST NOT DO is re-introduce the multi-node birth race. It does not:
+ * the designated source is scoped to the asking node by the host, and the
+ * `none` source only re-attempts what this node already attempted once from the
+ * insert wake — the same already-arbitrated tier-5 CAS, at a sixtieth of the
+ * rate. Scopes this node has been told are designated ELSEWHERE are dropped
+ * here rather than re-driven into a deferral it has already announced, and the
+ * T-07650 foreign-home filter still runs ahead of every claim regardless.
+ *
+ * A ledger or registry failure yields the candidates it could resolve and logs;
+ * it never takes the ordinary sweep down with it.
+ */
+async function unbornBirthWakeCandidates(
+  server: HrcServerInstanceForHandlers,
+  seated: readonly string[]
+): Promise<string[]> {
+  const seatedSet = new Set(seated)
+  const candidates = new Set<string>()
+
+  for (const targetSessionRef of await designatedUnbornTargets(server)) {
+    if (!seatedSet.has(targetSessionRef)) candidates.add(targetSessionRef)
+  }
+  for (const targetSessionRef of refusedBirthTargets(server)) {
+    if (!seatedSet.has(targetSessionRef)) candidates.add(targetSessionRef)
+  }
+
+  // A scope that has left the candidate set has been born (or bound elsewhere),
+  // so its retry bound is spent state. Pruned here rather than on the birth
+  // itself because this is the one place that sees the whole set.
+  for (const targetSessionRef of server.mailKickerBirthSweepBackoff.keys()) {
+    if (!candidates.has(targetSessionRef)) {
+      server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
+    }
+  }
+
+  const now = Date.now()
+  return [...candidates].filter(
+    (targetSessionRef) =>
+      (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.nextAtMs ?? 0) <= now
+  )
+}
+
+/** Live designations naming this node whose scope the registry has never bound. */
+async function designatedUnbornTargets(server: HrcServerInstanceForHandlers): Promise<string[]> {
+  const list = server.federationRegistryClient?.listUnbornDesignations
+  if (list === undefined) return []
+  let designations: readonly { scopeRef: string }[]
+  try {
+    designations = await list.call(server.federationRegistryClient, server.federationNodeId)
+  } catch (error) {
+    // An unreachable registry is not evidence that this node owes no births.
+    // It is a reason to try again on the next sweep, and never a reason to
+    // widen the local half to compensate.
+    writeServerLog('WARN', 'wrkq.kicker.unborn_designations_failed', {
+      nodeId: server.federationNodeId,
+      error: errorText(error),
+    })
+    return []
+  }
+  const targets: string[] = []
+  for (const designation of designations) {
+    const sessionRef = targetSessionRefForLedgerScope(designation.scopeRef)
+    if (sessionRef !== undefined) targets.push(sessionRef)
+  }
+  return targets
+}
+
+/**
+ * Scopes this node refused a birth for, from its own drive-attempt rows.
+ *
+ * Filtered against the two records that say the scope is no longer this node's
+ * to birth: a local placement-ledger row (it was established, here or by a
+ * rebind onto here) and a birth deferral this node has already announced (the
+ * collective designated it elsewhere, and re-driving it would buy one more
+ * refusal per sweep and nothing else).
+ */
+function refusedBirthTargets(server: HrcServerInstanceForHandlers): string[] {
+  const ledger = createPlacementLedgerRepository(server.db.sqlite)
+  const targets: string[] = []
+  for (const targetSessionRef of server.db.mailDrives.listRefusedBirthTargets()) {
+    const scopeRef = kickerScopeRefFor(targetSessionRef)
+    if (scopeRef === undefined) continue
+    if (ledger.get(scopeRef) !== undefined) continue
+    if (server.mailKickerBirthDeferredAnnounced.has(scopeRef)) continue
+    targets.push(targetSessionRef)
+  }
+  return targets
+}
+
+/**
+ * Charge one retry against every unborn candidate the sweep is about to drive.
+ *
+ * Charged on the ENQUEUE and not on the outcome, deliberately. A birth is
+ * asynchronous and its failure modes are many; keying the bound on "we tried"
+ * needs no outcome plumbing, and the success case clears itself — a born scope
+ * leaves the candidate set, which prunes its entry. Candidates the ledger
+ * reported no pending mail for are not charged: they cost nothing but a slot in
+ * a batched read, and holding them off for sixteen minutes would delay the
+ * scope's real birth when its mail does arrive.
+ */
+function chargeBirthSweepRetries(
+  server: HrcServerInstanceForHandlers,
+  unborn: readonly string[],
+  driving: ReadonlySet<string>
+): void {
+  const now = Date.now()
+  for (const targetSessionRef of unborn) {
+    if (!driving.has(targetSessionRef)) continue
+    const attempts = Math.min(
+      (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1,
+      BIRTH_SWEEP_MAX_BACKOFF_ROUNDS
+    )
+    server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
+      attempts,
+      nextAtMs: now + REDELIVERY_FLOOR_BASE_MS * 2 ** (attempts - 1),
+    })
+    writeServerLog('INFO', 'wrkq.kicker.unborn_birth_retry', {
+      targetSessionRef,
+      attempt: attempts,
+      nextAttemptInMs: REDELIVERY_FLOOR_BASE_MS * 2 ** (attempts - 1),
+    })
+  }
 }
 
 function chunk<T>(values: readonly T[], size: number): T[][] {

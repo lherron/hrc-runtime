@@ -139,9 +139,9 @@ function mutationStatus(outcome: string): number {
 }
 
 /**
- * The two T-07655 designation routes, extracted so the router's own complexity
- * does not grow with every placement question the collective learns to answer.
- * Returns undefined when the request is not one of them.
+ * The designation routes, extracted so the router's own complexity does not
+ * grow with every placement question the collective learns to answer. Returns
+ * undefined when the request is not one of them.
  */
 async function handleDesignationRoute(
   request: Request,
@@ -167,6 +167,26 @@ async function handleDesignationRoute(
       outcome:
         record === undefined ? 'none' : record.state === 'live' ? 'designated' : 'superseded',
       ...(record === undefined ? {} : { designation: record }),
+    })
+  }
+
+  // T-07661 — the virgin births one node still owes, so its kicker's periodic
+  // sweep has a candidate set for scopes NOBODY seats.
+  //
+  // A node may only ask about ITSELF. That is not access control for its own
+  // sake: an answer scoped to the caller cannot become an instruction to birth
+  // somebody else's scope, which keeps this a READ of a decision the host
+  // already took rather than a second, weaker, way to route a birth.
+  if (request.method === 'GET' && url.pathname === '/v1/federation/registry/unborn-designations') {
+    const homeNodeId = url.searchParams.get('homeNodeId')
+    if (homeNodeId === null || homeNodeId.trim().length === 0) throw new InvalidRegistryRequest()
+    if (homeNodeId.trim() !== peer.nodeId) {
+      return responseJson({ ok: false, error: 'authenticated_node_mismatch' }, 403)
+    }
+    return responseJson({
+      ok: true,
+      authenticatedNodeId: peer.nodeId,
+      designations: input.registry.listUnbornDesignationsForNode(peer.nodeId),
     })
   }
 
