@@ -32,7 +32,7 @@ import type { CollectiveHistoryCoordinator } from './federation/collective-histo
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
-import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
+import type { KickerForeignHome, MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
 import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
 import type { RegistrationHandlersMethods } from './registration-handlers.js'
@@ -179,6 +179,15 @@ type HrcServerInstanceDataForHandlers = {
   mailKickerSweepInFlight: Promise<void> | undefined
   readonly mailKickerPendingTargets: Map<string, HrcMailDriveWakeReason>
   readonly mailKickerTargetOperations: Map<string, Promise<void>>
+  /**
+   * Scopes this node has learned it does NOT home, keyed by scopeRef (T-07650).
+   *
+   * Process-local on purpose: it exists to charge one registry consult and one
+   * log line per scope per epoch instead of one per sweep tick, and a restart
+   * must be able to re-ask. It is never consulted ahead of the local placement
+   * ledger, so it can only ever delay a scope's return, never block it.
+   */
+  readonly mailKickerForeignHomes: Map<string, KickerForeignHome>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number

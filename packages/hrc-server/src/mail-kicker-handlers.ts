@@ -578,11 +578,182 @@ async function declineForInFlightAttempt(
   })
 }
 
+/** The scope behind a drive target, or nothing when the ref is unparseable. */
+function kickerScopeRefFor(targetSessionRef: string): string | undefined {
+  try {
+    return parseSessionRef(targetSessionRef).scopeRef
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A home this node believes a scope has, when that home is NOT this node.
+ *
+ * `source` is kept because the two answers have different lifetimes: a
+ * `placement-ledger` verdict is re-read from local SQLite on every wake and is
+ * authoritative, while a `registry` verdict is a remembered network answer.
+ */
+export type KickerForeignHome = Readonly<{
+  homeNodeId: string
+  placementEpoch: number
+  source: 'placement-ledger' | 'registry'
+}>
+
+/**
+ * "Is this scope mine to drive?", asked BEFORE a drive attempt is claimed.
+ *
+ * The kicker's two candidate sources — `listInFlightTargets()` and
+ * `listLiveSessionRefs()` — are both node-local and both blind to placement.
+ * A node that ever seated a scope keeps a live runtime row for it, and a
+ * claimed attempt that fails at the summon gate stays claimed, so after a
+ * rebind moves the scope away BOTH sets keep naming it forever. Every sweep
+ * tick then re-drove it into a `bound-elsewhere` refusal: 14 typed
+ * `drive_failed` per tick on max3, ~34 per minute, and one more permanently
+ * stuck attempt row per scope (T-07650).
+ *
+ * Resolution order deliberately mirrors the summon gate's own (§5), because a
+ * filter that disagreed with the gate would either skip work this node owes or
+ * keep re-driving work it does not:
+ *
+ *  1. NO FEDERATION — no registry client means no other node exists to home
+ *     anything. A single-node daemon homes everything it can see and nothing
+ *     is ever skipped; this is the whole reason the check is not "must have a
+ *     local placement row", which would silence delivery on every unfederated
+ *     install.
+ *  2. LOCAL PLACEMENT LEDGER — the node's own record of the bindings it holds
+ *     authority for, and the only answer that costs no network. An active row
+ *     naming another node is a definitive skip; an active row naming this node
+ *     is a definitive drive, and it also clears any remembered registry answer,
+ *     so a scope rebound BACK here resumes the moment activation installs it.
+ *  3. REMEMBERED REGISTRY ANSWER — process-local, so a restart re-consults and
+ *     a memo can never outlive the daemon that learned it.
+ *  4. REGISTRY CONSULT — one network read, and only for a scope with no local
+ *     row at all. That is exactly the shape this bug is made of, and it is
+ *     charged once per scope per process rather than once per scope per tick.
+ *
+ * Anything else — unbound, retired, bound here, or a registry we cannot reach —
+ * returns `undefined` and the wake proceeds unchanged. This filter only ever
+ * removes work whose refusal is already certain; it never invents a refusal the
+ * gate would not have made.
+ */
+async function foreignHomeFor(
+  server: HrcServerInstanceForHandlers,
+  scopeRef: string
+): Promise<KickerForeignHome | undefined> {
+  const registry = server.federationRegistryClient
+  if (registry === undefined) return undefined
+
+  const local = createPlacementLedgerRepository(server.db.sqlite).get(scopeRef)
+  if (local?.state === 'active') {
+    if (local.homeNodeId === server.federationNodeId) {
+      server.mailKickerForeignHomes.delete(scopeRef)
+      return undefined
+    }
+    return {
+      homeNodeId: local.homeNodeId,
+      placementEpoch: local.placementEpoch,
+      source: 'placement-ledger',
+    }
+  }
+
+  const remembered = server.mailKickerForeignHomes.get(scopeRef)
+  if (remembered !== undefined) return remembered
+
+  try {
+    const consulted = await registry.consult(scopeRef)
+    if (consulted.outcome !== 'bound') return undefined
+    if (consulted.binding.homeNodeId === server.federationNodeId) return undefined
+    return {
+      homeNodeId: consulted.binding.homeNodeId,
+      placementEpoch: consulted.binding.placementEpoch,
+      source: 'registry',
+    }
+  } catch (error) {
+    // An unreachable or refused registry is not evidence of a foreign home.
+    // Falling through hands the decision to the gate, which is where every
+    // other consult failure is already classified.
+    writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
+      scopeRef,
+      error: errorText(error),
+    })
+    return undefined
+  }
+}
+
+/**
+ * Skip a foreign-homed target: ONE positive line per scope per epoch.
+ *
+ * Two things happen here and both matter. The line is written once — a skip
+ * repeated every tick is the same noise this fixes, wearing a calmer verb — and
+ * any still-CLAIMED attempt is FINISHED rather than left annotated.
+ * `recordError` alone leaves an attempt `claimed`, and a claimed attempt owns
+ * the scope's drive slot forever, which is how twelve dead rows accumulated on
+ * lab and kept re-entering `listInFlightTargets()` hours after the rebind. A
+ * `started` attempt is left alone: it proved a dispatch, and its terminal event
+ * is what closes it.
+ *
+ * Stale local RUNTIMES are deliberately NOT torn down here. Evicting a live
+ * seat is a rebind's decision (`rebind.ts` already enumerates the scope's live
+ * runtime ids at revoke time), never a delivery mechanism's; a routing verdict
+ * must not kill a session an operator may be attached to. Nor is the exclusion
+ * pushed into `listLiveSessionRefs()`: that query lives in hrc-store-sqlite,
+ * which has neither this node's identity nor a registry client, and it would
+ * still leave `listInFlightTargets()` unfiltered. One filter, at the one place
+ * both candidate sources converge.
+ */
+function skipForeignHomedTarget(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  scopeRef: string,
+  foreign: KickerForeignHome,
+  wakeReason: HrcMailDriveWakeReason
+): void {
+  const attempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
+  const failedAttemptId =
+    attempt?.state === 'claimed'
+      ? server.db.mailDrives.failWithoutStart(
+          attempt.driveAttemptId,
+          `${scopeRef} is homed on ${foreign.homeNodeId} (epoch ${foreign.placementEpoch}); this node has no authority to drive it`
+        ).driveAttemptId
+      : undefined
+
+  const remembered = server.mailKickerForeignHomes.get(scopeRef)
+  const alreadyAnnounced =
+    remembered !== undefined &&
+    remembered.homeNodeId === foreign.homeNodeId &&
+    remembered.placementEpoch === foreign.placementEpoch
+  server.mailKickerForeignHomes.set(scopeRef, foreign)
+  if (alreadyAnnounced && failedAttemptId === undefined) return
+
+  writeServerLog('INFO', 'wrkq.kicker.foreign_home_skipped', {
+    targetSessionRef,
+    scopeRef,
+    homeNodeId: foreign.homeNodeId,
+    placementEpoch: foreign.placementEpoch,
+    source: foreign.source,
+    wakeReason,
+    ...(failedAttemptId === undefined ? {} : { failedAttemptId }),
+  })
+}
+
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   wakeReason: HrcMailDriveWakeReason
 ): Promise<void> {
+  // Placement first, before the drive slot, the ledger read, or the gate. A
+  // scope homed on another node cannot be driven from here by any wake reason,
+  // so claiming an attempt for it only manufactures the failure (T-07650).
+  // A ref this daemon cannot parse gets no verdict and no new failure mode:
+  // it falls through to the path that already reported that for what it is.
+  const scopeRef = kickerScopeRefFor(targetSessionRef)
+  const foreign = scopeRef === undefined ? undefined : await foreignHomeFor(server, scopeRef)
+  if (scopeRef !== undefined && foreign !== undefined) {
+    skipForeignHomedTarget(server, targetSessionRef, scopeRef, foreign, wakeReason)
+    return
+  }
+
   let attempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
   // Held rather than returned on: the decline needs the pending set and the
   // session, and both are read below. See `declineForInFlightAttempt`.

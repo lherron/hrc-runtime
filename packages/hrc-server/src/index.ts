@@ -144,6 +144,7 @@ import {
   normalizeLocalPersonaAllowlist,
 } from './local-persona-policy.js'
 import {
+  type KickerForeignHome,
   type MailKickerHandlersMethods,
   mailKickerHandlersMethods,
 } from './mail-kicker-handlers.js'
@@ -840,6 +841,7 @@ class HrcServerInstance implements HrcServer {
   mailKickerColdStartCatchupPending = false
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
+  readonly mailKickerForeignHomes = new Map<string, KickerForeignHome>()
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
