@@ -150,7 +150,7 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
   }
 
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView> {
-    return this.call<WrkqRoomView>('wrkq.room.show', { principalRef: this.principalRef, ...params })
+    return this.call<WrkqRoomView>('wrkq.room.show', params)
   }
 
   async eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView> {
@@ -181,10 +181,12 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
       id,
       method,
       // T-07647: wrkqd names every undeclared param in its log and will refuse
-      // them again after the consumer audit. Only methods whose params declare
-      // principalRef receive it (roomShow); caller identity for the rest comes
-      // from the child's WRKQ_PRINCIPAL_REF environment.
-      params,
+      // them again after the consumer audit. pendingView, present, roundEnded
+      // and room.show DECLARE principalRef and require it for attribution;
+      // eventsView and birthEnvelope do not, so those two must not carry it.
+      params: PRINCIPAL_FREE_METHODS.has(method)
+        ? params
+        : { principalRef: this.principalRef, ...params },
     })}\n`
 
     const settled = new Promise<T>((resolve, reject) => {
@@ -388,6 +390,9 @@ function mapMonitorEvent(raw: unknown): WrkqMonitorEvent {
  * `rpc.initialize` on every child — is the protocol-schema pin this client
  * exists to avoid.
  */
+/** wrkqd params structs that do not declare principalRef (T-07647 audit). */
+const PRINCIPAL_FREE_METHODS = new Set(['wrkq.monitor.eventsView', 'wrkq.envelope.birthEnvelope'])
+
 function isStaleSessionError(message: string): boolean {
   return /rpc\.initialize/i.test(message) || /transport failure/i.test(message)
 }
