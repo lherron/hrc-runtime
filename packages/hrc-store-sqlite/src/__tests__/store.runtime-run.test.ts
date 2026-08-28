@@ -749,6 +749,19 @@ describe('RunRepository.update — run-terminal monotonicity (T-07656)', () => {
         status: 'accepted',
         updatedAt: now,
       })
+      // An explicit resurrection — clearing completed_at in the same patch — is
+      // honoured: that is a caller asserting the run is live again (T-04025
+      // durable-finalizer recovery models it this way).
+      const revived = db.runs.update('run-t07656', {
+        status: 'running',
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: now,
+      })
+      expect(revived?.status).toBe('running')
+      expect(revived?.completedAt).toBeUndefined()
+
       const live = db.runs.update('run-t07656-live', {
         status: 'started',
         startedAt: now,

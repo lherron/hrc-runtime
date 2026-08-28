@@ -177,7 +177,19 @@ export type SessionListFilters = {
 }
 
 export type RuntimeUpdatePatch = Partial<Omit<HrcRuntimeSnapshot, 'runtimeId'>>
-export type RunUpdatePatch = Partial<Omit<HrcRunRecord, 'runId'>>
+/**
+ * `completedAt: null` is the one deliberate way to move a run back off terminal
+ * (T-07656): a caller that clears the terminal marker is asserting the run is
+ * live again, and `RunRepository.update` honours the status in that same patch.
+ * Without it, a non-terminal status against a completed row is dropped.
+ */
+export type RunUpdatePatch = Partial<
+  Omit<HrcRunRecord, 'runId' | 'completedAt' | 'errorCode' | 'errorMessage'>
+> & {
+  completedAt?: string | null | undefined
+  errorCode?: HrcRunRecord['errorCode'] | null | undefined
+  errorMessage?: string | null | undefined
+}
 export type LaunchUpdatePatch = Partial<Omit<HrcLaunchRecord, 'launchId'>>
 
 export function serializeJson(value: unknown): string | null {

@@ -100,8 +100,13 @@ describe('hrcchat minimal server routes', () => {
       // fails the in-flight run. In production the durable broker is preserved
       // (controllerKind + socket presence) and the run stays running — restore
       // that state so the completion models the preserved-broker reality.
+      // Clearing completed_at is the explicit resurrection the store honours
+      // (T-07656); a bare status rewrite against a terminal row is dropped.
       completionDb.runs.update(handoff.runId, {
         status: 'running',
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
         updatedAt: ctx.fixture.now(),
       })
       completionDb.runtimeBuffers.append({

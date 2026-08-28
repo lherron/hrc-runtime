@@ -1027,8 +1027,14 @@ export class RunRepository {
     // defines non-terminal as `completed_at IS NULL` — skips it forever (346 such
     // rows on max3, 18 on svc, 2026-08-28). The event-mapper already guards its
     // own turn.started rewrite (T-07235); this makes every writer honour it.
+    // A patch that explicitly clears completed_at (`completedAt: null`) is a
+    // deliberate resurrection and is honoured as written.
     let effective: RunUpdatePatch = patch
-    if (patch.status !== undefined && NON_TERMINAL_RUN_STATUSES.has(patch.status)) {
+    if (
+      patch.status !== undefined &&
+      NON_TERMINAL_RUN_STATUSES.has(patch.status) &&
+      patch.completedAt !== null
+    ) {
       const current = this.getByRunId(runId)
       if (current?.completedAt !== undefined) {
         const { status: _status, startedAt: _startedAt, acceptedAt: _acceptedAt, ...rest } = patch
