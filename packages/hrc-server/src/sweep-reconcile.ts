@@ -363,6 +363,39 @@ export async function reconcileActiveRunsOnce(
 }
 
 /**
+ * Is this runtime demonstrably NOT executing `runId`?
+ *
+ * Three answers, and only the first is a plain "no run at all":
+ *
+ *  - it claims nothing            -> not running anything, including this run.
+ *  - it claims a FINISHED run     -> a stale pointer. The runtime let go and
+ *                                    only the row kept the name. Still not
+ *                                    running anything.
+ *  - it claims THIS run           -> `listActiveRunReconcileCandidates` and the
+ *                                    branches above own that case; this pass
+ *                                    must not race them for it.
+ *  - it claims a live run, or one
+ *    with no row to check         -> not evidence. The live case is a genuinely
+ *                                    busy runtime and the queued-behind window;
+ *                                    the dangling case is unverifiable, and an
+ *                                    unverifiable claim is never a licence to
+ *                                    finalize somebody's turn.
+ *
+ * `completed_at` is the terminal marker throughout, the same one the scan query
+ * and the finalize guard use, so all three agree on what "finished" means.
+ */
+function runtimeIsNotRunning(
+  ctx: ServerContext,
+  runtime: HrcRuntimeSnapshot,
+  runId: string
+): boolean {
+  if (runtime.activeRunId === undefined) return true
+  if (runtime.activeRunId === runId) return false
+  const claimed = ctx.db.runs.getByRunId(runtime.activeRunId)
+  return claimed !== null && claimed.completedAt !== undefined
+}
+
+/**
  * Terminalize non-terminal runs whose runtime is running NOTHING.
  *
  * Every branch above reaches its run through `listActiveRunReconcileCandidates`,
@@ -380,9 +413,16 @@ export async function reconcileActiveRunsOnce(
  * (T-07653). The kicker is a READER of the run row; terminalizing it belongs to
  * the reconciler that owns it.
  *
- * The evidence is the runtime, not the clock: a runtime with NO `activeRunId`
- * is executing nothing, so a non-terminal run pointing at it has already ended
- * and only the row failed to learn. The reconciler's ordinary quiescence cutoff
+ * The evidence is the runtime, not the clock: a runtime that is not RUNNING
+ * this run is evidence the run has already ended and only the row failed to
+ * learn. "Not running it" is two shapes, and the first cut of this pass only
+ * caught one of them. A runtime with no `activeRunId` owns nothing — but a
+ * runtime still pointing at a run that is ITSELF terminal owns nothing either,
+ * and reading that stale pointer as "busy" left eight rows on max3 unreaped on
+ * runtimes that were `terminated` or `crashed`, the oldest since 2026-06-02,
+ * every one of them claiming a run that had been `failed` for weeks. A claim
+ * this daemon cannot verify (no such run row) is NOT evidence and is left
+ * alone. The reconciler's ordinary quiescence cutoff
  * still applies to BOTH the run and the runtime — not as the reason, but as a
  * race guard. A run row is inserted moments BEFORE `active_run_id` is stamped
  * on the runtime, and a queued prompt is admitted behind another run and only
@@ -413,10 +453,10 @@ function reconcileRunsAbandonedByTheirRuntime(
     if (!run.runtimeId) continue
 
     const runtime = ctx.db.runtimes.getByRuntimeId(run.runtimeId)
-    // No runtime row at all is a different defect and a different owner; only a
-    // runtime that demonstrably owns no run is evidence this run is over.
-    if (!runtime || runtime.activeRunId !== undefined) continue
+    // No runtime row at all is a different defect and a different owner.
+    if (!runtime) continue
     if (isExternalLifecycleOwner(runtime)) continue
+    if (!runtimeIsNotRunning(ctx, runtime, run.runId)) continue
 
     const observed = latestObservedRunActivity(ctx, run)
     const observedMs = Date.parse(observed.observedAt)
@@ -442,7 +482,7 @@ function finalizeAbandonedRun(
   observed: ObservedRunActivity
 ): ReconcileActiveRunResult {
   const now = timestamp()
-  const errorMessage = `runtime ${runtime.runtimeId} owns no active run; ${run.runId} ended without a terminal event`
+  const errorMessage = `runtime ${runtime.runtimeId} is not running ${run.runId}; it ended without a terminal event`
   // Re-assert the whole predicate in the WHERE clause. Between the scan and
   // here a real dispatch may have claimed this very run, and a reconcile that
   // finalizes a turn now in flight is worse than the leak it is closing.
@@ -456,8 +496,17 @@ function finalizeAbandonedRun(
             AND status IN ('accepted', 'started', 'running')
             AND completed_at IS NULL
             AND NOT EXISTS (
-              SELECT 1 FROM runtimes
-              WHERE runtime_id = ? AND active_run_id IS NOT NULL
+              SELECT 1 FROM runtimes rt
+              WHERE rt.runtime_id = ?
+                AND rt.active_run_id IS NOT NULL
+                AND (
+                  rt.active_run_id = ?
+                  OR NOT EXISTS (
+                    SELECT 1 FROM runs claimed
+                    WHERE claimed.run_id = rt.active_run_id
+                      AND claimed.completed_at IS NOT NULL
+                  )
+                )
             )
         `
     )
@@ -467,7 +516,8 @@ function finalizeAbandonedRun(
       HrcErrorCode.RUN_ABANDONED_BY_RUNTIME,
       errorMessage,
       run.runId,
-      runtime.runtimeId
+      runtime.runtimeId,
+      run.runId
     ) as { changes?: number }
 
   if ((claim.changes ?? 0) === 0) {

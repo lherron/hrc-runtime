@@ -300,4 +300,47 @@ describe('T-07653 — a thrown drive releases the scope drive slot', () => {
     expect(serverDb().mailDrives.getSlot(TARGET)?.activeDriveAttemptId).toBeUndefined()
     expect(serverDb().mailDrives.listInFlightTargets()).not.toContain(TARGET)
   })
+
+  /**
+   * The other residue behind the same wedge (T-07616 C-16776): a run row that
+   * carries a terminal `completed_at` while its `status` was never moved off
+   * `running`. 346 such rows on max3 and 18 on svc as of 2026-08-28, reaching
+   * back to July.
+   *
+   * The reconciler is right to leave them alone — `completed_at` is the terminal
+   * marker its whole query family uses, and the rows are a defect in whoever
+   * stamped it without the status. But the kicker READ them wrong:
+   * `isDurablyActiveRun` tested `status` only, and `observeAttempt` consults it
+   * BEFORE it ever looks at `completedAt`, so a finished run reported `'waiting'`
+   * forever and its scope's drive slot was never released. Reading the row
+   * correctly is the reader's job; repairing the row is not.
+   */
+  it('reads a run with completed_at as finished even when its status still says running', async () => {
+    say({ body: 'the run finishes but its status row is left behind' })
+    await startServer()
+    homeScopeHere()
+    seedLiveSeat()
+    installDeterministicStart(server as HrcServer)
+
+    await sweep()
+    const attempt = onlyAttempt()
+    expect(attempt.state).toBe('started')
+
+    // Exactly the live shape: completed_at stamped, status left at 'running',
+    // and NO terminal lifecycle event for the kicker to key on.
+    const done = new Date(Date.now() - 90 * 60 * 1000).toISOString()
+    serverDb().sqlite.run(
+      "UPDATE runs SET status = 'running', completed_at = ?, updated_at = ? WHERE run_id = ?",
+      [done, done, attempt.runId]
+    )
+    const run = serverDb().runs.getByRunId(attempt.runId)
+    expect(run?.status).toBe('running')
+    expect(run?.completedAt).toBeDefined()
+
+    await sweep()
+
+    expect(TERMINAL_STATES).toContain(onlyAttempt().state)
+    expect(serverDb().mailDrives.getSlot(TARGET)?.activeDriveAttemptId).toBeUndefined()
+    expect(serverDb().mailDrives.listInFlightTargets()).not.toContain(TARGET)
+  })
 })

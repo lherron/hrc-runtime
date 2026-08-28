@@ -104,7 +104,23 @@ type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
  */
 type InFlightDeclineRoute = 'active-attempt' | 'claim'
 
+/**
+ * Is this run still genuinely in flight?
+ *
+ * `completed_at` is checked FIRST and it wins. A run row can carry a terminal
+ * `completed_at` while its `status` was never moved off `running` — 346 such
+ * rows on max3 and 18 on svc as of 2026-08-28, reaching back to July — and the
+ * status-only test read every one of them as live. That is not cosmetic here:
+ * this predicate is what `observeAttempt` consults before it looks at
+ * `completedAt` at all, so a contradictory row reported `'waiting'` forever and
+ * held its scope's drive slot; `targetHasRunningTurn` read the same row as a
+ * permanently busy target. The kicker stays a READER of the run row (T-07653) —
+ * this is about reading it correctly, not about writing it. The rows themselves
+ * are a defect in whoever stamped `completed_at` without the status, and
+ * repairing them belongs to that writer.
+ */
 function isDurablyActiveRun(run: HrcRunRecord): boolean {
+  if (run.completedAt !== undefined) return false
   return run.status === 'queued' || isRunActive(run)
 }
 

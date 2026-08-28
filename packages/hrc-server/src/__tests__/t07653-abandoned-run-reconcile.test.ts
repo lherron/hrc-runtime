@@ -61,6 +61,10 @@ type SeedOptions = {
   /** What the runtime believes it is running. `undefined` is the defect. */
   runtimeActiveRunId?: string | undefined
   runtimeStatus?: string | undefined
+  /** Seed the run the runtime CLAIMS, and whether that claim is finished. */
+  claimedRun?: { runId: string; completed: boolean } | undefined
+  /** Stamp `completed_at` on the run under test while leaving status `running`. */
+  runCompletedAt?: string | undefined
   /** Minutes since the run and the runtime last did anything. */
   quietForMinutes?: number | undefined
   runtimeQuietForMinutes?: number | undefined
@@ -97,6 +101,22 @@ function seedAbandonedRun(options: SeedOptions): void {
       createdAt: runtimeTs,
       updatedAt: runtimeTs,
     })
+    if (options.claimedRun !== undefined) {
+      db.runs.insert({
+        runId: options.claimedRun.runId,
+        hostSessionId: options.hostSessionId,
+        runtimeId: options.runtimeId,
+        scopeRef,
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        status: options.claimedRun.completed ? 'failed' : 'running',
+        acceptedAt: runtimeTs,
+        startedAt: runtimeTs,
+        updatedAt: runtimeTs,
+        ...(options.claimedRun.completed ? { completedAt: runtimeTs } : {}),
+      })
+    }
     db.runs.insert({
       runId: options.runId,
       hostSessionId: options.hostSessionId,
@@ -109,6 +129,7 @@ function seedAbandonedRun(options: SeedOptions): void {
       acceptedAt: runTs,
       startedAt: runTs,
       updatedAt: runTs,
+      ...(options.runCompletedAt === undefined ? {} : { completedAt: options.runCompletedAt }),
     })
   } finally {
     db.close()
@@ -228,6 +249,89 @@ describe('T-07653 — the reconciler terminalizes a run its runtime already rele
     await reconcile({ olderThan: '30m' })
 
     expect(getRun('run-queued-behind')?.status).toBe('running')
+  })
+
+  /**
+   * The max3 residue (T-07616 C-16776 follow-up): eight runs left `running` on
+   * runtimes that were `terminated` or `crashed`, oldest 2026-06-02, every one
+   * of them still pointing at a DIFFERENT run that had been `failed` for weeks.
+   * The first cut of this pass read that stale pointer as "the runtime is busy"
+   * and skipped them. A runtime whose claim is itself finished owns nothing.
+   */
+  it('finalizes a run whose runtime still points at a DIFFERENT, already-finished run', async () => {
+    seedAbandonedRun({
+      runId: 'run-stale-claim',
+      runtimeId: 'rt-stale-claim',
+      hostSessionId: 'hsid-stale-claim',
+      scopeRef: 't07653-stale-claim',
+      runtimeStatus: 'terminated',
+      runtimeActiveRunId: 'run-claimed-and-dead',
+      claimedRun: { runId: 'run-claimed-and-dead', completed: true },
+    })
+
+    const body = await reconcile({ olderThan: '30m' })
+
+    const result = body.results.find((entry) => entry.runId === 'run-stale-claim')
+    expect(result?.status).toBe('repaired')
+    expect(result?.reason).toBe('run_abandoned_by_runtime')
+    expect(getRun('run-stale-claim')?.status).toBe('failed')
+    expect(eventsForRun('run-stale-claim')).toContain('turn.reaped')
+  })
+
+  it('leaves a run whose runtime is genuinely busy with another LIVE run', async () => {
+    // The queued-behind window, stated as evidence rather than as a clock: the
+    // runtime is executing the run ahead of this one.
+    seedAbandonedRun({
+      runId: 'run-behind-a-live-one',
+      runtimeId: 'rt-behind-a-live-one',
+      hostSessionId: 'hsid-behind',
+      scopeRef: 't07653-behind',
+      runtimeStatus: 'busy',
+      runtimeActiveRunId: 'run-still-going',
+      claimedRun: { runId: 'run-still-going', completed: false },
+    })
+
+    await reconcile({ olderThan: '30m' })
+
+    expect(getRun('run-behind-a-live-one')?.status).toBe('running')
+  })
+
+  it('leaves a run whose runtime claims a run this daemon cannot find', async () => {
+    // An unverifiable claim is not evidence, and never a licence to finalize.
+    seedAbandonedRun({
+      runId: 'run-dangling-claim',
+      runtimeId: 'rt-dangling-claim',
+      hostSessionId: 'hsid-dangling',
+      scopeRef: 't07653-dangling',
+      runtimeStatus: 'terminated',
+      runtimeActiveRunId: 'run-that-does-not-exist',
+    })
+
+    await reconcile({ olderThan: '30m' })
+
+    expect(getRun('run-dangling-claim')?.status).toBe('running')
+  })
+
+  /**
+   * The svc/max3 majority (18 and 346 rows): `status='running'` with
+   * `completed_at` ALREADY stamped. Terminal by the marker every reconcile
+   * query uses, so this pass is right to skip them — the defect is in whoever
+   * left the status behind, not here. Pinned so the boundary is deliberate.
+   */
+  it('does not touch a run that already carries completed_at, whatever its status says', async () => {
+    seedAbandonedRun({
+      runId: 'run-status-lagging',
+      runtimeId: 'rt-status-lagging',
+      hostSessionId: 'hsid-status-lagging',
+      scopeRef: 't07653-status-lagging',
+      runtimeStatus: 'terminated',
+      runCompletedAt: isoMinutesAgo(120),
+    })
+
+    const body = await reconcile({ olderThan: '30m' })
+
+    expect(body.results.filter((entry) => entry.runId === 'run-status-lagging')).toHaveLength(0)
+    expect(getRun('run-status-lagging')?.errorCode).toBeUndefined()
   })
 
   it('reports without mutating under dryRun', async () => {
