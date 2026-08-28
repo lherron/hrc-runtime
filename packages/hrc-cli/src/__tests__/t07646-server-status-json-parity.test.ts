@@ -290,6 +290,10 @@ describe('the activation contract published by hrc info (T-07646)', () => {
     expect(text).toContain('(NOT .processStartedAt)')
   })
 
+  it('tells the reader to use jq -e, the only thing that distinguishes absent from null', () => {
+    expect(renderServerStatusJsonContract()).toContain('jq -e')
+  })
+
   it('carries every path the reported activation failures reached for', () => {
     const documented = new Set(ACTIVATION_CONTRACT.map((entry) => entry.path))
     for (const path of [

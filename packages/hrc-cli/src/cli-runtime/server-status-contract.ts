@@ -262,5 +262,7 @@ export function renderServerStatusJsonContract(): string {
   human render. Nothing is emitted at the top level under a shorter name — jq answers
   null for a path that does not exist, so a typo reads exactly like a dead daemon.
 ${rows.join('\n')}
-  Assert release.mode == "atomic" before reading any other release.* path.`
+  Assert release.mode == "atomic" before reading any other release.* path, and read with
+  jq -e: it exits nonzero on a path that does not exist, where jq -r prints a bare null
+  no different from a real one. That is the whole failure this contract exists to end.`
 }
