@@ -384,7 +384,7 @@ The output always names the resolved kind and the concrete ID(s).
 
   program
     .command('turn')
-    .description('alias for `hrcchat turn` — dispatch tracked work to an agent and stream progress')
+    .description('dispatch tracked work to an agent and stream its progress')
     .helpOption(false)
     .allowUnknownOption(true)
     .allowExcessArguments(true)
@@ -703,8 +703,8 @@ The output always names the resolved kind and the concrete ID(s).
     audience: 'agent',
     agentUsage: {
       example: 'hrc turn cody@hrc-runtime:T-07011 "Continue."',
-      exitCodes: 'the forwarded hrcchat turn exit code',
-      output: 'forwards arguments and streaming output verbatim to hrcchat turn',
+      exitCodes: 'the dispatched turn exit code',
+      output: 'streams the turn output verbatim',
     },
   })
 }

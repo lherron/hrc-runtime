@@ -39,7 +39,13 @@ export async function cmdRuntimeEnsure(args: string[]): Promise<void> {
 }
 
 export async function execHrcchatTurn(forwarded: string[]): Promise<never> {
-  const child = spawn('hrcchat', ['turn', ...forwarded], { stdio: 'inherit' })
+  // HRC_TURN_FORWARDED suppresses hrcchat's "this verb is internal" notice:
+  // `hrc turn` IS the public spelling, so its users must not be told off for
+  // using it. Wave 5 (T-07617) absorbs the implementation and drops the spawn.
+  const child = spawn('hrcchat', ['turn', ...forwarded], {
+    stdio: 'inherit',
+    env: { ...process.env, HRC_TURN_FORWARDED: '1' },
+  })
   return await new Promise<never>((_resolve, reject) => {
     child.on('error', (err) => {
       reject(err)

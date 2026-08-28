@@ -211,7 +211,8 @@ ${blocks.join('\n\n')}`
 function renderHumanInfo(program: Command): string {
   return `ABOUT
   HRC is the local runtime control plane for agent targets, continuity sessions, and live runtimes.
-  Use hrc to inspect or control runtime state; use hrcchat for semantic agent messaging.
+  Use hrc to inspect or control runtime state (execution); use wrkc to talk to agents
+  (collaboration). Only 'wrkc say --to' fires — a say without it is a room log entry.
 
 ${renderHumanSections(program)}
 

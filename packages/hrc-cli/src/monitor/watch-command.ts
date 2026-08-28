@@ -715,13 +715,7 @@ const MILESTONE_EVENT_KINDS = new Set<string>([
   'runtime.idle',
   'runtime.dead',
 ])
-const MILESTONE_BASH_NEEDLES = [
-  'hrcchat dm',
-  'wrkq touch',
-  'wrkq set',
-  'wrkq comment',
-  'git commit',
-]
+const MILESTONE_BASH_NEEDLES = ['wrkc say', 'wrkq touch', 'wrkq set', 'wrkq comment', 'git commit']
 
 function normalizeEventFilterSpec(args: MonitorWatchArgs): FilterSpec | undefined {
   if (args.allEvents === true) return undefined
