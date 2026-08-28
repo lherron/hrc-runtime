@@ -9,31 +9,47 @@ predicate: >
   binding remains authoritative for an established scope. For a virgin scope,
   origin and receiver derive one home in this order: exact pin, exact home,
   reserved-family home, explicit typed provision.node directive, profile
-  provisioning default, platform default. A declared roster base reserves its
+  provisioning default, platform default. For an IMPLICIT mail-kicker birth
+  only, when every preceding placement input is silent and the target remains
+  virgin, the registry host may replace the local platform default with one
+  persisted tier-5 birth designation. It derives that designation itself from
+  wrkq's globally earliest reply-required envelope for the target and one
+  registry consult of that envelope's scoped sender: a bound sender contributes
+  its binding home and a retired sender its immutable retired home. The first
+  designation is recorded before response and every later ask returns it
+  unchanged. Only its home may establish with sender-derived provenance;
+  non-homing kickers finish without starting. Every higher-precedence
+  establishment remains admissible and atomically supersedes a live
+  designation. No designation is recorded for no birth envelope or an absent or
+  unbound sender, and inability to consult wrkq or the registry is a typed
+  retryable refusal with no local fallback. A declared roster base reserves its
   closed suffix namespace on that home, and profile validation rejects pins or
   homes for reserved members. An explicit node directive is admissible only
   when no placement declaration applies and is validated at both origin and
   receiver against the federation registry and the receiver's own profile;
   conflicts are typed refusals before mutation. No placement is inferred from
-  caller identity, transport, connection, or environment. A remote home is
-  invoked only through the authenticated, capability-advertised exactStart peer
-  verb, whose receiver independently validates retirement, authority, binding,
-  placement, and materialization capability before mutation and localizes
-  runtime intent. On the authoritative home, exact and suffix claim/start share
-  the same roster:<agentId>:<projectId> mutex and FREE predicate, so canonical
-  exact names overlapping suffix members cannot claim one continuity
-  concurrently. A new exact key either atomically rotates or mints a fresh
-  successor, records its canonical request hash, and registers start before
-  releasing the mutex, or returns session_scope_occupied without mutation.
-  Identical retries converge; conflicting replays fail before intent mutation;
-  superseded claims never start archived predecessors. Retryable peer failure
-  is synchronous runtime_unavailable and does not use the message outbox.
-authority: Lance / wrkq:T-07398
+  ambient caller identity, transport, connection, or environment; the mail
+  default is derived only by the registry host from the authoritative ledger
+  envelope and registry state. A remote home is invoked only through the
+  authenticated, capability-advertised exactStart peer verb, whose receiver
+  independently validates retirement, authority, binding, placement, and
+  materialization capability before mutation and localizes runtime intent. On
+  the authoritative home, exact and suffix claim/start share the same
+  roster:<agentId>:<projectId> mutex and FREE predicate, so canonical exact names
+  overlapping suffix members cannot claim one continuity concurrently. A new
+  exact key either atomically rotates or mints a fresh successor, records its
+  canonical request hash, and registers start before releasing the mutex, or
+  returns session_scope_occupied without mutation. Identical retries converge;
+  conflicting replays fail before intent mutation; superseded claims never
+  start archived predecessors. Retryable peer failure is synchronous
+  runtime_unavailable and does not use the message outbox.
+authority: Lance / wrkq:T-07398 / wrkq:T-07655
 source:
   - hrcchat#19456
   - hrcchat#20022
   - wrkq:T-07302
   - wrkq:T-07398
+  - wrkq:T-07655
   - packages/hrc-server/src/scope-claim-core.ts
   - packages/hrc-server/src/exact-claim.ts
   - packages/hrc-server/src/roster-claim.ts
@@ -43,13 +59,17 @@ required_tests:
   - wrkq:T-07302 exact/suffix overlap tests in both winner orders and after restart
   - wrkq:T-07398 reserved-family placement parity across exact, dm, and suffix doors
   - wrkq:T-07398 origin and receiver directive validation, conflict, and no-mutation tests
+  - wrkq:T-07655 birth-envelope ordering, FYI exclusion, and authority tests
+  - wrkq:T-07655 designation idempotence, sender-transition, outage, and precedence tests
+  - wrkq:T-07655 live multi-node designation, supersession, locate, and 24-hour soak proof
   - live multi-node exactStart placement, refusal, replay, and cleanup proof
   - live multi-node explicit node directive and declared-placement conflict proof
 last_verified: 2026-08-21
 reopen_when: >
   Exact-start occupancy, shared mutex or FREE semantics, idempotency ownership,
   peer exactStart authority, placement precedence, the reserved roster suffix
-  set, explicit provision directive admission, mobile suffix-versus-exact
-  selection, or exact placement routing changes.
+  set, explicit provision directive admission, mail birth-envelope selection,
+  birth-designation authority or lifecycle, sender-derived provenance, mobile
+  suffix-versus-exact selection, or exact placement routing changes.
 supersedes: []
 superseded_by: []
