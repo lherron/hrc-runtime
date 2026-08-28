@@ -1153,6 +1153,10 @@ export type ReconcileActiveRunReason =
   | 'runtime_awaiting_user_input'
   // T-01946 gate 6: `awaiting_input` status with no active run — corrupt, surfaced.
   | 'runtime_awaiting_without_active_run'
+  // T-07653: a non-terminal run whose runtime owns NO run at all — the runtime
+  // already let go, so the row is fossil and every reader of it (the mail
+  // kicker's drive slot above all) is wedged behind a turn that ended.
+  | 'run_abandoned_by_runtime'
 
 export type ReconcileActiveRunResult = {
   type: 'run'

@@ -7,7 +7,11 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
-import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type {
+  HrcMailDriveAttempt,
+  HrcMailDriveAttemptState,
+  HrcMailDriveWakeReason,
+} from 'hrc-store-sqlite'
 
 import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
@@ -649,6 +653,37 @@ function presentationRuntimeIdFor(
   return undefined
 }
 
+/**
+ * Finish a drive attempt that threw, instead of merely annotating it.
+ *
+ * `recordError` ANNOTATES; it does not finish, and a `claimed` attempt owns its
+ * scope's drive slot for as long as the row exists. A catch that only annotates
+ * therefore makes the target permanently undrivable by this daemon, silently —
+ * the hazard the missing-intent branch already names in `driveMailTargetOnce`,
+ * reached through a different door. Both generic catches were that door
+ * (T-07653); this is their single exit.
+ *
+ * A `started` attempt is the one case that is NOT finished here, and it is not
+ * an exception to the rule. It PROVED a dispatch: the turn is before the
+ * harness, the run row exists, and `observeAttempt` closes the attempt from the
+ * run's terminal event with the round accounting `completeStartedAttempt` owes
+ * the presented envelopes. Finishing it here would release a slot the live turn
+ * still holds and re-present those envelopes under a NEW attempt id, which is a
+ * duplicate delivery rather than a repair. A run that ends without ever
+ * reaching a terminal state is the ACTIVE-RUN RECONCILER's to terminalize
+ * (`sweep-reconcile.ts`), not the kicker's — the kicker only reads that row.
+ */
+function failDriveAfterThrow(
+  server: HrcServerInstanceForHandlers,
+  attempt: HrcMailDriveAttempt,
+  message: string
+): HrcMailDriveAttemptState {
+  const current = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
+  return current.state === 'started'
+    ? server.db.mailDrives.recordError(current.driveAttemptId, message).state
+    : server.db.mailDrives.failWithoutStart(current.driveAttemptId, message).state
+}
+
 /** The scope behind a drive target, or nothing when the ref is unparseable. */
 function kickerScopeRefFor(targetSessionRef: string): string | undefined {
   try {
@@ -858,11 +893,12 @@ async function driveMailTargetOnce(
         await server.options.hrcMailKickerAfterClaim?.(attempt)
       } catch (error) {
         const message = errorText(error)
-        server.db.mailDrives.recordError(attempt.driveAttemptId, message)
+        const attemptState = failDriveAfterThrow(server, attempt, message)
         writeServerLog('WARN', 'wrkq.kicker.after_claim_failed', {
           targetSessionRef,
           driveAttemptId: attempt.driveAttemptId,
           runId: attempt.runId,
+          attemptState,
           error: message,
         })
         return
@@ -958,12 +994,13 @@ async function driveMailTargetOnce(
     })
   } catch (error) {
     const message = errorText(error)
-    server.db.mailDrives.recordError(attempt.driveAttemptId, message)
+    const attemptState = failDriveAfterThrow(server, attempt, message)
     writeServerLog('WARN', 'wrkq.kicker.drive_failed', {
       targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
       runId: attempt.runId,
       wakeReason,
+      attemptState,
       error: message,
     })
   }

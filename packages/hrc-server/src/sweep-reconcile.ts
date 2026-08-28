@@ -334,6 +334,11 @@ export async function reconcileActiveRunsOnce(
     }
   }
 
+  // T-07653: runs their runtime already let go of. Also not reconcile
+  // candidates — the candidate query requires the runtime to still OWN the run —
+  // so they are scanned separately, on the same cutoff.
+  results.push(...reconcileRunsAbandonedByTheirRuntime(ctx, cutoffMs, input.dryRun))
+
   // T-01946 gate 6: surface (never normalize) corrupt `awaiting_input` runtimes —
   // the status set with no active run. These are not reconcile candidates (the
   // candidate query requires an active run), so they are scanned separately and
@@ -355,6 +360,182 @@ export async function reconcileActiveRunsOnce(
     results,
     summary,
   } satisfies ReconcileActiveRunsResponse
+}
+
+/**
+ * Terminalize non-terminal runs whose runtime is running NOTHING.
+ *
+ * Every branch above reaches its run through `listActiveRunReconcileCandidates`,
+ * which gates on `runtime.activeRunId === run.runId`. A run the runtime has
+ * ALREADY let go of is therefore invisible to all of them: the row sits
+ * `running` with no `completed_at` for the rest of the daemon's uptime. Startup
+ * reconcile clears these at boot — that is why a restart "fixes" it — and
+ * nothing did so on the interval, so a run that lost its runtime mid-uptime was
+ * fossil until the next restart.
+ *
+ * It is not cosmetic. The mail kicker READS these rows to decide whether a
+ * scope's drive slot is still in flight: one of them held
+ * `agent:clod:project:hrc-runtime:task:T-07615/lane:main` undrivable for
+ * thirteen hours and left `EN-00209` pending with an empty `presentedTo`
+ * (T-07653). The kicker is a READER of the run row; terminalizing it belongs to
+ * the reconciler that owns it.
+ *
+ * The evidence is the runtime, not the clock: a runtime with NO `activeRunId`
+ * is executing nothing, so a non-terminal run pointing at it has already ended
+ * and only the row failed to learn. The reconciler's ordinary quiescence cutoff
+ * still applies to BOTH the run and the runtime — not as the reason, but as a
+ * race guard. A run row is inserted moments BEFORE `active_run_id` is stamped
+ * on the runtime, and a queued prompt is admitted behind another run and only
+ * takes ownership when that one clears; a run inside either window must never
+ * be mistaken for an abandoned one, and requiring the RUNTIME to have been idle
+ * since before the cutoff closes both. `last_activity_at` is the right clock
+ * for that: housekeeping never advances it (`runtime-activity.ts`), so a merely
+ * swept runtime still reads as quiescent.
+ */
+function reconcileRunsAbandonedByTheirRuntime(
+  ctx: ServerContext,
+  cutoffMs: number,
+  dryRun: boolean
+): ReconcileActiveRunResult[] {
+  const results: ReconcileActiveRunResult[] = []
+  const rows = ctx.db.sqlite
+    .query<HrcServerRunRow, []>(
+      `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
+          WHERE status IN ('accepted', 'started', 'running')
+            AND runtime_id IS NOT NULL
+            AND completed_at IS NULL
+          ORDER BY updated_at ASC, run_id ASC`
+    )
+    .all()
+
+  for (const row of rows) {
+    const run = mapServerRunRow(row)
+    if (!run.runtimeId) continue
+
+    const runtime = ctx.db.runtimes.getByRuntimeId(run.runtimeId)
+    // No runtime row at all is a different defect and a different owner; only a
+    // runtime that demonstrably owns no run is evidence this run is over.
+    if (!runtime || runtime.activeRunId !== undefined) continue
+    if (isExternalLifecycleOwner(runtime)) continue
+
+    const observed = latestObservedRunActivity(ctx, run)
+    const observedMs = Date.parse(observed.observedAt)
+    if (!Number.isFinite(observedMs) || observedMs > cutoffMs) continue
+
+    const runtimeQuiescentSince = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+    if (!Number.isFinite(runtimeQuiescentSince) || runtimeQuiescentSince > cutoffMs) continue
+
+    results.push(
+      dryRun
+        ? abandonedRunResult(run, runtime, observed, 'matched')
+        : finalizeAbandonedRun(ctx, run, runtime, observed)
+    )
+  }
+  return results
+}
+
+/** Mark an abandoned run `failed` and say so in the lifecycle ledger. */
+function finalizeAbandonedRun(
+  ctx: ServerContext,
+  run: HrcRunRecord,
+  runtime: HrcRuntimeSnapshot,
+  observed: ObservedRunActivity
+): ReconcileActiveRunResult {
+  const now = timestamp()
+  const errorMessage = `runtime ${runtime.runtimeId} owns no active run; ${run.runId} ended without a terminal event`
+  // Re-assert the whole predicate in the WHERE clause. Between the scan and
+  // here a real dispatch may have claimed this very run, and a reconcile that
+  // finalizes a turn now in flight is worse than the leak it is closing.
+  const claim = ctx.db.sqlite
+    .query(
+      `
+          UPDATE runs
+          SET status = 'failed', completed_at = ?, updated_at = ?,
+              error_code = ?, error_message = ?
+          WHERE run_id = ?
+            AND status IN ('accepted', 'started', 'running')
+            AND completed_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM runtimes
+              WHERE runtime_id = ? AND active_run_id IS NOT NULL
+            )
+        `
+    )
+    .run(
+      now,
+      now,
+      HrcErrorCode.RUN_ABANDONED_BY_RUNTIME,
+      errorMessage,
+      run.runId,
+      runtime.runtimeId
+    ) as { changes?: number }
+
+  if ((claim.changes ?? 0) === 0) {
+    return abandonedRunResult(run, runtime, observed, 'skipped')
+  }
+
+  // `turn.reaped` is the reconciler's own terminal kind — the one the kicker's
+  // terminal set and the notification handlers already recognise. A run this
+  // daemon ends on evidence is reaped, not failed by its harness.
+  const event = appendHrcEvent(ctx.db, 'turn.reaped', {
+    ts: now,
+    hostSessionId: run.hostSessionId,
+    scopeRef: run.scopeRef,
+    laneRef: run.laneRef,
+    generation: run.generation,
+    runId: run.runId,
+    runtimeId: runtime.runtimeId,
+    ...(run.transport === 'sdk' || run.transport === 'tmux' || run.transport === 'headless'
+      ? { transport: run.transport }
+      : {}),
+    errorCode: HrcErrorCode.RUN_ABANDONED_BY_RUNTIME,
+    payload: {
+      success: false,
+      source: 'active-run-reconcile',
+      reason: 'run_abandoned_by_runtime',
+      finalizedRunStatus: 'failed',
+      runId: run.runId,
+      runtimeId: runtime.runtimeId,
+      runtimeStatus: runtime.status,
+      lastObservedAt: observed.observedAt,
+      observedSource: observed.observedSource,
+    },
+  })
+  ctx.notifyEvent(event)
+
+  writeServerLog('INFO', 'active_run_reconcile.abandoned_by_runtime', {
+    runId: run.runId,
+    runtimeId: runtime.runtimeId,
+    runtimeStatus: runtime.status,
+    lastObservedAt: observed.observedAt,
+    observedSource: observed.observedSource,
+  })
+
+  return abandonedRunResult(run, runtime, observed, 'repaired')
+}
+
+function abandonedRunResult(
+  run: HrcRunRecord,
+  runtime: HrcRuntimeSnapshot,
+  observed: ObservedRunActivity,
+  status: ReconcileActiveRunResult['status']
+): ReconcileActiveRunResult {
+  return {
+    type: 'run',
+    runId: run.runId,
+    hostSessionId: run.hostSessionId,
+    runtimeId: runtime.runtimeId,
+    transport: reconcileResultTransport(run),
+    status,
+    reason: 'run_abandoned_by_runtime',
+    observedAt: observed.observedAt,
+    observedSource: observed.observedSource,
+    runtimeStatus: runtime.status,
+    // Nothing to clear: the runtime already owns no run. That IS the evidence.
+    runtimeOwnershipCleared: false,
+    ...(status === 'repaired' ? { finalizedRunStatus: 'failed' as const } : {}),
+    ...(status === 'repaired' ? { errorCode: HrcErrorCode.RUN_ABANDONED_BY_RUNTIME } : {}),
+  }
 }
 
 /**
