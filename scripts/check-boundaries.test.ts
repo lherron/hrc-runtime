@@ -46,26 +46,26 @@ describe('check-boundaries diagnostics', () => {
     expect(diagnostic).toContain('EXCEPTION:')
   })
 
-  test('hrcmail scoped guards separate persistence and ingress from orchestration', () => {
+  // The companion ingress guard died with packages/hrc-server/src/mail at the
+  // T-07612 flag day, and findMailScopedViolation lost its layer argument with
+  // it. Only mail persistence still has files to guard.
+  test('mail persistence scoped guard keeps server orchestration out', () => {
     expect(
       findMailScopedViolation(
-        'persistence',
         'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
         'hrc-server'
       )
     ).toContain('persistence')
     expect(
       findMailScopedViolation(
-        'ingress',
-        'packages/hrc-server/src/mail/mail-ingress.ts',
-        '../turn-dispatch-handlers.js'
+        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
+        'hrc-server/dist/broker.js'
       )
-    ).toContain('persist only')
+    ).toContain('persistence')
     expect(
       findMailScopedViolation(
-        'ingress',
-        'packages/hrc-server/src/mail/mail-ingress.ts',
-        'hrc-store-sqlite'
+        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
+        './reply-schema.js'
       )
     ).toBeUndefined()
   })

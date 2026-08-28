@@ -76,9 +76,15 @@ async function readInvocations(logPath: string): Promise<string[]> {
     .catch(() => [])
 }
 
+// LEFTHOOK_BIN is load-bearing: the generated hook falls back to a PATH lookup
+// and, finding nothing, prints "Can't find lefthook in PATH" and exits 0. Every
+// real-hook assertion here then sees an empty invocation log with no explanation
+// of why. Naming the binary the suite already validates against keeps the
+// fixture hermetic instead of inheriting whatever lefthook the caller's PATH has.
 function hookEnvironment(fixture: HookFixture): Record<string, string> {
   return {
     HOOK_INVOCATIONS: fixture.logPath,
+    LEFTHOOK_BIN: lefthookBinary,
     PATH: `${fixture.binDir}:${process.env['PATH'] ?? ''}`,
   }
 }
