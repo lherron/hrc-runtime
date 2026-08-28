@@ -527,15 +527,63 @@ async function steerUrgentIntoBusyTarget(
   return true
 }
 
+/**
+ * The scope's drive slot is held by a kicker attempt that has not finished yet
+ * (T-07644).
+ *
+ * Ordinary mail waits here, and should: the turn-completion wake picks it up,
+ * and claiming a second slot for a scope already mid-drive would double-drive
+ * it. An URGENT envelope does NOT wait. Before this, the `waiting` observation
+ * was a bare `return` placed ABOVE the steer — which lives at the bottom of
+ * `if (attempt === undefined)` — so `--urgent` was unreachable in precisely the
+ * shape it was built for: a worker mid-turn on kicker-driven work. It was
+ * reachable only for a seat busy on a turn the kicker did not start, which is
+ * also why testing the feature against any visibly-busy seat passes while the
+ * defect ships.
+ *
+ * And it LOGS, unconditionally. The instrumented fall-through below already
+ * carries the reason — a silent decline is indistinguishable from a dead kicker
+ * — and that lesson shipped directly above a bare unlogged return that declined
+ * for a different reason. This line is also what makes "how often was a target
+ * busy" answerable: a scope in this shape never reached `target_busy` at all,
+ * so a zero counter looked identical to a quiet node.
+ */
+async function declineForInFlightAttempt(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  attempt: HrcMailDriveAttempt,
+  session: HrcSessionRecord | undefined,
+  actionable: readonly WrkqEnvelope[],
+  wakeReason: HrcMailDriveWakeReason
+): Promise<void> {
+  // No session means the drive that owns the slot has not reached one yet;
+  // there is no live turn to steer into, so the decline is all there is.
+  const steered =
+    session === undefined
+      ? false
+      : await steerUrgentIntoBusyTarget(server, targetSessionRef, session, actionable, wakeReason)
+  writeServerLog('INFO', 'wrkq.kicker.attempt_in_flight', {
+    ...(steered ? { urgentSteered: true } : {}),
+    targetSessionRef,
+    wakeReason,
+    driveAttemptId: attempt.driveAttemptId,
+    runId: attempt.runId,
+    pending: actionable.length,
+  })
+}
+
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   wakeReason: HrcMailDriveWakeReason
 ): Promise<void> {
   let attempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
+  // Held rather than returned on: the decline needs the pending set and the
+  // session, and both are read below. See `declineForInFlightAttempt`.
+  let inFlight: HrcMailDriveAttempt | undefined
   if (attempt !== undefined) {
     const observation = observeAttempt(server, attempt)
-    if (observation === 'waiting') return
+    if (observation === 'waiting') inFlight = attempt
     if (observation === 'finished') attempt = undefined
   }
 
@@ -550,6 +598,18 @@ async function driveMailTargetOnce(
       error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
       'wrkq.kicker.pending_view_failed',
       { targetSessionRef, wakeReason, error: errorText(error) }
+    )
+    return
+  }
+
+  if (inFlight !== undefined) {
+    await declineForInFlightAttempt(
+      server,
+      targetSessionRef,
+      inFlight,
+      session,
+      actionable,
+      wakeReason
     )
     return
   }
