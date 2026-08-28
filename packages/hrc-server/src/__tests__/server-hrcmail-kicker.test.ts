@@ -88,7 +88,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       Reflect.deleteProperty(process.env, 'HRC_MAIL_KICKER_ENABLED')
       Reflect.deleteProperty(process.env, 'HRC_MAIL_MAX_ROUNDS')
       expect(resolveHrcMailKickerEnabled({} as never)).toBe(false)
-      expect(resolveHrcMailMaxRounds({} as never)).toBe(5)
+      expect(resolveHrcMailMaxRounds({} as never)).toBe(3)
 
       process.env['HRC_MAIL_KICKER_ENABLED'] = '1'
       process.env['HRC_MAIL_MAX_ROUNDS'] = '7'
@@ -96,7 +96,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       expect(resolveHrcMailMaxRounds({} as never)).toBe(7)
 
       process.env['HRC_MAIL_MAX_ROUNDS'] = '7.5'
-      expect(resolveHrcMailMaxRounds({} as never)).toBe(5)
+      expect(resolveHrcMailMaxRounds({} as never)).toBe(3)
     } finally {
       if (originalEnabled === undefined) {
         Reflect.deleteProperty(process.env, 'HRC_MAIL_KICKER_ENABLED')

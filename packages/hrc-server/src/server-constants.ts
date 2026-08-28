@@ -54,7 +54,7 @@ export const DEFAULT_ATTACHED_START_READY_TIMEOUT_MS = 120_000
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS = 1_000
-export const DEFAULT_HRC_MAIL_MAX_ROUNDS = 5
+export const DEFAULT_HRC_MAIL_MAX_ROUNDS = 3
 
 /**
  * T-07575 session retention. The session store keeps every row forever (the
