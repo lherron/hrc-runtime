@@ -80,7 +80,13 @@ export function mapDmToWrkcSay(
 
   const argv = ['say', ref, ...(message !== undefined ? [message] : []), '--to', to]
 
-  if (opts.steer || opts.urgent) argv.push('--urgent')
+  // T-07612 rev 4: one delivery class. `--steer`/`--urgent` are accepted and
+  // dropped — every say reaches the seat in-flight; nothing waits for idle.
+  if (opts.steer || opts.urgent) {
+    notices.push(
+      'hrcchat: --steer/--urgent dropped: every wrkc say delivers in-flight (T-07612 rev 4)'
+    )
+  }
   if (opts.wait !== undefined) argv.push('--wait')
   if (opts.timeout !== undefined) argv.push('--timeout', opts.timeout)
   if (opts.json) argv.push('--json')

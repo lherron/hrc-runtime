@@ -9,6 +9,7 @@ import { timestamp } from '../server-util.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import {
+  completeRun,
   installMailKickerAgentHome,
   serverInternals,
   waitUntil,
@@ -40,12 +41,6 @@ const SCOPE = 'agent:kicker-proof:project:hrc-runtime:task:T-07644'
 const SENDER = 'mable@hrc-runtime:T-07644'
 
 /** One honest T-07203 success class; which one is that contract's business. */
-const PRESENTED_TO_LIVE_HARNESS = {
-  code: 'presented_to_live_harness',
-  delivery: 'presented',
-  deliverySemantics: 'pane_presentation',
-  ackSemantics: 'pane_write_only',
-} as const
 
 let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
@@ -94,7 +89,7 @@ type Dispatch = { whenBusy: string; prompt: string; runId?: string | undefined }
  * STEER call is distinguished by `whenBusy`, so "the steer was reached" is
  * observable rather than inferred from a body appearing somewhere.
  */
-function installShapeOneDispatch(steerOutcome: unknown | 'throw'): () => Dispatch[] {
+function installShapeOneDispatch(steerOutcome: 'accept' | 'throw'): () => Dispatch[] {
   const instance = server as HrcServer
   const calls: Dispatch[] = []
   let driveRunId: string | undefined
@@ -104,12 +99,25 @@ function installShapeOneDispatch(steerOutcome: unknown | 'throw'): () => Dispatc
     prompt: string,
     options: { runId?: string | undefined; whenBusy?: string | undefined }
   ): Promise<Response> => {
-    const whenBusy = options.whenBusy ?? 'reject'
+    // rev 4: a slot-less mid-turn delivery carries no runId; the ordinary
+    // drive carries the attempt's. Neither carries `whenBusy` any more.
+    const whenBusy = options.runId === undefined ? 'queued' : 'drive'
     calls.push({ whenBusy, prompt, runId: options.runId })
-    if (whenBusy === 'steer') {
-      if (steerOutcome === 'throw') throw new Error('no steerable broker endpoint')
-      return Response.json({ runId: driveRunId, delivery: steerOutcome })
+    expect(options.whenBusy).toBeUndefined()
+    if (whenBusy === 'queued') {
+      if (steerOutcome === 'throw') throw new Error('broker refused the input')
+      return Response.json({
+        runId: 'run-queued',
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: `rt-${session.hostSessionId}`,
+        transport: 'headless',
+        status: 'started',
+        inputId: 'input-queued',
+        supportsInFlightInput: false,
+      })
     }
+    void driveRunId
 
     const db = serverInternals(instance).db
     const runId = options.runId as string
@@ -199,137 +207,115 @@ async function withServerLog<T>(run: (lines: string[]) => Promise<T>): Promise<s
   return lines
 }
 
-describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt', () => {
-  it('steers an urgent envelope into the turn the kicker itself started', async () => {
+describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attempt', () => {
+  it('queues a plain envelope into the turn the kicker itself started', async () => {
     await startServer()
-    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
 
-    const urgent = say({ urgent: true, body: 'the urgent body' })
+    const mail = say({ body: 'the mid-turn body' })
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
         () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
-        'in-flight decline logged'
+        'in-flight line logged'
       )
     })
 
-    // POSITIVE: the steer path was entered. Not "no error appeared" -- the old
-    // failure was a bare return, which no absence assertion can distinguish
+    // POSITIVE: the delivery path was entered. Not "no error appeared" -- the
+    // old failure was a bare return, which no absence assertion can distinguish
     // from a working system.
-    const steers = calls().filter((call) => call.whenBusy === 'steer')
-    expect(steers).toHaveLength(1)
-    expect(steers[0]?.prompt ?? '').toContain('the urgent body')
+    const queued = calls().filter((call) => call.whenBusy === 'queued')
+    expect(queued).toHaveLength(1)
+    expect(queued[0]?.prompt ?? '').toContain('the mid-turn body')
 
-    // The ledger carries the receipt, and the redelivery bound did NOT move:
-    // a mid-turn steer is the weakest possible evidence anyone read it.
-    const receipts = ledger.envelopes.get(urgent.id)?.presentedTo ?? []
+    // The ledger carries the receipt, joined to the accepted input, and the
+    // redelivery bound did NOT move: a slot-less delivery advances no round.
+    const receipts = ledger.envelopes.get(mail.id)?.presentedTo ?? []
     expect(receipts).toHaveLength(1)
-    expect(ledger.roundEndedCalls).not.toContain(urgent.id)
-    // The outcome class is DURABLE on the receipt, not only on a log line: a
-    // log rotates and is grepped from one node, the receipt travels with the
-    // envelope (C-16526, re-ruled on C-16658).
-    expect(receipts[0]?.deliveryOutcome).toBe('presented_to_live_harness')
-    // This ratified steer class proves a pane write, not a fresh broker input.
-    // Its once-per-run receipt remains valid without an inputId.
-    expect(receipts[0]?.inputId).toBeUndefined()
+    expect(receipts[0]?.inputId).toBe('input-queued')
+    expect(receipts[0]?.runId).toBe('run-queued')
+    expect(receipts[0]?.deliveryOutcome).toBe('queued_to_live_harness')
+    expect(ledger.roundEndedCalls).not.toContain(mail.id)
 
-    const steered = lines.filter((line) => line.includes('wrkq.kicker.urgent_steered'))
-    expect(steered).toHaveLength(1)
-    expect(steered[0]).toContain('presented_to_live_harness')
-    // The decline line names the attempt holding the slot, and says a steer
-    // landed. Before T-07644 this branch produced no line at all.
+    expect(
+      lines.filter((line) => line.includes('wrkq.kicker.queued_into_busy_target'))
+    ).toHaveLength(1)
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
-    expect(inFlight[0]).toContain('"urgentSteered":true')
+    expect(inFlight[0]).toContain('"queuedDelivery":true')
     expect(inFlight[0]).toContain(TARGET)
     expect(inFlight[0]).toContain('"via":"active-attempt"')
     expect(inFlight[0]).toContain('"observation":"waiting"')
-  })
-
-  it('declines an ordinary envelope out loud instead of returning silently', async () => {
-    await startServer()
-    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
-    await summonIntoKickerTurn(calls)
-
-    const ordinary = say({ body: 'this one can wait for the turn to end' })
-    const lines = await withServerLog(async (captured) => {
-      ;(server as any).requestMailKickerWake(TARGET, 'insert')
-      await waitUntil(
-        () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
-        'in-flight decline logged'
-      )
-    })
-
-    // Waiting is correct for ordinary mail; being INVISIBLE while waiting is
-    // not. A scope in this shape never reached `target_busy`, so a zero counter
-    // read the same as a dead kicker.
-    expect(calls().filter((call) => call.whenBusy === 'steer')).toHaveLength(0)
-    expect(ledger.envelopes.get(ordinary.id)?.state).toBe('pending')
-    expect(ledger.envelopes.get(ordinary.id)?.presentedTo).toEqual([])
-    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
-    expect(inFlight).toHaveLength(1)
-    expect(inFlight[0]).not.toContain('urgentSteered')
-    // The payload names the attempt holding the slot, and is deliberately NOT
-    // `target_busy`: "a drive is in flight here" and "the addressee is mid-turn
-    // on its own run" are different conditions, and one counter cannot mean
-    // both (mable, C-16626).
+    // The slot is still declined -- one kicker drive per scope -- but the mail
+    // never waited on it, and nothing was logged as a busy wait.
     expect(inFlight[0]).toContain('"driveAttemptId"')
-    expect(inFlight[0]).toContain('"runId"')
     expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
-
-    // Only a steer carries the class, so a receipt that has one IS a steer.
-    // The ordinary summon that opened this turn must not have acquired one.
-    const opening = [...ledger.envelopes.values()].find((e) => e.presentedTo.length > 0)
-    expect(opening?.presentedTo[0]?.deliveryOutcome).toBeUndefined()
   })
 
-  it('interrupts the kicker-driven turn at most once for the same envelope', async () => {
+  it('advances the round when the turn it joined ends undisposed (daedalus flaw 1, rev 4)', async () => {
     await startServer()
-    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
+    const db = serverInternals(server as HrcServer).db
+    const holder = db.mailDrives.getActiveAttempt(TARGET)
+    if (holder === undefined) throw new Error('no attempt holds the slot')
 
-    say({ urgent: true })
+    const mail = say({ body: 'ignored mid-turn' })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
     await waitUntil(
-      () => calls().filter((call) => call.whenBusy === 'steer').length === 1,
-      'first steer'
+      () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 1,
+      'mid-turn receipt'
     )
+    // Joined to the attempt holding the slot, not left slot-less: an envelope
+    // nobody answers must still exhaust to `dead` (§6).
+    expect(db.mailDrives.presentationEnvelopeIds(holder.driveAttemptId)).toContain(mail.id)
 
-    // Rounds never advance for a steer, so nothing else bounds this: without
-    // the once-per-run gate every later wake would re-interrupt the same turn.
-    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
-    await Bun.sleep(80)
-    expect(calls().filter((call) => call.whenBusy === 'steer')).toHaveLength(1)
+    await completeRun(server as HrcServer, holder.runId)
+    await waitUntil(() => ledger.roundEndedCalls.includes(mail.id), 'round advanced at turn end')
+    expect(ledger.envelopes.get(mail.id)?.roundCount).toBe(1)
   })
 
-  it('records nothing when the steer fails typed, and still says so', async () => {
+  it('hands the same envelope to the seat at most once per floor window', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+
+    say()
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(
+      () => calls().filter((call) => call.whenBusy === 'queued').length === 1,
+      'first delivery'
+    )
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await Bun.sleep(80)
+    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+  })
+
+  it('records nothing when the broker refuses the input, and still says so', async () => {
     await startServer()
     const calls = installShapeOneDispatch('throw')
     await summonIntoKickerTurn(calls)
 
-    const urgent = say({ urgent: true })
+    const mail = say()
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
         () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
-        'in-flight decline logged'
+        'in-flight line logged'
       )
     })
 
-    expect(calls().filter((call) => call.whenBusy === 'steer')).toHaveLength(1)
-    // Nothing honest could be proven, so no receipt: a presentation that did
-    // not happen is worse recorded than absent. It stays exactly as pending as
-    // it was -- not downgraded to a queue, because the queue is where it is.
-    expect(ledger.envelopes.get(urgent.id)?.presentedTo).toEqual([])
-    expect(ledger.envelopes.get(urgent.id)?.state).toBe('pending')
-    expect(lines.filter((line) => line.includes('wrkq.kicker.urgent_steer_failed'))).toHaveLength(1)
-    // And no receipt means no class: the outcome is written with the
-    // presentation or not at all, never as a standalone claim.
+    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+    expect(ledger.envelopes.get(mail.id)?.presentedTo).toEqual([])
+    expect(ledger.envelopes.get(mail.id)?.state).toBe('pending')
+    expect(lines.filter((line) => line.includes('wrkq.kicker.busy_delivery_failed'))).toHaveLength(
+      1
+    )
     expect(lines.filter((line) => line.includes('deliveryOutcome'))).toHaveLength(0)
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
-    expect(inFlight[0]).not.toContain('urgentSteered')
+    expect(inFlight[0]).not.toContain('queuedDelivery')
   })
 })
 
@@ -349,7 +335,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
  * holding the slot over a run row that is still active, while the runtime shows
  * `ready` with no `activeRunId`. That is a state observed live on max3
  * (T-07653), and it is also the only way the claim race is reachable at all —
- * `targetHasRunningTurn` must be false, or the busy branch answers first.
+ * the runtime must look idle, or the drive's ordinary path answers first.
  */
 describe('T-07644 — the claim route answers the same way the active-attempt route does', () => {
   /** A slot held by an attempt whose run is active, over a NOT-busy runtime. */
@@ -413,12 +399,12 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
     }
   }
 
-  it('steers an urgent envelope discovered through the claim race', async () => {
+  it('queues an envelope discovered through the claim race into the live turn', async () => {
     await startServer()
-    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    const calls = installShapeOneDispatch('accept')
     await holdTheSlotViaClaim('started')
 
-    const urgent = say({ urgent: true, body: 'urgent through the claim race' })
+    const mail = say({ body: 'mail through the claim race' })
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
@@ -427,25 +413,25 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
       )
     })
 
-    const steers = calls().filter((call) => call.whenBusy === 'steer')
-    expect(steers).toHaveLength(1)
-    expect(steers[0]?.prompt ?? '').toContain('urgent through the claim race')
+    const queued = calls().filter((call) => call.whenBusy === 'queued')
+    expect(queued).toHaveLength(1)
+    expect(queued[0]?.prompt ?? '').toContain('mail through the claim race')
 
-    const receipts = ledger.envelopes.get(urgent.id)?.presentedTo ?? []
+    const receipts = ledger.envelopes.get(mail.id)?.presentedTo ?? []
     expect(receipts).toHaveLength(1)
-    expect(receipts[0]?.deliveryOutcome).toBe('presented_to_live_harness')
+    expect(receipts[0]?.deliveryOutcome).toBe('queued_to_live_harness')
 
     // The discriminators are what make the two routes tellable apart in a log.
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).toContain('"via":"claim"')
     expect(inFlight[0]).toContain('"observation":"waiting"')
-    expect(inFlight[0]).toContain('"urgentSteered":true')
+    expect(inFlight[0]).toContain('"queuedDelivery":true')
   })
 
   it('re-drives a finished attempt found by the claim, instead of dropping the wake', async () => {
     await startServer()
-    const calls = installShapeOneDispatch(PRESENTED_TO_LIVE_HARNESS)
+    const calls = installShapeOneDispatch('accept')
     await holdTheSlotViaClaim('completed')
 
     say({ body: 'work that must not be dropped by the race' })
@@ -454,7 +440,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
     // one and drives. Dropping the wake here would strand the envelope until
     // some unrelated later traffic happened to wake the scope again.
     await waitUntil(
-      () => calls().filter((call) => call.whenBusy !== 'steer').length === 1,
+      () => calls().filter((call) => call.whenBusy === 'drive').length === 1,
       'wake re-driven after the finished attempt'
     )
     const db = serverInternals(server as HrcServer).db

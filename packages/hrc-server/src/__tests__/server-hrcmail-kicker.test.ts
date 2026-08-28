@@ -421,7 +421,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'seated scope swept')
   })
 
-  it('leaves a fyi pending at a busy seat and delivers it on turn completion', async () => {
+  it('delivers a fyi into a busy seat at once instead of waiting for turn completion', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -461,28 +461,18 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     const envelope = say({
       obligation: 'fyi',
-      body: 'wait for the active turn to finish',
+      body: 'do not wait for the active turn to finish',
     })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    await Bun.sleep(50)
-    expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(0)
-    expect(ledger.presentRequests).toEqual([])
-    expect(ledger.envelopes.get(envelope.id)).toMatchObject({
-      state: 'pending',
-      terminal: false,
-    })
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
-
-    await completeRun(server as HrcServer, 'run-busy-v1')
-    await waitUntil(() => deterministic.calls() === 1, 'completion-triggered drive')
+    // T-07612 rev 4: one delivery class. The busy seat gets the fyi in-flight.
+    await waitUntil(() => deterministic.calls() === 1, 'busy-seat drive')
     expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(1)
-    await waitUntil(
-      () => ledger.envelopes.get(envelope.id)?.state === 'acked',
-      'completion-triggered fyi commit'
-    )
+    await waitUntil(() => ledger.envelopes.get(envelope.id)?.state === 'acked', 'fyi commit')
+    // preview, then the commit after the broker accepted.
     expect(
       ledger.presentRequests.filter((request) => request.envelope === envelope.id)
     ).toHaveLength(2)
+    expect(deterministic.prompts()[0] ?? '').toContain('do not wait for the active turn to finish')
   })
 
   it('holds a still-presented envelope inside its redelivery floor, doubling per round', async () => {
@@ -570,7 +560,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('failed')
   })
 
-  it('declines a busy target visibly, and drives it the moment its turn ends', async () => {
+  it('drives a busy target at once, naming the turn the input was queued behind', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -613,16 +603,16 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await (server as any).drainMailKickerTarget(TARGET)
     })
-    expect(deterministic.calls()).toBe(0)
-    // A silent decline is indistinguishable from a dead kicker. It must say so.
-    const busy = captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))
-    expect(busy).not.toHaveLength(0)
-    expect(busy[busy.length - 1]).toContain('run-busy-visible')
-    // T-07671: a count cannot answer "is MY envelope the one waiting here".
-    expect(busy[busy.length - 1]).toContain(held.id)
-
-    await completeRun(server as HrcServer, 'run-busy-visible')
-    await waitUntil(() => deterministic.calls() === 1, 'delivered once the turn ended')
+    // T-07612 rev 4: no `target_busy` decline exists. The drive dispatches
+    // with the route's queue policy and says which turn it queued behind.
+    expect(deterministic.calls()).toBe(1)
+    expect(captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(
+      0
+    )
+    const dispatched = captured.lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0]).toContain('"queuedBehindRunId":"run-busy-visible"')
+    expect(dispatched[0]).toContain(held.id)
   })
 
   it('releases the scope slot when this node cannot resolve the target placement', async () => {

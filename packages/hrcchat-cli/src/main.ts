@@ -185,7 +185,7 @@ const dmCmd = program
   .option('--respond-to <kind>', 'human|agent|system (human maps to agent:lance)')
   .option('--reply-to <id>', 'accepted and dropped: in a room the reply is the ack')
   .option('--cross-scope-reply', 'accepted and dropped')
-  .option('--steer', 'maps to `wrkc say --urgent`')
+  .option('--steer', 'accepted and dropped: every wrkc say delivers in-flight')
   .addOption(new Option('--urgent', 'alias for --steer').hideHelp())
   .option('--queue', 'accepted and dropped: queued delivery is the wrkc default')
   .option('--mode <mode>', 'accepted and dropped: use +node=/+model= on the target')
@@ -205,7 +205,7 @@ dmCmd.addHelpText(
   hrcchat dm <target> <body>            ->  wrkc say <target> --to <target> <body>
   hrcchat dm human <body>               ->  wrkc say lance --to lance <body>
   hrcchat dm <t> --wait response        ->  wrkc say <t> --to <t> --wait
-  hrcchat dm <t> --steer                ->  wrkc say <t> --to <t> --urgent
+  hrcchat dm <t> --steer                ->  wrkc say <t> --to <t>   (flag dropped; one delivery class)
   hrcchat dm <t> --follow <d>           ->  hrc monitor watch EN-xxxxx (refused here)
 
 `

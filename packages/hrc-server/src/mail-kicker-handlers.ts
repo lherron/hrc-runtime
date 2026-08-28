@@ -110,11 +110,12 @@ type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
  * `active-attempt` is the ordinary path: the slot was already held when the
  * wake arrived. `claim` is the RACE: two wakes for one scope, where
  * `getActiveAttempt` saw nothing and the claim CAS then reported the slot
- * already active. Both decline for the same reason, so both must decline the
- * same way — steer an urgent envelope, and say so.
+ * already active. Both decline the slot for the same reason, so both must act
+ * the same way — queue the mail into the live turn (rev 4), and say so.
  */
 type InFlightDeclineRoute = 'active-attempt' | 'claim'
 
+/** The run a session is currently busy on, for the busy-decline log line. */
 /**
  * Is this run still genuinely in flight?
  *
@@ -135,28 +136,6 @@ function isDurablyActiveRun(run: HrcRunRecord): boolean {
   return run.status === 'queued' || isRunActive(run)
 }
 
-function targetHasRunningTurn(
-  server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord
-): boolean {
-  for (const runtime of server.db.runtimes.listByHostSessionId(session.hostSessionId)) {
-    if (runtime.activeRunId !== undefined) {
-      const run = server.db.runs.getByRunId(runtime.activeRunId)
-      if (run === null || isDurablyActiveRun(run)) return true
-    }
-    if (
-      runtime.status === 'busy' ||
-      runtime.status === 'awaiting_input' ||
-      runtime.status === 'starting' ||
-      runtime.status === 'stopping'
-    ) {
-      return true
-    }
-  }
-  return false
-}
-
-/** The run a session is currently busy on, for the busy-decline log line. */
 function activeRunIdFor(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord
@@ -441,75 +420,58 @@ function senderGenerationFor(
 }
 
 /**
- * T-07616 — actuate `--urgent` instead of declining on a busy target.
+ * T-07612 rev 4 — present into a seat whose drive slot is already held.
  *
- * Spec §5 always said HRC actuates urgent as "steer-or-fail-typed"; nothing
- * read the flag, so an urgent envelope queued behind a long turn exactly like
- * an ordinary one and the documented lever did nothing. Ruled by mable on
- * T-07616: route it through the ratified T-07203 r7 steer classes unchanged.
+ * The slot exists so two kicker drives never double-drive one scope, and the
+ * attempt holding it releases only when its run ends. Under rev 4 nothing
+ * waits for that: mail arriving while a kicker-driven turn is in flight is
+ * handed to the broker with its ordinary queue policy, exactly as a typed
+ * message would be, and the harness surfaces it mid-turn. No probe, no proof
+ * of preemption, no typed busy failure — the steer class (T-07203) is not on
+ * this path (rev 4 §5).
  *
- * Three properties this path must hold, each the resolution of a named ruling:
- *
- * - SUCCESS IS ANY HONEST CLASS. `admitted_into_active_turn` (actuator proved
- *   turn admission), `presented_to_live_harness` (tmux: only a pane write is
- *   provable, and that is still an honest success) and `started_fresh_turn`
- *   (the target went idle underneath us) all count. Only a state where none of
- *   them can be proven is a failure, and it is never downgraded into a queue.
- *
- * - A STEER DOES NOT ADVANCE THE REDELIVERY BOUND. `roundEnded` is deliberately
- *   NOT called here: rounds measure "shown by a kicker-driven turn and then
- *   ignored", and a mid-turn steer is the weakest possible evidence that anyone
- *   read it. It writes a `presented_to` receipt and nothing else.
- *
- * - ONCE PER ACTIVE RUN. Because rounds never advance, the ordinary floor would
- *   re-steer the same envelope every 60s forever while it stays undisposed. An
- *   envelope already steered into THIS run is skipped, so the target is
- *   interrupted at most once per turn for a given envelope; when that turn
- *   ends, the ordinary kicker-driven path takes over and does advance rounds.
+ * Not a drive of its own (`steer-` attempt id, never claimed), but its round
+ * has to end somewhere (§6 bounded redelivery): the receipt is ATTACHED to the
+ * started attempt holding the slot, so when that attempt's run ends undisposed
+ * `completeStartedAttempt` advances this envelope's round with the rest. The
+ * redelivery floor keeps a presented envelope out of the next sweep. Rendered
+ * without the history cue: only a RECORDING `present` yields it, and the
+ * receipt is written after the broker accepts.
  */
-async function steerUrgentIntoBusyTarget(
+async function presentIntoBusyTarget(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   session: HrcSessionRecord,
+  holder: HrcMailDriveAttempt,
   actionable: readonly WrkqEnvelope[],
   wakeReason: HrcMailDriveWakeReason
 ): Promise<boolean> {
   const activeRunId = activeRunIdFor(server, session)
-  const urgent = actionable.filter(
-    (envelope) =>
-      envelope.urgent &&
-      // Already interrupted this turn with this envelope: saying it twice into
-      // one turn is noise, not urgency.
-      !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
+  const envelopes = actionable.filter(
+    // Already handed to this very turn: saying it twice into one turn is noise.
+    (envelope) => !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
   )
-  if (urgent.length === 0) return false
+  if (envelopes.length === 0) return false
 
-  // Same intent resolution the drive path uses: the session's applied intent
-  // when it has one, otherwise built from the target agent's own profile on
-  // this node. A steer never mints a session — the target is live by
-  // construction — so this only has to be good enough to dispatch with.
   const intent =
     session.lastAppliedIntentJson ??
-    buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, actionableDirectives(urgent))
+    buildKickRuntimeIntent(
+      parseSessionRef(targetSessionRef).scopeRef,
+      actionableDirectives(envelopes)
+    )
   if (intent === undefined) {
-    // No intent to dispatch with. Honest decline, not a silent skip.
-    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_unavailable', {
+    writeServerLog('WARN', 'wrkq.kicker.busy_delivery_unavailable', {
       targetSessionRef,
       wakeReason,
       reason: 'no_runtime_intent_available',
-      envelopes: urgent.map((envelope) => envelope.id),
+      envelopes: envelopes.map((envelope) => envelope.id),
     })
     return false
   }
 
   const driveAttemptId = `steer-${randomUUID()}`
-  // Rendered WITHOUT the history cue: the cue is wrkq's decision and only a
-  // RECORDING `present` yields it, and a receipt written before a steer that
-  // then fails typed would put a presentation in the collaboration ledger that
-  // never happened. The cue is the one line an agent can always replace with
-  // `wrkc log`; a false receipt is not recoverable.
   const presentables: PresentableEnvelope[] = []
-  for (const envelope of urgent) {
+  for (const envelope of envelopes) {
     presentables.push({
       envelope,
       historyHint: false,
@@ -519,78 +481,77 @@ async function steerUrgentIntoBusyTarget(
     })
   }
 
-  let delivery: DispatchTurnResponse['delivery']
-  let steeredRunId: string | undefined
+  let body: DispatchTurnResponse & { inputId?: string | undefined }
   try {
     const response = await server.dispatchTurnForSession(
       session,
       intent,
       formatEnvelopePresentations(presentables),
-      { whenBusy: 'steer', waitForCompletion: false }
+      { waitForCompletion: false }
     )
-    const body = (await response.json()) as DispatchTurnResponse
-    delivery = body.delivery
-    steeredRunId =
-      delivery?.code === 'admitted_into_active_turn'
-        ? delivery.mergedIntoRunId
-        : delivery?.code === 'presented_to_live_harness'
-          ? delivery.presentedDuringRunId
-          : body.runId
+    body = (await response.json()) as DispatchTurnResponse & { inputId?: string | undefined }
+    if (body.status !== 'started') {
+      throw new Error(`busy delivery did not start (status=${body.status})`)
+    }
   } catch (error) {
-    // Typed failure: nothing honest can be claimed, so nothing is recorded and
-    // the envelope stays exactly as pending as it was. NOT a downgrade to the
-    // queue — the queue is simply where it already was.
-    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_failed', {
+    // Nothing honest can be claimed, so nothing is recorded and the envelope
+    // stays exactly as pending as it was; the next wake retries.
+    writeServerLog('WARN', 'wrkq.kicker.busy_delivery_failed', {
       targetSessionRef,
       wakeReason,
       driveAttemptId,
       activeRunId,
-      envelopes: urgent.map((envelope) => envelope.id),
+      envelopes: envelopes.map((envelope) => envelope.id),
       error: errorText(error),
     })
     return false
   }
 
-  if (delivery === undefined) {
-    writeServerLog('WARN', 'wrkq.kicker.urgent_steer_failed', {
-      targetSessionRef,
-      wakeReason,
-      driveAttemptId,
-      activeRunId,
-      envelopes: urgent.map((envelope) => envelope.id),
-      error: 'dispatch returned no delivery outcome',
-    })
-    return false
-  }
-
-  const runtimeId = presentationRuntimeIdFor(server, session)
-  for (const envelope of urgent) {
+  const inputId = body.inputId ?? server.db.runs.getByRunId(body.runId)?.dispatchedInputId
+  const runtimeId = body.runtimeId ?? presentationRuntimeIdFor(server, session)
+  for (const envelope of envelopes) {
     await server.wrkqLedger.present({
       envelope: envelope.id,
       node: server.federationNodeId,
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
       driveAttemptId,
-      // The outcome CLASS goes on the RECEIPT, not only on the log line below
-      // (C-16526, ruled again on T-07644 C-16658). A log line rotates and is
-      // grepped from one node; the receipt is the durable record of how this
-      // delivery landed, readable by anyone holding the envelope. It is written
-      // only here, so a receipt carrying it is by construction a steer.
-      deliveryOutcome: delivery.code,
-      ...(steeredRunId === undefined ? {} : { runId: steeredRunId }),
+      deliveryOutcome: body.delivery?.code ?? 'queued_to_live_harness',
+      runId: body.runId,
+      ...(inputId === undefined ? {} : { inputId }),
       ...(runtimeId === undefined ? {} : { runtimeId }),
     })
   }
 
-  writeServerLog('INFO', 'wrkq.kicker.urgent_steered', {
+  // The round-completing join. A holder that has already finished by now is
+  // not an error: its completion advanced nothing for these ids, so the next
+  // wake re-drives them through an ordinary attempt, which does.
+  let attachedTo: string | undefined
+  try {
+    server.db.mailDrives.attachToStartedAttempt(
+      holder.driveAttemptId,
+      envelopes.map((envelope) => envelope.id)
+    )
+    attachedTo = holder.driveAttemptId
+  } catch (error) {
+    writeServerLog('WARN', 'wrkq.kicker.busy_delivery_unattached', {
+      targetSessionRef,
+      driveAttemptId,
+      holderAttemptId: holder.driveAttemptId,
+      envelopes: envelopes.map((envelope) => envelope.id),
+      error: errorText(error),
+    })
+  }
+
+  writeServerLog('INFO', 'wrkq.kicker.queued_into_busy_target', {
     targetSessionRef,
     wakeReason,
     driveAttemptId,
-    // The outcome CLASS is the whole point of the T-07203 contract: it says
-    // what was actually proven, not merely that something was sent.
-    outcome: delivery.code,
-    runId: steeredRunId,
-    envelopes: urgent.map((envelope) => envelope.id),
+    activeRunId,
+    runId: body.runId,
+    ...(inputId === undefined ? {} : { inputId }),
+    ...(attachedTo === undefined ? {} : { roundsAttachedTo: attachedTo }),
+    envelopes: envelopes.map((envelope) => envelope.id),
   })
   return true
 }
@@ -599,15 +560,11 @@ async function steerUrgentIntoBusyTarget(
  * The scope's drive slot is held by a kicker attempt that has not finished yet
  * (T-07644).
  *
- * Ordinary mail waits here, and should: the turn-completion wake picks it up,
- * and claiming a second slot for a scope already mid-drive would double-drive
- * it. An URGENT envelope does NOT wait. Before this, the `waiting` observation
- * was a bare `return` placed ABOVE the steer — which lives at the bottom of
- * `if (attempt === undefined)` — so `--urgent` was unreachable in precisely the
- * shape it was built for: a worker mid-turn on kicker-driven work. It was
- * reachable only for a seat busy on a turn the kicker did not start, which is
- * also why testing the feature against any visibly-busy seat passes while the
- * defect ships.
+ * The SLOT is declined — claiming a second one for a scope already mid-drive
+ * would double-drive it — but the MAIL does not wait (T-07612 rev 4): it is
+ * queued into the live turn by `presentIntoBusyTarget`, slot-less. Before rev 4
+ * only `--urgent` took that path, and before T-07644 even that was unreachable
+ * here — a bare `return` sat above it.
  *
  * And it LOGS, unconditionally. The instrumented fall-through below already
  * carries the reason — a silent decline is indistinguishable from a dead kicker
@@ -634,12 +591,19 @@ async function declineForInFlightAttempt(
 ): Promise<void> {
   // No session means the drive that owns the slot has not reached one yet;
   // there is no live turn to steer into, so the decline is all there is.
-  const steered =
+  const queued =
     session === undefined
       ? false
-      : await steerUrgentIntoBusyTarget(server, targetSessionRef, session, actionable, wakeReason)
+      : await presentIntoBusyTarget(
+          server,
+          targetSessionRef,
+          session,
+          attempt,
+          actionable,
+          wakeReason
+        )
   writeServerLog('INFO', 'wrkq.kicker.drive_in_flight', {
-    ...(steered ? { urgentSteered: true } : {}),
+    ...(queued ? { queuedDelivery: true } : {}),
     targetSessionRef,
     wakeReason,
     driveAttemptId: attempt.driveAttemptId,
@@ -952,33 +916,10 @@ async function driveMailTargetOnce(
   }
 
   if (attempt === undefined) {
-    if (session !== undefined && targetHasRunningTurn(server, session)) {
-      // An urgent envelope does not wait for the turn to end (T-07616): it
-      // steers into the live turn through the ratified steer classes, or fails
-      // typed and stays pending. Everything else falls through to the decline.
-      const steered = await steerUrgentIntoBusyTarget(
-        server,
-        targetSessionRef,
-        session,
-        actionable,
-        wakeReason
-      )
-      // Not a failure: a busy target keeps its obligation until its own turn
-      // ends, and the turn-completion wake picks it up. Logged because a
-      // SILENT decline is indistinguishable from a dead kicker — which is
-      // exactly the conclusion two readers reached from its absence.
-      writeServerLog('INFO', 'wrkq.kicker.target_busy', {
-        ...(steered ? { urgentSteered: true } : {}),
-        targetSessionRef,
-        wakeReason,
-        pending: actionable.length,
-        // T-07671: the count answers "is anything waiting"; the ids answer
-        // "is MY envelope waiting", which is the question an RCA actually asks.
-        envelopeIds: actionable.map((envelope) => envelope.id),
-        activeRunId: activeRunIdFor(server, session),
-      })
-      return
-    }
+    // T-07612 rev 4: a busy target is NOT a reason to wait. The drive below
+    // dispatches with the broker's ordinary busy policy (queue into the live
+    // harness), so the envelope reaches the seat mid-turn the way a typed
+    // message would. There is no `target_busy` decline any more.
     // A fyi is presented into a live generation if there is one, and otherwise
     // waits. It is NEVER the reason a session is born (§5), so a wake set that
     // holds nothing else stops here rather than at the summon gate.
@@ -1105,27 +1046,6 @@ async function driveMailTargetOnce(
       generation: session.generation,
     })
 
-    if (targetHasRunningTurn(server, session)) {
-      // T-07671: this is a SECOND busy check, after the seat was resolved or
-      // summoned, and until now it was a bare return — the one shape where a
-      // claimed attempt is abandoned mid-drive with no line at all. It is not
-      // `target_busy`: that names a decline taken BEFORE a claim, and merging
-      // the two would destroy the counter that ended four wrong root causes
-      // (T-07644 C-16626). This one leaves an attempt holding the scope's slot,
-      // which is the fact an operator needs, so it says so and names the
-      // attempt.
-      writeServerLog('WARN', 'wrkq.kicker.drive_yielded_busy', {
-        targetSessionRef,
-        driveAttemptId: attempt.driveAttemptId,
-        runId: attempt.runId,
-        wakeReason,
-        envelopeIds: actionable.map((envelope) => envelope.id),
-        activeRunId: activeRunIdFor(server, session),
-        note: 'target went busy after the claim; attempt still holds the scope slot',
-      })
-      return
-    }
-
     // The local receipt is written FIRST, then the ledger is told with the same
     // attempt id. A kill in between replays into an exactly-once `present`.
     const envelopeIds = server.db.mailDrives.presentForAttempt(
@@ -1158,6 +1078,9 @@ async function driveMailTargetOnce(
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
 
+    // Read BEFORE the dispatch: the route moves the runtime's active run onto
+    // the new input, so afterwards this would name our own run.
+    const queuedBehindRunId = activeRunIdFor(server, session)
     const response = await server.dispatchTurnForSession(
       session,
       session.lastAppliedIntentJson ?? materializationIntent,
@@ -1165,7 +1088,9 @@ async function driveMailTargetOnce(
       {
         runId: attempt.runId,
         waitForCompletion: false,
-        whenBusy: 'reject',
+        // T-07612 rev 4: no `whenBusy: 'reject'`. Undefined lets the route send
+        // the broker its queue policy, which the broker applies only if the
+        // harness reports a turn active — the hrcchat-dm default, restored.
       }
     )
     const body = (await response.json()) as DispatchTurnResponse & {
@@ -1195,6 +1120,12 @@ async function driveMailTargetOnce(
       generation: body.generation,
       inputId,
       wakeReason,
+      // rev 4: the broker queued this input behind the seat's live turn; the
+      // harness surfaces it in-flight. Named so `grep <scope>` can tell a
+      // fresh turn from a mid-turn delivery.
+      ...(queuedBehindRunId === undefined || queuedBehindRunId === attempt.runId
+        ? {}
+        : { queuedBehindRunId }),
     })
     const committedRuntimeId = body.runtimeId ?? runtimeId
     await commitPresentations(server, presentables, attempt, session, committedRuntimeId, inputId)

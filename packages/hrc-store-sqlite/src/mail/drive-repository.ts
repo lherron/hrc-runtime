@@ -376,6 +376,43 @@ export class HrcMailDriveRepository {
   }
 
   /**
+   * Attach envelopes presented MID-TURN to the started attempt that holds the
+   * scope slot (T-07612 rev 4).
+   *
+   * A presentation queued into a live kicker-driven turn is not a drive of its
+   * own, but its round has to end somewhere: it joins the attempt whose run it
+   * was handed to, so `completeStartedAttempt` advances its round when that run
+   * ends undisposed. Returns the ids newly attached (already-attached ids are
+   * skipped). Refuses an attempt that is not started or does not own its slot.
+   */
+  attachToStartedAttempt(driveAttemptId: string, envelopeIds: readonly string[]): string[] {
+    return this.db
+      .transaction(() => {
+        const attempt = this.requireAttempt(driveAttemptId)
+        const slot = this.getSlot(attempt.targetSessionRef)
+        if (slot?.activeDriveAttemptId !== driveAttemptId) {
+          throw new Error(`mail drive attempt ${driveAttemptId} does not own its scope slot`)
+        }
+        if (attempt.state !== 'started') {
+          throw new Error(`mail drive attempt ${driveAttemptId} is ${attempt.state}, not started`)
+        }
+        const before = new Set(this.presentationEnvelopeIds(driveAttemptId))
+        const now = new Date().toISOString()
+        for (const envelopeId of envelopeIds) {
+          this.db
+            .query(
+              `INSERT OR IGNORE INTO hrcmail_drive_presentations (
+                 drive_attempt_id, envelope_id, presented_at
+               ) VALUES (?, ?, ?)`
+            )
+            .run(driveAttemptId, envelopeId, now)
+        }
+        return this.presentationEnvelopeIds(driveAttemptId).filter((id) => !before.has(id))
+      })
+      .immediate() as string[]
+  }
+
+  /**
    * Install the composed section 7 injection text on a claimed attempt.
    *
    * The prompt is only knowable after presentation, because it IS the presented

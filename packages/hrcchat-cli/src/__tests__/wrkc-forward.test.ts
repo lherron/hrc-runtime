@@ -37,9 +37,11 @@ describe('mapDmToWrkcSay', () => {
     expect(argv[argv.indexOf('--to') + 1]).toBe('clod@hrc-runtime:primary')
   })
 
-  it('maps steer and its deprecated alias onto --urgent', () => {
-    expect(forward('a@b:primary', 'x', { steer: true }).argv).toContain('--urgent')
-    expect(forward('a@b:primary', 'x', { urgent: true }).argv).toContain('--urgent')
+  it('drops steer and its deprecated alias: one delivery class (T-07612 rev 4)', () => {
+    const steered = forward('a@b:primary', 'x', { steer: true })
+    expect(steered.argv).not.toContain('--urgent')
+    expect(steered.notices.some((n) => n.includes('--steer/--urgent dropped'))).toBe(true)
+    expect(forward('a@b:primary', 'x', { urgent: true }).argv).not.toContain('--urgent')
   })
 
   it('maps --wait response onto the group wait, carrying the timeout', () => {

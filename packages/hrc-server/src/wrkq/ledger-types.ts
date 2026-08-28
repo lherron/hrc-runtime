@@ -59,7 +59,6 @@ export type WrkqEnvelope = {
   state: WrkqEnvelopeState
   terminal: boolean
   roundCount: number
-  urgent: boolean
   /** HRC birth directives, stored verbatim by wrkq and parsed here at kick time. */
   materializationIntent?: string | undefined
   presentedTo: WrkqEnvelopePresentation[]
@@ -245,5 +244,4 @@ export type WrkqEnvelopeCreatedPayload = {
   to_principal_ref?: string
   obligation?: string
   materialization_intent?: string
-  urgent?: boolean
 }
