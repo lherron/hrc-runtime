@@ -26,6 +26,8 @@
  * The establish fence refuses only ANOTHER tier-5 birth that disagrees with it.
  */
 
+import { formatScopeRef, parseScopeHandle, parseScopeRef } from 'agent-scope'
+
 import type { BindingRegistry, BirthDesignationResult } from 'hrc-store-sqlite'
 
 /** The wrkq birth-envelope read, as the host performs it. Null means none. */
@@ -48,6 +50,35 @@ export class BirthEnvelopeUnavailableError extends Error {
     )
     this.name = 'BirthEnvelopeUnavailableError'
   }
+}
+
+/**
+ * The wrkq spelling of the sender, converted to the registry's.
+ *
+ * wrkq stores the HANDLE (`clod@hrc-runtime:T-07655`) — the short form an agent
+ * types — while the registry keys every row on the canonical ref
+ * (`agent:clod:project:hrc-runtime:task:T-07655`). This is the same seam
+ * `ledger-scope.ts` documents for the TARGET, and it has to be crossed for the
+ * SENDER too: the sender arrives on a ledger row, and feeding a handle straight
+ * to `getRecord` throws `ScopeRef must start with "agent:<agentId>"`.
+ *
+ * Both spellings are accepted because `wrkc say --scope-ref` takes either, and a
+ * ledger row is whatever the sender wrote. An unparseable value is NOT an error:
+ * it is a sender that names no scope, which is already the `none` case.
+ */
+function canonicalSenderScopeRef(raw: string): string | undefined {
+  const value = raw.trim().split('/lane:')[0]?.trim()
+  if (value === undefined || value.length === 0) return undefined
+  for (const parse of [parseScopeRef, parseScopeHandle]) {
+    try {
+      const parsed = parse(value)
+      if (parsed.projectId === undefined || parsed.projectId === '') return undefined
+      return formatScopeRef(parsed)
+    } catch {
+      // Not this spelling; try the other.
+    }
+  }
+  return undefined
 }
 
 export type DesignateBirthHostDeps = {
@@ -94,10 +125,12 @@ export async function designateBirthOnHost(
   // principal (a human). Neither names a placeable home, and per the spec
   // NOTHING is recorded: a decision must not be taken before the sender's
   // capability to answer it is known.
-  const senderScopeRef = birthEnvelope?.from.scopeRef
-  if (birthEnvelope === null || senderScopeRef === undefined || senderScopeRef.length === 0) {
+  const rawSender = birthEnvelope?.from.scopeRef
+  if (birthEnvelope === null || rawSender === undefined || rawSender.length === 0) {
     return { kind: 'none' }
   }
+  const senderScopeRef = canonicalSenderScopeRef(rawSender)
+  if (senderScopeRef === undefined) return { kind: 'none' }
 
   const sender = deps.registry.getRecord(senderScopeRef)
   if (sender === undefined) return { kind: 'none' }

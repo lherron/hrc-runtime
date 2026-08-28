@@ -100,6 +100,76 @@ describe('T-07655 designateBirthOnHost', () => {
     }
   })
 
+  /**
+   * The spelling the LEDGER actually uses.
+   *
+   * wrkq stores `from_scope_ref` as the HANDLE an agent types
+   * (`clod@hrc-runtime:T-07655`); the registry keys every row on the canonical
+   * ref. Feeding the handle straight to `getRecord` throws
+   * `ScopeRef must start with "agent:<agentId>"`, which `designateBirthOnHost`
+   * then wrapped as an unavailable registry — so on the live fleet EVERY
+   * designation refused retryably and no upgraded node could birth a virgin
+   * scope at all. Observed on svc 2026-08-28T05:58:15Z.
+   *
+   * The unit fixtures above did not catch it because they were hand-written in
+   * canonical form: a double built from my own idea of the wire agreed with my
+   * own mistake. This case is written in the spelling the ledger really emits.
+   */
+  test('the sender arrives in wrkq HANDLE spelling and still resolves', async () => {
+    const store = await registry()
+    try {
+      bindSender(store, 'max3')
+      const result = await designateBirthOnHost(
+        { registry: store, birthEnvelopeFor: envelopeFrom('mable@wrkq:primary') },
+        TARGET
+      )
+      expect(result).toMatchObject({
+        kind: 'designated',
+        designation: { homeNodeId: 'max3', provenance: 'default_home_node(sender)' },
+      })
+      // Recorded canonically, so it compares directly against a binding row.
+      expect(result.kind === 'designated' ? result.designation.senderScopeRef : undefined).toBe(
+        SENDER
+      )
+    } finally {
+      store.close()
+    }
+  })
+
+  test('a lane suffix on the sender is execution vocabulary, not part of the scope', async () => {
+    const store = await registry()
+    try {
+      bindSender(store, 'svc')
+      const result = await designateBirthOnHost(
+        {
+          registry: store,
+          birthEnvelopeFor: envelopeFrom('agent:mable:project:wrkq:task:primary/lane:main'),
+        },
+        TARGET
+      )
+      expect(result).toMatchObject({ kind: 'designated', designation: { homeNodeId: 'svc' } })
+    } finally {
+      store.close()
+    }
+  })
+
+  // A sender that names no parseable scope is the `none` class, NOT an outage:
+  // reporting it as unavailable would refuse the birth on every node forever.
+  test('an unparseable sender designates nothing and is not an outage', async () => {
+    const store = await registry()
+    try {
+      bindSender(store, 'max3')
+      const result = await designateBirthOnHost(
+        { registry: store, birthEnvelopeFor: envelopeFrom('not a scope at all') },
+        TARGET
+      )
+      expect(result).toEqual({ kind: 'none' })
+      expect(store.designationHistory(TARGET)).toEqual([])
+    } finally {
+      store.close()
+    }
+  })
+
   // Acceptance 1(d), bound sender.
   test('a bound sender designates its own home', async () => {
     const store = await registry()
