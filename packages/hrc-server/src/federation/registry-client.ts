@@ -868,6 +868,16 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
 
     const refused = refusedForStatus(response.status)
     if (refused !== undefined) throw refused
+    if (response.status === 404) {
+      // A registry host that predates T-07655 does not serve this route, and a
+      // host that has designated nothing is exactly what that means. Reporting
+      // it as unreachable instead would refuse every virgin implicit birth on
+      // an upgraded node until the HOST upgraded too — a fleet-wide dispatch
+      // outage for the whole length of a rollout window, caused by the very
+      // change meant to make births orderly. An upgraded host never 404s here:
+      // it answers 200 or 503, so this is unambiguous.
+      return { kind: 'none' }
+    }
     if (response.status === 503) {
       // The host could not read wrkq. Retryable and, crucially, NOT `none`:
       // treating an outage as "nothing designated" would drop every node back
@@ -915,6 +925,9 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
     )
     const refused = refusedForStatus(response.status)
     if (refused !== undefined) throw refused
+    // Same rollout rule as designateBirth: an older host serves no designations,
+    // so locate reports none rather than rendering the whole layer as unknown.
+    if (response.status === 404) return { outcome: 'none' }
     if (response.status !== 200) {
       throw new RegistryUnreachableError(
         `federation binding registry returned unexpected status ${response.status}`

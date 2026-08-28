@@ -11,6 +11,10 @@ import {
   designateBirthOnHost,
 } from '../federation/birth-designation.js'
 import type { BirthEnvelopeReader } from '../federation/birth-designation.js'
+import {
+  HttpBindingRegistryClient,
+  RegistryUnreachableError,
+} from '../federation/registry-client.js'
 
 /**
  * T-07655 — the registry HOST's designation routine.
@@ -223,5 +227,56 @@ describe('T-07655 designateBirthOnHost', () => {
     } finally {
       store.close()
     }
+  })
+})
+
+/**
+ * Rollout safety across a mixed fleet.
+ *
+ * The registry HOST is one node (mini/svc); every other node is a client. The
+ * prescribed rollout upgrades max3 first, so for the length of that window an
+ * upgraded client asks a host that has never heard of the route. If that 404
+ * read as "unreachable", the gate would refuse every virgin implicit birth on
+ * the upgraded node — a fleet-wide dispatch outage caused by the very change
+ * meant to make births orderly.
+ */
+describe('T-07655 mixed-fleet rollout', () => {
+  function httpClientAgainst(status: number, body: unknown = { ok: false, error: 'not_found' }) {
+    return new HttpBindingRegistryClient(
+      {
+        nodeId: 'svc',
+        endpoint: 'http://100.64.0.1:9/',
+        registryEndpoint: 'http://100.64.0.1:9/',
+        token: { reveal: () => 'secret', matches: () => true },
+      } as unknown as ConstructorParameters<typeof HttpBindingRegistryClient>[0],
+      {
+        fetch: async () =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          }),
+        log: () => {},
+      }
+    )
+  }
+
+  test('a registry host that predates the route designates nothing, and is not an outage', async () => {
+    const client = httpClientAgainst(404)
+    expect(await client.designateBirth?.('agent:cody:project:hrc-runtime:task:T-07655')).toEqual({
+      kind: 'none',
+    })
+    expect(await client.readDesignation?.('agent:cody:project:hrc-runtime:task:T-07655')).toEqual({
+      outcome: 'none',
+    })
+  })
+
+  test('a host that CAN read designations but cannot read wrkq is still an outage', async () => {
+    // The distinction is the whole point: 404 is "no such capability here",
+    // 503 is "I have the capability and could not use it". Only the second may
+    // ever be answered by falling back to a local birth — and it is not.
+    const client = httpClientAgainst(503, { ok: false, error: 'runtime_unavailable' })
+    await expect(
+      client.designateBirth?.('agent:cody:project:hrc-runtime:task:T-07655')
+    ).rejects.toThrow(RegistryUnreachableError)
   })
 })
