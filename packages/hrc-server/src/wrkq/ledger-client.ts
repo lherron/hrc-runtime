@@ -150,7 +150,7 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
   }
 
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView> {
-    return this.call<WrkqRoomView>('wrkq.room.show', params)
+    return this.call<WrkqRoomView>('wrkq.room.show', { principalRef: this.principalRef, ...params })
   }
 
   async eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView> {
@@ -180,7 +180,11 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
       jsonrpc: '2.0',
       id,
       method,
-      params: { principalRef: this.principalRef, ...params },
+      // T-07647: wrkqd names every undeclared param in its log and will refuse
+      // them again after the consumer audit. Only methods whose params declare
+      // principalRef receive it (roomShow); caller identity for the rest comes
+      // from the child's WRKQ_PRINCIPAL_REF environment.
+      params,
     })}\n`
 
     const settled = new Promise<T>((resolve, reject) => {
