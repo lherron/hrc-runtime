@@ -143,9 +143,9 @@ Gotchas worth not re-deriving:
 
 agent-control-plane pins ASP and HRC as operator-managed *producer tuples* and
 advances them only through its own governed `just advance-producers` inside a
-coordinated deployment window. Its
-[docs/producer-advance.md](../agent-control-plane/docs/producer-advance.md) names
-producer `sync-downstream`, `just pull-deps`, routine `just install`, and a moving
+coordinated deployment window. Its own
+`docs/producer-advance.md` (in the agent-control-plane repo) names producer
+`sync-downstream`, `just pull-deps`, routine `just install`, and a moving
 `latest` tag as mechanisms that must never move that tuple — a producer's install
 publishes a node-local set and moves `latest`, and that side effect is not a
 release signal for ACP.
