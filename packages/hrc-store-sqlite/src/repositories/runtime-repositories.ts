@@ -669,6 +669,14 @@ export class RuntimeRepository {
   }
 }
 
+/** Statuses that may never overwrite a run that already carries completed_at (T-07656). */
+const NON_TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  'queued',
+  'accepted',
+  'started',
+  'running',
+])
+
 const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'hostSessionId', column: 'host_session_id' },
   { key: 'runtimeId', column: 'runtime_id' },
@@ -1011,7 +1019,23 @@ export class RunRepository {
   }
 
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {
-    const entries = collectPatchEntries(patch, RUN_UPDATE_SPEC)
+    // T-07656 run-terminal monotonicity at the store boundary. A run that
+    // carries `completed_at` has answered its caller; a later start/accept
+    // stamp (a dispatch path racing the zombie sweep or the reconciler) must not
+    // move `status` back off terminal, or the row reads "running" with a
+    // completed_at older than its started_at and every reconcile pass — which
+    // defines non-terminal as `completed_at IS NULL` — skips it forever (346 such
+    // rows on max3, 18 on svc, 2026-08-28). The event-mapper already guards its
+    // own turn.started rewrite (T-07235); this makes every writer honour it.
+    let effective: RunUpdatePatch = patch
+    if (patch.status !== undefined && NON_TERMINAL_RUN_STATUSES.has(patch.status)) {
+      const current = this.getByRunId(runId)
+      if (current?.completedAt !== undefined) {
+        const { status: _status, startedAt: _startedAt, acceptedAt: _acceptedAt, ...rest } = patch
+        effective = rest
+      }
+    }
+    const entries = collectPatchEntries(effective, RUN_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByRunId(runId)

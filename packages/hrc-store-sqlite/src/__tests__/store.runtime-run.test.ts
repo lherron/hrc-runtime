@@ -698,3 +698,66 @@ describe('RunRepository', () => {
 // ---------------------------------------------------------------------------
 // 6. LaunchRepository
 // ---------------------------------------------------------------------------
+
+describe('RunRepository.update — run-terminal monotonicity (T-07656)', () => {
+  it('a start stamp cannot move a terminal run back off terminal', () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const now = ts()
+      db.sessions.insert({
+        hostSessionId: 'hsid-t07656',
+        scopeRef: testScopeRef('scope-t07656'),
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runs.insert({
+        runId: 'run-t07656',
+        hostSessionId: 'hsid-t07656',
+        scopeRef: testScopeRef('scope-t07656'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'headless',
+        status: 'failed',
+        completedAt: '2026-08-27T22:13:53.000Z',
+        updatedAt: now,
+      })
+
+      // The late dispatch-side stamp (broker-interactive-handlers / sdk-dispatch shape).
+      const after = db.runs.update('run-t07656', {
+        status: 'started',
+        startedAt: '2026-08-27T22:14:57.000Z',
+        updatedAt: '2026-08-27T22:14:57.000Z',
+      })
+      expect(after?.status).toBe('failed')
+      expect(after?.startedAt).toBeUndefined()
+      expect(after?.completedAt).toBe('2026-08-27T22:13:53.000Z')
+      // Non-status fields in the same patch still land.
+      expect(after?.updatedAt).toBe('2026-08-27T22:14:57.000Z')
+
+      // A run with no completed_at still accepts the ordinary start stamp.
+      db.runs.insert({
+        runId: 'run-t07656-live',
+        hostSessionId: 'hsid-t07656',
+        scopeRef: testScopeRef('scope-t07656'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'headless',
+        status: 'accepted',
+        updatedAt: now,
+      })
+      const live = db.runs.update('run-t07656-live', {
+        status: 'started',
+        startedAt: now,
+        updatedAt: now,
+      })
+      expect(live?.status).toBe('started')
+      expect(live?.startedAt).toBe(now)
+    } finally {
+      db.close()
+    }
+  })
+})
