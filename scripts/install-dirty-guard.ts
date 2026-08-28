@@ -15,7 +15,8 @@
  * which is exactly what the guard should refuse.
  */
 import { spawnSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
@@ -158,6 +159,107 @@ function poisonMessage(setting: string, configPath: string, fix: string): string
   ].join('\n')
 }
 
+/**
+ * An install builds and publishes the tree on disk into a shared release lane,
+ * so it has to be certain WHICH tree it is grading.
+ *
+ * `git` answers about the nearest enclosing repository, not about the directory
+ * you asked it about. An export lane — `var/install/hrc-dev/tree` is one, made
+ * by `git archive` and carrying no `.git` of its own — therefore has every git
+ * probe in this guard walk up and answer for an ancestor. Measured: from that
+ * tree, `git rev-parse --show-toplevel` reports `~/praesidium`, the praesidium
+ * ROOT repo, and `git status --porcelain -uno` reports it clean. The dirty guard
+ * and the poison guard both pass on a repository that has nothing to do with the
+ * code about to be published.
+ *
+ * The package.json in that export says `"name": "hrc-runtime"`, exactly like the
+ * real checkout, so the tree cannot identify itself. Only the git toplevel
+ * separates them.
+ *
+ * Not gated on allow-dirty: this is misdirection about which tree is being
+ * installed, not a decision to install uncommitted work.
+ */
+export type TreeIdentity = {
+  /** `git rev-parse --show-toplevel`; undefined when the tree is in no repository. */
+  toplevel: string | undefined
+  originUrl: string | undefined
+  /** `name` from the tree's OWN root package.json, not from any enclosing repo. */
+  packageName: string | undefined
+}
+
+export function readTreeIdentity(sourceRoot: string): TreeIdentity {
+  const toplevel = git(sourceRoot, ['rev-parse', '--path-format=absolute', '--show-toplevel'])
+  const origin = git(sourceRoot, ['config', '--get', 'remote.origin.url'])
+  let packageName: string | undefined
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(sourceRoot, 'package.json'), 'utf8'))
+    const name =
+      parsed !== null && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)['name']
+        : undefined
+    if (typeof name === 'string' && name !== '') packageName = name
+  } catch {}
+  return {
+    toplevel: toplevel.status === 0 && toplevel.stdout.trim() ? toplevel.stdout.trim() : undefined,
+    originUrl: origin.status === 0 && origin.stdout.trim() ? origin.stdout.trim() : undefined,
+    packageName,
+  }
+}
+
+/** The repository name an `origin` URL points at, sans `.git` suffix. */
+export function repoNameFromRemote(url: string): string | undefined {
+  const trimmed = url.trim().replace(/\/+$/, '')
+  const lastSegment = trimmed.split(/[/:]/).pop()
+  if (lastSegment === undefined || lastSegment === '') return undefined
+  return lastSegment.replace(/\.git$/, '')
+}
+
+/**
+ * The message to refuse with, or undefined when the tree is what it claims.
+ * Pure over its inputs so every refusal is testable without building an export
+ * lane on disk.
+ */
+export function treeIdentityMessage(
+  identity: TreeIdentity,
+  sourceRoot: string
+): string | undefined {
+  if (identity.toplevel === undefined) {
+    return identityMessage(
+      `${sourceRoot} is not inside any git repository`,
+      'An install publishes into a shared release lane and must be traceable to a commit.'
+    )
+  }
+  if (realpathOrSelf(identity.toplevel) !== realpathOrSelf(sourceRoot)) {
+    return identityMessage(
+      `${sourceRoot} has no .git of its own`,
+      `Every git probe in this guard answered for ${identity.toplevel} instead, so the dirty and poison checks graded that repository, not this tree. This is what an export lane (git archive, no .git) looks like — install from the checkout the code is committed in.`
+    )
+  }
+  const remoteRepo =
+    identity.originUrl === undefined ? undefined : repoNameFromRemote(identity.originUrl)
+  if (remoteRepo === undefined) {
+    return identityMessage(
+      `${sourceRoot} has no origin remote`,
+      'Without one the tree cannot be identified as the repository it claims to be.'
+    )
+  }
+  if (identity.packageName !== undefined && remoteRepo !== identity.packageName) {
+    return identityMessage(
+      `${sourceRoot} declares package "${identity.packageName}" but sits in repository "${remoteRepo}"`,
+      `origin is ${identity.originUrl}. A tree whose package and repository disagree is the wrong tree for this install.`
+    )
+  }
+  return undefined
+}
+
+function identityMessage(finding: string, detail: string): string {
+  return [
+    '[install] refusing to install: cannot establish which tree is being installed.',
+    `[install]   ${finding}`,
+    `[install] ${detail}`,
+  ].join('\n')
+}
+
 function parseCli(argv: string[]): { allowDirty: boolean; sourceRoot: string } {
   let sourceRoot = process.cwd()
   const tokens: string[] = []
@@ -181,6 +283,17 @@ if (import.meta.main) {
   )
   if (poisoned) {
     console.error(poisoned)
+    process.exit(1)
+  }
+  // After the poison check, which owns the more specific diagnosis: core.bare
+  // makes `rev-parse --show-toplevel` fail, and that must not be reported here
+  // as "not inside any git repository".
+  const misidentified = treeIdentityMessage(
+    readTreeIdentity(options.sourceRoot),
+    options.sourceRoot
+  )
+  if (misidentified) {
+    console.error(misidentified)
     process.exit(1)
   }
   const paths = readDirtyTrackedPaths(options.sourceRoot)

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,7 +11,10 @@ import {
   gitConfigPoisonMessage,
   readDirtyTrackedPaths,
   readGitConfigOverrides,
+  readTreeIdentity,
   refusalMessage,
+  repoNameFromRemote,
+  treeIdentityMessage,
 } from './install-dirty-guard'
 
 describe('dirtyTrackedPaths', () => {
@@ -171,5 +174,130 @@ describe('readGitConfigOverrides', () => {
     expect(gitConfigPoisonMessage(overrides, repo)).toContain('core.bare = true')
 
     git('config', '--unset', 'core.bare')
+  })
+})
+
+describe('repoNameFromRemote', () => {
+  test('names the repository behind each remote form', () => {
+    expect(repoNameFromRemote('git@github.com:lherron/hrc-runtime.git')).toBe('hrc-runtime')
+    expect(repoNameFromRemote('https://github.com/lherron/hrc-runtime.git')).toBe('hrc-runtime')
+    expect(repoNameFromRemote('ssh://git.example.test/praesidium.git')).toBe('praesidium')
+    expect(repoNameFromRemote('/srv/git/hrc-runtime/')).toBe('hrc-runtime')
+  })
+})
+
+describe('treeIdentityMessage', () => {
+  const root = '/Users/lherron/praesidium/hrc-runtime'
+
+  test('a checkout that is its own repository root is not refused', () => {
+    expect(
+      treeIdentityMessage(
+        {
+          toplevel: root,
+          originUrl: 'git@github.com:lherron/hrc-runtime.git',
+          packageName: 'hrc-runtime',
+        },
+        root
+      )
+    ).toBeUndefined()
+  })
+
+  test('refuses a tree whose git probes answer for an ancestor', () => {
+    const message = treeIdentityMessage(
+      {
+        toplevel: '/Users/lherron/praesidium',
+        originUrl: 'git@github.com:lherron/praesidium.git',
+        // The export carries the real checkout's package.json verbatim, so its
+        // own name cannot tell it apart from the repository it was cut from.
+        packageName: 'hrc-runtime',
+      },
+      '/Users/lherron/praesidium/var/install/hrc-dev/tree'
+    )
+    expect(message).toContain('has no .git of its own')
+    expect(message).toContain('/Users/lherron/praesidium')
+    expect(message).toContain('export lane')
+  })
+
+  test('refuses a tree that is in no repository at all', () => {
+    expect(
+      treeIdentityMessage(
+        { toplevel: undefined, originUrl: undefined, packageName: 'hrc-runtime' },
+        root
+      )
+    ).toContain('is not inside any git repository')
+  })
+
+  test('refuses a repository root that cannot identify itself', () => {
+    // `git init` over an export lane makes the toplevel match; the missing
+    // origin is then the only thing left that says which repository this is.
+    expect(
+      treeIdentityMessage(
+        { toplevel: root, originUrl: undefined, packageName: 'hrc-runtime' },
+        root
+      )
+    ).toContain('has no origin remote')
+  })
+
+  test('refuses a tree whose package and repository disagree', () => {
+    const message = treeIdentityMessage(
+      {
+        toplevel: root,
+        originUrl: 'git@github.com:lherron/praesidium.git',
+        packageName: 'hrc-runtime',
+      },
+      root
+    )
+    expect(message).toContain('declares package "hrc-runtime"')
+    expect(message).toContain('sits in repository "praesidium"')
+  })
+})
+
+describe('readTreeIdentity over the export lane that motivated the guard', () => {
+  let repo: string
+  let exportLane: string
+
+  beforeAll(() => {
+    repo = realpathSync(mkdtempSync(join(tmpdir(), 'install-tree-identity-')))
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, {
+        cwd: repo,
+        encoding: 'utf8',
+        env: environmentWithoutGitOverrides(),
+      })
+      if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`)
+    }
+    git('init', '--quiet')
+    git('remote', 'add', 'origin', 'git@github.com:lherron/praesidium.git')
+    writeFileSync(join(repo, 'package.json'), '{"name":"praesidium"}\n')
+
+    // The hazard, built the way `git archive` builds it: a tree with the real
+    // package.json and no .git, sitting inside another repository.
+    exportLane = join(repo, 'var', 'install', 'hrc-dev', 'tree')
+    mkdirSync(exportLane, { recursive: true })
+    writeFileSync(join(exportLane, 'package.json'), '{"name":"hrc-runtime"}\n')
+  })
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  test('every git probe answers for the enclosing repository, and the tree reads clean', () => {
+    const identity = readTreeIdentity(exportLane)
+    expect(realpathSync(identity.toplevel ?? '')).toBe(repo)
+    expect(identity.originUrl).toBe('git@github.com:lherron/praesidium.git')
+    expect(identity.packageName).toBe('hrc-runtime')
+    // This is why the guard was needed: the pre-existing checks see nothing wrong.
+    expect(readDirtyTrackedPaths(exportLane)).toEqual([])
+    expect(gitConfigPoisonMessage(readGitConfigOverrides(exportLane), exportLane)).toBeUndefined()
+  })
+
+  test('the identity guard refuses it, naming the repository that would have been graded', () => {
+    const message = treeIdentityMessage(readTreeIdentity(exportLane), exportLane)
+    expect(message).toContain('has no .git of its own')
+    expect(message).toContain(repo)
+  })
+
+  test('the repository root it was cut from is still accepted', () => {
+    expect(treeIdentityMessage(readTreeIdentity(repo), repo)).toBeUndefined()
   })
 })
