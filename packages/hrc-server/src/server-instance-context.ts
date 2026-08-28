@@ -201,6 +201,15 @@ type HrcServerInstanceDataForHandlers = {
    * silence the other's line.
    */
   readonly mailKickerForeignHomeAnnounced: Map<string, string>
+  /**
+   * T-07655 — birth deferrals already announced, keyed by scopeRef with value
+   * `<homeNodeId>@<designationEpoch>`, so the line is written once per scope
+   * per designation epoch. Its OWN map, for the same reason the one above is:
+   * a deferral and a foreign-home skip are different facts about a scope and
+   * neither may silence the other. Keying on the epoch rather than the scope
+   * re-arms the line after a tier-1-4 establishment supersedes a designation.
+   */
+  readonly mailKickerBirthDeferredAnnounced: Map<string, string>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number

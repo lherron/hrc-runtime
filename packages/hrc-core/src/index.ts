@@ -501,6 +501,10 @@ export type {
 
 export type {
   BirthAuthorityProvenance,
+  BirthDesignationProvenance,
+  BirthDesignationRecord,
+  BirthDesignationResult,
+  BirthDesignationState,
   EstablishmentProvenance,
   FederationBirthClass,
   FederationGateModeValue,
@@ -534,6 +538,7 @@ export type {
   LocateBirthChain,
   LocateBirthChainLink,
   LocateDeclaredPolicy,
+  LocateDesignationView,
   LocateLedgerView,
   LocateNote,
   LocateObservation,

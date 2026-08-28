@@ -847,6 +847,7 @@ class HrcServerInstance implements HrcServer {
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
   readonly mailKickerForeignHomeAnnounced = new Map<string, string>()
+  readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
   shadowTeardownInFlight: Promise<void> | undefined
@@ -1075,6 +1076,11 @@ class HrcServerInstance implements HrcServer {
           peers,
           registryPath: resolveBindingRegistryPath(options.stateRoot),
           localNodeId: federationConfig.nodeId,
+          // Resolved at call time, not here: `this.wrkqLedger` is constructed
+          // later in this same constructor, and the host reads the birth
+          // envelope only when a designation is actually asked for (T-07655).
+          birthEnvelopeFor: async (scopeRef: string) =>
+            await this.wrkqLedger.birthEnvelope({ scopeRef }),
           sqliteBusyTimeoutMs: options.sqliteBusyTimeoutMs,
         })
         this.federationRegistryEndpoint = this.bindingRegistryEndpoint.url

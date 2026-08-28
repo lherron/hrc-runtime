@@ -5,6 +5,9 @@ import { dirname } from 'node:path'
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type {
   BirthAuthorityProvenance,
+  BirthDesignationProvenance,
+  BirthDesignationRecord,
+  BirthDesignationState,
   EstablishmentProvenance,
   FederationBirthClass,
   FederationPlacementBinding,
@@ -19,6 +22,10 @@ import type { ScopeRetirementRecord } from './federation-reconciliation.js'
  */
 export type {
   BirthAuthorityProvenance,
+  BirthDesignationProvenance,
+  BirthDesignationRecord,
+  BirthDesignationResult,
+  BirthDesignationState,
   EstablishmentProvenance,
   FederationBirthClass,
 } from 'hrc-core'
@@ -79,6 +86,37 @@ export type EstablishBindingInput = Omit<
 export type BindingEstablishResult =
   | { outcome: 'created' | 'existing'; binding: PlacementBinding }
   | { outcome: 'retired'; retirement: RegistryRetirementRecord }
+  /**
+   * T-07655 — the establish fence. Returned ONLY for a tier-5 designated
+   * establishment (`default_home_node(sender|sender-retired)`) whose node is
+   * not the live designation's home. Every other provenance is unfenced: tiers
+   * 1-4 supersede the designation instead, in this same transaction.
+   */
+  | { outcome: 'designation-mismatch'; designation: BirthDesignationRecord }
+
+/** Recording input for a designation the registry host has already derived. */
+export type RecordBirthDesignationInput = {
+  scopeRef: string
+  homeNodeId: string
+  provenance: BirthDesignationProvenance
+  birthEnvelopeId: string
+  senderScopeRef: string
+  now: string
+}
+
+/** Tier-1-4 provenances: they supersede a live designation, never lose to it. */
+const SUPERSEDING_PROVENANCE = new Set<EstablishmentProvenance>([
+  'pin',
+  'task_default',
+  'default_home_node',
+  'explicit_local',
+])
+
+/** The two provenances the establish fence is allowed to refuse. */
+const DESIGNATED_PROVENANCE = new Set<EstablishmentProvenance>([
+  'default_home_node(sender)',
+  'default_home_node(sender-retired)',
+])
 
 export type BindingCasInput = {
   scopeRef: string
@@ -188,6 +226,47 @@ const REGISTRY_COLUMNS = `
   retirement_reason,
   successor_node_id
 `
+
+const DESIGNATION_COLUMNS = `
+  scope_ref,
+  designation_epoch,
+  home_node_id,
+  provenance,
+  birth_envelope_id,
+  sender_scope_ref,
+  designated_at,
+  state,
+  superseded_by,
+  superseded_at
+`
+
+type DesignationRow = {
+  scope_ref: string
+  designation_epoch: number
+  home_node_id: string
+  provenance: BirthDesignationProvenance
+  birth_envelope_id: string
+  sender_scope_ref: string
+  designated_at: string
+  state: BirthDesignationState
+  superseded_by: EstablishmentProvenance | null
+  superseded_at: string | null
+}
+
+function mapDesignation(row: DesignationRow): BirthDesignationRecord {
+  return {
+    scopeRef: row.scope_ref,
+    homeNodeId: row.home_node_id,
+    provenance: row.provenance,
+    birthEnvelopeId: row.birth_envelope_id,
+    senderScopeRef: row.sender_scope_ref,
+    designationEpoch: row.designation_epoch,
+    designatedAt: row.designated_at,
+    state: row.state,
+    ...(row.superseded_by === null ? {} : { supersededBy: row.superseded_by }),
+    ...(row.superseded_at === null ? {} : { supersededAt: row.superseded_at }),
+  }
+}
 
 const LEDGER_COLUMNS = `
   scope_ref,
@@ -371,6 +450,8 @@ function ensurePlacementLedgerSchema(db: Database): void {
           'task_default',
           'default_home_node',
           'default_home_node(local)',
+          'default_home_node(sender)',
+          'default_home_node(sender-retired)',
           'explicit_local',
           'rebind'
         )
@@ -386,13 +467,16 @@ function ensurePlacementLedgerSchema(db: Database): void {
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
     )
     .get('placement_ledger')?.sql
-  if (schema?.includes("'task_default'")) return
+  if (schema?.includes("'default_home_node(sender)'")) return
 
-  // T-06697 widens a CHECK-constrained vocabulary. SQLite cannot alter a
-  // CHECK in place, so preserve every row while rebuilding the table once.
+  // T-06697 widened this CHECK-constrained vocabulary; T-07655 widens it again
+  // with the two designated tier-5 provenances. SQLite cannot alter a CHECK in
+  // place, so preserve every row while rebuilding the table once. The gate
+  // tests for the NEWEST value on purpose: keying it on 'task_default' would
+  // have skipped every table the previous rebuild already produced.
   db.transaction(() => {
     db.exec(`
-      ALTER TABLE placement_ledger RENAME TO placement_ledger_legacy_t06697;
+      ALTER TABLE placement_ledger RENAME TO placement_ledger_legacy_t07655;
       CREATE TABLE placement_ledger (
         scope_ref TEXT PRIMARY KEY,
         home_node_id TEXT NOT NULL,
@@ -406,6 +490,8 @@ function ensurePlacementLedgerSchema(db: Database): void {
             'task_default',
             'default_home_node',
             'default_home_node(local)',
+            'default_home_node(sender)',
+            'default_home_node(sender-retired)',
             'explicit_local',
             'rebind'
           )
@@ -415,8 +501,8 @@ function ensurePlacementLedgerSchema(db: Database): void {
         updated_at TEXT NOT NULL
       );
       INSERT INTO placement_ledger (${LEDGER_COLUMNS})
-      SELECT ${LEDGER_COLUMNS} FROM placement_ledger_legacy_t06697;
-      DROP TABLE placement_ledger_legacy_t06697;
+      SELECT ${LEDGER_COLUMNS} FROM placement_ledger_legacy_t07655;
+      DROP TABLE placement_ledger_legacy_t07655;
     `)
   }).immediate()
 }
@@ -584,6 +670,8 @@ function createRegistryTable(db: Database): void {
           'task_default',
           'default_home_node',
           'default_home_node(local)',
+          'default_home_node(sender)',
+          'default_home_node(sender-retired)',
           'explicit_local',
           'rebind'
         )
@@ -616,6 +704,46 @@ function createRegistryTable(db: Database): void {
   `)
 }
 
+/**
+ * The tier-5 birth designations (T-07655), deliberately in the REGISTRY
+ * database rather than a node-local one.
+ *
+ * Co-location is the whole mechanism: a tier-1-4 establishment must supersede a
+ * live designation in the SAME SQLite transaction that writes the binding, and
+ * the establish fence must read the designation under that transaction too. A
+ * designation living in another file could only be updated after the binding
+ * committed, which is a window in which the two records disagree.
+ *
+ * The partial unique index is the structural half of idempotency: at most ONE
+ * live designation per scope exists, so a second designateBirth for a scope
+ * already designated cannot mint a second row even if two hosts raced.
+ */
+function createBirthDesignationTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS birth_designation (
+      scope_ref TEXT NOT NULL,
+      designation_epoch INTEGER NOT NULL CHECK (designation_epoch >= 1),
+      home_node_id TEXT NOT NULL,
+      provenance TEXT NOT NULL CHECK (
+        provenance IN ('default_home_node(sender)', 'default_home_node(sender-retired)')
+      ),
+      birth_envelope_id TEXT NOT NULL,
+      sender_scope_ref TEXT NOT NULL,
+      designated_at TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('live', 'superseded')),
+      superseded_by TEXT,
+      superseded_at TEXT,
+      PRIMARY KEY (scope_ref, designation_epoch),
+      CHECK (
+        (state = 'live' AND superseded_by IS NULL AND superseded_at IS NULL) OR
+        (state = 'superseded' AND superseded_by IS NOT NULL AND superseded_at IS NOT NULL)
+      )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS birth_designation_live_idx
+      ON birth_designation(scope_ref) WHERE state = 'live';
+  `)
+}
+
 export type OpenBindingRegistryOptions = {
   busyTimeoutMs?: number | undefined
 }
@@ -638,15 +766,31 @@ function createRegistryDatabase(path: string, options: OpenBindingRegistryOption
     .get('binding_registry')?.sql
   if (schema === undefined) {
     createRegistryTable(db)
+    createBirthDesignationTable(db)
     return db
   }
-  if (schema.includes("state TEXT NOT NULL CHECK (state IN ('active', 'retired'))")) return db
+  createBirthDesignationTable(db)
+  if (schema.includes("'default_home_node(sender)'")) return db
 
-  // Existing registry rows are all active. Upgrade them in one SQLite
-  // transaction so no observer can see a half-migrated authority table.
+  // T-06681 added the retirement state; T-07655 widens the establishment
+  // vocabulary with the two designated tier-5 provenances. Both are rebuilds of
+  // a CHECK SQLite cannot alter in place, and the same copy handles either
+  // starting shape: pre-T-06681 rows are all active, and a post-T-06681 table
+  // already carries the state column the copy names.
+  const legacyActiveOnly = !schema.includes(
+    "state TEXT NOT NULL CHECK (state IN ('active', 'retired'))"
+  )
   db.transaction(() => {
     db.exec('ALTER TABLE binding_registry RENAME TO binding_registry_legacy_t06681;')
     createRegistryTable(db)
+    if (!legacyActiveOnly) {
+      db.exec(`
+        INSERT INTO binding_registry (${REGISTRY_COLUMNS})
+        SELECT ${REGISTRY_COLUMNS} FROM binding_registry_legacy_t06681;
+        DROP TABLE binding_registry_legacy_t06681;
+      `)
+      return
+    }
     db.exec(`
       INSERT INTO binding_registry (
         scope_ref,
@@ -726,6 +870,88 @@ export class BindingRegistry {
       .map(mapRegistryRecord)
   }
 
+  /** The one live tier-5 designation for a scope, if it has one (T-07655). */
+  liveDesignation(scopeRef: string): BirthDesignationRecord | undefined {
+    const row = this.sqlite
+      .query<DesignationRow, [string]>(
+        `SELECT ${DESIGNATION_COLUMNS} FROM birth_designation
+          WHERE scope_ref = ? AND state = 'live'`
+      )
+      .get(canonicalScopeRef(scopeRef))
+    return row === null ? undefined : mapDesignation(row)
+  }
+
+  /**
+   * The designation locate reports: the LIVE one, or the most recent superseded
+   * one when a declared tier has since won. A superseded row is kept and shown
+   * because it is the only record of why a scope was born where it was.
+   */
+  latestDesignation(scopeRef: string): BirthDesignationRecord | undefined {
+    const row = this.sqlite
+      .query<DesignationRow, [string]>(
+        `SELECT ${DESIGNATION_COLUMNS} FROM birth_designation
+          WHERE scope_ref = ? ORDER BY designation_epoch DESC LIMIT 1`
+      )
+      .get(canonicalScopeRef(scopeRef))
+    return row === null ? undefined : mapDesignation(row)
+  }
+
+  /** Every designation a scope has ever had, oldest first. Locate reads it. */
+  designationHistory(scopeRef: string): BirthDesignationRecord[] {
+    return this.sqlite
+      .query<DesignationRow, [string]>(
+        `SELECT ${DESIGNATION_COLUMNS} FROM birth_designation
+          WHERE scope_ref = ? ORDER BY designation_epoch`
+      )
+      .all(canonicalScopeRef(scopeRef))
+      .map(mapDesignation)
+  }
+
+  /**
+   * Records a designation the host has already derived, and returns the live
+   * one either way.
+   *
+   * IDEMPOTENT BY CONSTRUCTION. A scope that already has a live designation
+   * gets that row back untouched — a second caller, a re-asking kicker, and a
+   * sender that has since retired and reactivated all converge on the FIRST
+   * answer, which is what makes the designation a stable fact rather than a
+   * per-asker one. The epoch advances only after a supersession clears the
+   * live row.
+   */
+  recordDesignation(input: RecordBirthDesignationInput): BirthDesignationRecord {
+    const scopeRef = canonicalScopeRef(input.scopeRef)
+    const homeNodeId = requireNodeId(input.homeNodeId, 'homeNodeId')
+    return this.sqlite
+      .transaction(() => {
+        const live = this.liveDesignation(scopeRef)
+        if (live !== undefined) return live
+        const previous = this.sqlite
+          .query<{ epoch: number | null }, [string]>(
+            'SELECT MAX(designation_epoch) AS epoch FROM birth_designation WHERE scope_ref = ?'
+          )
+          .get(scopeRef)?.epoch
+        const designationEpoch = (previous ?? 0) + 1
+        this.sqlite
+          .query(
+            `INSERT INTO birth_designation (${DESIGNATION_COLUMNS})
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'live', NULL, NULL)`
+          )
+          .run(
+            scopeRef,
+            designationEpoch,
+            homeNodeId,
+            input.provenance,
+            input.birthEnvelopeId,
+            input.senderScopeRef,
+            input.now
+          )
+        const stored = this.liveDesignation(scopeRef)
+        if (stored === undefined) throw new Error('birth designation insert did not store a row')
+        return stored
+      })
+      .immediate() as BirthDesignationRecord
+  }
+
   establish(input: EstablishBindingInput): BindingEstablishResult {
     const scopeRef = canonicalScopeRef(input.scopeRef)
     const homeNodeId = requireNodeId(input.homeNodeId, 'homeNodeId')
@@ -741,6 +967,30 @@ export class BindingRegistry {
         if (current?.state === 'retired') {
           return { outcome: 'retired', retirement: current }
         }
+
+        // The T-07655 fence and its supersession, both inside the transaction
+        // that writes the binding. A designation is a tier-5 DEFAULT: it can
+        // refuse only another tier-5 establishment that disagrees with it, and
+        // every declared tier clears it by winning rather than by asking.
+        const designation = this.liveDesignation(scopeRef)
+        if (designation !== undefined && current === undefined) {
+          if (
+            DESIGNATED_PROVENANCE.has(input.establishmentProvenance) &&
+            homeNodeId !== designation.homeNodeId
+          ) {
+            return { outcome: 'designation-mismatch', designation }
+          }
+          if (SUPERSEDING_PROVENANCE.has(input.establishmentProvenance)) {
+            this.sqlite
+              .query(
+                `UPDATE birth_designation
+                    SET state = 'superseded', superseded_by = ?, superseded_at = ?
+                  WHERE scope_ref = ? AND designation_epoch = ?`
+              )
+              .run(input.establishmentProvenance, input.now, scopeRef, designation.designationEpoch)
+          }
+        }
+
         if (current?.state === 'active') {
           const binding = activeBinding(current)
           if (binding === undefined) throw new Error('active registry record mapping failed')

@@ -2,6 +2,8 @@ import type { WrkqLedgerClient } from '../../wrkq/ledger-client.js'
 import { WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
 import type {
   WrkqEnvelope,
+  WrkqEnvelopeBirth,
+  WrkqEnvelopeBirthEnvelopeParams,
   WrkqEnvelopeObligation,
   WrkqEnvelopePendingView,
   WrkqEnvelopePendingViewParams,
@@ -143,6 +145,32 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
         .filter((e) => e.obligation === 'reply_required' && e.state === 'presented')
         .map((e) => e.id),
       repended: 0,
+    }
+  }
+
+  /**
+   * T-07655 — the birth envelope: the LOWEST-seq `reply_required` row addressed
+   * to the scope, in ANY state. The fake reproduces the real rule rather than
+   * "the oldest pending one", because state-independence is the whole property
+   * a designation rests on.
+   */
+  async birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null> {
+    this.guard('wrkq.envelope.birthEnvelope')
+    const candidates = [...this.envelopes.values()]
+      .filter(
+        (envelope) =>
+          envelope.obligation === 'reply_required' && envelope.to?.scopeRef === params.scopeRef
+      )
+      .sort((a, b) => a.id.localeCompare(b.id))
+    const first = candidates[0]
+    if (first === undefined) return null
+    return {
+      envelopeId: first.id,
+      seq: Number(first.id.slice(3)),
+      from: {
+        principalRef: first.from.principalRef,
+        ...(first.from.scopeRef === undefined ? {} : { scopeRef: first.from.scopeRef }),
+      },
     }
   }
 

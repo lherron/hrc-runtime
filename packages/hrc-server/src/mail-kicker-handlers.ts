@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { HrcDomainError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcLifecycleEvent,
@@ -765,6 +766,99 @@ function skipForeignHomedTarget(
   })
 }
 
+/**
+ * A gate refusal that is a BIRTH DEFERRAL rather than a drive failure (T-07655).
+ *
+ * Two reasons qualify, and both mean the same thing operationally: this node
+ * takes no part in the birth, and there is nothing wrong with it or with the
+ * mail. Before this existed they fell into the generic catch and printed
+ * `drive_failed`, which is how three nodes racing for one birth looked like
+ * three broken drives.
+ */
+type BirthDeferral = {
+  reason:
+    | 'birth-designated-elsewhere'
+    | 'designated-home-unreachable'
+    | 'birth-designation-mismatch'
+  homeNodeId: string
+  designationEpoch: number
+  birthEnvelopeId: string
+  senderScopeRef: string
+  provenance: string
+}
+
+function birthDeferralFor(error: unknown): BirthDeferral | undefined {
+  if (!(error instanceof HrcDomainError)) return undefined
+  const reason = error.detail['reason']
+  if (
+    reason !== 'birth-designated-elsewhere' &&
+    reason !== 'designated-home-unreachable' &&
+    reason !== 'birth-designation-mismatch'
+  ) {
+    return undefined
+  }
+  const designation = error.detail['birthDesignation']
+  if (!isRecord(designation)) return undefined
+  const homeNodeId = designation['homeNodeId']
+  const designationEpoch = designation['designationEpoch']
+  const birthEnvelopeId = designation['birthEnvelopeId']
+  const senderScopeRef = designation['senderScopeRef']
+  const provenance = designation['provenance']
+  if (
+    typeof homeNodeId !== 'string' ||
+    typeof designationEpoch !== 'number' ||
+    typeof birthEnvelopeId !== 'string' ||
+    typeof senderScopeRef !== 'string' ||
+    typeof provenance !== 'string'
+  ) {
+    return undefined
+  }
+  return { reason, homeNodeId, designationEpoch, birthEnvelopeId, senderScopeRef, provenance }
+}
+
+/**
+ * Finish a deferred attempt and say so ONCE per scope per designation epoch.
+ *
+ * The attempt must be FINISHED, not merely annotated: a claimed attempt owns
+ * the scope's drive slot, and a scope this node will never birth would hold its
+ * own slot forever (the T-07653 invariant, and the same trap
+ * `placement_unresolvable` documents above).
+ */
+function deferBirthForTarget(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  scopeRef: string,
+  attempt: HrcMailDriveAttempt,
+  deferral: BirthDeferral,
+  wakeReason: HrcMailDriveWakeReason
+): void {
+  const failedAttemptId =
+    server.db.mailDrives.getAttempt(attempt.driveAttemptId)?.state === 'claimed'
+      ? server.db.mailDrives.failWithoutStart(
+          attempt.driveAttemptId,
+          `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`
+        ).driveAttemptId
+      : undefined
+
+  const announcement = `${deferral.homeNodeId}@${deferral.designationEpoch}`
+  const alreadyAnnounced = server.mailKickerBirthDeferredAnnounced.get(scopeRef) === announcement
+  server.mailKickerBirthDeferredAnnounced.set(scopeRef, announcement)
+  if (alreadyAnnounced) return
+
+  writeServerLog('INFO', 'wrkq.kicker.birth_deferred', {
+    targetSessionRef,
+    scopeRef,
+    birthEnvelopeId: deferral.birthEnvelopeId,
+    senderScopeRef: deferral.senderScopeRef,
+    homeNodeId: deferral.homeNodeId,
+    provenance: deferral.provenance,
+    designationEpoch: deferral.designationEpoch,
+    reason: deferral.reason,
+    wakeReason,
+    ...(failedAttemptId === undefined ? {} : { failedAttemptId }),
+  })
+}
+
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
@@ -1009,6 +1103,15 @@ async function driveMailTargetOnce(
       wakeReason,
     })
   } catch (error) {
+    // A birth deferral is not a failed drive. It is this node correctly
+    // declining to take a birth the collective designated elsewhere, and
+    // reporting it as `drive_failed` is precisely what made the pre-T-07655
+    // race look like breakage on every node that lost it.
+    const deferral = birthDeferralFor(error)
+    if (deferral !== undefined && scopeRef !== undefined) {
+      deferBirthForTarget(server, targetSessionRef, scopeRef, attempt, deferral, wakeReason)
+      return
+    }
     const message = errorText(error)
     const attemptState = failDriveAfterThrow(server, attempt, message)
     writeServerLog('WARN', 'wrkq.kicker.drive_failed', {

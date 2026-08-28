@@ -2,6 +2,8 @@ import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
 import { writeServerLog } from '../server-log.js'
 import type {
   WrkqEnvelope,
+  WrkqEnvelopeBirth,
+  WrkqEnvelopeBirthEnvelopeParams,
   WrkqEnvelopePendingView,
   WrkqEnvelopePendingViewParams,
   WrkqEnvelopePresentParams,
@@ -66,6 +68,15 @@ export class WrkqLedgerRequestError extends Error {
 
 export type WrkqLedgerClient = {
   pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView>
+  /**
+   * The BIRTH ENVELOPE of a target scope (T-07655): the lowest-seq
+   * `reply_required` envelope ever addressed to it, in any state, or null.
+   *
+   * ONLY the registry HOST calls it. It is the one wrkq read that decides
+   * placement, so it must have exactly one reader — a node re-deriving it
+   * locally would be re-deciding a question the collective already answered.
+   */
+  birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null>
   present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult>
   roundEnded(params: WrkqEnvelopeRoundParams): Promise<WrkqEnvelope>
   /** Presentation only: an ad-hoc room's subject for the section 7 header. */
@@ -124,6 +135,10 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
 
   pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView> {
     return this.call<WrkqEnvelopePendingView>('wrkq.envelope.pendingView', params)
+  }
+
+  birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null> {
+    return this.call<WrkqEnvelopeBirth | null>('wrkq.envelope.birthEnvelope', params)
   }
 
   present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult> {

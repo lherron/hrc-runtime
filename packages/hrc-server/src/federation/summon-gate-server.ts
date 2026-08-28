@@ -696,6 +696,14 @@ export async function establishExternalRegistrationPlacement(
             : { homeNodeId: established.retirement.successorNodeId }),
         }
       }
+      if (established.outcome === 'designation-mismatch') {
+        return {
+          outcome: 'noncanonical',
+          cause: 'placement_refused',
+          detail: `${request.scopeRef} is designated to be born on ${established.designation.homeNodeId} (T-07655); this node did not take the birth`,
+          homeNodeId: established.designation.homeNodeId,
+        }
+      }
       if (established.outcome === 'bound-elsewhere') {
         return {
           outcome: 'noncanonical',
@@ -864,6 +872,14 @@ export async function establishRemotePolicyAuthority(
             : { homeNodeId: established.retirement.successorNodeId }),
         })
       }
+      if (established.outcome === 'designation-mismatch') {
+        return remoteEstablishRefusal({
+          message: 'remote policy establishment lost to a birth designation',
+          reason: 'birth-designation-mismatch',
+          retryable: false,
+          homeNodeId: established.designation.homeNodeId,
+        })
+      }
       return {
         outcome: established.outcome === 'established' ? 'established' : 'existing',
         correlationId: request.correlationId,
@@ -1020,6 +1036,39 @@ async function commitAuthorizedEstablishment(input: {
     })
   }
 
+  if (established.outcome === 'designation-mismatch') {
+    // The establish fence (T-07655). Reaching it means this node resolved a
+    // tier-5 designated birth and the registry had already designated a
+    // DIFFERENT node — a designation that changed under a slow local pass. It
+    // is deliberately not `bound-elsewhere`: nothing was born, so an operator
+    // reading it must not go looking for a binding that does not exist.
+    const designation = established.designation
+    const diagnostic = `${input.request.scopeRef} is designated to be born on ${designation.homeNodeId} (following ${designation.senderScopeRef}, birth envelope ${designation.birthEnvelopeId}); this node is ${input.deps.localNodeId} and its tier-5 birth was refused. ${designation.homeNodeId} births it from the same ledger insert; an explicit start, a pin, or a +node= dispatch supersedes the designation.`
+    writeServerLog('WARN', 'federation.summon_gate.refusal', {
+      path: input.request.path,
+      scopeRef: input.request.scopeRef,
+      reason: 'birth-designation-mismatch',
+      wouldBeDecision: 'refuse',
+      enforced: true,
+      mode: input.mode,
+      retryable: false,
+      localNodeId: input.deps.localNodeId,
+      homeNodeId: designation.homeNodeId,
+      designationEpoch: designation.designationEpoch,
+      intent: input.request.intent,
+      birthCredentialPresent: input.request.birthCredential !== undefined,
+      diagnostic,
+    })
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+      scopeRef: input.request.scopeRef,
+      path: input.request.path,
+      reason: 'birth-designation-mismatch',
+      retryable: false,
+      homeNodeId: designation.homeNodeId,
+      birthDesignation: designation,
+    })
+  }
+
   if (established.outcome === 'bound-elsewhere') {
     const diagnostic = `${input.request.scopeRef} became bound on ${established.binding.homeNodeId} while ${input.label} establishment was being committed on ${input.deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`
     writeServerLog('WARN', 'federation.summon_gate.refusal', {
@@ -1105,6 +1154,12 @@ export async function assertSummonAuthority(
       ...(result.evaluation.capabilitySource === undefined
         ? {}
         : { capability_source: result.evaluation.capabilitySource }),
+      // Carried so the kicker can report a deferral ONCE per designation epoch
+      // instead of once per wake, and can name the sender an operator would
+      // otherwise have to reconstruct from the ledger by hand (T-07655).
+      ...(result.evaluation.birthDesignation === undefined
+        ? {}
+        : { birthDesignation: result.evaluation.birthDesignation }),
     })
   }
 

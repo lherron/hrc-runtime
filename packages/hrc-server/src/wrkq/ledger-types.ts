@@ -92,6 +92,31 @@ export type WrkqEnvelopePendingViewParams = {
   scopeRef?: string | undefined
 }
 
+/**
+ * T-07655 — the birth-envelope request. It carries the TARGET scope and
+ * nothing else on purpose: the sender is read off the ledger row, so no caller
+ * can steer which node a virgin scope is born on.
+ */
+export type WrkqEnvelopeBirthEnvelopeParams = {
+  scopeRef: string
+}
+
+/**
+ * The lowest-seq `reply_required` envelope ever addressed to a scope, in any
+ * state. A null result means nothing has ever fired at it — fyi never summons.
+ *
+ * As everywhere in ledger-types.ts this is the STRUCTURAL SUBSET HRC reads, not
+ * wrkq's whole DTO; additive change on the wrkq side is tolerated by design.
+ */
+export type WrkqEnvelopeBirth = {
+  envelopeId: string
+  seq: number
+  from: {
+    principalRef: string
+    scopeRef?: string | undefined
+  }
+}
+
 /** The kicker wake set AND the stop-hook predicate in one read model. */
 export type WrkqEnvelopePendingView = {
   items: WrkqEnvelope[]

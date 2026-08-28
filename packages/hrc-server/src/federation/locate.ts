@@ -45,6 +45,7 @@ import type {
   LocateBirthChain,
   LocateBirthChainLink,
   LocateDeclaredPolicy,
+  LocateDesignationView,
   LocateLedgerView,
   LocateNote,
   LocateObservation,
@@ -66,6 +67,7 @@ export type {
   LocateBirthChain,
   LocateBirthChainLink,
   LocateDeclaredPolicy,
+  LocateDesignationView,
   LocateLedgerView,
   LocateNote,
   LocateObservation,
@@ -431,6 +433,49 @@ async function resolveBirthChain(
  * Never throws: an operator reaching for locate is usually already in a bad
  * state, and a report with one unavailable section beats a stack trace.
  */
+/**
+ * The fourth truth (T-07655): what the collective designated as this scope's
+ * tier-5 birth node.
+ *
+ * Reported ALWAYS, including when a binding exists, because a designation and a
+ * binding answer different questions — "where was it supposed to be born" and
+ * "where does it live" — and the only way to see that a scope was born somewhere
+ * a designation did not name is to print both. It is never derived from the
+ * binding, and an unreachable registry stays `unknown` rather than becoming
+ * `none`: reporting an unread designation as absent is the §5 fail-closed rule
+ * applied to the newest of the four layers.
+ */
+async function readDesignation(scopeRef: string, deps: LocateDeps): Promise<LocateDesignationView> {
+  if (!deps.federationConfigured) {
+    return {
+      outcome: 'not-consulted',
+      detail: 'Federation is not configured on this node, so there is no registry to consult.',
+    }
+  }
+  const read = deps.registry.readDesignation
+  if (read === undefined) {
+    return {
+      outcome: 'not-consulted',
+      detail: 'This registry client cannot read birth designations.',
+    }
+  }
+  try {
+    const result = await read.call(deps.registry, scopeRef)
+    if (result.outcome === 'none') return { outcome: 'none' }
+    return { outcome: result.outcome, record: result.designation }
+  } catch (error) {
+    const unreachable = error instanceof RegistryUnreachableError
+    return {
+      outcome: 'unknown',
+      detail:
+        error instanceof Error
+          ? error.message
+          : 'the binding registry could not be read for a birth designation',
+      retryable: unreachable,
+    }
+  }
+}
+
 export async function locateScope(request: LocateRequest): Promise<ScopeLocation> {
   const { deps } = request
   const scopeRef = formatCanonicalScopeRef({ scopeRef: request.scopeRef })
@@ -558,6 +603,7 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
     declared,
     ledger,
     registry,
+    designation: await readDesignation(scopeRef, deps),
     authority,
     observed: {
       scope: 'local-node-only',

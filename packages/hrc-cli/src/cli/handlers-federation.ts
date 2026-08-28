@@ -166,6 +166,34 @@ function formatLocation(location: ScopeLocation): string {
     }`
   )
 
+  // The FOURTH truth (T-07655), on its own line between the binding and what is
+  // running. It is never merged into `registry:` — a designation names where a
+  // scope was SUPPOSED to be born, the binding names where it lives, and the
+  // whole value of printing both is seeing them disagree.
+  // Absent, not just `none`, when the daemon predates T-07655: a newer CLI
+  // talking to an older daemon gets no field at all, and crashing on it would
+  // make `hrc target locate` — the tool an operator reaches for when things are
+  // already wrong — the thing that breaks during a rollout.
+  const designation = location.designation ?? undefined
+  if (designation !== undefined) {
+    lines.push(
+      `designation:${
+        designation.outcome === 'designated'
+          ? ` ${designation.record.homeNodeId} (${designation.record.provenance}, epoch ${designation.record.designationEpoch})`
+          : designation.outcome === 'superseded'
+            ? ` ${designation.record.homeNodeId} SUPERSEDED by ${designation.record.supersededBy ?? 'a declared tier'}`
+            : designation.outcome === 'none'
+              ? ' none'
+              : ` ${designation.outcome} — ${designation.detail}`
+      }`
+    )
+    if (designation.outcome === 'designated' || designation.outcome === 'superseded') {
+      lines.push(
+        `            follows ${designation.record.senderScopeRef} via ${designation.record.birthEnvelopeId}`
+      )
+    }
+  }
+
   const observed = location.observed
   lines.push(
     `observed:   ${observed.runtimeCount === 0 ? `no runtimes on ${observed.nodeId}` : `${observed.runtimeCount} runtime(s) on ${observed.nodeId}`} (local-node truth only)`

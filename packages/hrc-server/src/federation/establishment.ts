@@ -1,6 +1,7 @@
 import type {
   BindingRegistry,
   BirthAuthorityProvenance,
+  BirthDesignationRecord,
   EstablishmentProvenance,
   FederationBirthClass,
   PlacementBinding,
@@ -25,6 +26,14 @@ export type EstablishLocalPlacementResult =
       binding: PlacementBinding
     }
   | { outcome: 'retired'; retirement: RegistryRetirementRecord }
+  /**
+   * The T-07655 establish fence: this node tried a tier-5 designated birth for
+   * a scope the registry has designated to a DIFFERENT node. Nothing was
+   * written. It is not a race lost — it is the arbitration that stops the race
+   * from happening, so it is reported as its own outcome rather than folded
+   * into `bound-elsewhere`, which means a birth that actually happened.
+   */
+  | { outcome: 'designation-mismatch'; designation: BirthDesignationRecord }
 
 /**
  * Linearizes a first birth at the collective registry before installing local
@@ -56,6 +65,9 @@ export async function establishLocalPlacement(input: {
   })
   if (registryResult.outcome === 'retired') {
     return { outcome: 'retired', retirement: registryResult.retirement }
+  }
+  if (registryResult.outcome === 'designation-mismatch') {
+    return { outcome: 'designation-mismatch', designation: registryResult.designation }
   }
   const binding = registryResult.binding
 

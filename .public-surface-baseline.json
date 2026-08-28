@@ -279,6 +279,38 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "BirthDesignationProvenance",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationProvenance|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BirthDesignationRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BirthDesignationResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BirthDesignationState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BROKER_TO_HRC_LIFECYCLE_KIND",
       "kind": "value",
       "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
@@ -3051,6 +3083,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|LocateDeclaredPolicy|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateDesignationView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateDesignationView|type",
       "count": 1
     },
     {

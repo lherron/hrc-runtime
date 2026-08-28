@@ -8,6 +8,8 @@ import {
   openBindingRegistry,
 } from 'hrc-store-sqlite'
 
+import type { BirthEnvelopeReader } from './birth-designation.js'
+import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
 import type { RegistryListenerConfig } from './registry-bind.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { createLocalBindingRegistryClient } from './registry-client.js'
@@ -130,9 +132,75 @@ function mutationStatus(outcome: string): number {
   return 200
 }
 
+/**
+ * The two T-07655 designation routes, extracted so the router's own complexity
+ * does not grow with every placement question the collective learns to answer.
+ * Returns undefined when the request is not one of them.
+ */
+async function handleDesignationRoute(
+  request: Request,
+  url: URL,
+  peer: RegistryAuthPeer,
+  input: {
+    registry: BindingRegistry
+    birthEnvelopeFor?: BirthEnvelopeReader | undefined
+  },
+  now: () => string
+): Promise<Response | undefined> {
+  // Read-only companion to designate-birth, for `hrc target locate`. Locate
+  // must never MINT a designation as a side effect of reporting, so it cannot
+  // reuse the POST: a read that decided placement would be a report that
+  // changes what it reports.
+  if (request.method === 'GET' && url.pathname === '/v1/federation/registry/designation') {
+    const scopeRef = url.searchParams.get('scopeRef')
+    if (scopeRef === null || scopeRef.trim().length === 0) throw new InvalidRegistryRequest()
+    const record = input.registry.latestDesignation(scopeRef)
+    return responseJson({
+      ok: true,
+      authenticatedNodeId: peer.nodeId,
+      outcome:
+        record === undefined ? 'none' : record.state === 'live' ? 'designated' : 'superseded',
+      ...(record === undefined ? {} : { designation: record }),
+    })
+  }
+
+  if (request.method !== 'POST' || url.pathname !== '/v1/federation/registry/designate-birth') {
+    return undefined
+  }
+
+  // No `authenticated_node_mismatch` check, and that is the point: the request
+  // names only the TARGET scope. There is no node field to compare, because a
+  // caller supplying placement input is exactly what this designation is built
+  // to make impossible. Any authenticated peer may ask, and all get one answer.
+  const body = await requestRecord(request)
+  try {
+    const result = await designateBirthOnHost(
+      {
+        registry: input.registry,
+        ...(input.birthEnvelopeFor === undefined
+          ? {}
+          : { birthEnvelopeFor: input.birthEnvelopeFor }),
+        now,
+      },
+      requiredString(body, 'scopeRef')
+    )
+    return responseJson({ ok: true, authenticatedNodeId: peer.nodeId, ...result })
+  } catch (error) {
+    if (error instanceof BirthEnvelopeUnavailableError) {
+      // 503, never a 200 `none`: an unread ledger is not evidence that nothing
+      // designated this scope, and reporting it as `none` would send every node
+      // back to a local birth at the same instant.
+      return responseJson({ ok: false, error: 'runtime_unavailable', retryable: true }, 503)
+    }
+    throw error
+  }
+}
+
 export function createBindingRegistryRequestHandler(input: {
   registry: BindingRegistry
   peers: ReadonlyMap<string, RegistryAuthPeer>
+  /** The host's own wrkq read for `designate-birth` (T-07655). */
+  birthEnvelopeFor?: BirthEnvelopeReader | undefined
   now?: (() => string) | undefined
 }): (request: Request) => Promise<Response> {
   const now = input.now ?? (() => new Date().toISOString())
@@ -188,6 +256,9 @@ export function createBindingRegistryRequestHandler(input: {
         })
         return responseJson({ ok: true, authenticatedNodeId: peer.nodeId, ...result })
       }
+
+      const designationResponse = await handleDesignationRoute(request, url, peer, input, now)
+      if (designationResponse !== undefined) return designationResponse
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/registry/cas') {
         const body = await requestRecord(request)
@@ -302,6 +373,12 @@ export function startBindingRegistryEndpoint(input: {
   peers: ReadonlyMap<string, RegistryAuthPeer>
   registryPath: string
   localNodeId: string
+  /**
+   * The host's wrkq birth-envelope read (T-07655). Passed as a thunk-friendly
+   * function because the daemon's ledger client is constructed AFTER this
+   * endpoint; the closure resolves it at call time, not at construction.
+   */
+  birthEnvelopeFor?: BirthEnvelopeReader | undefined
   sqliteBusyTimeoutMs?: number | undefined
 }): BindingRegistryEndpointControl {
   const bind = new URL(input.listener.bind)
@@ -315,11 +392,21 @@ export function startBindingRegistryEndpoint(input: {
     const server = Bun.serve({
       hostname: bind.hostname.replace(/^\[|\]$/g, ''),
       port: Number(bind.port),
-      fetch: createBindingRegistryRequestHandler({ registry, peers: input.peers }),
+      fetch: createBindingRegistryRequestHandler({
+        registry,
+        peers: input.peers,
+        ...(input.birthEnvelopeFor === undefined
+          ? {}
+          : { birthEnvelopeFor: input.birthEnvelopeFor }),
+      }),
     })
     return {
       url: input.listener.bind,
-      registryClient: createLocalBindingRegistryClient(registry, input.localNodeId),
+      registryClient: createLocalBindingRegistryClient(registry, input.localNodeId, {
+        ...(input.birthEnvelopeFor === undefined
+          ? {}
+          : { birthEnvelopeFor: input.birthEnvelopeFor }),
+      }),
       stop() {
         server.stop(true)
         registry.close()

@@ -4,6 +4,10 @@ import type {
   BindingEstablishResult,
   BindingRegistry,
   BirthAuthorityProvenance,
+  BirthDesignationProvenance,
+  BirthDesignationRecord,
+  BirthDesignationResult,
+  BirthDesignationState,
   EstablishmentProvenance,
   FederationBirthClass,
   PlacementBinding,
@@ -13,6 +17,8 @@ import type {
 } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
+import type { BirthEnvelopeReader } from './birth-designation.js'
+import { BirthEnvelopeUnavailableError, designateBirthOnHost } from './birth-designation.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
 
@@ -26,8 +32,15 @@ const ESTABLISHMENT_PROVENANCE = new Set<EstablishmentProvenance>([
   'task_default',
   'default_home_node',
   'default_home_node(local)',
+  'default_home_node(sender)',
+  'default_home_node(sender-retired)',
   'explicit_local',
   'rebind',
+])
+
+const DESIGNATION_PROVENANCE = new Set<string>([
+  'default_home_node(sender)',
+  'default_home_node(sender-retired)',
 ])
 
 const PROVABLY_PRE_SEND_CONNECT_CODES = new Set([
@@ -43,6 +56,11 @@ const PROVABLY_PRE_SEND_CONNECT_CODES = new Set([
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
 ])
 
+/** What the registry knows about a scope's tier-5 designation, for locate. */
+export type RegistryDesignationRead =
+  | { outcome: 'designated' | 'superseded'; designation: BirthDesignationRecord }
+  | { outcome: 'none' }
+
 export type RegistryConsultResult =
   | { outcome: 'bound'; binding: PlacementBinding }
   | { outcome: 'retired'; retirement: RegistryRetirementRecord }
@@ -51,6 +69,31 @@ export type RegistryConsultResult =
 export interface BindingRegistryClient {
   consult(scopeRef: string, options?: { signal?: AbortSignal }): Promise<RegistryConsultResult>
   establish(request: Parameters<BindingRegistry['establish']>[0]): Promise<BindingEstablishResult>
+  /**
+   * T-07655 — ask the registry host which node a VIRGIN scope should be born
+   * on, when nothing has declared a home for it.
+   *
+   * The request carries the target scope and NOTHING ELSE. The host reads the
+   * scope's birth envelope from wrkq itself and follows the home of the scope
+   * that sent it, so a caller cannot influence the answer, and every node that
+   * tailed the same ledger insert receives the same one.
+   *
+   * Optional only for the direct unit consumers that build a partial double;
+   * every client a running daemon holds implements it.
+   */
+  designateBirth?(
+    scopeRef: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BirthDesignationResult>
+  /**
+   * The READ-ONLY companion, for `hrc target locate`. It never records a
+   * designation: a report that decided placement as a side effect of being read
+   * would change the very thing it reports.
+   */
+  readDesignation?(
+    scopeRef: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<RegistryDesignationRead>
   compareAndSwap?(
     request: Parameters<BindingRegistry['compareAndSwap']>[0]
   ): Promise<BindingCasResult>
@@ -95,6 +138,12 @@ type RegistryClientLog = (
 ) => void
 
 export type BindingRegistryClientOptions = {
+  /**
+   * The registry HOST's wrkq birth-envelope read (T-07655). Only the local
+   * client uses it: a peer's designation is answered by the host, never
+   * re-derived from the asking node's own ledger view.
+   */
+  birthEnvelopeFor?: BirthEnvelopeReader | undefined
   /** Per HTTP attempt; defaults to 2 seconds. */
   perAttemptTimeoutMs?: number | undefined
   /** Total wall-clock budget including retries and backoff; defaults to 5 seconds. */
@@ -119,15 +168,17 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
   readonly #registry: BindingRegistry
   readonly #localNodeId: string
   readonly #log: RegistryClientLog
+  readonly #birthEnvelopeFor: BirthEnvelopeReader | undefined
 
   constructor(
     registry: BindingRegistry,
     localNodeId: string,
-    options: Pick<BindingRegistryClientOptions, 'log'> = {}
+    options: Pick<BindingRegistryClientOptions, 'log' | 'birthEnvelopeFor'> = {}
   ) {
     this.#registry = registry
     this.#localNodeId = localNodeId
     this.#log = options.log ?? writeServerLog
+    this.#birthEnvelopeFor = options.birthEnvelopeFor
   }
 
   async consult(
@@ -191,10 +242,15 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
               retiredHomeNodeId: result.retirement.retiredHomeNodeId,
               placementEpoch: result.retirement.placementEpoch,
             }
-          : {
-              homeNodeId: result.binding.homeNodeId,
-              placementEpoch: result.binding.placementEpoch,
-            }),
+          : result.outcome === 'designation-mismatch'
+            ? {
+                designatedHomeNodeId: result.designation.homeNodeId,
+                designationEpoch: result.designation.designationEpoch,
+              }
+            : {
+                homeNodeId: result.binding.homeNodeId,
+                placementEpoch: result.binding.placementEpoch,
+              }),
         transport: 'local',
       })
       return result
@@ -204,6 +260,53 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
       }
       throw classifyUnreachable(error)
     }
+  }
+
+  async designateBirth(scopeRef: string): Promise<BirthDesignationResult> {
+    if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
+    // This node HOSTS the registry, so it runs the host routine in-process
+    // rather than calling itself over HTTP — the same shape every other local
+    // authority read takes here, and it needs no self-peer bearer token.
+    try {
+      const result = await designateBirthOnHost(
+        {
+          registry: this.#registry,
+          ...(this.#birthEnvelopeFor === undefined
+            ? {}
+            : { birthEnvelopeFor: this.#birthEnvelopeFor }),
+        },
+        scopeRef
+      )
+      this.#log('INFO', `federation.registry.designate_birth.${result.kind}`, {
+        scopeRef,
+        transport: 'local',
+        ...(result.kind === 'designated'
+          ? {
+              homeNodeId: result.designation.homeNodeId,
+              provenance: result.designation.provenance,
+              designationEpoch: result.designation.designationEpoch,
+              senderScopeRef: result.designation.senderScopeRef,
+              birthEnvelopeId: result.designation.birthEnvelopeId,
+            }
+          : {}),
+      })
+      return result
+    } catch (error) {
+      if (error instanceof BirthEnvelopeUnavailableError) {
+        throw new RegistryUnreachableError(error.message, error)
+      }
+      if (error instanceof RegistryRefusedError || error instanceof RegistryUnreachableError) {
+        throw error
+      }
+      throw classifyUnreachable(error)
+    }
+  }
+
+  async readDesignation(scopeRef: string): Promise<RegistryDesignationRead> {
+    if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
+    const record = this.#registry.latestDesignation(scopeRef)
+    if (record === undefined) return { outcome: 'none' }
+    return { outcome: record.state === 'live' ? 'designated' : 'superseded', designation: record }
   }
 
   async retire(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult> {
@@ -245,7 +348,7 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
 export function createLocalBindingRegistryClient(
   registry: BindingRegistry,
   localNodeId: string,
-  options: Pick<BindingRegistryClientOptions, 'log'> = {}
+  options: Pick<BindingRegistryClientOptions, 'log' | 'birthEnvelopeFor'> = {}
 ): BindingRegistryClient {
   return new LocalBindingRegistryClient(registry, localNodeId, options)
 }
@@ -268,6 +371,47 @@ function parseBirthClass(value: unknown): FederationBirthClass | undefined {
 function parseAuthorityProvenance(value: unknown): BirthAuthorityProvenance | undefined {
   if (!isRecord(value) || !isNonemptyString(value['kind'])) return undefined
   return value as BirthAuthorityProvenance
+}
+
+function parseDesignation(
+  value: unknown,
+  expectedScopeRef: string
+): BirthDesignationRecord | undefined {
+  if (!isRecord(value)) return undefined
+  if (value['scopeRef'] !== expectedScopeRef) return undefined
+  const provenance = value['provenance']
+  const state = value['state']
+  const designationEpoch = value['designationEpoch']
+  if (
+    !isNonemptyString(value['homeNodeId']) ||
+    typeof provenance !== 'string' ||
+    !DESIGNATION_PROVENANCE.has(provenance) ||
+    !isNonemptyString(value['birthEnvelopeId']) ||
+    !isNonemptyString(value['senderScopeRef']) ||
+    !isNonemptyString(value['designatedAt']) ||
+    (state !== 'live' && state !== 'superseded') ||
+    !Number.isSafeInteger(designationEpoch) ||
+    Number(designationEpoch) < 1
+  ) {
+    return undefined
+  }
+  const supersededBy = value['supersededBy']
+  const supersededAt = value['supersededAt']
+  return {
+    scopeRef: expectedScopeRef,
+    homeNodeId: value['homeNodeId'],
+    provenance: provenance as BirthDesignationProvenance,
+    birthEnvelopeId: value['birthEnvelopeId'],
+    senderScopeRef: value['senderScopeRef'],
+    designationEpoch: Number(designationEpoch),
+    designatedAt: value['designatedAt'],
+    state: state as BirthDesignationState,
+    ...(isNonemptyString(supersededBy) &&
+    ESTABLISHMENT_PROVENANCE.has(supersededBy as EstablishmentProvenance)
+      ? { supersededBy: supersededBy as EstablishmentProvenance }
+      : {}),
+    ...(isNonemptyString(supersededAt) ? { supersededAt } : {}),
+  }
 }
 
 function parseBinding(value: unknown, expectedScopeRef: string): PlacementBinding | undefined {
@@ -656,6 +800,136 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
       )
     }
     return { outcome, binding }
+  }
+
+  async designateBirth(
+    scopeRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<BirthDesignationResult> {
+    if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
+    const deadline = this.#now() + this.#totalTimeoutMs
+    let lastFailure: RegistryUnreachableError | undefined
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await this.#runAttempt(
+          deadline,
+          (signal) => this.#designateBirthAttempt(scopeRef, signal),
+          options.signal
+        )
+        this.#log('INFO', `federation.registry.designate_birth.${result.kind}`, {
+          scopeRef,
+          attempt,
+          ...(result.kind === 'designated'
+            ? {
+                homeNodeId: result.designation.homeNodeId,
+                provenance: result.designation.provenance,
+                designationEpoch: result.designation.designationEpoch,
+                senderScopeRef: result.designation.senderScopeRef,
+              }
+            : {}),
+        })
+        return result
+      } catch (error) {
+        if (error instanceof RegistryRefusedError) throw error
+        lastFailure = classifyUnreachable(error)
+        const mayRetry =
+          attempt < MAX_ATTEMPTS && !options.signal?.aborted && this.#remaining(deadline) > 0
+        if (!mayRetry) {
+          this.#log('ERROR', 'federation.registry.designate_birth.unreachable', {
+            scopeRef,
+            attempt,
+            retryable: lastFailure.retryable,
+          })
+          throw lastFailure
+        }
+        await this.#backoff(attempt, deadline, options.signal)
+      }
+    }
+
+    throw lastFailure ?? new RegistryUnreachableError()
+  }
+
+  async #designateBirthAttempt(
+    scopeRef: string,
+    signal: AbortSignal
+  ): Promise<BirthDesignationResult> {
+    const url = new URL('/v1/federation/registry/designate-birth', this.#endpoint)
+    const response = await this.#fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        authorization: this.#authorizationHeader,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ scopeRef }),
+      redirect: 'error',
+      signal,
+    })
+
+    const refused = refusedForStatus(response.status)
+    if (refused !== undefined) throw refused
+    if (response.status === 503) {
+      // The host could not read wrkq. Retryable and, crucially, NOT `none`:
+      // treating an outage as "nothing designated" would drop every node back
+      // to a local birth, which is the simultaneous birth this prevents.
+      throw new RegistryUnreachableError(
+        'federation binding registry could not read the birth envelope'
+      )
+    }
+    if (response.status !== 200) {
+      throw new RegistryUnreachableError(
+        `federation binding registry returned unexpected status ${response.status}`
+      )
+    }
+
+    const body = await this.#responseBody(response)
+    const kind = isRecord(body) ? body['kind'] : undefined
+    if (kind === 'none') return { kind: 'none' }
+    const designation = isRecord(body) ? parseDesignation(body['designation'], scopeRef) : undefined
+    if (kind !== 'designated' || designation === undefined) {
+      throw new RegistryUnreachableError(
+        'federation binding registry returned an invalid birth designation'
+      )
+    }
+    return { kind: 'designated', designation }
+  }
+
+  async readDesignation(
+    scopeRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<RegistryDesignationRead> {
+    if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
+    const deadline = this.#now() + this.#totalTimeoutMs
+    const url = new URL('/v1/federation/registry/designation', this.#endpoint)
+    url.searchParams.set('scopeRef', scopeRef)
+    const response = await this.#runAttempt(
+      deadline,
+      async (signal) =>
+        await this.#fetch(url.toString(), {
+          method: 'GET',
+          headers: { authorization: this.#authorizationHeader },
+          redirect: 'error',
+          signal,
+        }),
+      options.signal
+    )
+    const refused = refusedForStatus(response.status)
+    if (refused !== undefined) throw refused
+    if (response.status !== 200) {
+      throw new RegistryUnreachableError(
+        `federation binding registry returned unexpected status ${response.status}`
+      )
+    }
+    const body = await this.#responseBody(response)
+    const outcome = isRecord(body) ? body['outcome'] : undefined
+    if (outcome === 'none') return { outcome: 'none' }
+    const designation = isRecord(body) ? parseDesignation(body['designation'], scopeRef) : undefined
+    if ((outcome !== 'designated' && outcome !== 'superseded') || designation === undefined) {
+      throw new RegistryUnreachableError(
+        'federation binding registry returned an invalid designation read'
+      )
+    }
+    return { outcome, designation }
   }
 
   async retire(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult> {

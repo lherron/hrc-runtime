@@ -36,6 +36,61 @@ export type EstablishmentProvenance =
   | 'default_home_node(local)'
   | 'explicit_local'
   | 'rebind'
+  /**
+   * T-07655 — the two tier-5 provenances of a mail-triggered implicit summon
+   * whose birth node was DESIGNATED from the sender's own home. They sit at the
+   * same tier as `default_home_node(local)` and are the only provenances the
+   * establish fence can refuse; every tier-1-4 provenance supersedes a live
+   * designation instead of being refused by it.
+   */
+  | 'default_home_node(sender)'
+  | 'default_home_node(sender-retired)'
+
+/** The tier-5 provenances a birth designation can produce (T-07655). */
+export type BirthDesignationProvenance =
+  | 'default_home_node(sender)'
+  | 'default_home_node(sender-retired)'
+
+/**
+ * A recorded tier-5 birth designation: the node one virgin scope is born on,
+ * derived ONCE by the single-writer registry host from registry state plus the
+ * wrkq birth envelope it reads itself.
+ *
+ * It is a DEFAULT, not a constraint. `superseded` is what a tier-1-4
+ * establishment leaves behind when it wins, in the same transaction.
+ */
+export type BirthDesignationState = 'live' | 'superseded'
+
+export type BirthDesignationRecord = {
+  readonly scopeRef: string
+  readonly homeNodeId: string
+  readonly provenance: BirthDesignationProvenance
+  readonly birthEnvelopeId: string
+  /** The sender scope whose home this designation followed. */
+  readonly senderScopeRef: string
+  /**
+   * Per-scope ordinal: 1 for a scope's first designation, incremented by each
+   * later one. It re-arms the once-per-scope `birth_deferred` line after a
+   * supersession instead of silencing it forever.
+   */
+  readonly designationEpoch: number
+  readonly designatedAt: string
+  readonly state: BirthDesignationState
+  /** The provenance of the tier-1-4 establishment that superseded it. */
+  readonly supersededBy?: EstablishmentProvenance | undefined
+  readonly supersededAt?: string | undefined
+}
+
+/**
+ * The registry host's answer to `designateBirth {scopeRef}`.
+ *
+ * `none` means the ledger cannot name a placeable sender — no birth envelope, a
+ * scope-less sender, or one the registry does not know — and NOTHING is
+ * recorded. The caller falls through to today's tier 5.
+ */
+export type BirthDesignationResult =
+  | { readonly kind: 'designated'; readonly designation: BirthDesignationRecord }
+  | { readonly kind: 'none' }
 
 /** Open-ended birth credential chain payload; `kind` discriminates. */
 export type BirthAuthorityProvenance = Readonly<Record<string, unknown>> & {
@@ -564,6 +619,27 @@ export type LocateRetirement = {
 }
 
 /** `GET /v1/federation/locate?scopeRef=…` */
+/**
+ * The FOURTH independent truth (T-07655): what the collective designated as
+ * this scope's tier-5 birth node, and whether that designation still stands.
+ *
+ * It is reported beside declared / binding / observed and never folded into any
+ * of them, for the same reason the other three are kept apart: a designation
+ * that disagreed with the binding would be invisible if either could overwrite
+ * the other. A designation is not policy (nothing declared it) and not
+ * authority (it never held a binding) — it is the record of a DECISION, and the
+ * only place an operator can see why a scope was born where it was.
+ */
+export type LocateDesignationView =
+  | { outcome: 'designated'; record: BirthDesignationRecord }
+  /** Every designation this scope has had, when the live one is not the only one. */
+  | { outcome: 'superseded'; record: BirthDesignationRecord }
+  | { outcome: 'none' }
+  /** Consulted and failed. Never collapsed into `none`, per the §5 fail-closed rule. */
+  | { outcome: 'unknown'; detail: string; retryable: boolean }
+  /** Not consulted — this node does not host the registry, or federation is off. */
+  | { outcome: 'not-consulted'; detail: string }
+
 export type ScopeLocation = {
   scopeRef: string
   localNodeId: string
@@ -572,6 +648,8 @@ export type ScopeLocation = {
   declared: LocateDeclaredPolicy
   ledger: LocateLedgerView
   registry: LocateRegistryView
+  /** T-07655 — the tier-5 birth designation, reported as its own truth. */
+  designation: LocateDesignationView
   authority: LocateAuthority
   observed: LocateObservation
   /** Present when authority names another node and this daemon attempts an on-demand peer locate. */

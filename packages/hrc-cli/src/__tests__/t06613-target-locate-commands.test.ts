@@ -34,6 +34,7 @@ function baseLocation(overrides: Partial<ScopeLocation> = {}): ScopeLocation {
     declared: { source: 'none', detail: 'no stanza' },
     ledger: { state: 'absent' },
     registry: { outcome: 'unbound' },
+    designation: { outcome: 'none' },
     authority: { state: 'unbound' },
     observed: { scope: 'local-node-only', nodeId: 'max3', runtimeCount: 0, runtimes: [] },
     notes: [],

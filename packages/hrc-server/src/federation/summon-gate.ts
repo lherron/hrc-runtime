@@ -30,6 +30,8 @@ import { parseScopeRef } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
 import type {
   BirthAuthorityProvenance,
+  BirthDesignationRecord,
+  BirthDesignationResult,
   EstablishmentProvenance,
   PlacementBinding,
   PlacementLedgerRepository,
@@ -132,6 +134,20 @@ export type SummonGateRefuseReason =
   | 'placement-directive-conflict'
   | 'unknown-node'
   | 'invalid-provision-value'
+  /**
+   * T-07655 — the two tier-5 birth-designation refusals. Neither is a race
+   * lost: they are what stops every node that tailed one ledger insert from
+   * racing for the same virgin birth.
+   *
+   * `birth-designated-elsewhere` means the registry designated another node,
+   * which will birth it from the same insert. `designated-home-unreachable`
+   * means the designated node is not a peer this daemon knows, so nobody here
+   * can act and an operator has to see it.
+   */
+  | 'birth-designated-elsewhere'
+  | 'designated-home-unreachable'
+  /** The establish fence itself, when a designated birth loses the CAS. */
+  | 'birth-designation-mismatch'
 
 /** Node-local facts required to materialize an agent scope (§5). */
 export type SummonCapabilityName =
@@ -191,6 +207,8 @@ export type SummonGateEvaluation =
       capabilitySource?: 'presence-heuristic' | undefined
       /** Exact established remote authority; present only for bound-elsewhere. */
       placementBinding?: PlacementBinding | undefined
+      /** The live tier-5 designation this refusal is about (T-07655). */
+      birthDesignation?: BirthDesignationRecord | undefined
       /** Policy provenance for an unbound implicit request naming a remote home. */
       candidateEstablishmentProvenance?:
         | Exclude<EstablishmentProvenance, 'rebind' | 'explicit_local' | 'default_home_node(local)'>
@@ -395,6 +413,7 @@ function refuse(
       EstablishmentProvenance,
       'rebind' | 'explicit_local' | 'default_home_node(local)'
     >
+    birthDesignation?: BirthDesignationRecord
   } = {}
 ): SummonGateEvaluation {
   return {
@@ -413,6 +432,9 @@ function refuse(
     ...(options.candidateEstablishmentProvenance === undefined
       ? {}
       : { candidateEstablishmentProvenance: options.candidateEstablishmentProvenance }),
+    ...(options.birthDesignation === undefined
+      ? {}
+      : { birthDesignation: options.birthDesignation }),
   }
 }
 
@@ -512,6 +534,8 @@ type DesignatedHome = {
     | { kind: 'pin'; key: string }
     | { kind: 'task-default'; key: string }
     | undefined
+  /** Present only for a tier-5 home that came from a birth designation. */
+  designation?: BirthDesignationRecord | undefined
 }
 
 /**
@@ -796,6 +820,87 @@ function nodeLocalRemoteEstablishRefusal(
   )
 }
 
+/**
+ * The tier-5 birth designation (T-07655): where does a VIRGIN scope get born
+ * when nothing has declared a home for it?
+ *
+ * Today's answer is "right here", on every node at once. Since wave 3 every
+ * daemon's mail kicker tails the same wrkq ledger, so one insert addressed to a
+ * virgin scope makes every live kicker attempt a local birth simultaneously and
+ * the registry arbitrates first-commit-wins. The losers logged
+ * `drive_failed "became bound on <winner>"`, and three task scopes dispatched
+ * from max3 seats were observed being born on three different nodes.
+ *
+ * The fix is to make the answer the SAME on every node instead of arbitrating
+ * afterwards. The registry host — one writer, already serialized per scope —
+ * reads the scope's birth envelope from wrkq ITSELF and follows the home of the
+ * scope that sent it. Every kicker asks the same host and gets the same node.
+ *
+ * WHY THIS IS NOT THE FORBIDDEN AMBIENT CALLER ASSERTION. Nothing is read from
+ * the socket, the peer, or the environment. The sender's home is a REGISTRY
+ * FACT recorded when that scope was established, and the sender itself comes
+ * off a ledger row the registry reads directly — the request carries only the
+ * target, so a caller cannot steer it.
+ *
+ * IT IS A DEFAULT, NOT A CONSTRAINT. It is reached only where tiers 1-4 are
+ * silent, and a tier-1-4 establishment anywhere supersedes it rather than being
+ * refused by it. That is enforced in the registry transaction, not here.
+ */
+async function applyBirthDesignation(
+  request: SummonGateRequest,
+  scopeRef: string,
+  designated: DesignatedHome
+): Promise<DesignatedHome | SummonGateEvaluation> {
+  const { deps } = request
+  // Only the last tier is designatable. A declared pin, home, directive, or an
+  // operator's explicit start already answered, and must not be re-asked.
+  if (designated.provenance !== 'default_home_node(local)') return designated
+  // Mail-triggered implicit summons only. An operator start is `explicit_local`
+  // and never reaches here; a federated-establish is a peer acting on a
+  // decision this tier does not produce.
+  if (request.intent !== 'implicit' || request.origin === 'federated-establish') return designated
+  // Absent only in direct unit consumers; the server always injects a real
+  // client. Absence means today's tier 5, which is the pre-T-07655 law.
+  const designateBirth = deps.registry.designateBirth
+  if (designateBirth === undefined) return designated
+
+  let result: BirthDesignationResult
+  try {
+    result = await designateBirth.call(deps.registry, scopeRef)
+  } catch (error) {
+    // No local fallback for a scoped sender. Establishing here on an outage is
+    // exactly the racing birth this tier exists to prevent, and it would be
+    // unrecoverable: a birth cannot be taken back.
+    const refused = error instanceof RegistryRefusedError
+    return refuse(
+      refused ? 'registry-refused' : 'registry-unreachable',
+      `Cannot designate a birth node for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}. Refusing to birth it locally, because a local fallback on every node is the simultaneous birth this designation exists to prevent.`,
+      { retryable: !refused }
+    )
+  }
+
+  // No birth envelope, a scope-less sender, or a sender the registry does not
+  // know. Nothing was recorded, and today's tier 5 is the pre-existing law for
+  // that class — explicitly out of scope of this change.
+  if (result.kind === 'none') return designated
+
+  const designation = result.designation
+  const known = deps.knownNodeIds
+  if (known !== undefined && !known.includes(designation.homeNodeId)) {
+    return refuse(
+      'designated-home-unreachable',
+      `${scopeRef} is designated to ${designation.homeNodeId} (from the home of ${designation.senderScopeRef}, birth envelope ${designation.birthEnvelopeId}), which is not a peer this node knows. Nothing here can birth it. Add that peer, or start the scope explicitly on a node that can reach it — an explicit start supersedes the designation.`,
+      { retryable: true, homeNodeId: designation.homeNodeId, birthDesignation: designation }
+    )
+  }
+
+  return {
+    homeNodeId: designation.homeNodeId,
+    provenance: designation.provenance,
+    designation,
+  }
+}
+
 async function decideVirginPolicyPlacement(
   request: SummonGateRequest,
   scopeRef: string,
@@ -816,6 +921,20 @@ async function decideVirginPolicyPlacement(
         homeNodeId: designated.homeNodeId,
         establishmentProvenance: designated.provenance,
       })
+    )
+  }
+
+  const designation = designated.designation
+  if (designation !== undefined) {
+    // Not `routed-elsewhere`: that reason invites a remote-establish
+    // disposition, and a designated birth is deliberately NOT delegated. The
+    // designated node's own kicker births it from the same ledger insert, its
+    // own capability check runs there, and a failure is then visible on exactly
+    // one node instead of racing across every node that tailed the insert.
+    return refuse(
+      'birth-designated-elsewhere',
+      `${scopeRef} is designated to be born on ${designation.homeNodeId}, following the home of ${designation.senderScopeRef}, which sent its birth envelope ${designation.birthEnvelopeId}. This node is ${deps.localNodeId} and takes no part in the birth; ${designation.homeNodeId} births it from the same ledger insert. An explicit start, a pin, or a +node= dispatch supersedes the designation.`,
+      { homeNodeId: designation.homeNodeId, birthDesignation: designation }
     )
   }
 
@@ -1160,10 +1279,12 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     )
   }
 
-  const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent, {
+  const declared = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent, {
     provision: request.provision,
     knownNodeIds: deps.knownNodeIds,
   })
+  if (isEvaluation(declared)) return declared
+  const designated = await applyBirthDesignation(request, scopeRef, declared)
   if (isEvaluation(designated)) return designated
   return await decideVirginPolicyPlacement(request, scopeRef, designated)
 }
