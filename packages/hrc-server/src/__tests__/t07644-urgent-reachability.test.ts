@@ -209,7 +209,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
-        () => captured.some((line) => line.includes('wrkq.kicker.attempt_in_flight')),
+        () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
         'in-flight decline logged'
       )
     })
@@ -231,7 +231,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(steered[0]).toContain('presented_to_live_harness')
     // The decline line names the attempt holding the slot, and says a steer
     // landed. Before T-07644 this branch produced no line at all.
-    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.attempt_in_flight'))
+    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).toContain('"urgentSteered":true')
     expect(inFlight[0]).toContain(TARGET)
@@ -246,7 +246,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
-        () => captured.some((line) => line.includes('wrkq.kicker.attempt_in_flight')),
+        () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
         'in-flight decline logged'
       )
     })
@@ -257,10 +257,16 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(calls().filter((call) => call.whenBusy === 'steer')).toHaveLength(0)
     expect(ledger.envelopes.get(ordinary.id)?.state).toBe('pending')
     expect(ledger.envelopes.get(ordinary.id)?.presentedTo).toEqual([])
-    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.attempt_in_flight'))
+    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).not.toContain('urgentSteered')
-    expect(inFlight[0]).toContain('"pending":1')
+    // The payload names the attempt holding the slot, and is deliberately NOT
+    // `target_busy`: "a drive is in flight here" and "the addressee is mid-turn
+    // on its own run" are different conditions, and one counter cannot mean
+    // both (mable, C-16626).
+    expect(inFlight[0]).toContain('"driveAttemptId"')
+    expect(inFlight[0]).toContain('"runId"')
+    expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
   })
 
   it('interrupts the kicker-driven turn at most once for the same envelope', async () => {
@@ -291,7 +297,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     const lines = await withServerLog(async (captured) => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await waitUntil(
-        () => captured.some((line) => line.includes('wrkq.kicker.attempt_in_flight')),
+        () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
         'in-flight decline logged'
       )
     })
@@ -303,7 +309,7 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     expect(ledger.envelopes.get(urgent.id)?.presentedTo).toEqual([])
     expect(ledger.envelopes.get(urgent.id)?.state).toBe('pending')
     expect(lines.filter((line) => line.includes('wrkq.kicker.urgent_steer_failed'))).toHaveLength(1)
-    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.attempt_in_flight'))
+    const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).not.toContain('urgentSteered')
   })

@@ -544,9 +544,16 @@ async function steerUrgentIntoBusyTarget(
  * And it LOGS, unconditionally. The instrumented fall-through below already
  * carries the reason — a silent decline is indistinguishable from a dead kicker
  * — and that lesson shipped directly above a bare unlogged return that declined
- * for a different reason. This line is also what makes "how often was a target
- * busy" answerable: a scope in this shape never reached `target_busy` at all,
- * so a zero counter looked identical to a quiet node.
+ * for a different reason.
+ *
+ * The kind is `drive_in_flight` and deliberately NOT `target_busy` (mable,
+ * T-07644 C-16626). They are different conditions — "a drive is already in
+ * flight for this target" versus "the addressee is mid-turn on its own run" —
+ * and merging them would destroy the meaning of the counter that ended four
+ * wrong root causes. The payload is the reduced one for the same reason: what
+ * this line has to name is the attempt holding the slot, because the state it
+ * reports can WEDGE. An attempt whose run never reaches a terminal event stays
+ * `started` forever, and until this line existed the scope simply went quiet.
  */
 async function declineForInFlightAttempt(
   server: HrcServerInstanceForHandlers,
@@ -562,13 +569,12 @@ async function declineForInFlightAttempt(
     session === undefined
       ? false
       : await steerUrgentIntoBusyTarget(server, targetSessionRef, session, actionable, wakeReason)
-  writeServerLog('INFO', 'wrkq.kicker.attempt_in_flight', {
+  writeServerLog('INFO', 'wrkq.kicker.drive_in_flight', {
     ...(steered ? { urgentSteered: true } : {}),
     targetSessionRef,
     wakeReason,
     driveAttemptId: attempt.driveAttemptId,
     runId: attempt.runId,
-    pending: actionable.length,
   })
 }
 
