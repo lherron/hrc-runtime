@@ -6,7 +6,8 @@
  * the mapping stays a pure, testable function.
  */
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { constants, accessSync, readFileSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 
 import { CliUsageError } from 'cli-kit'
 
@@ -35,6 +36,16 @@ export async function forwardDmToWrkc(
   const plan = mapDmToWrkcSay(target, body, opts)
   if (plan.kind === 'refuse') throw new CliUsageError(plan.message)
 
+  // Checked BEFORE the notice, not after the spawn fails. Printing
+  // "forwarded: wrkc say ..." and only then discovering wrkc is missing claims
+  // something that did not happen — observed live on a node the flag day
+  // activated while the wrkq client was never installed (T-07616).
+  if (!isOnPath('wrkc')) {
+    throw new CliUsageError(
+      'wrkc is not installed; `hrcchat dm` forwards to it and cannot deliver without it. Install wrkq, then retry — nothing was sent.'
+    )
+  }
+
   process.stderr.write(formatForwardNotice(plan))
 
   // stderr is piped rather than inherited ONLY so a closed-room refusal can be
@@ -54,10 +65,12 @@ export async function forwardDmToWrkc(
 
   return await new Promise<never>((_resolve, reject) => {
     child.on('error', (err: NodeJS.ErrnoException) => {
+      // Kept as a backstop for the race where wrkc leaves PATH between the
+      // preflight check and the spawn.
       if (err.code === 'ENOENT') {
         reject(
           new CliUsageError(
-            'wrkc is not on PATH; hrcchat dm now forwards to it. Install wrkq (`just install` in ~/praesidium/wrkq).'
+            'wrkc is not installed; `hrcchat dm` forwards to it and cannot deliver without it. Install wrkq, then retry — nothing was sent.'
           )
         )
         return
@@ -76,4 +89,18 @@ export async function forwardDmToWrkc(
       process.exit(code ?? 0)
     })
   })
+}
+
+/** Resolve a bare command name against PATH, the way the spawn will. */
+function isOnPath(command: string): boolean {
+  for (const dir of (process.env['PATH'] ?? '').split(delimiter)) {
+    if (dir === '') continue
+    try {
+      accessSync(join(dir, command), constants.X_OK)
+      return true
+    } catch {
+      // Not here; keep looking.
+    }
+  }
+  return false
 }
