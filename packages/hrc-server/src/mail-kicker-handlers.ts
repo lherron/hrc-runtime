@@ -6,6 +6,7 @@ import type {
   HrcRunRecord,
   HrcSessionRecord,
 } from 'hrc-core'
+import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import { formatSessionRef } from './messages.js'
@@ -762,12 +763,19 @@ export function drainMailKickerTarget(
  * The periodic sweep: the correctness backstop behind the ledger tail.
  *
  * Its candidate set is deliberately NARROW — the scopes this node is currently
- * seating, plus any drive attempt still in flight. That is what "scopes this
- * node homes" means in practice, and it keeps one bounded `pendingView` per
- * sweep instead of a query that grows with every scope the daemon has ever
- * seen. Discovering a scope with no live seat is the TAIL's job: it resumes
- * from a persisted cursor, so an envelope written while HRC was down is
- * replayed rather than swept for.
+ * seating, plus any drive attempt still in flight. It keeps one bounded
+ * `pendingView` per sweep instead of a query that grows with every scope the
+ * daemon has ever seen. Discovering a scope with no live seat is the TAIL's
+ * job: it resumes from a persisted cursor, so an envelope written while HRC was
+ * down is replayed rather than swept for.
+ *
+ * That division of labour holds for a RESTART and ONLY for a restart. A
+ * first-ever start has no cursor to resume from and the tail starts at the
+ * ledger's END, so nothing here and nothing there can see an envelope that was
+ * already pending — the seated set does not contain the scope, and the tail has
+ * jumped past its `envelope.created`. The one-time cold-start catch-up below
+ * (`runMailKickerColdStartCatchup`, T-07643) closes exactly that case; this
+ * comment previously asserted a backstop that did not exist in it.
  */
 export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return Promise.resolve()
@@ -784,12 +792,7 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
         if (view.repended > 0) {
           writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', { repended: view.repended })
         }
-        for (const envelope of view.items) {
-          const scopeRef = envelope.to?.scopeRef
-          if (scopeRef === undefined) continue
-          const sessionRef = targetSessionRefForLedgerScope(scopeRef)
-          if (sessionRef !== undefined) targets.add(sessionRef)
-        }
+        collectPendingTargets(view.items, targets)
       } catch (error) {
         writeServerLog(
           error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
@@ -820,12 +823,94 @@ function chunk<T>(values: readonly T[], size: number): T[][] {
   return batches
 }
 
+/** The drive targets a `pendingView` page names, added to an existing set. */
+function collectPendingTargets(items: readonly WrkqEnvelope[], targets: Set<string>): void {
+  for (const envelope of items) {
+    const scopeRef = envelope.to?.scopeRef
+    if (scopeRef === undefined) continue
+    const sessionRef = targetSessionRefForLedgerScope(scopeRef)
+    if (sessionRef !== undefined) targets.add(sessionRef)
+  }
+}
+
+/**
+ * Every scope this node HOMES, seated or not.
+ *
+ * The placement ledger is the daemon's own record of the bindings it holds
+ * authority for, so it is the only local answer to "which addressees are mine"
+ * that does not require a live seat. It is read here rather than kept on the
+ * instance because the catch-up runs once per process and a stale snapshot
+ * would be worse than a query.
+ *
+ * A scope no node has ever homed has no row anywhere, and is not this node's to
+ * deliver to: an envelope to one still rides the tail's `envelope.created` into
+ * the summon gate, which is where a first birth belongs.
+ */
+function homedTargetSessionRefs(server: HrcServerInstanceForHandlers): string[] {
+  const refs = new Set<string>()
+  for (const record of createPlacementLedgerRepository(server.db.sqlite).list()) {
+    if (record.state !== 'active') continue
+    if (record.homeNodeId !== server.federationNodeId) continue
+    const sessionRef = targetSessionRefForLedgerScope(record.scopeRef)
+    if (sessionRef !== undefined) refs.add(sessionRef)
+  }
+  return [...refs]
+}
+
+/**
+ * The one-time cold-start catch-up (T-07643).
+ *
+ * A first-ever start persists its cursor at the ledger's END — replaying the
+ * whole log would re-drive every historical envelope — and the periodic sweep
+ * only looks at seated scopes. So on that one start, an envelope that was
+ * ALREADY pending against a scope this node homes but is not currently seating
+ * is invisible to both halves of the wake routing, and nothing ever delivers
+ * it. It stays `pending` with an empty `presentedTo` indefinitely: not dead,
+ * not floored, not logged. That is what happened on svc and lab at the T-07616
+ * flag day, where an envelope was rescued only because unrelated later traffic
+ * to the same scope swept it up.
+ *
+ * The fix is one widened sweep, run once, over the placement-ledger scopes this
+ * node homes. It is not the periodic sweep's job: the sweep runs every thirty
+ * ticks forever, and a query that grows with every scope the daemon has ever
+ * bound is a load problem when it is not a one-off.
+ *
+ * THROWS on a ledger failure, deliberately. A catch-up that silently did not
+ * happen is the same silent gap it exists to close, so the caller keeps the
+ * intent armed and retries on the next tick instead.
+ *
+ * It DISCOVERS; it does not deliver. Each target is handed to the ordinary wake
+ * path and the catch-up returns, because awaiting a cold summon per target
+ * would hold the tail — the one-second wake path — for as long as the slowest
+ * birth on the node takes.
+ */
+async function runMailKickerColdStartCatchup(server: HrcServerInstanceForHandlers): Promise<void> {
+  const homed = homedTargetSessionRefs(server)
+  const targets = new Set<string>()
+  for (const batch of chunk(homed, LEDGER_SWEEP_SCOPE_BATCH)) {
+    const view = await server.wrkqLedger.pendingView({ scopes: batch, includeFyi: true })
+    if (view.repended > 0) {
+      writeServerLog('INFO', 'wrkq.kicker.deferrals_repended', { repended: view.repended })
+    }
+    collectPendingTargets(view.items, targets)
+  }
+  writeServerLog('INFO', 'wrkq.kicker.cold_start_catchup', {
+    homedScopes: homed.length,
+    targets: [...targets],
+  })
+  for (const targetSessionRef of targets) {
+    server.requestMailKickerWake(targetSessionRef, 'recovery')
+  }
+}
+
 /**
  * Follow wrkq's event ledger for `envelope.created`, from a PERSISTED cursor.
  *
  * Always explicit: a read with no cursor replays the whole log (T-07620). The
  * first tail on a virgin store resolves "now" from row identity via `lastN`
- * rather than by arithmetic on a high-water mark.
+ * rather than by arithmetic on a high-water mark — and then hands to the
+ * one-time cold-start catch-up, because starting at "now" is exactly what makes
+ * an already-pending envelope unreachable (T-07643).
  */
 export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return
@@ -836,7 +921,16 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
       let cursor = this.db.wrkqLedgerCursors.get()
       if (cursor === undefined) {
         cursor = this.db.wrkqLedgerCursors.advance(await resolveTailStartCursor(this))
+        // Armed BEFORE the catch-up runs and cleared only when one completes,
+        // so a wrkq outage on the first tick costs a retry rather than the
+        // whole backlog: the cursor is already persisted and this condition
+        // will never be true again in this store.
+        this.mailKickerColdStartCatchupPending = true
         writeServerLog('INFO', 'wrkq.kicker.tail_started', { cursor })
+      }
+      if (this.mailKickerColdStartCatchupPending) {
+        await runMailKickerColdStartCatchup(this)
+        this.mailKickerColdStartCatchupPending = false
       }
       const page = await this.wrkqLedger.eventsView({
         cursor,
@@ -872,6 +966,12 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
  * the newest one, and one bounded page past it reports that newest row's id as
  * its high water — which is exactly the end. An empty ledger stays at 0, so the
  * very first envelope ever written is still seen.
+ *
+ * An empty ledger was the ONLY case that covered, and a first start against a
+ * non-empty one is the common case, not the rare one — every already-pending
+ * envelope sits before this cursor. What makes those reachable is the
+ * cold-start catch-up the caller runs immediately after persisting this mark,
+ * never this function widening its start.
  */
 async function resolveTailStartCursor(server: HrcServerInstanceForHandlers): Promise<number> {
   const beforeLast = await server.wrkqLedger.eventsView({ cursor: 0, lastN: 1 })

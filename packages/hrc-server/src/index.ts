@@ -836,6 +836,8 @@ class HrcServerInstance implements HrcServer {
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
   mailKickerSweepInFlight: Promise<void> | undefined
   wrkqLedgerTailInFlight: Promise<void> | undefined
+  /** T-07643: a first-ever tail start owes one catch-up over its homed scopes. */
+  mailKickerColdStartCatchupPending = false
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
   // Stale-generation auto-rotation policy. Resolved once at construction

@@ -1,18 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import type { DispatchTurnResponse, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
-import { appendHrcEvent } from '../hrc-event-helper.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import { resolveHrcMailKickerEnabled, resolveHrcMailMaxRounds } from '../option-resolvers.js'
 import { timestamp } from '../server-util.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import {
+  captureServerLog,
+  completeRun,
+  installDeterministicStart,
+  installMailKickerAgentHome,
+  queryCount,
+  startedRunId,
+  waitUntil,
+} from './fixtures/mail-kicker-harness.js'
 
 /**
  * T-07615 (T-07612 wave 3) — HRC drives the wrkq collaboration ledger.
@@ -31,27 +38,15 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 let ledger: FakeWrkqLedger
 let crashChild: ReturnType<typeof Bun.spawn> | undefined
-let originalCwd: string
-let originalAgentsRoot: string | undefined
 let agentsRoot: string
+let restoreAgentHome: () => void
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-mail-kicker-')
   ledger = new FakeWrkqLedger()
-
-  // The kicker BUILDS the runtime intent for a cold target from the agent's own
-  // profile on this node, because wrkq stores only the verbatim directive block.
-  // So the target has to have a real agent home for a cold summon to be possible
-  // at all -- which is the same thing production requires.
-  originalCwd = process.cwd()
-  originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
-  const workspaceRoot = await realpath(fixture.tmpDir)
-  agentsRoot = join(workspaceRoot, 'collective', 'var', 'agents')
-  await mkdir(join(workspaceRoot, 'collective', 'hrc-runtime', '.git'), { recursive: true })
-  await mkdir(join(agentsRoot, 'kicker-proof'), { recursive: true })
-  await writeFile(join(agentsRoot, 'kicker-proof', 'agent-profile.toml'), 'version = 3\n')
-  process.chdir(join(workspaceRoot, 'collective'))
-  process.env['ASP_AGENTS_ROOT'] = agentsRoot
+  const home = await installMailKickerAgentHome(fixture.tmpDir, 'kicker-proof')
+  agentsRoot = home.agentsRoot
+  restoreAgentHome = home.restore
 })
 
 afterEach(async () => {
@@ -64,12 +59,7 @@ afterEach(async () => {
     await crashChild.exited.catch(() => undefined)
     crashChild = undefined
   }
-  process.chdir(originalCwd)
-  if (originalAgentsRoot === undefined) {
-    Reflect.deleteProperty(process.env, 'ASP_AGENTS_ROOT')
-  } else {
-    process.env['ASP_AGENTS_ROOT'] = originalAgentsRoot
-  }
+  restoreAgentHome()
   await fixture.cleanup()
 })
 
@@ -88,211 +78,6 @@ async function startServer(options: Record<string, unknown> = {}): Promise<HrcSe
     })
   )
   return server
-}
-
-async function waitUntil(
-  predicate: () => boolean | Promise<boolean>,
-  label: string
-): Promise<void> {
-  const deadline = Date.now() + 5_000
-  while (Date.now() < deadline) {
-    if (await predicate()) return
-    await Bun.sleep(20)
-  }
-  throw new Error(`timed out waiting for ${label}`)
-}
-
-function startedAttempts(db: HrcDatabase) {
-  return db.mailDrives
-    .listAttempts(TARGET)
-    .filter((attempt) => attempt.state === 'started' || attempt.state === 'completed')
-}
-
-/**
- * The run id of the nth attempt that actually reached a runtime.
- *
- * Dispatch being CALLED is not the same as the turn having started: the drive
- * records its start from the `turn.started` event, so the wait is on the durable
- * attempt state rather than on a call counter.
- */
-async function startedRunId(db: HrcDatabase, index: number): Promise<string> {
-  await waitUntil(() => startedAttempts(db).length > index, `attempt ${index} started`)
-  return startedAttempts(db)[index]?.runId as string
-}
-
-/**
- * Capture the daemon's own stderr for one bounded window, so a "skipped and
- * logged" claim can be checked rather than inferred. Scoped to the call and
- * restored afterwards: swapping stderr for a whole file swallows every other
- * test's diagnostics.
- */
-async function captureServerLog<T>(run: () => Promise<T>): Promise<{
-  result: T
-  lines: string[]
-}> {
-  const lines: string[] = []
-  const original = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    lines.push(String(chunk))
-    return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
-  }) as typeof process.stderr.write
-  try {
-    return { result: await run(), lines }
-  } finally {
-    process.stderr.write = original
-  }
-}
-
-function queryCount(db: HrcDatabase, table: string): number {
-  const row = db.sqlite.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()
-  return row?.count ?? 0
-}
-
-/**
- * A deterministic dispatch that reuses ONE runtime per host session, the way a
- * real session does. `rotateRuntime` stands in for a `/quit`: continuation is
- * cleared and the next turn runs in a NEW runtime inside the SAME generation,
- * which is precisely the case §7's history cue is keyed to.
- */
-function installDeterministicStart(serverInstance: HrcServer): {
-  calls: () => number
-  prompts: () => string[]
-  rotateRuntime: () => void
-} {
-  let calls = 0
-  let runtimeGeneration = 0
-  const prompts: string[] = []
-  const runtimesBySession = new Map<string, string>()
-  ;(serverInstance as any).dispatchTurnForSession = async (
-    session: HrcSessionRecord,
-    _intent: HrcRuntimeIntent,
-    prompt: string,
-    options: { runId: string }
-  ): Promise<Response> => {
-    calls += 1
-    prompts.push(prompt)
-    const db = (serverInstance as any).db as HrcDatabase
-    const runId = options.runId
-    const existing = db.runs.getByRunId(runId)
-    if (existing !== null) {
-      return Response.json({
-        runId,
-        hostSessionId: existing.hostSessionId,
-        generation: existing.generation,
-        runtimeId: existing.runtimeId,
-        transport: existing.transport,
-        status: existing.status === 'completed' ? 'completed' : 'started',
-        supportsInFlightInput: false,
-      } as DispatchTurnResponse)
-    }
-
-    const now = timestamp()
-    const sessionKey = `${session.hostSessionId}:${runtimeGeneration}`
-    const runtimeId =
-      runtimesBySession.get(sessionKey) ?? `rt-${session.hostSessionId}-${runtimeGeneration}`
-    const reused = db.runtimes.getByRuntimeId(runtimeId)
-    runtimesBySession.set(sessionKey, runtimeId)
-    if (reused !== null) {
-      db.runtimes.update(runtimeId, {
-        status: 'busy',
-        statusChangedAt: now,
-        updatedAt: now,
-      })
-      db.runtimes.updateRunId(runtimeId, runId, now)
-    } else {
-      db.runtimes.insert({
-        runtimeId,
-        runtimeKind: 'harness',
-        hostSessionId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'busy',
-        statusChangedAt: now,
-        supportsInflightInput: false,
-        adopted: false,
-        activeRunId: runId,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
-    db.runs.insert({
-      runId,
-      hostSessionId: session.hostSessionId,
-      runtimeId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      transport: 'headless',
-      status: 'started',
-      acceptedAt: now,
-      startedAt: now,
-      updatedAt: now,
-    })
-    const started = appendHrcEvent(db, 'turn.started', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId,
-      runId,
-      transport: 'headless',
-    })
-    ;(serverInstance as any).notifyEvent(started)
-    return Response.json({
-      runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId,
-      transport: 'headless',
-      status: 'started',
-      supportsInFlightInput: false,
-    } as DispatchTurnResponse)
-  }
-  return {
-    calls: () => calls,
-    prompts: () => prompts,
-    rotateRuntime: () => {
-      const db = (serverInstance as any).db as HrcDatabase
-      const now = timestamp()
-      for (const runtimeId of runtimesBySession.values()) {
-        db.runtimes.update(runtimeId, {
-          status: 'exited',
-          statusChangedAt: now,
-          updatedAt: now,
-        })
-      }
-      runtimeGeneration += 1
-    },
-  }
-}
-
-async function completeRun(serverInstance: HrcServer, runId: string): Promise<void> {
-  const db = (serverInstance as any).db as HrcDatabase
-  const run = db.runs.getByRunId(runId)
-  if (run === null) throw new Error(`missing run ${runId}`)
-  const now = timestamp()
-  db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
-  if (run.runtimeId !== undefined) {
-    db.runtimes.updateRunId(run.runtimeId, undefined, now)
-    db.runtimes.update(run.runtimeId, { status: 'ready', statusChangedAt: now, updatedAt: now })
-  }
-  const completed = appendHrcEvent(db, 'turn.completed', {
-    ts: now,
-    hostSessionId: run.hostSessionId,
-    scopeRef: run.scopeRef,
-    laneRef: run.laneRef,
-    generation: run.generation,
-    runtimeId: run.runtimeId,
-    runId,
-    transport: run.transport,
-    payload: { success: true },
-  })
-  ;(serverInstance as any).notifyEvent(completed)
 }
 
 describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
@@ -396,7 +181,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.prompts()[0]).toContain('history: wrkc log T-07615')
 
     ledger.ack(first.id)
-    await completeRun(server as HrcServer, await startedRunId(db, 0))
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
 
     // Same WARM runtime, another message: it has seen this room, so no cue.
     say({ body: 'third' })
@@ -404,7 +189,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 2, 'second drive')
     expect(deterministic.prompts()[1]).not.toContain('history:')
 
-    await completeRun(server as HrcServer, await startedRunId(db, 1))
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 1))
 
     // /quit clears continuation WITHOUT rotating the generation, so the next
     // runtime reads cold and the cue comes back. That is the whole reason wrkq
@@ -483,7 +268,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const db = (server as any).db as HrcDatabase
     expect(db.sessions.listByScopeRef(SCOPE, 'main')).toHaveLength(1)
 
-    await completeRun(server as HrcServer, await startedRunId(db, 0))
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     await waitUntil(
       () => ledger.roundEndedCalls.includes(envelope.id),
       'round advanced for the undisposed envelope'
@@ -501,7 +286,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // The reply IS the ack; by the time the turn ends the obligation is gone.
     ledger.ack(envelope.id)
     const db = (server as any).db as HrcDatabase
-    await completeRun(server as HrcServer, await startedRunId(db, 0))
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     await waitUntil(() => ledger.roundEndedCalls.includes(envelope.id), 'roundEnded consulted')
     // Only a still-presented envelope advances, so the acked one burns nothing.
     expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(0)
@@ -664,7 +449,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'first drive')
 
     const db = (server as any).db as HrcDatabase
-    await completeRun(server as HrcServer, await startedRunId(db, 0))
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     await waitUntil(() => ledger.roundEndedCalls.length > 0, 'round advanced')
     expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(1)
 

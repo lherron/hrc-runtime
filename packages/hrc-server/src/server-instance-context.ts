@@ -193,6 +193,13 @@ type HrcServerInstanceDataForHandlers = {
   readonly wrkqLedger: WrkqLedgerClient
   readonly federationNodeId: string
   wrkqLedgerTailInFlight: Promise<void> | undefined
+  /**
+   * T-07643: a first-ever tail start owes one widened catch-up sweep over the
+   * scopes this node homes. Armed when the cursor is minted, cleared only when
+   * a catch-up completes, so a ledger outage retries instead of losing the
+   * backlog silently.
+   */
+  mailKickerColdStartCatchupPending: boolean
   readonly hrcMailMaxRounds: number
   harnessBrokerController: HarnessBrokerController | undefined
   /**
