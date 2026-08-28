@@ -185,9 +185,12 @@ function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | unde
  */
 function advanceRoundsForAttempt(
   server: HrcServerInstanceForHandlers,
-  driveAttemptId: string,
+  attempt: HrcMailDriveAttempt,
   envelopeIds: readonly string[]
 ): void {
+  // T-07671 §5: a line about a target that does not name the target is not part
+  // of that target's timeline, and `grep <scope>` silently misses it.
+  const { targetSessionRef, driveAttemptId } = attempt
   if (envelopeIds.length === 0) return
   void (async () => {
     for (const envelope of envelopeIds) {
@@ -198,6 +201,7 @@ function advanceRoundsForAttempt(
         })
         if (advanced.state === 'dead') {
           writeServerLog('INFO', 'wrkq.kicker.envelope_dead', {
+            targetSessionRef,
             driveAttemptId,
             envelope,
             roundCount: advanced.roundCount,
@@ -205,6 +209,7 @@ function advanceRoundsForAttempt(
         }
       } catch (error) {
         writeServerLog('WARN', 'wrkq.kicker.round_ended_failed', {
+          targetSessionRef,
           driveAttemptId,
           envelope,
           error: errorText(error),
@@ -237,11 +242,7 @@ function observeAttempt(
   if (terminal !== undefined) {
     const completed = server.db.mailDrives.completeStartedAttempt(current.runId, terminal.eventKind)
     if (completed !== undefined) {
-      advanceRoundsForAttempt(
-        server,
-        completed.attempt.driveAttemptId,
-        completed.presentedEnvelopeIds
-      )
+      advanceRoundsForAttempt(server, completed.attempt, completed.presentedEnvelopeIds)
     }
     return 'finished'
   }
@@ -256,11 +257,7 @@ function observeAttempt(
       `run.${run.status}`
     )
     if (completed !== undefined) {
-      advanceRoundsForAttempt(
-        server,
-        completed.attempt.driveAttemptId,
-        completed.presentedEnvelopeIds
-      )
+      advanceRoundsForAttempt(server, completed.attempt, completed.presentedEnvelopeIds)
     }
     return 'finished'
   }
@@ -630,6 +627,10 @@ async function declineForInFlightAttempt(
     // which, nor tell a `waiting` decline from a `finished` one.
     via: route.via,
     observation: route.observation,
+    // T-07671: WHICH envelopes are held behind the in-flight attempt, not just
+    // how many. A wedged attempt is reconstructed from the log alone only if
+    // the line names the mail that is stuck behind it.
+    envelopeIds: actionable.map((envelope) => envelope.id),
   })
 }
 
@@ -948,6 +949,9 @@ async function driveMailTargetOnce(
         targetSessionRef,
         wakeReason,
         pending: actionable.length,
+        // T-07671: the count answers "is anything waiting"; the ids answer
+        // "is MY envelope waiting", which is the question an RCA actually asks.
+        envelopeIds: actionable.map((envelope) => envelope.id),
         activeRunId: activeRunIdFor(server, session),
       })
       return
@@ -1026,6 +1030,26 @@ async function driveMailTargetOnce(
     }
   }
 
+  // T-07671: the drive is now committed — the slot is held and this daemon owns
+  // it. Every later outcome (presented, dispatched, no-op, failed) carries the
+  // same `driveAttemptId`, so this line is the head of a timeline that
+  // `grep <scope>` reconstructs without opening `state.sqlite`. It is emitted
+  // for a re-driven pre-existing attempt as well as a fresh claim, because the
+  // question it answers — "did this daemon start driving this mail at all" —
+  // is the same one in both shapes.
+  writeServerLog('INFO', 'wrkq.kicker.drive_claimed', {
+    targetSessionRef,
+    driveAttemptId: attempt.driveAttemptId,
+    runId: attempt.runId,
+    wakeReason,
+    envelopeIds: actionable.map((envelope) => envelope.id),
+    // Whether a seat already existed, and what it was doing. A drive that has
+    // to summon first behaves nothing like one into a live seat, and the two
+    // were previously indistinguishable in the log.
+    seated: session !== undefined,
+    ...(session === undefined ? {} : { activeRunId: activeRunIdFor(server, session) }),
+  })
+
   try {
     const materializationIntent = session?.lastAppliedIntentJson ?? attempt.materializationIntent
     if (materializationIntent === undefined) {
@@ -1058,7 +1082,26 @@ async function driveMailTargetOnce(
       generation: session.generation,
     })
 
-    if (targetHasRunningTurn(server, session)) return
+    if (targetHasRunningTurn(server, session)) {
+      // T-07671: this is a SECOND busy check, after the seat was resolved or
+      // summoned, and until now it was a bare return — the one shape where a
+      // claimed attempt is abandoned mid-drive with no line at all. It is not
+      // `target_busy`: that names a decline taken BEFORE a claim, and merging
+      // the two would destroy the counter that ended four wrong root causes
+      // (T-07644 C-16626). This one leaves an attempt holding the scope's slot,
+      // which is the fact an operator needs, so it says so and names the
+      // attempt.
+      writeServerLog('WARN', 'wrkq.kicker.drive_yielded_busy', {
+        targetSessionRef,
+        driveAttemptId: attempt.driveAttemptId,
+        runId: attempt.runId,
+        wakeReason,
+        envelopeIds: actionable.map((envelope) => envelope.id),
+        activeRunId: activeRunIdFor(server, session),
+        note: 'target went busy after the claim; attempt still holds the scope slot',
+      })
+      return
+    }
 
     // The local receipt is written FIRST, then the ledger is told with the same
     // attempt id. A kill in between replays into an exactly-once `present`.
@@ -1068,6 +1111,17 @@ async function driveMailTargetOnce(
     )
     if (envelopeIds.length === 0) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
+      // T-07671: an attempt that ends here wrote no receipts and dispatched no
+      // turn. Silent, it is indistinguishable from a kicker that never ran.
+      writeServerLog('WARN', 'wrkq.kicker.drive_no_op', {
+        targetSessionRef,
+        driveAttemptId: attempt.driveAttemptId,
+        runId: attempt.runId,
+        wakeReason,
+        reason: 'already_presented',
+        envelopeIds: actionable.map((envelope) => envelope.id),
+        note: 'this attempt had already recorded its presentations; no turn dispatched',
+      })
       return
     }
 
@@ -1077,6 +1131,23 @@ async function driveMailTargetOnce(
       .map((id) => byId.get(id))
       .filter((envelope): envelope is WrkqEnvelope => envelope !== undefined)
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
+    // T-07671: the ledger now holds a presentation receipt for each of these.
+    // The receipt is the thing an operator finds in wrkq and cannot explain, so
+    // the daemon has to say it wrote one — with the same identifiers the
+    // receipt carries (`hostSessionId`, `generation`, `runtimeId`), which is
+    // what makes the two records joinable without opening sqlite.
+    writeServerLog('INFO', 'wrkq.kicker.presented', {
+      targetSessionRef,
+      driveAttemptId: attempt.driveAttemptId,
+      runId: attempt.runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+      envelopes: presentables.map((presentable) => ({
+        id: presentable.envelope.id,
+        obligation: presentable.envelope.obligation,
+      })),
+    })
     const prompt = formatEnvelopePresentations(presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
@@ -1085,6 +1156,24 @@ async function driveMailTargetOnce(
     // was everything this attempt held, there is no turn to dispatch.
     if (!presentables.some((presentable) => summonsATurn(presentable.envelope))) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
+      // T-07671, and the line the RCA that produced this task needed: a fyi-only
+      // attempt writes presentation receipts into the ledger and then ends
+      // WITHOUT a turn. From wrkq alone that reads as `presented`+`acked` with a
+      // runId, which looks exactly like a delivered turn — the ambiguity that
+      // cost an afternoon of reading `hrcmail_drive_attempts` by hand. WARN,
+      // because "receipts written, addressee never woken" is the state a reader
+      // grepping for trouble is looking for.
+      writeServerLog('WARN', 'wrkq.kicker.drive_no_op', {
+        targetSessionRef,
+        driveAttemptId: attempt.driveAttemptId,
+        runId: attempt.runId,
+        wakeReason,
+        reason: 'fyi_only',
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        envelopeIds: presentables.map((presentable) => presentable.envelope.id),
+        note: 'presentation receipts written WITHOUT a turn: no envelope carried a reply_required obligation',
+      })
       return
     }
 
@@ -1110,6 +1199,12 @@ async function driveMailTargetOnce(
       driveAttemptId: attempt.driveAttemptId,
       runId: attempt.runId,
       presentedCount: presentables.length,
+      // T-07671: WHICH envelopes rode this turn, and WHERE it landed. A count
+      // cannot answer "was EN-00823 delivered", and without the seat identity
+      // the dispatch cannot be joined to the ledger's own receipt.
+      envelopeIds: presentables.map((presentable) => presentable.envelope.id),
+      hostSessionId: body.hostSessionId,
+      generation: body.generation,
       wakeReason,
     })
   } catch (error) {

@@ -524,7 +524,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     })
     const deterministic = installDeterministicStart(server as HrcServer)
 
-    say()
+    const held = say()
     const captured = await captureServerLog(async () => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await (server as any).drainMailKickerTarget(TARGET)
@@ -534,6 +534,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const busy = captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))
     expect(busy).not.toHaveLength(0)
     expect(busy[busy.length - 1]).toContain('run-busy-visible')
+    // T-07671: a count cannot answer "is MY envelope the one waiting here".
+    expect(busy[busy.length - 1]).toContain(held.id)
 
     await completeRun(server as HrcServer, 'run-busy-visible')
     await waitUntil(() => deterministic.calls() === 1, 'delivered once the turn ended')
@@ -672,4 +674,110 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(db.mailDrives.getAttempt(claimed.driveAttemptId)?.state).toBe('completed')
     expect(deterministic.calls()).toBe(1)
   }, 20_000)
+
+  /**
+   * T-07671 — RCA-grade logging.
+   *
+   * The RCA that produced this task had three `presented`+`acked` fyi
+   * envelopes in the wrkq ledger, each stamped with a runId and a
+   * driveAttemptId, and ZERO server-log lines for either drive. The only way to
+   * learn that no turn was ever dispatched was to read `hrcmail_drive_attempts`
+   * in `state.sqlite` by hand. These tests pin the lines that make that
+   * reconstruction a `grep <scope>` instead.
+   */
+  it('leaves a full drive_claimed → presented → drive_no_op trail for a fyi-only drive', async () => {
+    await startServer()
+    const resolved = await fixture.resolveSession(SCOPE)
+    const db = (server as any).db as HrcDatabase
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-fyi-trail',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const envelope = say({ obligation: 'fyi', body: 'for your information only' })
+
+    const captured = await captureServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      await (server as any).drainMailKickerTarget(TARGET)
+      await waitUntil(
+        () => ledger.envelopes.get(envelope.id)?.state === 'acked',
+        'fyi presented and auto-acked'
+      )
+    })
+    expect(deterministic.calls()).toBe(0)
+
+    const kindLine = (kind: string): string => {
+      const lines = captured.lines.filter((line) => line.includes(`wrkq.kicker.${kind}`))
+      expect(lines).not.toHaveLength(0)
+      return lines[lines.length - 1] as string
+    }
+
+    // Head of the timeline: the drive is committed and this daemon owns it.
+    const claimed = kindLine('drive_claimed')
+    expect(claimed).toContain(TARGET)
+    expect(claimed).toContain(envelope.id)
+    expect(claimed).toContain('"seated":true')
+
+    // The receipt the ledger holds, said by the daemon that wrote it, with the
+    // identifiers the receipt itself carries.
+    const presented = kindLine('presented')
+    expect(presented).toContain(envelope.id)
+    expect(presented).toContain('"obligation":"fyi"')
+    expect(presented).toContain(resolved.hostSessionId)
+
+    // And the line the RCA needed: receipts written, no turn.
+    const noOp = kindLine('drive_no_op')
+    expect(noOp).toContain('WARN')
+    expect(noOp).toContain(TARGET)
+    expect(noOp).toContain(envelope.id)
+    expect(noOp).toContain('"reason":"fyi_only"')
+    expect(noOp).toContain('WITHOUT a turn')
+    // A fyi drive must never be confusable with a delivered one.
+    expect(
+      captured.lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
+    ).toHaveLength(0)
+  })
+
+  it('names the envelopes and the seat on the turn_dispatched line of a reply_required drive', async () => {
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const envelope = say()
+
+    const captured = await captureServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      await waitUntil(() => deterministic.calls() === 1, 'drive dispatched')
+    })
+
+    const dispatched = captured.lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
+    expect(dispatched).not.toHaveLength(0)
+    const line = dispatched[dispatched.length - 1] as string
+    expect(line).toContain(TARGET)
+    expect(line).toContain(envelope.id)
+    expect(line).toContain('"hostSessionId"')
+    expect(line).toContain('"generation"')
+
+    // The same driveAttemptId threads claim → presentation → dispatch, so one
+    // grep of the scope reconstructs the drive in order.
+    const db = (server as any).db as HrcDatabase
+    const attempt = db.mailDrives.listAttempts(TARGET)[0] as HrcMailDriveAttempt
+    for (const kind of ['drive_claimed', 'presented', 'turn_dispatched']) {
+      const kindLines = captured.lines.filter((entry) => entry.includes(`wrkq.kicker.${kind}`))
+      expect(kindLines).not.toHaveLength(0)
+      expect(kindLines[kindLines.length - 1]).toContain(attempt.driveAttemptId)
+    }
+  })
 })
