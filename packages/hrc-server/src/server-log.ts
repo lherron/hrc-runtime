@@ -12,8 +12,16 @@ const SERVER_LOG_REDACT_KEY_PATTERN =
  * gap on two nodes stayed unreadable while it was happening (T-07643). An
  * allowlist keeps the pattern's default-deny posture; nothing here may name a
  * value, only a key whose contents are already public vocabulary.
+ *
+ * `hostSessionId` is the same accident and the same cost. It is an opaque
+ * identifier the CLI prints, the collaboration ledger stamps on every
+ * presentation receipt, and the T-07650 audits settled on as their canonical
+ * join key — precisely because a runtime id churns mid-session and a host
+ * session does not. A daemon log that redacts the one column the audit joins on
+ * cannot be reconciled against the ledger at all, which is what made the shadow
+ * teardown's own line unreadable when it was first written.
  */
-const SERVER_LOG_NEVER_REDACTED_KEYS = new Set(['targetSessionRef'])
+const SERVER_LOG_NEVER_REDACTED_KEYS = new Set(['targetSessionRef', 'hostSessionId'])
 
 export function writeServerLog(
   level: ServerLogLevel,

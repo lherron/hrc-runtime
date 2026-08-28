@@ -100,6 +100,7 @@ import {
   resolveFederationConfigPath,
   summarizeFederationConfig,
 } from './federation/federation-config.js'
+import type { ForeignHome } from './federation/home-authority.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import { locatePeerScope, probePeerHealth } from './federation/peer-observer.js'
 import {
@@ -144,7 +145,6 @@ import {
   normalizeLocalPersonaAllowlist,
 } from './local-persona-policy.js'
 import {
-  type KickerForeignHome,
   type MailKickerHandlersMethods,
   mailKickerHandlersMethods,
 } from './mail-kicker-handlers.js'
@@ -277,6 +277,10 @@ import {
   sessionIndexHandlersMethods,
 } from './session-index-handlers.js'
 import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
+import {
+  type ShadowTeardownHandlersMethods,
+  shadowTeardownHandlersMethods,
+} from './shadow-teardown-handlers.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
 import { toStartRuntimeResponse, toStatusSessionView } from './status-views.js'
 import {
@@ -757,6 +761,7 @@ interface HrcServerInstance
     SessionIndexHandlersMethods,
     BridgeSurfaceHandlersMethods,
     SweepHandlersMethods,
+    ShadowTeardownHandlersMethods,
     RuntimeIoHandlersMethods,
     RuntimeControlHandlersMethods,
     TargetMessageHandlersMethods,
@@ -841,7 +846,10 @@ class HrcServerInstance implements HrcServer {
   mailKickerColdStartCatchupPending = false
   readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
   readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
-  readonly mailKickerForeignHomes = new Map<string, KickerForeignHome>()
+  readonly mailKickerForeignHomeAnnounced = new Map<string, string>()
+  readonly foreignHomeMemo = new Map<string, ForeignHome>()
+  shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
+  shadowTeardownInFlight: Promise<void> | undefined
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -1299,6 +1307,7 @@ class HrcServerInstance implements HrcServer {
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
     this.startMailKicker()
+    this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
       if (grant.consumed) {
         scheduleExternalRegistrationCollectiveEstablishment(this, grant.registrationId)
@@ -1562,6 +1571,17 @@ class HrcServerInstance implements HrcServer {
         await this.sessionRetentionInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.session_retention_wait_failed', { error })
+      }
+    }
+    if (this.shadowTeardownTimer) {
+      clearInterval(this.shadowTeardownTimer)
+      this.shadowTeardownTimer = undefined
+    }
+    if (this.shadowTeardownInFlight) {
+      try {
+        await this.shadowTeardownInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.shadow_teardown_wait_failed', { error })
       }
     }
     if (this.mailKickerSweepTimer) {
@@ -2749,6 +2769,7 @@ Object.assign(
   sessionIndexHandlersMethods,
   bridgeSurfaceHandlersMethods,
   sweepHandlersMethods,
+  shadowTeardownHandlersMethods,
   runtimeIoHandlersMethods,
   runtimeControlHandlersMethods,
   targetMessageHandlersMethods,

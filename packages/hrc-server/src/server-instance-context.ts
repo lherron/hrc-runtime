@@ -29,10 +29,11 @@ import type {
   ExternalRegistrationRendezvousMethods,
 } from './external-registration-rendezvous.js'
 import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
+import type { ForeignHome } from './federation/home-authority.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
-import type { KickerForeignHome, MailKickerHandlersMethods } from './mail-kicker-handlers.js'
+import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
 import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
 import type { RegistrationHandlersMethods } from './registration-handlers.js'
@@ -53,6 +54,7 @@ import type {
   TurnResponseFinalizer,
 } from './server-types.js'
 import type { SessionIndexHandlersMethods } from './session-index-handlers.js'
+import type { ShadowTeardownHandlersMethods } from './shadow-teardown-handlers.js'
 import type { SteerClassDispatchMethods } from './steer-class-dispatch.js'
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
@@ -93,6 +95,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   ExactClaimHandlersMethods &
   RegistrationGcHandlersMethods &
   RegistrationHandlersMethods &
+  ShadowTeardownHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &
@@ -144,6 +147,15 @@ type HrcServerInstanceDataForHandlers = {
   /** T-07214: per-peer default-deny remote-preemption authority (see index.ts). */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly federationRegistryClient: BindingRegistryClient | undefined
+  /**
+   * Scopes this node has learned it does NOT home, keyed by scopeRef (T-07650).
+   *
+   * Process-local on purpose: it exists to charge one registry consult per scope
+   * per process instead of one per tick, and a restart must be able to re-ask.
+   * It is never consulted ahead of the local placement ledger, so it can only
+   * ever delay a scope's return to this node, never block it.
+   */
+  readonly foreignHomeMemo: Map<string, ForeignHome>
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
@@ -170,6 +182,8 @@ type HrcServerInstanceDataForHandlers = {
   tmuxAgingInFlight: Promise<unknown> | undefined
   sessionRetentionTimer: ReturnType<typeof setInterval> | undefined
   sessionRetentionInFlight: Promise<void> | undefined
+  shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
+  shadowTeardownInFlight: Promise<void> | undefined
   /** Immutable process release identity, captured once at construction. */
   readonly capturedRelease: CapturedServerRelease
   /** T-07235 provision-liveness watchdog: its own cadence, not the zombie sweep's. */
@@ -180,14 +194,13 @@ type HrcServerInstanceDataForHandlers = {
   readonly mailKickerPendingTargets: Map<string, HrcMailDriveWakeReason>
   readonly mailKickerTargetOperations: Map<string, Promise<void>>
   /**
-   * Scopes this node has learned it does NOT home, keyed by scopeRef (T-07650).
-   *
-   * Process-local on purpose: it exists to charge one registry consult and one
-   * log line per scope per epoch instead of one per sweep tick, and a restart
-   * must be able to re-ask. It is never consulted ahead of the local placement
-   * ledger, so it can only ever delay a scope's return, never block it.
+   * The kicker's own log dedupe for `foreign_home_skipped`: scopeRef ->
+   * `<homeNodeId>@<epoch>`, so the line is written once per scope per epoch.
+   * Separate from `foreignHomeMemo` because that memo is shared with the shadow
+   * teardown, and whichever mechanism resolved a scope first would otherwise
+   * silence the other's line.
    */
-  readonly mailKickerForeignHomes: Map<string, KickerForeignHome>
+  readonly mailKickerForeignHomeAnnounced: Map<string, string>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number

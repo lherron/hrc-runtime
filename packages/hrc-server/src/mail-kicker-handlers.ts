@@ -9,10 +9,12 @@ import type {
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
+import type { ForeignHome } from './federation/home-authority.js'
+import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import { formatSessionRef } from './messages.js'
 import { parseSessionRef } from './server-parsers.js'
 
-import { isRunActive } from './require-helpers.js'
+import { isRunActive, isRuntimeUnavailableStatus } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRecord } from './server-parsers.js'
@@ -510,9 +512,7 @@ async function steerUrgentIntoBusyTarget(
     return false
   }
 
-  const runtimeId = server.db.runtimes
-    .listByHostSessionId(session.hostSessionId)
-    .find((runtime) => runtime.status !== 'exited')?.runtimeId
+  const runtimeId = presentationRuntimeIdFor(server, session)
   for (const envelope of urgent) {
     await server.wrkqLedger.present({
       envelope: envelope.id,
@@ -602,105 +602,58 @@ async function declineForInFlightAttempt(
   })
 }
 
+/** Home-authority deps, with the kicker's own name on a consult failure. */
+function kickerHomeDeps(server: HrcServerInstanceForHandlers) {
+  return homeAuthorityDeps(server, (scopeRef, error) => {
+    writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
+      scopeRef,
+      error: errorText(error),
+    })
+  })
+}
+
+/**
+ * The runtime a presentation receipt must name: the host session's CURRENT
+ * seat, not the oldest row it ever had (T-07650 mechanism A).
+ *
+ * The previous expression was `listByHostSessionId(...).find(r => r.status !==
+ * 'exited')`. That query is `ORDER BY created_at ASC`, and `'exited'` is an
+ * `HrcBrokerInvocationState`, never a runtime status — no stored row has ever
+ * held it, so the predicate excluded nothing and the expression was `[0]`: the
+ * FIRST runtime the host session ever had, whatever became of it. A receipt
+ * therefore named a five-week-old row while the turn ran on the current one, in
+ * proportion to how long the session had lived and not to anything being wrong.
+ * The audits found it fleet-wide with zero true corpses behind it — max3 60/60,
+ * svc 38/38, every one resolving to a live host session.
+ *
+ * Newest-first, skipping the unavailable states, and pinned to the SESSION'S
+ * GENERATION so a prior-generation runtime left `ready` after a rotation can
+ * never be named (T-07650, on Lance's max3 specimen: gen 27 `ready` since
+ * 17:00Z took a message meant for gen 50). No current-generation seat means NO
+ * runtimeId on the receipt: a receipt with no runtime is honest and already has
+ * its own line in the audit, while a receipt naming the wrong one is not
+ * recoverable after the fact.
+ */
+function presentationRuntimeIdFor(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord
+): string | undefined {
+  const runtimes = server.db.runtimes.listByHostSessionId(session.hostSessionId)
+  for (let index = runtimes.length - 1; index >= 0; index -= 1) {
+    const runtime = runtimes[index]
+    if (runtime === undefined) continue
+    if (runtime.generation !== session.generation) continue
+    if (runtime.status === 'exited' || isRuntimeUnavailableStatus(runtime.status)) continue
+    return runtime.runtimeId
+  }
+  return undefined
+}
+
 /** The scope behind a drive target, or nothing when the ref is unparseable. */
 function kickerScopeRefFor(targetSessionRef: string): string | undefined {
   try {
     return parseSessionRef(targetSessionRef).scopeRef
   } catch {
-    return undefined
-  }
-}
-
-/**
- * A home this node believes a scope has, when that home is NOT this node.
- *
- * `source` is kept because the two answers have different lifetimes: a
- * `placement-ledger` verdict is re-read from local SQLite on every wake and is
- * authoritative, while a `registry` verdict is a remembered network answer.
- */
-export type KickerForeignHome = Readonly<{
-  homeNodeId: string
-  placementEpoch: number
-  source: 'placement-ledger' | 'registry'
-}>
-
-/**
- * "Is this scope mine to drive?", asked BEFORE a drive attempt is claimed.
- *
- * The kicker's two candidate sources — `listInFlightTargets()` and
- * `listLiveSessionRefs()` — are both node-local and both blind to placement.
- * A node that ever seated a scope keeps a live runtime row for it, and a
- * claimed attempt that fails at the summon gate stays claimed, so after a
- * rebind moves the scope away BOTH sets keep naming it forever. Every sweep
- * tick then re-drove it into a `bound-elsewhere` refusal: 14 typed
- * `drive_failed` per tick on max3, ~34 per minute, and one more permanently
- * stuck attempt row per scope (T-07650).
- *
- * Resolution order deliberately mirrors the summon gate's own (§5), because a
- * filter that disagreed with the gate would either skip work this node owes or
- * keep re-driving work it does not:
- *
- *  1. NO FEDERATION — no registry client means no other node exists to home
- *     anything. A single-node daemon homes everything it can see and nothing
- *     is ever skipped; this is the whole reason the check is not "must have a
- *     local placement row", which would silence delivery on every unfederated
- *     install.
- *  2. LOCAL PLACEMENT LEDGER — the node's own record of the bindings it holds
- *     authority for, and the only answer that costs no network. An active row
- *     naming another node is a definitive skip; an active row naming this node
- *     is a definitive drive, and it also clears any remembered registry answer,
- *     so a scope rebound BACK here resumes the moment activation installs it.
- *  3. REMEMBERED REGISTRY ANSWER — process-local, so a restart re-consults and
- *     a memo can never outlive the daemon that learned it.
- *  4. REGISTRY CONSULT — one network read, and only for a scope with no local
- *     row at all. That is exactly the shape this bug is made of, and it is
- *     charged once per scope per process rather than once per scope per tick.
- *
- * Anything else — unbound, retired, bound here, or a registry we cannot reach —
- * returns `undefined` and the wake proceeds unchanged. This filter only ever
- * removes work whose refusal is already certain; it never invents a refusal the
- * gate would not have made.
- */
-async function foreignHomeFor(
-  server: HrcServerInstanceForHandlers,
-  scopeRef: string
-): Promise<KickerForeignHome | undefined> {
-  const registry = server.federationRegistryClient
-  if (registry === undefined) return undefined
-
-  const local = createPlacementLedgerRepository(server.db.sqlite).get(scopeRef)
-  if (local?.state === 'active') {
-    if (local.homeNodeId === server.federationNodeId) {
-      server.mailKickerForeignHomes.delete(scopeRef)
-      return undefined
-    }
-    return {
-      homeNodeId: local.homeNodeId,
-      placementEpoch: local.placementEpoch,
-      source: 'placement-ledger',
-    }
-  }
-
-  const remembered = server.mailKickerForeignHomes.get(scopeRef)
-  if (remembered !== undefined) return remembered
-
-  try {
-    const consulted = await registry.consult(scopeRef)
-    if (consulted.outcome !== 'bound') return undefined
-    if (consulted.binding.homeNodeId === server.federationNodeId) return undefined
-    return {
-      homeNodeId: consulted.binding.homeNodeId,
-      placementEpoch: consulted.binding.placementEpoch,
-      source: 'registry',
-    }
-  } catch (error) {
-    // An unreachable or refused registry is not evidence of a foreign home.
-    // Falling through hands the decision to the gate, which is where every
-    // other consult failure is already classified.
-    writeServerLog('WARN', 'wrkq.kicker.home_consult_failed', {
-      scopeRef,
-      error: errorText(error),
-    })
     return undefined
   }
 }
@@ -730,7 +683,7 @@ function skipForeignHomedTarget(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   scopeRef: string,
-  foreign: KickerForeignHome,
+  foreign: ForeignHome,
   wakeReason: HrcMailDriveWakeReason
 ): void {
   const attempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
@@ -742,12 +695,12 @@ function skipForeignHomedTarget(
         ).driveAttemptId
       : undefined
 
-  const remembered = server.mailKickerForeignHomes.get(scopeRef)
-  const alreadyAnnounced =
-    remembered !== undefined &&
-    remembered.homeNodeId === foreign.homeNodeId &&
-    remembered.placementEpoch === foreign.placementEpoch
-  server.mailKickerForeignHomes.set(scopeRef, foreign)
+  // Announcement is deduped on its OWN map, not on the resolver's memo. The
+  // memo is shared with the shadow teardown, and whichever mechanism happened
+  // to resolve the scope first would otherwise silence this line for the other.
+  const announcement = `${foreign.homeNodeId}@${foreign.placementEpoch}`
+  const alreadyAnnounced = server.mailKickerForeignHomeAnnounced.get(scopeRef) === announcement
+  server.mailKickerForeignHomeAnnounced.set(scopeRef, announcement)
   if (alreadyAnnounced && failedAttemptId === undefined) return
 
   writeServerLog('INFO', 'wrkq.kicker.foreign_home_skipped', {
@@ -774,7 +727,8 @@ async function driveMailTargetOnce(
   // A ref this daemon cannot parse gets no verdict and no new failure mode:
   // it falls through to the path that already reported that for what it is.
   const scopeRef = kickerScopeRefFor(targetSessionRef)
-  const foreign = scopeRef === undefined ? undefined : await foreignHomeFor(server, scopeRef)
+  const foreign =
+    scopeRef === undefined ? undefined : await resolveForeignHome(kickerHomeDeps(server), scopeRef)
   if (scopeRef !== undefined && foreign !== undefined) {
     skipForeignHomedTarget(server, targetSessionRef, scopeRef, foreign, wakeReason)
     return
@@ -961,9 +915,7 @@ async function driveMailTargetOnce(
       return
     }
 
-    const runtimeId = server.db.runtimes
-      .listByHostSessionId(session.hostSessionId)
-      .find((runtime) => runtime.status !== 'exited')?.runtimeId
+    const runtimeId = presentationRuntimeIdFor(server, session)
     const byId = new Map(actionable.map((envelope) => [envelope.id, envelope]))
     const ordered = envelopeIds
       .map((id) => byId.get(id))
