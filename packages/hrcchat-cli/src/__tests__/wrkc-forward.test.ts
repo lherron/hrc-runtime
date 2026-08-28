@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 
-import { mapDmToWrkcSay, stripBirthDirectives } from '../wrkc-forward.js'
+import { closedRoomRecoveryHint, mapDmToWrkcSay, stripBirthDirectives } from '../wrkc-forward.js'
 
 function forward(...args: Parameters<typeof mapDmToWrkcSay>) {
   const plan = mapDmToWrkcSay(...args)
@@ -116,5 +116,25 @@ describe('stripBirthDirectives', () => {
     expect(stripBirthDirectives('clod@hrc-runtime:T-1 +node=mini +model=opus')).toBe(
       'clod@hrc-runtime:T-1'
     )
+  })
+})
+
+describe('closedRoomRecoveryHint', () => {
+  it('names the recovery, and why the room closed, on a closed-room refusal', () => {
+    const hint = closedRoomRecoveryHint(
+      'Error: WRKQ_WRONG_STATE: room T-07615 is closed; reopen it before saying into it\n',
+      'T-07615'
+    )
+    expect(hint).toBeDefined()
+    expect(hint).toContain('wrkc reopen T-07615')
+    expect(hint).toContain('wrkc say T-07615 --to <agent>')
+    // The WHY matters: a closure that is always reopened reflexively stops
+    // carrying any meaning.
+    expect(hint).toMatch(/terminal state|more to say/)
+  })
+
+  it('stays silent on every other failure, so it cannot mislead', () => {
+    expect(closedRoomRecoveryHint('Error: some unrelated failure\n', 'T-1')).toBeUndefined()
+    expect(closedRoomRecoveryHint('', 'T-1')).toBeUndefined()
   })
 })

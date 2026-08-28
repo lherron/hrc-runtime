@@ -10,7 +10,12 @@ import { readFileSync } from 'node:fs'
 
 import { CliUsageError } from 'cli-kit'
 
-import { type DmForwardOptions, formatForwardNotice, mapDmToWrkcSay } from './wrkc-forward.js'
+import {
+  type DmForwardOptions,
+  closedRoomRecoveryHint,
+  formatForwardNotice,
+  mapDmToWrkcSay,
+} from './wrkc-forward.js'
 
 export async function forwardDmToWrkc(
   target: string,
@@ -32,12 +37,20 @@ export async function forwardDmToWrkc(
 
   process.stderr.write(formatForwardNotice(plan))
 
+  // stderr is piped rather than inherited ONLY so a closed-room refusal can be
+  // followed by its recovery. Everything wrkc writes is passed through verbatim
+  // and in order first; nothing is swallowed or rewritten.
   const child = spawn('wrkc', plan.argv, {
-    stdio: [stdinText === undefined ? 'inherit' : 'pipe', 'inherit', 'inherit'],
+    stdio: [stdinText === undefined ? 'inherit' : 'pipe', 'inherit', 'pipe'],
   })
   if (stdinText !== undefined && child.stdin) {
     child.stdin.end(stdinText)
   }
+  let stderrText = ''
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderrText += chunk.toString()
+    process.stderr.write(chunk)
+  })
 
   return await new Promise<never>((_resolve, reject) => {
     child.on('error', (err: NodeJS.ErrnoException) => {
@@ -55,6 +68,10 @@ export async function forwardDmToWrkc(
       if (signal) {
         process.kill(process.pid, signal as NodeJS.Signals)
         return
+      }
+      if (code !== 0) {
+        const hint = closedRoomRecoveryHint(stderrText, plan.argv[1] ?? '<room>')
+        if (hint !== undefined) process.stderr.write(hint)
       }
       process.exit(code ?? 0)
     })

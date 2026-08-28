@@ -128,3 +128,28 @@ export function formatForwardNotice(plan: {
 function quoteForDisplay(arg: string): string {
   return /[\s'"]/.test(arg) ? JSON.stringify(arg) : arg
 }
+
+/**
+ * A room closes with its work, so a seat on a completed task refuses a `say`
+ * until the room is deliberately reopened (spec §3.1). `hrcchat dm` used to be
+ * the SEPARATE path people fell back to when that happened; after the flag day
+ * it is the same path, so the caller needs the recovery spelled out rather than
+ * just the state.
+ *
+ * The wording deliberately says WHY the room is closed. An agent that reads only
+ * "reopen it" reopens reflexively, and a closure that is always reopened stops
+ * meaning anything (clod@hrc-runtime:primary, T-07616).
+ */
+export function closedRoomRecoveryHint(stderrText: string, ref: string): string | undefined {
+  if (!/WRKQ_WRONG_STATE|room .* is closed/i.test(stderrText)) return undefined
+  return [
+    '',
+    'hrcchat dm: that room is closed, and closing was deliberate — a task room closes',
+    'when its task reaches a terminal state, so reopening it says the work has more to say.',
+    'If it does:',
+    `  wrkc reopen ${ref}`,
+    `  wrkc say ${ref} --to <agent> -`,
+    'If it does not, address the agent on work that is still open instead.',
+    '',
+  ].join('\n')
+}
