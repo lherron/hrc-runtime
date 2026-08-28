@@ -48,6 +48,9 @@ function parseBinding(value: unknown, scopeRef: string): FederationPlacementBind
       value['establishmentProvenance'] !== 'task_default' &&
       value['establishmentProvenance'] !== 'default_home_node' &&
       value['establishmentProvenance'] !== 'default_home_node(local)' &&
+      // T-07655: a peer may now answer with a designated tier-5 birth.
+      value['establishmentProvenance'] !== 'default_home_node(sender)' &&
+      value['establishmentProvenance'] !== 'default_home_node(sender-retired)' &&
       value['establishmentProvenance'] !== 'explicit_local' &&
       value['establishmentProvenance'] !== 'rebind') ||
     (priorHomeNodeId !== undefined && typeof priorHomeNodeId !== 'string') ||

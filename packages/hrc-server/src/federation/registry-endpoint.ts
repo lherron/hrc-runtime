@@ -91,6 +91,12 @@ function parseEstablishmentProvenance(value: unknown): Exclude<EstablishmentProv
     value === 'task_default' ||
     value === 'default_home_node' ||
     value === 'default_home_node(local)' ||
+    // T-07655. This whitelist is a WIRE boundary, so it is only crossed when a
+    // node establishes against a REMOTE registry — which is every node but the
+    // host. Omitting these two refused every designated birth with a 400 that
+    // read as `registry-refused`, i.e. as a credentials problem.
+    value === 'default_home_node(sender)' ||
+    value === 'default_home_node(sender-retired)' ||
     value === 'explicit_local'
   ) {
     return value
