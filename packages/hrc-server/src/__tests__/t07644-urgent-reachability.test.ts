@@ -230,6 +230,9 @@ describe('T-07644 — urgent reaches the steer past an in-flight kicker attempt'
     // log rotates and is grepped from one node, the receipt travels with the
     // envelope (C-16526, re-ruled on C-16658).
     expect(receipts[0]?.deliveryOutcome).toBe('presented_to_live_harness')
+    // This ratified steer class proves a pane write, not a fresh broker input.
+    // Its once-per-run receipt remains valid without an inputId.
+    expect(receipts[0]?.inputId).toBeUndefined()
 
     const steered = lines.filter((line) => line.includes('wrkq.kicker.urgent_steered'))
     expect(steered).toHaveLength(1)

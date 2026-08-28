@@ -327,7 +327,7 @@ function redeliveryFloorRemainingMs(envelope: WrkqEnvelope, now: number): number
   return Math.max(floorMs - (now - lastPresentedAt), 0)
 }
 
-/** Only a `reply_required` obligation is worth a turn, let alone a birth (§5). */
+/** Only a `reply_required` obligation is allowed to birth a previously unseated target (§5). */
 function summonsATurn(envelope: WrkqEnvelope): boolean {
   return envelope.obligation === 'reply_required'
 }
@@ -348,12 +348,11 @@ function actionableDirectives(envelopes: readonly WrkqEnvelope[]): string | unde
 }
 
 /**
- * Tell wrkq each envelope was presented, and collect what §7 needs to render it.
+ * Ask wrkq what each presentation would contain, without writing a receipt.
  *
- * `present` is exactly-once per `driveAttemptId`: a replayed attempt returns
- * `recorded: false` and leaves one receipt. `historyHint` is wrkq's cue
- * decision, keyed to the RUNTIME rather than the generation, so a post-`/quit`
- * runtime inside the same generation is correctly treated as cold.
+ * The ledger remains the sole authority for the §7 history cue, but a preview
+ * neither marks the runtime warm nor auto-acks a fyi. Delivery is committed
+ * only after the broker accepts the prompt below.
  */
 async function recordPresentations(
   server: HrcServerInstanceForHandlers,
@@ -366,6 +365,7 @@ async function recordPresentations(
   for (const envelope of envelopes) {
     const result = await server.wrkqLedger.present({
       envelope: envelope.id,
+      preview: true,
       node: server.federationNodeId,
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
@@ -383,6 +383,29 @@ async function recordPresentations(
     })
   }
   return presentables
+}
+
+/** Commit receipts only after an ordinary dispatch accepted the composed prompt. */
+async function commitPresentations(
+  server: HrcServerInstanceForHandlers,
+  presentables: readonly PresentableEnvelope[],
+  attempt: HrcMailDriveAttempt,
+  session: HrcSessionRecord,
+  runtimeId: string | undefined,
+  inputId: string
+): Promise<void> {
+  for (const presentable of presentables) {
+    await server.wrkqLedger.present({
+      envelope: presentable.envelope.id,
+      node: server.federationNodeId,
+      hostSessionId: session.hostSessionId,
+      generation: String(session.generation),
+      runId: attempt.runId,
+      inputId,
+      driveAttemptId: attempt.driveAttemptId,
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+    })
+  }
 }
 
 /** An ad-hoc room's subject, for the §7 header. Absent is not an error. */
@@ -1131,51 +1154,9 @@ async function driveMailTargetOnce(
       .map((id) => byId.get(id))
       .filter((envelope): envelope is WrkqEnvelope => envelope !== undefined)
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
-    // T-07671: the ledger now holds a presentation receipt for each of these.
-    // The receipt is the thing an operator finds in wrkq and cannot explain, so
-    // the daemon has to say it wrote one — with the same identifiers the
-    // receipt carries (`hostSessionId`, `generation`, `runtimeId`), which is
-    // what makes the two records joinable without opening sqlite.
-    writeServerLog('INFO', 'wrkq.kicker.presented', {
-      targetSessionRef,
-      driveAttemptId: attempt.driveAttemptId,
-      runId: attempt.runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      ...(runtimeId === undefined ? {} : { runtimeId }),
-      envelopes: presentables.map((presentable) => ({
-        id: presentable.envelope.id,
-        obligation: presentable.envelope.obligation,
-      })),
-    })
     const prompt = formatEnvelopePresentations(presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
-
-    // An `fyi` is auto-acked at its own presentation and never summons; if that
-    // was everything this attempt held, there is no turn to dispatch.
-    if (!presentables.some((presentable) => summonsATurn(presentable.envelope))) {
-      server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
-      // T-07671, and the line the RCA that produced this task needed: a fyi-only
-      // attempt writes presentation receipts into the ledger and then ends
-      // WITHOUT a turn. From wrkq alone that reads as `presented`+`acked` with a
-      // runId, which looks exactly like a delivered turn — the ambiguity that
-      // cost an afternoon of reading `hrcmail_drive_attempts` by hand. WARN,
-      // because "receipts written, addressee never woken" is the state a reader
-      // grepping for trouble is looking for.
-      writeServerLog('WARN', 'wrkq.kicker.drive_no_op', {
-        targetSessionRef,
-        driveAttemptId: attempt.driveAttemptId,
-        runId: attempt.runId,
-        wakeReason,
-        reason: 'fyi_only',
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        envelopeIds: presentables.map((presentable) => presentable.envelope.id),
-        note: 'presentation receipts written WITHOUT a turn: no envelope carried a reply_required obligation',
-      })
-      return
-    }
 
     const response = await server.dispatchTurnForSession(
       session,
@@ -1187,13 +1168,20 @@ async function driveMailTargetOnce(
         whenBusy: 'reject',
       }
     )
-    const body = (await response.json()) as DispatchTurnResponse
+    const body = (await response.json()) as DispatchTurnResponse & {
+      inputId?: string | undefined
+    }
+    const inputId = body.inputId ?? server.db.runs.getByRunId(body.runId)?.dispatchedInputId
+    if (body.status !== 'started' || inputId === undefined) {
+      throw new Error(
+        `mail dispatch did not return a started input (status=${body.status}, inputId=${inputId ?? 'missing'})`
+      )
+    }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: body.hostSessionId,
       generation: body.generation,
       runtimeId: body.runtimeId,
     })
-    observeAttempt(server, attempt)
     writeServerLog('INFO', 'wrkq.kicker.turn_dispatched', {
       targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
@@ -1205,8 +1193,27 @@ async function driveMailTargetOnce(
       envelopeIds: presentables.map((presentable) => presentable.envelope.id),
       hostSessionId: body.hostSessionId,
       generation: body.generation,
+      inputId,
       wakeReason,
     })
+    const committedRuntimeId = body.runtimeId ?? runtimeId
+    await commitPresentations(server, presentables, attempt, session, committedRuntimeId, inputId)
+    // T-07671: this line belongs at COMMIT, where the ledger now holds the
+    // receipt. `inputId` joins it to the broker's input.accepted event.
+    writeServerLog('INFO', 'wrkq.kicker.presented', {
+      targetSessionRef,
+      driveAttemptId: attempt.driveAttemptId,
+      runId: attempt.runId,
+      inputId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      ...(committedRuntimeId === undefined ? {} : { runtimeId: committedRuntimeId }),
+      envelopes: presentables.map((presentable) => ({
+        id: presentable.envelope.id,
+        obligation: presentable.envelope.obligation,
+      })),
+    })
+    observeAttempt(server, attempt)
   } catch (error) {
     // A birth deferral is not a failed drive. It is this node correctly
     // declining to take a birth the collective designated elsewhere, and

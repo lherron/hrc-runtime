@@ -21,9 +21,9 @@ import type {
  *
  * Three methods, and nothing else in wrkq's surface is HRC's: `pendingView`
  * (the kicker wake set and the stop-hook predicate, whose read also sweeps due
- * deferrals back to pending), `present` (writes `presented_to`, exactly-once
- * per `driveAttemptId`, and returns the §7 history-cue decision), and
- * `roundEnded` (the redelivery bound).
+ * deferrals back to pending), `present` (previews the §7 history-cue decision
+ * or writes `presented_to` exactly-once per `driveAttemptId`, optionally joined
+ * to the accepted broker input), and `roundEnded` (the redelivery bound).
  *
  * TRANSPORT. One long-lived `wrkq rpc --stdio` child speaking newline-delimited
  * JSON-RPC, spawned under `wrkqAuthorityEnvironment()` — the daemon's existing

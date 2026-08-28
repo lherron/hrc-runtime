@@ -145,6 +145,7 @@ export function queryCount(db: HrcDatabase, table: string): number {
 export type DeterministicStart = {
   calls: () => number
   prompts: () => string[]
+  inputIds: () => string[]
   rotateRuntime: () => void
 }
 
@@ -158,6 +159,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
   let calls = 0
   let runtimeGeneration = 0
   const prompts: string[] = []
+  const inputIds: string[] = []
   const runtimesBySession = new Map<string, string>()
   serverInternals(serverInstance).dispatchTurnForSession = async (
     session: HrcSessionRecord,
@@ -169,6 +171,8 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     prompts.push(prompt)
     const db = serverInternals(serverInstance).db
     const runId = options.runId
+    const inputId = `input-${runId}`
+    inputIds.push(inputId)
     const existing = db.runs.getByRunId(runId)
     if (existing !== null) {
       return Response.json({
@@ -184,8 +188,25 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
 
     const now = timestamp()
     const sessionKey = `${session.hostSessionId}:${runtimeGeneration}`
+    const seededRuntimes = db.runtimes.listByHostSessionId(session.hostSessionId)
+    let seededRuntime = null
+    for (let index = seededRuntimes.length - 1; index >= 0; index -= 1) {
+      const candidate = seededRuntimes[index]
+      if (candidate === undefined) continue
+      if (
+        candidate.generation === session.generation &&
+        candidate.status !== 'terminated' &&
+        candidate.status !== 'zombie' &&
+        candidate.status !== 'exited'
+      ) {
+        seededRuntime = candidate
+        break
+      }
+    }
     const runtimeId =
-      runtimesBySession.get(sessionKey) ?? `rt-${session.hostSessionId}-${runtimeGeneration}`
+      runtimesBySession.get(sessionKey) ??
+      seededRuntime?.runtimeId ??
+      `rt-${session.hostSessionId}-${runtimeGeneration}`
     const reused = db.runtimes.getByRuntimeId(runtimeId)
     runtimesBySession.set(sessionKey, runtimeId)
     if (reused !== null) {
@@ -227,6 +248,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
       acceptedAt: now,
       startedAt: now,
       updatedAt: now,
+      dispatchedInputId: inputId,
     })
     const started = appendHrcEvent(db, 'turn.started', {
       ts: now,
@@ -252,6 +274,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
   return {
     calls: () => calls,
     prompts: () => prompts,
+    inputIds: () => inputIds,
     rotateRuntime: () => {
       const db = serverInternals(serverInstance).db
       const now = timestamp()

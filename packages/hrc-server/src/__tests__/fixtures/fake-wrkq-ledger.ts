@@ -55,6 +55,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   private eventSeq = 0
   unavailable = false
   presentCalls = 0
+  readonly presentRequests: WrkqEnvelopePresentParams[] = []
   roundEndedCalls: string[] = []
 
   say(seed: SeedEnvelope): WrkqEnvelope {
@@ -177,6 +178,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   async present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult> {
     this.guard('wrkq.envelope.present')
     this.presentCalls += 1
+    this.presentRequests.push({ ...params })
     const envelope = this.envelopes.get(params.envelope)
     if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
 
@@ -193,7 +195,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     ).length
     const historyHint = messageCount > 1 && !seen.has(runtimeKey)
 
-    if (!alreadyRecorded) {
+    if (params.preview !== true && !alreadyRecorded) {
       if (params.driveAttemptId !== undefined) this.attemptReceipts.add(receiptKey)
       envelope.presentedTo.push({
         memberRef: params.memberRef ?? envelope.to?.scopeRef ?? '',
@@ -202,6 +204,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
         ...(params.hostSessionId === undefined ? {} : { hostSessionId: params.hostSessionId }),
         ...(params.generation === undefined ? {} : { generation: params.generation }),
         ...(params.runId === undefined ? {} : { runId: params.runId }),
+        ...(params.inputId === undefined ? {} : { inputId: params.inputId }),
         ...(params.driveAttemptId === undefined ? {} : { driveAttemptId: params.driveAttemptId }),
         // Stored opaquely and never validated, exactly as wrkq does it: the
         // steer class is HRC's vocabulary and the ledger does not learn it.
@@ -222,7 +225,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
 
     return {
       envelope,
-      recorded: !alreadyRecorded,
+      recorded: params.preview === true ? false : !alreadyRecorded,
       historyHint,
       messageCount,
       lastMessageAt: envelope.createdAt,

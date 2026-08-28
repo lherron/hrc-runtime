@@ -26,8 +26,9 @@ import {
  *
  * The spec's §15 bundle-2 consumer half: presented exactly once per
  * driveAttemptId across insert/completion/sweep races and a kill between
- * attempt persistence and dispatch; `fyi` never summons; `reply_required`
- * summons through the summon gate; the `history:` cue is keyed to the runtime.
+ * attempt persistence and dispatch; `fyi` never births an unseated scope but
+ * is delivered into an existing generation; `reply_required` summons through
+ * the summon gate; the `history:` cue is keyed to the runtime.
  */
 
 const TARGET = 'agent:kicker-proof:project:hrc-runtime:task:T-07615/lane:main'
@@ -145,6 +146,15 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(prompt).not.toContain(envelope.id)
     // No room history is ever injected; the first message in a room has no cue.
     expect(prompt).not.toContain('history:')
+    const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toMatchObject({ preview: true })
+    expect(requests[0]?.inputId).toBeUndefined()
+    expect(requests[1]?.preview).toBeUndefined()
+    expect(requests[1]?.inputId).toBe(deterministic.inputIds()[0])
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBe(
+      deterministic.inputIds()[0]
+    )
   })
 
   it('cues history per RUNTIME: cold on arrival, silent when warm, cold again after a /quit', async () => {
@@ -201,7 +211,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.prompts()[2]).toContain('history: wrkc log T-07615')
   })
 
-  it('presents a fyi into a seat that already exists, and acks it there', async () => {
+  it('previews and dispatches a fyi into an idle seat, then commits it with the accepted input', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -224,16 +234,33 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       updatedAt: now,
     })
     const deterministic = installDeterministicStart(server as HrcServer)
-    const envelope = say({ obligation: 'fyi', body: 'for your information only' })
+    // Make the target runtime cold to this already-active room, so the preview
+    // must preserve the ledger-owned history cue in the dispatched prompt.
+    say({
+      toScopeRef: 'agent:other:project:hrc-runtime:task:T-07615',
+      body: 'earlier room mail',
+    })
+    const envelope = say({
+      obligation: 'fyi',
+      body: 'for your information only',
+    })
 
     await (server as any).runMailKickerSweep()
     await waitUntil(
       () => ledger.envelopes.get(envelope.id)?.state === 'acked',
       'fyi presented and auto-acked'
     )
-    // Presented, but no turn: a fyi is not work, it is a notice.
-    expect(deterministic.calls()).toBe(0)
+    expect(deterministic.calls()).toBe(1)
+    expect(deterministic.prompts()[0]).toContain('for your information only')
+    expect(deterministic.prompts()[0]).toContain('history: wrkc log T-07615')
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+    const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toMatchObject({ preview: true })
+    expect(requests[1]).toMatchObject({ inputId: deterministic.inputIds()[0] })
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBe(
+      deterministic.inputIds()[0]
+    )
   })
 
   it('never summons for a fyi, and completes the attempt as a no-op', async () => {
@@ -254,6 +281,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(deterministic.calls()).toBe(0)
     expect(queryCount(db, 'sessions')).toBe(0)
     expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(0)
+    expect(ledger.presentRequests).toEqual([])
   })
 
   it('summons a reply_required target through the gate and advances its round on a bare turn', async () => {
@@ -393,7 +421,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'seated scope swept')
   })
 
-  it('leaves a busy target alone until its turn completes', async () => {
+  it('leaves a fyi pending at a busy seat and delivers it on turn completion', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -431,14 +459,30 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     })
     const deterministic = installDeterministicStart(server as HrcServer)
 
-    say()
+    const envelope = say({
+      obligation: 'fyi',
+      body: 'wait for the active turn to finish',
+    })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
     await Bun.sleep(50)
     expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(0)
+    expect(ledger.presentRequests).toEqual([])
+    expect(ledger.envelopes.get(envelope.id)).toMatchObject({
+      state: 'pending',
+      terminal: false,
+    })
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
 
     await completeRun(server as HrcServer, 'run-busy-v1')
     await waitUntil(() => deterministic.calls() === 1, 'completion-triggered drive')
     expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(1)
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.state === 'acked',
+      'completion-triggered fyi commit'
+    )
+    expect(
+      ledger.presentRequests.filter((request) => request.envelope === envelope.id)
+    ).toHaveLength(2)
   })
 
   it('holds a still-presented envelope inside its redelivery floor, doubling per round', async () => {
@@ -484,6 +528,46 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // A pending envelope has no receipt to wait from: the floor is about
     // RE-delivery, and delaying a first presentation would just be latency.
     await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
+  })
+
+  it('does not commit when dispatch throws after preview', async () => {
+    await startServer()
+    const resolved = await fixture.resolveSession(SCOPE)
+    const db = (server as any).db as HrcDatabase
+    const now = timestamp()
+    db.runtimes.insert({
+      runtimeId: 'rt-preview-then-throw',
+      runtimeKind: 'harness',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    ;(server as any).dispatchTurnForSession = async (): Promise<Response> => {
+      throw new Error('dispatch rejected after preview')
+    }
+    const envelope = say({ obligation: 'fyi', body: 'must stay pending' })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await (server as any).drainMailKickerTarget(TARGET)
+
+    const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ preview: true })
+    expect(ledger.envelopes.get(envelope.id)).toMatchObject({
+      state: 'pending',
+      terminal: false,
+    })
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
+    expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('failed')
   })
 
   it('declines a busy target visibly, and drives it the moment its turn ends', async () => {
@@ -685,7 +769,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
    * in `state.sqlite` by hand. These tests pin the lines that make that
    * reconstruction a `grep <scope>` instead.
    */
-  it('leaves a full drive_claimed → presented → drive_no_op trail for a fyi-only drive', async () => {
+  it('leaves a full drive_claimed → turn_dispatched → presented trail for a fyi-only drive', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -708,7 +792,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       updatedAt: now,
     })
     const deterministic = installDeterministicStart(server as HrcServer)
-    const envelope = say({ obligation: 'fyi', body: 'for your information only' })
+    const envelope = say({
+      obligation: 'fyi',
+      body: 'for your information only',
+    })
 
     const captured = await captureServerLog(async () => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
@@ -718,7 +805,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
         'fyi presented and auto-acked'
       )
     })
-    expect(deterministic.calls()).toBe(0)
+    expect(deterministic.calls()).toBe(1)
 
     const kindLine = (kind: string): string => {
       const lines = captured.lines.filter((line) => line.includes(`wrkq.kicker.${kind}`))
@@ -732,24 +819,19 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(claimed).toContain(envelope.id)
     expect(claimed).toContain('"seated":true')
 
-    // The receipt the ledger holds, said by the daemon that wrote it, with the
-    // identifiers the receipt itself carries.
+    const dispatched = kindLine('turn_dispatched')
+    expect(dispatched).toContain(envelope.id)
+    expect(dispatched).toContain(deterministic.inputIds()[0] as string)
+
+    // The receipt the ledger holds is logged only after the accepted dispatch,
+    // with the broker input that joins the two records.
     const presented = kindLine('presented')
     expect(presented).toContain(envelope.id)
     expect(presented).toContain('"obligation":"fyi"')
     expect(presented).toContain(resolved.hostSessionId)
-
-    // And the line the RCA needed: receipts written, no turn.
-    const noOp = kindLine('drive_no_op')
-    expect(noOp).toContain('WARN')
-    expect(noOp).toContain(TARGET)
-    expect(noOp).toContain(envelope.id)
-    expect(noOp).toContain('"reason":"fyi_only"')
-    expect(noOp).toContain('WITHOUT a turn')
-    // A fyi drive must never be confusable with a delivered one.
-    expect(
-      captured.lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
-    ).toHaveLength(0)
+    expect(presented).toContain(deterministic.inputIds()[0] as string)
+    expect(captured.lines.some((line) => line.includes('"reason":"fyi_only"'))).toBe(false)
+    expect(captured.lines.indexOf(dispatched)).toBeLessThan(captured.lines.indexOf(presented))
   })
 
   it('names the envelopes and the seat on the turn_dispatched line of a reply_required drive', async () => {

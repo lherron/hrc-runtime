@@ -436,7 +436,7 @@ describe('T-07650 — the receipt names the current seat, not the oldest row', (
     expect((await receiptFor(envelope.id)).runtimeId).toBe('rt-current-gen')
   })
 
-  it('stamps no runtime at all rather than the wrong one', async () => {
+  it('stamps the fresh delivery runtime rather than the wrong prior-generation one', async () => {
     registerScopeHomedOn(LOCAL_NODE)
     const envelope = say({ body: 'no current-generation seat exists' })
     await startServer()
@@ -455,9 +455,12 @@ describe('T-07650 — the receipt names the current seat, not the oldest row', (
     installDeterministicStart(server as HrcServer)
 
     await sweep()
-    // A receipt with no runtime is honest and already has its own audit line;
-    // a receipt naming the wrong runtime is not recoverable after the fact.
-    expect((await receiptFor(envelope.id)).runtimeId).toBeUndefined()
+    // Two-phase presentation commits after dispatch, so the receipt now knows
+    // the fresh runtime that accepted the prompt. It must never fall back to
+    // the unrelated prior-generation row that happened to keep `ready`.
+    const receipt = await receiptFor(envelope.id)
+    expect(receipt.runtimeId).toBe('rt-hs-t07650-rotated-away-0')
+    expect(receipt.runtimeId).not.toBe('rt-prior-gen-only')
   })
 })
 

@@ -34,6 +34,8 @@ export type WrkqEnvelopePresentation = {
   hostSessionId?: string | undefined
   generation?: string | undefined
   runId?: string | undefined
+  /** Broker input accepted for this presentation, when the delivery class has one. */
+  inputId?: string | undefined
   driveAttemptId?: string | undefined
   /** HRC's own class for HOW this delivery landed; wrkq never validates it. */
   deliveryOutcome?: string | undefined
@@ -128,12 +130,16 @@ export type WrkqEnvelopePendingView = {
 
 export type WrkqEnvelopePresentParams = {
   envelope: string
+  /** Compute the presentation result without writing a receipt or auto-acking a fyi. */
+  preview?: boolean | undefined
   memberRef?: string | undefined
   node?: string | undefined
   runtimeId?: string | undefined
   hostSessionId?: string | undefined
   generation?: string | undefined
   runId?: string | undefined
+  /** Broker input accepted for this presentation, when the delivery class has one. */
+  inputId?: string | undefined
   /** One drive attempt presents an envelope exactly once. */
   driveAttemptId?: string | undefined
   /**
