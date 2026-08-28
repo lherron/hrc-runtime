@@ -128,7 +128,7 @@ there is no source-level cross-repo import. **Editing `../agent-spaces` has zero
 effect on HRC until it is published and pulled**, and the running daemon still
 needs an HRC install plus restart.
 
-- **Publish** (in `../agent-spaces`): `just install` publishes one coherent timestamped ASP set to mini's Verdaccio and, unless `no-sync=1`, syncs the local HRC/ACP consumer checkouts.
+- **Publish** (in `../agent-spaces`): `just install` publishes one coherent timestamped ASP set to mini's Verdaccio and, unless `no-sync=1`, syncs the local **hrc-runtime** checkout. HRC is the only consumer it syncs — see *ACP is not a sync target* below.
 - **Pull** (here): `just pull-deps` verifies coherence, reconciles `bun.lock`, and creates one lockfile-only commit. `just check-deps` is advisory/read-only.
 
 Gotchas worth not re-deriving:
@@ -137,6 +137,25 @@ Gotchas worth not re-deriving:
 - **Mini is the only registry authority** (`http://mini:4873/` must be reachable); svc, lab, and max3 all use that store.
 - **Pull != installed != live.** `just pull-deps` advances the lock; `just install` selects the release; `hrc server restart` activates it.
 - **Compile dep vs runtime dep.** HRC code referencing new ASP *types/exports* needs the sync to typecheck — that serializes ASP→sync→HRC. A pure ASP *behavior* change flows through existing contracts, so HRC logic can be written in parallel and needs the sync only for runtime/e2e. Decide by whether the HRC diff names a new ASP symbol.
+- **The sync spec is a hand-maintained list, and a new ASP dependency does not join it automatically.** `scripts/sync-asp-from-verdaccio.ts` enumerates the packages `pull-deps` advances. A direct dependency missing from that list is left behind while the rest of the set moves — and `pull-deps` still prints `ASP_SYNC ASP@<new>`, so the report is green while HRC's own ASP set is internally split. `agent-harness` and `spaces-harness-broker-pi-sdk` sat a release behind that way (T-07677). **When you add an ASP package to `package.json`, add it to that list in the same change**, and verify with: every ASP-family dep in `node_modules` reporting one identical version.
+
+### ACP is not a sync target
+
+agent-control-plane pins ASP and HRC as operator-managed *producer tuples* and
+advances them only through its own governed `just advance-producers` inside a
+coordinated deployment window. Its
+[docs/producer-advance.md](../agent-control-plane/docs/producer-advance.md) names
+producer `sync-downstream`, `just pull-deps`, routine `just install`, and a moving
+`latest` tag as mechanisms that must never move that tuple — a producer's install
+publishes a node-local set and moves `latest`, and that side effect is not a
+release signal for ACP.
+
+This cuts both ways for HRC. HRC publishes `hrc-core`/`hrc-sdk`/etc. for ACP (see
+*Cross-Repo Publishing*), so **an HRC install is not an ACP release either**: ACP
+picks HRC up only when an operator advances the `hrc` tuple. ACP running behind
+the registry is the intended steady state, not staleness; the `PRODUCER_PINNED`
+advisory lines exist so registry movement stays visible without changing the
+deployed tuple. Never "fix" an ACP lag from this repo.
 
 ## Cross-Repo Publishing
 
