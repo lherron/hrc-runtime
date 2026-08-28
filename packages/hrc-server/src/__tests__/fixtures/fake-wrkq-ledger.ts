@@ -49,7 +49,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   readonly events: { id: number; eventType: string; payload: string }[] = []
   /** Every (envelope, runtime) pair already presented, for the history cue. */
   private readonly runtimesSeenPerRoom = new Map<string, Set<string>>()
-  private readonly attemptReceipts = new Set<string>()
+  readonly attemptReceipts = new Set<string>()
   private eventSeq = 0
   unavailable = false
   presentCalls = 0

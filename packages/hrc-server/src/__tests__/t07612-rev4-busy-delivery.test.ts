@@ -170,9 +170,8 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
           laneRef: session.laneRef,
           generation: session.generation,
           transport: 'headless',
-          status: 'started',
+          status: 'accepted',
           acceptedAt: now,
-          startedAt: now,
           updatedAt: now,
         })
       }
@@ -208,9 +207,10 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
     // No `reject`, no `steer`: the route's own queue policy is what reaches the
     // broker, applied only if the harness reports a turn active.
     expect(call?.whenBusy).toBeUndefined()
-    // The receipt joins the accepted input.
+    // The receipt joins the accepted input, and names its slot-less owner.
     const receipt = ledger.envelopes.get(envelope.id)?.presentedTo[0]
-    expect(receipt?.inputId).toBe(`input-${call?.runId}`)
+    expect(receipt?.inputId).toBe('input-run-queued')
+    expect(receipt?.driveAttemptId?.startsWith('queued-')).toBe(true)
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('presented')
   })
 
@@ -241,6 +241,34 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(60)
     expect(dispatch.calls()).toHaveLength(1)
+  })
+
+  it('never claims the scope slot for a busy seat; the queued run owns the round', async () => {
+    await startServer()
+    await makeBusyTarget()
+    captureDispatch('accept')
+    const db = (server as any).db as HrcDatabase
+
+    const envelope = say({ body: 'queued behind the live turn' })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(
+      () => (ledger.envelopes.get(envelope.id)?.presentedTo.length ?? 0) === 1,
+      'receipt committed'
+    )
+    // No slot claimed: a queued input the harness merges into the live turn
+    // (never starting its own) can therefore never wedge the scope.
+    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
+    const [queued] = db.mailDrives.listUnfinishedAttempts(TARGET)
+    expect(queued?.runId).toBe('run-queued')
+    expect(queued?.queuedBehindRunId).toBe('run-busy-v1')
+
+    // The live turn ends; B never starts. Nothing moves — HRC does not guess.
+    const now = timestamp()
+    db.runs.markCompleted('run-busy-v1', { status: 'completed', completedAt: now, updatedAt: now })
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await Bun.sleep(80)
+    expect(ledger.roundEndedCalls).toEqual([])
+    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
   })
 
   it('records nothing when the broker refuses the input', async () => {

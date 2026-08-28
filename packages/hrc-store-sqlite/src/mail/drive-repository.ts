@@ -35,10 +35,24 @@ export type HrcMailDriveAttempt = {
   startHrcSeq?: number | undefined
   terminalEventKind?: string | undefined
   lastError?: string | undefined
+  /** The live run this attempt's input was queued behind (T-07612 rev 4, mid-turn attempts). */
+  queuedBehindRunId?: string | undefined
   claimedAt: string
   startedAt?: string | undefined
   completedAt?: string | undefined
   updatedAt: string
+}
+
+export type HrcMailQueuedAttemptInput = {
+  targetSessionRef: string
+  runId: string
+  wakeReason: HrcMailDriveWakeReason
+  prompt: string
+  envelopeIds: readonly string[]
+  queuedBehindRunId: string
+  hostSessionId: string
+  generation: number
+  runtimeId?: string | undefined
 }
 
 export type HrcMailDriveSlot = {
@@ -77,6 +91,7 @@ type DriveAttemptRow = {
   started_at: string | null
   completed_at: string | null
   updated_at: string
+  queued_behind_run_id: string | null
 }
 
 type DriveSlotRow = {
@@ -89,7 +104,7 @@ const DRIVE_ATTEMPT_COLUMNS = `
   drive_attempt_id, target_session_ref, run_id, wake_reason, state, prompt,
   presented_count, materialization_intent_json, host_session_id, generation,
   runtime_id, start_hrc_seq, terminal_event_kind, last_error, claimed_at,
-  started_at, completed_at, updated_at
+  started_at, completed_at, updated_at, queued_behind_run_id
 `
 
 function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
@@ -110,6 +125,7 @@ function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
     ...(row.start_hrc_seq === null ? {} : { startHrcSeq: row.start_hrc_seq }),
     ...(row.terminal_event_kind === null ? {} : { terminalEventKind: row.terminal_event_kind }),
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
+    ...(row.queued_behind_run_id === null ? {} : { queuedBehindRunId: row.queued_behind_run_id }),
     claimedAt: row.claimed_at,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
@@ -376,29 +392,47 @@ export class HrcMailDriveRepository {
   }
 
   /**
-   * Attach envelopes presented MID-TURN to the started attempt that holds the
-   * scope slot (T-07612 rev 4).
+   * A mid-turn presentation as its own attempt (T-07612 rev 4).
    *
-   * A presentation queued into a live kicker-driven turn is not a drive of its
-   * own, but its round has to end somewhere: it joins the attempt whose run it
-   * was handed to, so `completeStartedAttempt` advances its round when that run
-   * ends undisposed. Returns the ids newly attached (already-attached ids are
-   * skipped). Refuses an attempt that is not started or does not own its slot.
+   * It never touches the scope slot: the slot is held by the drive whose turn
+   * is live, and this attempt's input was queued behind that turn. It is owned
+   * by the queued input's run, so `completeStartedAttempt` advances its rounds
+   * when THAT run ends undisposed. If the harness merges the input into the
+   * live turn instead (no `turn.started` of its own), this attempt advances
+   * nothing — HRC does not guess — and bounded redelivery comes from the next
+   * ordinary drive after the floor. Presentations are recorded here, so the
+   * attempt is `claimed` with its receipts already in place.
    */
-  attachToStartedAttempt(driveAttemptId: string, envelopeIds: readonly string[]): string[] {
+  insertQueuedAttempt(input: HrcMailQueuedAttemptInput): HrcMailDriveAttempt {
+    const target = normalizeTarget(input.targetSessionRef)
     return this.db
       .transaction(() => {
-        const attempt = this.requireAttempt(driveAttemptId)
-        const slot = this.getSlot(attempt.targetSessionRef)
-        if (slot?.activeDriveAttemptId !== driveAttemptId) {
-          throw new Error(`mail drive attempt ${driveAttemptId} does not own its scope slot`)
-        }
-        if (attempt.state !== 'started') {
-          throw new Error(`mail drive attempt ${driveAttemptId} is ${attempt.state}, not started`)
-        }
-        const before = new Set(this.presentationEnvelopeIds(driveAttemptId))
         const now = new Date().toISOString()
-        for (const envelopeId of envelopeIds) {
+        const driveAttemptId = `queued-${randomUUID()}`
+        this.db
+          .query(
+            `INSERT INTO hrcmail_drive_attempts (
+               drive_attempt_id, target_session_ref, run_id, wake_reason, state,
+               prompt, presented_count, materialization_intent_json,
+               host_session_id, generation, runtime_id, queued_behind_run_id,
+               claimed_at, updated_at
+             ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, NULL, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            driveAttemptId,
+            target,
+            input.runId,
+            input.wakeReason,
+            input.prompt,
+            input.envelopeIds.length,
+            input.hostSessionId,
+            input.generation,
+            input.runtimeId ?? null,
+            input.queuedBehindRunId,
+            now,
+            now
+          )
+        for (const envelopeId of input.envelopeIds) {
           this.db
             .query(
               `INSERT OR IGNORE INTO hrcmail_drive_presentations (
@@ -407,9 +441,22 @@ export class HrcMailDriveRepository {
             )
             .run(driveAttemptId, envelopeId, now)
         }
-        return this.presentationEnvelopeIds(driveAttemptId).filter((id) => !before.has(id))
+        return this.requireAttempt(driveAttemptId)
       })
-      .immediate() as string[]
+      .immediate() as HrcMailDriveAttempt
+  }
+
+  /** Every attempt for a target that has not reached a terminal state, slot-holding or not. */
+  listUnfinishedAttempts(targetSessionRef: string): HrcMailDriveAttempt[] {
+    return this.db
+      .query<DriveAttemptRow, [string]>(
+        `SELECT ${DRIVE_ATTEMPT_COLUMNS}
+         FROM hrcmail_drive_attempts
+         WHERE target_session_ref = ? AND state IN ('claimed', 'started')
+         ORDER BY claimed_at ASC`
+      )
+      .all(normalizeTarget(targetSessionRef))
+      .map(mapAttempt)
   }
 
   /**

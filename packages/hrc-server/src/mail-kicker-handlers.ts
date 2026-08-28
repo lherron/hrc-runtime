@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import { HrcDomainError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
@@ -146,6 +144,24 @@ function activeRunIdFor(
   return undefined
 }
 
+/** A mid-turn attempt (rev 4): owned by the queued input's run, holding no slot. */
+function isQueuedAttempt(attempt: HrcMailDriveAttempt): boolean {
+  return attempt.driveAttemptId.startsWith('queued-')
+}
+
+/** The session's active run id only if its row is durably in flight. */
+function durablyActiveRunIdFor(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord
+): string | undefined {
+  for (const runtime of server.db.runtimes.listByHostSessionId(session.hostSessionId)) {
+    if (runtime.activeRunId === undefined) continue
+    const run = server.db.runs.getByRunId(runtime.activeRunId)
+    if (run !== null && isDurablyActiveRun(run)) return run.runId
+  }
+  return undefined
+}
+
 function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -227,6 +243,33 @@ function observeAttempt(
   }
 
   const run = server.db.runs.getByRunId(current.runId)
+  // T-07612 rev 4: a mid-turn (`queued-`) attempt holds no slot and is never
+  // replayed. If its run is gone, or its runtime died before the input ever
+  // started a turn, nothing will complete it: close it WITHOUT rounds — the
+  // envelope was not shown at a boundary — and let the floor re-drive.
+  if (started === undefined && isQueuedAttempt(current)) {
+    const runtime =
+      current.runtimeId === undefined
+        ? undefined
+        : (server.db.runtimes.getByRuntimeId(current.runtimeId) ?? undefined)
+    const reason =
+      run === null
+        ? 'queued input has no run row'
+        : runtime?.status === 'terminated'
+          ? 'runtime terminated before the queued input started a turn'
+          : undefined
+    if (reason !== undefined) {
+      server.db.mailDrives.failWithoutStart(current.driveAttemptId, reason)
+      writeServerLog('INFO', 'wrkq.kicker.queued_attempt_reaped', {
+        targetSessionRef: current.targetSessionRef,
+        driveAttemptId: current.driveAttemptId,
+        runId: current.runId,
+        queuedBehindRunId: current.queuedBehindRunId,
+        reason,
+      })
+      return 'finished'
+    }
+  }
   if (run === null) return 'dispatch'
   if (isDurablyActiveRun(run)) return 'waiting'
 
@@ -420,7 +463,7 @@ function senderGenerationFor(
 }
 
 /**
- * T-07612 rev 4 — present into a seat whose drive slot is already held.
+ * T-07612 rev 4 — present into a seat that is on a live turn.
  *
  * The slot exists so two kicker drives never double-drive one scope, and the
  * attempt holding it releases only when its run ends. Under rev 4 nothing
@@ -430,26 +473,105 @@ function senderGenerationFor(
  * of preemption, no typed busy failure — the steer class (T-07203) is not on
  * this path (rev 4 §5).
  *
- * Not a drive of its own (`steer-` attempt id, never claimed), but its round
- * has to end somewhere (§6 bounded redelivery): the receipt is ATTACHED to the
- * started attempt holding the slot, so when that attempt's run ends undisposed
- * `completeStartedAttempt` advances this envelope's round with the rest. The
- * redelivery floor keeps a presented envelope out of the next sweep. Rendered
- * without the history cue: only a RECORDING `present` yields it, and the
- * receipt is written after the broker accepts.
+ * A drive attempt of its own (`queued-` id) that holds NO slot, owned by the
+ * queued input's run (§6 bounded redelivery needs an owner): if the harness
+ * starts that input as its own turn, `completeStartedAttempt` advances the
+ * round when it ends undisposed. If the harness merged it into the turn it was
+ * queued behind (no `turn.started` of its own) this attempt advances NOTHING —
+ * HRC cannot tell a merge from a slow start and does not guess (daedalus, rev
+ * 4 ruling 3); the redelivery floor expires and the next ordinary drive into
+ * the then-idle seat owns the round. Rendered without the history cue: only a
+ * RECORDING `present` yields it, and the receipt is written after the broker
+ * accepts.
  */
 async function presentIntoBusyTarget(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   session: HrcSessionRecord,
-  holder: HrcMailDriveAttempt,
+  queuedBehindRunId: string,
   actionable: readonly WrkqEnvelope[],
   wakeReason: HrcMailDriveWakeReason
 ): Promise<boolean> {
-  const activeRunId = activeRunIdFor(server, session)
+  const activeRunId = queuedBehindRunId
+  // The duplicate guard covers exactly the dispatch→commit window and nothing
+  // more. An ordinary drive writes its LOCAL receipt before it dispatches and
+  // commits the LEDGER receipt only after the broker accepts (T-07672); a wake
+  // landing inside that window would re-present the same mail into the same
+  // turn. Once the ledger receipt exists the redelivery floor is the sole
+  // authority on re-presentation — so an envelope whose queued input never
+  // started a turn (merged or dropped by the harness) is re-queued into a
+  // later live turn when its floor expires, and never waits for idle
+  // (daedalus, rev 4 ruling 4).
+  //
+  // And the window always CLOSES (ruling 5): a local receipt whose ledger
+  // receipt is missing is replayed here, exactly as an ordinary drive replays
+  // after a kill between persisting and dispatching (T-07615) — `present` is
+  // exactly-once per driveAttemptId, and a `queued-` attempt exists only after
+  // the broker accepted, so the replay claims nothing that did not happen.
+  const uncommitted = new Set<string>()
+  for (const unfinished of server.db.mailDrives.listUnfinishedAttempts(targetSessionRef)) {
+    if (!isQueuedAttempt(unfinished)) {
+      // An ordinary drive commits its own receipts right after its dispatch;
+      // its window is the few ms in between, and it is not replayed here.
+      for (const id of server.db.mailDrives.presentationEnvelopeIds(unfinished.driveAttemptId)) {
+        const envelope = actionable.find((candidate) => candidate.id === id)
+        const committed = envelope?.presentedTo.some(
+          (receipt) => receipt.driveAttemptId === unfinished.driveAttemptId
+        )
+        if (committed !== true) uncommitted.add(id)
+      }
+      continue
+    }
+    for (const id of server.db.mailDrives.presentationEnvelopeIds(unfinished.driveAttemptId)) {
+      const envelope = actionable.find((candidate) => candidate.id === id)
+      if (envelope === undefined) continue
+      const committed = envelope.presentedTo.some(
+        (receipt) => receipt.driveAttemptId === unfinished.driveAttemptId
+      )
+      if (committed) continue
+      try {
+        await server.wrkqLedger.present({
+          envelope: id,
+          node: server.federationNodeId,
+          ...(unfinished.hostSessionId === undefined
+            ? {}
+            : { hostSessionId: unfinished.hostSessionId }),
+          ...(unfinished.generation === undefined
+            ? {}
+            : { generation: String(unfinished.generation) }),
+          driveAttemptId: unfinished.driveAttemptId,
+          deliveryOutcome: 'queued_to_live_harness',
+          runId: unfinished.runId,
+          ...(() => {
+            const dispatched = server.db.runs.getByRunId(unfinished.runId)?.dispatchedInputId
+            return dispatched === undefined ? {} : { inputId: dispatched }
+          })(),
+          ...(unfinished.runtimeId === undefined ? {} : { runtimeId: unfinished.runtimeId }),
+        })
+        writeServerLog('INFO', 'wrkq.kicker.queued_receipt_replayed', {
+          targetSessionRef,
+          driveAttemptId: unfinished.driveAttemptId,
+          runId: unfinished.runId,
+          envelope: id,
+        })
+        // Committed now; the floor governs it from here, this wake included.
+        uncommitted.add(id)
+      } catch (error) {
+        writeServerLog('WARN', 'wrkq.kicker.queued_receipt_replay_failed', {
+          targetSessionRef,
+          driveAttemptId: unfinished.driveAttemptId,
+          envelope: id,
+          error: errorText(error),
+        })
+        uncommitted.add(id)
+      }
+    }
+  }
   const envelopes = actionable.filter(
-    // Already handed to this very turn: saying it twice into one turn is noise.
-    (envelope) => !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
+    (envelope) =>
+      !uncommitted.has(envelope.id) &&
+      // Already handed to this very turn: saying it twice into one turn is noise.
+      !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
   )
   if (envelopes.length === 0) return false
 
@@ -469,7 +591,6 @@ async function presentIntoBusyTarget(
     return false
   }
 
-  const driveAttemptId = `steer-${randomUUID()}`
   const presentables: PresentableEnvelope[] = []
   for (const envelope of envelopes) {
     presentables.push({
@@ -480,15 +601,13 @@ async function presentIntoBusyTarget(
       ...senderGenerationFor(server, envelope),
     })
   }
+  const prompt = formatEnvelopePresentations(presentables)
 
   let body: DispatchTurnResponse & { inputId?: string | undefined }
   try {
-    const response = await server.dispatchTurnForSession(
-      session,
-      intent,
-      formatEnvelopePresentations(presentables),
-      { waitForCompletion: false }
-    )
+    const response = await server.dispatchTurnForSession(session, intent, prompt, {
+      waitForCompletion: false,
+    })
     body = (await response.json()) as DispatchTurnResponse & { inputId?: string | undefined }
     if (body.status !== 'started') {
       throw new Error(`busy delivery did not start (status=${body.status})`)
@@ -499,7 +618,6 @@ async function presentIntoBusyTarget(
     writeServerLog('WARN', 'wrkq.kicker.busy_delivery_failed', {
       targetSessionRef,
       wakeReason,
-      driveAttemptId,
       activeRunId,
       envelopes: envelopes.map((envelope) => envelope.id),
       error: errorText(error),
@@ -509,13 +627,31 @@ async function presentIntoBusyTarget(
 
   const inputId = body.inputId ?? server.db.runs.getByRunId(body.runId)?.dispatchedInputId
   const runtimeId = body.runtimeId ?? presentationRuntimeIdFor(server, session)
+  // The round-completing owner (rev 4): an attempt of its own, owned by the
+  // queued input's run and queued behind the holder's, holding no slot. Local
+  // receipt first, then the ledger with the same attempt id (the T-07615
+  // ordering that survives a kill in between).
+  const queuedAttempt = server.db.mailDrives.insertQueuedAttempt({
+    targetSessionRef,
+    runId: body.runId,
+    wakeReason,
+    prompt,
+    envelopeIds: envelopes.map((envelope) => envelope.id),
+    queuedBehindRunId,
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    ...(runtimeId === undefined ? {} : { runtimeId }),
+  })
   for (const envelope of envelopes) {
     await server.wrkqLedger.present({
       envelope: envelope.id,
       node: server.federationNodeId,
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
-      driveAttemptId,
+      driveAttemptId: queuedAttempt.driveAttemptId,
+      // The outcome CLASS goes on the RECEIPT, not only on the log line
+      // (C-16526, re-ruled on T-07644 C-16658): a log rotates and is grepped
+      // from one node; the receipt travels with the envelope.
       deliveryOutcome: body.delivery?.code ?? 'queued_to_live_harness',
       runId: body.runId,
       ...(inputId === undefined ? {} : { inputId }),
@@ -523,34 +659,14 @@ async function presentIntoBusyTarget(
     })
   }
 
-  // The round-completing join. A holder that has already finished by now is
-  // not an error: its completion advanced nothing for these ids, so the next
-  // wake re-drives them through an ordinary attempt, which does.
-  let attachedTo: string | undefined
-  try {
-    server.db.mailDrives.attachToStartedAttempt(
-      holder.driveAttemptId,
-      envelopes.map((envelope) => envelope.id)
-    )
-    attachedTo = holder.driveAttemptId
-  } catch (error) {
-    writeServerLog('WARN', 'wrkq.kicker.busy_delivery_unattached', {
-      targetSessionRef,
-      driveAttemptId,
-      holderAttemptId: holder.driveAttemptId,
-      envelopes: envelopes.map((envelope) => envelope.id),
-      error: errorText(error),
-    })
-  }
-
   writeServerLog('INFO', 'wrkq.kicker.queued_into_busy_target', {
     targetSessionRef,
     wakeReason,
-    driveAttemptId,
+    driveAttemptId: queuedAttempt.driveAttemptId,
     activeRunId,
     runId: body.runId,
     ...(inputId === undefined ? {} : { inputId }),
-    ...(attachedTo === undefined ? {} : { roundsAttachedTo: attachedTo }),
+    queuedBehindRunId,
     envelopes: envelopes.map((envelope) => envelope.id),
   })
   return true
@@ -598,7 +714,7 @@ async function declineForInFlightAttempt(
           server,
           targetSessionRef,
           session,
-          attempt,
+          attempt.runId,
           actionable,
           wakeReason
         )
@@ -886,6 +1002,11 @@ async function driveMailTargetOnce(
     if (observation === 'waiting') inFlight = attempt
     if (observation === 'finished') attempt = undefined
   }
+  // T-07612 rev 4: mid-turn attempts hold no slot, so nothing above finds
+  // them. Every wake observes them too — that is how their rounds end.
+  for (const queued of server.db.mailDrives.listUnfinishedAttempts(targetSessionRef)) {
+    if (isQueuedAttempt(queued)) observeAttempt(server, queued)
+  }
 
   let session = findTargetSession(server.db, targetSessionRef) ?? undefined
   let actionable: WrkqEnvelope[]
@@ -916,10 +1037,26 @@ async function driveMailTargetOnce(
   }
 
   if (attempt === undefined) {
-    // T-07612 rev 4: a busy target is NOT a reason to wait. The drive below
-    // dispatches with the broker's ordinary busy policy (queue into the live
-    // harness), so the envelope reaches the seat mid-turn the way a typed
-    // message would. There is no `target_busy` decline any more.
+    // T-07612 rev 4: a busy target is NOT a reason to wait, and not a reason
+    // to claim the slot either. A seat on a durably live turn gets the mail
+    // as a slot-less attempt owned by the queued input's own run — the same
+    // path an in-flight kicker turn takes — so a queued input the harness
+    // merges into the live turn (never starting one of its own) can never
+    // wedge the scope slot. The slot-claiming drive below is for an IDLE seat.
+    if (session !== undefined) {
+      const busyRunId = durablyActiveRunIdFor(server, session)
+      if (busyRunId !== undefined) {
+        await presentIntoBusyTarget(
+          server,
+          targetSessionRef,
+          session,
+          busyRunId,
+          actionable,
+          wakeReason
+        )
+        return
+      }
+    }
     // A fyi is presented into a live generation if there is one, and otherwise
     // waits. It is NEVER the reason a session is born (§5), so a wake set that
     // holds nothing else stops here rather than at the summon gate.
@@ -1078,9 +1215,6 @@ async function driveMailTargetOnce(
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
 
-    // Read BEFORE the dispatch: the route moves the runtime's active run onto
-    // the new input, so afterwards this would name our own run.
-    const queuedBehindRunId = activeRunIdFor(server, session)
     const response = await server.dispatchTurnForSession(
       session,
       session.lastAppliedIntentJson ?? materializationIntent,
@@ -1088,9 +1222,9 @@ async function driveMailTargetOnce(
       {
         runId: attempt.runId,
         waitForCompletion: false,
-        // T-07612 rev 4: no `whenBusy: 'reject'`. Undefined lets the route send
-        // the broker its queue policy, which the broker applies only if the
-        // harness reports a turn active — the hrcchat-dm default, restored.
+        // T-07612 rev 4: no `whenBusy: 'reject'`. The seat was idle by HRC's
+        // record when this drive began; if the broker finds a turn live anyway
+        // it queues (its own policy), never refuses.
       }
     )
     const body = (await response.json()) as DispatchTurnResponse & {
@@ -1120,12 +1254,6 @@ async function driveMailTargetOnce(
       generation: body.generation,
       inputId,
       wakeReason,
-      // rev 4: the broker queued this input behind the seat's live turn; the
-      // harness surfaces it in-flight. Named so `grep <scope>` can tell a
-      // fresh turn from a mid-turn delivery.
-      ...(queuedBehindRunId === undefined || queuedBehindRunId === attempt.runId
-        ? {}
-        : { queuedBehindRunId }),
     })
     const committedRuntimeId = body.runtimeId ?? runtimeId
     await commitPresentations(server, presentables, attempt, session, committedRuntimeId, inputId)

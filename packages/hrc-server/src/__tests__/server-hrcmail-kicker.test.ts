@@ -81,6 +81,49 @@ async function startServer(options: Record<string, unknown> = {}): Promise<HrcSe
   return server
 }
 
+/**
+ * T-07612 rev 4: a busy seat is presented slot-less with the route's queue
+ * policy. The double answers like the route does for a queued input: a run
+ * row in `accepted`, `status:'started'`, an inputId.
+ */
+function installQueuedDispatch(serverInstance: HrcServer): { calls: () => number } {
+  let calls = 0
+  ;(serverInstance as any).dispatchTurnForSession = async (
+    session: HrcSessionRecord,
+    _intent: unknown,
+    _prompt: string
+  ): Promise<Response> => {
+    calls += 1
+    const db = (serverInstance as any).db as HrcDatabase
+    const runtime = db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
+    const runId = `run-queued-${calls}`
+    const now = timestamp()
+    db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime?.runtimeId ?? 'rt-busy-v1',
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+    })
+    return Response.json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime?.runtimeId ?? 'rt-busy-v1',
+      transport: 'headless',
+      status: 'started',
+      inputId: `input-${runId}`,
+      supportsInFlightInput: false,
+    })
+  }
+  return { calls: () => calls }
+}
+
 describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('is dark by default and honors the named max-round override', () => {
     const originalEnabled = process.env['HRC_MAIL_KICKER_ENABLED']
@@ -457,22 +500,21 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       startedAt: now,
       updatedAt: now,
     })
-    const deterministic = installDeterministicStart(server as HrcServer)
+    const queued = installQueuedDispatch(server as HrcServer)
 
     const envelope = say({
       obligation: 'fyi',
       body: 'do not wait for the active turn to finish',
     })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    // T-07612 rev 4: one delivery class. The busy seat gets the fyi in-flight.
-    await waitUntil(() => deterministic.calls() === 1, 'busy-seat drive')
-    expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(1)
+    // T-07612 rev 4: one delivery class. The busy seat gets the fyi in-flight,
+    // slot-less, and the receipt acks it on the broker's accept.
+    await waitUntil(() => queued.calls() === 1, 'busy-seat delivery')
     await waitUntil(() => ledger.envelopes.get(envelope.id)?.state === 'acked', 'fyi commit')
-    // preview, then the commit after the broker accepted.
+    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
     expect(
       ledger.presentRequests.filter((request) => request.envelope === envelope.id)
-    ).toHaveLength(2)
-    expect(deterministic.prompts()[0] ?? '').toContain('do not wait for the active turn to finish')
+    ).toHaveLength(1)
   })
 
   it('holds a still-presented envelope inside its redelivery floor, doubling per round', async () => {
@@ -560,7 +602,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('failed')
   })
 
-  it('drives a busy target at once, naming the turn the input was queued behind', async () => {
+  it('delivers into a busy target at once, naming the turn it queued behind', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -596,23 +638,24 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       startedAt: now,
       updatedAt: now,
     })
-    const deterministic = installDeterministicStart(server as HrcServer)
+    const queued = installQueuedDispatch(server as HrcServer)
 
     const held = say()
     const captured = await captureServerLog(async () => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await (server as any).drainMailKickerTarget(TARGET)
     })
-    // T-07612 rev 4: no `target_busy` decline exists. The drive dispatches
-    // with the route's queue policy and says which turn it queued behind.
-    expect(deterministic.calls()).toBe(1)
+    // T-07612 rev 4: no `target_busy` decline exists. The mail is queued into
+    // the live harness at once and the line says which turn it queued behind.
+    expect(queued.calls()).toBe(1)
     expect(captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(
       0
     )
-    const dispatched = captured.lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
-    expect(dispatched).toHaveLength(1)
-    expect(dispatched[0]).toContain('"queuedBehindRunId":"run-busy-visible"')
-    expect(dispatched[0]).toContain(held.id)
+    const line = captured.lines.filter((l) => l.includes('wrkq.kicker.queued_into_busy_target'))
+    expect(line).toHaveLength(1)
+    expect(line[0]).toContain('"queuedBehindRunId":"run-busy-visible"')
+    expect(line[0]).toContain(held.id)
+    expect(ledger.envelopes.get(held.id)?.presentedTo).toHaveLength(1)
   })
 
   it('releases the scope slot when this node cannot resolve the target placement', async () => {

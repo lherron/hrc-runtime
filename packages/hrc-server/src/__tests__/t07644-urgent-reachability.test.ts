@@ -66,13 +66,14 @@ function say(overrides: Partial<Parameters<FakeWrkqLedger['say']>[0]> = {}) {
   return ledger.say({ toScopeRef: SCOPE, fromScopeRef: SENDER, roomKey: 'T-07644', ...overrides })
 }
 
-async function startServer(): Promise<HrcServer> {
+async function startServer(options: Record<string, unknown> = {}): Promise<HrcServer> {
   server = await createHrcServer(
     fixture.serverOpts({
       hrcMailKickerEnabled: true,
       hrcMailKickerSweepIntervalMs: 60_000,
       otelListenerEnabled: false,
       wrkqLedger: ledger,
+      ...options,
     })
   )
   return server
@@ -93,6 +94,7 @@ function installShapeOneDispatch(steerOutcome: 'accept' | 'throw'): () => Dispat
   const instance = server as HrcServer
   const calls: Dispatch[] = []
   let driveRunId: string | undefined
+  let queuedRuns = 0
   serverInternals(instance).dispatchTurnForSession = async (
     session: HrcSessionRecord,
     _intent: HrcRuntimeIntent,
@@ -106,14 +108,35 @@ function installShapeOneDispatch(steerOutcome: 'accept' | 'throw'): () => Dispat
     expect(options.whenBusy).toBeUndefined()
     if (whenBusy === 'queued') {
       if (steerOutcome === 'throw') throw new Error('broker refused the input')
+      // The route writes an `accepted` run row for a queued input; its
+      // turn.started arrives only if the harness runs it as its own turn.
+      const db = serverInternals(instance).db
+      const now = timestamp()
+      queuedRuns += 1
+      const queuedRunId = queuedRuns === 1 ? 'run-queued' : `run-queued-${queuedRuns}`
+      {
+        const liveRuntime = db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
+        db.runs.insert({
+          runId: queuedRunId,
+          hostSessionId: session.hostSessionId,
+          runtimeId: liveRuntime?.runtimeId ?? `rt-${session.hostSessionId}`,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          transport: 'headless',
+          status: 'accepted',
+          acceptedAt: now,
+          updatedAt: now,
+        })
+      }
       return Response.json({
-        runId: 'run-queued',
+        runId: queuedRunId,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
         runtimeId: `rt-${session.hostSessionId}`,
         transport: 'headless',
         status: 'started',
-        inputId: 'input-queued',
+        inputId: `input-${queuedRunId}`,
         supportsInFlightInput: false,
       })
     }
@@ -233,7 +256,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     // redelivery bound did NOT move: a slot-less delivery advances no round.
     const receipts = ledger.envelopes.get(mail.id)?.presentedTo ?? []
     expect(receipts).toHaveLength(1)
-    expect(receipts[0]?.inputId).toBe('input-queued')
+    expect(receipts[0]?.inputId).toBe('input-run-queued')
     expect(receipts[0]?.runId).toBe('run-queued')
     expect(receipts[0]?.deliveryOutcome).toBe('queued_to_live_harness')
     expect(ledger.roundEndedCalls).not.toContain(mail.id)
@@ -253,7 +276,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
   })
 
-  it('advances the round when the turn it joined ends undisposed (daedalus flaw 1, rev 4)', async () => {
+  it("owns its round by the queued input's OWN turn, not the holder's (daedalus flaw 1, rev 4)", async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -267,13 +290,177 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
       () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 1,
       'mid-turn receipt'
     )
-    // Joined to the attempt holding the slot, not left slot-less: an envelope
-    // nobody answers must still exhaust to `dead` (§6).
-    expect(db.mailDrives.presentationEnvelopeIds(holder.driveAttemptId)).toContain(mail.id)
+    // An attempt of its own, owned by the queued input's run, holding no slot.
+    const queued = db.mailDrives
+      .listUnfinishedAttempts(TARGET)
+      .find((attempt) => attempt.runId === 'run-queued')
+    expect(queued?.queuedBehindRunId).toBe(holder.runId)
+    expect(db.mailDrives.getActiveAttempt(TARGET)?.driveAttemptId).toBe(holder.driveAttemptId)
 
+    // Holder A ends. Headless FIFO: B has not run yet, so B's envelope was not
+    // shown-and-ignored — its round must NOT move (daedalus, rev 4 second
+    // rejection). The 15s default grace keeps the merge rule out of this.
     await completeRun(server as HrcServer, holder.runId)
-    await waitUntil(() => ledger.roundEndedCalls.includes(mail.id), 'round advanced at turn end')
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await Bun.sleep(80)
+    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+
+    // B starts and ends undisposed: now the round advances.
+    const session = await fixture.resolveSession(SCOPE)
+    const now = timestamp()
+    serverInternals(server as HrcServer).notifyEvent(
+      appendHrcEvent(db, 'turn.started', {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: SCOPE,
+        laneRef: 'main',
+        generation: session.generation,
+        runtimeId: `rt-${session.hostSessionId}`,
+        runId: 'run-queued',
+        transport: 'headless',
+      })
+    )
+    await completeRun(server as HrcServer, 'run-queued')
+    await waitUntil(() => ledger.roundEndedCalls.includes(mail.id), 'round advanced at B end')
     expect(ledger.envelopes.get(mail.id)?.roundCount).toBe(1)
+  })
+
+  it('advances nothing when the queued input never starts a turn, and never holds the slot', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+    const db = serverInternals(server as HrcServer).db
+    const holder = db.mailDrives.getActiveAttempt(TARGET)
+    if (holder === undefined) throw new Error('no attempt holds the slot')
+
+    const mail = say({ body: 'merged into the live turn by the harness' })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(
+      () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 1,
+      'mid-turn receipt'
+    )
+
+    // A ends; B never starts (a TUI that merges typed text mid-turn). HRC
+    // cannot tell that from a slow B start and does not guess (daedalus, rev
+    // 4 ruling 3): no round moves, the slot is free, and the queued attempt
+    // simply waits for B — the floor, not this attempt, bounds redelivery.
+    await completeRun(server as HrcServer, holder.runId)
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await Bun.sleep(80)
+    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
+    const queued = db.mailDrives.listUnfinishedAttempts(TARGET)
+    expect(queued.map((attempt) => attempt.runId)).toEqual(['run-queued'])
+    // Only the NEW mail rode the queued input: the holder's envelope was
+    // already locally presented (its ledger commit may still be in flight).
+    expect(db.mailDrives.presentationEnvelopeIds(queued[0]?.driveAttemptId ?? '')).toEqual([
+      mail.id,
+    ])
+
+    // The seat goes busy again on a later turn A2 and the floor expires: the
+    // envelope is re-queued into A2 as a NEW attempt — B never starting must
+    // not suppress delivery on a healthy seat (daedalus, rev 4 ruling 4).
+    const owner = queued[0]
+    if (owner?.runtimeId === undefined || owner.hostSessionId === undefined) {
+      throw new Error('queued attempt has no runtime/session')
+    }
+    const liveRuntime = db.runtimes.getByRuntimeId(owner.runtimeId)
+    if (liveRuntime === null) throw new Error('no runtime')
+    const a2 = timestamp()
+    db.runs.insert({
+      runId: 'run-A2',
+      hostSessionId: owner.hostSessionId,
+      runtimeId: liveRuntime.runtimeId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: owner.generation ?? 1,
+      transport: 'headless',
+      status: 'started',
+      acceptedAt: a2,
+      startedAt: a2,
+      updatedAt: a2,
+    })
+    db.runtimes.update(liveRuntime.runtimeId, {
+      status: 'busy',
+      activeRunId: 'run-A2',
+      statusChangedAt: a2,
+      updatedAt: a2,
+    })
+    const ledgerEnvelope = ledger.envelopes.get(mail.id)
+    if (ledgerEnvelope?.presentedTo[0] === undefined) throw new Error('no receipt')
+    ledgerEnvelope.presentedTo[0].presentedAt = new Date(Date.now() - 10 * 60_000).toISOString()
+    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+    await waitUntil(
+      () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 2,
+      're-queued into the later live turn'
+    )
+    expect(ledger.envelopes.get(mail.id)?.presentedTo[1]?.runId).not.toBe('run-queued')
+    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+
+    // The runtime dies before B ever starts: the attempts are reaped WITHOUT
+    // rounds, so they cannot pile up, and the envelope is untouched.
+    const runtimeId = queued[0]?.runtimeId
+    if (runtimeId === undefined) throw new Error('queued attempt has no runtime')
+    const now = timestamp()
+    db.runtimes.update(runtimeId, { status: 'terminated', statusChangedAt: now, updatedAt: now })
+    const lines = await withServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+      await (server as any).drainMailKickerTarget(TARGET)
+    })
+    expect(db.mailDrives.listUnfinishedAttempts(TARGET)).toHaveLength(0)
+    const reaped = db.mailDrives
+      .listAttempts(TARGET)
+      .filter((attempt) => attempt.driveAttemptId.startsWith('queued-'))
+    expect(reaped.map((attempt) => attempt.state)).toEqual(['failed', 'failed'])
+    expect(lines.some((line) => line.includes('wrkq.kicker.queued_attempt_reaped'))).toBe(true)
+    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    expect(ledger.envelopes.get(mail.id)?.state).toBe('presented')
+  })
+
+  it('replays a ledger receipt lost between the local insert and the commit (ruling 5)', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+    const db = serverInternals(server as HrcServer).db
+
+    const mail = say({ body: 'accepted by the broker, commit interrupted' })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(
+      () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 1,
+      'mid-turn receipt'
+    )
+    const attempt = db.mailDrives
+      .listUnfinishedAttempts(TARGET)
+      .find((a) => a.runId === 'run-queued')
+    if (attempt === undefined) throw new Error('no queued attempt')
+
+    // The crash: local attempt + local receipt durable, ledger receipt never
+    // written. Reproduced by erasing the ledger side only.
+    const envelope = ledger.envelopes.get(mail.id)
+    if (envelope === undefined) throw new Error('no envelope')
+    envelope.presentedTo = []
+    envelope.state = 'pending'
+    // ...including wrkq's exactly-once marker: the ledger never saw the first
+    // `present`, so the replay is the FIRST it records.
+    for (const key of [...ledger.attemptReceipts]) {
+      if (key.includes(attempt.driveAttemptId)) ledger.attemptReceipts.delete(key)
+    }
+
+    const lines = await withServerLog(async () => {
+      ;(server as any).requestMailKickerWake(TARGET, 'periodic')
+      await waitUntil(
+        () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 1,
+        'receipt replayed'
+      )
+    })
+    // Same attempt id — a replay, not a second presentation — and no second
+    // broker input for it.
+    expect(ledger.envelopes.get(mail.id)?.presentedTo[0]?.driveAttemptId).toBe(
+      attempt.driveAttemptId
+    )
+    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+    expect(lines.some((line) => line.includes('wrkq.kicker.queued_receipt_replayed'))).toBe(true)
+    expect(ledger.envelopes.get(mail.id)?.state).toBe('presented')
   })
 
   it('hands the same envelope to the seat at most once per floor window', async () => {

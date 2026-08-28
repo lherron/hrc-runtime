@@ -2020,6 +2020,20 @@ const toolResultBlobsMigration: HrcMigration = {
  *    kicker wakes on. It is persisted so a restart resumes where it stopped
  *    rather than replaying the log or silently skipping the gap.
  */
+/**
+ * T-07612 rev 4 — a mid-turn presentation is its own drive attempt, owned by
+ * the queued input's run and not by the scope slot. `queued_behind_run_id`
+ * names the live turn the input was queued behind, so the kicker can end the
+ * attempt at that turn's terminal when the harness merged the input into it
+ * (no `turn.started` of its own ever arrives).
+ */
+const hrcmailQueuedAttemptMigration: HrcMigration = {
+  id: '0047_hrcmail_queued_attempts',
+  apply(db) {
+    db.exec('ALTER TABLE hrcmail_drive_attempts ADD COLUMN queued_behind_run_id TEXT;')
+  },
+}
+
 const wrkqLedgerConsumerMigration: HrcMigration = {
   id: '0046_wrkq_ledger_consumer',
   apply(db) {
@@ -2098,4 +2112,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcEventLedgerIncarnationMigration,
   toolResultBlobsMigration,
   wrkqLedgerConsumerMigration,
+  hrcmailQueuedAttemptMigration,
 ]
