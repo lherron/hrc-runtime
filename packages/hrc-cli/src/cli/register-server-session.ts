@@ -472,7 +472,8 @@ ${MONITOR_EXIT_CODES_HELP}\n`
     agentUsage: {
       example: 'hrc server status --json',
       exitCodes: '0 healthy; 1 not running; 2 degraded/usage; 3 probe failure',
-      output: '--json emits one status document; human output is for terminals',
+      output:
+        '--json emits one status document, named paths under SERVER STATUS JSON in hrc info --agent',
     },
   })
   annotateChild(session, 'list', {

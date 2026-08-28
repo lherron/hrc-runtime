@@ -2,6 +2,7 @@ import { CliUsageError } from 'cli-kit'
 import type { Command } from 'commander'
 
 import { resolveServerPaths } from '../cli-runtime.js'
+import { renderServerStatusJsonContract } from '../cli-runtime/server-status-contract.js'
 import {
   type HrcCommandMetadata,
   allCommandNodes,
@@ -198,6 +199,8 @@ function renderAgentInfo(program: Command): string {
 OUTPUT
   JSON is one complete document. NDJSON is one complete object per line.
   Never parse terminal-oriented human/tree output in automation.
+
+${renderServerStatusJsonContract()}
 
 CURSORS
   monitor show/watch/wait use global hrcSeq replay and condition fences.
