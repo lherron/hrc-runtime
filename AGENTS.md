@@ -42,13 +42,47 @@ separate states — record each. After runtime changes: `just install`, `hrc ser
 restart`, `hrc server status`; the readback must name the new release in
 `binaryPath` / `packagePath`.
 
-## Fleet Deployment (lab / max3)
+## Fleet Deployment
 
-Three logical nodes, each with its own checkout, release, and daemon: **svc** and
-**lab** co-hosted on `mini`, **max3** a separate workstation. `just deploy-lab` /
-`just deploy-max3` ssh over, refuse a dirty checkout (watch for a stray
-`default.profraw`), require 0 busy runtimes (drain first), ff-only merge
-`origin/main`, install, restart, and verify node identity unchanged.
+Four logical nodes, each with its own checkout, release, and daemon: **svc** and
+**lab** co-hosted on `mini`, **max3** a separate workstation, and **hrcdev** a
+Tart guest VM hosted on max3. One recipe per node — `just deploy-svc`,
+`deploy-lab`, `deploy-max3`, `deploy-hrcdev` — plus `just fleet-status` for a
+read-only hrc/asp parity table and `just deploy-fleet-from-max3` to bring svc and
+hrcdev to max3 in a single pass. Each ssh's over, refuses a dirty checkout (watch
+for a stray `default.profraw`), requires 0 busy runtimes (drain first), ff-only
+merges to the target ref, installs, restarts, and verifies node identity.
+
+**The target ref is a parameter, and `@max3` is the interesting default.**
+`deploy-svc` / `deploy-hrcdev` default to `@max3`: the hrc source commit max3's
+daemon is *running right now*, read from `.release.hrcBuild.sourceCommit` on the
+driver and handed to the node as a literal SHA. `deploy-lab` / `deploy-max3` still
+default to `origin/main`. Any ref works — `just deploy-svc origin/main`,
+`just deploy-svc <sha>`. `deploy-fleet-from-max3` resolves `@max3` **once** for
+both nodes; letting each resolve it races a concurrent max3 install and can leave
+the two on different commits while reporting success.
+
+Parity is measured in **sourceCommit, never setVersion** — every node's `just
+install` mints its own timestamped package version from the same commit, and
+coherence keys on the commit. ASP package parity follows for free: bun.lock at the
+target commit pins the tuple.
+
+Three guards, each closing a way a deploy can report green having done nothing:
+
+- **Containment** — the target must be contained by freshly fetched `origin/main`.
+  `just install` enforces this itself, but only after the checkout has moved.
+- **Direction** — the node must be strictly behind the target. `--ff-only` cannot
+  move backwards, so a node at or ahead of it would take a silent no-op merge and
+  still report a green deploy. Going backwards is an operator decision.
+- **Identity** — post-restart, `.release.hrcBuild.sourceCommit` must equal the
+  target and `runningEqualsInstalled` must be true. A restart onto a **stale**
+  release looks exactly as healthy as a correct one; only the commit tells them
+  apart. Verifying release *shape* (`packagePath` looks like a release) does not.
+
+`ssh <host> <cmd>` gets a non-interactive, non-login shell that reads only
+`~/.zshenv`, and svc's does not add `~/.bun/bin` or Homebrew — `hrc` and `just`
+are both missing there while they resolve fine on lab and hrcdev. The recipes
+prepend the canonical locations rather than requiring the dotfiles to agree.
 
 **Supervisor differs by node — this governs restarts and flags:**
 
@@ -68,6 +102,12 @@ Three logical nodes, each with its own checkout, release, and daemon: **svc** an
   release with plist env, root-free; `just deploy-lab` encodes this. Only the
   one-time install needs root (`sudo install` + `sudo launchctl bootstrap system`).
 
+- **hrcdev** runs its daemon **unsupervised** — no plist, orphaned to PID 1, so it
+  never self-restarts and no plist env can reach it. `hrc server restart` finds no
+  launchd owner and takes its stop + self-daemonize + restart-proof path, which is
+  correct; the deploy recipe needs no special case for it. But nothing brings that
+  daemon back on its own, so a failed restart there stays down.
+
 **Env-gated flags** (e.g. `HRC_MAIL_KICKER_ENABLED`) are read from `process.env`
 only: they live in the node's plist `EnvironmentVariables` and apply on the next
 supervisor (re)load. Never infer launchd management from a plist's presence — a
@@ -75,14 +115,29 @@ self-daemonized `hrc server start` orphans to PID 1 identically. Check `launchct
 print gui/<uid>/<label>` (or `system/<label>`) and whether the running argv
 matches the plist's `ProgramArguments`.
 
-### hrcdev VM (max3)
+### hrcdev — the Tart VM (max3)
 
-Tart macOS guest, `ssh lherron@192.168.50.45`. ssh timing out while `tart list`
-says **running** means the vmnet bridge lost its uplink — `ifconfig bridge100`
-shows `member: vmenet0` with no `member: en7`. It is not tailscale and not guest
-sleep. Fix without restarting the guest: `sudo ifconfig bridge100 addm en7`
-(macOS uses `addm`/`deletem`). LaunchAgent `com.praesidium.hrcdev-vm-watchdog`
-(300s) auto-repairs; log `var/logs/hrcdev-vm-watchdog.log`.
+**"hrcdev" in this repo always means the Tart macOS guest VM hosted on max3.** It
+is a full logical node: roster id `hrcdev`, its own checkout at
+`~/praesidium/hrc-runtime`, its own atomic releases, its own daemon, and its own
+deploy recipe (`just deploy-hrcdev`).
+
+Do not confuse it with the **`hrc-dev` lane** at
+`~/praesidium/var/install/hrc-dev/tree`, which is a different thing with a
+different repair procedure: a `git archive` export with no `.git` (so `git -C`
+there silently resolves to the praesidium **root** repo and lies), no
+`praesidium-release.json` (so it cannot state its own sourceCommit), and a
+`KeepAlive` LaunchAgent `com.praesidium.hrc-dev` that must be stopped with
+`launchctl bootout`, never `kickstart` or a kill. It has no deploy recipe and is
+not a fleet node.
+
+Tart macOS guest, `ssh hrcdev` (or `ssh lherron@192.168.50.45`). ssh timing out
+while `tart list` says **running** means the vmnet bridge lost its uplink —
+`ifconfig bridge100` shows `member: vmenet0` with no `member: en7`. It is not
+tailscale and not guest sleep. Fix without restarting the guest: `sudo ifconfig
+bridge100 addm en7` (macOS uses `addm`/`deletem`). LaunchAgent
+`com.praesidium.hrcdev-vm-watchdog` (300s) auto-repairs; log
+`var/logs/hrcdev-vm-watchdog.log`.
 
 **Guest provisioning is not a copy of max3** — the guest was built credential-native
 (T-07279/T-07281), so host-only conveniences are absent and host-only workarounds

@@ -204,25 +204,126 @@ install-hrc-viewer-launchd:
     launchctl print "$service_target" >/dev/null
     echo "[install] activated $service_target"
 
-# Deploy the latest pushed main revision to the co-hosted lab logical node.
-deploy-lab:
-    @just _deploy-node "lab@mini" "lab"
+# Deploy to the co-hosted lab logical node (defaults to the latest pushed main)
+deploy-lab ref="origin/main":
+    @just _deploy-node "lab@mini" "lab" "{{ ref }}"
 
-# Deploy the latest pushed main revision to the max3 logical node.
-deploy-max3:
-    @just _deploy-node "max3" "max3"
+# Deploy to the max3 logical node (defaults to the latest pushed main)
+deploy-max3 ref="origin/main":
+    @just _deploy-node "max3" "max3" "{{ ref }}"
+
+# The `@max3` default means the hrc source commit max3's daemon is RUNNING right
+# now, not origin/main HEAD. Pass an explicit ref (a SHA, tag, or origin/main) to
+# target something else.
+
+# Deploy to the svc logical node (user lherron on mini)
+deploy-svc ref="@max3":
+    @just _deploy-node "mini" "svc" "{{ ref }}"
+
+# `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), NOT the
+# ~/praesidium/var/install/hrc-dev lane, which is a git-archive export with its
+# own LaunchAgent and no release manifest. See AGENTS.md.
+
+# Deploy to the hrcdev logical node (the Tart guest VM on max3)
+deploy-hrcdev ref="@max3":
+    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}"
+
+# The commit is resolved ONCE and passed to both nodes as a literal SHA. Letting
+# each node resolve `@max3` for itself would race a concurrent max3 install and
+# could leave the two nodes on different commits while reporting success.
+
+# Bring svc and hrcdev to the hrc source commit max3 is running
+deploy-fleet-from-max3:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="$(just _max3-source-commit)"
+    echo "[fleet] target hrc sourceCommit ${target} (running on max3)"
+    just _deploy-node "mini" "svc" "$target"
+    just _deploy-node "hrcdev" "hrcdev" "$target"
+
+# Run this before and after a deploy; an unreachable node prints as unreachable
+# instead of aborting the table.
+
+# Read-only hrc/asp parity table across max3, svc, lab, and hrcdev
+fleet-status:
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    probe() {
+      local label="$1" target="$2" status hrc asp health coherent
+      if [[ -z "$target" ]]; then
+        status="$(hrc server status --json 2>/dev/null)"
+      else
+        status="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" \
+          'export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; hrc server status --json' \
+          2>/dev/null)"
+      fi
+      if [[ -z "$status" ]]; then
+        printf '%-8s %-12s %s\n' "$label" 'unreachable' '-'
+        return
+      fi
+      health="$(jq -r '.status // "down"' <<<"$status")"
+      hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
+      asp="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status")"
+      coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
+      printf '%-8s %-12s %-10s %-28s %s\n' \
+        "$label" "$health" "${hrc:0:8}" "$asp" \
+        "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
+    }
+
+    printf '%-8s %-12s %-10s %-28s %s\n' NODE STATUS HRC ASP COHERENCE
+    probe max3 ''
+    probe svc 'mini'
+    probe lab 'lab@mini'
+    probe hrcdev 'hrcdev'
+
+# Print the hrc source commit max3's daemon is currently running.
+#
+# This is the authority behind the `@max3` target ref, and it fails closed rather
+# than guessing: a daemon that is not running its own installed release has no
+# single answer to "what version is max3 running", so `runningEqualsInstalled`
+# is a hard gate, not a warning.
+[private]
+_max3-source-commit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { printf '@max3: %s\n' "$*" >&2; exit 1; }
+
+    status="$(hrc server status --json 2>/dev/null)" || fail 'local HRC daemon is not reachable'
+    health="$(jq -r '.status // "down"' <<<"$status")"
+    [[ "$health" == healthy ]] || fail "local HRC daemon is ${health}, not healthy"
+    node="$(jq -r '.node.nodeId // ""' <<<"$status")"
+    [[ "$node" == max3 ]] ||
+      fail "the @max3 target ref must be resolved on max3; this node is ${node:-unknown}"
+    [[ "$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")" == true ]] ||
+      fail 'max3 is not running its own installed release; install/restart max3 first'
+    jq -er '.release.hrcBuild.sourceCommit' <<<"$status" ||
+      fail 'max3 status did not report a release sourceCommit'
 
 [private]
-_deploy-node ssh-target expected-node:
+_deploy-node ssh-target expected-node target-ref="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
 
+    target_ref='{{ target-ref }}'
+    if [[ "$target_ref" == '@max3' ]]; then
+      target_ref="$(just _max3-source-commit)"
+    fi
+
     ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" <<'REMOTE'
+      bash -s -- "{{ expected-node }}" "$target_ref" <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
+    target_ref="$2"
     repo="$HOME/praesidium/hrc-runtime"
+
+    # `ssh host cmd` gets a non-interactive, non-login shell, which reads only
+    # ~/.zshenv. svc's does not add ~/.bun/bin or Homebrew, so `hrc` and `just`
+    # are both MISSING over ssh there while they resolve fine on lab and hrcdev.
+    # Prepend the canonical locations rather than requiring every node's dotfiles
+    # to agree.
+    export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
     fail() {
       printf 'deploy-%s: %s\n' "$expected_node" "$*" >&2
@@ -250,18 +351,38 @@ _deploy-node ssh-target expected-node:
     fi
 
     git fetch --prune origin main
-    local_sha="$(git rev-parse HEAD)"
-    remote_sha="$(git rev-parse origin/main)"
-    if [[ "$local_sha" != "$remote_sha" ]]; then
-      merge_base="$(git merge-base HEAD origin/main)"
-      if [[ "$merge_base" != "$local_sha" ]]; then
-        git log --oneline --decorate --left-right HEAD...origin/main >&2
-        fail 'main diverges from origin/main; refusing to reset local commits'
-      fi
-      git merge --ff-only origin/main
+    target_sha="$(git rev-parse --verify --quiet "${target_ref}^{commit}")" ||
+      fail "cannot resolve target ref ${target_ref} in this checkout"
+
+    # Containment. `just install` enforces this itself (publish-local-verdaccio's
+    # canonical gate refuses a source commit origin/main does not contain), but
+    # only AFTER the checkout has already moved. Checking it here keeps a refused
+    # deploy from leaving the node parked on an unpublished commit.
+    git merge-base --is-ancestor "$target_sha" origin/main ||
+      fail "target ${target_sha} is not contained by freshly fetched origin/main"
+
+    head_sha="$(git rev-parse HEAD)"
+    running_sha="$(jq -r '.release.hrcBuild.sourceCommit // ""' <<<"$status_before")"
+    running_installed="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_before")"
+    if [[ "$head_sha" == "$target_sha" && "$running_sha" == "$target_sha" &&
+          "$running_installed" == 'true' ]]; then
+      printf '%s already at %s: checkout, installed release, and running daemon agree\n' \
+        "$expected_node" "$target_sha"
+      exit 0
     fi
-    [[ "$(git rev-parse HEAD)" == "$remote_sha" ]] ||
-      fail 'checkout did not reach the fetched origin/main revision'
+
+    # Direction. --ff-only cannot move backwards, so a node at or ahead of the
+    # target would take a silent no-op merge and then report a green deploy after
+    # install+restart without ever having moved. Refuse instead; going backwards
+    # is an operator decision, not something a deploy should do quietly.
+    git merge-base --is-ancestor "$head_sha" "$target_sha" || {
+      git log --oneline --decorate --left-right "$head_sha...$target_sha" >&2
+      fail "checkout ${head_sha} is ahead of or diverged from target ${target_sha}"
+    }
+
+    git merge --ff-only "$target_sha"
+    [[ "$(git rev-parse HEAD)" == "$target_sha" ]] ||
+      fail 'checkout did not reach the target revision'
 
     busy_json="$(hrc runtime list --status busy --json)" ||
       fail 'could not inspect busy runtimes'
@@ -275,16 +396,19 @@ _deploy-node ssh-target expected-node:
     just install no-sync=1
     # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
     # gate). A node's login profile may export convenience vars from that
-    # envelope (lab exports ASP_DEFAULT_TASK), which would make this operator
-    # deploy shell look like a half-formed agent session. Strip exactly the
-    # envelope keys for the lifecycle calls — the gate's own prescribed
-    # remediation ("run from a clean operator shell").
+    # envelope (svc exports ASP_DEFAULT_TASK=minisvc, lab exports minilab), which
+    # would make this operator deploy shell look like a half-formed agent
+    # session. Strip exactly the envelope keys for the lifecycle calls — the
+    # gate's own prescribed remediation ("run from a clean operator shell").
     lifecycle_env=(env -u HRC_SESSION_REF -u HRC_RUN_ID -u HRC_BIRTH_CREDENTIAL
       -u ASP_SCOPE_REF -u ASP_TASK_ID -u ASP_DEFAULT_TASK -u ASP_HANDLE)
     # Restart onto the freshly-selected release. The correct mechanism differs by
     # supervisor: svc/max3 run gui LaunchAgents that `hrc server restart` detects and
-    # kickstarts cleanly. lab runs a system LaunchDaemon (no gui session for uid 502),
-    # which `hrc server restart` does NOT detect — it would self-daemonize a second
+    # kickstarts cleanly. hrcdev runs its daemon unsupervised with no plist at all,
+    # where the same command finds no launchd owner and takes its stop +
+    # self-daemonize + restart-proof path — also correct, no special case needed.
+    # lab runs a system LaunchDaemon (no gui session for uid 502), which
+    # `hrc server restart` does NOT detect — it would self-daemonize a second
     # process and race the KeepAlive respawn. For lab, stop and let launchd bring it
     # back on the new release (root-free: lab may signal its own-uid process).
     if [[ "$expected_node" == lab ]]; then
@@ -325,7 +449,20 @@ _deploy-node ssh-target expected-node:
     [[ "$binary_path" == "$release_root/"* ]] ||
       fail "binaryPath and packagePath name different releases: $binary_path vs $release_path"
 
-    printf 'deployed %s to %s: %s\n' "$remote_sha" "$expected_node" "$release_root"
+    # Release IDENTITY, not just release shape. Everything above proves a healthy
+    # daemon is running some atomic release; a restart onto a stale one looks
+    # exactly this healthy. Only the sourceCommit says the node is running what
+    # was asked for.
+    deployed_sha="$(jq -er '.release.hrcBuild.sourceCommit' <<<"$status_after")" ||
+      fail 'post-restart status did not report a release sourceCommit'
+    [[ "$deployed_sha" == "$target_sha" ]] ||
+      fail "daemon is running ${deployed_sha}, expected ${target_sha}"
+    [[ "$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_after")" == 'true' ]] ||
+      fail 'running daemon is not the installed release'
+    asp_version="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status_after")"
+
+    printf 'deployed %s to %s: %s (asp %s)\n' \
+      "$target_sha" "$expected_node" "$release_root" "$asp_version"
     REMOTE
 
 pull-deps:
