@@ -18,6 +18,15 @@ export const aspSyncSpec: SyncSpec = {
         'spaces-harness-broker-protocol',
         'spaces-harness-broker-client',
         'spaces-harness-broker',
+        // Both ship in the same ASP publish stream and are DIRECT hrc-runtime
+        // dependencies: `agent-harness` is the binary `resolveBrokerBinary`
+        // hands the agent-harness-tmux driver, and the pi-sdk package is what
+        // that binary maps its turns with. Omitting them stranded the pair a
+        // release behind the rest of the set while `pull-deps` reported the
+        // stream advanced (T-07677) — an ASP version split inside HRC's own
+        // dependency set, which is precisely what this list exists to prevent.
+        'spaces-harness-broker-pi-sdk',
+        'agent-harness',
         'spaces-runtime-contracts',
         'spaces-aspc-protocol',
         'spaces-aspc',
