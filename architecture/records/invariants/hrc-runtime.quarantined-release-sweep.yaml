@@ -1,0 +1,37 @@
+id: hrc-runtime.quarantined-release-sweep
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: irreversible deletion of quarantined atomic HRC releases
+predicate: >
+  Phase 1 quarantine remains reversible and keeps every observed reference.
+  Phase 2 may unlink only valid release-id children of the owning user's
+  .gc-quarantine during an operator-scheduled quiescence window, within the
+  hrc-runtime.quarantined-release-sweep-scan-coherence accepted-risk boundary.
+  Before mutation, the daemon is absent and held down, current-code maintenance
+  and install exclusion is held, the release root and quarantine are owner-owned
+  mode 0700, and two complete clean ps plus privileged open-path observations
+  cover the exact candidate set with an unchanged pid-and-start-time incarnation
+  set. Probe status, output completeness, attestation nonce and candidate scope
+  fail closed. Privilege may actuate supervision and read process state, but every
+  unlink runs as the release owner. Each surviving candidate remains bit-for-bit
+  unmodified on refusal. After all safety gates pass, each candidate transition
+  is ordered: reassert daemon absence, write .sweep-in-progress, recursively set
+  every directory in that candidate to mode 0700, then unlink that same candidate.
+  A sentinel-bearing survivor is non-restorable partial-sweep residue completed
+  by a later successful sweep. Elapsed quarantine age is operator convenience,
+  never evidence of reference absence.
+authority: wrkq:T-07686 rev 9 architecture approval, 2026-08-29
+source:
+  - wrkq:T-07686
+  - architecture/records/invariants/hrc-runtime.observable-release.yaml
+required_tests:
+  - just architecture-records
+  - T-07686 refusal-before-mutation, recursive-depth, sentinel-before-tightening, and partial-sweep gates
+  - T-07686 daemon, maintenance-lock, install-exclusion, and two-principal authority gates
+  - T-07686 probe completeness, release-id matcher, two-pass incarnation bracket, and attestation gates
+  - T-07686 containment, owner-delete, dry-run, and live maintenance-window evidence
+last_verified: 2026-08-29 design approval; implementation gates pending
+reopen_when: The quarantine layout, proof target, process observers, scan coherence, quiescence protocol, supervision or lock authority, delete principal, per-candidate mutation order, restore semantics, or accepted-risk bound changes.
+supersedes: []
+superseded_by: []

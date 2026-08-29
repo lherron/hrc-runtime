@@ -38,6 +38,10 @@ Mobile suffix-roster families are finite. Every enabled ACP quick-pick base has 
 
 Every atomic HRC release records its exact HRC build and locked ASP build in praesidium-release.json before cutover; the daemon captures that immutable identity at startup, fails closed for invalid atomic manifests, and reports on every status read whether the running release still equals the installed release. Source and worktree daemons report unmanaged explicitly.
 
+## hrc-runtime.quarantined-release-sweep
+
+Phase 1 quarantine remains reversible and keeps every observed reference. Phase 2 may unlink only valid release-id children of the owning user's .gc-quarantine during an operator-scheduled quiescence window, within the hrc-runtime.quarantined-release-sweep-scan-coherence accepted-risk boundary. Before mutation, the daemon is absent and held down, current-code maintenance and install exclusion is held, the release root and quarantine are owner-owned mode 0700, and two complete clean ps plus privileged open-path observations cover the exact candidate set with an unchanged pid-and-start-time incarnation set. Probe status, output completeness, attestation nonce and candidate scope fail closed. Privilege may actuate supervision and read process state, but every unlink runs as the release owner. Each surviving candidate remains bit-for-bit unmodified on refusal. After all safety gates pass, each candidate transition is ordered: reassert daemon absence, write .sweep-in-progress, recursively set every directory in that candidate to mode 0700, then unlink that same candidate. A sentinel-bearing survivor is non-restorable partial-sweep residue completed by a later successful sweep. Elapsed quarantine age is operator convenience, never evidence of reference absence.
+
 ## hrc-runtime.verify-gate
 
 The declared verify gate checks architecture records and their generated projections in addition to build, structural checks, lint, types, tests, and the fixture-owned federation loopback corpus.

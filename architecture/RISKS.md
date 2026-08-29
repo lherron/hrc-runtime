@@ -8,3 +8,10 @@
 - Accepted by: Lance
 - Blast radius: The first deployment of the monotonic Mobile recency projection intentionally reorders existing sessions whose greatest observed activity timestamp differs from the former latest-by-hrc_seq event timestamp; the preflight census found 153 affected current sessions.
 - Mitigation: The migration records the exact changed-row count, ACP and iOS update their recency gates in the same cross-layer effort, and the new value is thereafter monotonic and authoritative.
+
+## hrc-runtime.quarantined-release-sweep-scan-coherence
+
+- Severity: medium
+- Accepted by: mable, HRC release-GC campaign owner
+- Blast radius: macOS exposes no coherent system-wide userspace directory-fd snapshot. Under a non-adversarial local process population, an accidental authority transfer can still evade both complete bracketed scans without process-incarnation churn. A sweep may then delete one superseded quarantined release still reachable by one non-HRC process family, including a pre-existing foreign holder; its future relative opens fail with ENOENT until that family restarts. No live HRC runtime, release data required by one, or already-open file or mapping is lost or corrupted.
+- Mitigation: The sweep runs only in an operator-scheduled quiescence window with the daemon held down, owner-only pathname traversal from the release root, current-code maintenance and install exclusion, two privileged complete clean scans bracketed by an unchanged pid-and-start-time set, and fail-closed completeness and attestation checks. Refusals precede candidate mutation; each accepted candidate is marked before recursive permission tightening and owner-run unlink. Any observed instance of this residual triggers the kernel-atomic APFS volume and unmount design.
