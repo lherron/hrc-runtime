@@ -16,7 +16,30 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 export const QUARANTINE_DIRNAME = '.gc-quarantine'
 const RELEASE_ID_PATTERN = /^release-[A-Za-z0-9._-]+$/
-const RELEASE_PATH_SEGMENT = /hrc-runtime-releases\/(release-[A-Za-z0-9._-]+)/g
+/**
+ * Release ids are only evidence when they sit under the CALLER's release root.
+ * Matching the bare `hrc-runtime-releases/` segment matches every principal's
+ * root on a shared node — measured on mini, where lherron's gc refused on lab's
+ * broker and lab's refused on lherron's, leaving neither able to quarantine.
+ */
+export function matchReleaseIdsUnderRoot(
+  haystack: string,
+  known: ReadonlySet<string>,
+  releaseRoot: string
+): string[] {
+  const found: string[] = []
+  const needle = `${releaseRoot}/`
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
+    // The id is the first path segment after the root, or after the quarantine
+    // directory — argv keeps the PRE-quarantine path, so both shapes occur.
+    const match = /^(?:\.gc-quarantine\/)?(release-[A-Za-z0-9._-]+)/.exec(
+      haystack.slice(at + needle.length)
+    )
+    const id = match?.[1]
+    if (id !== undefined && known.has(id)) found.push(id)
+  }
+  return found
+}
 
 export type ReleaseGcDisposition =
   | 'keep'
@@ -137,16 +160,6 @@ export function isReleaseId(name: string): boolean {
   return RELEASE_ID_PATTERN.test(name)
 }
 
-/** A regex hit is only honoured if it names a directory that actually exists. */
-function matchReleaseIds(haystack: string, known: ReadonlySet<string>): string[] {
-  const found: string[] = []
-  for (const match of haystack.matchAll(RELEASE_PATH_SEGMENT)) {
-    const id = match[1]
-    if (id !== undefined && known.has(id)) found.push(id)
-  }
-  return found
-}
-
 function defaultListPids(): PidRecord[] {
   const { status, stdout, truncated } = run('ps', ['-Axo', 'pid=,command='])
   if (truncated) throw new ReleaseGcAbort('probe-failed', 'ps output was truncated')
@@ -260,7 +273,7 @@ function assessReferences(
   for (const record of pids) {
     if (selfPids.has(record.pid)) continue
     argvByPid.set(record.pid, record.command)
-    for (const id of matchReleaseIds(record.command, known)) argv.add(id)
+    for (const id of matchReleaseIdsUnderRoot(record.command, known, releaseRoot)) argv.add(id)
   }
 
   const probe = deps.readOpenPaths(pids.map((record) => record.pid))
@@ -268,7 +281,8 @@ function assessReferences(
     throw new ReleaseGcAbort('probe-failed', 'open-paths probe returned no process records')
   }
   const openPaths = new Set<string>()
-  for (const path of probe.paths) for (const id of matchReleaseIds(path, known)) openPaths.add(id)
+  for (const path of probe.paths)
+    for (const id of matchReleaseIdsUnderRoot(path, known, releaseRoot)) openPaths.add(id)
 
   // Per-pid omission is expected (SIP-protected and foreign-uid processes are
   // unreadable unprivileged). It is only an abort when an UNINSPECTED pid is
@@ -278,17 +292,21 @@ function assessReferences(
   for (const [pid, command] of argvByPid) {
     if (covered.has(pid)) continue
     omittedPidCount += 1
-    if (command.includes(`${basename(releaseRoot)}/release-`)) {
+    // Anchored on the CALLER's root. `basename(releaseRoot)` is
+    // "hrc-runtime-releases", which every principal on the node shares, so the
+    // old check fired on a foreign uid's broker — uninspectable by construction,
+    // making the gate permanently unsatisfiable for both users.
+    if (command.includes(`${releaseRoot}/release-`)) {
       throw new ReleaseGcAbort(
         'probe-incomplete',
-        `pid ${pid} runs from the release root but could not be inspected: ${command}`
+        `pid ${pid} runs from this release root but could not be inspected: ${command}`
       )
     }
   }
 
   const runtimeRecords = new Set<string>()
   for (const blob of deps.readRuntimeRecords()) {
-    for (const id of matchReleaseIds(blob, known)) runtimeRecords.add(id)
+    for (const id of matchReleaseIdsUnderRoot(blob, known, releaseRoot)) runtimeRecords.add(id)
   }
 
   return { argv, openPaths, runtimeRecords, omittedPidCount }

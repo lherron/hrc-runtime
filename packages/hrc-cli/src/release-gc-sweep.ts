@@ -38,6 +38,7 @@ import {
   ReleaseGcAbort,
   defaultReleaseRoot,
   isReleaseId,
+  matchReleaseIdsUnderRoot,
 } from './release-gc.js'
 
 export const MAINTENANCE_LOCK_DIRNAME = 'hrc-runtime-maintenance.lock'
@@ -328,13 +329,15 @@ function defaultDiskFree(releaseRoot: string): () => string {
 }
 
 /** Anchored to ids that actually exist, at ANY path prefix. */
-function matchIds(haystack: string, known: ReadonlySet<string>): string[] {
-  const found: string[] = []
-  for (const match of haystack.matchAll(/release-[0-9][0-9A-Za-z._-]*/g)) {
-    const id = match[0]
-    if (known.has(id)) found.push(id)
-  }
-  return found
+/**
+ * Root-anchored, for the same reason phase 1 is: on a shared node a bare id
+ * match is evidence about whoever happens to own that path, not about the
+ * caller. Both shapes are covered because the root prefix is common to them —
+ * `<root>/release-X` (argv keeps the PRE-quarantine path) and
+ * `<root>/.gc-quarantine/release-X`.
+ */
+function matchIds(haystack: string, known: ReadonlySet<string>, releaseRoot: string): string[] {
+  return matchReleaseIdsUnderRoot(haystack, known, releaseRoot)
 }
 
 /**
@@ -599,10 +602,10 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
 
     const hits = new Set<string>()
     for (const record of [...before, ...mid, ...after]) {
-      for (const id of matchIds(record.command, known)) hits.add(id)
+      for (const id of matchIds(record.command, known, releaseRoot)) hits.add(id)
     }
     for (const path of [...pass1.paths, ...pass2.paths]) {
-      for (const id of matchIds(path, known)) hits.add(id)
+      for (const id of matchIds(path, known, releaseRoot)) hits.add(id)
     }
 
     inspectedPids = pass1.inspectedPids.length
@@ -648,7 +651,7 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
     if (appearedUninspected.length > 0) {
       const followUp = probeSpecificPids(appearedUninspected.map((r) => r.pid))
       for (const path of followUp.paths) {
-        for (const id of matchIds(path, known)) hits.add(id)
+        for (const id of matchIds(path, known, releaseRoot)) hits.add(id)
       }
       const nowCovered = new Set(followUp.inspectedPids)
       const stillHere = new Set(checkAlive(appearedUninspected.map((r) => r.pid)))

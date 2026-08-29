@@ -113,7 +113,7 @@ describe('T-07686 reference matching', () => {
         sweep({
           listPids: () => [{ pid: 200, command: 'sleep 30', lstart: LSTART }],
           probeOpenPaths: () => ({
-            paths: [`/x/hrc-runtime-releases/.gc-quarantine/${A}`],
+            paths: [`${ROOT}/.gc-quarantine/${A}`],
             inspectedPids: [200],
             privileged: true,
           }),
@@ -126,9 +126,7 @@ describe('T-07686 reference matching', () => {
     expectRefusal(
       () =>
         sweep({
-          listPids: () => [
-            { pid: 200, command: `bun /x/hrc-runtime-releases/${A}/b.js`, lstart: LSTART },
-          ],
+          listPids: () => [{ pid: 200, command: `bun ${ROOT}/${A}/b.js`, lstart: LSTART }],
           probeOpenPaths: () => ({ paths: [], inspectedPids: [200], privileged: true }),
         }),
       'not-quiescent'
@@ -290,7 +288,7 @@ describe('T-07686 bracketed scan tolerates unrelated churn', () => {
             },
             probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
             probeSpecificPids: () => ({
-              paths: [`/x/.gc-quarantine/${A}/lib`],
+              paths: [`${ROOT}/.gc-quarantine/${A}/lib`],
               inspectedPids: [900],
             }),
           }),
@@ -341,7 +339,7 @@ describe('T-07686 no refusal path mutates state', () => {
       'not-quiescent',
       {
         probeOpenPaths: () => ({
-          paths: [`/x/.gc-quarantine/${A}/lib`],
+          paths: [`${ROOT}/.gc-quarantine/${A}/lib`],
           inspectedPids: [100],
           privileged: true,
         }),

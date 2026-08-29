@@ -8,6 +8,7 @@ import {
   type ReleaseGcDependencies,
   collectReleaseGc,
   isReleaseId,
+  matchReleaseIdsUnderRoot,
 } from '../release-gc.js'
 
 const ROOT = '/tmp/rel/hrc-runtime-releases'
@@ -20,7 +21,7 @@ function deps(over: Partial<ReleaseGcDependencies> = {}): ReleaseGcDependencies 
   const renamed: string[] = []
   return {
     listReleaseDirs: () => [INSTALLED, RUNNING, REFERENCED, ...OLD],
-    listPids: () => [{ pid: 100, command: `bun /x/hrc-runtime-releases/${REFERENCED}/b.js` }],
+    listPids: () => [{ pid: 100, command: `bun ${ROOT}/${REFERENCED}/b.js` }],
     readOpenPaths: () => ({ covered: [100], paths: [], failed: false }),
     readRuntimeRecords: () => [],
     readServerStatus: () => ({ running: true, releasePath: `${ROOT}/${RUNNING}` }),
@@ -76,7 +77,7 @@ describe('T-07683 release gc fences', () => {
         listPids: () => [{ pid: 100, command: 'bun /Users/x/.bun/bin/hrc server serve' }],
         readOpenPaths: () => ({
           covered: [100],
-          paths: [`/x/hrc-runtime-releases/${REFERENCED}/node_modules/a/clip.node`],
+          paths: [`${ROOT}/${REFERENCED}/node_modules/a/clip.node`],
           failed: false,
         }),
       }),
@@ -91,7 +92,7 @@ describe('T-07683 release gc fences', () => {
       deps: deps({
         listPids: () => [{ pid: 100, command: 'bun /Users/x/.bun/bin/hrc server serve' }],
         readOpenPaths: () => ({ covered: [100], paths: [], failed: false }),
-        readRuntimeRecords: () => [`{"cmd":"/x/hrc-runtime-releases/${REFERENCED}/b"}`],
+        readRuntimeRecords: () => [`{"cmd":"${ROOT}/${REFERENCED}/b"}`],
       }),
     })
     expect(keptIds(report)).toContain(REFERENCED)
@@ -104,8 +105,8 @@ describe('T-07683 release gc fences', () => {
         releaseRoot: ROOT,
         deps: deps({
           listPids: () => [
-            { pid: 100, command: `bun /x/hrc-runtime-releases/${REFERENCED}/b.js` },
-            { pid: 200, command: `bun /x/hrc-runtime-releases/${OLD[0]}/b.js` },
+            { pid: 100, command: `bun ${ROOT}/${REFERENCED}/b.js` },
+            { pid: 200, command: `bun ${ROOT}/${OLD[0]}/b.js` },
           ],
           readOpenPaths: () => ({ covered: [100], paths: [], failed: false }),
         }),
@@ -119,7 +120,7 @@ describe('T-07683 release gc fences', () => {
       releaseRoot: ROOT,
       deps: deps({
         listPids: () => [
-          { pid: 100, command: `bun /x/hrc-runtime-releases/${REFERENCED}/b.js` },
+          { pid: 100, command: `bun ${ROOT}/${REFERENCED}/b.js` },
           { pid: 300, command: '/usr/libexec/secd' },
         ],
         readOpenPaths: () => ({ covered: [100], paths: [], failed: false }),
@@ -262,5 +263,63 @@ describe('T-07683 scope boundary — no removal capability', () => {
   test('never spawns a deleting command', () => {
     expect(source).not.toContain("'rm'")
     expect(source).not.toContain('rm -rf')
+  })
+})
+
+// Real argv captured from mini 2026-08-29, where BOTH principals were permanently
+// un-gc-able: lherron's gc refused on lab's broker and lab's refused on
+// lherron's. The matcher keyed on the bare `hrc-runtime-releases/` segment,
+// which every principal on a shared node has.
+describe('T-07686 gc evidence is anchored to the CALLER release root', () => {
+  const LHERRON_ROOT = '/Users/lherron/.bun/install/hrc-runtime-releases'
+  const LAB_ROOT = '/Users/lab/.bun/install/hrc-runtime-releases'
+  const LHERRON_ID = 'release-20260828001459971-3051'
+  const LAB_ID = 'release-20260828010227066-27611'
+  const LAB_BROKER = `/opt/homebrew/bin/tmux -S /Users/lab/praesidium/var/run/hrc/btmux/x.sock new-session -d exec '${LAB_ROOT}/${LAB_ID}/node_modules/.bin/harness-broker' run`
+  const LHERRON_BROKER = `/opt/homebrew/bin/tmux -S /Users/lherron/praesidium/var/run/hrc/btmux/y.sock new-session -d exec '${LHERRON_ROOT}/${LHERRON_ID}/node_modules/.bin/harness-broker' run`
+
+  test("lab's broker is not evidence against lherron's root", () => {
+    expect(matchReleaseIdsUnderRoot(LAB_BROKER, new Set([LAB_ID]), LHERRON_ROOT)).toEqual([])
+  })
+
+  test("lherron's broker is not evidence against lab's root", () => {
+    expect(matchReleaseIdsUnderRoot(LHERRON_BROKER, new Set([LHERRON_ID]), LAB_ROOT)).toEqual([])
+  })
+
+  test('a holder under MY root is still caught', () => {
+    expect(matchReleaseIdsUnderRoot(LHERRON_BROKER, new Set([LHERRON_ID]), LHERRON_ROOT)).toEqual([
+      LHERRON_ID,
+    ])
+  })
+
+  test('the PRE-quarantine argv path under my root is still caught (T-07686 §6.1)', () => {
+    const argv = `bun ${LHERRON_ROOT}/${LHERRON_ID}/packages/hrc-cli/bin/hrc.js server serve`
+    expect(matchReleaseIdsUnderRoot(argv, new Set([LHERRON_ID]), LHERRON_ROOT)).toEqual([
+      LHERRON_ID,
+    ])
+  })
+
+  test('the quarantined path under my root is caught too', () => {
+    const argv = `bun ${LHERRON_ROOT}/.gc-quarantine/${LHERRON_ID}/x.js`
+    expect(matchReleaseIdsUnderRoot(argv, new Set([LHERRON_ID]), LHERRON_ROOT)).toEqual([
+      LHERRON_ID,
+    ])
+  })
+
+  test('an uninspectable FOREIGN-root pid no longer aborts the gc', () => {
+    const report = collectReleaseGc({
+      keep: 1,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => [
+          { pid: 100, command: `bun ${ROOT}/${REFERENCED}/b.js` },
+          // lab's broker: foreign root, uninspectable by construction
+          { pid: 29104, command: LAB_BROKER },
+        ],
+        readOpenPaths: () => ({ covered: [100], paths: [], failed: false }),
+      }),
+    })
+    expect(report.omittedPidCount).toBe(1)
+    expect(report.summary.total).toBeGreaterThan(0)
   })
 })
