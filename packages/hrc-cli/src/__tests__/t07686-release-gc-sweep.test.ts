@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { SWEEP_SENTINEL, type SweepDependencies, collectSweep } from '../release-gc-sweep.js'
+import {
+  SWEEP_SENTINEL,
+  type SweepDependencies,
+  collectSweep,
+  isHrcDaemonArgv,
+} from '../release-gc-sweep.js'
 import { ReleaseGcAbort } from '../release-gc.js'
 
 const ROOT = '/tmp/rel/hrc-runtime-releases'
@@ -352,4 +357,35 @@ describe('T-07686 scope boundary — exactly one remover', () => {
   test('the sentinel constant is exported so --restore can refuse on it', () => {
     expect(SWEEP_SENTINEL).toBe('.sweep-in-progress')
   })
+})
+
+// Real argv strings captured from max3 and mini on 2026-08-29. `server serve` is
+// a shared verb across four different daemons on this fleet, so the discriminator
+// is pinned against the actual population rather than a hand-written sample —
+// the first live dry-run refused on `taskboard server serve`, which every unit
+// test had missed.
+describe('T-07686 daemon discriminator, pinned to real fleet argv', () => {
+  const MUST_MATCH = [
+    'bun /Users/lherron/.bun/bin/hrc server serve',
+    'bun /Users/lab/.bun/bin/hrc server serve',
+    'bun /Users/lherron/.bun/bin/hrc-dev server serve',
+    'bun /Users/lherron/praesidium/hrc-runtime/packages/hrc-cli/bin/hrc.js server serve',
+    'bun /Users/lab/praesidium/under-construction/T-07650/packages/hrc-cli/bin/hrc.js server serve',
+  ]
+  const MUST_NOT_MATCH = [
+    'bun /Users/lherron/.bun/bin/taskboard server serve --dev',
+    'bun /Users/lherron/.bun/bin/acp server serve',
+    'grep -r "server serve" /Users/lherron/notes',
+  ]
+
+  for (const command of MUST_MATCH) {
+    test(`matches: ${command.slice(0, 60)}`, () => {
+      expect(isHrcDaemonArgv({ pid: 1, command })).not.toBeNull()
+    })
+  }
+  for (const command of MUST_NOT_MATCH) {
+    test(`does NOT match: ${command.slice(0, 60)}`, () => {
+      expect(isHrcDaemonArgv({ pid: 1, command })).toBeNull()
+    })
+  }
 })

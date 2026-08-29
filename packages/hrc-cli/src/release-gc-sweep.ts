@@ -281,6 +281,28 @@ function matchIds(haystack: string, known: ReadonlySet<string>): string[] {
   return found
 }
 
+/**
+ * `server serve` is a SHARED verb on this fleet — taskboard, acp, hrc and hrc-dev
+ * all use it — so the daemon gate must discriminate on the BINARY, not the verb.
+ * Measured on max3 and mini; a naive `bun .* server serve` match refused the very
+ * first live dry-run on `taskboard server serve`, which no unit test saw.
+ *
+ * Deliberately inclusive in the safe direction: `hrc-dev` runs from a separate
+ * export and cannot mint into this release root, but it is counted anyway, since
+ * over-refusing costs an operator one more stop while under-refusing costs the
+ * proof. The second clause catches worktree and dev builds whose basename is
+ * `hrc.js` or anything else under `hrc-cli/bin/`.
+ */
+export function isHrcDaemonArgv(record: { pid: number; command: string }): {
+  pid: number
+  command: string
+} | null {
+  const isHrc =
+    /(^|\/)hrc(-dev)?(\.js)?\s+server\s+serve\b/.test(record.command) ||
+    /hrc-cli\/bin\/\S*\s+server\s+serve\b/.test(record.command)
+  return isHrc ? { pid: record.pid, command: record.command } : null
+}
+
 function incarnationKey(records: { pid: number; lstart: string }[]): string {
   return records
     .map((r) => `${r.pid}@${r.lstart}`)
@@ -315,8 +337,8 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
     deps.listServerProcesses ??
     (() =>
       defaultListPids()
-        .filter((r) => /(^|\/)(bun|node)\b.*\bserver serve\b/.test(r.command))
-        .map((r) => ({ pid: r.pid, command: r.command })))
+        .map(isHrcDaemonArgv)
+        .filter((r): r is { pid: number; command: string } => r !== null))
   const isSocketLive = deps.isSocketLive ?? (() => false)
   const isInstallLockHeld =
     deps.isInstallLockHeld ??
