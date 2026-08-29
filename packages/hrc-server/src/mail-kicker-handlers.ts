@@ -414,7 +414,12 @@ async function commitPresentations(
   attempt: HrcMailDriveAttempt,
   session: HrcSessionRecord,
   runtimeId: string | undefined,
-  inputId: string
+  /**
+   * Absent for a cold birth: the prompt rode the runtime's `initialPrompt`, so
+   * that delivery class has no invocation input to name (T-07693). The receipt
+   * contract already declares this field optional for exactly that reason.
+   */
+  inputId: string | undefined
 ): Promise<void> {
   for (const presentable of presentables) {
     await server.wrkqLedger.present({
@@ -423,7 +428,7 @@ async function commitPresentations(
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
       runId: attempt.runId,
-      inputId,
+      ...(inputId === undefined ? {} : { inputId }),
       driveAttemptId: attempt.driveAttemptId,
       ...(runtimeId === undefined ? {} : { runtimeId }),
     })
@@ -1231,10 +1236,16 @@ async function driveMailTargetOnce(
       inputId?: string | undefined
     }
     const inputId = body.inputId ?? server.db.runs.getByRunId(body.runId)?.dispatchedInputId
-    if (body.status !== 'started' || inputId === undefined) {
-      throw new Error(
-        `mail dispatch did not return a started input (status=${body.status}, inputId=${inputId ?? 'missing'})`
-      )
+    // T-07693: `inputId` is optional on the receipt contract — "when the
+    // delivery class has one" — and a COLD birth's class has none: the prompt
+    // rides the runtime's `initialPrompt`, so there is no invocation input to
+    // name. Requiring one here booked every cold ledger-tail birth as
+    // `drive_failed` (15 of 15 in the live log, all `wakeReason:"insert"`),
+    // which released the drive slot and left the envelope pending for the next
+    // wake to redeliver — the second wake that then raced the birth (T-07688).
+    // A started turn is a started turn; only the STATUS is load-bearing.
+    if (body.status !== 'started') {
+      throw new Error(`mail dispatch did not start a turn (status=${body.status})`)
     }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: body.hostSessionId,

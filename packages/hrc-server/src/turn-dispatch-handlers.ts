@@ -1205,6 +1205,59 @@ async function dispatchAdmittedTurnForSession(
     // Fall through to tmux/headless path with the idle runtime
   }
 
+  // T-07693: a runtime whose BIRTH is still in flight is being born, not stuck.
+  // The admission below cannot tell those apart — T-05358 routes every
+  // non-input-dispatchable `starting` interactive runtime to
+  // stale-and-reprovision — so a second wake landing inside the boot window
+  // marked the newborn stale and minted a SECOND seat on the one host session.
+  // Two agents, one worktree (observed live on T-07688).
+  //
+  // Join the birth instead. `runtimeStartOperations` is the same in-flight-start
+  // registration that IS predicate (b) of `isClaimScopeFree`, so this is the
+  // T-07302 exact-scope invariant enforced one layer down, at the runtime rather
+  // than the claim: one live seat per exact scope, whichever source wakes it.
+  //
+  // T-07202 added this join for the crossing-DM case, but placed it INSIDE
+  // `handleInteractiveTmuxBrokerDispatchTurn` — downstream of the admission, so
+  // it could not prevent the reprovision — and made it opt-in, so the wrkq wake
+  // path never reached it. That guard stays where it is; this one is the fence.
+  //
+  // Scoped OUT of the attach path deliberately: `attachBeforeInvocationStart` is
+  // a promise to the operator that they get the pane before the invocation runs,
+  // and an already-accepted birth is past that point. Attached start has its own
+  // ready-wait (T-07304); silently dropping the attach here would trade a
+  // visible double-seat for an invisible broken promise.
+  const inFlightBirth =
+    options.attachBeforeInvocationStart === undefined
+      ? this.runtimeStartOperations.get(session.hostSessionId)
+      : undefined
+  if (inFlightBirth !== undefined) {
+    const bornRuntime = await inFlightBirth
+    // The headless broker registers its boot in the SAME map for the same host
+    // session, and a headless runtime is not deliverable through the
+    // interactive executor. Only an interactive broker seat is joined here;
+    // anything else falls through to the ordinary route with the runtime
+    // re-read, since awaiting the birth is exactly what made the old snapshot
+    // stale.
+    if (bornRuntime.transport === 'tmux' && bornRuntime.controllerKind === 'harness-broker') {
+      // Same authority re-check the broker-reuse branch below makes, against
+      // the caller's own intent: joining a birth is a reuse, and a
+      // write-capable newborn must not become a route around actuator-split
+      // validation.
+      assertActuatorSplitRuntimeReuse(intent, bornRuntime)
+      return await withObservation(
+        await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
+          waitForCompletion: options.waitForCompletion,
+          whenBusy: options.whenBusy,
+          repairCorrelation: options.repairCorrelation,
+          responseFormat: options.responseFormat,
+          ...dispatchRunPersistence(options),
+        })
+      )
+    }
+    latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
+  }
+
   const admission = decideInteractiveBrokerAdmission(
     intent,
     // T-05358: pass input-dispatchability so a `stopping`/`starting` interactive
