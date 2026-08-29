@@ -1,19 +1,37 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { CANONICAL_REGISTRY_URL, activeRegistryUrl, scanLockContent } from './registry'
 import { resolveInstallRoot } from './workspace-root'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
-// scripts/lib/ -> repo root
+// scripts/lib/ -> repo root. THIS repo's manifests, THIS repo's bun.lock, THIS
+// repo's git history. Every lock read and write below targets REPO_ROOT: the
+// atomic release is built from `hrc-runtime/bun.lock --frozen-lockfile`, so a
+// sync that advanced any other lockfile advanced nothing a release can see.
 const REPO_ROOT = resolve(import.meta.dir, '..', '..')
 // Dependencies may be installed by a parent workspace rather than this repo; the
 // installed-version probes below must read the node_modules that actually exists.
+// Under the praesidium dev workspace this is `~/praesidium`, whose bun.lock
+// resolves every agent-spaces package to `workspace:` — reading it as the release
+// lock is exactly how `just pull-deps` became an exit-0 no-op (2026-08-29).
 const ROOT = resolveInstallRoot(REPO_ROOT)
+const WORKSPACE_OWNED = ROOT !== REPO_ROOT
+const REPO_LOCK = join(REPO_ROOT, 'bun.lock')
 const REGISTRY = activeRegistryUrl()
 const LOCK_STALE_MS = 120_000
 
@@ -82,9 +100,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
 }
 
-function run(cmd: string, args: string[]): { status: number; out: string } {
+function run(cmd: string, args: string[], cwd = REPO_ROOT): { status: number; out: string } {
   const result = spawnSync(cmd, args, {
-    cwd: ROOT,
+    cwd,
     encoding: 'utf8',
     stdio: 'pipe',
     ...(cmd === 'git' ? { env: environmentWithoutGitOverrides() } : {}),
@@ -157,8 +175,12 @@ function summaryForGroups(
   return groups
     .map((group) => {
       const first = group.packages[0]
-      return `${group.label}@${first ? versions.get(first) : '?'}`
+      const version = first ? versions.get(first) : undefined
+      // A group nothing in this repo consumes has no lock entry; leave it out of
+      // the summary rather than record `LABEL@undefined` in a commit message.
+      return version ? `${group.label}@${version}` : undefined
     })
+    .filter((entry): entry is string => entry !== undefined)
     .join('  ')
 }
 
@@ -167,7 +189,7 @@ async function usedPackageNames(
   candidates: ReadonlyMap<string, string>
 ): Promise<Set<string>> {
   const used = new Set<string>()
-  for (const path of await discover(ROOT)) {
+  for (const path of await discover(REPO_ROOT)) {
     const manifest = JSON.parse(await readFile(path, 'utf8')) as Manifest
     for (const dependencies of [
       manifest.dependencies,
@@ -184,18 +206,89 @@ async function usedPackageNames(
   return used
 }
 
-async function lockfileVersions(): Promise<Map<string, string>> {
-  const lock = await readFile(join(ROOT, 'bun.lock'), 'utf8')
-  const versions = new Map<string, string>()
+export type LockResolution = {
+  /** The lock key: `name` for a hoisted entry, `parent/name` for a nested copy. */
+  key: string
+  name: string
+  version: string
+  nested: boolean
+}
+
+/**
+ * Every package resolution recorded in a bun text lockfile, nested copies
+ * included. A nested key (`agent-harness/spaces-harness-broker`) is bun recording
+ * that two different versions of one package coexist in the tree — the shape a
+ * hand-run `bun update <pkg>@<ver>` leaves behind.
+ */
+export function parseLockResolutions(lock: string): LockResolution[] {
+  const resolutions: LockResolution[] = []
   for (const line of lock.split(/\r?\n/)) {
     const match = line.match(/^\s*("(?:\\.|[^"\\])*"):\s*\[("(?:\\.|[^"\\])*")/)
     if (!match?.[1] || !match[2]) continue
-    const name = JSON.parse(match[1]) as string
+    const key = JSON.parse(match[1]) as string
     const resolution = JSON.parse(match[2]) as string
-    const prefix = `${name}@`
-    if (resolution.startsWith(prefix)) versions.set(name, resolution.slice(prefix.length))
+    const at = resolution.lastIndexOf('@')
+    if (at <= 0) continue
+    const name = resolution.slice(0, at)
+    const version = resolution.slice(at + 1)
+    const nested = key !== name
+    if (nested && !key.endsWith(`/${name}`)) continue
+    resolutions.push({ key, name, version, nested })
+  }
+  return resolutions
+}
+
+async function lockfileVersions(lockPath = REPO_LOCK): Promise<Map<string, string>> {
+  const versions = new Map<string, string>()
+  for (const entry of parseLockResolutions(await readFile(lockPath, 'utf8'))) {
+    if (!entry.nested) versions.set(entry.name, entry.version)
   }
   return versions
+}
+
+/**
+ * A coherence group's packages must resolve to ONE version in the lock, and to
+ * one copy each: a split set or a nested duplicate means the release would ship
+ * two agent-spaces tuples at once. Returns human-readable violations; empty is
+ * coherent. Packages the lock does not mention are not violations here — that is
+ * freshness, not coherence.
+ */
+export function lockCoherenceViolations(groups: readonly CoherenceGroup[], lock: string): string[] {
+  const resolutions = parseLockResolutions(lock)
+  const violations: string[] = []
+  for (const group of groups) {
+    const members = new Set(group.packages)
+    const versions = new Map<string, Set<string>>()
+    for (const entry of resolutions) {
+      if (!members.has(entry.name)) continue
+      if (entry.nested) {
+        violations.push(
+          `${group.label}: nested copy ${entry.key} -> ${entry.name}@${entry.version} (two versions of one package in the tree)`
+        )
+      }
+      const seen = versions.get(entry.version) ?? new Set<string>()
+      seen.add(entry.name)
+      versions.set(entry.version, seen)
+    }
+    if (versions.size > 1) {
+      const detail = [...versions]
+        .map(([version, names]) => `${version} (${[...names].sort().join(', ')})`)
+        .join('; ')
+      violations.push(`${group.label}: set is split across ${versions.size} versions: ${detail}`)
+    }
+  }
+  return violations
+}
+
+export async function assertLockCoherent(
+  groups: readonly CoherenceGroup[],
+  lockPath = REPO_LOCK
+): Promise<void> {
+  const violations = lockCoherenceViolations(groups, await readFile(lockPath, 'utf8'))
+  if (violations.length === 0) return
+  throw new Error(
+    `bun.lock is incoherent — a release built from it would ship a split dependency set:\n${violations.join('\n')}\nNever advance these with \`bun update\` or \`bun add\`; run \`just pull-deps\`, which moves the whole set together.`
+  )
 }
 
 async function lockfileIsLatest(
@@ -312,7 +405,11 @@ function rewriteDependencySet(
   return { changed, used }
 }
 
-/** Rewrite every synced-package specifier across all manifests; quiet no-op when already correct. */
+/**
+ * Rewrite every synced-package specifier across the discovered manifests; quiet
+ * no-op when already correct. `discover` is handed REPO_ROOT; a staging copy
+ * passes a discoverer that ignores it and returns the staged paths.
+ */
 async function rewriteManifests(
   discover: (root: string) => Promise<string[]>,
   latest: Map<string, string>,
@@ -320,7 +417,7 @@ async function rewriteManifests(
 ): Promise<RewriteResult> {
   let changed = false
   let used = false
-  for (const path of await discover(ROOT)) {
+  for (const path of await discover(REPO_ROOT)) {
     const manifest = JSON.parse(await readFile(path, 'utf8')) as Manifest
     const results = [
       rewriteDependencySet(manifest.dependencies, latest, specifierFor),
@@ -359,6 +456,9 @@ async function installedVersion(name: string): Promise<string | undefined> {
 }
 
 async function installedAreLatest(latest: Map<string, string>): Promise<boolean> {
+  // A parent workspace owns node_modules and links producers from source; what
+  // is installed there says nothing about what the lock will ship.
+  if (WORKSPACE_OWNED) return true
   for (const [name, version] of latest) {
     if (await isWorkspaceLinked(name)) continue
     const installed = await installedVersion(name)
@@ -369,6 +469,12 @@ async function installedAreLatest(latest: Map<string, string>): Promise<boolean>
 }
 
 async function verifyInstalled(latest: Map<string, string>, label: string): Promise<void> {
+  if (WORKSPACE_OWNED) {
+    console.log(
+      `${label}: node_modules is owned by the workspace at ${ROOT} (source-linked); only bun.lock is registry-managed here`
+    )
+    return
+  }
   const stale: string[] = []
   const linked: string[] = []
   for (const [name, version] of latest) {
@@ -408,18 +514,84 @@ async function isolatedBunfigContent(): Promise<string> {
   return `${lines.join('\n')}\n`
 }
 
-async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promise<void> {
+function bunInstall(label: string, args: string[], cwd: string, bunfig: string): void {
+  // --no-cache bypasses bun's manifest cache so we always see Verdaccio's
+  // current dist-tags. Without it, a freshly-published dev version can
+  // "fail to resolve" until the cache TTL expires.
+  const install = run('bun', ['install', '--no-cache', `--config=${bunfig}`, ...args], cwd)
+  if (install.status !== 0) {
+    throw new Error(`bun install failed while syncing ${label} packages:\n${install.out}`)
+  }
+}
+
+/**
+ * Advance THIS repo's bun.lock to `latest` without touching any node_modules.
+ *
+ * The resolution runs in a staging copy of the repo's manifests + lock, in a
+ * temp dir with no parent workspace above it, so bun resolves against the
+ * registry and writes a lock in the exact shape the release install will consume
+ * (`bun install --frozen-lockfile` in an exported tree). Only the resulting
+ * bun.lock is copied back. Tracked manifests in the repo are never pinned, even
+ * transiently.
+ *
+ * Pin/restore dance, in staging: bun won't re-resolve a tag already satisfied by
+ * the lock, and `bun update` rewrites package.json and re-resolves tags outside
+ * the coherence check. So pin the verified versions exactly, resolve, restore the
+ * tag specifier, resolve again so the lock records `latest`.
+ */
+async function advanceRepoLockfile(
+  label: string,
+  discover: (root: string) => Promise<string[]>,
+  latest: Map<string, string>,
+  tmpPrefix: string
+): Promise<void> {
+  const staging = await mkdtemp(join(tmpdir(), tmpPrefix))
+  try {
+    const bunfig = join(staging, '.sync-bunfig.toml')
+    await writeFile(bunfig, await isolatedBunfigContent())
+    const stagedManifests: string[] = []
+    const manifests = new Set([join(REPO_ROOT, 'package.json'), ...(await discover(REPO_ROOT))])
+    for (const path of manifests) {
+      const relative = relativeTo(REPO_ROOT, path)
+      if (relative === undefined) continue
+      const target = join(staging, relative)
+      await mkdir(dirname(target), { recursive: true })
+      await copyFile(path, target)
+      stagedManifests.push(target)
+    }
+    for (const name of ['bun.lock', '.npmrc']) {
+      const source = join(REPO_ROOT, name)
+      if (await stat(source).catch(() => undefined)) await copyFile(source, join(staging, name))
+    }
+    const staged = async () => stagedManifests
+    await rewriteManifests(staged, latest, (_name, version) => version)
+    bunInstall(label, ['--lockfile-only'], staging, bunfig)
+    await rewriteManifests(staged, latest, () => TAG_SPECIFIER)
+    bunInstall(label, ['--lockfile-only'], staging, bunfig)
+    await copyFile(join(staging, 'bun.lock'), REPO_LOCK)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
+}
+
+function relativeTo(root: string, path: string): string | undefined {
+  const rel = relative(root, path)
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined
+  return rel
+}
+
+/**
+ * Materialize node_modules from the (now advanced) lock. Standalone checkouts
+ * only: under a parent workspace the workspace's own install owns node_modules
+ * (scripts/install-workspace-deps.ts) and links producers from source.
+ */
+async function installFromRepoLockfile(label: string, tmpPrefix: string): Promise<void> {
+  if (WORKSPACE_OWNED) return
   const tmp = await mkdtemp(join(tmpdir(), tmpPrefix))
   try {
     const bunfig = join(tmp, 'bunfig.toml')
     await writeFile(bunfig, await isolatedBunfigContent())
-    // --no-cache bypasses bun's manifest cache so we always see Verdaccio's
-    // current dist-tags. Without it, a freshly-published dev version can
-    // "fail to resolve" until the cache TTL expires.
-    const install = run('bun', ['install', '--no-cache', `--config=${bunfig}`])
-    if (install.status !== 0) {
-      throw new Error(`bun install failed while syncing ${label} packages:\n${install.out}`)
-    }
+    bunInstall(label, ['--frozen-lockfile'], REPO_ROOT, bunfig)
   } finally {
     await rm(tmp, { recursive: true, force: true })
   }
@@ -430,7 +602,7 @@ async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promis
  * the worktree, which is what the pathspec commit below would record.
  */
 function assertLockHygiene(): void {
-  const lock = readFileSyncUtf8(join(ROOT, 'bun.lock'))
+  const lock = readFileSyncUtf8(REPO_LOCK)
   if (lock === undefined) return
   const violations = scanLockContent(lock)
   if (violations.length === 0) return
@@ -529,16 +701,27 @@ export async function syncFromVerdaccio(spec: SyncSpec): Promise<void> {
       return
     }
 
-    const stale = !(await installedAreLatest(latest)) || !(await lockfileIsLatest(discover, latest))
-    if (stale) {
-      await rewriteManifests(discover, latest, (_name, version) => version)
-      await bunInstallFromVerdaccio(spec.label, tmpPrefix)
-      await rewriteManifests(discover, latest, () => TAG_SPECIFIER)
+    const lockStale = !(await lockfileIsLatest(discover, latest))
+    const stale = lockStale || !(await installedAreLatest(latest))
+    if (lockStale || normalized.changed) {
+      await advanceRepoLockfile(spec.label, discover, latest, tmpPrefix)
     }
     if (stale || normalized.changed) {
-      // Reconcile bun.lock so it records the tag specifier, not the exact pin.
-      await bunInstallFromVerdaccio(spec.label, tmpPrefix)
+      await installFromRepoLockfile(spec.label, tmpPrefix)
     }
+    // A pull that leaves the lock behind latest is a failure, never a warning:
+    // the release is built from this lock, and an exit-0 no-op here shipped the
+    // old agent-spaces tuple twice in one afternoon (2026-08-29).
+    if (!(await lockfileIsLatest(discover, latest))) {
+      const locked = await lockfileVersions()
+      const behind = [...latest]
+        .filter(([name, version]) => locked.has(name) && locked.get(name) !== version)
+        .map(([name, version]) => `${name}: locked ${locked.get(name)}, latest ${version}`)
+      throw new Error(
+        `${spec.label} sync did not advance ${relative(process.cwd(), REPO_LOCK) || 'bun.lock'}:\n${behind.join('\n')}`
+      )
+    }
+    await assertLockCoherent(spec.groups)
     await verifyInstalled(latest, spec.label)
     // Only report churn this run produced — a bun.lock dirtied by someone
     // else's in-flight work is theirs to speak for.

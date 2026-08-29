@@ -15,7 +15,7 @@
     "build": "bun run build:ordered",
     "build:ordered": "bun run --filter 'agent-action-render' build && bun run --filter 'hrc-core' build && bun run --filter 'hrc-events' build && bun run --filter 'hrc-store-sqlite' build && bun run --filter 'hrc-capture-verifier' build && bun run --filter 'hrc-sdk' build && bun run --filter 'hrc-viewer' build && bun run --filter 'hrc-frame-render' build && bun run --filter 'hrc-server' build && bun run --filter 'hrc-cli' build && bun run --filter 'hrcchat-cli' build",
     "build:parallel": "bun run --filter '*' build",
-    "check": "bun run check:dependency-pins && bun run check:boundaries && bun run check:manifests && bun run check:public-surface && bun run check:suppressions && bun run check:env-hygiene && bun run check:test-size && bun run lint && bun run typecheck && bun run test",
+    "check": "bun run check:dependency-pins && bun run check:lock-coherence && bun run check:boundaries && bun run check:manifests && bun run check:public-surface && bun run check:suppressions && bun run check:env-hygiene && bun run check:test-size && bun run lint && bun run typecheck && bun run test",
     "check:env-hygiene": "bun scripts/check-env-hygiene.ts",
     "check:boundaries": "bun scripts/check-boundaries.ts",
     "check:architecture-records": "bun scripts/check-architecture-records.ts",
@@ -42,7 +42,8 @@
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && lefthook install || echo '[prepare] skipping lefthook (not a git checkout)'",
-    "check:asp-skew": "bun scripts/check-asp-skew.ts"
+    "check:asp-skew": "bun scripts/check-asp-skew.ts",
+    "check:lock-coherence": "bun scripts/check-lock-coherence.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

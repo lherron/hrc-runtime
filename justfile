@@ -78,6 +78,7 @@ typecheck:
 # Run repo-split boundary + manifest edge checks
 check:
     bun scripts/check-dependency-pins.ts
+    bun scripts/check-lock-coherence.ts
     bun scripts/check-boundaries.ts
     bun scripts/check-manifest-edges.ts
     bun scripts/check-cli-surface.ts
@@ -194,6 +195,9 @@ install *options:
     # but a consumer lagging its producer is the intended steady state, and
     # refusing here would wedge every fleet install on every agent-spaces commit.
     bun scripts/check-asp-skew.ts --warn || true
+    # Refuse, never warn: a split ASP set in bun.lock is not lag, it is a release
+    # that would ship two agent-spaces tuples at once (hand-run `bun update`).
+    bun scripts/check-lock-coherence.ts
     bun scripts/atomic-install.ts \
       --context="$PRAESIDIUM_INSTALL_CONTEXT" \
       --link-mode="$PRAESIDIUM_INSTALL_LINK_MODE" \
@@ -489,6 +493,7 @@ pull-deps:
     git diff --quiet -- bun.lock && git diff --cached --quiet -- bun.lock || { echo "pull-deps: bun.lock must be clean before pulling" >&2; exit 1; }
     bun scripts/sync-asp-from-verdaccio.ts --pull
     bun scripts/sync-wrkq-from-verdaccio.ts --pull
+    bun scripts/check-lock-coherence.ts
     bun scripts/commit-verdaccio-lock.ts
     # Residual skew AFTER the pull. A pull advances the lock to registry latest, so
     # anything still ahead is unpublished agent-spaces work — which this repo

@@ -7,7 +7,7 @@ Verdaccio registry at `http://mini:4873/`.
 
 ## Build & deploy
 
-Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: push before `just install` (a main-checkout install refuses an unpushed or non-clean tree); install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple; fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
+Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: push before `just install` (a main-checkout install refuses an unpushed or non-clean tree); install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple — and so does one after a `pull-deps` that did not move `bun.lock`, so read back `git log -1 -- bun.lock` before installing; never `bun update`/`bun add` a synced package (`check-lock-coherence` refuses the split lock it leaves); fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
 
 ## Validation
 
