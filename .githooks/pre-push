@@ -1,0 +1,44 @@
+#!/bin/sh
+# Repo-owned hook shim. Deliberately NOT lefthook's generated .git/hooks template.
+#
+# That template ends in a package-manager fallthrough (`pnpm lefthook`). With
+# lefthook absent from PATH and no repo-local node_modules — the normal state under
+# the praesidium dev workspace — it reached that branch and pnpm 11 auto-installed a
+# pnpm layout into this repo, writing pnpm-lock.yaml, pnpm-workspace.yaml and a
+# node_modules/.pnpm store. That store then SHADOWED the workspace: tests resolved
+# registry copies instead of agent-spaces source, silently, on every commit. A hook
+# must never let a package manager materialise a dependency tree as a side effect of
+# running a hook.
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "hrc pre-push hook error: not inside a Git worktree." >&2
+  exit 2
+}
+repo_name="$(basename "$repo_root")"
+
+# Search this checkout first, then upward only as far as a workspace root that
+# CLAIMS it. A worktree is not claimed by ~/praesidium's globs, so it stops here
+# rather than borrowing the shared checkout's binaries.
+lefthook_bin=""
+search_dir="$repo_root"
+while :; do
+  if [ -x "$search_dir/node_modules/.bin/lefthook" ]; then
+    lefthook_bin="$search_dir/node_modules/.bin/lefthook"
+    break
+  fi
+  parent="$(dirname "$search_dir")"
+  [ "$parent" = "$search_dir" ] && break
+  if [ -f "$parent/package.json" ] && grep -q '"workspaces"' "$parent/package.json"; then
+    grep -q "\"$repo_name/" "$parent/package.json" || break
+  fi
+  search_dir="$parent"
+done
+
+if [ -z "$lefthook_bin" ]; then
+  echo "hrc pre-push hook error: lefthook not found in any node_modules/.bin at or above $repo_root." >&2
+  echo "Run 'bun install' at the workspace root (or 'just install' here), then retry." >&2
+  exit 127
+fi
+
+exec "$lefthook_bin" run pre-push --no-auto-install "$@"

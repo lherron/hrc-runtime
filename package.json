@@ -30,11 +30,12 @@
     "test:scripts": "TMPDIR=/tmp bun test scripts/",
     "test:installed-live": "just e2e",
     "test:observability": "bun scripts/test-observability.ts",
-    "test:fast": "bun run check:test-size && bun run test:scripts && bun run test:unit && bun run test:contract",
-    "test:release": "bun run test:integration",
+    "test:fast": "bun scripts/print-asp-graph.ts && bun run check:test-size && bun run test:scripts && bun run test:unit && bun run test:contract",
+    "test:release": "bun scripts/check-asp-skew.ts && bun run test:integration",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
-    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && lefthook install || echo '[prepare] skipping lefthook (not a git checkout)'"
+    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && lefthook install || echo '[prepare] skipping lefthook (not a git checkout)'",
+    "check:asp-skew": "bun scripts/check-asp-skew.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

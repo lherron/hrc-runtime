@@ -171,11 +171,21 @@ rebuild:
 install *options:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Repo-owned hooks, not lefthook's generated template. Set here because a
+    # fresh clone otherwise silently falls back to .git/hooks, whose final branch
+    # is `pnpm lefthook` — which materialises a pnpm node_modules that shadows the
+    # workspace. This is config, so it cannot be carried by a tracked file alone.
+    git config core.hooksPath .githooks
     bun scripts/install-dirty-guard.ts --source-root="$PWD" {{ options }}
     policy="$(bun scripts/install-policy.ts shell {{ options }})"
     eval "$policy"
     echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
     echo "[install] dependency pulls are explicit; preserving bun.lock"
+    # Warn, never refuse. The dev workspace makes the suite resolve agent-spaces
+    # SOURCE while this install builds the locked tuple, so the two can disagree —
+    # but a consumer lagging its producer is the intended steady state, and
+    # refusing here would wedge every fleet install on every agent-spaces commit.
+    bun scripts/check-asp-skew.ts --warn || true
     bun scripts/atomic-install.ts \
       --context="$PRAESIDIUM_INSTALL_CONTEXT" \
       --link-mode="$PRAESIDIUM_INSTALL_LINK_MODE" \
@@ -472,6 +482,10 @@ pull-deps:
     bun scripts/sync-asp-from-verdaccio.ts --pull
     bun scripts/sync-wrkq-from-verdaccio.ts --pull
     bun scripts/commit-verdaccio-lock.ts
+    # Residual skew AFTER the pull. A pull advances the lock to registry latest, so
+    # anything still ahead is unpublished agent-spaces work — which this repo
+    # cannot fix and which names the repo that can.
+    bun scripts/report-residual-asp-skew.ts || true
 
 check-deps:
     bun scripts/sync-asp-from-verdaccio.ts --check
