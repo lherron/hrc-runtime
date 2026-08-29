@@ -97,7 +97,9 @@ describe('T-07612 §7 presentation', () => {
     expect(rendered).not.toContain('reply:')
   })
 
-  it('quotes an ad-hoc room subject and addresses its key', () => {
+  // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,
+  // exactly like a derived room's, with nothing quoted after it.
+  it('renders an ad-hoc room as its bare key and addresses that key', () => {
     const rendered = formatEnvelopePresentation(
       presentable({
         envelope: envelope({
@@ -105,14 +107,14 @@ describe('T-07612 §7 presentation', () => {
           roomKind: 'adhoc',
           from: { principalRef: 'agent:mable', scopeRef: 'mable@hrc-runtime:primary' },
         }),
-        roomSubject: 'T-07603 landed',
         senderGeneration: 7,
       }),
       NOW
     )
     expect(rendered).toContain(
-      '[R-00012 "T-07603 landed" · mable@hrc-runtime:primary (gen 7) → you · reply required]'
+      '[R-00012 · mable@hrc-runtime:primary (gen 7) → you · reply required]'
     )
+    expect(rendered).not.toContain('"')
     expect(rendered).toContain("reply: wrkc say R-00012 --to mable@hrc-runtime:primary - <<'EOF'")
   })
 

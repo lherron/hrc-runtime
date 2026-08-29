@@ -29,11 +29,6 @@ export type PresentableEnvelope = {
   messageCount: number
   lastMessageAt?: string | undefined
   /**
-   * The ad-hoc room's subject, so a pair room's header is distinguishable.
-   * Derived rooms have none: their key already IS the work identity.
-   */
-  roomSubject?: string | undefined
-  /**
    * The sender's live generation, when this node homes the sender and can see
    * it. It is HRC's own execution state, not the ledger's -- wrkq stores a
    * generation for the PRESENTATION (the recipient side) and deliberately none
@@ -81,17 +76,12 @@ function formatHeader(presentable: PresentableEnvelope): string {
 /**
  * The room's addressing token, which is its KEY and never its row id.
  *
- * A task room reads `T-07604` and a campaign room reads its path, because for
- * the derived kinds the key IS the work identity. An ad-hoc room quotes its
- * subject after the key so a reader can tell one pair room from another.
+ * Every kind renders bare: a task room reads `T-07604`, a campaign room reads
+ * its path, and an ad-hoc room reads `R-xxxxx`. An R- room is a pair channel
+ * rather than a topic, so there is nothing to qualify the key with.
  */
 function formatRoomToken(presentable: PresentableEnvelope): string {
-  const key = presentable.envelope.roomKey
-  const subject = presentable.roomSubject?.trim()
-  if (presentable.envelope.roomKind !== 'adhoc' || subject === undefined || subject.length === 0) {
-    return key
-  }
-  return `${key} "${subject}"`
+  return presentable.envelope.roomKey
 }
 
 function formatSender(presentable: PresentableEnvelope): string {

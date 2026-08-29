@@ -79,7 +79,6 @@ export type WrkqLedgerClient = {
   birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null>
   present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult>
   roundEnded(params: WrkqEnvelopeRoundParams): Promise<WrkqEnvelope>
-  /** Presentation only: an ad-hoc room's subject for the section 7 header. */
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView>
   /** The bounded, cursor-fenced event page the kicker's wake tail reads. */
   eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView>

@@ -400,7 +400,6 @@ async function recordPresentations(
       historyHint: result.historyHint,
       messageCount: result.messageCount,
       ...(result.lastMessageAt === undefined ? {} : { lastMessageAt: result.lastMessageAt }),
-      ...(await roomSubjectFor(server, result.envelope)),
       ...senderGenerationFor(server, result.envelope),
     })
   }
@@ -432,20 +431,6 @@ async function commitPresentations(
       driveAttemptId: attempt.driveAttemptId,
       ...(runtimeId === undefined ? {} : { runtimeId }),
     })
-  }
-}
-
-/** An ad-hoc room's subject, for the §7 header. Absent is not an error. */
-async function roomSubjectFor(
-  server: HrcServerInstanceForHandlers,
-  envelope: WrkqEnvelope
-): Promise<{ roomSubject?: string }> {
-  if (envelope.roomKind !== 'adhoc') return {}
-  try {
-    const room = await server.wrkqLedger.roomShow({ room: envelope.roomKey })
-    return room.subject === undefined ? {} : { roomSubject: room.subject }
-  } catch {
-    return {}
   }
 }
 
@@ -602,7 +587,6 @@ async function presentIntoBusyTarget(
       envelope,
       historyHint: false,
       messageCount: 0,
-      ...(await roomSubjectFor(server, envelope)),
       ...senderGenerationFor(server, envelope),
     })
   }

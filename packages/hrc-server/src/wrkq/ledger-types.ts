@@ -72,14 +72,12 @@ export type WrkqRoomShowParams = {
 }
 
 /**
- * The subset of a room HRC renders. Read ONLY to put an ad-hoc room's subject
- * in the section 7 header; the ledger's room surface is otherwise the agent's,
+ * The subset of a room HRC renders. The ledger's room surface is the agent's,
  * through `wrkc`.
  */
 export type WrkqRoomView = {
   key: string
   kind: WrkqRoomKind
-  subject?: string | undefined
 }
 
 export type WrkqEnvelopePendingViewParams = {
