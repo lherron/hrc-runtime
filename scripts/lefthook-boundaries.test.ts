@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
@@ -31,7 +32,21 @@ interface HookFixture {
 }
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
-const lefthookBinary = join(repoRoot, 'node_modules', '.bin', 'lefthook')
+// Resolve the binary by walking up rather than assuming it sits in THIS repo's
+// node_modules. Under the praesidium dev workspace the three repos install as one
+// workspace and bun hoists binaries to the workspace root, so the repo-local path
+// exists only in a standalone install. Walking up satisfies both layouts.
+function resolveWorkspaceBinary(name: string): string {
+  for (let directory = repoRoot; ; directory = dirname(directory)) {
+    const candidate = join(directory, 'node_modules', '.bin', name)
+    if (existsSync(candidate)) return candidate
+    if (dirname(directory) === directory) {
+      throw new Error(`cannot resolve ${name} in any node_modules/.bin above ${repoRoot}`)
+    }
+  }
+}
+
+const lefthookBinary = resolveWorkspaceBinary('lefthook')
 const scopeScript = join(repoRoot, 'scripts', 'run-if-code-changed.ts')
 const codeOnlyPreCommitCommands = [
   'lint',
@@ -196,7 +211,11 @@ describe('lefthook v2 configuration', () => {
     expect(prePush.commands).toEqual({
       'code-validation': {
         use_stdin: true,
-        run: "bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun install && TMPDIR=/tmp bun run test:fast' {files}",
+        // `bun scripts/install-workspace-deps.ts`, not a bare `bun install`: this
+        // repo is its own workspace root, so a bare install here repopulates a
+        // repo-local node_modules with registry copies and shadows the source
+        // links of a parent praesidium dev workspace. See scripts/lib/workspace-root.ts.
+        run: "bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && TMPDIR=/tmp bun run test:fast' {files}",
       },
     })
   })

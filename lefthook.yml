@@ -38,4 +38,4 @@ pre-push:
       # fixtures cross it, so the gate fails on a CLEAN tree (8/2401 on
       # 2026-08-21) and the failure set drifts as fixtures are renamed.
       # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
-      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun install && TMPDIR=/tmp bun run test:fast' {files}
+      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && TMPDIR=/tmp bun run test:fast' {files}

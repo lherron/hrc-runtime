@@ -15,6 +15,7 @@ import type {
   BrokerRuntimeSubstrate,
 } from '../broker/runtime-hosting.js'
 import { shellQuote } from '../dispatch-invocation.js'
+import { resolveHoistedBinary } from '../hoisted-binary.js'
 import type { HrcServerOptions } from '../server-types.js'
 import { timestamp } from '../server-util.js'
 import {
@@ -149,10 +150,10 @@ export function resolveBrokerBinary(driverKind: string): string {
     return override
   }
 
-  // The daemon and every broker kind must come from one coherent atomic
-  // release. This same shape works from a source checkout because the root
-  // node_modules/.bin occupies the corresponding location.
-  return resolve(import.meta.dir, '../../../../node_modules/.bin', binary.name)
+  // The daemon and every broker kind must come from one coherent atomic release.
+  // Nearest-match preserves that; see resolveHoistedBinary for why the location is
+  // searched rather than assumed.
+  return resolveHoistedBinary(resolve(import.meta.dir, '../../../..'), binary.name)
 }
 
 export async function allocateBrokerSubstrate(

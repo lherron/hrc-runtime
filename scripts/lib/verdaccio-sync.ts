@@ -1,12 +1,17 @@
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+
+import { resolveInstallRoot } from './workspace-root'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
 // scripts/lib/ -> repo root
-const ROOT = resolve(import.meta.dir, '..', '..')
+const REPO_ROOT = resolve(import.meta.dir, '..', '..')
+// Dependencies may be installed by a parent workspace rather than this repo; the
+// installed-version probes below must read the node_modules that actually exists.
+const ROOT = resolveInstallRoot(REPO_ROOT)
 // Destructure rather than index/property access: consumers span tsconfigs that
 // require bracket access on index signatures (noPropertyAccessFromIndexSignature)
 // and biome configs that forbid it (useLiteralKeys); destructuring satisfies both.
@@ -325,6 +330,19 @@ async function rewriteManifests(
   return { changed, used }
 }
 
+/**
+ * A workspace-linked package is a symlink to a sibling repo's source, so its
+ * version is that repo's package.json version and has no relationship to any
+ * published dev-timestamp. Comparing the two would report every linked package as
+ * permanently stale and invite `pull-deps` to rewrite bun.lock against source
+ * that was never published. Linked packages are simply not registry-managed.
+ */
+async function isWorkspaceLinked(name: string): Promise<boolean> {
+  return await lstat(join(ROOT, 'node_modules', name))
+    .then((entry) => entry.isSymbolicLink())
+    .catch(() => false)
+}
+
 async function installedVersion(name: string): Promise<string | undefined> {
   const raw = await readFile(join(ROOT, 'node_modules', name, 'package.json'), 'utf8').catch(
     () => undefined
@@ -335,6 +353,7 @@ async function installedVersion(name: string): Promise<string | undefined> {
 
 async function installedAreLatest(latest: Map<string, string>): Promise<boolean> {
   for (const [name, version] of latest) {
+    if (await isWorkspaceLinked(name)) continue
     const installed = await installedVersion(name)
     if (installed === undefined) return false
     if (installed !== version) return false
@@ -344,13 +363,23 @@ async function installedAreLatest(latest: Map<string, string>): Promise<boolean>
 
 async function verifyInstalled(latest: Map<string, string>, label: string): Promise<void> {
   const stale: string[] = []
+  const linked: string[] = []
   for (const [name, version] of latest) {
+    if (await isWorkspaceLinked(name)) {
+      linked.push(name)
+      continue
+    }
     const installed = await installedVersion(name)
     if (installed === undefined) {
       stale.push(`${name}: missing from node_modules, latest ${version}`)
       continue
     }
     if (installed !== version) stale.push(`${name}: installed ${installed}, latest ${version}`)
+  }
+  if (linked.length > 0) {
+    console.log(
+      `${label}: ${linked.length} package(s) source-linked by a workspace; not registry-managed`
+    )
   }
   if (stale.length > 0) {
     throw new Error(`${label} dependency sync failed:\n${stale.join('\n')}`)

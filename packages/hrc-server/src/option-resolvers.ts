@@ -1,9 +1,10 @@
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 import { HrcRuntimeUnavailableError } from 'hrc-core'
 
 import { AspcFacadeBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
+import { resolveHoistedBinary } from './hoisted-binary.js'
 import {
   type PrecompileLaunchTimingContext,
   observePrecompileLaunchSpan,
@@ -33,7 +34,7 @@ const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
 const HRC_ASPC_FACADE_CMD_ENV = 'HRC_ASPC_FACADE_CMD'
 const HRC_ASPC_FACADE_ARGS_ENV = 'HRC_ASPC_FACADE_ARGS'
-const DEFAULT_ASPC_FACADE_COMMAND = join(WORKSPACE_ROOT, 'node_modules', '.bin', 'aspc-facade')
+const DEFAULT_ASPC_FACADE_COMMAND = resolveHoistedBinary(WORKSPACE_ROOT, 'aspc-facade')
 const DEFAULT_ASPC_FACADE_ARGS = ['run', '--transport', 'stdio']
 
 export function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
