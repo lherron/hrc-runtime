@@ -239,33 +239,44 @@ function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string
   return `${lines.join('\n')}\n`
 }
 
+/**
+ * The no-summary footer. The HEADLINE follows the recovery state rather than
+ * being hardcoded: `terminal_fenced` means the daemon declined to recover a
+ * summary BECAUSE the runtime is still alive, so a detach from a live session
+ * must not be announced as "session ended" with a failure-shaped note. Every
+ * other state really is a session that ended without a recoverable summary, and
+ * says so in one neutral vocabulary ("summary unavailable; <why>") rather than
+ * mixing in "recovery skipped/failed" jargon that reads like an error.
+ */
 function formatSessionEndedFallback(
   scopeLabel: string,
   recovery: FinalSummaryRecoveryResult | undefined
 ): string {
-  const suffix = (() => {
+  // Detach from a runtime the daemon still considers live: nothing ended, and
+  // there is nothing here for the operator to act on.
+  if (recovery?.state === 'terminal_fenced') {
+    return `\n\x1b[2m─ detached ─ ${scopeLabel} (session still running)\x1b[0m\n\n`
+  }
+  const note = (() => {
     switch (recovery?.state) {
       case 'timeout':
-        return 'summary recovery timed out'
+        return 'summary unavailable; recovery timed out'
       case 'failed':
-        return 'summary recovery failed'
+        return 'summary unavailable; recovery did not complete'
       case 'not_durable':
         return 'summary unavailable; no durable broker endpoint'
       case 'not_broker':
         return 'summary unavailable; non-broker runtime'
       case 'retention_gap':
         return 'summary unavailable; broker event retention gap'
-      case 'terminal_fenced':
-        return 'summary recovery skipped; runtime not terminal'
       case 'unavailable':
-        return 'summary unavailable'
       case 'not_needed':
       case 'recovered':
       case undefined:
         return 'summary unavailable'
     }
   })()
-  return `\n\x1b[2m─ session ended ─ ${scopeLabel} (${suffix})\x1b[0m\n\n`
+  return `\n\x1b[2m─ session ended ─ ${scopeLabel} (${note})\x1b[0m\n\n`
 }
 
 /**
