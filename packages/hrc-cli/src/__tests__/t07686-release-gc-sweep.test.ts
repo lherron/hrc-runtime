@@ -6,7 +6,9 @@ import {
   SWEEP_SENTINEL,
   type SweepDependencies,
   collectSweep,
+  findLiveOmissions,
   isHrcDaemonArgv,
+  isSweepHelperArgv,
 } from '../release-gc-sweep.js'
 import { ReleaseGcAbort } from '../release-gc.js'
 
@@ -388,4 +390,77 @@ describe('T-07686 daemon discriminator, pinned to real fleet argv', () => {
       expect(isHrcDaemonArgv({ pid: 1, command })).toBeNull()
     })
   }
+})
+
+// Both defects below aborted a real max3 maintenance window on 2026-08-29 at the
+// dry-run step. Neither was visible to any fixture written before the live run.
+describe('T-07686 probe-incomplete must not fire on transients (live window abort)', () => {
+  const MARKER = 'hrc-sweep-marker-999-'
+
+  test('a pid that EXITED between snapshot and scan is GONE, not an omission', () => {
+    const snapshot = [
+      { pid: 30396, command: '/System/.../mdworker_shared -s mdworker' },
+      { pid: 100, command: '/usr/sbin/cupsd' },
+    ]
+    // mdworker is uninspected AND no longer alive at the re-check
+    const omitted = findLiveOmissions(snapshot, [100], [100], [], MARKER)
+    expect(omitted).toEqual([])
+  })
+
+  test('a pid still ALIVE at the re-check and uninspected IS an omission', () => {
+    const snapshot = [{ pid: 555, command: '/usr/libexec/somethingd' }]
+    const omitted = findLiveOmissions(snapshot, [], [555], [], MARKER)
+    expect(omitted.map((o) => o.pid)).toEqual([555])
+  })
+
+  test("the probe's OWN ps helper is excluded by identity, not by luck", () => {
+    const helper = 'sh -c ps -Axo pid=,lstart=,command=; echo "__PROBE_COMPLETE:$?"'
+    expect(isSweepHelperArgv(helper, MARKER)).toBe(true)
+    // even while alive and uninspected, it must not count
+    const omitted = findLiveOmissions([{ pid: 29734, command: helper }], [], [29734], [], MARKER)
+    expect(omitted).toEqual([])
+  })
+
+  test('the marker child is excluded by identity', () => {
+    const child = `sh -c exec 9<'/tmp/${MARKER}17'; sleep 30`
+    expect(isSweepHelperArgv(child, MARKER)).toBe(true)
+  })
+
+  test('the sweep process itself and its parent are excluded', () => {
+    const omitted = findLiveOmissions(
+      [{ pid: 42, command: 'bun hrc admin release sweep' }],
+      [],
+      [42],
+      [42],
+      MARKER
+    )
+    expect(omitted).toEqual([])
+  })
+})
+
+describe('T-07686 daemon matcher anchors on the binary token (live window abort)', () => {
+  // The operator's own zsh, running a heredoc that quoted the command text, was
+  // reported as a surviving daemon. Substring matching hits any process whose
+  // command line merely CONTAINS the words.
+  const SHELLS_THAT_MUST_NOT_MATCH = [
+    '/bin/zsh -c launchctl bootout gui/501/com.praesidium.hrc-dev # hrc-dev server serve',
+    '/bin/zsh -lc "echo running hrc server serve now"',
+    'bun /Users/lherron/.bun/bin/taskboard server serve --dev',
+    'bun /Users/lherron/.bun/bin/acp server serve',
+  ]
+  for (const command of SHELLS_THAT_MUST_NOT_MATCH) {
+    test(`does NOT match: ${command.slice(0, 62)}`, () => {
+      expect(isHrcDaemonArgv({ pid: 1, command })).toBeNull()
+    })
+  }
+
+  test('still matches every real daemon shape', () => {
+    for (const command of [
+      'bun /Users/lherron/.bun/bin/hrc server serve',
+      'bun /Users/lherron/.bun/bin/hrc-dev server serve',
+      'bun /Users/lab/praesidium/under-construction/T-07650/packages/hrc-cli/bin/hrc.js server serve',
+    ]) {
+      expect(isHrcDaemonArgv({ pid: 1, command })).not.toBeNull()
+    }
+  })
 })

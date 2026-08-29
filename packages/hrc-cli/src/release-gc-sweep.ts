@@ -31,7 +31,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import {
   QUARANTINE_DIRNAME,
@@ -74,6 +74,8 @@ export interface SweepDependencies {
   probeOpenPaths?: () => { paths: string[]; inspectedPids: number[]; privileged: boolean }
   readAttestation?: () => SweepAttestation | undefined
   listServerProcesses?: () => { pid: number; command: string }[]
+  /** Liveness re-check immediately after the scan; see `findLiveOmissions`. */
+  checkAlive?: (pids: number[]) => number[]
   isSocketLive?: () => boolean
   isInstallLockHeld?: () => boolean
   statMode?: (path: string) => { mode: number; uid: number }
@@ -198,7 +200,7 @@ export function acquireMaintenanceLock(releaseRoot: string = defaultReleaseRoot(
   }
 }
 
-function defaultListPids(): { pid: number; command: string; lstart: string }[] {
+export function defaultListPids(): { pid: number; command: string; lstart: string }[] {
   const { stdout } = runProbe('ps -Axo pid=,lstart=,command=', [0])
   const records: { pid: number; command: string; lstart: string }[] = []
   for (const line of stdout.split('\n')) {
@@ -223,7 +225,7 @@ function defaultListPids(): { pid: number; command: string; lstart: string }[] {
  * unprivileged lsof omits ~36% of pids and the cwd/directory-fd class it hides
  * is inside the proof target.
  */
-function defaultProbeOpenPaths(): {
+export function defaultProbeOpenPaths(): {
   paths: string[]
   inspectedPids: number[]
   privileged: boolean
@@ -267,6 +269,21 @@ function defaultProbeOpenPaths(): {
   }
 }
 
+/** `ps -p` re-check. A pid absent here has exited, which the spec calls GONE. */
+export function defaultCheckAlive(pids: number[]): number[] {
+  if (pids.length === 0) return []
+  const { stdout } = run('ps', ['-o', 'pid=,state=', '-p', pids.join(',')])
+  const alive: number[] = []
+  for (const line of stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\S+)/.exec(line)
+    if (match === null) continue
+    // A zombie is inert by definition; the spec accepts DEFUNCT as satisfied.
+    if ((match[2] ?? '').startsWith('Z')) continue
+    alive.push(Number.parseInt(match[1] ?? '', 10))
+  }
+  return alive
+}
+
 function defaultDiskFree(releaseRoot: string): () => string {
   return () => run('df', ['-h', releaseRoot]).stdout.trim().split('\n').slice(-1)[0] ?? ''
 }
@@ -297,10 +314,64 @@ export function isHrcDaemonArgv(record: { pid: number; command: string }): {
   pid: number
   command: string
 } | null {
-  const isHrc =
-    /(^|\/)hrc(-dev)?(\.js)?\s+server\s+serve\b/.test(record.command) ||
-    /hrc-cli\/bin\/\S*\s+server\s+serve\b/.test(record.command)
-  return isHrc ? { pid: record.pid, command: record.command } : null
+  // Tokenise and anchor on the EXECUTABLE POSITION. A substring match hits any
+  // process whose command line merely CONTAINS the text — measured live: the
+  // operator's own zsh, running a heredoc that quoted "hrc-dev server serve",
+  // was reported as a surviving daemon. Same self-inflicted-hit class the
+  // release-id matcher already anchors against; the daemon matcher did not.
+  const tokens = record.command.trim().split(/\s+/)
+  if (tokens.length < 3) return null
+  // argv[0] may be the interpreter (`bun /path/to/hrc server serve`).
+  const first = basename(tokens[0] ?? '')
+  const execIndex = first === 'bun' || first === 'node' ? 1 : 0
+  const execPath = tokens[execIndex] ?? ''
+  const exec = basename(execPath)
+  const isHrcBinary =
+    exec === 'hrc' || exec === 'hrc.js' || exec === 'hrc-dev' || /\/hrc-cli\/bin\//.test(execPath)
+  if (!isHrcBinary) return null
+  // `server serve` must be the actual verb pair, immediately after the binary.
+  if (tokens[execIndex + 1] !== 'server' || tokens[execIndex + 2] !== 'serve') return null
+  return { pid: record.pid, command: record.command }
+}
+
+/**
+ * The sweep's own probe helpers appear in its own `ps` snapshot and then exit —
+ * they are the most reliably transient processes on the box. They are excluded
+ * by IDENTITY, not by luck: every helper this module spawns carries either the
+ * completion sentinel or the marker filename in its argv, and both strings are
+ * unique to this process.
+ */
+export function isSweepHelperArgv(command: string, selfMarker: string): boolean {
+  return command.includes(PROBE_SENTINEL) || command.includes(selfMarker)
+}
+
+/**
+ * A pid present in the pre-scan snapshot but absent from lsof coverage is NOT
+ * an omission if it simply EXITED — the spec's residue rule is "defunct or
+ * gone". Measured on a live max3 window: four consecutive dry-runs refused on
+ * transient pids (mdworker_shared, and the probe's own `sh -c ps` helper),
+ * which made the gate unsatisfiable on any real macOS box.
+ *
+ * So liveness is RE-ESTABLISHED after the scan rather than assumed from the
+ * earlier snapshot. Only a pid still alive then is a genuine omission.
+ */
+export function findLiveOmissions(
+  snapshot: { pid: number; command: string }[],
+  inspectedPids: Iterable<number>,
+  stillAlive: Iterable<number>,
+  selfPids: Iterable<number>,
+  selfMarker: string
+): { pid: number; command: string }[] {
+  const inspected = new Set(inspectedPids)
+  const alive = new Set(stillAlive)
+  const self = new Set(selfPids)
+  return snapshot.filter(
+    (r) =>
+      !inspected.has(r.pid) &&
+      alive.has(r.pid) &&
+      !self.has(r.pid) &&
+      !isSweepHelperArgv(r.command, selfMarker)
+  )
 }
 
 function incarnationKey(records: { pid: number; lstart: string }[]): string {
@@ -392,6 +463,12 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
   const attestation = deps.readAttestation?.()
   const maxAttempts = options.maxBracketAttempts ?? DEFAULT_BRACKET_ATTEMPTS
 
+  // Identity of this sweep's own processes. `selfMarker` is unique to this run
+  // and appears in every helper argv this module spawns.
+  const selfMarker = `hrc-sweep-marker-${process.pid}-`
+  const selfPids = new Set<number>([process.pid, process.ppid])
+  const checkAlive = deps.checkAlive ?? defaultCheckAlive
+
   let referenced = new Set<string>()
   let inspectedPids = 0
   let privileged = false
@@ -434,14 +511,34 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
     }
     // Every pid the probe was expected to inspect must appear; an exit-0 probe
     // that skipped a live pid contradicts itself.
-    const inspected = new Set(pass1.inspectedPids)
-    const omitted = mid.filter((r) => !inspected.has(r.pid))
-    if (!attestation && omitted.length > 0) {
-      const first = omitted[0]
-      throw new ReleaseGcAbort(
-        'probe-incomplete',
-        `privileged probe exited 0 but omitted live pid ${first?.pid}: ${first?.command}`
+    // Residue is "defunct or gone" per spec. A pid in `mid` that lsof did not
+    // cover may simply have EXITED; re-establish liveness rather than inferring
+    // it from the earlier snapshot, and exclude our own helpers by identity.
+    if (!attestation) {
+      // Drawn from the PRE-scan snapshot, not the post-scan one. A process that
+      // started while lsof was enumerating was never available for it to
+      // inspect, so it is not an omission — it is churn, and the bracket's
+      // incarnation check below is what owns that case. Measured live: sampling
+      // `mid` reported a CoreSimulator process that began mid-scan as a live
+      // omission, which is the fork-after-snapshot error in a new place.
+      const suspects = before.filter(
+        (r) => !pass1.inspectedPids.includes(r.pid) && !selfPids.has(r.pid)
       )
+      const stillAlive = suspects.length > 0 ? checkAlive(suspects.map((r) => r.pid)) : []
+      const omitted = findLiveOmissions(
+        suspects,
+        pass1.inspectedPids,
+        stillAlive,
+        selfPids,
+        selfMarker
+      )
+      if (omitted.length > 0) {
+        const first = omitted[0]
+        throw new ReleaseGcAbort(
+          'probe-incomplete',
+          `privileged probe exited 0 but omitted live pid ${first?.pid}: ${first?.command}`
+        )
+      }
     }
 
     const hits = new Set<string>()
