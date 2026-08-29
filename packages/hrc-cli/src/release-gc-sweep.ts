@@ -572,6 +572,34 @@ export function formatSweepReport(report: SweepReport): string {
   return `${lines.join('\n')}\n`
 }
 
+/**
+ * Read-only inventory of what a successful sweep would reclaim. Printed
+ * alongside a dry-run refusal so an operator planning a window can see the
+ * prize and the blockers in one place. It makes NO safety claim and touches
+ * nothing; the gate's verdict is the refusal, not this.
+ */
+function quarantineInventory(releaseRoot: string): string {
+  const quarantineDir = join(releaseRoot, QUARANTINE_DIRNAME)
+  let ids: string[] = []
+  try {
+    ids = readdirSync(quarantineDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && isReleaseId(e.name))
+      .map((e) => e.name)
+  } catch {
+    return `inventory: ${quarantineDir} is not readable or does not exist\n`
+  }
+  const du = run('du', ['-sh', quarantineDir]).stdout.trim().split(/\s+/)[0] ?? 'unknown'
+  const oldest = ids.slice().sort()[0] ?? '(none)'
+  return [
+    'inventory (read-only, NOT a safety verdict):',
+    `  candidates:  ${ids.length}`,
+    `  reclaimable: ${du}`,
+    `  oldest:      ${oldest}`,
+    `  df now:      ${defaultDiskFree(releaseRoot)()}`,
+    '',
+  ].join('\n')
+}
+
 export function cmdAdminReleaseSweep(options: { apply?: boolean; json?: boolean }): SweepReport {
   const releaseRoot = defaultReleaseRoot()
   const lock = acquireMaintenanceLock(releaseRoot)
@@ -581,6 +609,15 @@ export function cmdAdminReleaseSweep(options: { apply?: boolean; json?: boolean 
       options.json === true ? `${JSON.stringify(report, null, 2)}\n` : formatSweepReport(report)
     )
     return report
+  } catch (error) {
+    // A dry-run exists to tell an operator what stands between them and the
+    // reclaim. Surfacing the blocker WITH the inventory is the whole point; on
+    // --apply the refusal stands alone and nothing is softened.
+    if (options.apply !== true && error instanceof ReleaseGcAbort) {
+      process.stdout.write(quarantineInventory(releaseRoot))
+      process.stdout.write(`blocked by ${error.reason}: ${error.message}\n`)
+    }
+    throw error
   } finally {
     lock.release()
   }
