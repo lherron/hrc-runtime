@@ -6,9 +6,10 @@ import { join, resolve } from 'node:path'
 import { type PraesidiumBuild, environmentWithoutGitOverrides } from 'hrc-core'
 
 import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
+import { activeRegistryUrl } from './lib/registry'
 
 const ROOT = resolve(import.meta.dir, '..')
-const REGISTRY = process.env.VERDACCIO_REGISTRY ?? 'http://mini:4873/'
+const REGISTRY = activeRegistryUrl()
 
 const PACKAGES = [
   'packages/agent-action-render',

@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { CANONICAL_REGISTRY_URL, activeRegistryUrl, scanLockContent } from './registry'
 import { resolveInstallRoot } from './workspace-root'
 
 import { environmentWithoutGitOverrides } from 'hrc-core'
@@ -12,11 +14,7 @@ const REPO_ROOT = resolve(import.meta.dir, '..', '..')
 // Dependencies may be installed by a parent workspace rather than this repo; the
 // installed-version probes below must read the node_modules that actually exists.
 const ROOT = resolveInstallRoot(REPO_ROOT)
-// Destructure rather than index/property access: consumers span tsconfigs that
-// require bracket access on index signatures (noPropertyAccessFromIndexSignature)
-// and biome configs that forbid it (useLiteralKeys); destructuring satisfies both.
-const { VERDACCIO_REGISTRY } = process.env
-const REGISTRY = VERDACCIO_REGISTRY ?? 'http://mini:4873/'
+const REGISTRY = activeRegistryUrl()
 const LOCK_STALE_MS = 120_000
 
 /**
@@ -69,6 +67,15 @@ export type VerdaccioFreshness = {
   fresh: boolean
   summary: string
   stale: string[]
+}
+
+/** commitLockfile is synchronous (it runs inside a git-hook-sensitive path). */
+function readFileSyncUtf8(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -419,6 +426,21 @@ async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promis
 }
 
 /**
+ * Refuse to write a bun.lock naming any host but the canonical registry. Reads
+ * the worktree, which is what the pathspec commit below would record.
+ */
+function assertLockHygiene(): void {
+  const lock = readFileSyncUtf8(join(ROOT, 'bun.lock'))
+  if (lock === undefined) return
+  const violations = scanLockContent(lock)
+  if (violations.length === 0) return
+  const hosts = [...new Set(violations.map((violation) => violation.host))].sort()
+  throw new Error(
+    `refusing to commit bun.lock: ${violations.length} URL(s) on non-canonical host(s) ${hosts.join(', ')} (canonical: ${CANONICAL_REGISTRY_URL}). First: line ${violations[0]?.line} ${violations[0]?.url}. Re-sync on a host that resolves the canonical registry.`
+  )
+}
+
+/**
  * Commit the advanced bun.lock as one lockfile-only pathspec commit. Reached ONLY
  * from `commitSyncedLockfile`, i.e. from this repo's own deliberate `just
  * pull-deps` — a sync never commits on its own (T-07629): an install driven from
@@ -435,6 +457,12 @@ function commitLockfile(label: string, summary: string): void {
   if (GIT_INDEX_FILE) return
   const status = run('git', ['status', '--porcelain', '--', 'bun.lock'])
   if (status.status !== 0 || status.out.trim() === '') return
+  // This commit is `--no-verify`, so the pre-commit lock-hygiene gate never
+  // sees it — and a sync run on a host that reaches Verdaccio under a
+  // machine-local name is precisely how 26 loopback URLs reached origin/main
+  // (T-07412). Re-check here rather than let the one path that skips the hook
+  // be the one that caused the incident.
+  assertLockHygiene()
   const commit = run('git', [
     'commit',
     '--no-verify',

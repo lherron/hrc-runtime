@@ -57,6 +57,17 @@ const codeOnlyPreCommitCommands = [
   'suppressions',
   'typecheck',
 ]
+/**
+ * Gates that must look at EVERY commit. `run-if-code-changed` decides from the
+ * staged path set whether a check is worth running; a gate that refuses to let
+ * poisoned content into shared history must not be able to be skipped by that
+ * heuristic. Being on this list is a deliberate choice, so the membership test
+ * below is exhaustive: a new command is either wrapped or listed here.
+ */
+const unconditionalPreCommitCommands: Record<string, string> = {
+  gitleaks: 'gitleaks protect --staged --redact',
+  'lock-hygiene': 'bun scripts/check-lock-hygiene.ts',
+}
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
@@ -194,21 +205,31 @@ describe('lefthook v2 configuration', () => {
     run([lefthookBinary, 'validate'], repoRoot)
   })
 
-  test('keeps secret scanning unconditional and wraps every code check', async () => {
+  test('keeps the unconditional gates unwrapped and wraps every code check', async () => {
     const commands = (await readConfig())['pre-commit'].commands
 
-    expect(commands['gitleaks']?.run).toBe('gitleaks protect --staged --redact')
+    for (const [name, run] of Object.entries(unconditionalPreCommitCommands)) {
+      expect(commands[name]?.run, name).toBe(run)
+    }
     for (const name of codeOnlyPreCommitCommands) {
       expect(commands[name]?.run, name).toStartWith(
         'bun scripts/run-if-code-changed.ts pre-commit -- '
       )
     }
+    // Exhaustive: an unwrapped command cannot be added without landing on the
+    // unconditional list on purpose.
+    expect(Object.keys(commands).sort()).toEqual(
+      [...Object.keys(unconditionalPreCommitCommands), ...codeOnlyPreCommitCommands].sort()
+    )
   })
 
   test('uses one fail-safe pre-push stdin consumer and preserves TMPDIR', async () => {
     const prePush = (await readConfig())['pre-push']
     expect(prePush.files).toBe("printf 'lefthook.yml\\n'")
     expect(prePush.commands).toEqual({
+      // Reads the index rather than the pushed refs, so it needs no stdin and
+      // leaves code-validation the hook's single consumer (T-07412).
+      'lock-hygiene': { run: 'bun scripts/check-lock-hygiene.ts' },
       'code-validation': {
         use_stdin: true,
         // `bun scripts/install-workspace-deps.ts`, not a bare `bun install`: this

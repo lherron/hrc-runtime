@@ -9,6 +9,11 @@ pre-commit:
   commands:
     gitleaks:
       run: gitleaks protect --staged --redact
+    # Unconditional, not run-if-code-changed: it reads one staged blob, and a
+    # gate that refuses poisoned shared history must not depend on a
+    # changed-scope heuristic to decide whether to look (T-07412).
+    lock-hygiene:
+      run: bun scripts/check-lock-hygiene.ts
     lint:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun run lint
       stage_fixed: true
@@ -30,6 +35,10 @@ pre-push:
   # Keep the hook alive for deleted paths, which Lefthook omits from push_files.
   files: printf 'lefthook.yml\n'
   commands:
+    # No use_stdin: the gate reads the index, not the pushed refs, so it does
+    # not compete with code-validation for the hook's single stdin.
+    lock-hygiene:
+      run: bun scripts/check-lock-hygiene.ts
     code-validation:
       use_stdin: true
       # TMPDIR=/tmp is load-bearing on macOS: the default
