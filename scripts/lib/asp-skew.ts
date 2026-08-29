@@ -5,10 +5,11 @@
  * resolved agent-spaces from bun.lock, and so did the release. The workspace links
  * agent-spaces from SOURCE at the sibling checkout's HEAD, while atomic-install
  * still builds from `bun.lock --frozen-lockfile`. So "green in the workspace" no
- * longer implies "green in the release", and the surface that used to report lock
- * lag (verdaccio-sync) now correctly stays silent for source-linked packages —
- * silencing true reports along with the false ones. This module is what reports it
- * instead.
+ * longer implies "green in the release". verdaccio-sync reports REGISTRY lag (the
+ * repo lock vs Verdaccio latest, since fdb4a0d1 it reads hrc-runtime/bun.lock
+ * regardless of the workspace); this module reports SOURCE lag — the sibling
+ * checkout's HEAD vs the commit the locked tuple was published from — which no
+ * registry comparison can see.
  *
  * The lag itself is NOT a defect: a consumer running behind its producer is this
  * platform's intended steady state. Only the CLAIM that a green suite means a

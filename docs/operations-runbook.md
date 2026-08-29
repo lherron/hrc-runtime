@@ -99,9 +99,15 @@ hrc server restart && hrc server status
 ```
 
 - `just pull-deps` (run in hrc-runtime) queries the configured Verdaccio
-  for the ASP and wrkq streams, verifies coherence, reconciles `bun.lock`,
-  and creates one standard lockfile-only commit. `just check-deps` is
-  advisory/read-only.
+  for the ASP and wrkq streams, verifies coherence, advances
+  **`hrc-runtime/bun.lock`** (resolved lockfile-only in a staging copy, so it
+  behaves the same under the `~/praesidium` dev workspace and standalone),
+  refuses if the lock did not reach registry latest or resolves a synced set to
+  more than one version, and creates one standard lockfile-only commit
+  (`chore: sync bun.lock (ASP@…)`). Read back `git log -1 -- bun.lock` before
+  installing. `just check-deps` is advisory/read-only;
+  `bun scripts/check-lock-coherence.ts` is the refusal `just install`,
+  `just check` and `just pull-deps` all apply.
 - **Coherence guard**: all ASP packages must share the same `latest`
   version at publish time; a half-published snapshot errors with
   `ASP Verdaccio latest set is incoherent`. Publish the whole ASP set from
@@ -109,9 +115,14 @@ hrc server restart && hrc server status
 - Verdaccio must be reachable at the canonical `http://mini:4873/` endpoint or
   both publish and sync fail. Mini is the sole registry store; consumers do not
   mirror packages between node-local registries.
-- Pull != installed != live: `just pull-deps` advances the lock and
-  installs in the checkout; `just install` atomically selects the HRC
-  release; `hrc server restart` activates it in launchd.
+- Pull != installed != live: `just pull-deps` advances the lock (and, on a
+  standalone checkout, node_modules — under the dev workspace node_modules is
+  the workspace's, linked from source); `just install` atomically selects the
+  HRC release; `hrc server restart` activates it in launchd.
+- Never `bun update <pkg>@<ver>` / `bun add` a synced package: it moves a
+  subset and nests fresh copies of its dependencies, so the lock carries two
+  ASP tuples at once. Repair: `git checkout <last-coherent> -- bun.lock`,
+  commit, `just pull-deps`.
 - A pure ASP compile-time change (new type/export) requires the sync
   before HRC will typecheck. A pure ASP behavior/data change (e.g. a
   capability flag flip) flows through existing contracts and only needs
