@@ -156,6 +156,7 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
   (`broker/controller.ts`, `startup-reconcile.ts`, and `index.ts` predate
   this ceiling and are grandfathered).
 - Validation bar: `bun run typecheck`, `bun run test`, `bun run lint`,
-  `bun run check:boundaries`, `bun run check:manifests`, `bun run build`,
+  `bun run check:boundaries`, `bun run check:manifests`,
+  `bun run check:dependency-pins`, `bun run build`,
   then an installed-binary smoke (`just install`, restart the real launchd
   daemon, `hrc --help` / `hrc server status` / one real read-only command).

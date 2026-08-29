@@ -52,6 +52,7 @@ const codeOnlyPreCommitCommands = [
   'lint',
   'boundaries',
   'manifests',
+  'dependency-pins',
   'cli-surface',
   'public-surface',
   'suppressions',

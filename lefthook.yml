@@ -21,6 +21,8 @@ pre-commit:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-boundaries.ts
     manifests:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-manifest-edges.ts
+    dependency-pins:
+      run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-dependency-pins.ts
     cli-surface:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun scripts/check-cli-surface.ts
     public-surface:

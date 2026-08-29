@@ -28,7 +28,7 @@
     "spaces-config": "latest"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.3.14",
     "hrc-server": "*",
     "typescript": "^5.8.3"
   }

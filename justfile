@@ -77,12 +77,20 @@ typecheck:
 
 # Run repo-split boundary + manifest edge checks
 check:
+    bun scripts/check-dependency-pins.ts
     bun scripts/check-boundaries.ts
     bun scripts/check-manifest-edges.ts
     bun scripts/check-cli-surface.ts
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
     bun scripts/check-env-hygiene.ts
+
+# Prune nested node_modules copies of a root-pinned dependency that shadow the
+# root resolution. `bun install` writes but never tidies, so a copy an earlier
+# resolution wrote survives every install after the manifest is corrected — and
+# TypeScript keeps resolving to it. Pass --check to report without deleting.
+doctor *args:
+    bun scripts/workspace-doctor.ts {{args}}
 
 # Validate durable architecture records and generated projections
 architecture-records *args:

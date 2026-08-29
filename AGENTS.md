@@ -13,6 +13,29 @@ Verdaccio registry at `http://mini:4873/`.
 - Enablement lessons: [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
 - Standalone HTML specs go in `docs/html/` (`just serve-docs`).
 
+## Dependency Pins
+
+The root `package.json` `overrides` block is the **pin table**: an exact version
+there is the one version this workspace may resolve for that dependency.
+
+- `bun run check:dependency-pins` (`just check`, lefthook pre-commit) refuses any
+  manifest whose `dependencies`/`devDependencies` specifier disagrees with the
+  table. `peerDependencies` stay free — a peer range describes the consumer's
+  tree, not a resolution this workspace performs.
+- `just doctor` (`bun run doctor`, `--check` to report only) prunes nested
+  `<package>/node_modules/<dep>` copies of a pinned dependency whose version
+  differs from the root resolution. It also runs inside
+  `scripts/install-workspace-deps.ts` right after `bun install`.
+
+**Why both.** A floating specifier in a member manifest does not merely widen a
+range: bun resolves it separately and installs a nested copy, and TypeScript
+resolves types from the nearest `node_modules`, so that copy silently shadows
+the root for that package alone while the lockfile still shows one clean
+resolution and `bun install --frozen-lockfile` reports "no changes". The guard
+stops new ones being declared; the doctor removes the ones already on disk,
+which `bun install` never tidies on its own. Adding an exact pin to the table
+extends both automatically (T-07695).
+
 ## Repo Boundaries
 
 Enforced by `bun run check:boundaries`: HRC source **must not** import `acp-*`,
