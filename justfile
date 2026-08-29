@@ -221,8 +221,24 @@ install-hrc-viewer-launchd:
     rm "$installed_plist.next"
     if launchctl print "$service_target" >/dev/null 2>&1; then
       launchctl bootout "$service_target"
+      # bootout returns before the job is actually gone; a bootstrap that races
+      # it fails with "Bootstrap failed: 5: Input/output error" and leaves the
+      # viewer DOWN with this recipe exiting non-zero (T-07711). Wait it out.
+      for _ in $(seq 1 50); do
+        launchctl print "$service_target" >/dev/null 2>&1 || break
+        sleep 0.2
+      done
     fi
-    launchctl bootstrap "gui/$(id -u)" "$installed_plist"
+    bootstrapped=0
+    for attempt in 1 2 3 4 5; do
+      if launchctl bootstrap "gui/$(id -u)" "$installed_plist"; then
+        bootstrapped=1
+        break
+      fi
+      echo "[install] bootstrap attempt $attempt failed; retrying" >&2
+      sleep 1
+    done
+    [[ "$bootstrapped" == 1 ]] || { echo "[install] could not bootstrap $service_target after 5 attempts" >&2; exit 1; }
     launchctl print "$service_target" >/dev/null
     echo "[install] activated $service_target"
 
