@@ -14,6 +14,7 @@ import {
   viewerStateForEventKind,
   viewerTerminalBg,
 } from './headless-viewer-status.js'
+import { type TmuxClientProbe, createTmuxClientProbe } from './tmux-clients.js'
 import { defaultTaskSlugResolver } from './wrkq-task-label.js'
 
 export type HrcViewerClient = Pick<
@@ -42,6 +43,7 @@ export type ViewerGhostmux = {
     statusBar?: GhostmuxStatusBarSpec | undefined
     terminalBg?: string | undefined
     windowKey?: string | undefined
+    skipCreateWhen?: (() => Promise<boolean>) | undefined
   }): Promise<HeadlessViewerResult>
   findHeadlessViewerSurfaceByRuntimeId(runtimeId: string): Promise<string | null>
   listHeadlessViewerPanes(): Promise<HeadlessViewerPane[]>
@@ -77,6 +79,11 @@ export type HrcViewerOptions = {
   now?: (() => number) | undefined
   schedule?: ((fn: () => void, ms: number) => ReturnType<typeof setTimeout>) | undefined
   clearScheduled?: ((handle: ReturnType<typeof setTimeout>) => void) | undefined
+  /**
+   * Who is already attached to a runtime's tmux target (T-07711). Injected so
+   * the operator-attached suppression is testable without a live tmux server.
+   */
+  probeTmuxClients?: TmuxClientProbe | undefined
 }
 
 const DEFAULT_LINGER_SECONDS = 300
@@ -164,6 +171,7 @@ export class HrcViewer {
   private reconcileInFlight: Promise<void> | undefined
   private stopped = false
   private readonly statusProjector: HeadlessViewerStatusProjector
+  private readonly probeTmuxClients: TmuxClientProbe
 
   constructor(options: HrcViewerOptions) {
     this.client = options.client
@@ -176,6 +184,7 @@ export class HrcViewer {
     this.now = options.now ?? Date.now
     this.schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearScheduled = options.clearScheduled ?? ((handle) => clearTimeout(handle))
+    this.probeTmuxClients = options.probeTmuxClients ?? createTmuxClientProbe()
     this.statusProjector = new HeadlessViewerStatusProjector({
       resolveSurfaceId: (runtimeId) =>
         this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(runtimeId),
@@ -447,10 +456,15 @@ export class HrcViewer {
     row: PresentationRuntimeRow,
     latestEvent?: LifecycleEvent | undefined
   ): Promise<void> {
+    const tmux = row.tmux
     const attachCommand = attachCommandFor(row, this.lingerSeconds)
-    if (attachCommand === null) return
+    if (attachCommand === null || tmux === undefined) return
     const slug = await defaultTaskSlugResolver()(row.scopeRef)
     const state = latestEvent ? (viewerStateForEventKind(latestEvent.eventKind) ?? 'idle') : 'idle'
+    // T-07711: captured by the veto below so the skip can NAME the terminals it
+    // deferred to. A reclassified case has to leave a positive line — proving
+    // the fix by the absence of a `created` line proves nothing.
+    let operatorClients: readonly string[] = []
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: row.scopeRef,
       laneRef: normalizePresentationLaneRef(row.laneRef),
@@ -467,7 +481,24 @@ export class HrcViewer {
       ),
       terminalBg: viewerTerminalBg(row.scopeRef),
       windowKey: row.presentation?.viewerWindow,
+      // Only reached when no pane of ours exists for this identity, so every
+      // attached client is somebody ELSE's terminal — an operator watching this
+      // runtime via `hrc run`/`hrc attach`. Fails open: the probe answers `[]`
+      // for every error, dead socket and timeout, and the create proceeds.
+      skipCreateWhen: async () => {
+        operatorClients = await this.probeTmuxClients(tmux.socketPath, tmux.attachTarget)
+        return operatorClients.length > 0
+      },
     })
+    if (result.status === 'skipped') {
+      this.log('INFO', 'broker_headless_viewer.skipped_operator_attached', {
+        runtimeId: row.runtimeId,
+        scopeRef: row.scopeRef,
+        attachTarget: tmux.attachTarget,
+        clients: operatorClients,
+      })
+      return
+    }
     this.log(
       result.status === 'failed' ? 'WARN' : 'INFO',
       `broker_headless_viewer.${result.status}`,

@@ -354,6 +354,8 @@ export type GhostmuxStatusBarSpec = {
 export type HeadlessViewerResult =
   | { status: 'created'; surfaceId: string; tabKey: string }
   | { status: 'reused'; surfaceId: string; tabKey: string }
+  /** `skipCreateWhen` vetoed a create; no surface exists and none was made. */
+  | { status: 'skipped'; reason: string }
   | { status: 'failed'; error: string }
 
 /** Live viewer-pane registry entry projected from Ghostty metadata. */
@@ -707,6 +709,15 @@ export class GhostmuxManager {
      * default key, i.e. today's single "Headless Sessions" window.
      */
     windowKey?: string | undefined
+    /**
+     * Optional veto on MINTING a pane (T-07711). Consulted only on the create
+     * branch — after the keyed pane lookup has missed, under the tab lock — so
+     * reuse, retitle and repaint never pay for it and never consult it. The
+     * caller supplies the question; today's only one is "is an operator terminal
+     * already attached to this runtime's tmux target?". A predicate that answers
+     * true yields `{ status: 'skipped' }` and nothing is created.
+     */
+    skipCreateWhen?: (() => Promise<boolean>) | undefined
   }): Promise<HeadlessViewerResult> {
     const identity = deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef)
     const tab = identity.tab
@@ -744,6 +755,14 @@ export class GhostmuxManager {
             surfaceId: existing.surfaceId,
             tabKey: tab.tabKey,
           }
+        }
+
+        // T-07711: the create veto goes HERE — the pane lookup above has missed
+        // under the lock, so we own no pane for this identity and are about to
+        // mint one. Asking before `ensureHeadlessWindow` also means a vetoed
+        // create leaves no keyed window behind as a side effect.
+        if (options.skipCreateWhen !== undefined && (await options.skipCreateWhen())) {
+          return { status: 'skipped' as const, reason: 'create_vetoed' }
         }
 
         // ORDER IS MANDATORY (T-07121, daedalus #17988): find-or-create the keyed
