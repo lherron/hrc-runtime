@@ -46,6 +46,16 @@ const PROBE_MAX_BUFFER = 256 * 1024 * 1024
 const PROBE_SENTINEL = '__PROBE_COMPLETE'
 /** Measured on max3: coherence is reached in 1-7 attempts; 10 is the fail-closed ceiling. */
 const DEFAULT_BRACKET_ATTEMPTS = 10
+/**
+ * The exact argv this module spawns. Needed for identity, not just for issuing:
+ * the completion sentinel lives in the `sh -c` wrapper's argv, so the `ps` and
+ * `lsof` GRANDCHILDREN do not carry it and were counted as foreign churn —
+ * measured as the dominant appeared/exited population on a live box.
+ */
+const PS_SNAPSHOT_ARGV = 'ps -Axo pid=,lstart=,command='
+const LSOF_SCAN_ARGV = 'lsof -n -P -Fpn'
+/** Pids of every helper this module has spawned in this process. */
+const spawnedHelperPids = new Set<number>()
 
 export interface SweptRelease {
   releaseId: string
@@ -76,6 +86,8 @@ export interface SweepDependencies {
   listServerProcesses?: () => { pid: number; command: string }[]
   /** Liveness re-check immediately after the scan; see `findLiveOmissions`. */
   checkAlive?: (pids: number[]) => number[]
+  /** Targeted probe of pids that appeared mid-scan; see the coherence check. */
+  probeSpecificPids?: (pids: number[]) => { paths: string[]; inspectedPids: number[] }
   isSocketLive?: () => boolean
   isInstallLockHeld?: () => boolean
   statMode?: (path: string) => { mode: number; uid: number }
@@ -111,6 +123,7 @@ function run(command: string, args: string[]): { status: number | null; stdout: 
     maxBuffer: PROBE_MAX_BUFFER,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  if (typeof result.pid === 'number') spawnedHelperPids.add(result.pid)
   const truncated =
     result.error !== undefined && (result.error as NodeJS.ErrnoException).code === 'ENOBUFS'
   if (truncated) throw new ReleaseGcAbort('probe-failed', `${command} output was truncated`)
@@ -269,6 +282,32 @@ export function defaultProbeOpenPaths(): {
   }
 }
 
+/**
+ * Targeted follow-up for pids that appeared while the main scan was running.
+ * Restricting to a pid list is unsound for ENUMERATING holders (a fork escapes
+ * a pre-computed list) but sound for INTERROGATING a specific known process,
+ * which is all this asks.
+ */
+export function defaultProbeSpecificPids(pids: number[]): {
+  paths: string[]
+  inspectedPids: number[]
+} {
+  if (pids.length === 0) return { paths: [], inspectedPids: [] }
+  // Exit 1 is normal here: lsof reports it when a listed pid has already gone.
+  const { stdout } = runProbe(`sudo -n lsof -n -P -Fpn -p ${pids.join(',')} 2>/dev/null`, [0, 1])
+  const paths: string[] = []
+  const inspectedPids: number[] = []
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('p')) {
+      const pid = Number.parseInt(line.slice(1), 10)
+      if (Number.isFinite(pid)) inspectedPids.push(pid)
+    } else if (line.startsWith('n')) {
+      paths.push(line.slice(1))
+    }
+  }
+  return { paths, inspectedPids }
+}
+
 /** `ps -p` re-check. A pid absent here has exited, which the spec calls GONE. */
 export function defaultCheckAlive(pids: number[]): number[] {
   if (pids.length === 0) return []
@@ -342,7 +381,29 @@ export function isHrcDaemonArgv(record: { pid: number; command: string }): {
  * unique to this process.
  */
 export function isSweepHelperArgv(command: string, selfMarker: string): boolean {
-  return command.includes(PROBE_SENTINEL) || command.includes(selfMarker)
+  const trimmed = command.trim()
+  return (
+    command.includes(PROBE_SENTINEL) ||
+    command.includes(selfMarker) ||
+    // The grandchildren: `sh -c` carries the sentinel, its `ps`/`lsof` child does
+    // not. Match the exact argv this module issues.
+    trimmed === PS_SNAPSHOT_ARGV ||
+    trimmed.startsWith(LSOF_SCAN_ARGV) ||
+    trimmed.startsWith(`sudo -n ${LSOF_SCAN_ARGV}`)
+  )
+}
+
+/** Identity of this sweep's processes: recorded spawn pids plus argv shape. */
+export function isSweepOwnProcess(
+  record: { pid: number; command: string },
+  selfPids: ReadonlySet<number>,
+  selfMarker: string
+): boolean {
+  return (
+    selfPids.has(record.pid) ||
+    spawnedHelperPids.has(record.pid) ||
+    isSweepHelperArgv(record.command, selfMarker)
+  )
 }
 
 /**
@@ -372,13 +433,6 @@ export function findLiveOmissions(
       !self.has(r.pid) &&
       !isSweepHelperArgv(r.command, selfMarker)
   )
-}
-
-function incarnationKey(records: { pid: number; lstart: string }[]): string {
-  return records
-    .map((r) => `${r.pid}@${r.lstart}`)
-    .sort()
-    .join('\n')
 }
 
 export function collectSweep(options: SweepOptions = {}): SweepReport {
@@ -468,12 +522,14 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
   const selfMarker = `hrc-sweep-marker-${process.pid}-`
   const selfPids = new Set<number>([process.pid, process.ppid])
   const checkAlive = deps.checkAlive ?? defaultCheckAlive
+  const probeSpecificPids = deps.probeSpecificPids ?? defaultProbeSpecificPids
 
   let referenced = new Set<string>()
   let inspectedPids = 0
   let privileged = false
   let attempts = 0
   let coherent = false
+  let lastIncoherence = 'unknown'
 
   for (attempts = 1; attempts <= maxAttempts; attempts += 1) {
     const before = listPids()
@@ -551,19 +607,68 @@ export function collectSweep(options: SweepOptions = {}): SweepReport {
 
     inspectedPids = pass1.inspectedPids.length
     privileged = true
+
+    // Coherence check. Unrelated churn is NOT a violation — demanding an
+    // identical incarnation set never settles on a live Mac (measured: Spotlight
+    // alone spawns ~8 mdworker_shared per 45s, and a whole-box lsof takes ~60s).
+    // The check exists to catch a REFERENCE moving by fork inheritance or pid
+    // reuse, so only two shapes break it:
+    //   (a) a pid that APPEARED and was never inspected — it could hold a
+    //       reference nothing observed;
+    // A pid that appeared and inspects clean, or was inspected clean and then
+    // exited, cannot carry a reference (§7 absorbing-state).
+    //
+    // An EXITED-while-uninspected pid is deliberately NOT a violation, ruled
+    // 2026-08-29 after it measured unsatisfiable 4/4 under ordinary churn. The
+    // reason it is redundant rather than merely inconvenient: a reference only
+    // matters if a LIVE process can resolve it when the scan ends. If P exited
+    // uninspected holding one, it reached some Q by fork or SCM_RIGHTS, and
+    // every Q is already covered — inspected (a hit refuses `not-quiescent`),
+    // appeared-uninspected (the follow-up below), present-uninspected-and-alive
+    // (the `probe-incomplete` check above), or itself exited, which ends the
+    // chain with no live holder. There is no fourth case. The single thing the
+    // dropped rule narrowed is Q-inspected-clean-then-handed-the-descriptor,
+    // which is the SCM_RIGHTS timing escape already ratified as accepted
+    // residual (C-17003, §1.1/§4.5) — so removing it widens nothing.
+    const inspectedBoth = new Set([...pass1.inspectedPids, ...pass2.inspectedPids])
+    const beforeKeys = new Set(before.map((r) => `${r.pid}@${r.lstart}`))
+    // Keyed on pid@lstart, so a REUSED pid correctly reads as one exit plus one
+    // appearance rather than as an unchanged process.
+    const foreign = (r: { pid: number; command: string }): boolean =>
+      !isSweepOwnProcess(r, selfPids, selfMarker)
+    const appeared = after.filter((r) => !beforeKeys.has(`${r.pid}@${r.lstart}`) && foreign(r))
+
+    const appearedUninspected = appeared.filter((r) => !inspectedBoth.has(r.pid))
+
+    // A pid that appeared after the scan began was never available for the main
+    // enumeration to see. Ask about it directly rather than discarding the whole
+    // bracket: a targeted probe is sound HERE because the question is "does this
+    // specific process hold a reference", not "enumerate every holder".
+    let unresolved: { pid: number; command: string }[] = []
+    if (appearedUninspected.length > 0) {
+      const followUp = probeSpecificPids(appearedUninspected.map((r) => r.pid))
+      for (const path of followUp.paths) {
+        for (const id of matchIds(path, known)) hits.add(id)
+      }
+      const nowCovered = new Set(followUp.inspectedPids)
+      const stillHere = new Set(checkAlive(appearedUninspected.map((r) => r.pid)))
+      // Uninspectable AND still alive is unresolved; already gone is inert.
+      unresolved = appearedUninspected.filter((r) => !nowCovered.has(r.pid) && stillHere.has(r.pid))
+    }
+
     referenced = hits
 
-    // Churn check: no process may appear, exit, or reuse a pid across the bracket.
-    if (incarnationKey(before) === incarnationKey(after)) {
+    if (unresolved.length === 0) {
       coherent = true
       break
     }
+    lastIncoherence = `pid ${unresolved[0]?.pid} appeared during the scan and could not be inspected: ${unresolved[0]?.command}`
   }
 
   if (!coherent) {
     throw new ReleaseGcAbort(
       'scan-incoherent',
-      `process churn defeated the bracketed scan after ${maxAttempts} attempts; nothing was deleted`
+      `the bracketed scan could not be made coherent in ${maxAttempts} attempts; nothing was deleted. Last: ${lastIncoherence}`
     )
   }
 

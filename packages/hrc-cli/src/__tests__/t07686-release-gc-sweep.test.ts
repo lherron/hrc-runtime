@@ -175,48 +175,152 @@ describe('T-07686 probe completeness', () => {
   })
 })
 
-describe('T-07686 bracketed scan', () => {
-  test('process churn between passes refuses scan-incoherent', () => {
+describe('T-07686 bracketed scan tolerates unrelated churn', () => {
+  // Attempt 2 of the max3 window aborted `scan-incoherent` 10/10 because the
+  // bracket demanded an identical incarnation set. A live Mac never provides
+  // one: Spotlight alone spawns ~8 mdworker_shared per 45s against a ~60s scan.
+  // Only a reference MOVING breaks coherence, not churn as such.
+  const CUPSD = { pid: 100, command: '/usr/sbin/cupsd', lstart: LSTART }
+  const MDWORKER = { pid: 900, command: '/System/.../mdworker_shared', lstart: LSTART }
+
+  test('a process that APPEARED and inspects clean does not refuse', () => {
+    let call = 0
+    const report = collectSweep({
+      apply: false,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => {
+          call += 1
+          return call >= 3 ? [CUPSD, MDWORKER] : [CUPSD]
+        },
+        // the newcomer IS covered by the scan
+        probeOpenPaths: () => ({ paths: [], inspectedPids: [100, 900], privileged: true }),
+      }),
+    })
+    expect(report.summary.wouldSweep).toBe(2)
+  })
+
+  test('a process INSPECTED clean and then exited does not refuse', () => {
+    let call = 0
+    const report = collectSweep({
+      apply: false,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => {
+          call += 1
+          return call >= 3 ? [CUPSD] : [CUPSD, MDWORKER]
+        },
+        probeOpenPaths: () => ({ paths: [], inspectedPids: [100, 900], privileged: true }),
+      }),
+    })
+    expect(report.summary.wouldSweep).toBe(2)
+  })
+
+  test('a pid that APPEARED and cannot be inspected, and is still alive, refuses', () => {
     let call = 0
     expectRefusal(
       () =>
-        sweep({
-          listPids: () => {
-            call += 1
-            // a new pid appears by the closing snapshot of every attempt
-            return call % 3 === 0
-              ? [
-                  { pid: 100, command: '/usr/sbin/cupsd', lstart: LSTART },
-                  { pid: 999, command: 'git fetch', lstart: LSTART },
-                ]
-              : [{ pid: 100, command: '/usr/sbin/cupsd', lstart: LSTART }]
-          },
+        collectSweep({
+          apply: false,
+          releaseRoot: ROOT,
+          deps: deps({
+            // listPids is called 3x per attempt (before, mid, after); keying on
+            // the cycle makes the churn recur on EVERY attempt, so the bounded
+            // retry is exhausted rather than succeeding on the second pass.
+            listPids: () => {
+              call += 1
+              return call % 3 === 1 ? [CUPSD] : [CUPSD, MDWORKER]
+            },
+            probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+            probeSpecificPids: () => ({ paths: [], inspectedPids: [] }),
+            checkAlive: (pids) => pids,
+          }),
         }),
       'scan-incoherent'
     )
   })
 
-  test('a REUSED pid is churn, not the same process — lstart is the incarnation key', () => {
+  test('an appeared pid resolved by the targeted follow-up proceeds', () => {
+    let call = 0
+    const report = collectSweep({
+      apply: false,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => {
+          call += 1
+          return call >= 3 ? [CUPSD, MDWORKER] : [CUPSD]
+        },
+        probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+        // the follow-up reaches it and it is clean
+        probeSpecificPids: () => ({ paths: [], inspectedPids: [900] }),
+      }),
+    })
+    expect(report.summary.wouldSweep).toBe(2)
+  })
+
+  test('an appeared pid that has already gone by the follow-up is inert, not a refusal', () => {
+    let call = 0
+    const report = collectSweep({
+      apply: false,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => {
+          call += 1
+          return call >= 3 ? [CUPSD, MDWORKER] : [CUPSD]
+        },
+        probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+        probeSpecificPids: () => ({ paths: [], inspectedPids: [] }),
+        checkAlive: () => [],
+      }),
+    })
+    expect(report.summary.wouldSweep).toBe(2)
+  })
+
+  test('the targeted follow-up HITTING a quarantined id refuses not-quiescent', () => {
     let call = 0
     expectRefusal(
       () =>
-        sweep({
-          listPids: () => {
-            call += 1
-            return [
-              {
-                pid: 100,
-                command: '/usr/sbin/cupsd',
-                lstart: call % 3 === 0 ? 'Fri Aug 29 02:00:00 2026' : LSTART,
-              },
-            ]
-          },
+        collectSweep({
+          apply: false,
+          releaseRoot: ROOT,
+          deps: deps({
+            listPids: () => {
+              call += 1
+              return call >= 3 ? [CUPSD, MDWORKER] : [CUPSD]
+            },
+            probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+            probeSpecificPids: () => ({
+              paths: [`/x/.gc-quarantine/${A}/lib`],
+              inspectedPids: [900],
+            }),
+          }),
         }),
-      'scan-incoherent'
+      'not-quiescent'
     )
   })
 
-  test('a stable incarnation set across the bracket proceeds', () => {
+  // Ruled 2026-08-29: an exited-while-uninspected pid is NOT a violation. It
+  // measured unsatisfiable 4/4 under ordinary churn, and it is redundant — every
+  // live endpoint of an inherited reference is caught by the hit check, the
+  // appeared follow-up, or probe-incomplete; a chain that ends in an exit has no
+  // live holder to resolve anything.
+  test('a pid that EXITED while uninspected does NOT refuse', () => {
+    let call = 0
+    const report = collectSweep({
+      apply: false,
+      releaseRoot: ROOT,
+      deps: deps({
+        listPids: () => {
+          call += 1
+          return call % 3 === 0 ? [CUPSD] : [CUPSD, MDWORKER]
+        },
+        probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+      }),
+    })
+    expect(report.summary.wouldSweep).toBe(2)
+  })
+
+  test('a quiet table proceeds', () => {
     expect(sweep().summary.swept).toBe(2)
   })
 })
