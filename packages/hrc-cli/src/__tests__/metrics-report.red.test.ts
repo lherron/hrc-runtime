@@ -138,6 +138,7 @@ describe('metrics report reader', () => {
       commands: [],
       routes: [],
       counters: [],
+      launch: { client: [], clientPhases: [], serverPhases: [] },
       slowest: [],
       largest: { cli: [], server: [] },
       uncorrelatedServerCount: 0,
@@ -148,6 +149,84 @@ describe('metrics report reader', () => {
     expect(report.commands).toHaveLength(1)
     expect(report.routes).toHaveLength(1)
     expect(JSON.stringify(report)).not.toContain('NaN')
+  })
+
+  test('reports end-to-end startup separately from attached session lifetime', async () => {
+    // The trap this closes: an attached `hrc run` has a durMs of hours. Any
+    // startup number read off that record is the operator's session length.
+    await writeMetrics(
+      [
+        cliRecord({ cmd: 'run', durMs: 8_544_797 }),
+        {
+          v: 1,
+          kind: 'launch',
+          ts: NOW.toISOString(),
+          bin: 'hrc',
+          cmd: 'run',
+          startupMs: 2400,
+          phases: [
+            { phase: 'resolveSession', ms: 12 },
+            { phase: 'prepareAttachedRun', ms: 1518 },
+          ],
+          pid: 1,
+        },
+        {
+          v: 1,
+          kind: 'launch',
+          ts: NOW.toISOString(),
+          bin: 'hrc',
+          cmd: 'run',
+          startupMs: 7600,
+          phases: [{ phase: 'prepareAttachedRun', ms: 6500 }],
+          pid: 2,
+        },
+      ],
+      [
+        {
+          v: 1,
+          kind: 'launch_span',
+          ts: NOW.toISOString(),
+          phase: 'precompile-compile-rpc',
+          transport: 'interactive',
+          runtimeId: 'rt-1',
+          ms: 6463,
+        },
+        {
+          v: 1,
+          kind: 'launch_span',
+          ts: NOW.toISOString(),
+          phase: 'precompile-compile-rpc',
+          transport: 'headless',
+          runtimeId: 'rt-2',
+          ms: 40,
+        },
+      ]
+    )
+    const report = await readMetricsReport({ since: '7d', now: NOW })
+
+    expect(report.launch.client).toEqual([
+      { command: 'hrc run', count: 2, startupMs: { p50: 2400, p95: 7600, max: 7600 } },
+    ])
+    // The lifetime record is still grouped under commands, untouched.
+    expect(report.commands.find((row) => row.command === 'hrc run')?.durMs.max).toBe(8_544_797)
+
+    expect(report.launch.clientPhases).toEqual([
+      { phase: 'prepareAttachedRun', count: 2, ms: { p50: 1518, p95: 6500, max: 6500 } },
+      { phase: 'resolveSession', count: 1, ms: { p50: 12, p95: 12, max: 12 } },
+    ])
+    // Transport partitions the population: one name, two very different costs.
+    expect(report.launch.serverPhases).toEqual([
+      {
+        phase: 'precompile-compile-rpc (interactive)',
+        count: 1,
+        ms: { p50: 6463, p95: 6463, max: 6463 },
+      },
+      {
+        phase: 'precompile-compile-rpc (headless)',
+        count: 1,
+        ms: { p50: 40, p95: 40, max: 40 },
+      },
+    ])
   })
 
   test('aggregates ledger.blob_miss counters', async () => {

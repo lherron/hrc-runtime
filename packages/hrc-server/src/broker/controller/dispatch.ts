@@ -22,6 +22,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
+import { recordLaunchSpan } from '../../request-metrics'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { preflightDriverSupportsResponseFormat } from '../../turn-response-format'
 import {
@@ -304,13 +305,19 @@ export async function startController(
   // logger so we can localize the cost of a real (non-dry-run) launch.
   const timingStartMs = performance.now()
   let phaseStartMs = timingStartMs
-  const markPhase = (phase: string): void => {
-    const nowMs = performance.now()
+  const emitPhase = (phase: string, durMs: number): void => {
     ctx.logger.info?.('broker.timing', {
       phase,
-      durMs: Number((nowMs - phaseStartMs).toFixed(1)),
+      durMs,
       runtimeId: String(input.identity.runtimeId),
     })
+    // The log line rotates; this is the durable population that
+    // `hrc admin metrics report` aggregates.
+    recordLaunchSpan({ phase, runtimeId: String(input.identity.runtimeId), ms: durMs })
+  }
+  const markPhase = (phase: string): void => {
+    const nowMs = performance.now()
+    emitPhase(phase, Number((nowMs - phaseStartMs).toFixed(1)))
     phaseStartMs = nowMs
   }
 
@@ -578,11 +585,7 @@ export async function startController(
     // Encompasses the driver's start() (e.g. codex's load-bearing paste-readiness
     // sleep + launch-command paste), so this is usually the largest broker phase.
     markPhase('broker-invocation-start')
-    ctx.logger.info?.('broker.timing', {
-      phase: 'broker-start-total',
-      durMs: Number((performance.now() - timingStartMs).toFixed(1)),
-      runtimeId: String(input.identity.runtimeId),
-    })
+    emitPhase('broker-start-total', Number((performance.now() - timingStartMs).toFixed(1)))
 
     const invocationAdmission = admitStartedInvocation(
       input.profile,

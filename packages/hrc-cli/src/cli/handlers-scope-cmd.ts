@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 
-import type { DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
+import { recordCliLaunch } from 'hrc-core'
+import type { CliLaunchPhase, DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
@@ -265,17 +266,21 @@ export async function cmdRun(
 
     const client = createClient()
 
-    // Launch-timing instrumentation (diagnostic). `--dry-run` returns above before
-    // any of this server round-trip work; these per-RPC durations localize where a
-    // real launch spends its wall time. Gated behind HRC_LAUNCH_TIMING (or --debug)
-    // so normal interactive runs keep a clean terminal. Emitted to stderr.
+    // Launch-timing instrumentation. `--dry-run` returns above before any of this
+    // server round-trip work; these per-RPC durations localize where a real launch
+    // spends its wall time. Two sinks, deliberately: the stderr line stays gated
+    // behind HRC_LAUNCH_TIMING (or --debug) so a normal interactive run keeps a
+    // clean terminal, while the phases are ALWAYS accumulated and written as one
+    // durable `launch` record at the attach handoff below. Startup cost is only
+    // answerable from a population, and a diagnostic nobody enables collects none.
     const launchTiming = debug || process.env['HRC_LAUNCH_TIMING'] === '1'
     const launchT0 = performance.now()
+    const launchPhases: CliLaunchPhase[] = []
     const markLaunch = (phase: string, sinceMs: number): void => {
+      const ms = Number((performance.now() - sinceMs).toFixed(1))
+      launchPhases.push({ phase, ms })
       if (!launchTiming) return
-      process.stderr.write(
-        `[hrc-launch-timing] ${phase} dur=${(performance.now() - sinceMs).toFixed(1)}ms\n`
-      )
+      process.stderr.write(`[hrc-launch-timing] ${phase} dur=${ms.toFixed(1)}ms\n`)
     }
 
     const tResolve = performance.now()
@@ -314,6 +319,14 @@ export async function cmdRun(
       markLaunch('resumeAttachedRun', tResume)
     }
     markLaunch('total(pre-attach)', launchT0)
+    // The attach handoff is the end of startup: past this point the operator is
+    // in the TUI and the remaining wall time is session length, not launch cost.
+    recordCliLaunch({
+      bin: 'hrc',
+      cmd: opts.invokedAs === 'resume' ? 'resume' : 'run',
+      startupMs: Number((performance.now() - launchT0).toFixed(1)),
+      phases: launchPhases,
+    })
     await waitForAttachProcess(attached, client, resolved.hostSessionId)
     // The tmux client has restored the operator's terminal (primary screen) by
     // now, so anything we print lands cleanly in their shell scrollback. Render

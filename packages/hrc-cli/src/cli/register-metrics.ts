@@ -29,6 +29,12 @@ function printNdjson(report: MetricsReport): void {
     process.stdout.write(`${JSON.stringify({ kind: 'route', ...row })}\n`)
   for (const row of report.counters)
     process.stdout.write(`${JSON.stringify({ kind: 'counter', ...row })}\n`)
+  for (const row of report.launch.client)
+    process.stdout.write(`${JSON.stringify({ kind: 'launch', ...row })}\n`)
+  for (const row of report.launch.clientPhases)
+    process.stdout.write(`${JSON.stringify({ kind: 'launch-client-phase', ...row })}\n`)
+  for (const row of report.launch.serverPhases)
+    process.stdout.write(`${JSON.stringify({ kind: 'launch-server-phase', ...row })}\n`)
   for (const row of report.slowest)
     process.stdout.write(`${JSON.stringify({ kind: 'slowest', ...row })}\n`)
   for (const row of report.largest.cli) {
@@ -65,6 +71,24 @@ function printHuman(report: MetricsReport): void {
   process.stdout.write('\nCounters\n')
   for (const row of report.counters) {
     process.stdout.write(`${row.name} count=${row.count}\n`)
+  }
+  process.stdout.write('\nStartup (end-to-end, command entry -> attach handoff)\n')
+  for (const row of report.launch.client) {
+    process.stdout.write(
+      `${row.command} count=${row.count} startupMs[p50=${row.startupMs.p50} p95=${row.startupMs.p95} max=${row.startupMs.max}]\n`
+    )
+  }
+  process.stdout.write('\nStartup phases (client)\n')
+  for (const row of report.launch.clientPhases) {
+    process.stdout.write(
+      `${row.phase} count=${row.count} ms[p50=${row.ms.p50} p95=${row.ms.p95} max=${row.ms.max}]\n`
+    )
+  }
+  process.stdout.write('\nStartup phases (server)\n')
+  for (const row of report.launch.serverPhases) {
+    process.stdout.write(
+      `${row.phase} count=${row.count} ms[p50=${row.ms.p50} p95=${row.ms.p95} max=${row.ms.max}]\n`
+    )
   }
   process.stdout.write('\nSlowest invocations\n')
   for (const row of report.slowest) {

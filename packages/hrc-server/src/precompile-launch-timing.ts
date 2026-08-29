@@ -1,3 +1,4 @@
+import { recordLaunchSpan } from './request-metrics.js'
 import { writeServerLog } from './server-log.js'
 
 export type PrecompileLaunchTransport = 'headless' | 'interactive' | 'preview'
@@ -43,6 +44,8 @@ export async function observePrecompileLaunchSpan<T>(
   if (timing.boundMs !== undefined) {
     boundTimer = setTimeout(() => {
       boundWarningEmitted = true
+      // The bound tripped while the operation is still running: warn now with
+      // the elapsed-so-far, and let the finally block record the real total.
       emitTiming(timing.logger, 'warn', {
         phase,
         transport: timing.transport,
@@ -67,12 +70,9 @@ export async function observePrecompileLaunchSpan<T>(
         durMs,
       })
     }
-    emitTiming(timing.logger, 'info', {
-      phase,
-      transport: timing.transport,
-      runtimeId: timing.runtimeId,
-      durMs,
-    })
+    // Always emitted, over-bound or not: this is the one line per span that the
+    // log population is counted from, and the one metric record per span.
+    emitSpan(timing, phase, durMs)
   }
 }
 
@@ -86,4 +86,23 @@ function emitTiming(
   } catch {
     // Timing diagnostics must never alter a launch outcome.
   }
+}
+
+/**
+ * Emit one span to BOTH sinks: the log line (human breadcrumb, rotates) and the
+ * metrics store (durable population behind `hrc admin metrics report`).
+ */
+function emitSpan(timing: PrecompileLaunchTimingContext, phase: string, durMs: number): void {
+  emitTiming(timing.logger, 'info', {
+    phase,
+    transport: timing.transport,
+    runtimeId: timing.runtimeId,
+    durMs,
+  })
+  recordLaunchSpan({
+    phase,
+    runtimeId: timing.runtimeId,
+    ms: durMs,
+    transport: timing.transport,
+  })
 }

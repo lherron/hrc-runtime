@@ -503,6 +503,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "CliLaunchMetricRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|CliLaunchMetricRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CliLaunchPhase",
+      "kind": "type",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|CliLaunchPhase|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "CliMetricsRecorder",
       "kind": "type",
       "file": "packages/hrc-core/src/cli-metrics.ts",
@@ -3379,6 +3395,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ReconcileActiveRunsSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "recordCliLaunch",
+      "kind": "value",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|recordCliLaunch|value",
       "count": 1
     },
     {

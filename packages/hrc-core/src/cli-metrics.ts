@@ -49,7 +49,17 @@ type CliMetricRecord = {
   cmd: string
   flags: string[]
   exitCode: number
+  /**
+   * Whole-process lifetime. For an ATTACHED interactive command (`hrc run`)
+   * this is how long the operator left the TUI open - hours - and says nothing
+   * about how long startup took. Read `startupMs` for that.
+   */
   durMs: number
+  /**
+   * Wall time from command entry to the point the command handed off to its
+   * attached surface. Present only for commands that reach an attach handoff.
+   */
+  startupMs?: number
   stdoutBytes: number
   tty: boolean
   agent?: string
@@ -58,11 +68,32 @@ type CliMetricRecord = {
   rpc: HrcCliRpcMetric[]
 }
 
+export type CliLaunchPhase = { phase: string; ms: number }
+
+/**
+ * End-to-end startup of an attaching command, written at the attach handoff
+ * rather than at process exit: for an interactive run, exit is hours later and
+ * a crash in between would lose the record entirely.
+ */
+export type CliLaunchMetricRecord = {
+  v: 1
+  kind: 'launch'
+  ts: string
+  bin: 'hrc' | 'hrcchat'
+  cmd: string
+  startupMs: number
+  phases: CliLaunchPhase[]
+  agent?: string
+  project?: string
+  pid: number
+}
+
 export type CliMetricsRecorder = {
   setCommandTree(command: CliCommand): void
 }
 
 let rpcMetricsHook: HrcCliRpcMetricsHook | undefined
+let observedStartupMs: number | undefined
 
 export function getHrcCliRpcMetricsHook(): HrcCliRpcMetricsHook | undefined {
   return rpcMetricsHook
@@ -164,7 +195,7 @@ function pruneOldMetricsFiles(metricsDir: string, now: number): void {
   }
 }
 
-function writeMetric(record: CliMetricRecord, now: Date): void {
+function writeMetric(record: CliMetricRecord | CliLaunchMetricRecord, now: Date): void {
   try {
     const metricsDir = join(resolveStateRoot(), 'metrics')
     mkdirSync(metricsDir, { recursive: true })
@@ -174,7 +205,8 @@ function writeMetric(record: CliMetricRecord, now: Date): void {
       // Retention is best-effort and must never affect the invoking command.
     }
     const file = join(metricsDir, `cli-${now.toISOString().slice(0, 10)}.ndjson`)
-    appendFileSync(file, `${serializeBounded(record)}\n`, { encoding: 'utf8', flag: 'a' })
+    const line = record.kind === 'cli' ? serializeBounded(record) : JSON.stringify(record)
+    appendFileSync(file, `${line}\n`, { encoding: 'utf8', flag: 'a' })
   } catch {
     // Metrics are observational; storage failures must never affect CLI behavior.
   }
@@ -247,6 +279,7 @@ export function installCliMetricsRecorder(options: {
       flags: flagNames(argv),
       exitCode,
       durMs: elapsedMs(startedHrtime),
+      ...(observedStartupMs === undefined ? {} : { startupMs: observedStartupMs }),
       stdoutBytes,
       tty: process.stdout.isTTY === true,
       ...(agent ? { agent } : {}),
@@ -261,5 +294,44 @@ export function installCliMetricsRecorder(options: {
     setCommandTree(command) {
       commandTree = command
     },
+  }
+}
+
+/**
+ * Record end-to-end startup for a command that attaches to a surface. Writes a
+ * durable `launch` record immediately, and stamps `startupMs` onto this
+ * process's exit-time `cli` record so that record is self-describing next to
+ * its lifetime `durMs`.
+ *
+ * Never throws: instrumentation must not change a launch outcome.
+ */
+export function recordCliLaunch(launch: {
+  bin: 'hrc' | 'hrcchat'
+  cmd: string
+  startupMs: number
+  phases: readonly CliLaunchPhase[]
+}): void {
+  observedStartupMs = launch.startupMs
+  if (process.env['HRC_METRICS'] === '0') return
+  try {
+    const agent = process.env['ASP_AGENT_ID']?.trim()
+    const project = process.env['ASP_PROJECT']?.trim()
+    writeMetric(
+      {
+        v: 1,
+        kind: 'launch',
+        ts: new Date().toISOString(),
+        bin: launch.bin,
+        cmd: launch.cmd,
+        startupMs: launch.startupMs,
+        phases: [...launch.phases],
+        ...(agent ? { agent } : {}),
+        ...(project ? { project } : {}),
+        pid: process.pid,
+      },
+      new Date()
+    )
+  } catch {
+    // Metrics are observational; storage failures must never affect the launch.
   }
 }

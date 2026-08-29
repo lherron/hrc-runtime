@@ -30,6 +30,26 @@ type CliMetricRecord = {
   rpc: CliRpcMetric[]
 }
 
+type LaunchRecord = {
+  v: 1
+  kind: 'launch'
+  ts: string
+  bin: 'hrc' | 'hrcchat'
+  cmd: string
+  startupMs: number
+  phases: { phase: string; ms: number }[]
+}
+
+type LaunchSpanRecord = {
+  v: 1
+  kind: 'launch_span'
+  ts: string
+  phase: string
+  transport?: 'headless' | 'interactive' | 'preview'
+  runtimeId: string
+  ms: number
+}
+
 type NumberStats = { p50: number; p95: number; max: number }
 type ByteStats = { total: number; max: number }
 
@@ -48,6 +68,29 @@ export type RouteMetricGroup = {
 }
 
 export type CounterMetricGroup = { name: string; count: number }
+
+export type LaunchStartupGroup = {
+  command: string
+  count: number
+  startupMs: NumberStats
+}
+
+export type LaunchPhaseGroup = {
+  phase: string
+  count: number
+  ms: NumberStats
+}
+
+/**
+ * Startup cost, split by which side of the wire measured it. `client` is the
+ * end-to-end number an operator actually waits through; `clientPhases` and
+ * `serverPhases` localize where it went.
+ */
+export type LaunchMetricSection = {
+  client: LaunchStartupGroup[]
+  clientPhases: LaunchPhaseGroup[]
+  serverPhases: LaunchPhaseGroup[]
+}
 
 export type SlowInvocation = {
   command: string
@@ -81,6 +124,7 @@ export type MetricsReport = {
   commands: CommandMetricGroup[]
   routes: RouteMetricGroup[]
   counters: CounterMetricGroup[]
+  launch: LaunchMetricSection
   slowest: SlowInvocation[]
   largest: { cli: LargestCliMetric[]; server: LargestServerMetric[] }
   uncorrelatedServerCount: number
@@ -146,6 +190,60 @@ function parseCliMetric(value: unknown): CliMetricRecord | undefined {
     durMs: value['durMs'],
     stdoutBytes: value['stdoutBytes'],
     rpc: rpc as CliRpcMetric[],
+  }
+}
+
+function parseLaunchMetric(value: unknown): LaunchRecord | undefined {
+  if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'launch') return undefined
+  if (
+    typeof value['ts'] !== 'string' ||
+    (value['bin'] !== 'hrc' && value['bin'] !== 'hrcchat') ||
+    typeof value['cmd'] !== 'string' ||
+    !isFiniteNonNegative(value['startupMs']) ||
+    !Array.isArray(value['phases'])
+  ) {
+    return undefined
+  }
+  const phases: { phase: string; ms: number }[] = []
+  for (const entry of value['phases']) {
+    if (!isRecord(entry) || typeof entry['phase'] !== 'string' || !isFiniteNonNegative(entry['ms']))
+      return undefined
+    phases.push({ phase: entry['phase'], ms: entry['ms'] })
+  }
+  return {
+    v: 1,
+    kind: 'launch',
+    ts: value['ts'],
+    bin: value['bin'],
+    cmd: value['cmd'],
+    startupMs: value['startupMs'],
+    phases,
+  }
+}
+
+function parseLaunchSpanMetric(value: unknown): LaunchSpanRecord | undefined {
+  if (!isRecord(value) || value['v'] !== 1 || value['kind'] !== 'launch_span') return undefined
+  const transport = value['transport']
+  if (
+    typeof value['ts'] !== 'string' ||
+    typeof value['phase'] !== 'string' ||
+    typeof value['runtimeId'] !== 'string' ||
+    !isFiniteNonNegative(value['ms']) ||
+    (transport !== undefined &&
+      transport !== 'headless' &&
+      transport !== 'interactive' &&
+      transport !== 'preview')
+  ) {
+    return undefined
+  }
+  return {
+    v: 1,
+    kind: 'launch_span',
+    ts: value['ts'],
+    phase: value['phase'],
+    ...(transport === undefined ? {} : { transport }),
+    runtimeId: value['runtimeId'],
+    ms: value['ms'],
   }
 }
 
@@ -221,13 +319,15 @@ function fileCouldContainWindow(name: string, cutoff: number): boolean {
   return match[1] >= new Date(cutoff).toISOString().slice(0, 10)
 }
 
-async function readMetricFile(
-  path: string,
-  cutoff: number,
-  cli: CliMetricRecord[],
-  server: ServerRequestMetricRecord[],
+type MetricSink = {
+  cli: CliMetricRecord[]
+  server: ServerRequestMetricRecord[]
   counters: ServerCounterMetricRecord[]
-): Promise<void> {
+  launches: LaunchRecord[]
+  launchSpans: LaunchSpanRecord[]
+}
+
+async function readMetricFile(path: string, cutoff: number, sink: MetricSink): Promise<void> {
   const lines = createInterface({
     input: createReadStream(path),
     crlfDelay: Number.POSITIVE_INFINITY,
@@ -242,13 +342,19 @@ async function readMetricFile(
         continue
       }
       const record =
-        parseCliMetric(parsed) ?? parseServerMetric(parsed) ?? parseCounterMetric(parsed)
+        parseCliMetric(parsed) ??
+        parseServerMetric(parsed) ??
+        parseCounterMetric(parsed) ??
+        parseLaunchMetric(parsed) ??
+        parseLaunchSpanMetric(parsed)
       if (!record) continue
       const timestamp = Date.parse(record.ts)
       if (!Number.isFinite(timestamp) || timestamp < cutoff) continue
-      if (record.kind === 'cli') cli.push(record)
-      else if (record.kind === 'server') server.push(record)
-      else counters.push(record)
+      if (record.kind === 'cli') sink.cli.push(record)
+      else if (record.kind === 'server') sink.server.push(record)
+      else if (record.kind === 'counter') sink.counters.push(record)
+      else if (record.kind === 'launch') sink.launches.push(record)
+      else sink.launchSpans.push(record)
     }
   } catch {
     // Metrics files are observational and may rotate or disappear while reading.
@@ -297,6 +403,42 @@ function groupRoutes(records: ServerRequestMetricRecord[]): RouteMetricGroup[] {
     .sort((a, b) => a.route.localeCompare(b.route))
 }
 
+function groupLaunchPhases(samples: Map<string, number[]>): LaunchPhaseGroup[] {
+  return [...samples.entries()]
+    .map(([phase, values]) => ({ phase, count: values.length, ms: percentileStats(values) }))
+    .sort((a, b) => b.ms.p50 - a.ms.p50 || a.phase.localeCompare(b.phase))
+}
+
+function groupLaunches(launches: LaunchRecord[], spans: LaunchSpanRecord[]): LaunchMetricSection {
+  const byCommand = new Map<string, number[]>()
+  const clientPhases = new Map<string, number[]>()
+  for (const record of launches) {
+    const key = `${record.bin} ${record.cmd}`
+    byCommand.set(key, [...(byCommand.get(key) ?? []), record.startupMs])
+    for (const phase of record.phases) {
+      clientPhases.set(phase.phase, [...(clientPhases.get(phase.phase) ?? []), phase.ms])
+    }
+  }
+  const serverPhases = new Map<string, number[]>()
+  for (const span of spans) {
+    // Transport is part of the identity: a headless precompile and an
+    // interactive one are different populations that happen to share a name.
+    const key = span.transport ? `${span.phase} (${span.transport})` : span.phase
+    serverPhases.set(key, [...(serverPhases.get(key) ?? []), span.ms])
+  }
+  return {
+    client: [...byCommand.entries()]
+      .map(([command, values]) => ({
+        command,
+        count: values.length,
+        startupMs: percentileStats(values),
+      }))
+      .sort((a, b) => a.command.localeCompare(b.command)),
+    clientPhases: groupLaunchPhases(clientPhases),
+    serverPhases: groupLaunchPhases(serverPhases),
+  }
+}
+
 export async function readMetricsReport(
   options: ReadMetricsReportOptions = {}
 ): Promise<MetricsReport> {
@@ -305,14 +447,13 @@ export async function readMetricsReport(
   const metricsDir = join(resolveStateRoot(), 'metrics')
   const metricsDirExists = existsSync(metricsDir)
   const names = await readdir(metricsDir).catch(() => [])
-  const cli: CliMetricRecord[] = []
-  const server: ServerRequestMetricRecord[] = []
-  const counterRecords: ServerCounterMetricRecord[] = []
+  const sink: MetricSink = { cli: [], server: [], counters: [], launches: [], launchSpans: [] }
 
   const selectedNames = names.filter((entry) => fileCouldContainWindow(entry, cutoff)).sort()
   for (const name of selectedNames) {
-    await readMetricFile(join(metricsDir, name), cutoff, cli, server, counterRecords)
+    await readMetricFile(join(metricsDir, name), cutoff, sink)
   }
+  const { cli, server, counters: counterRecords } = sink
 
   const cliRpcIds = new Set(cli.flatMap((record) => record.rpc.map((rpc) => rpc.id)))
   const serverByReqId = new Map<string, number>()
@@ -385,6 +526,7 @@ export async function readMetricsReport(
     ]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name)),
+    launch: groupLaunches(sink.launches, sink.launchSpans),
     slowest,
     largest: { cli: largestCli, server: largestServer },
     uncorrelatedServerCount: server.filter(

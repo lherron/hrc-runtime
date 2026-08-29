@@ -74,8 +74,11 @@ export {
 export {
   getHrcCliRpcMetricsHook,
   installCliMetricsRecorder,
+  recordCliLaunch,
 } from './cli-metrics.js'
 export type {
+  CliLaunchMetricRecord,
+  CliLaunchPhase,
   CliMetricsRecorder,
   HrcCliRpcMetric,
   HrcCliRpcMetricsHook,

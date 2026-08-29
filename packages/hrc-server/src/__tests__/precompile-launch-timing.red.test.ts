@@ -1,4 +1,8 @@
-import { describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { AspcCompileHarnessInvocationResponse } from 'spaces-aspc-protocol'
 import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
@@ -8,6 +12,27 @@ import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapte
 import { startAspcFacadeBrokerClient } from '../option-resolvers'
 
 import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
+
+// Launch spans are persisted to <state root>/metrics as of T-07706. Without an
+// isolated state root these fixture runs write `runtime-spawn`-shaped records
+// into the operator's REAL metrics store and skew every startup percentile.
+let stateRoot: string
+let originalStateDir: string | undefined
+
+beforeAll(() => {
+  originalStateDir = process.env['HRC_STATE_DIR']
+  stateRoot = mkdtempSync(join(tmpdir(), 'hrc-precompile-timing-'))
+  process.env['HRC_STATE_DIR'] = stateRoot
+})
+
+afterAll(() => {
+  // Deliberately NOT `process.env[...] = originalStateDir` when it was unset:
+  // assigning undefined stores the literal string 'undefined', which resolves to
+  // a bogus relative state root rather than restoring the default (see T-07707).
+  if (originalStateDir === undefined) Reflect.deleteProperty(process.env, 'HRC_STATE_DIR')
+  else process.env['HRC_STATE_DIR'] = originalStateDir
+  rmSync(stateRoot, { recursive: true, force: true })
+})
 
 type TimingFields = Record<string, unknown>
 type TimingEntry = { message: string; fields: TimingFields }

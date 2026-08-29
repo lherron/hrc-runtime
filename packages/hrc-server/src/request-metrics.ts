@@ -30,6 +30,23 @@ export type SqliteSlowStatementMetricRecord = {
   callerTag: string
 }
 
+/**
+ * One launch phase span, durably recorded so `hrc admin metrics report` can
+ * aggregate startup cost. These spans are ALSO written to hrc-server.err.log as
+ * `broker.timing` lines; the log is the human breadcrumb, this is the
+ * population. The log rotates, so a grep over it is a lossy sample - anything
+ * that needs a p50/p95 must read these records instead.
+ */
+export type LaunchSpanMetricRecord = {
+  v: 1
+  kind: 'launch_span'
+  ts: string
+  phase: string
+  transport?: 'headless' | 'interactive' | 'preview'
+  runtimeId: string
+  ms: number
+}
+
 export type ServerCounterMetricRecord = {
   v: 1
   kind: 'counter'
@@ -42,6 +59,7 @@ export type ServerMetricRecord =
   | ServerRequestMetricRecord
   | SqliteSlowStatementMetricRecord
   | ServerCounterMetricRecord
+  | LaunchSpanMetricRecord
 
 export type ResponseByteMeasurement = { bytes: number } | { stream: true }
 
@@ -118,4 +136,31 @@ export function writeServerMetric(
   } catch {
     // Metrics are observational; storage failures must never affect responses.
   }
+}
+
+/**
+ * Record a launch phase span. Never throws: a launch must not fail because its
+ * own instrumentation could not be persisted.
+ */
+export function recordLaunchSpan(span: {
+  phase: string
+  runtimeId: string
+  ms: number
+  transport?: 'headless' | 'interactive' | 'preview' | undefined
+}): void {
+  const now = new Date()
+  writeServerMetric(
+    {
+      v: 1,
+      kind: 'launch_span',
+      ts: now.toISOString(),
+      phase: span.phase,
+      ...(span.transport ? { transport: span.transport } : {}),
+      runtimeId: span.runtimeId,
+      // Sub-microsecond precision is noise in a launch budget and makes the
+      // rendered report unreadable; one decimal millisecond is the useful unit.
+      ms: Number(span.ms.toFixed(1)),
+    },
+    now
+  )
 }
