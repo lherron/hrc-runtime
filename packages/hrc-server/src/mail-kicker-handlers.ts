@@ -469,6 +469,7 @@ async function readActionableEnvelopes(
       .map((reminder) => [reminder.envelopeId, reminder] as const)
   )
   const actionable: ActionableEnvelope[] = []
+  const claimedReminders = new Set<string>()
   for (const envelope of view.items) {
     if (envelope.state === 'pending') {
       // D1 vs D6: `presented_to` non-empty means the body has already been
@@ -484,7 +485,22 @@ async function readActionableEnvelopes(
     // The reminder is bound to ONE runtime. If the newest receipt has moved on,
     // this reminder is stale evidence about a delivery that no longer stands.
     if (newestPresentationReceipt(envelope)?.runtimeId !== reminder.runtimeId) continue
+    claimedReminders.add(reminder.envelopeId)
     actionable.push({ envelope, form: 'reminder', reminder })
+  }
+  // Every due reminder this read did NOT claim is one whose obligation has
+  // stopped standing on that runtime — replied, deferred, lapsed by D3, or
+  // superseded. Retire it here, where the wake set that decided so is in hand.
+  // Left armed it stays due forever and puts this scope in every later sweep's
+  // candidate set for nothing.
+  for (const reminder of due.values()) {
+    if (claimedReminders.has(reminder.envelopeId)) continue
+    if (!server.db.mailDrives.retireReminder(reminder.envelopeId, reminder.runtimeId)) continue
+    writeServerLog('INFO', 'wrkq.kicker.reminder_retired', {
+      targetSessionRef,
+      envelope: reminder.envelopeId,
+      runtimeId: reminder.runtimeId,
+    })
   }
   return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
 }

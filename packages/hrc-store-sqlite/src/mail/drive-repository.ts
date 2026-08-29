@@ -817,6 +817,36 @@ export class HrcMailDriveRepository {
   }
 
   /**
+   * Retire a reminder whose obligation is no longer standing on that runtime.
+   *
+   * An armed reminder is only ever DELIVERED if the envelope is still
+   * `presented` on the runtime it was armed for. Everything else that can
+   * happen to it in the intervening minute — a reply, a defer, a D3 lapse, a
+   * delivery that has since been superseded — leaves the row armed and due
+   * forever, and `listDueReminderTargets` would then hand the sweep that scope
+   * on every tick for the life of the store. Nothing would be DELIVERED (the
+   * wake set is still the authority on that), so this is a load and hygiene
+   * defect rather than a correctness one — which is exactly the shape that
+   * survives review and shows up months later as an unexplained sweep cost.
+   *
+   * `drive_attempt_id` is deliberately left NULL. `remindersForAttempt` keys on
+   * it, so a retired row can never be mistaken for a reminder that was actually
+   * shown to someone, and D5 can never strike an obligation out over it.
+   */
+  retireReminder(envelopeId: string, runtimeId: string): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE hrcmail_envelope_reminders
+              SET delivered_at = ?
+            WHERE envelope_id = ? AND runtime_id = ?
+              AND delivered_at IS NULL AND drive_attempt_id IS NULL`
+        )
+        .run(new Date().toISOString(), envelopeId, runtimeId).changes > 0
+    )
+  }
+
+  /**
    * The reminders one drive attempt carried.
    *
    * D5's whole predicate: if the attempt that just proved a start-and-end is a

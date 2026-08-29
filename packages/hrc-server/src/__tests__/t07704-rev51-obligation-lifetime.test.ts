@@ -282,6 +282,85 @@ describe('rev 5.1 scenario 4 — defer across rotation', () => {
 })
 
 /**
+ * Reminder hygiene — an armed reminder whose obligation stopped standing.
+ *
+ * Observed live during the T-07704 gate, not predicted: EN-01303 lapsed by D3
+ * and EN-01308 was deferred, both inside their 60s hold, and both left a row
+ * armed and DUE forever. Nothing was ever delivered off them — the wake set is
+ * still the authority — so it reads as harmless, which is precisely why it
+ * would have survived. What it actually buys is `listDueReminderTargets`
+ * handing the sweep those scopes on every tick, for the life of the store.
+ */
+describe('rev 5.1 D4 — a reminder is retired when its obligation stops standing', () => {
+  it('retires the armed reminder of an obligation that lapsed inside its hold', async () => {
+    const mail = say({ body: 'lapses before its reminder is due' })
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const hrc = internals()
+    const db = serverDb()
+
+    hrc.requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => deterministic.calls() === 1, 'delivery')
+    await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
+    const runtimeId = holdingRuntimeId(mail.id)
+
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
+    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+
+    // The runtime dies inside the hold: D3 fails the obligation, and the
+    // reminder now names something that will never stand again.
+    db.runtimes.updateStatus(runtimeId, 'terminated', timestamp())
+    await hrc.runMailKickerSweep()
+    await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'failed', 'D3 lapse')
+
+    dueNow(db, mail.id)
+    hrc.requestMailKickerWake(TARGET, 'periodic')
+    await hrc.drainMailKickerTarget(TARGET)
+    await waitUntil(
+      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
+      'reminder retired'
+    )
+    // Retired, never delivered: the scope leaves the due-reminder candidate set
+    // and no pointer was ever pushed for an obligation that no longer exists.
+    expect(db.mailDrives.listDueReminderTargets(farFuture())).not.toContain(TARGET)
+    expect(deterministic.calls()).toBe(1)
+  })
+
+  it('retires the armed reminder of an obligation the reader deferred', async () => {
+    const mail = say({ body: 'deferred before its reminder is due' })
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    const hrc = internals()
+    const db = serverDb()
+
+    hrc.requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => deterministic.calls() === 1, 'delivery')
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
+    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+
+    // A deferred envelope gets no reminder (D6). The row must not outlive that.
+    ledger.defer(mail.id, 'not now')
+    dueNow(db, mail.id)
+    hrc.requestMailKickerWake(TARGET, 'periodic')
+    await hrc.drainMailKickerTarget(TARGET)
+    await waitUntil(
+      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
+      'reminder retired'
+    )
+    expect(deterministic.calls()).toBe(1)
+
+    // And retiring must not look like a delivery: D5 can never strike out over
+    // a reminder nobody was shown.
+    ledger.repend(mail.id)
+    hrc.requestMailKickerWake(TARGET, 'periodic')
+    await waitUntil(() => deterministic.calls() === 2, 'defer retry delivered')
+    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 1))
+    await Bun.sleep(80)
+    expect(ledger.envelopes.get(mail.id)?.state).not.toBe('failed')
+  })
+})
+
+/**
  * D3 over the whole terminal vocabulary.
  *
  * The four statuses arrive from four different writers, and every one of them
