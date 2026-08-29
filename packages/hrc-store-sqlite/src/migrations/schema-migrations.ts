@@ -2070,6 +2070,62 @@ const wrkqLedgerConsumerMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07704 (T-07612 rev 5.1) — an obligation's lifetime is the runtime it was
+ * presented to.
+ *
+ * Two local records, and only these: the ledger still lives in wrkq and no
+ * table here mirrors an envelope.
+ *
+ * 1. `hrcmail_envelope_reminders` makes D4 at-most-once per (envelope,
+ *    runtime). It has to be DURABLE rather than an in-memory map: the reminder
+ *    is held for a minute, and a daemon restart inside that minute would
+ *    otherwise either lose the reminder or (worse) re-arm one already
+ *    delivered, and D5 fails an obligation off the reminder attempt.
+ * 2. `hrcmail_failure_notices` is the §5 sender-side notice queued for a scope
+ *    with no live generation. "Otherwise on next attend" is a promise across
+ *    time, and a promise HRC keeps in memory is a promise it drops on restart.
+ *
+ * Both are keyed so that re-observing the same fact is a no-op, because both
+ * are fed by sweeps that re-observe by design.
+ */
+const hrcmailEnvelopeLifetimeMigration: HrcMigration = {
+  id: '0048_hrcmail_envelope_lifetime',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_envelope_reminders (
+        envelope_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        turn_ended_at TEXT NOT NULL,
+        remind_at TEXT NOT NULL,
+        drive_attempt_id TEXT,
+        delivered_at TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (envelope_id, runtime_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_envelope_reminders_due
+        ON hrcmail_envelope_reminders(delivered_at, remind_at);
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_envelope_reminders_attempt
+        ON hrcmail_envelope_reminders(drive_attempt_id);
+
+      CREATE TABLE IF NOT EXISTS hrcmail_failure_notices (
+        envelope_id TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        notice TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        delivered_at TEXT,
+        PRIMARY KEY (envelope_id, target_session_ref)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_failure_notices_undelivered
+        ON hrcmail_failure_notices(delivered_at, target_session_ref);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2113,4 +2169,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   toolResultBlobsMigration,
   wrkqLedgerConsumerMigration,
   hrcmailQueuedAttemptMigration,
+  hrcmailEnvelopeLifetimeMigration,
 ]

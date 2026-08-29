@@ -155,7 +155,6 @@ import {
   resolveHeadlessCodexBrokerEnabled,
   resolveHrcMailKickerEnabled,
   resolveHrcMailKickerSweepIntervalMs,
-  resolveHrcMailMaxRounds,
   resolvePiTuiTmuxBrokerEnabled,
   resolveSessionProjectionDays,
   resolveStaleGenerationEnabled,
@@ -849,6 +848,7 @@ class HrcServerInstance implements HrcServer {
   readonly mailKickerForeignHomeAnnounced = new Map<string, string>()
   readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
   readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
+  readonly mailKickerLapsedRuntimes = new Set<string>()
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
   shadowTeardownInFlight: Promise<void> | undefined
@@ -865,7 +865,6 @@ class HrcServerInstance implements HrcServer {
   readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
-  readonly hrcMailMaxRounds: number
   /**
    * HRC's client for the wrkq collaboration ledger (T-07612 §10). wrkq owns
    * rooms and envelopes; this is the ONLY door HRC reads or writes them through.
@@ -1280,7 +1279,6 @@ class HrcServerInstance implements HrcServer {
     this.agentHarnessTmuxBrokerEnabled = resolveAgentHarnessTmuxBrokerEnabled(options)
     this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
-    this.hrcMailMaxRounds = resolveHrcMailMaxRounds(options)
     this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
     this.wrkqLedger = options.wrkqLedger ?? new WrkqStdioLedgerClient()
     this.ctx = {

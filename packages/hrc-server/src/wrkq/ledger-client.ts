@@ -4,11 +4,12 @@ import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
   WrkqEnvelopeBirthEnvelopeParams,
+  WrkqEnvelopeFailParams,
   WrkqEnvelopePendingView,
   WrkqEnvelopePendingViewParams,
   WrkqEnvelopePresentParams,
   WrkqEnvelopePresentResult,
-  WrkqEnvelopeRoundParams,
+  WrkqEnvelopeShowParams,
   WrkqMonitorEvent,
   WrkqMonitorEventsView,
   WrkqMonitorEventsViewParams,
@@ -19,11 +20,17 @@ import type {
 /**
  * HRC's client for the wrkq collaboration ledger (T-07612 §10).
  *
- * Three methods, and nothing else in wrkq's surface is HRC's: `pendingView`
- * (the kicker wake set and the stop-hook predicate, whose read also sweeps due
- * deferrals back to pending), `present` (previews the §7 history-cue decision
- * or writes `presented_to` exactly-once per `driveAttemptId`, optionally joined
- * to the accepted broker input), and `roundEnded` (the redelivery bound).
+ * Nothing in wrkq's surface is HRC's beyond these: `pendingView` (the kicker
+ * wake set and the stop-hook predicate, whose read also sweeps due deferrals
+ * back to pending), `present` (previews the §4 history-cue decision or writes
+ * `presented_to` exactly-once per `driveAttemptId`, optionally joined to the
+ * accepted broker input), `fail` (rev 5.1's unsuccessful terminal transition —
+ * D3 lapse, D5 strike-out, D7 undeliverable), and `envelopeShow` (the §5 sender
+ * notice's read-back, because the `envelope.failed` payload carries neither
+ * party nor the room key).
+ *
+ * `roundEnded` is GONE with rev 5.1: an obligation's budget is no longer a
+ * count of turn completions, so there is no round to end.
  *
  * TRANSPORT. One long-lived `wrkq rpc --stdio` child speaking newline-delimited
  * JSON-RPC, spawned under `wrkqAuthorityEnvironment()` — the daemon's existing
@@ -78,7 +85,14 @@ export type WrkqLedgerClient = {
    */
   birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null>
   present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult>
-  roundEnded(params: WrkqEnvelopeRoundParams): Promise<WrkqEnvelope>
+  /**
+   * End one obligation unsuccessfully (rev 5.1 §2). Idempotent per
+   * (envelope, runtime); a runtime that does not own the newest receipt is
+   * REFUSED rather than allowed to fail someone else's presentation.
+   */
+  fail(params: WrkqEnvelopeFailParams): Promise<WrkqEnvelope>
+  /** One envelope by id — the §5 failure notice's only source for its parties. */
+  envelopeShow(params: WrkqEnvelopeShowParams): Promise<WrkqEnvelope>
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView>
   /** The bounded, cursor-fenced event page the kicker's wake tail reads. */
   eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView>
@@ -144,8 +158,12 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
     return this.call<WrkqEnvelopePresentResult>('wrkq.envelope.present', params)
   }
 
-  roundEnded(params: WrkqEnvelopeRoundParams): Promise<WrkqEnvelope> {
-    return this.call<WrkqEnvelope>('wrkq.envelope.roundEnded', params)
+  fail(params: WrkqEnvelopeFailParams): Promise<WrkqEnvelope> {
+    return this.call<WrkqEnvelope>('wrkq.envelope.fail', params)
+  }
+
+  envelopeShow(params: WrkqEnvelopeShowParams): Promise<WrkqEnvelope> {
+    return this.call<WrkqEnvelope>('wrkq.envelope.show', params)
   }
 
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView> {
@@ -180,9 +198,10 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
       id,
       method,
       // T-07647: wrkqd names every undeclared param in its log and will refuse
-      // them again after the consumer audit. pendingView, present, roundEnded
-      // and room.show DECLARE principalRef and require it for attribution;
-      // eventsView and birthEnvelope do not, so those two must not carry it.
+      // them again after the consumer audit. pendingView, present, fail,
+      // envelope.show and room.show DECLARE principalRef and require it for
+      // attribution; eventsView and birthEnvelope do not, so those two must
+      // not carry it.
       params: PRINCIPAL_FREE_METHODS.has(method)
         ? params
         : { principalRef: this.principalRef, ...params },

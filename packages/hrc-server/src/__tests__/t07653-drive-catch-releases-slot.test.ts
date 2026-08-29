@@ -210,7 +210,8 @@ describe('T-07653 — a thrown drive releases the scope drive slot', () => {
     await sweep()
     expect(deterministic.calls()).toBe(0)
 
-    // A NEW envelope, because the thrown one is inside its redelivery floor.
+    // A NEW envelope, because under rev 5.1 D2 the thrown one may already be
+    // `presented` and therefore bound to that runtime rather than re-drivable.
     // What the wedge cost was never one envelope: a held slot made the scope
     // undrivable for EVERYTHING that arrived afterwards.
     say({ body: 'arrives after the failure and must still be delivered' })

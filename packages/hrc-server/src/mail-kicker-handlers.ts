@@ -1,4 +1,4 @@
-import { HrcDomainError } from 'hrc-core'
+import { HrcDomainError, RUNTIME_STATUS_LEVEL_BY_STATUS } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcLifecycleEvent,
@@ -10,6 +10,7 @@ import type {
   HrcMailDriveAttempt,
   HrcMailDriveAttemptState,
   HrcMailDriveWakeReason,
+  HrcMailEnvelopeReminder,
 } from 'hrc-store-sqlite'
 
 import type { ForeignHome } from './federation/home-authority.js'
@@ -23,15 +24,21 @@ import { writeServerLog } from './server-log.js'
 import { isRecord } from './server-parsers.js'
 import { findTargetSession } from './target-view.js'
 import {
+  type EnvelopePresentationForm,
   type PresentableEnvelope,
+  formatEnvelopeFailureNotice,
   formatEnvelopePresentations,
 } from './wrkq/envelope-presentation.js'
 import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 import { WrkqLedgerUnavailableError } from './wrkq/ledger-client.js'
 import { targetSessionRefForLedgerScope } from './wrkq/ledger-scope.js'
+import { newestPresentationReceipt } from './wrkq/ledger-types.js'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeCreatedPayload,
+  WrkqEnvelopeFailedPayload,
+  WrkqEnvelopeFailureReason,
+  WrkqEnvelopePendingView,
   WrkqMonitorEvent,
 } from './wrkq/ledger-types.js'
 
@@ -39,10 +46,23 @@ import type {
  * The kicker, re-pointed at the wrkq collaboration ledger (T-07612 §10, T-07615).
  *
  * What did NOT change: the per-scope drive slot, the stable `driveAttemptId`,
- * the summon gate as the sole message-traffic provisioning door, and the rule
- * that a clear-inbox no-op turn burns no round. What changed is where the
- * obligations live. HRC reads them from wrkq, presents them per §7, and records
- * the presentation back into wrkq — it keeps no durable copy of an envelope.
+ * and the summon gate as the sole message-traffic provisioning door. What
+ * changed is where the obligations live. HRC reads them from wrkq, presents
+ * them per §4, and records the presentation back into wrkq — it keeps no
+ * durable copy of an envelope.
+ *
+ * REV 5.1 (T-07702, T-07704) rebinds an obligation's LIFETIME to the runtime it
+ * was presented to, and spends its budget only on reader decisions:
+ *
+ *  - D1/D6 the body is pushed ONCE per envelope; every later surface is a
+ *    pointer with a read hint.
+ *  - D2 a `presented` envelope is never re-presented to a different runtime.
+ *    There is no redelivery floor any more, because there is no redelivery.
+ *  - D3 a runtime that terminates holding one FAILS the obligation, and the
+ *    sender is told (§5).
+ *  - D4/D5 inside one runtime the kicker gets exactly one reminder, and a
+ *    reminder turn that ends undisposed fails the obligation as `ignored`.
+ *  - D7 five consecutive refused birth sweeps fail it as `undeliverable`.
  *
  * Three wake sources, per §10:
  *  - `envelope.created` on the wrkq event ledger, tailed from a persisted
@@ -52,6 +72,21 @@ import type {
  *  - a periodic sweep, which is the correctness backstop that makes tail
  *    latency never load-bearing.
  */
+
+/**
+ * The four runtime terminal events (rev 5.1 D3).
+ *
+ * `broker/controller/lifecycle.ts` classifies a user-initiated exit as
+ * `terminated` and every abnormal broker terminal as `crashed`; the reaper and
+ * the startup reconciler mark `dead`/`stale`. They are the WAKE — the runtime's
+ * status column is what actually decides.
+ */
+const RUNTIME_TERMINAL_EVENTS = new Set([
+  'runtime.terminated',
+  'runtime.crashed',
+  'runtime.dead',
+  'runtime.stale',
+])
 
 const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
   'turn.completed',
@@ -64,16 +99,15 @@ const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
 /** One presentation carries a room's worth of obligations, not an inbox dump. */
 const MAX_PRESENTED_PER_ATTEMPT = 20
 /**
- * The floor between re-presentations of a still-undisposed envelope, doubling
- * per round: 1m, 2m, 4m, 8m, 16m — so exhausting the bound takes at least 31
- * minutes of wall clock (mable's erratum on T-07612 §6, ruled on T-07615).
+ * How long a reminder is held after the turn that left the obligation
+ * undisposed (rev 5.1 D4).
  *
- * Without it the bound counts TURNS, not time, and a target whose turns end in
- * seconds burns all five rounds in under a minute: EN-00040 dead-lettered 40
- * seconds after it was written, while its addressee had done nothing wrong.
- * The round semantics are unchanged and there is still no maximum age.
+ * A DELAY, not a backoff: it does not double, because there is nothing to back
+ * off from. There is exactly one reminder per (envelope, runtime), and the
+ * minute exists so a reader who is about to reply in their next breath is not
+ * interrupted to be told they have not replied yet.
  */
-const REDELIVERY_FLOOR_BASE_MS = 60_000
+const REMINDER_HOLD_MS = 60_000
 /**
  * Bounded page for the wake tail. The limit bounds RAW ledger rows scanned, not
  * matches, so a busy ledger costs more ticks rather than one unbounded read.
@@ -89,16 +123,31 @@ const LEDGER_SWEEP_SCOPE_BATCH = 100
  * backstop that runs every second is a load problem rather than a safety one.
  */
 const LEDGER_SWEEP_TICKS = 30
+/** The doubling base of the virgin-birth retry bound: 1m, 2m, 4m, 8m, 16m. */
+const BIRTH_SWEEP_BACKOFF_BASE_MS = 60_000
 /**
- * How far the virgin-birth retry bound doubles before it flattens (T-07661).
+ * How many consecutive refused birth sweeps an obligation is worth (rev 5.1 D7,
+ * T-07661).
  *
- * Five rounds is the redelivery floor's own shape — 1m, 2m, 4m, 8m, 16m — and
- * it is reused rather than reinvented so a refused birth and an undisposed
- * presentation age at the same rate. It FLATTENS rather than expiring: an
- * obligation does not stop being owed because its birth is hard, and a
- * sixteen-minute retry is not a spin.
+ * It used to FLATTEN at five and retry forever on the grounds that "an
+ * obligation does not stop being owed because its birth is hard". rev 5.1
+ * overrules that: an addressee that cannot be seated after five escalating
+ * attempts is not going to be seated by a sixth, and a sender left waiting on a
+ * sixteen-minute spin learns nothing. The fifth refusal fails the envelope
+ * `undeliverable` and hands the decision back to the sender, which is the same
+ * shape as every other rev 5.1 failure.
  */
-const BIRTH_SWEEP_MAX_BACKOFF_ROUNDS = 5
+const BIRTH_SWEEP_MAX_REFUSALS = 5
+/**
+ * How far back the D3 lapse backstop looks for runtimes that have since died.
+ *
+ * A week, and it is a COST bound rather than a correctness one: the wake path
+ * catches a lapse in a second, and the memo means each runtime is observed at
+ * most once per process, so this only decides how much history one restart
+ * re-walks. An obligation older than this that no wake and no earlier sweep
+ * ever saw is not a case the daemon can invent evidence for.
+ */
+const LAPSE_SWEEP_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000
 
 type AttemptObservation = 'dispatch' | 'waiting' | 'finished'
 
@@ -171,14 +220,29 @@ function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | unde
 }
 
 /**
- * Advance the redelivery bound for every envelope a finished attempt presented.
+ * What a finished attempt's own turn did to the obligations it carried
+ * (rev 5.1 D4/D5).
  *
- * Rounds belong to wrkq now, and only a still-`presented` envelope advances
- * there, so a turn that replied or deferred costs nothing. Failures are logged
- * and dropped: a missed round makes an obligation live longer, which is the
- * safe direction.
+ * The trigger is the attempt's OWN turn having provably started and ended:
+ * `completeStartedAttempt` returns envelope ids only in that case, so an input
+ * the harness merged into another turn reaches here with nothing and neither
+ * arms a reminder nor strikes an obligation out. That is the rev 4 ownership
+ * rule, retained for exactly this one job.
+ *
+ * Two outcomes, decided by whether THIS attempt was the reminder:
+ *
+ *  - an ordinary delivery attempt ARMS the one reminder for (envelope,
+ *    runtime), held `REMINDER_HOLD_MS`;
+ *  - the reminder attempt STRIKES OUT — the reader has now ended two turns
+ *    holding the obligation, one of them after being pointed straight at it.
+ *
+ * Both are conditional on the envelope still being `presented` AND on this
+ * attempt still owning its newest receipt. A reply, a defer, or a delivery that
+ * has since been superseded all mean this attempt has nothing left to decide.
+ * Failures are logged and dropped: not failing an obligation makes it live
+ * longer, which is the safe direction, and D3 bounds it regardless.
  */
-function advanceRoundsForAttempt(
+function disposeAttemptObligations(
   server: HrcServerInstanceForHandlers,
   attempt: HrcMailDriveAttempt,
   envelopeIds: readonly string[]
@@ -187,23 +251,51 @@ function advanceRoundsForAttempt(
   // of that target's timeline, and `grep <scope>` silently misses it.
   const { targetSessionRef, driveAttemptId } = attempt
   if (envelopeIds.length === 0) return
+  const reminded = new Map(
+    server.db.mailDrives
+      .remindersForAttempt(driveAttemptId)
+      .map((reminder) => [reminder.envelopeId, reminder] as const)
+  )
+  const turnEndedAt = attempt.completedAt ?? new Date().toISOString()
+  const remindAt = new Date(Date.now() + REMINDER_HOLD_MS).toISOString()
   void (async () => {
     for (const envelope of envelopeIds) {
       try {
-        const advanced = await server.wrkqLedger.roundEnded({
-          envelope,
-          maxRounds: server.hrcMailMaxRounds,
-        })
-        if (advanced.state === 'dead') {
-          writeServerLog('INFO', 'wrkq.kicker.envelope_dead', {
+        const row = await server.wrkqLedger.envelopeShow({ envelope })
+        if (row.state !== 'presented') continue
+        const newest = newestPresentationReceipt(row)
+        // Superseded: another attempt has presented this since, so the
+        // obligation is bound to that delivery and not to this one.
+        if (newest?.driveAttemptId !== driveAttemptId) continue
+        const runtime = newest.runtimeId ?? attempt.runtimeId
+        if (runtime === undefined) continue
+        if (reminded.has(envelope)) {
+          await failEnvelope(server, {
+            envelope,
+            reason: 'ignored',
+            runtime,
             targetSessionRef,
             driveAttemptId,
-            envelope,
-            roundCount: advanced.roundCount,
           })
+          continue
         }
+        const armed = server.db.mailDrives.armReminder({
+          envelopeId: envelope,
+          runtimeId: runtime,
+          targetSessionRef,
+          turnEndedAt,
+          remindAt,
+        })
+        if (!armed) continue
+        writeServerLog('INFO', 'wrkq.kicker.reminder_armed', {
+          targetSessionRef,
+          driveAttemptId,
+          envelope,
+          runtimeId: runtime,
+          remindAt,
+        })
       } catch (error) {
-        writeServerLog('WARN', 'wrkq.kicker.round_ended_failed', {
+        writeServerLog('WARN', 'wrkq.kicker.dispose_obligation_failed', {
           targetSessionRef,
           driveAttemptId,
           envelope,
@@ -212,6 +304,46 @@ function advanceRoundsForAttempt(
       }
     }
   })()
+}
+
+/**
+ * End one obligation unsuccessfully, and say so in one greppable line.
+ *
+ * The call is IDEMPOTENT per (envelope, runtime) on the wrkq side, and a
+ * runtime that no longer owns the newest receipt is REFUSED there rather than
+ * allowed to fail a delivery that has moved on. Both matter here: this is
+ * reached from a wake, from a sweep, and from a completed attempt, and all
+ * three can observe the same lapse.
+ */
+async function failEnvelope(
+  server: HrcServerInstanceForHandlers,
+  input: {
+    envelope: string
+    reason: Exclude<WrkqEnvelopeFailureReason, 'legacy'>
+    runtime?: string | undefined
+    targetSessionRef: string
+    driveAttemptId?: string | undefined
+  }
+): Promise<void> {
+  const failed = await server.wrkqLedger.fail({
+    envelope: input.envelope,
+    reason: input.reason,
+    ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
+  })
+  writeServerLog('INFO', 'wrkq.kicker.envelope_failed', {
+    targetSessionRef: input.targetSessionRef,
+    ...(input.driveAttemptId === undefined ? {} : { driveAttemptId: input.driveAttemptId }),
+    envelope: input.envelope,
+    reason: input.reason,
+    ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
+    state: failed.state,
+  })
+}
+
+/** Is this runtime, by its own status column, no longer live? */
+function isRuntimeTerminal(status: string): boolean {
+  const level = (RUNTIME_STATUS_LEVEL_BY_STATUS as Record<string, string | null>)[status]
+  return level === 'runtime-dead'
 }
 
 function observeAttempt(
@@ -237,7 +369,7 @@ function observeAttempt(
   if (terminal !== undefined) {
     const completed = server.db.mailDrives.completeStartedAttempt(current.runId, terminal.eventKind)
     if (completed !== undefined) {
-      advanceRoundsForAttempt(server, completed.attempt, completed.presentedEnvelopeIds)
+      disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
     }
     return 'finished'
   }
@@ -279,7 +411,7 @@ function observeAttempt(
       `run.${run.status}`
     )
     if (completed !== undefined) {
-      advanceRoundsForAttempt(server, completed.attempt, completed.presentedEnvelopeIds)
+      disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
     }
     return 'finished'
   }
@@ -287,16 +419,38 @@ function observeAttempt(
 }
 
 /**
- * Ask wrkq what stands against one target.
+ * One envelope this wake may deliver, and WHICH of the §4 forms it takes.
+ *
+ * The form is decided from the ledger row plus HRC's own reminder record, in
+ * one place, so no delivery path gets to choose a shape for itself.
+ */
+type ActionableEnvelope = {
+  envelope: WrkqEnvelope
+  form: EnvelopePresentationForm
+  /** The armed reminder this delivery discharges, for the D5 binding. */
+  reminder?: HrcMailEnvelopeReminder | undefined
+}
+
+/**
+ * Ask wrkq what stands against one target, and in what form.
  *
  * `pendingView` is the wake set and the stop-hook predicate in one read, and its
  * sweep re-pends due deferrals — so calling it here IS the periodic-sweep half
  * of §5's wake routing.
+ *
+ * REV 5.1 D2 lives here, and it is a subtraction rather than a gate. A
+ * `presented` envelope is simply not deliverable: it is bound to the runtime in
+ * its newest receipt, and the only thing that can surface it again is that same
+ * runtime's own due reminder. Everything else this returns is `pending` — first
+ * delivery (empty `presented_to`, full form) or a defer retry (non-empty,
+ * pointer form carrying the reader's own reason). The redelivery floor that
+ * used to hold a presented envelope back for 1/2/4/8/16 minutes is gone with
+ * the re-presentation it was throttling.
  */
 async function readActionableEnvelopes(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string
-): Promise<WrkqEnvelope[]> {
+): Promise<ActionableEnvelope[]> {
   const view = await server.wrkqLedger.pendingView({
     scopes: [targetSessionRef],
     // T-07627: fyi rows ride the same read. They never summon (§5) and never
@@ -309,44 +463,30 @@ async function readActionableEnvelopes(
       repended: view.repended,
     })
   }
-  const now = Date.now()
-  const actionable: WrkqEnvelope[] = []
-  const floored: { envelope: string; remainingMs: number }[] = []
+  const due = new Map(
+    server.db.mailDrives
+      .listDueReminders(targetSessionRef, new Date().toISOString())
+      .map((reminder) => [reminder.envelopeId, reminder] as const)
+  )
+  const actionable: ActionableEnvelope[] = []
   for (const envelope of view.items) {
-    const remainingMs = redeliveryFloorRemainingMs(envelope, now)
-    if (remainingMs > 0) {
-      floored.push({ envelope: envelope.id, remainingMs })
+    if (envelope.state === 'pending') {
+      // D1 vs D6: `presented_to` non-empty means the body has already been
+      // pushed once, so this is a defer retry and takes the pointer form.
+      const form: EnvelopePresentationForm =
+        envelope.presentedTo.length === 0 ? 'full' : 'defer-retry'
+      actionable.push({ envelope, form })
       continue
     }
-    actionable.push(envelope)
-  }
-  if (floored.length > 0) {
-    // A skip that only shows up as "the claim came back clear" is a proxy for
-    // the thing, not the thing. This says which envelope was held and for how
-    // much longer, so the floor is observable rather than inferred.
-    writeServerLog('INFO', 'wrkq.kicker.redelivery_floored', {
-      targetSessionRef,
-      floored,
-    })
+    if (envelope.state !== 'presented') continue
+    const reminder = due.get(envelope.id)
+    if (reminder === undefined) continue
+    // The reminder is bound to ONE runtime. If the newest receipt has moved on,
+    // this reminder is stale evidence about a delivery that no longer stands.
+    if (newestPresentationReceipt(envelope)?.runtimeId !== reminder.runtimeId) continue
+    actionable.push({ envelope, form: 'reminder', reminder })
   }
   return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
-}
-
-/**
- * How much longer this envelope is held by its redelivery floor, or 0.
- *
- * Only a PRESENTED envelope can be held: one that has never been shown has
- * nothing to wait from, and neither does one with no receipt to measure from.
- */
-function redeliveryFloorRemainingMs(envelope: WrkqEnvelope, now: number): number {
-  if (envelope.state !== 'presented') return 0
-  const lastPresentedAt = envelope.presentedTo.reduce<number>((newest, receipt) => {
-    const at = Date.parse(receipt.presentedAt)
-    return Number.isNaN(at) ? newest : Math.max(newest, at)
-  }, 0)
-  if (lastPresentedAt === 0) return 0
-  const floorMs = REDELIVERY_FLOOR_BASE_MS * 2 ** Math.max(envelope.roundCount, 0)
-  return Math.max(floorMs - (now - lastPresentedAt), 0)
 }
 
 /** Only a `reply_required` obligation is allowed to birth a previously unseated target (§5). */
@@ -361,8 +501,8 @@ function summonsATurn(envelope: WrkqEnvelope): boolean {
  * is HRC's. It is a string, not an intent: the intent is assembled at kick time
  * from the target agent's own profile on this node.
  */
-function actionableDirectives(envelopes: readonly WrkqEnvelope[]): string | undefined {
-  for (const envelope of envelopes) {
+function actionableDirectives(actionable: readonly ActionableEnvelope[]): string | undefined {
+  for (const { envelope } of actionable) {
     const raw = envelope.materializationIntent?.trim()
     if (raw !== undefined && raw.length > 0) return raw
   }
@@ -378,15 +518,15 @@ function actionableDirectives(envelopes: readonly WrkqEnvelope[]): string | unde
  */
 async function recordPresentations(
   server: HrcServerInstanceForHandlers,
-  envelopes: readonly WrkqEnvelope[],
+  actionable: readonly ActionableEnvelope[],
   attempt: HrcMailDriveAttempt,
   session: HrcSessionRecord,
   runtimeId: string | undefined
 ): Promise<PresentableEnvelope[]> {
   const presentables: PresentableEnvelope[] = []
-  for (const envelope of envelopes) {
+  for (const item of actionable) {
     const result = await server.wrkqLedger.present({
-      envelope: envelope.id,
+      envelope: item.envelope.id,
       preview: true,
       node: server.federationNodeId,
       hostSessionId: session.hostSessionId,
@@ -397,9 +537,14 @@ async function recordPresentations(
     })
     presentables.push({
       envelope: result.envelope,
-      historyHint: result.historyHint,
+      // A pointer form carries no body and therefore no history cue: the cue
+      // exists to orient a cold reader at first contact, and every pointer
+      // goes to a reader who has already had one.
+      historyHint: item.form === 'full' && result.historyHint,
       messageCount: result.messageCount,
       ...(result.lastMessageAt === undefined ? {} : { lastMessageAt: result.lastMessageAt }),
+      form: item.form,
+      ...(item.reminder === undefined ? {} : { turnEndedAt: item.reminder.turnEndedAt }),
       ...senderGenerationFor(server, result.envelope),
     })
   }
@@ -479,7 +624,7 @@ async function presentIntoBusyTarget(
   targetSessionRef: string,
   session: HrcSessionRecord,
   queuedBehindRunId: string,
-  actionable: readonly WrkqEnvelope[],
+  actionable: readonly ActionableEnvelope[],
   wakeReason: HrcMailDriveWakeReason
 ): Promise<boolean> {
   const activeRunId = queuedBehindRunId
@@ -487,11 +632,10 @@ async function presentIntoBusyTarget(
   // more. An ordinary drive writes its LOCAL receipt before it dispatches and
   // commits the LEDGER receipt only after the broker accepts (T-07672); a wake
   // landing inside that window would re-present the same mail into the same
-  // turn. Once the ledger receipt exists the redelivery floor is the sole
-  // authority on re-presentation — so an envelope whose queued input never
-  // started a turn (merged or dropped by the harness) is re-queued into a
-  // later live turn when its floor expires, and never waits for idle
-  // (daedalus, rev 4 ruling 4).
+  // turn. Once the ledger receipt exists the envelope is `presented` and D2
+  // takes it out of the wake set entirely: an input the harness merged and
+  // never started is not re-queued by anything, and is bounded by D3 instead
+  // (rev 5.1 D2/D5 replacing rev 4 ruling 4).
   //
   // And the window always CLOSES (ruling 5): a local receipt whose ledger
   // receipt is missing is replayed here, exactly as an ordinary drive replays
@@ -504,7 +648,7 @@ async function presentIntoBusyTarget(
       // An ordinary drive commits its own receipts right after its dispatch;
       // its window is the few ms in between, and it is not replayed here.
       for (const id of server.db.mailDrives.presentationEnvelopeIds(unfinished.driveAttemptId)) {
-        const envelope = actionable.find((candidate) => candidate.id === id)
+        const envelope = actionable.find((candidate) => candidate.envelope.id === id)?.envelope
         const committed = envelope?.presentedTo.some(
           (receipt) => receipt.driveAttemptId === unfinished.driveAttemptId
         )
@@ -513,7 +657,7 @@ async function presentIntoBusyTarget(
       continue
     }
     for (const id of server.db.mailDrives.presentationEnvelopeIds(unfinished.driveAttemptId)) {
-      const envelope = actionable.find((candidate) => candidate.id === id)
+      const envelope = actionable.find((candidate) => candidate.envelope.id === id)?.envelope
       if (envelope === undefined) continue
       const committed = envelope.presentedTo.some(
         (receipt) => receipt.driveAttemptId === unfinished.driveAttemptId
@@ -544,7 +688,8 @@ async function presentIntoBusyTarget(
           runId: unfinished.runId,
           envelope: id,
         })
-        // Committed now; the floor governs it from here, this wake included.
+        // Committed now, so the envelope is `presented` and bound to that
+        // runtime: D2 takes it out of every later wake set, this one included.
         uncommitted.add(id)
       } catch (error) {
         writeServerLog('WARN', 'wrkq.kicker.queued_receipt_replay_failed', {
@@ -558,10 +703,10 @@ async function presentIntoBusyTarget(
     }
   }
   const envelopes = actionable.filter(
-    (envelope) =>
-      !uncommitted.has(envelope.id) &&
+    (item) =>
+      !uncommitted.has(item.envelope.id) &&
       // Already handed to this very turn: saying it twice into one turn is noise.
-      !envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
+      !item.envelope.presentedTo.some((receipt) => receipt.runId === activeRunId)
   )
   if (envelopes.length === 0) return false
 
@@ -576,18 +721,20 @@ async function presentIntoBusyTarget(
       targetSessionRef,
       wakeReason,
       reason: 'no_runtime_intent_available',
-      envelopes: envelopes.map((envelope) => envelope.id),
+      envelopes: envelopes.map((item) => item.envelope.id),
     })
     return false
   }
 
   const presentables: PresentableEnvelope[] = []
-  for (const envelope of envelopes) {
+  for (const item of envelopes) {
     presentables.push({
-      envelope,
+      envelope: item.envelope,
       historyHint: false,
       messageCount: 0,
-      ...senderGenerationFor(server, envelope),
+      form: item.form,
+      ...(item.reminder === undefined ? {} : { turnEndedAt: item.reminder.turnEndedAt }),
+      ...senderGenerationFor(server, item.envelope),
     })
   }
   const prompt = formatEnvelopePresentations(presentables)
@@ -608,7 +755,7 @@ async function presentIntoBusyTarget(
       targetSessionRef,
       wakeReason,
       activeRunId,
-      envelopes: envelopes.map((envelope) => envelope.id),
+      envelopes: envelopes.map((item) => item.envelope.id),
       error: errorText(error),
     })
     return false
@@ -625,15 +772,15 @@ async function presentIntoBusyTarget(
     runId: body.runId,
     wakeReason,
     prompt,
-    envelopeIds: envelopes.map((envelope) => envelope.id),
+    envelopeIds: envelopes.map((item) => item.envelope.id),
     queuedBehindRunId,
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(runtimeId === undefined ? {} : { runtimeId }),
   })
-  for (const envelope of envelopes) {
+  for (const item of envelopes) {
     await server.wrkqLedger.present({
-      envelope: envelope.id,
+      envelope: item.envelope.id,
       node: server.federationNodeId,
       hostSessionId: session.hostSessionId,
       generation: String(session.generation),
@@ -641,11 +788,21 @@ async function presentIntoBusyTarget(
       // The outcome CLASS goes on the RECEIPT, not only on the log line
       // (C-16526, re-ruled on T-07644 C-16658): a log rotates and is grepped
       // from one node; the receipt travels with the envelope.
-      deliveryOutcome: body.delivery?.code ?? 'queued_to_live_harness',
+      deliveryOutcome:
+        item.form === 'full'
+          ? (body.delivery?.code ?? 'queued_to_live_harness')
+          : `${item.form}_queued_to_live_harness`,
       runId: body.runId,
       ...(inputId === undefined ? {} : { inputId }),
       ...(runtimeId === undefined ? {} : { runtimeId }),
     })
+    if (item.reminder !== undefined) {
+      server.db.mailDrives.markReminderDelivered(
+        item.reminder.envelopeId,
+        item.reminder.runtimeId,
+        queuedAttempt.driveAttemptId
+      )
+    }
   }
 
   writeServerLog('INFO', 'wrkq.kicker.queued_into_busy_target', {
@@ -656,7 +813,8 @@ async function presentIntoBusyTarget(
     runId: body.runId,
     ...(inputId === undefined ? {} : { inputId }),
     queuedBehindRunId,
-    envelopes: envelopes.map((envelope) => envelope.id),
+    envelopes: envelopes.map((item) => item.envelope.id),
+    forms: envelopes.map((item) => item.form),
   })
   return true
 }
@@ -690,7 +848,7 @@ async function declineForInFlightAttempt(
   targetSessionRef: string,
   attempt: HrcMailDriveAttempt,
   session: HrcSessionRecord | undefined,
-  actionable: readonly WrkqEnvelope[],
+  actionable: readonly ActionableEnvelope[],
   wakeReason: HrcMailDriveWakeReason,
   route: { via: InFlightDeclineRoute; observation: AttemptObservation }
 ): Promise<void> {
@@ -722,7 +880,7 @@ async function declineForInFlightAttempt(
     // T-07671: WHICH envelopes are held behind the in-flight attempt, not just
     // how many. A wedged attempt is reconstructed from the log alone only if
     // the line names the mail that is stuck behind it.
-    envelopeIds: actionable.map((envelope) => envelope.id),
+    envelopeIds: actionable.map((item) => item.envelope.id),
   })
 }
 
@@ -998,7 +1156,12 @@ async function driveMailTargetOnce(
   }
 
   let session = findTargetSession(server.db, targetSessionRef) ?? undefined
-  let actionable: WrkqEnvelope[]
+  // §5 — the sender-side failure notices this scope is owed. Delivered here
+  // rather than folded into the drive because a notice is not an obligation:
+  // it rides a live generation if there is one and waits for the next attend
+  // otherwise, and it NEVER summons.
+  if (session !== undefined) await deliverFailureNotices(server, targetSessionRef, session)
+  let actionable: ActionableEnvelope[]
   try {
     actionable = await readActionableEnvelopes(server, targetSessionRef)
   } catch (error) {
@@ -1049,10 +1212,10 @@ async function driveMailTargetOnce(
     // A fyi is presented into a live generation if there is one, and otherwise
     // waits. It is NEVER the reason a session is born (§5), so a wake set that
     // holds nothing else stops here rather than at the summon gate.
-    if (session === undefined && !actionable.some(summonsATurn)) return
+    if (session === undefined && !actionable.some((item) => summonsATurn(item.envelope))) return
     const directives = actionableDirectives(actionable)
     const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
-      envelopeIds: actionable.map((envelope) => envelope.id),
+      envelopeIds: actionable.map((item) => item.envelope.id),
       ...(() => {
         const intent = buildKickRuntimeIntent(
           parseSessionRef(targetSessionRef).scopeRef,
@@ -1132,7 +1295,7 @@ async function driveMailTargetOnce(
     driveAttemptId: attempt.driveAttemptId,
     runId: attempt.runId,
     wakeReason,
-    envelopeIds: actionable.map((envelope) => envelope.id),
+    envelopeIds: actionable.map((item) => item.envelope.id),
     // Whether a seat already existed, and what it was doing. A drive that has
     // to summon first behaves nothing like one into a live seat, and the two
     // were previously indistinguishable in the log.
@@ -1176,7 +1339,7 @@ async function driveMailTargetOnce(
     // attempt id. A kill in between replays into an exactly-once `present`.
     const envelopeIds = server.db.mailDrives.presentForAttempt(
       attempt.driveAttemptId,
-      actionable.map((envelope) => envelope.id)
+      actionable.map((item) => item.envelope.id)
     )
     if (envelopeIds.length === 0) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
@@ -1188,17 +1351,17 @@ async function driveMailTargetOnce(
         runId: attempt.runId,
         wakeReason,
         reason: 'already_presented',
-        envelopeIds: actionable.map((envelope) => envelope.id),
+        envelopeIds: actionable.map((item) => item.envelope.id),
         note: 'this attempt had already recorded its presentations; no turn dispatched',
       })
       return
     }
 
     const runtimeId = presentationRuntimeIdFor(server, session)
-    const byId = new Map(actionable.map((envelope) => [envelope.id, envelope]))
+    const byId = new Map(actionable.map((item) => [item.envelope.id, item]))
     const ordered = envelopeIds
       .map((id) => byId.get(id))
-      .filter((envelope): envelope is WrkqEnvelope => envelope !== undefined)
+      .filter((item): item is ActionableEnvelope => item !== undefined)
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
     const prompt = formatEnvelopePresentations(presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
@@ -1252,6 +1415,17 @@ async function driveMailTargetOnce(
     })
     const committedRuntimeId = body.runtimeId ?? runtimeId
     await commitPresentations(server, presentables, attempt, session, committedRuntimeId, inputId)
+    // The reminder is bound to the attempt that carried it: D5 reads this row
+    // back when that attempt's own turn ends, and it is what stops a second
+    // reminder ever being armed for the same (envelope, runtime).
+    for (const item of ordered) {
+      if (item.reminder === undefined) continue
+      server.db.mailDrives.markReminderDelivered(
+        item.reminder.envelopeId,
+        item.reminder.runtimeId,
+        attempt.driveAttemptId
+      )
+    }
     // T-07671: this line belongs at COMMIT, where the ledger now holds the
     // receipt. `inputId` joins it to the broker's input.accepted event.
     writeServerLog('INFO', 'wrkq.kicker.presented', {
@@ -1265,6 +1439,7 @@ async function driveMailTargetOnce(
       envelopes: presentables.map((presentable) => ({
         id: presentable.envelope.id,
         obligation: presentable.envelope.obligation,
+        form: presentable.form ?? 'full',
       })),
     })
     observeAttempt(server, attempt)
@@ -1362,7 +1537,19 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
   if (this.mailKickerSweepInFlight !== undefined) return this.mailKickerSweepInFlight
 
   const sweep = (async () => {
+    // rev 5.1 D3 backstop. Ahead of the delivery sweep on purpose: an
+    // obligation that has already lapsed should be failed before the same tick
+    // reads the wake set, so the sender's notice and the reader's next
+    // presentation cannot cross.
+    await sweepLapsedObligations(this)
+    const now = new Date().toISOString()
     const targets = new Set<string>(this.db.mailDrives.listInFlightTargets())
+    // Two rev 5.1 candidate sources that key on nothing in the ledger: a due
+    // D4 reminder, and a §5 notice waiting for its sender's next attend.
+    // Neither shows up as pending mail, so without these a scope whose only
+    // outstanding business is one of them is never woken at all.
+    for (const target of this.db.mailDrives.listDueReminderTargets(now)) targets.add(target)
+    for (const target of this.db.mailDrives.listFailureNoticeTargets()) targets.add(target)
     const seated = this.db.runtimes.listLiveSessionRefs()
     const unborn = await unbornBirthWakeCandidates(this, seated)
     for (const batch of chunk([...seated, ...unborn], LEDGER_SWEEP_SCOPE_BATCH)) {
@@ -1515,7 +1702,8 @@ function refusedBirthTargets(server: HrcServerInstanceForHandlers): string[] {
 }
 
 /**
- * Charge one retry against every unborn candidate the sweep is about to drive.
+ * Charge one retry against every unborn candidate the sweep is about to drive,
+ * and give up on the fifth (rev 5.1 D7).
  *
  * Charged on the ENQUEUE and not on the outcome, deliberately. A birth is
  * asynchronous and its failure modes are many; keying the bound on "we tried"
@@ -1524,6 +1712,11 @@ function refusedBirthTargets(server: HrcServerInstanceForHandlers): string[] {
  * reported no pending mail for are not charged: they cost nothing but a slot in
  * a batched read, and holding them off for sixteen minutes would delay the
  * scope's real birth when its mail does arrive.
+ *
+ * Under rev 4 the bound FLATTENED at five and retried forever at sixteen-minute
+ * intervals. rev 5.1 ends it instead: the fifth refusal fails every pending
+ * envelope for that target `undeliverable` and tells the sender, which is a
+ * decision someone can act on rather than a spin nobody is watching.
  */
 function chargeBirthSweepRetries(
   server: HrcServerInstanceForHandlers,
@@ -1533,20 +1726,263 @@ function chargeBirthSweepRetries(
   const now = Date.now()
   for (const targetSessionRef of unborn) {
     if (!driving.has(targetSessionRef)) continue
-    const attempts = Math.min(
-      (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1,
-      BIRTH_SWEEP_MAX_BACKOFF_ROUNDS
-    )
+    const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
+    if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {
+      server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
+      void failUndeliverableMail(server, targetSessionRef, attempts).catch((error: unknown) => {
+        writeServerLog('WARN', 'wrkq.kicker.undeliverable_failed', {
+          targetSessionRef,
+          error: errorText(error),
+        })
+      })
+      continue
+    }
     server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
       attempts,
-      nextAtMs: now + REDELIVERY_FLOOR_BASE_MS * 2 ** (attempts - 1),
+      nextAtMs: now + BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
     })
     writeServerLog('INFO', 'wrkq.kicker.unborn_birth_retry', {
       targetSessionRef,
       attempt: attempts,
-      nextAttemptInMs: REDELIVERY_FLOOR_BASE_MS * 2 ** (attempts - 1),
+      nextAttemptInMs: BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
     })
   }
+}
+
+/**
+ * rev 5.1 D7 — this node cannot seat the addressee, and has stopped trying.
+ *
+ * Only a `pending` envelope is failed: `undeliverable` means the body was never
+ * pushed at all, and wrkqd enforces that on its side too. Anything already
+ * presented belongs to D3/D5 and is not this bound's to end.
+ */
+async function failUndeliverableMail(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  refusals: number
+): Promise<void> {
+  const view = await server.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
+  for (const envelope of view.items) {
+    if (envelope.state !== 'pending') continue
+    if (envelope.presentedTo.length > 0) continue
+    writeServerLog('WARN', 'wrkq.kicker.birth_refusals_exhausted', {
+      targetSessionRef,
+      envelope: envelope.id,
+      refusals,
+    })
+    await failEnvelope(server, { envelope: envelope.id, reason: 'undeliverable', targetSessionRef })
+  }
+}
+
+/**
+ * rev 5.1 D3 — a runtime that terminated holding an obligation fails it.
+ *
+ * The predicate is *R is no longer live*, read off the runtime STATUS column;
+ * the four terminal event kinds are only the wake. That distinction is the
+ * whole of D3's robustness: `terminated`, `crashed`, `dead` and `stale` are
+ * written by four different mechanisms (user exit, abnormal broker terminal,
+ * the reaper twice over), and a rule keyed on one event name would silently
+ * miss the other three.
+ *
+ * Returns whether the observation COMPLETED, so a caller can memoize a runtime
+ * as swept without memoizing a ledger outage as an answer.
+ */
+async function failLapsedObligations(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  runtimeIds: ReadonlySet<string>
+): Promise<boolean> {
+  let view: WrkqEnvelopePendingView
+  try {
+    view = await server.wrkqLedger.pendingView({ scopes: [targetSessionRef], includeFyi: true })
+  } catch (error) {
+    writeServerLog(
+      error instanceof WrkqLedgerUnavailableError ? 'WARN' : 'ERROR',
+      'wrkq.kicker.lapse_pending_view_failed',
+      { targetSessionRef, error: errorText(error) }
+    )
+    return false
+  }
+  let complete = true
+  for (const envelope of view.items) {
+    if (envelope.state !== 'presented') continue
+    const runtime = newestPresentationReceipt(envelope)?.runtimeId
+    if (runtime === undefined || !runtimeIds.has(runtime)) continue
+    try {
+      await failEnvelope(server, {
+        envelope: envelope.id,
+        reason: 'runtime_terminated',
+        runtime,
+        targetSessionRef,
+      })
+    } catch (error) {
+      writeServerLog('WARN', 'wrkq.kicker.lapse_failed', {
+        targetSessionRef,
+        envelope: envelope.id,
+        runtimeId: runtime,
+        error: errorText(error),
+      })
+      complete = false
+    }
+  }
+  return complete
+}
+
+/**
+ * The D3 backstop: every locally-known runtime that has since gone terminal.
+ *
+ * The wake path below catches the ordinary case within a second of the event.
+ * This exists because a wake is a claim and a status column is a fact — a
+ * daemon that was down when the runtime died, a reaper reclassification that
+ * fanned out no event, a `--force` restart that orphaned a broker: none of
+ * those reach the observer, and all of them leave the same row behind.
+ *
+ * Memoized per runtime per process. Nothing can be presented TO a dead runtime,
+ * so one complete observation per runtime is the whole job; a restart re-scans
+ * the lookback window, and the ledger's own idempotence absorbs the overlap.
+ */
+async function sweepLapsedObligations(server: HrcServerInstanceForHandlers): Promise<void> {
+  const since = new Date(Date.now() - LAPSE_SWEEP_LOOKBACK_MS).toISOString()
+  const byTarget = new Map<string, Set<string>>()
+  for (const bound of server.db.mailDrives.listRuntimeBoundTargets(since)) {
+    if (server.mailKickerLapsedRuntimes.has(bound.runtimeId)) continue
+    const runtime = server.db.runtimes.getByRuntimeId(bound.runtimeId) ?? undefined
+    if (runtime === undefined || !isRuntimeTerminal(runtime.status)) continue
+    const runtimes = byTarget.get(bound.targetSessionRef) ?? new Set<string>()
+    runtimes.add(bound.runtimeId)
+    byTarget.set(bound.targetSessionRef, runtimes)
+  }
+  for (const [targetSessionRef, runtimeIds] of byTarget) {
+    if (await failLapsedObligations(server, targetSessionRef, runtimeIds)) {
+      for (const runtimeId of runtimeIds) server.mailKickerLapsedRuntimes.add(runtimeId)
+    }
+  }
+}
+
+/**
+ * §5 — hand this scope the failure notices it is owed, as a sender.
+ *
+ * fyi-class: rendered from the ledger row, carrying no envelope and creating no
+ * obligation. It rides the scope's LIVE GENERATION and nothing else — no live
+ * seat means the notices simply stay queued for the next attend, because a
+ * failure notice must never be the reason a session is born. That is why the
+ * gate is `presentationRuntimeIdFor` (a current-generation seat) rather than
+ * "a session row exists": a session whose runtime is gone would otherwise have
+ * a dispatch provision one.
+ */
+async function deliverFailureNotices(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  session: HrcSessionRecord
+): Promise<void> {
+  const notices = server.db.mailDrives.listUndeliveredFailureNotices(targetSessionRef)
+  if (notices.length === 0) return
+  if (presentationRuntimeIdFor(server, session) === undefined) return
+  const intent =
+    session.lastAppliedIntentJson ??
+    buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined)
+  if (intent === undefined) return
+  const prompt = notices.map((notice) => notice.notice).join('\n\n')
+  try {
+    const response = await server.dispatchTurnForSession(session, intent, prompt, {
+      waitForCompletion: false,
+    })
+    const body = (await response.json()) as DispatchTurnResponse
+    if (body.status !== 'started') {
+      throw new Error(`failure notice did not start (status=${body.status})`)
+    }
+    server.db.mailDrives.markFailureNoticesDelivered(
+      targetSessionRef,
+      notices.map((notice) => notice.envelopeId)
+    )
+    writeServerLog('INFO', 'wrkq.kicker.failure_notice_delivered', {
+      targetSessionRef,
+      runId: body.runId,
+      envelopes: notices.map((notice) => notice.envelopeId),
+    })
+  } catch (error) {
+    // Nothing is marked delivered, so the next attend tries again. A notice
+    // that could not be shown is not a notice that stops being owed.
+    writeServerLog('WARN', 'wrkq.kicker.failure_notice_failed', {
+      targetSessionRef,
+      envelopes: notices.map((notice) => notice.envelopeId),
+      error: errorText(error),
+    })
+  }
+}
+
+/**
+ * §5 — queue the sender-side notice for one `envelope.failed` off the tail.
+ *
+ * Rendered by reading the ROW back, not from the event payload: the real
+ * payload carries `{state, reason, room_uuid, runtime_id}` and neither party
+ * nor the room key (paired against wrkqd at wrkq 88b133a). The envelope id is
+ * on the event row itself.
+ *
+ * Only a sender this node homes or seats is served. A notice is delivered by
+ * exactly one daemon — the sender's own — and a human sender is served by the
+ * ACP surfaces instead (§11), never by a summon here.
+ */
+async function queueFailureNotice(
+  server: HrcServerInstanceForHandlers,
+  event: WrkqMonitorEvent
+): Promise<void> {
+  const envelopeId = event.resourceId
+  if (envelopeId === undefined) return
+  const reason = failureReasonFor(event.payload)
+  if (reason === undefined) return
+  const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+  const senderScope = envelope.from.scopeRef
+  if (senderScope === undefined) return
+  const targetSessionRef = targetSessionRefForLedgerScope(senderScope)
+  if (targetSessionRef === undefined) return
+  // The placement ledger is keyed on the CANONICAL scope, not on the handle
+  // wrkq stores. Handing it the handle throws rather than missing, which is how
+  // one un-normalized read took the whole notice path down.
+  const canonicalScope = kickerScopeRefFor(targetSessionRef)
+  const placement =
+    canonicalScope === undefined
+      ? undefined
+      : createPlacementLedgerRepository(server.db.sqlite).get(canonicalScope)
+  const homed = placement?.state === 'active' && placement.homeNodeId === server.federationNodeId
+  if (!homed && findTargetSession(server.db, targetSessionRef) === null) return
+  const runtimeId = failedPayload(event.payload)?.runtime_id
+  const notice = formatEnvelopeFailureNotice(envelope, reason, {
+    ...(runtimeId === undefined ? {} : { runtimeId }),
+  })
+  if (!server.db.mailDrives.recordFailureNotice({ envelopeId, targetSessionRef, notice })) return
+  writeServerLog('INFO', 'wrkq.kicker.failure_notice_queued', {
+    targetSessionRef,
+    envelope: envelopeId,
+    reason,
+  })
+  server.requestMailKickerWake(targetSessionRef, 'insert')
+}
+
+function failedPayload(raw: string | undefined): WrkqEnvelopeFailedPayload | undefined {
+  if (raw === undefined) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  return isRecord(parsed) ? (parsed as WrkqEnvelopeFailedPayload) : undefined
+}
+
+const FAILURE_REASONS = new Set<WrkqEnvelopeFailureReason>([
+  'runtime_terminated',
+  'ignored',
+  'undeliverable',
+  'legacy',
+])
+
+function failureReasonFor(raw: string | undefined): WrkqEnvelopeFailureReason | undefined {
+  const reason = failedPayload(raw)?.reason
+  if (reason === undefined) return undefined
+  return FAILURE_REASONS.has(reason as WrkqEnvelopeFailureReason)
+    ? (reason as WrkqEnvelopeFailureReason)
+    : undefined
 }
 
 function chunk<T>(values: readonly T[], size: number): T[][] {
@@ -1668,10 +2104,23 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
       }
       const page = await this.wrkqLedger.eventsView({
         cursor,
-        eventTypes: ['envelope.created'],
+        // `envelope.failed` rides the SAME cursor as `envelope.created` (§5).
+        // It is not a wake — nothing is owed to the addressee any more — it is
+        // how the SENDER learns, and it reaches senders on other nodes for
+        // free because every node tails the one ledger.
+        eventTypes: ['envelope.created', 'envelope.failed'],
         limit: LEDGER_TAIL_PAGE_LIMIT,
       })
       for (const event of page.items) {
+        if (event.eventType === 'envelope.failed') {
+          await queueFailureNotice(this, event).catch((error: unknown) => {
+            writeServerLog('WARN', 'wrkq.kicker.failure_notice_queue_failed', {
+              envelope: event.resourceId,
+              error: errorText(error),
+            })
+          })
+          continue
+        }
         const target = wakeTargetForEvent(event)
         if (target === undefined) continue
         this.requestMailKickerWake(target, 'insert')
@@ -1767,6 +2216,29 @@ export function observeMailDriveLifecycleEvent(
       generation: event.generation,
       runtimeId: event.runtimeId,
     })
+    return
+  }
+  if (RUNTIME_TERMINAL_EVENTS.has(event.eventKind)) {
+    // rev 5.1 D3. The EVENT is the wake and the STATUS column is the authority,
+    // so this re-reads the row rather than trusting the name it arrived under —
+    // a `runtime.stale` that the reaper has since walked back is not a lapse.
+    const runtimeId = event.runtimeId
+    if (runtimeId === undefined) return
+    if (this.mailKickerLapsedRuntimes.has(runtimeId)) return
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
+    if (runtime === undefined || !isRuntimeTerminal(runtime.status)) return
+    const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
+    void failLapsedObligations(this, targetSessionRef, new Set([runtimeId]))
+      .then((complete) => {
+        if (complete) this.mailKickerLapsedRuntimes.add(runtimeId)
+      })
+      .catch((error: unknown) => {
+        writeServerLog('WARN', 'wrkq.kicker.lapse_wake_failed', {
+          targetSessionRef,
+          runtimeId,
+          error: errorText(error),
+        })
+      })
     return
   }
   if (!MAIL_DRIVE_TERMINAL_EVENTS.has(event.eventKind)) return

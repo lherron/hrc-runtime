@@ -220,7 +220,10 @@ export class HrcMailFederatedOriginRepository {
     outcome: 'applied' | 'idempotent'
     envelope: HrcMailEnvelope
   } {
-    if (input.envelope.state !== 'acked' && input.envelope.state !== 'dead') {
+    // rev 5.1: an obligation ends well as `acked` and badly as `failed`. The
+    // rev 4 `dead` name is gone from the collaboration vocabulary, so a mirror
+    // arriving under it is no longer terminal here either.
+    if (input.envelope.state !== 'acked' && input.envelope.state !== 'failed') {
       throw new HrcMailRepositoryError(
         'invalid_transition',
         `federated disposition must be terminal, got ${input.envelope.state}`,

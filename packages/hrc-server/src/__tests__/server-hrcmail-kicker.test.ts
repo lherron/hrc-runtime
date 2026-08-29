@@ -7,7 +7,7 @@ import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
-import { resolveHrcMailKickerEnabled, resolveHrcMailMaxRounds } from '../option-resolvers.js'
+import { resolveHrcMailKickerEnabled } from '../option-resolvers.js'
 import { timestamp } from '../server-util.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
@@ -68,6 +68,11 @@ function say(overrides: Partial<Parameters<FakeWrkqLedger['say']>[0]> = {}) {
   return ledger.say({ toScopeRef: SCOPE, fromScopeRef: SENDER, ...overrides })
 }
 
+/** A `now` far enough ahead that every armed reminder reads as due. */
+function farFuture(): string {
+  return new Date(Date.now() + 60 * 60_000).toISOString()
+}
+
 async function startServer(options: Record<string, unknown> = {}): Promise<HrcServer> {
   server = await createHrcServer(
     fixture.serverOpts({
@@ -125,32 +130,18 @@ function installQueuedDispatch(serverInstance: HrcServer): { calls: () => number
 }
 
 describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
-  it('is dark by default and honors the named max-round override', () => {
+  it('is dark by default', () => {
     const originalEnabled = process.env['HRC_MAIL_KICKER_ENABLED']
-    const originalMaxRounds = process.env['HRC_MAIL_MAX_ROUNDS']
     try {
       Reflect.deleteProperty(process.env, 'HRC_MAIL_KICKER_ENABLED')
-      Reflect.deleteProperty(process.env, 'HRC_MAIL_MAX_ROUNDS')
       expect(resolveHrcMailKickerEnabled({} as never)).toBe(false)
-      expect(resolveHrcMailMaxRounds({} as never)).toBe(3)
-
       process.env['HRC_MAIL_KICKER_ENABLED'] = '1'
-      process.env['HRC_MAIL_MAX_ROUNDS'] = '7'
       expect(resolveHrcMailKickerEnabled({} as never)).toBe(true)
-      expect(resolveHrcMailMaxRounds({} as never)).toBe(7)
-
-      process.env['HRC_MAIL_MAX_ROUNDS'] = '7.5'
-      expect(resolveHrcMailMaxRounds({} as never)).toBe(3)
     } finally {
       if (originalEnabled === undefined) {
         Reflect.deleteProperty(process.env, 'HRC_MAIL_KICKER_ENABLED')
       } else {
         process.env['HRC_MAIL_KICKER_ENABLED'] = originalEnabled
-      }
-      if (originalMaxRounds === undefined) {
-        Reflect.deleteProperty(process.env, 'HRC_MAIL_MAX_ROUNDS')
-      } else {
-        process.env['HRC_MAIL_MAX_ROUNDS'] = originalMaxRounds
       }
     }
   })
@@ -174,7 +165,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
 
-  it('injects the §7 presentation, not an inbox pointer', async () => {
+  it('injects the §4 full form, not an inbox pointer', async () => {
     const envelope = say({ body: 'the body that must be injected verbatim' })
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
@@ -185,8 +176,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(prompt).toContain('[T-07615 · mable@hrc-runtime:T-07615 → you · reply required]')
     expect(prompt).toContain('the body that must be injected verbatim')
     expect(prompt).toContain("reply: wrkc say T-07615 --to mable@hrc-runtime:T-07615 - <<'EOF'")
-    // The envelope id is INTERNAL: inbox/show/log surface it, injection must not.
-    expect(prompt).not.toContain(envelope.id)
+    // rev 5.1: the id is no longer internal. The defer line has to name the row
+    // the reader is being asked to defer, and the ROOM KEY is still what the
+    // reply line addresses.
+    expect(prompt).toContain(`defer: wrkc defer ${envelope.id} --reason …`)
     // No room history is ever injected; the first message in a room has no cue.
     expect(prompt).not.toContain('history:')
     const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
@@ -327,7 +320,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(ledger.presentRequests).toEqual([])
   })
 
-  it('summons a reply_required target through the gate and advances its round on a bare turn', async () => {
+  it('summons a reply_required target through the gate and arms ONE reminder on a bare turn', async () => {
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
     await (server as any).runWrkqLedgerTail()
@@ -341,13 +334,19 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     await waitUntil(
-      () => ledger.roundEndedCalls.includes(envelope.id),
-      'round advanced for the undisposed envelope'
+      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1,
+      'D4 reminder armed for the undisposed envelope'
     )
-    expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(1)
+    const [reminder] = db.mailDrives.listDueReminders(TARGET, farFuture())
+    expect(reminder?.envelopeId).toBe(envelope.id)
+    // A DELAY, not a backoff: one minute from the turn that left it undisposed.
+    expect(Date.parse(reminder?.remindAt ?? '') - Date.now()).toBeGreaterThan(30_000)
+    // rev 5.1 D2: nothing re-presents it in the meantime.
+    expect(ledger.envelopes.get(envelope.id)?.state).toBe('presented')
+    expect(ledger.failRequests).toEqual([])
   })
 
-  it('does not advance a round for a turn that answered the envelope', async () => {
+  it('arms no reminder for a turn that answered the envelope', async () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
@@ -358,9 +357,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     ledger.ack(envelope.id)
     const db = (server as any).db as HrcDatabase
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => ledger.roundEndedCalls.includes(envelope.id), 'roundEnded consulted')
-    // Only a still-presented envelope advances, so the acked one burns nothing.
-    expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(0)
+    await Bun.sleep(80)
+    expect(db.mailDrives.listDueReminders(TARGET, farFuture())).toEqual([])
   })
 
   it('declines to drive at all while wrkq is unreachable', async () => {
@@ -517,7 +515,12 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     ).toHaveLength(1)
   })
 
-  it('holds a still-presented envelope inside its redelivery floor, doubling per round', async () => {
+  // rev 5.1 D2, replacing rev 4's redelivery floor entirely. The floor existed
+  // to slow a re-presentation down; there is no re-presentation to slow. The
+  // four RATIFIED SCENARIOS and the D3 terminal-status matrix live in
+  // `t07704-rev51-obligation-lifetime.test.ts`; what stays here is the kicker's
+  // own unit behaviour.
+  it('never re-presents a presented envelope, floor or no floor', async () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
@@ -526,39 +529,30 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     const db = (server as any).db as HrcDatabase
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => ledger.roundEndedCalls.length > 0, 'round advanced')
-    expect(ledger.envelopes.get(envelope.id)?.roundCount).toBe(1)
+    await waitUntil(
+      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1,
+      'reminder armed'
+    )
 
-    // A turn that ends in seconds must NOT be able to burn the bound in
-    // seconds. The envelope was presented moments ago, so it is floored.
-    const captured = await captureServerLog(async () => {
-      ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
-      await (server as any).drainMailKickerTarget(TARGET)
-    })
-    expect(deterministic.calls()).toBe(1)
-    // The hold is OBSERVABLE, not inferred from a claim that came back clear.
-    const held = captured.lines.filter((line) => line.includes('wrkq.kicker.redelivery_floored'))
-    expect(held).not.toHaveLength(0)
-    expect(held[held.length - 1]).toContain(envelope.id)
-    expect(held[held.length - 1]).toContain('remainingMs')
-
-    // Age the receipt past the round-1 floor (2m) and it drives again.
+    // Age the receipt by an hour: under rev 4 that alone bought a redelivery.
     const aged = ledger.envelopes.get(envelope.id)
     const receipt = aged?.presentedTo[aged.presentedTo.length - 1]
     if (receipt !== undefined) {
-      receipt.presentedAt = new Date(Date.now() - 5 * 60_000).toISOString()
+      receipt.presentedAt = new Date(Date.now() - 60 * 60_000).toISOString()
     }
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
-    await waitUntil(() => deterministic.calls() === 2, 'drive resumed past the floor')
+    await (server as any).drainMailKickerTarget(TARGET)
+    await Bun.sleep(50)
+    // Still exactly one drive: the only thing that surfaces it again is its own
+    // DUE reminder, and that one is held for a minute.
+    expect(deterministic.calls()).toBe(1)
   })
 
-  it('never floors an envelope the addressee has not been shown', async () => {
+  it('delivers a first presentation immediately — there is nothing to hold back', async () => {
     say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    // A pending envelope has no receipt to wait from: the floor is about
-    // RE-delivery, and delaying a first presentation would just be latency.
     await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
   })
 

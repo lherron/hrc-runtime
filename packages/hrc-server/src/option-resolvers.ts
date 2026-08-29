@@ -11,7 +11,6 @@ import {
 } from './precompile-launch-timing.js'
 import {
   DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
-  DEFAULT_HRC_MAIL_MAX_ROUNDS,
   DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
   DEFAULT_SESSION_PROJECTION_DAYS,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
@@ -21,7 +20,6 @@ import {
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
   HRC_MAIL_KICKER_ENABLED_ENV,
-  HRC_MAIL_MAX_ROUNDS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
   HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
   HRC_SESSION_PROJECTION_DAYS_ENV,
@@ -152,17 +150,6 @@ export function resolveHrcMailKickerSweepIntervalMs(options: HrcServerOptions): 
     return Math.max(10, Math.floor(value))
   }
   return DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS
-}
-
-export function resolveHrcMailMaxRounds(options: HrcServerOptions): number {
-  const override = options.hrcMailMaxRounds
-  if (typeof override === 'number' && Number.isSafeInteger(override) && override > 0) {
-    return override
-  }
-  const raw = process.env[HRC_MAIL_MAX_ROUNDS_ENV]
-  if (raw === undefined) return DEFAULT_HRC_MAIL_MAX_ROUNDS
-  const parsed = Number(raw.trim())
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_HRC_MAIL_MAX_ROUNDS
 }
 
 export function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {

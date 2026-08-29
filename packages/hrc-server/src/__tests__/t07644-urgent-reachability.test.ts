@@ -230,6 +230,19 @@ async function withServerLog<T>(run: (lines: string[]) => Promise<T>): Promise<s
   return lines
 }
 
+/**
+ * The D4 reminders armed for one envelope, however far off their hold is.
+ *
+ * `listDueReminders` is the PRODUCTION predicate and takes a `now`; passing an
+ * hour ahead asks "is one armed at all" without reaching past the repository
+ * into its table.
+ */
+function remindersFor(db: HrcDatabase, envelopeId: string) {
+  return db.mailDrives
+    .listDueReminders(TARGET, new Date(Date.now() + 3_600_000).toISOString())
+    .filter((reminder) => reminder.envelopeId === envelopeId)
+}
+
 describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attempt', () => {
   it('queues a plain envelope into the turn the kicker itself started', async () => {
     await startServer()
@@ -259,7 +272,8 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(receipts[0]?.inputId).toBe('input-run-queued')
     expect(receipts[0]?.runId).toBe('run-queued')
     expect(receipts[0]?.deliveryOutcome).toBe('queued_to_live_harness')
-    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    // A delivery is not a disposition: nothing about the obligation has moved.
+    expect(ledger.failRequests).toEqual([])
 
     expect(
       lines.filter((line) => line.includes('wrkq.kicker.queued_into_busy_target'))
@@ -276,7 +290,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
   })
 
-  it("owns its round by the queued input's OWN turn, not the holder's (daedalus flaw 1, rev 4)", async () => {
+  it("owns its disposition by the queued input's OWN turn, not the holder's (rev 4 flaw 1, kept by rev 5.1 D5)", async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -298,12 +312,12 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(db.mailDrives.getActiveAttempt(TARGET)?.driveAttemptId).toBe(holder.driveAttemptId)
 
     // Holder A ends. Headless FIFO: B has not run yet, so B's envelope was not
-    // shown-and-ignored — its round must NOT move (daedalus, rev 4 second
-    // rejection). The 15s default grace keeps the merge rule out of this.
+    // shown-and-ignored — nothing about it may be decided (daedalus, rev 4
+    // second rejection). The 15s default grace keeps the merge rule out of this.
     await completeRun(server as HrcServer, holder.runId)
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(80)
-    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    expect(remindersFor(db, mail.id)).toEqual([])
 
     // B starts and ends undisposed: now the round advances.
     const session = await fixture.resolveSession(SCOPE)
@@ -321,11 +335,16 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
       })
     )
     await completeRun(server as HrcServer, 'run-queued')
-    await waitUntil(() => ledger.roundEndedCalls.includes(mail.id), 'round advanced at B end')
-    expect(ledger.envelopes.get(mail.id)?.roundCount).toBe(1)
+    await waitUntil(() => remindersFor(db, mail.id).length === 1, 'reminder armed at B end')
+    // ONE reminder, bound to the runtime that held it, and nothing failed yet:
+    // strike one, not strike two.
+    expect(remindersFor(db, mail.id)[0]?.runtimeId).toBe(
+      ledger.envelopes.get(mail.id)?.presentedTo.at(-1)?.runtimeId
+    )
+    expect(ledger.failRequests).toEqual([])
   })
 
-  it('advances nothing when the queued input never starts a turn, and never holds the slot', async () => {
+  it('decides nothing when the queued input never starts a turn, and never holds the slot', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -342,12 +361,12 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
 
     // A ends; B never starts (a TUI that merges typed text mid-turn). HRC
     // cannot tell that from a slow B start and does not guess (daedalus, rev
-    // 4 ruling 3): no round moves, the slot is free, and the queued attempt
-    // simply waits for B — the floor, not this attempt, bounds redelivery.
+    // 4 ruling 3): nothing is armed, nothing is struck out, the slot is free.
+    // Under rev 5.1 the bound on this case is D3, not a floor.
     await completeRun(server as HrcServer, holder.runId)
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(80)
-    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    expect(remindersFor(db, mail.id)).toEqual([])
     expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
     const queued = db.mailDrives.listUnfinishedAttempts(TARGET)
     expect(queued.map((attempt) => attempt.runId)).toEqual(['run-queued'])
@@ -357,9 +376,10 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
       mail.id,
     ])
 
-    // The seat goes busy again on a later turn A2 and the floor expires: the
-    // envelope is re-queued into A2 as a NEW attempt — B never starting must
-    // not suppress delivery on a healthy seat (daedalus, rev 4 ruling 4).
+    // The seat goes busy again on a later turn A2. Under rev 4 the floor
+    // expired here and the envelope was RE-QUEUED into A2 (ruling 4). rev 5.1
+    // D2 deletes that outright: a `presented` envelope is bound to the runtime
+    // in its newest receipt and is never presented again to anything.
     const owner = queued[0]
     if (owner?.runtimeId === undefined || owner.hostSessionId === undefined) {
       throw new Error('queued attempt has no runtime/session')
@@ -390,15 +410,13 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     if (ledgerEnvelope?.presentedTo[0] === undefined) throw new Error('no receipt')
     ledgerEnvelope.presentedTo[0].presentedAt = new Date(Date.now() - 10 * 60_000).toISOString()
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
-    await waitUntil(
-      () => (ledger.envelopes.get(mail.id)?.presentedTo.length ?? 0) === 2,
-      're-queued into the later live turn'
-    )
-    expect(ledger.envelopes.get(mail.id)?.presentedTo[1]?.runId).not.toBe('run-queued')
-    expect(ledger.roundEndedCalls).not.toContain(mail.id)
+    await (server as any).drainMailKickerTarget(TARGET)
+    await Bun.sleep(60)
+    expect(ledger.envelopes.get(mail.id)?.presentedTo).toHaveLength(1)
 
-    // The runtime dies before B ever starts: the attempts are reaped WITHOUT
-    // rounds, so they cannot pile up, and the envelope is untouched.
+    // The runtime dies before B ever starts. The attempts are reaped, and the
+    // obligation LAPSES (D3) rather than waiting forever on a turn that will
+    // never run: the sender is told and decides.
     const runtimeId = queued[0]?.runtimeId
     if (runtimeId === undefined) throw new Error('queued attempt has no runtime')
     const now = timestamp()
@@ -406,15 +424,19 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     const lines = await withServerLog(async () => {
       ;(server as any).requestMailKickerWake(TARGET, 'periodic')
       await (server as any).drainMailKickerTarget(TARGET)
+      await (server as any).runMailKickerSweep()
+      await waitUntil(
+        () => ledger.envelopes.get(mail.id)?.state === 'failed',
+        'D3 lapse on the dead runtime'
+      )
     })
     expect(db.mailDrives.listUnfinishedAttempts(TARGET)).toHaveLength(0)
     const reaped = db.mailDrives
       .listAttempts(TARGET)
       .filter((attempt) => attempt.driveAttemptId.startsWith('queued-'))
-    expect(reaped.map((attempt) => attempt.state)).toEqual(['failed', 'failed'])
+    expect(reaped.map((attempt) => attempt.state)).toEqual(['failed'])
     expect(lines.some((line) => line.includes('wrkq.kicker.queued_attempt_reaped'))).toBe(true)
-    expect(ledger.roundEndedCalls).not.toContain(mail.id)
-    expect(ledger.envelopes.get(mail.id)?.state).toBe('presented')
+    expect(ledger.envelopes.get(mail.id)?.failureReason).toBe('runtime_terminated')
   })
 
   it('replays a ledger receipt lost between the local insert and the commit (ruling 5)', async () => {

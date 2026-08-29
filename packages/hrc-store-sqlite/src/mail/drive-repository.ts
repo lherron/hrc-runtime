@@ -68,8 +68,85 @@ export type HrcMailDriveClaimResult =
 
 export type CompleteHrcMailDriveResult = {
   attempt: HrcMailDriveAttempt
-  /** The envelope ids this attempt presented; the caller advances their rounds in wrkq. */
+  /**
+   * The envelope ids this attempt presented, and NON-EMPTY ONLY when the
+   * attempt's own turn provably started and ended.
+   *
+   * That is the rev 5.1 D5 ownership proof, unchanged from rev 4 and now
+   * carrying exactly one thing: an attempt whose input the harness merged into
+   * another turn never reaches `started`, comes back empty here, and therefore
+   * can neither arm a reminder nor strike an obligation out.
+   */
   presentedEnvelopeIds: string[]
+}
+
+/**
+ * One armed D4 reminder: at most one per (envelope, runtime), forever.
+ *
+ * `turnEndedAt` is kept because the reminder's header quotes it back ("your
+ * turn ended 4m ago"), and by the time the hold expires the run row that knew
+ * it may be several turns in the past.
+ */
+export type HrcMailEnvelopeReminder = {
+  envelopeId: string
+  runtimeId: string
+  targetSessionRef: string
+  turnEndedAt: string
+  remindAt: string
+  driveAttemptId?: string | undefined
+  deliveredAt?: string | undefined
+  createdAt: string
+}
+
+/** One §5 sender-side failure notice awaiting a live generation to land in. */
+export type HrcMailFailureNotice = {
+  envelopeId: string
+  targetSessionRef: string
+  notice: string
+  createdAt: string
+  deliveredAt?: string | undefined
+}
+
+type ReminderRow = {
+  envelope_id: string
+  runtime_id: string
+  target_session_ref: string
+  turn_ended_at: string
+  remind_at: string
+  drive_attempt_id: string | null
+  delivered_at: string | null
+  created_at: string
+}
+
+type FailureNoticeRow = {
+  envelope_id: string
+  target_session_ref: string
+  notice: string
+  created_at: string
+  delivered_at: string | null
+}
+
+function mapReminder(row: ReminderRow): HrcMailEnvelopeReminder {
+  return {
+    envelopeId: row.envelope_id,
+    runtimeId: row.runtime_id,
+    targetSessionRef: row.target_session_ref,
+    turnEndedAt: row.turn_ended_at,
+    remindAt: row.remind_at,
+    ...(row.drive_attempt_id === null ? {} : { driveAttemptId: row.drive_attempt_id }),
+    ...(row.delivered_at === null ? {} : { deliveredAt: row.delivered_at }),
+    createdAt: row.created_at,
+  }
+}
+
+function mapFailureNotice(row: FailureNoticeRow): HrcMailFailureNotice {
+  return {
+    envelopeId: row.envelope_id,
+    targetSessionRef: row.target_session_ref,
+    notice: row.notice,
+    createdAt: row.created_at,
+    ...(row.delivered_at === null ? {} : { deliveredAt: row.delivered_at }),
+  }
 }
 
 type DriveAttemptRow = {
@@ -536,20 +613,21 @@ export class HrcMailDriveRepository {
   }
 
   completeNoOp(driveAttemptId: string): HrcMailDriveAttempt {
-    return this.finishWithoutRounds(driveAttemptId, 'no_op', undefined)
+    return this.finishUnstarted(driveAttemptId, 'no_op', undefined)
   }
 
   failWithoutStart(driveAttemptId: string, error: string): HrcMailDriveAttempt {
-    return this.finishWithoutRounds(driveAttemptId, 'failed', error)
+    return this.finishUnstarted(driveAttemptId, 'failed', error)
   }
 
   /**
    * Close a started attempt and report which envelopes it presented.
    *
-   * Round accounting moved to wrkq with the ledger: the caller calls
-   * `wrkq.envelope.roundEnded` for each returned id. Only a still-`presented`
-   * envelope advances there, so a clear-inbox no-op turn still burns nothing --
-   * the rule is unchanged, its enforcement is just on the owning side now.
+   * The returned ids are the rev 5.1 D4/D5 trigger: this attempt's OWN turn
+   * started and ended, and these are the obligations it carried. An attempt
+   * that never started returns none, which is precisely what keeps a merged
+   * input from arming a reminder it did not show or striking out an obligation
+   * it never surfaced.
    */
   completeStartedAttempt(
     runId: string,
@@ -562,7 +640,7 @@ export class HrcMailDriveRepository {
     }
     if (current.state !== 'started' || current.startHrcSeq === undefined) {
       return {
-        attempt: this.finishWithoutRounds(
+        attempt: this.finishUnstarted(
           current.driveAttemptId,
           'failed',
           `terminal ${terminalEventKind} observed without turn.started`
@@ -608,7 +686,8 @@ export class HrcMailDriveRepository {
       .map((row) => row.envelope_id)
   }
 
-  private finishWithoutRounds(
+  /** End an attempt that never proved a turn: no D4 arming, no D5 strike-out. */
+  private finishUnstarted(
     driveAttemptId: string,
     state: 'failed' | 'no_op',
     error: string | undefined
@@ -635,6 +714,196 @@ export class HrcMailDriveRepository {
         return this.requireAttempt(driveAttemptId)
       })
       .immediate() as HrcMailDriveAttempt
+  }
+
+  // ── rev 5.1 obligation lifetime (T-07704) ──────────────────────────────────
+
+  /**
+   * (target, runtime) pairs this node presented mail on, since `since`.
+   *
+   * The D3 lapse backstop's candidate source. It is bounded by a lookback
+   * rather than being "every attempt ever", and it is the LOCAL record on
+   * purpose: a runtime this node never drove is another node's to lapse, and
+   * asking the ledger which runtimes are dead would be asking wrkq a question
+   * about execution state it has no business knowing.
+   */
+  listRuntimeBoundTargets(since: string): { targetSessionRef: string; runtimeId: string }[] {
+    return this.db
+      .query<{ target_session_ref: string; runtime_id: string }, [string]>(
+        `SELECT DISTINCT a.target_session_ref, a.runtime_id
+           FROM hrcmail_drive_attempts a
+          WHERE a.runtime_id IS NOT NULL
+            AND a.updated_at >= ?
+            AND EXISTS (
+              SELECT 1 FROM hrcmail_drive_presentations p
+               WHERE p.drive_attempt_id = a.drive_attempt_id
+            )
+          ORDER BY a.target_session_ref ASC, a.runtime_id ASC`
+      )
+      .all(since)
+      .map((row) => ({ targetSessionRef: row.target_session_ref, runtimeId: row.runtime_id }))
+  }
+
+  /**
+   * Arm the D4 reminder for one (envelope, runtime), at most once ever.
+   *
+   * Returns false when the pair already has a row — armed, delivered, or long
+   * spent. That is the whole at-most-once guarantee, and it lives in a UNIQUE
+   * key rather than in a read-then-write because the arming trigger is
+   * deliberately loose: every turn terminal on the runtime re-offers the same
+   * pair, and all but the first must be no-ops.
+   */
+  armReminder(input: {
+    envelopeId: string
+    runtimeId: string
+    targetSessionRef: string
+    turnEndedAt: string
+    remindAt: string
+  }): boolean {
+    const changes = this.db
+      .query(
+        `INSERT OR IGNORE INTO hrcmail_envelope_reminders (
+           envelope_id, runtime_id, target_session_ref, turn_ended_at,
+           remind_at, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.envelopeId,
+        input.runtimeId,
+        normalizeTarget(input.targetSessionRef),
+        input.turnEndedAt,
+        input.remindAt,
+        new Date().toISOString()
+      ).changes
+    return changes > 0
+  }
+
+  /** Armed, undelivered reminders for one target whose hold has expired. */
+  listDueReminders(targetSessionRef: string, now: string): HrcMailEnvelopeReminder[] {
+    return this.db
+      .query<ReminderRow, [string, string]>(
+        `SELECT envelope_id, runtime_id, target_session_ref, turn_ended_at,
+                remind_at, drive_attempt_id, delivered_at, created_at
+           FROM hrcmail_envelope_reminders
+          WHERE target_session_ref = ? AND delivered_at IS NULL AND remind_at <= ?
+          ORDER BY remind_at ASC, envelope_id ASC`
+      )
+      .all(normalizeTarget(targetSessionRef), now)
+      .map(mapReminder)
+  }
+
+  /** Targets owed a due reminder; a sweep candidate source of its own. */
+  listDueReminderTargets(now: string): string[] {
+    return this.db
+      .query<{ target_session_ref: string }, [string]>(
+        `SELECT DISTINCT target_session_ref
+           FROM hrcmail_envelope_reminders
+          WHERE delivered_at IS NULL AND remind_at <= ?
+          ORDER BY target_session_ref ASC`
+      )
+      .all(now)
+      .map((row) => row.target_session_ref)
+  }
+
+  /** Bind a delivered reminder to the attempt that carried it (the D5 owner). */
+  markReminderDelivered(envelopeId: string, runtimeId: string, driveAttemptId: string): void {
+    this.db
+      .query(
+        `UPDATE hrcmail_envelope_reminders
+            SET drive_attempt_id = ?, delivered_at = ?
+          WHERE envelope_id = ? AND runtime_id = ? AND delivered_at IS NULL`
+      )
+      .run(driveAttemptId, new Date().toISOString(), envelopeId, runtimeId)
+  }
+
+  /**
+   * The reminders one drive attempt carried.
+   *
+   * D5's whole predicate: if the attempt that just proved a start-and-end is a
+   * reminder attempt, the obligations it named have had their second strike.
+   */
+  remindersForAttempt(driveAttemptId: string): HrcMailEnvelopeReminder[] {
+    return this.db
+      .query<ReminderRow, [string]>(
+        `SELECT envelope_id, runtime_id, target_session_ref, turn_ended_at,
+                remind_at, drive_attempt_id, delivered_at, created_at
+           FROM hrcmail_envelope_reminders
+          WHERE drive_attempt_id = ?
+          ORDER BY envelope_id ASC`
+      )
+      .all(driveAttemptId)
+      .map(mapReminder)
+  }
+
+  /**
+   * Queue a §5 failure notice for a sender scope.
+   *
+   * Keyed on (envelope, target) so the ledger tail re-reading a page, or two
+   * nodes observing the same `envelope.failed`, cannot tell one sender the same
+   * thing twice.
+   */
+  recordFailureNotice(input: {
+    envelopeId: string
+    targetSessionRef: string
+    notice: string
+  }): boolean {
+    const changes = this.db
+      .query(
+        `INSERT OR IGNORE INTO hrcmail_failure_notices (
+           envelope_id, target_session_ref, notice, created_at
+         ) VALUES (?, ?, ?, ?)`
+      )
+      .run(
+        input.envelopeId,
+        normalizeTarget(input.targetSessionRef),
+        input.notice,
+        new Date().toISOString()
+      ).changes
+    return changes > 0
+  }
+
+  listUndeliveredFailureNotices(targetSessionRef: string): HrcMailFailureNotice[] {
+    return this.db
+      .query<FailureNoticeRow, [string]>(
+        `SELECT envelope_id, target_session_ref, notice, created_at, delivered_at
+           FROM hrcmail_failure_notices
+          WHERE target_session_ref = ? AND delivered_at IS NULL
+          ORDER BY created_at ASC, envelope_id ASC`
+      )
+      .all(normalizeTarget(targetSessionRef))
+      .map(mapFailureNotice)
+  }
+
+  /** Scopes holding an undelivered notice: "on next attend", made findable. */
+  listFailureNoticeTargets(): string[] {
+    return this.db
+      .query<{ target_session_ref: string }, []>(
+        `SELECT DISTINCT target_session_ref
+           FROM hrcmail_failure_notices
+          WHERE delivered_at IS NULL
+          ORDER BY target_session_ref ASC`
+      )
+      .all()
+      .map((row) => row.target_session_ref)
+  }
+
+  markFailureNoticesDelivered(targetSessionRef: string, envelopeIds: readonly string[]): void {
+    if (envelopeIds.length === 0) return
+    const now = new Date().toISOString()
+    const target = normalizeTarget(targetSessionRef)
+    this.db
+      .transaction(() => {
+        for (const envelopeId of envelopeIds) {
+          this.db
+            .query(
+              `UPDATE hrcmail_failure_notices
+                  SET delivered_at = ?
+                WHERE envelope_id = ? AND target_session_ref = ? AND delivered_at IS NULL`
+            )
+            .run(now, envelopeId, target)
+        }
+      })
+      .immediate()
   }
 
   private releaseSlot(targetSessionRef: string, driveAttemptId: string, now: string): void {

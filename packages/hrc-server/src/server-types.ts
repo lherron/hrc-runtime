@@ -269,8 +269,6 @@ export type HrcServerOptions = {
   hrcMailKickerEnabled?: boolean | undefined
   /** Test/embedded periodic sweep override; production defaults to one second. */
   hrcMailKickerSweepIntervalMs?: number | undefined
-  /** Across-turn envelope bound; defaults to HRC_MAIL_MAX_ROUNDS (5). */
-  hrcMailMaxRounds?: number | undefined
   /**
    * Test-only crash-boundary seam. It runs after the durable slot CAS and
    * before summon/presentation/dispatch; throwing leaves the attempt recoverable.

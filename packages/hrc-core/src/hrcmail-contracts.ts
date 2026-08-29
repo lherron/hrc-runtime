@@ -10,7 +10,24 @@ import type { HrcRuntimeIntent } from './contracts.js'
 export const HRC_MAIL_REPLY_SCHEMA_DIALECT = 'https://json-schema.org/draft/2020-12/schema'
 export const HRC_MAIL_REPLY_SCHEMA_MAX_BYTES = 64 * 1024
 
-export type HrcMailEnvelopeState = 'pending' | 'presented' | 'acked' | 'deferred' | 'dead'
+/**
+ * The FROZEN hrcmail envelope states (T-07616 flag day).
+ *
+ * These tables hold no live collaboration state; collaboration moved to the
+ * wrkq ledger, whose own state vocabulary is `WrkqEnvelopeState` in hrc-server
+ * and renamed `dead` to `failed` at rev 5.1. `'failed'` is admitted here only
+ * because the federated-origin terminal guard is spelled in rev 5.1's
+ * vocabulary (T-07704 scope item 10); `'dead'` stays because the frozen
+ * `hrcmail_envelopes` CHECK constraint and its repository still write it, and
+ * migrating a dead subsystem's schema buys nothing.
+ */
+export type HrcMailEnvelopeState =
+  | 'pending'
+  | 'presented'
+  | 'acked'
+  | 'deferred'
+  | 'dead'
+  | 'failed'
 
 export type HrcMailPayloadKind = 'request' | 'conversational'
 

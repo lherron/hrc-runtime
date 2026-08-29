@@ -16,7 +16,20 @@
 
 export type WrkqEnvelopeObligation = 'reply_required' | 'fyi' | 'none'
 
-export type WrkqEnvelopeState = 'pending' | 'presented' | 'acked' | 'deferred' | 'dead'
+export type WrkqEnvelopeState = 'pending' | 'presented' | 'acked' | 'deferred' | 'failed'
+
+/**
+ * Why an obligation ended without a reply (rev 5.1 §2).
+ *
+ * `legacy` is written ONLY by wrkq's flag-day migration, for rows that were
+ * `dead` under rev 4 rounds. HRC never writes it and `wrkq.envelope.fail`
+ * refuses it; it is declared here because HRC READS it off a migrated row.
+ */
+export type WrkqEnvelopeFailureReason =
+  | 'runtime_terminated'
+  | 'ignored'
+  | 'undeliverable'
+  | 'legacy'
 
 export type WrkqRoomKind = 'campaign' | 'task' | 'project' | 'adhoc'
 
@@ -58,7 +71,16 @@ export type WrkqEnvelope = {
   taskId?: string | undefined
   state: WrkqEnvelopeState
   terminal: boolean
-  roundCount: number
+  /** Present only on a `failed` row. */
+  failureReason?: WrkqEnvelopeFailureReason | undefined
+  /**
+   * The reader's OWN words when they deferred (rev 5.1 §4). It survives the
+   * retry promise firing, which is what lets the defer-retry pointer form quote
+   * the reason back rather than re-pushing a body nobody asked for again.
+   */
+  deferReason?: string | undefined
+  /** When a deferral's retry promise is due. */
+  retryAt?: string | undefined
   /** HRC birth directives, stored verbatim by wrkq and parsed here at kick time. */
   materializationIntent?: string | undefined
   presentedTo: WrkqEnvelopePresentation[]
@@ -173,10 +195,55 @@ export type WrkqEnvelopePresentResult = {
   lastMessageAt?: string | undefined
 }
 
-export type WrkqEnvelopeRoundParams = {
+/**
+ * The unsuccessful terminal transition (rev 5.1 §2, D3/D5/D7).
+ *
+ * `runtime` names the runtime HRC is failing the obligation ON, and wrkqd
+ * REFUSES the call unless that runtime owns the envelope's newest presentation
+ * receipt (`WRKQ_CONFLICT`, retryable). That refusal is the ledger enforcing D2
+ * on HRC's behalf: a node cannot fail an obligation that has since been
+ * presented somewhere else. Repeating the same (envelope, runtime) failure is
+ * an idempotent read of the terminal row.
+ *
+ * `undeliverable` is the one reason that carries no runtime: it fails a
+ * `pending` envelope that was never presented at all.
+ */
+export type WrkqEnvelopeFailParams = {
   envelope: string
-  maxRounds?: number | undefined
+  reason: Exclude<WrkqEnvelopeFailureReason, 'legacy'>
+  runtime?: string | undefined
   principalRef?: string | undefined
+}
+
+export type WrkqEnvelopeShowParams = {
+  envelope: string
+  principalRef?: string | undefined
+}
+
+/**
+ * The receipt that BINDS the obligation, per rev 5.1 D2/D3: the newest one.
+ *
+ * `>=` on the comparison so a tie resolves to the LAST row, which matches
+ * wrkqd's own `ORDER BY presented_at DESC, rowid DESC` — and wrkq's receipts
+ * carry a second-resolution timestamp, so two inside one second is the ordinary
+ * shape of a replayed commit rather than an exotic case. Getting the tie wrong
+ * would make `fail{runtime}` name the older runtime and be REFUSED by the
+ * ledger, which is the safe direction but a silent one.
+ */
+export function newestPresentationReceipt(
+  envelope: Pick<WrkqEnvelope, 'presentedTo'>
+): WrkqEnvelopePresentation | undefined {
+  let newest: WrkqEnvelopePresentation | undefined
+  let newestAt = Number.NEGATIVE_INFINITY
+  for (const receipt of envelope.presentedTo) {
+    const at = Date.parse(receipt.presentedAt)
+    const rank = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at
+    if (rank >= newestAt) {
+      newestAt = rank
+      newest = receipt
+    }
+  }
+  return newest
 }
 
 /**
@@ -233,6 +300,24 @@ export type WrkqMonitorEventsViewParams = {
   /** Resolves a start cursor from row identity instead of returning a page. */
   lastN?: number | undefined
   principalRef?: string | undefined
+}
+
+/**
+ * The `envelope.failed` payload, as the real wrkqd writes it.
+ *
+ * Paired against mini's wrkqd at wrkq 88b133a before this declaration was
+ * written: the payload carries `{state, reason, room_uuid}` plus `runtime_id`
+ * when the failure named one, and NOTHING ELSE. In particular it does NOT carry
+ * the envelope id, the room KEY, or either party — the id is on the event row's
+ * `resource_id`, and the rest is an `envelope.show` away. The §5 sender notice
+ * therefore reads the row back rather than rendering from the payload, which is
+ * exactly the mistake a fixture written from this file could not have caught.
+ */
+export type WrkqEnvelopeFailedPayload = {
+  state?: string
+  reason?: string
+  room_uuid?: string
+  runtime_id?: string
 }
 
 /** The fields of an `envelope.created` payload that decide where a wake goes. */

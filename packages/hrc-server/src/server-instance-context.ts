@@ -214,11 +214,10 @@ type HrcServerInstanceDataForHandlers = {
    * T-07661 — the per-target retry bound for sweep-driven VIRGIN births, keyed
    * by targetSessionRef.
    *
-   * The redelivery floor cannot bound these: it measures from a `presented_to`
-   * receipt, and a scope that was never born was never presented anything. So a
-   * scope whose birth refuses permanently would be re-attempted on every sweep
-   * forever. This carries the SAME doubling shape (1m, 2m, 4m, 8m, 16m) applied
-   * to birth attempts instead of presentations.
+   * A scope that was never born was never presented anything, so nothing on the
+   * envelope can bound its retries. This carries a doubling shape (1m, 2m, 4m,
+   * 8m, 16m) applied to birth attempts, and under rev 5.1 D7 the fifth refusal
+   * ENDS it: the pending mail is failed `undeliverable` and the sender decides.
    *
    * Process-local, like `foreignHomeMemo` and for the same reason: a restart is
    * precisely when a refused birth deserves an immediate retry, so losing the
@@ -226,6 +225,17 @@ type HrcServerInstanceDataForHandlers = {
    * scope leaves the candidate set, which is what a successful birth does.
    */
   readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
+  /**
+   * T-07704 (rev 5.1 D3) — runtimes whose lapse has already been observed,
+   * keyed by runtimeId.
+   *
+   * Nothing can be presented TO a dead runtime, so one complete observation per
+   * runtime is the whole job and this is a pure cost memo. Process-local for
+   * the usual reason: a restart re-walks the lookback window, and
+   * `wrkq.envelope.fail` is idempotent per (envelope, runtime), so the overlap
+   * costs a read rather than a wrong answer.
+   */
+  readonly mailKickerLapsedRuntimes: Set<string>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
@@ -247,7 +257,6 @@ type HrcServerInstanceDataForHandlers = {
    * backlog silently.
    */
   mailKickerColdStartCatchupPending: boolean
-  readonly hrcMailMaxRounds: number
   harnessBrokerController: HarnessBrokerController | undefined
   /**
    * Resolves once the post-construction durable-broker warmup has finished (or

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   type PresentableEnvelope,
+  formatEnvelopeFailureNotice,
   formatEnvelopePresentation,
   formatEnvelopePresentations,
 } from '../wrkq/envelope-presentation.js'
@@ -10,7 +11,8 @@ import type { WrkqEnvelope } from '../wrkq/ledger-types.js'
 import { envelopeIdSequence } from '../wrkq/ledger-types.js'
 
 /**
- * The §7 injection format and the wrkq↔HRC scope seam (T-07612, T-07615).
+ * The §4 injection formats and the wrkq↔HRC scope seam (T-07612 rev 5.1,
+ * T-07615, T-07704).
  */
 
 const NOW = new Date('2026-08-27T12:00:00Z')
@@ -28,8 +30,6 @@ function envelope(overrides: Partial<WrkqEnvelope> = {}): WrkqEnvelope {
     body: 'the body',
     state: 'presented',
     terminal: false,
-    roundCount: 0,
-    urgent: false,
     presentedTo: [],
     createdAt: '2026-08-27T10:00:00Z',
     updatedAt: '2026-08-27T10:00:00Z',
@@ -46,8 +46,8 @@ function presentable(overrides: Partial<PresentableEnvelope> = {}): PresentableE
   }
 }
 
-describe('T-07612 §7 presentation', () => {
-  it('renders header, body, and one reply line — and never the envelope id', () => {
+describe('T-07612 rev 5.1 §4 presentation', () => {
+  it('renders header, body, reply and defer lines in the full form', () => {
     const rendered = formatEnvelopePresentation(presentable({ senderGeneration: 3 }), NOW)
     expect(rendered).toBe(
       [
@@ -56,10 +56,17 @@ describe('T-07612 §7 presentation', () => {
         "reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'",
         '…',
         'EOF',
+        'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
       ].join('\n')
     )
-    // EN ids are INTERNAL: inbox/show/log surface them, the injection must not.
-    expect(rendered).not.toContain('EN-00042')
+  })
+
+  // rev 5.1: not answering now is a VERB. A reader who has never been shown it
+  // defaults to the silence the whole revision exists to stop.
+  it('teaches the defer verb at first contact', () => {
+    expect(formatEnvelopePresentation(presentable(), NOW)).toContain(
+      'defer: wrkc defer EN-00042 --reason …'
+    )
   })
 
   it('omits the generation when this node cannot see the sender', () => {
@@ -79,7 +86,7 @@ describe('T-07612 §7 presentation', () => {
     )
     expect(cold).toContain('history: wrkc log T-07604   (14 messages · last 2h ago)')
     // A cue, never the history itself: no room content is ever injected.
-    expect(cold.split('\n')).toHaveLength(6)
+    expect(cold.split('\n')).toHaveLength(7)
   })
 
   it('never cues a brand-new room even when asked', () => {
@@ -95,6 +102,8 @@ describe('T-07612 §7 presentation', () => {
     )
     expect(rendered).toContain('→ you · fyi]')
     expect(rendered).not.toContain('reply:')
+    // A fyi is auto-acked at presentation: there is nothing to defer either.
+    expect(rendered).not.toContain('defer:')
   })
 
   // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,
@@ -189,5 +198,113 @@ describe('the wrkq/HRC scope seam', () => {
     // EV- belongs to evidence items; it is not an envelope (T-07612 C-16371).
     expect(envelopeIdSequence('EV-00042')).toBe(0)
     expect(envelopeIdSequence('nonsense')).toBe(0)
+  })
+})
+
+/**
+ * rev 5.1 §4 — the POINTER forms and the sender-side failure notice.
+ *
+ * The body is pushed once per envelope on the common path; every later surface
+ * is a pointer with a read hint, and the header's fourth clause is what tells
+ * the reader why a body-less injection just arrived.
+ */
+describe('T-07612 rev 5.1 §4 pointer forms', () => {
+  it('reminds with no body, a read hint, and how long the turn has been over', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({ form: 'reminder', turnEndedAt: '2026-08-27T11:56:00Z' }),
+      NOW
+    )
+    expect(rendered).toBe(
+      [
+        '[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply or defer]',
+        'read: wrkc show EN-00042   ·   thread: wrkc log T-07604',
+        "reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        '…',
+        'EOF',
+        'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
+      ].join('\n')
+    )
+    // The rule, not an optimization: a pointer NEVER carries the body.
+    expect(rendered).not.toContain('the body')
+  })
+
+  it('never cues history on a pointer, even when the ledger says the room is cold', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({ form: 'reminder', historyHint: true, messageCount: 14 }),
+      NOW
+    )
+    expect(rendered).not.toContain('history:')
+  })
+
+  it('quotes the reader their own defer reason on the retry', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({
+        form: 'defer-retry',
+        envelope: envelope({
+          state: 'pending',
+          deferReason: 'mid-restart drain, back in 10',
+          presentedTo: [{ memberRef: 'clod@hrc-runtime:T-07604', presentedAt: NOW.toISOString() }],
+        }),
+      }),
+      NOW
+    )
+    expect(rendered).toContain(
+      '· reply required · you deferred this: "mid-restart drain, back in 10"]'
+    )
+    expect(rendered).toContain('read: wrkc show EN-00042   ·   thread: wrkc log T-07604')
+    expect(rendered).not.toContain('the body')
+  })
+
+  it('clips a runaway defer reason rather than re-injecting an essay', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({
+        form: 'defer-retry',
+        envelope: envelope({ state: 'pending', deferReason: 'x'.repeat(400) }),
+      }),
+      NOW
+    )
+    expect(rendered).toContain(`"${'x'.repeat(120)}…"`)
+  })
+})
+
+describe('T-07612 rev 5.1 §5 sender failure notice', () => {
+  it('names the room, the envelope, the addressee, the reason, and the resend', () => {
+    const failed = envelope({
+      state: 'failed',
+      terminal: true,
+      failureReason: 'runtime_terminated',
+      presentedTo: [
+        {
+          memberRef: 'clod@hrc-runtime:T-07604',
+          runtimeId: 'rt-0e428a10',
+          presentedAt: '2026-08-27T11:58:59Z',
+        },
+      ],
+    })
+    expect(formatEnvelopeFailureNotice(failed, 'runtime_terminated', { now: NOW })).toBe(
+      [
+        '[T-07604 · your EN-00042 → clod@hrc-runtime:T-07604 · failed: runtime_terminated]',
+        'presented 61s, undisposed; runtime rt-0e428a10 ended. Resend: wrkc say T-07604 --to clod@hrc-runtime:T-07604 -',
+      ].join('\n')
+    )
+  })
+
+  it('reports a strike-out as two undisposed turns on the runtime that held it', () => {
+    const failed = envelope({ state: 'failed', terminal: true, failureReason: 'ignored' })
+    expect(
+      formatEnvelopeFailureNotice(failed, 'ignored', { runtimeId: 'rt-1fa86350', now: NOW })
+    ).toBe(
+      [
+        '[T-07604 · your EN-00042 → clod@hrc-runtime:T-07604 · failed: ignored]',
+        'presented, reminded, 2 turns ended undisposed on rt-1fa86350. Resend or escalate.',
+      ].join('\n')
+    )
+  })
+
+  it('says an undeliverable envelope was never delivered at all', () => {
+    const failed = envelope({ state: 'failed', terminal: true, failureReason: 'undeliverable' })
+    expect(formatEnvelopeFailureNotice(failed, 'undeliverable', { now: NOW })).toContain(
+      'never delivered; clod@hrc-runtime:T-07604 could not be seated.'
+    )
   })
 })

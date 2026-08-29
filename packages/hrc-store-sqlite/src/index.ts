@@ -176,6 +176,8 @@ export type {
   HrcMailDriveClaimResult,
   HrcMailDriveSlot,
   HrcMailDriveWakeReason,
+  HrcMailEnvelopeReminder,
+  HrcMailFailureNotice,
 } from './mail/drive-repository.js'
 export type {
   AckHrcMailEnvelopeInput,

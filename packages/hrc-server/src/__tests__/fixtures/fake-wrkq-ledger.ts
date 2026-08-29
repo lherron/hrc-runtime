@@ -1,15 +1,17 @@
 import type { WrkqLedgerClient } from '../../wrkq/ledger-client.js'
-import { WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
+import { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
+import { newestPresentationReceipt } from '../../wrkq/ledger-types.js'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
   WrkqEnvelopeBirthEnvelopeParams,
+  WrkqEnvelopeFailParams,
   WrkqEnvelopeObligation,
   WrkqEnvelopePendingView,
   WrkqEnvelopePendingViewParams,
   WrkqEnvelopePresentParams,
   WrkqEnvelopePresentResult,
-  WrkqEnvelopeRoundParams,
+  WrkqEnvelopeShowParams,
   WrkqMonitorEventsView,
   WrkqMonitorEventsViewParams,
   WrkqRoomShowParams,
@@ -19,15 +21,27 @@ import type {
 /**
  * A wrkq collaboration ledger, standing in for wrkqd.
  *
- * It reproduces the CONTRACT wave 1 published rather than a convenient subset —
+ * It reproduces the CONTRACT wrkqd publishes rather than a convenient subset —
  * `present` is exactly-once per `driveAttemptId`, `historyHint` is keyed to the
  * RUNTIME and not the generation, a `fyi` auto-acks at its own presentation,
- * `blocking` names only what was actually presented, and `roundEnded` advances
- * only a still-presented envelope. Those are the behaviours HRC's kicker leans
- * on, so a double that faked them would prove nothing.
+ * `blocking` names only what was actually presented, and `fail` REFUSES a
+ * runtime that does not own the newest receipt, refuses `legacy`, and gates
+ * `undeliverable` to a `pending` row. Those are the behaviours HRC's kicker
+ * leans on, so a double that faked them would prove nothing.
  *
- * Verified against the live surface in the wave-1 rehearsal
- * (`smoke-wait-and-hrc-surface.txt`, T-07613).
+ * PAIRED AGAINST THE REAL SERVER, not against this file's own idea of the wire
+ * (T-07704, mini's wrkqd at wrkq 88b133a). Three things came back from that
+ * pairing that a hand-written double would have got wrong, and every one of
+ * them is load-bearing here:
+ *
+ *  - the envelope wire carries NO `roundCount` any more, and `failureReason`
+ *    only on a failed row;
+ *  - `envelope.failed` payload is `{state, reason, room_uuid[, runtime_id]}` —
+ *    it does NOT carry the envelope id, which lives on the event row's
+ *    `resource_id`, so the fake emits `resourceId` and the §5 notice reads it
+ *    from there;
+ *  - a runtime that does not own the newest receipt is refused with
+ *    `WRKQ_CONFLICT` rather than silently failing someone else's presentation.
  */
 
 let nextEnvelopeSeq = 0
@@ -46,7 +60,12 @@ export type SeedEnvelope = {
 export class FakeWrkqLedger implements WrkqLedgerClient {
   readonly envelopes = new Map<string, WrkqEnvelope>()
   readonly rooms = new Map<string, WrkqRoomView>()
-  readonly events: { id: number; eventType: string; payload: string }[] = []
+  readonly events: {
+    id: number
+    eventType: string
+    payload: string
+    resourceId?: string | undefined
+  }[] = []
   /** Every (envelope, runtime) pair already presented, for the history cue. */
   private readonly runtimesSeenPerRoom = new Map<string, Set<string>>()
   readonly attemptReceipts = new Set<string>()
@@ -54,7 +73,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   unavailable = false
   presentCalls = 0
   readonly presentRequests: WrkqEnvelopePresentParams[] = []
-  roundEndedCalls: string[] = []
+  readonly failRequests: WrkqEnvelopeFailParams[] = []
 
   say(seed: SeedEnvelope): WrkqEnvelope {
     nextEnvelopeSeq += 1
@@ -76,7 +95,6 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       body: seed.body ?? 'prove the durable kicker',
       state: 'pending',
       terminal: false,
-      roundCount: 0,
       ...(seed.materializationIntent === undefined
         ? {}
         : { materializationIntent: seed.materializationIntent }),
@@ -89,6 +107,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     this.events.push({
       id: this.eventSeq,
       eventType: 'envelope.created',
+      resourceId: id,
       payload: JSON.stringify({
         id,
         room_uuid: envelope.roomUuid,
@@ -110,6 +129,27 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     if (envelope === undefined) return
     envelope.state = 'acked'
     envelope.terminal = true
+  }
+
+  /**
+   * The reader's own hold. `wrkc defer` writes the reason and a retry promise;
+   * the reason SURVIVES the re-pend (wrkq clears `retry_at`, never
+   * `defer_reason`), which is what lets D6's pointer form quote it back.
+   */
+  defer(envelopeId: string, reason: string, retryAt?: string): void {
+    const envelope = this.envelopes.get(envelopeId)
+    if (envelope === undefined) return
+    envelope.state = 'deferred'
+    envelope.deferReason = reason
+    if (retryAt !== undefined) envelope.retryAt = retryAt
+  }
+
+  /** The retry promise firing: back to `pending` with `presented_to` intact. */
+  repend(envelopeId: string): void {
+    const envelope = this.envelopes.get(envelopeId)
+    if (envelope === undefined || envelope.state !== 'deferred') return
+    envelope.state = 'pending'
+    envelope.retryAt = undefined
   }
 
   private guard(method: string): void {
@@ -210,9 +250,12 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
           : { deliveryOutcome: params.deliveryOutcome }),
         presentedAt: new Date().toISOString(),
       })
+      // A TERMINAL envelope keeps its state: wrkq's `present` re-asserts the
+      // current state when `IsEnvelopeTerminal`, so a receipt never resurrects
+      // a failed or acked row.
       if (envelope.state === 'pending') envelope.state = 'presented'
       // A fyi is auto-acked at its OWN presentation and never summons again.
-      if (envelope.obligation === 'fyi') {
+      if (envelope.obligation === 'fyi' && !envelope.terminal) {
         envelope.state = 'acked'
         envelope.terminal = true
       }
@@ -229,17 +272,63 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     }
   }
 
-  async roundEnded(params: WrkqEnvelopeRoundParams): Promise<WrkqEnvelope> {
-    this.guard('wrkq.envelope.roundEnded')
-    this.roundEndedCalls.push(params.envelope)
+  /**
+   * rev 5.1's unsuccessful terminal transition, with wrkqd's own refusals.
+   *
+   * The refusals are the point. HRC calls this from three places that can all
+   * observe a stale view — a completed attempt, a lifecycle wake, and a
+   * backstop sweep — so a double that accepted every call would let a bug
+   * through that the real server catches on the wire.
+   */
+  async fail(params: WrkqEnvelopeFailParams): Promise<WrkqEnvelope> {
+    this.guard('wrkq.envelope.fail')
+    this.failRequests.push({ ...params })
     const envelope = this.envelopes.get(params.envelope)
     if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
-    if (envelope.state !== 'presented') return envelope
-    envelope.roundCount += 1
-    if (envelope.roundCount >= (params.maxRounds ?? 5)) {
-      envelope.state = 'dead'
-      envelope.terminal = true
+    if (params.runtime !== undefined) {
+      const newest = newestPresentationReceipt(envelope)
+      if (newest === undefined || newest.runtimeId !== params.runtime) {
+        throw new WrkqLedgerRequestError(
+          'envelope runtime does not own the newest presentation',
+          'wrkq.envelope.fail',
+          -32021,
+          { code: 'WRKQ_CONFLICT', envelope: envelope.id, runtime: params.runtime }
+        )
+      }
     }
+    if (envelope.state === 'failed') return envelope
+    const wantedFrom =
+      params.reason === 'undeliverable' ? 'pending' : ('presented' as WrkqEnvelope['state'])
+    if (envelope.state !== wantedFrom) {
+      throw new WrkqLedgerRequestError('wrong_state', 'wrkq.envelope.fail', -32028, {
+        code: 'WRKQ_WRONG_STATE',
+        envelope: envelope.id,
+        state: envelope.state,
+        verb: 'fail',
+      })
+    }
+    envelope.state = 'failed'
+    envelope.terminal = true
+    envelope.failureReason = params.reason
+    this.eventSeq += 1
+    this.events.push({
+      id: this.eventSeq,
+      eventType: 'envelope.failed',
+      resourceId: envelope.id,
+      payload: JSON.stringify({
+        state: 'failed',
+        reason: params.reason,
+        room_uuid: envelope.roomUuid,
+        ...(params.runtime === undefined ? {} : { runtime_id: params.runtime }),
+      }),
+    })
+    return envelope
+  }
+
+  async envelopeShow(params: WrkqEnvelopeShowParams): Promise<WrkqEnvelope> {
+    this.guard('wrkq.envelope.show')
+    const envelope = this.envelopes.get(params.envelope)
+    if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
     return envelope
   }
 
@@ -267,6 +356,9 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
           id: event.id,
           timestamp: new Date().toISOString(),
           resourceType: 'envelope',
+          // The REAL row carries the envelope id here and not in the payload;
+          // the §5 notice reads it from exactly this field.
+          ...(event.resourceId === undefined ? {} : { resourceId: event.resourceId }),
           eventType: event.eventType,
           payload: event.payload,
         })),

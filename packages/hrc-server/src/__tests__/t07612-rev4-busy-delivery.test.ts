@@ -237,13 +237,15 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
       () => (ledger.envelopes.get(envelope.id)?.presentedTo.length ?? 0) === 1,
       'first delivery'
     )
-    // The redelivery floor, measured from the receipt, is what bounds this.
+    // rev 5.1 D2: the envelope is `presented` and bound to that runtime, so it
+    // has left the wake set entirely. Under rev 4 the redelivery floor is what
+    // held this back; now there is nothing to hold.
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(60)
     expect(dispatch.calls()).toHaveLength(1)
   })
 
-  it('never claims the scope slot for a busy seat; the queued run owns the round', async () => {
+  it('never claims the scope slot for a busy seat; the queued run owns the disposition', async () => {
     await startServer()
     await makeBusyTarget()
     captureDispatch('accept')
@@ -263,11 +265,16 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
     expect(queued?.queuedBehindRunId).toBe('run-busy-v1')
 
     // The live turn ends; B never starts. Nothing moves — HRC does not guess.
+    // rev 5.1 keeps that rule and narrows what it protects: a merged input
+    // arms no reminder and strikes nothing out, and D3 is the only bound left.
     const now = timestamp()
     db.runs.markCompleted('run-busy-v1', { status: 'completed', completedAt: now, updatedAt: now })
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(80)
-    expect(ledger.roundEndedCalls).toEqual([])
+    expect(ledger.failRequests).toEqual([])
+    expect(
+      db.mailDrives.listDueReminders(TARGET, new Date(Date.now() + 3_600_000).toISOString())
+    ).toEqual([])
     expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
   })
 
@@ -284,6 +291,6 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
     // A receipt for a presentation that did not happen is worse than none.
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-    expect(ledger.roundEndedCalls).toEqual([])
+    expect(ledger.failRequests).toEqual([])
   })
 })
