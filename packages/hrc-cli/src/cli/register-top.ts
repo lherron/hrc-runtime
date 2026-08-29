@@ -1,5 +1,6 @@
 import { type Command, Option } from 'commander'
 
+import { cmdAdminReleaseGc } from '../release-gc.js'
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
@@ -265,6 +266,22 @@ Semantics:
   const adminWorktrees = admin
     .command('worktrees')
     .description('audit and prune completed-task linked worktrees')
+
+  const adminRelease = admin.command('release').description('manage atomic release directories')
+
+  adminRelease
+    .command('gc')
+    .description(
+      'quarantine old atomic release dirs behind installed/running/live-reference fences'
+    )
+    .option('--keep <n>', 'releases to retain beyond the fences (default 5)')
+    .option('--apply', 'quarantine eligible releases (default is dry-run)')
+    .option('--restore <releaseId>', 'return one quarantined release to the release root')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      cmdAdminReleaseGc(cmd.opts())
+    })
 
   adminWorktrees
     .command('audit')

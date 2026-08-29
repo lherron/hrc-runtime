@@ -67,6 +67,7 @@ describe('consolidated hrc command graph', () => {
     expect(visibleChildren(child(program, 'admin'))).toEqual([
       'runs',
       'worktrees',
+      'release',
       'surface',
       'bridge',
       'runtime',
@@ -76,6 +77,7 @@ describe('consolidated hrc command graph', () => {
       'metrics',
     ])
     expect(visibleChildren(child(child(program, 'admin'), 'worktrees'))).toEqual(['audit', 'prune'])
+    expect(visibleChildren(child(child(program, 'admin'), 'release'))).toEqual(['gc'])
     expect(visibleChildren(child(child(program, 'admin'), 'registrations'))).toEqual(['gc'])
   })
 
