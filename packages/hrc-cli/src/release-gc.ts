@@ -103,12 +103,33 @@ function installLockPath(releaseRoot: string): string {
   return join(dirname(releaseRoot), 'hrc-runtime-install.lock')
 }
 
-function run(command: string, args: string[]): { status: number | null; stdout: string } {
+/**
+ * The open-paths probe emits ~2.9MB on a busy host, well over the 1MB default
+ * `maxBuffer`, and truncation is SILENT — measured: 2,854,925 bytes produced,
+ * 1,572,702 returned, 715 of ~1160 pids visible. That under-observation is in
+ * the unsafe direction (a missed reference reads as "unreferenced"), so the
+ * buffer is explicit and any truncation is surfaced rather than absorbed.
+ */
+const PROBE_MAX_BUFFER = 256 * 1024 * 1024
+
+function run(
+  command: string,
+  args: string[]
+): { status: number | null; stdout: string; truncated: boolean } {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
+    maxBuffer: PROBE_MAX_BUFFER,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  return { status: result.error ? null : result.status, stdout: result.stdout ?? '' }
+  // Node/Bun signal an exceeded buffer through `error` (ENOBUFS). Treat it as a
+  // probe failure, never as a short but valid reading.
+  const truncated =
+    result.error !== undefined && (result.error as NodeJS.ErrnoException).code === 'ENOBUFS'
+  return {
+    status: result.error ? null : result.status,
+    stdout: result.stdout ?? '',
+    truncated,
+  }
 }
 
 /** Release ids embed a sortable timestamp; one sort key, deliberately. */
@@ -127,7 +148,8 @@ function matchReleaseIds(haystack: string, known: ReadonlySet<string>): string[]
 }
 
 function defaultListPids(): PidRecord[] {
-  const { status, stdout } = run('ps', ['-Axo', 'pid=,command='])
+  const { status, stdout, truncated } = run('ps', ['-Axo', 'pid=,command='])
+  if (truncated) throw new ReleaseGcAbort('probe-failed', 'ps output was truncated')
   if (status !== 0) throw new ReleaseGcAbort('probe-failed', 'ps enumeration failed')
   const records: PidRecord[] = []
   for (const line of stdout.split('\n')) {
@@ -149,7 +171,10 @@ function defaultReadOpenPaths(pids: number[]): {
   failed: boolean
 } {
   // Pid-scoped, never `+D` — a tree walk over the release root does not converge.
-  const { stdout } = run('lsof', ['-n', '-P', '-Fpn', '-p', pids.join(',')])
+  const { stdout, truncated } = run('lsof', ['-n', '-P', '-Fpn', '-p', pids.join(',')])
+  if (truncated) {
+    throw new ReleaseGcAbort('probe-failed', 'open-paths probe output was truncated')
+  }
   const covered: number[] = []
   const paths: string[] = []
   for (const line of stdout.split('\n')) {

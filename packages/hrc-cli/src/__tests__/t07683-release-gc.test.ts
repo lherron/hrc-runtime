@@ -209,6 +209,27 @@ describe('T-07683 release gc fences', () => {
   })
 })
 
+// Pins a defect the live run caught and no behavioural test can see without
+// spawning megabytes: the probe emitted 2,854,925 bytes, spawnSync's 1MB default
+// silently returned 1,572,702, and coverage collapsed from ~1160 pids to 715.
+// Under-observation reads a referenced release as unreferenced, so it is unsafe.
+describe('T-07683 probe must not silently under-observe', () => {
+  const source = readFileSync(join(import.meta.dir, '..', 'release-gc.ts'), 'utf8')
+
+  test('spawns probes with an explicit maxBuffer, never the 1MB default', () => {
+    expect(source).toContain('PROBE_MAX_BUFFER')
+    expect(source).toContain('maxBuffer: PROBE_MAX_BUFFER')
+    const budget = source.match(/const PROBE_MAX_BUFFER = (\d+) \* 1024 \* 1024/)
+    expect(budget).not.toBeNull()
+    expect(Number.parseInt(budget?.[1] ?? '0', 10)).toBeGreaterThanOrEqual(16)
+  })
+
+  test('treats a truncated probe as failure, not as a short valid reading', () => {
+    expect(source).toContain("=== 'ENOBUFS'")
+    expect(source).toContain('was truncated')
+  })
+})
+
 // The scope line against T-07686. Structural, not behavioural: a module that
 // cannot delete cannot be made to delete by an edit that forgets why.
 describe('T-07683 scope boundary — no removal capability', () => {
