@@ -1,5 +1,6 @@
 import { type Command, Option } from 'commander'
 
+import { cmdAdminReleaseSweep } from '../release-gc-sweep.js'
 import { cmdAdminReleaseGc } from '../release-gc.js'
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
@@ -281,6 +282,18 @@ Semantics:
     .action(async (...actionArgs: unknown[]) => {
       const cmd = actionArgs[actionArgs.length - 1] as Command
       cmdAdminReleaseGc(cmd.opts())
+    })
+
+  adminRelease
+    .command('sweep')
+    .description(
+      'permanently delete quarantined releases (requires quiescence; dry-run by default)'
+    )
+    .option('--apply', 'actually delete (default is dry-run)')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      cmdAdminReleaseSweep(cmd.opts())
     })
 
   adminWorktrees

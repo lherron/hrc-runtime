@@ -27,6 +27,7 @@ import {
 } from '../cli-runtime.js'
 import { agentHarnessGuardMessage } from '../harness-guard.js'
 import { printJson } from '../print.js'
+import { assertNoMaintenanceSweep } from '../release-gc-sweep.js'
 import { resolveSessionArg } from '../selector-resolve.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
@@ -78,6 +79,11 @@ export async function cmdServerStart(
     fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
   }
 
+  // Both branches must refuse under a release sweep: the ownerless path below
+  // self-daemonizes and takes no lock of its own, so omitting the check there
+  // silently reopens the mid-unlink race the sweep's L1 depends on (T-07686).
+  assertNoMaintenanceSweep()
+
   const owner = await detectLaunchdOwner()
   if (owner) {
     const kickstart = await launchctlKickstart(owner)
@@ -92,10 +98,12 @@ export async function cmdServerStart(
   }
 
   if (mode === 'daemon') {
+    assertNoMaintenanceSweep()
     await daemonizeAndWait(timeoutMs)
     return
   }
 
+  assertNoMaintenanceSweep()
   return serverForeground()
 }
 
