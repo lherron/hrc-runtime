@@ -1,5 +1,5 @@
-import { readSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve as resolvePath } from 'node:path'
+import { readSync, statSync, writeFileSync } from 'node:fs'
+import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path'
 
 import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
@@ -94,6 +94,12 @@ interface ResolveManagedScopeOptions {
    */
   projectRootOverride?: string | undefined
   /**
+   * Explicit execution cwd (from --cwd). This is deliberately independent of
+   * projectRoot: project resolution and harness composition still use the
+   * target project's root, while the launched process starts here.
+   */
+  cwdOverride?: string | undefined
+  /**
    * Registration policy for first-run in an unmarked dir:
    * - 'prompt' — if TTY and cwd is outside the agents root, ask whether to write
    *   asp-targets.toml; on Y, write it and re-infer.
@@ -156,6 +162,7 @@ export function resolveManagedScopeContext(
   scopeInput: string,
   options: ResolveManagedScopeOptions = {}
 ): ManagedScopeContext {
+  const cwdOverride = validateManagedCwdOverride(options.cwdOverride)
   // Compose projectId fallback in caller-spec order:
   //   explicit --project-id → ASP_PROJECT (caller env) → cwd inference → register prompt
   // The shared agent-scope resolver fills the task default ("primary") once a
@@ -205,7 +212,9 @@ export function resolveManagedScopeContext(
     projectOrigin,
   })
 
-  const { parsed, scopeRef, laneRef, placement, directives } = resolved
+  const { parsed, scopeRef, laneRef, placement: resolvedPlacement, directives } = resolved
+  const placement =
+    cwdOverride === undefined ? resolvedPlacement : { ...resolvedPlacement, cwd: cwdOverride }
 
   const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
   return {
@@ -219,6 +228,19 @@ export function resolveManagedScopeContext(
     ...(directives === undefined ? {} : { directives }),
     ...(projectRootOverride ? { projectRootOverride } : {}),
   }
+}
+
+function validateManagedCwdOverride(cwd: string | undefined): string | undefined {
+  if (cwd === undefined) return undefined
+  if (!isAbsolute(cwd)) {
+    throw new Error(`--cwd must be an absolute path: ${cwd}`)
+  }
+  try {
+    if (statSync(cwd).isDirectory()) return cwd
+  } catch {
+    // Fall through to the single actionable validation error below.
+  }
+  throw new Error(`--cwd does not exist or is not a directory: ${cwd}`)
 }
 
 /**
@@ -429,6 +451,7 @@ export function buildManagedAttachIntent(scope: ManagedScopeContext): HrcRuntime
 const VALUE_TAKING_PASSTHROUGH_FLAGS = new Set([
   '--project-id',
   '--project-root',
+  '--cwd',
   '--wait',
   '--idempotency-key',
   '--viewer-window',

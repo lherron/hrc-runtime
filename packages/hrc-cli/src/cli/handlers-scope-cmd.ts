@@ -173,6 +173,10 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
         '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
         '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''
+  const cwdOption =
+    command === 'start'
+      ? '  --cwd <path>        Set execution cwd without changing the resolved project root\n'
+      : ''
 
   process.stdout.write(`Usage: hrc ${command} <scope> [options]
 
@@ -188,7 +192,7 @@ ${noAttachOption}${newSessionOption}  --dry-run            Local plan preview â€
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
-  --no-register        Don't prompt to register cwd as a project marker
+${cwdOption}  --no-register        Don't prompt to register cwd as a project marker
   -p <text>            Initial prompt to send to the harness
   --prompt-file <path> Read initial prompt from a file
   --wait[=completed]   Wait for the prompt turn to complete
@@ -360,6 +364,7 @@ Options:
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
+  --cwd <path>         Set execution cwd without changing the resolved project root
   --no-register        Don't prompt to register cwd as a project marker
   -p <text>            Initial prompt to send to the resumed harness
   --prompt-file <path> Read initial prompt from a file
@@ -395,6 +400,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
   const jsonOutput = hasFlag(args, '--json')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
+  const cwdOverride = parseFlag(args, '--cwd')
   const prompt = await parseScopePrompt(args, {
     command: 'run',
     passthroughFlags: [
@@ -405,6 +411,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
       '--json',
       '--project-id',
       '--project-root',
+      '--cwd',
     ],
   })
 
@@ -413,6 +420,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
     const scope = resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
+      cwdOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef
@@ -429,6 +437,8 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
       }
       w('')
       w(`  sessionRef:   ${sessionRef}`)
+      w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+      w(`  cwd:          ${intent.placement.cwd}`)
       w('  action:       POST /v1/sessions/resume-continuation (mint successor from latest')
       w('                non-invalidated continuation), then prepare/start against it with')
       w('                allowStaleGeneration:true. Fails if no captured continuation exists.')
@@ -528,6 +538,7 @@ export async function cmdStart(args: string[]): Promise<void> {
   const idempotencyKey = parseFlag(args, '--idempotency-key')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
+  const cwdOverride = parseFlag(args, '--cwd')
   const viewerWindow = parseFlag(args, '--viewer-window')
   const onConflict = parseFlag(args, '--on-conflict')
   if (onConflict !== undefined && onConflict !== 'suffix' && onConflict !== 'reject') {
@@ -546,6 +557,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--idempotency-key',
       '--project-id',
       '--project-root',
+      '--cwd',
       '--viewer-window',
       '--on-conflict',
     ],
@@ -556,6 +568,7 @@ export async function cmdStart(args: string[]): Promise<void> {
     const scope = resolveManagedScopeContext(scopeInput, {
       projectIdOverride,
       projectRootOverride,
+      cwdOverride,
       registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
     })
     sessionRef = scope.sessionRef

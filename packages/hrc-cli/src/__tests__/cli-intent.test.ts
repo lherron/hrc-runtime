@@ -191,6 +191,21 @@ describe('buildManagedStartIntent', () => {
     expect(buildManagedStartIntent(scope()).harness.interactive).toBe(true)
   })
 
+  it('assembles an explicit execution cwd without changing the resolved project root', async () => {
+    const executionCwd = join(projectRoot, 'target-checkout')
+    await mkdir(executionCwd)
+    const scopeContext = resolveManagedScopeContext('codex-agent@fixture-project:T-07731', {
+      projectRootOverride: projectRoot,
+      cwdOverride: executionCwd,
+      registerPolicy: 'never',
+    })
+
+    expect(buildManagedStartIntent(scopeContext).placement).toMatchObject({
+      projectRoot,
+      cwd: executionCwd,
+    })
+  })
+
   // T-07118: the viewer placement hint is a presentation field only — an absent
   // flag must leave the intent byte-identical to today's.
   it('threads --viewer-window into presentation.viewerWindow', () => {
@@ -328,13 +343,23 @@ describe('parseScopePrompt value-taking passthrough flags', () => {
     '--idempotency-key',
     '--project-id',
     '--project-root',
+    '--cwd',
     '--viewer-window',
     '--on-conflict',
   ]
 
   it('consumes --viewer-window / --on-conflict values instead of reading them as prompts', async () => {
     const prompt = await parseScopePrompt(
-      ['mable@hrc-runtime', '--viewer-window', 'console', '--on-conflict', 'suffix', '--dry-run'],
+      [
+        'mable@hrc-runtime',
+        '--viewer-window',
+        'console',
+        '--cwd',
+        '/tmp',
+        '--on-conflict',
+        'suffix',
+        '--dry-run',
+      ],
       { command: 'start', passthroughFlags: startFlags }
     )
     expect(prompt).toBeUndefined()

@@ -52,6 +52,7 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
+    .option('--cwd <path>', 'set execution cwd without changing the resolved project root')
     .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
     .option('--viewer-window <key>', 'place this session viewer tab in the keyed window')
     .addOption(
@@ -86,6 +87,7 @@ export function registerTopLevelCommands(program: Command): void {
         value: [
           '--project-id',
           '--project-root',
+          '--cwd',
           '--idempotency-key',
           '--viewer-window',
           '--on-conflict',
@@ -98,6 +100,7 @@ export function registerTopLevelCommands(program: Command): void {
         strings: [
           'project-id',
           'project-root',
+          'cwd',
           'prompt-file',
           'idempotency-key',
           'viewer-window',
@@ -226,6 +229,7 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
+    .option('--cwd <path>', 'set execution cwd without changing the resolved project root')
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .addHelpText(
@@ -247,10 +251,10 @@ Semantics:
       const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
       assertNoUnknownOptions(rawArgv, {
         boolean: ['--no-attach', '--dry-run', '--debug', '--no-register', '--json'],
-        value: ['--project-id', '--project-root', '-p', '--prompt-file'],
+        value: ['--project-id', '--project-root', '--cwd', '-p', '--prompt-file'],
       })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'prompt-file'],
+        strings: ['project-id', 'project-root', 'cwd', 'prompt-file'],
         booleans: ['dry-run', 'debug', 'json'],
         negatedBooleans: ['attach', 'register'],
       })

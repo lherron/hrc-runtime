@@ -89,6 +89,18 @@ describe('no args / help', () => {
       text: expect.stringContaining('RUNBOOK'),
     })
   })
+
+  it('documents --cwd on start/resume without exposing it on run', async () => {
+    const start = await runCli(['start', '--help'])
+    const resume = await runCli(['resume', '--help'])
+    const run = await runCli(['run', '--help'])
+    const info = await runCli(['info'])
+
+    expect(start.stdout).toContain('--cwd <path>')
+    expect(resume.stdout).toContain('--cwd <path>')
+    expect(run.stdout).not.toContain('--cwd')
+    expect(info.stdout).toContain('start/resume --cwd <absolute-path>')
+  })
 })
 
 // ===========================================================================

@@ -207,6 +207,9 @@ CURSORS
   monitor events/transcript/stats use invocation-local broker seq. The grammars are distinct.
   Monitor conditions NEVER evaluate the broker invocation ledger.
 
+PLACEMENT
+  hrc start/resume --cwd <absolute-path> changes execution cwd without changing project root.
+
 RUNBOOK
 ${blocks.join('\n\n')}`
 }
@@ -222,7 +225,8 @@ ${renderHumanSections(program)}
 MODEL
   target = who you mean; session = continuity; runtime = the live execution.
   Start/reuse/attach with hrc run. Attach without launching with hrc attach.
-  Resume is continuation-only recovery: it never fresh-launches and is not an alias of run.`
+  Resume is continuation-only recovery: it never fresh-launches and is not an alias of run.
+  hrc start/resume --cwd <absolute-path> changes execution cwd without changing project root.`
 }
 
 export function buildInfoText(

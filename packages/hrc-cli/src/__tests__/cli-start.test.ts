@@ -83,6 +83,65 @@ describe('hrc start', () => {
     }
   })
 
+  it('previews an explicit execution cwd while preserving the resolved project root', async () => {
+    const projectRoot = join(projectsRoot, 'agent-spaces')
+    const executionCwd = join(projectsRoot, 'target-checkout')
+    await mkdir(executionCwd, { recursive: true })
+
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--cwd', executionCwd, '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(`projectRoot:  ${projectRoot}`)
+    expect(result.stdout).toContain(`cwd:          ${executionCwd}`)
+  })
+
+  it('threads --cwd through continuation-resume preview without changing project root', async () => {
+    const projectRoot = join(projectsRoot, 'agent-spaces')
+    const executionCwd = join(projectsRoot, 'resume-checkout')
+    await mkdir(executionCwd, { recursive: true })
+
+    const result = await runCli(
+      ['resume', 'rex@agent-spaces', '--no-attach', '--cwd', executionCwd, '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(`projectRoot:  ${projectRoot}`)
+    expect(result.stdout).toContain(`cwd:          ${executionCwd}`)
+  })
+
+  it('rejects relative and missing execution cwd paths', async () => {
+    const env = cliEnv({
+      ASP_AGENTS_ROOT: agentsRoot,
+      ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+    })
+    const relative = await runCli(
+      ['start', 'rex@agent-spaces', '--cwd', 'relative/path', '--dry-run'],
+      env
+    )
+    const missingPath = join(projectsRoot, 'does-not-exist')
+    const missing = await runCli(
+      ['resume', 'rex@agent-spaces', '--cwd', missingPath, '--dry-run'],
+      env
+    )
+
+    expect(relative.exitCode).not.toBe(0)
+    expect(relative.stderr).toContain('--cwd must be an absolute path')
+    expect(missing.exitCode).not.toBe(0)
+    expect(missing.stderr).toContain('--cwd does not exist or is not a directory')
+  })
+
   /**
    * T-07302 — `--on-conflict` is registered in THREE places (Commander choices,
    * the unknown-option guard's value list, and the handler's own validation).
