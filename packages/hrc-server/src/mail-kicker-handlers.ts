@@ -32,7 +32,7 @@ import {
 import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 import { WrkqLedgerUnavailableError } from './wrkq/ledger-client.js'
 import { targetSessionRefForLedgerScope } from './wrkq/ledger-scope.js'
-import { newestPresentationReceipt } from './wrkq/ledger-types.js'
+import { newestPresentationReceipt, obligationSummons } from './wrkq/ledger-types.js'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeCreatedPayload,
@@ -505,9 +505,20 @@ async function readActionableEnvelopes(
   return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
 }
 
-/** Only a `reply_required` obligation is allowed to birth a previously unseated target (§5). */
+/**
+ * May this envelope birth a previously unseated target?
+ *
+ * T-07746 separated summoning from reply debt. Both `reply_required` and the
+ * default `notify` birth and wake; only `reply_required` goes on to owe a
+ * reply. T-07612 §5 tied the two together, but what §5 was protecting was the
+ * DEBT — an unborn seat must not be conscripted into owing an answer — not the
+ * birth. Waking a seat to read something it owes nothing on is a different act.
+ *
+ * A legacy `fyi` still does NOT summon: those rows were written under the old
+ * rule and never could, so honoring them here keeps history truthful.
+ */
 function summonsATurn(envelope: WrkqEnvelope): boolean {
-  return envelope.obligation === 'reply_required'
+  return obligationSummons(envelope.obligation)
 }
 
 /**
@@ -1225,9 +1236,11 @@ async function driveMailTargetOnce(
         return
       }
     }
-    // A fyi is presented into a live generation if there is one, and otherwise
-    // waits. It is NEVER the reason a session is born (§5), so a wake set that
-    // holds nothing else stops here rather than at the summon gate.
+    // A non-summoning envelope (a legacy `fyi`) is presented into a live
+    // generation if there is one, and otherwise waits. It is never the reason a
+    // session is born, so a wake set holding nothing else stops here rather
+    // than at the summon gate. `notify` DOES summon (T-07746) and so never
+    // reaches this return.
     if (session === undefined && !actionable.some((item) => summonsATurn(item.envelope))) return
     const directives = actionableDirectives(actionable)
     const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
@@ -2182,9 +2195,10 @@ async function resolveTailStartCursor(server: HrcServerInstanceForHandlers): Pro
 /**
  * The target an `envelope.created` wakes, or undefined for one that never kicks.
  *
- * A `fyi` NEVER summons (§5): it rides into a live generation or waits for the
- * addressee's next attend, so it is not a wake. A scope-less addressee (a human
- * principal) is never kicked either — ACP presents those.
+ * `reply_required` and `notify` both wake (T-07746). A legacy `fyi` does not:
+ * it rides into a live generation or waits for the addressee's next attend, so
+ * it is not a wake. A scope-less addressee (a human principal) is never kicked
+ * either — ACP presents those.
  */
 function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
   if (event.eventType !== 'envelope.created' || event.payload === undefined) return undefined
@@ -2196,7 +2210,7 @@ function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
   }
   if (!isRecord(parsed)) return undefined
   const payload = parsed as WrkqEnvelopeCreatedPayload
-  if (payload.obligation !== 'reply_required') return undefined
+  if (!obligationSummons(payload.obligation)) return undefined
   const scopeRef = payload.to_scope_ref
   if (typeof scopeRef !== 'string') return undefined
   return targetSessionRefForLedgerScope(scopeRef)

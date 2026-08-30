@@ -322,6 +322,32 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(ledger.presentRequests).toEqual([])
   })
 
+  // T-07746 acceptance 2 — the whole point of the change, and the bar the
+  // design was rejected over twice. `notify` is the DEFAULT addressed say and
+  // it MUST birth an unseated scope, exactly like reply_required, while owing
+  // nothing back. This is the mirror of the fyi never-summons test above: same
+  // setup, opposite verdict, so the pair pins both halves of the axis.
+  it('SUMMONS an unseated target for a notify, though it owes nothing', async () => {
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    // Establish the cursor first, as the fyi case does: anything written
+    // before the first tail belongs to the sweep, not the tail.
+    await (server as any).runWrkqLedgerTail()
+    say({ obligation: 'notify', body: 'no reply owed, but wake up' })
+
+    // The tail must treat this as a wake — the gate that used to read
+    // `obligation !== 'reply_required'` and drop it.
+    await (server as any).runWrkqLedgerTail()
+    await Bun.sleep(50)
+
+    const db = (server as any).db as HrcDatabase
+    // A seat was actually born. Under the pre-T-07746 filter every one of
+    // these is 0, which is exactly the defect this proves is gone.
+    expect(deterministic.calls()).toBe(1)
+    expect(db.mailDrives.listAttempts(TARGET)).toHaveLength(1)
+    expect(ledger.presentRequests.length).toBeGreaterThan(0)
+  })
+
   it('summons a reply_required target through the gate and arms ONE reminder on a bare turn', async () => {
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)

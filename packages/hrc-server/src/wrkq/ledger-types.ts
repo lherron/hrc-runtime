@@ -14,7 +14,39 @@
  * injected presentation never shows it.
  */
 
-export type WrkqEnvelopeObligation = 'reply_required' | 'fyi' | 'none'
+/**
+ * T-07746 — the live producer vocabulary is `none | notify | reply_required`.
+ *
+ * `notify` is the DEFAULT for an addressed say: it births and wakes exactly
+ * like `reply_required`, but owes nothing back and never refuses a turn end.
+ * Summoning and reply debt are separate axes; only the debt half was ever §5's
+ * concern.
+ *
+ * `fyi` is retained here as a SUPERSET member, deliberately. HRC activates
+ * before wrkq (there is no schema-hash pin on this client), so this build must
+ * read the `fyi` rows still in the ledger AND the `notify` rows that arrive
+ * once wrkq migrates. Dropping `fyi` is a trailing cleanup, not part of the
+ * cutover.
+ */
+export type WrkqEnvelopeObligation = 'reply_required' | 'notify' | 'fyi' | 'none'
+
+/**
+ * Does this obligation birth an unseated target and wake a seated one?
+ *
+ * Takes a raw `string | undefined` because the ledger EVENT payload types
+ * `obligation` as optional (`WrkqEnvelopeCreatedPayload`), and an event whose
+ * class we cannot read must FAIL CLOSED: not summoning a seat we were unsure
+ * about is recoverable on the next attend, while birthing one on a token we
+ * could not parse is not.
+ */
+export function obligationSummons(obligation: string | undefined): boolean {
+  return obligation === 'reply_required' || obligation === 'notify'
+}
+
+/** Does this obligation owe a reply, and therefore refuse a turn end? */
+export function obligationOwesReply(obligation: WrkqEnvelopeObligation): boolean {
+  return obligation === 'reply_required'
+}
 
 export type WrkqEnvelopeState = 'pending' | 'presented' | 'acked' | 'deferred' | 'failed'
 

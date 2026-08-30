@@ -1,4 +1,4 @@
-import { newestPresentationReceipt } from './ledger-types.js'
+import { newestPresentationReceipt, obligationOwesReply } from './ledger-types.js'
 import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from './ledger-types.js'
 
 /**
@@ -173,14 +173,26 @@ function formOf(presentable: PresentableEnvelope): EnvelopePresentationForm {
   return presentable.form ?? 'full'
 }
 
+/**
+ * The header clauses.
+ *
+ * Only a `reply_required` envelope carries an obligation clause. A `notify` —
+ * the default addressed say since T-07746 — carries NONE: it is an ordinary
+ * message that woke you, and there is nothing to designate. The old `fyi`
+ * label is gone deliberately; naming a class that owes nothing told the reader
+ * about our taxonomy rather than about their mail, and the absence of a
+ * "reply required" clause already says everything a reader needs.
+ *
+ * A legacy `fyi` row renders the same way, for the same reason.
+ */
 function formatHeader(presentable: PresentableEnvelope, now: Date): string {
   const { envelope } = presentable
-  const obligation = envelope.obligation === 'fyi' ? 'fyi' : 'reply required'
+  const obligation = obligationOwesReply(envelope.obligation) ? 'reply required' : undefined
   const why = formatWhy(presentable, now)
   const clauses = [
     formatRoomToken(presentable),
     `${formatSender(presentable)} → you`,
-    obligation,
+    ...(obligation === undefined ? [] : [obligation]),
     ...(why === undefined ? [] : [why]),
   ]
   return `[${clauses.join(' · ')}]`

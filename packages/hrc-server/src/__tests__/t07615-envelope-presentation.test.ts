@@ -95,15 +95,47 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     ).not.toContain('history:')
   })
 
-  it('ends a fyi header with fyi and gives it no reply line', () => {
+  // T-07746 INVERTED THIS TEST. It used to assert `→ you · fyi]` — that a
+  // no-obligation envelope was LABELLED as one. Lance's ruling: a message that
+  // owes nothing is just a message, and naming its class told the reader about
+  // our taxonomy rather than about their mail. The header now carries an
+  // obligation clause ONLY when a reply is actually owed, so the absence of
+  // "reply required" is what says "nothing is owed" — no label needed.
+  it('gives a notify no obligation clause, no reply line and no defer line', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({ envelope: envelope({ obligation: 'notify' }) }),
+      NOW
+    )
+    expect(rendered).toContain('→ you]')
+    expect(rendered).not.toContain('notify')
+    expect(rendered).not.toContain('reply required')
+    expect(rendered).not.toContain('reply:')
+    // Terminal at presentation: there is nothing to defer either.
+    expect(rendered).not.toContain('defer:')
+  })
+
+  // A legacy fyi row renders identically. Those rows predate T-07746 and are
+  // rewritten to `notify` by wrkq migration 000059; until that lands HRC still
+  // reads them, and they must not resurrect the label.
+  it('renders a legacy fyi with no obligation clause either', () => {
     const rendered = formatEnvelopePresentation(
       presentable({ envelope: envelope({ obligation: 'fyi' }) }),
       NOW
     )
-    expect(rendered).toContain('→ you · fyi]')
+    expect(rendered).toContain('→ you]')
+    expect(rendered).not.toContain('fyi]')
     expect(rendered).not.toContain('reply:')
-    // A fyi is auto-acked at presentation: there is nothing to defer either.
     expect(rendered).not.toContain('defer:')
+  })
+
+  // The other side of the axis: reply_required still says so, unchanged.
+  it('still marks a reply_required header and carries its reply line', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({ envelope: envelope({ obligation: 'reply_required' }) }),
+      NOW
+    )
+    expect(rendered).toContain('· reply required]')
+    expect(rendered).toContain('reply: wrkc say')
   })
 
   // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,

@@ -169,8 +169,16 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     this.guard('wrkq.envelope.pendingView')
     const scopes = params.scopes ?? []
     // T-07627: `includeFyi` widens `items` only. `blocking` stays reply_required
-    // and presented, because a fyi is auto-acked at its own presentation.
-    const obligations = params.includeFyi === true ? ['reply_required', 'fyi'] : ['reply_required']
+    // and presented, because an unobliged envelope is auto-acked at its own
+    // presentation.
+    //
+    // T-07746: `notify` rides the widened read exactly as `fyi` does. The
+    // PARAM keeps its `includeFyi` spelling on purpose — renaming it was a
+    // rollout hazard (wrkq silently ignores unknown RPC keys, so an old HRC
+    // sending the old name would be given a DIFFERENT read), and the rename
+    // belongs to T-07745.
+    const obligations =
+      params.includeFyi === true ? ['reply_required', 'notify', 'fyi'] : ['reply_required']
     const items = [...this.envelopes.values()].filter(
       (envelope) =>
         obligations.includes(envelope.obligation) &&
@@ -187,17 +195,25 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   }
 
   /**
-   * T-07655 — the birth envelope: the LOWEST-seq `reply_required` row addressed
-   * to the scope, in ANY state. The fake reproduces the real rule rather than
-   * "the oldest pending one", because state-independence is the whole property
-   * a designation rests on.
+   * T-07655 — the birth envelope: the LOWEST-seq SUMMONING row addressed to the
+   * scope, in ANY state. The fake reproduces the real rule rather than "the
+   * oldest pending one", because state-independence is the whole property a
+   * designation rests on.
+   *
+   * T-07746 widened the candidate set from `reply_required` alone to
+   * `reply_required | notify`: a scope's birth designation may now come from an
+   * envelope that owes nothing. That is sound because the designation is only a
+   * PLACEMENT input and the sender is read off the ledger row either way, so no
+   * caller gains steering it did not have. A legacy `fyi` is still excluded —
+   * those rows were written when they could not summon.
    */
   async birthEnvelope(params: WrkqEnvelopeBirthEnvelopeParams): Promise<WrkqEnvelopeBirth | null> {
     this.guard('wrkq.envelope.birthEnvelope')
     const candidates = [...this.envelopes.values()]
       .filter(
         (envelope) =>
-          envelope.obligation === 'reply_required' && envelope.to?.scopeRef === params.scopeRef
+          (envelope.obligation === 'reply_required' || envelope.obligation === 'notify') &&
+          envelope.to?.scopeRef === params.scopeRef
       )
       .sort((a, b) => a.id.localeCompare(b.id))
     const first = candidates[0]
@@ -254,8 +270,12 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       // current state when `IsEnvelopeTerminal`, so a receipt never resurrects
       // a failed or acked row.
       if (envelope.state === 'pending') envelope.state = 'presented'
-      // A fyi is auto-acked at its OWN presentation and never summons again.
-      if (envelope.obligation === 'fyi' && !envelope.terminal) {
+      // T-07746: anything that does not OWE a reply is terminal at its own
+      // presentation — `notify` and the legacy `fyi` alike. Without this a
+      // delivered notify would sit in `presented`, which HRC reads as an
+      // obligation regardless of token, arming a reminder and eventually
+      // failing it as ignored.
+      if (envelope.obligation !== 'reply_required' && !envelope.terminal) {
         envelope.state = 'acked'
         envelope.terminal = true
       }
