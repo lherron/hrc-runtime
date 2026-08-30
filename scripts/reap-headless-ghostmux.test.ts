@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite'
 import { describe, expect, it } from 'bun:test'
 
 import {
@@ -8,7 +9,132 @@ import {
   isQuitEligible,
   selectHeadlessPanes,
   skipReasons,
+  statusSql,
 } from './reap-headless-ghostmux'
+
+function reapStatusFixture(input: {
+  completedAcceptedAt: string
+  zombieAcceptedAt: string
+  runtimeLastActivityAt: string
+  laterRuntimeEvent?: { ts: string; kind: string }
+}): unknown[] {
+  const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE runtimes (
+      runtime_id TEXT PRIMARY KEY,
+      scope_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      active_run_id TEXT,
+      transport TEXT NOT NULL,
+      controller_kind TEXT NOT NULL,
+      runtime_state_json TEXT NOT NULL,
+      last_activity_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      runtime_id TEXT,
+      scope_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      accepted_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE hrc_events (
+      hrc_seq INTEGER PRIMARY KEY,
+      runtime_id TEXT,
+      scope_ref TEXT NOT NULL,
+      run_id TEXT,
+      ts TEXT NOT NULL,
+      event_kind TEXT NOT NULL
+    );
+  `)
+  const scopeRef = 'agent:cody:project:wrkq:task:T-reaper'
+  const runtimeId = 'rt-reaper-order'
+  db.query(
+    `INSERT INTO runtimes VALUES (?, ?, 'ready', NULL, 'headless', 'harness-broker', ?, ?, ?)`
+  ).run(
+    runtimeId,
+    scopeRef,
+    JSON.stringify({
+      broker: {
+        presentation: { kind: 'tmux-tui' },
+        substrate: { kind: 'leased-tmux' },
+      },
+    }),
+    input.runtimeLastActivityAt,
+    input.runtimeLastActivityAt
+  )
+  db.query(`INSERT INTO runs VALUES ('run-completed', ?, ?, 'completed', ?, ?)`).run(
+    runtimeId,
+    scopeRef,
+    input.completedAcceptedAt,
+    '2026-08-29T16:50:01.924Z'
+  )
+  db.query(`INSERT INTO runs VALUES ('run-orphan', ?, ?, 'zombie', ?, ?)`).run(
+    runtimeId,
+    scopeRef,
+    input.zombieAcceptedAt,
+    '2026-08-29T17:20:31.409Z'
+  )
+  db.query(
+    `INSERT INTO hrc_events VALUES (10, ?, ?, 'run-completed', '2026-08-29T16:50:01.924Z', 'turn.completed')`
+  ).run(runtimeId, scopeRef)
+  db.query(
+    `INSERT INTO hrc_events VALUES (20, ?, ?, 'run-orphan', '2026-08-29T17:20:31.409Z', 'turn.zombied')`
+  ).run(runtimeId, scopeRef)
+  if (input.laterRuntimeEvent !== undefined) {
+    db.query('INSERT INTO hrc_events VALUES (30, ?, ?, NULL, ?, ?)').run(
+      runtimeId,
+      scopeRef,
+      input.laterRuntimeEvent.ts,
+      input.laterRuntimeEvent.kind
+    )
+  }
+  try {
+    return db.query(statusSql(scopeRef, runtimeId, '')).values()[0] ?? []
+  } finally {
+    db.close()
+  }
+}
+
+describe('statusSql turn chronology', () => {
+  it('does not let a maintenance zombie update outrank a newer dispatched completion', () => {
+    const row = reapStatusFixture({
+      completedAcceptedAt: '2026-08-29T16:49:58.760Z',
+      zombieAcceptedAt: '2026-08-29T16:46:28.448Z',
+      runtimeLastActivityAt: '2026-08-29T16:50:01.921Z',
+    })
+    expect(row[5]).toBe('completed')
+    expect(row[6]).toBe('run-completed')
+    expect(row[7]).toBe('2026-08-29T16:50:01.921Z')
+    expect(row[9]).toBe('turn.completed')
+  })
+
+  it('still selects a genuinely newest dispatched zombie', () => {
+    const row = reapStatusFixture({
+      completedAcceptedAt: '2026-08-29T16:49:58.760Z',
+      zombieAcceptedAt: '2026-08-29T16:51:00.000Z',
+      runtimeLastActivityAt: '2026-08-29T16:51:00.000Z',
+    })
+    expect(row[5]).toBe('zombie')
+    expect(row[6]).toBe('run-orphan')
+    expect(row[9]).toBe('turn.zombied')
+  })
+
+  it('uses runtime activity for the idle clock without stealing the selected turn event', () => {
+    const row = reapStatusFixture({
+      completedAcceptedAt: '2026-08-29T16:49:58.760Z',
+      zombieAcceptedAt: '2026-08-29T16:46:28.448Z',
+      runtimeLastActivityAt: '2026-08-29T17:30:00.000Z',
+      laterRuntimeEvent: {
+        ts: '2026-08-29T17:30:00.000Z',
+        kind: 'runtime.presentation',
+      },
+    })
+    expect(row[7]).toBe('2026-08-29T17:30:00.000Z')
+    expect(row[9]).toBe('turn.completed')
+  })
+})
 
 // Operator idle-viewer reap predicate (T-04423). Eligible iff the surface
 // resolves to exactly one broker-tmux runtime that is idle-and-complete with NO
@@ -26,9 +152,9 @@ function eligibleStatus(overrides: Partial<PaneStatus> = {}): PaneStatus {
     activeRunId: '',
     turnStatus: 'completed',
     runId: 'run-done',
-    lastEventUtc: '2026-06-14T15:50:38.000Z',
-    lastEventLocal: '2026-06-14 10:50:38',
-    lastEventKind: 'turn.completed',
+    lastActivityUtc: '2026-06-14T15:50:38.000Z',
+    lastActivityLocal: '2026-06-14 10:50:38',
+    latestTurnEventKind: 'turn.completed',
     ...overrides,
   }
 }
@@ -80,21 +206,21 @@ describe('isQuitEligible (operator reap predicate)', () => {
       expect(
         isQuitEligible(
           eligibleStatus({
-            lastEventUtc: new Date(now - 29 * 60 * 1000).toISOString(),
+            lastActivityUtc: new Date(now - 29 * 60 * 1000).toISOString(),
           })
         )
       ).toBe(false)
       expect(
         isQuitEligible(
           eligibleStatus({
-            lastEventUtc: new Date(now - 30 * 60 * 1000).toISOString(),
+            lastActivityUtc: new Date(now - 30 * 60 * 1000).toISOString(),
           })
         )
       ).toBe(false)
       expect(
         isQuitEligible(
           eligibleStatus({
-            lastEventUtc: new Date(now - 30 * 60 * 1000 - 1).toISOString(),
+            lastActivityUtc: new Date(now - 30 * 60 * 1000 - 1).toISOString(),
           })
         )
       ).toBe(true)
@@ -104,8 +230,8 @@ describe('isQuitEligible (operator reap predicate)', () => {
   })
 
   it('skips when latest activity time is missing or invalid', () => {
-    expect(isQuitEligible(eligibleStatus({ lastEventUtc: '' }))).toBe(false)
-    expect(isQuitEligible(eligibleStatus({ lastEventUtc: 'not-a-timestamp' }))).toBe(false)
+    expect(isQuitEligible(eligibleStatus({ lastActivityUtc: '' }))).toBe(false)
+    expect(isQuitEligible(eligibleStatus({ lastActivityUtc: 'not-a-timestamp' }))).toBe(false)
   })
 })
 
@@ -165,7 +291,7 @@ describe('skipReasons (per-pane skip explanations)', () => {
   it('explains when the latest activity is not more than 30 minutes old', () => {
     const reasons = skipReasons(
       eligibleStatus({
-        lastEventUtc: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        lastActivityUtc: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
       })
     )
     expect(reasons.some((reason) => /more than 30 minutes idle/i.test(reason))).toBe(true)

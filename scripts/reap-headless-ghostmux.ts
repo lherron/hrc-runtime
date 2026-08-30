@@ -47,9 +47,9 @@ type PaneStatus = Pane & {
   activeRunId: string
   turnStatus: string
   runId: string
-  lastEventUtc: string
-  lastEventLocal: string
-  lastEventKind: string
+  lastActivityUtc: string
+  lastActivityLocal: string
+  latestTurnEventKind: string
   // Presentation-aware reap fields (T-04923, Phase C of T-04905). Sourced from
   // the persisted broker hosting state (runtime_state_json). OPTIONAL because the
   // legacy metadata path (and the original eligibleStatus fixtures) never set
@@ -85,7 +85,7 @@ title regex no longer matched. TITLE_REGEX remains an OPTIONAL secondary filter.
 Eligible = surface resolves to one runtime with controllerKind=harness-broker,
 a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
 substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
-status=ready, NO active run, latest turn=completed, and latest HRC activity
+status=ready, NO active run, latest turn=completed, and latest runtime activity
 strictly more than ${MIN_IDLE_MINUTES} minutes ago.
 
 Environment:
@@ -336,9 +336,9 @@ function eventKindColor(eventKind: string): string {
   return color.yellow(eventKind)
 }
 
-function isIdleLongerThanThreshold(lastEventUtc: string): boolean {
-  const lastEventMs = Date.parse(lastEventUtc)
-  return Number.isFinite(lastEventMs) && Date.now() - lastEventMs > MIN_IDLE_MS
+function isIdleLongerThanThreshold(lastActivityUtc: string): boolean {
+  const lastActivityMs = Date.parse(lastActivityUtc)
+  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > MIN_IDLE_MS
 }
 
 // Operator idle-viewer reap invariant (T-04423, daedalus ruling): a reap is
@@ -470,12 +470,12 @@ function skipReasons(status: PaneStatus): string[] {
     }
   }
 
-  const lastEventMs = Date.parse(status.lastEventUtc)
-  if (!Number.isFinite(lastEventMs)) {
+  const lastActivityMs = Date.parse(status.lastActivityUtc)
+  if (!Number.isFinite(lastActivityMs)) {
     reasons.push('latest activity time is missing or invalid — cannot confirm 30 minutes idle')
-  } else if (!isIdleLongerThanThreshold(status.lastEventUtc)) {
+  } else if (!isIdleLongerThanThreshold(status.lastActivityUtc)) {
     reasons.push(
-      `latest activity was ${formatDurationAgo(status.lastEventUtc)} — requires more than ${MIN_IDLE_MINUTES} minutes idle`
+      `latest activity was ${formatDurationAgo(status.lastActivityUtc)} — requires more than ${MIN_IDLE_MINUTES} minutes idle`
     )
   }
 
@@ -608,9 +608,9 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
       activeRunId: '',
       turnStatus: 'completed',
       runId: `run-sim-${pane.id}`,
-      lastEventUtc: '2026-06-09T14:00:00.000Z',
-      lastEventLocal: '2026-06-09 09:00:00',
-      lastEventKind: leftover ? 'runtime.terminated' : 'turn.completed',
+      lastActivityUtc: '2026-06-09T14:00:00.000Z',
+      lastActivityLocal: '2026-06-09 09:00:00',
+      latestTurnEventKind: leftover ? 'runtime.terminated' : 'turn.completed',
     }
   }
 
@@ -626,9 +626,9 @@ function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
       activeRunId: '',
       turnStatus: 'unknown',
       runId: '',
-      lastEventUtc: '',
-      lastEventLocal: '',
-      lastEventKind: 'missing-db',
+      lastActivityUtc: '',
+      lastActivityLocal: '',
+      latestTurnEventKind: 'missing-db',
     }
   }
 
@@ -656,7 +656,8 @@ function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
         VALUES ('${escapedScope}', '${escapedRuntime}')
       ),
       latest_runtime AS (
-        SELECT runtime_id, status, active_run_id, transport, controller_kind, runtime_state_json, updated_at
+        SELECT runtime_id, status, active_run_id, transport, controller_kind,
+               runtime_state_json, last_activity_at, updated_at
         FROM runtimes
         WHERE (runtime_id = (SELECT runtime_id FROM target) AND (SELECT runtime_id FROM target) <> '')
            OR (scope_ref = (SELECT scope_ref FROM target) AND (SELECT scope_ref FROM target) <> '')
@@ -664,24 +665,23 @@ function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
         LIMIT 1
       ),
       latest_run AS (
-        SELECT run_id, status, updated_at
+        SELECT run_id, status, accepted_at
         FROM runs
         WHERE (
             runtime_id = COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime))
             AND COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime)) IS NOT NULL
           )
            OR (scope_ref = (SELECT scope_ref FROM target) AND (SELECT scope_ref FROM target) <> '')
-        ORDER BY updated_at DESC
+        -- accepted_at is immutable dispatch chronology. updated_at is a
+        -- maintenance clock: the zombie sweeper legitimately advances it and
+        -- must not make an older orphan look like the latest dispatched turn.
+        ORDER BY accepted_at DESC, run_id DESC
         LIMIT 1
       ),
       latest_event AS (
         SELECT ts, event_kind, hrc_seq
         FROM hrc_events
-        WHERE (
-            runtime_id = COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime))
-            AND COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime)) IS NOT NULL
-          )
-           OR (scope_ref = (SELECT scope_ref FROM target) AND (SELECT scope_ref FROM target) <> '')
+        WHERE run_id = (SELECT run_id FROM latest_run)
         ORDER BY hrc_seq DESC
         LIMIT 1
       )
@@ -694,8 +694,8 @@ function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
         COALESCE((SELECT active_run_id FROM latest_runtime), ''),
         COALESCE((SELECT status FROM latest_run), 'none'),
         COALESCE((SELECT run_id FROM latest_run), ''),
-        COALESCE((SELECT ts FROM latest_event), ''),
-        COALESCE(datetime((SELECT ts FROM latest_event), 'localtime'), ''),
+        COALESCE((SELECT last_activity_at FROM latest_runtime), ''),
+        COALESCE(datetime((SELECT last_activity_at FROM latest_runtime), 'localtime'), ''),
         COALESCE((SELECT event_kind FROM latest_event), ''),
         -- Presentation-aware reap (T-04923). Two serialisation shapes (G2 compat):
         -- normalized broker.presentation.kind, or flat-fallback from broker.tuiWindow.
@@ -737,9 +737,9 @@ function paneStatusFromFields(
     activeRunId,
     turnStatus,
     runId,
-    lastEventUtc,
-    lastEventLocal,
-    lastEventKind,
+    lastActivityUtc,
+    lastActivityLocal,
+    latestTurnEventKind,
     presentationKind,
     substrateKind,
   ] = fields
@@ -755,9 +755,9 @@ function paneStatusFromFields(
     activeRunId: activeRunId || '',
     turnStatus: turnStatus || 'none',
     runId: runId || '',
-    lastEventUtc: lastEventUtc || '',
-    lastEventLocal: lastEventLocal || '',
-    lastEventKind: lastEventKind || '',
+    lastActivityUtc: lastActivityUtc || '',
+    lastActivityLocal: lastActivityLocal || '',
+    latestTurnEventKind: latestTurnEventKind || '',
     // '' here means json_extract returned NULL (no parseable broker hosting
     // state) — skipReasons() treats that as malformed, distinct from `undefined`
     // (legacy metadata path with no hosting-state column at all).
@@ -924,7 +924,7 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
 
   console.log(color.bold(`Matched panes (${statuses.length})`))
   statuses.forEach((status, index) => {
-    const duration = formatDurationAgo(status.lastEventUtc)
+    const duration = formatDurationAgo(status.lastActivityUtc)
     const reasons = skipReasons(status)
     const heading = [
       color.dim(`${String(index + 1).padStart(2)}.`),
@@ -944,7 +944,7 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
         shortRuntime(status.runtimeId)
       )}`
     )
-    console.log(`    ${color.dim('last event')} ${eventKindColor(status.lastEventKind)}`)
+    console.log(`    ${color.dim('turn event')} ${eventKindColor(status.latestTurnEventKind)}`)
     console.log(`    ${color.dim('title')}      ${color.dim(status.title)}`)
     // Explain exactly why a skipped pane is ineligible — one line per failed
     // guard, so the operator never has to reverse-engineer the predicate.
@@ -1238,5 +1238,6 @@ export {
   isQuitEligible,
   selectHeadlessPanes,
   skipReasons,
+  statusSql,
 }
 export type { DiscoveredPane, PaneStatus }
