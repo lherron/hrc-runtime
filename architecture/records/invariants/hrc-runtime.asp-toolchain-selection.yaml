@@ -1,0 +1,38 @@
+id: hrc-runtime.asp-toolchain-selection
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC-owned ASP child-process selection and compatibility boundary
+predicate: >
+  Every HRC-owned ASP child spawn resolves its binary at spawn time through one
+  selection authority. A non-empty per-binary command override wins, then the
+  binary's canonical name under an explicitly configured absolute
+  HRC_ASP_TOOLCHAIN_ROOT, then the HRC release's resolveHoistedBinary result. No
+  spawn path, including the legacy interactive stdio broker path, independently
+  selects or caches a command; injected constant commands are test seams only.
+  A configured-root selection that is missing or not executable fails before
+  spawn, and incompatible facade or broker protocol/capability hellos fail
+  closed before invocation work. Admin status derives effective source and path
+  from the same resolver and distinguishes them from the immutable bundled ASP
+  tuple governed by hrc-runtime.observable-release. The root is one
+  configuration namespace, not an atomic build-identity boundary, and the
+  daemon's in-process ASP imports remain pinned to its release.
+authority: wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+source:
+  - wrkq:T-07764
+  - architecture/records/invariants/hrc-runtime.observable-release.yaml
+  - packages/hrc-server/src/hoisted-binary.ts
+  - packages/hrc-server/src/option-resolvers.ts
+  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
+  - packages/hrc-server/src/broker/controller.ts
+  - packages/hrc-server/src/broker/controller/dispatch.ts
+  - packages/hrc-server/src/broker/capabilities.ts
+required_tests:
+  - just architecture-records
+  - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
+  - T-07764 protocol/capability remedy and status/resolver authority gates
+  - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
+last_verified: 2026-08-30 design approval; implementation gates pending
+reopen_when: An ASP child spawn site, selection precedence, external-root semantics, compatibility handshake, toolchain status projection, or in-process ASP dependency boundary changes.
+supersedes: []
+superseded_by: []
