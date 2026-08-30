@@ -12,7 +12,12 @@ predicate: >
   viewerRequested intent. A store-only presentation read model exposes those
   facts without probing or mutating runtimes. hrc-viewer alone actuates Ghostty
   through ghostmux and keeps no persistent registry outside Ghostty pane
-  metadata. Exactly one viewer-bearing daemon is permitted per GUI user and it
+  metadata. Raising or focusing an existing pane by a user-principal tool (a
+  CLI the human runs on their own desktop, e.g. hcs) is not presentation
+  actuation for this invariant: it mints, stamps, rebinds, retitles, and closes
+  nothing, and focus is never read for identity or topology decisions. Such a
+  tool may read the pane metadata the viewer wrote to locate a pane; it may
+  not write it. Exactly one viewer-bearing daemon is permitted per GUI user and it
   is the production daemon; non-production daemons for that user keep their
   in-daemon Ghostty viewer disabled and never run hrc-viewer. This placement
   constraint is the authority boundary for the user's shared Ghostty registry;
@@ -24,12 +29,13 @@ predicate: >
   Viewer absence, death, lag, reconnect, reconciliation, and polling cannot
   mutate or finalize runtime, run, or turn state and cannot delay or fail their
   lifecycle paths.
-authority: Lance Herron operator ruling, 2026-08-26
+authority: Lance Herron operator ruling, 2026-08-26; focus carve-out by Lance Herron operator ruling, 2026-08-30 (wrkq:T-07729, overruling daedalus EN-01480/EN-01482 F1)
 source:
   - hrcchat#21132
   - hrcchat#21160
   - hrcchat#21165
   - wrkq:T-07595
+  - wrkq:T-07729
   - docs/proposals/viewer-sidecar-spec.md
   - packages/hrc-server/src/runtime-io-handlers.ts
   - packages/hrc-viewer/src/viewer.ts
