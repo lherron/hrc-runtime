@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import { parseScopeRef } from 'agent-scope'
+import type { WrkqProjectRegistryEntry } from 'hrc-core'
 import {
   type HarnessDetection,
   type HarnessId,
@@ -24,6 +25,8 @@ import {
   resolvePlacementContext,
 } from 'spaces-config'
 import { harnessRegistry } from 'spaces-execution'
+
+import { resolveRegisteredProjectRoot } from './project-registry-roots.js'
 
 import type { SummonCapabilityHint, SummonCapabilityObservation } from './summon-gate.js'
 
@@ -183,7 +186,12 @@ export type NodeLocalPlacementResolution = {
  */
 export function resolveNodeLocalPlacement(
   scopeRef: string,
-  options: { env: Record<string, string | undefined>; cwd: string }
+  options: {
+    env: Record<string, string | undefined>
+    cwd: string
+    /** Test seam; production reads `wrkq projects --json`. */
+    registryProjects?: readonly WrkqProjectRegistryEntry[] | undefined
+  }
 ): NodeLocalPlacementResolution {
   const parsed = parseScopeRef(scopeRef)
   const placementInput = {
@@ -193,6 +201,22 @@ export function resolveNodeLocalPlacement(
     env: options.env,
   }
   let paths = resolveAgentPlacementPaths(placementInput)
+
+  if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
+    // The registry first: it is the only authority that can name a checkout the
+    // cwd walk-up structurally cannot reach, and it is the same one `hrc start`
+    // consults, so honoring it here is what makes a ledger-born seat land where
+    // an operator-started one does (T-07749).
+    const registeredRoot = resolveRegisteredProjectRoot(parsed.projectId, {
+      env: options.env,
+      ...(options.registryProjects === undefined
+        ? {}
+        : { registryProjects: options.registryProjects }),
+    })
+    if (registeredRoot !== undefined) {
+      paths = resolveAgentPlacementPaths({ ...placementInput, projectRoot: registeredRoot })
+    }
+  }
 
   if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
     const siblingCandidates = [join(options.cwd, parsed.projectId)]

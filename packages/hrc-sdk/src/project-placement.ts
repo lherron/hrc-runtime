@@ -3,7 +3,12 @@ import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { environmentWithoutGitOverrides } from 'hrc-core'
+import {
+  type WrkqProjectRegistryEntry,
+  environmentWithoutGitOverrides,
+  findWrkqProjectEntry,
+  readWrkqProjectRegistry,
+} from 'hrc-core'
 import {
   type ResolveAgentPlacementPathsOptions,
   type ResolvedAgentPlacementPaths,
@@ -32,12 +37,11 @@ export interface HrcResolvedAgentPlacementPaths extends ResolvedAgentPlacementPa
   resolution: ProjectPlacementResolution
 }
 
-export interface ProjectRegistryEntry {
-  slug?: string | undefined
-  path?: string | undefined
-  title?: string | undefined
-  root?: string | null | undefined
-}
+/**
+ * The registry shape lives in `hrc-core` so the daemon's own placement resolver
+ * reads the same authority this one does (T-07749).
+ */
+export type ProjectRegistryEntry = WrkqProjectRegistryEntry
 
 export interface ResolveHrcAgentPlacementPathsOptions extends ResolveAgentPlacementPathsOptions {
   projectOrigin: ProjectOrigin
@@ -79,31 +83,6 @@ function isLinkedCheckout(path: string): boolean {
   } catch {
     return false
   }
-}
-
-function readProjectRegistry(env: Record<string, string | undefined>): ProjectRegistryEntry[] {
-  const result = spawnSync('wrkq', ['projects', '--json'], {
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'ignore'],
-  })
-  if (result.status !== 0 || !result.stdout) return []
-  try {
-    const parsed = JSON.parse(result.stdout) as unknown
-    return Array.isArray(parsed) ? (parsed as ProjectRegistryEntry[]) : []
-  } catch {
-    return []
-  }
-}
-
-function findRegistryEntry(
-  projects: ProjectRegistryEntry[],
-  projectId: string
-): ProjectRegistryEntry | undefined {
-  return projects.find(
-    (project) =>
-      project.slug === projectId || project.path === projectId || project.title === projectId
-  )
 }
 
 function didYouMeanExplicitTaskProject(
@@ -302,8 +281,8 @@ export function resolveHrcAgentPlacementPaths(
     })
   }
 
-  const projects = options.registryProjects ?? readProjectRegistry(env)
-  const registryEntry = findRegistryEntry(projects, options.projectId)
+  const projects = options.registryProjects ?? readWrkqProjectRegistry(env)
+  const registryEntry = findWrkqProjectEntry(projects, options.projectId)
   let canonicalRoot: string | undefined
   let canonicalSource: 'wrkq-registry' | 'marker-scan' | undefined
   if (registryEntry?.root) {

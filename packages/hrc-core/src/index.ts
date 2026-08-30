@@ -11,6 +11,13 @@ export type { HrcBirthCredential } from './federation.js'
 export { environmentWithoutGitOverrides } from './git-environment.js'
 
 export {
+  expandRegistryHome,
+  findWrkqProjectEntry,
+  readWrkqProjectRegistry,
+} from './project-registry.js'
+export type { WrkqProjectRegistryEntry } from './project-registry.js'
+
+export {
   HrcBadRequestError,
   HrcConflictError,
   HrcDomainError,
