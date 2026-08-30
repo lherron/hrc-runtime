@@ -401,6 +401,35 @@ function parseRequiredSafeInteger(
   return value
 }
 
+function parseOptionalSafeInteger(
+  searchParams: URLSearchParams,
+  field: string,
+  minimum: number
+): number | undefined {
+  const raw = normalizeOptionalQuery(searchParams.get(field))
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field} must be a safe integer greater than or equal to ${minimum}`,
+      { field, value: raw }
+    )
+  }
+  return value
+}
+
+/**
+ * Bounded lifecycle-event tail, head page or exclusive-before reverse page.
+ *
+ * Omitting `beforeHrcSeq` keeps the pre-existing head-page behavior verbatim.
+ * A reverse page must carry the `ledgerIncarnationId` it was minted against —
+ * paging backwards through a replaced ledger would silently return rows from a
+ * different history — and a mismatch is a typed `cursor_invalid` conflict with
+ * no event payload. The cursor is deliberately named apart from the bounded
+ * live stream's `afterSeq`: it walks history backwards and never advances a
+ * consumer's forward position.
+ */
 export function handleEventsTail(this: HrcServerInstanceForHandlers, url: URL): Response {
   const limit = parseRequiredSafeInteger(url.searchParams, 'limit', 1)
   if (limit > HRC_EVENTS_TAIL_MAX_LIMIT) {
@@ -410,8 +439,38 @@ export function handleEventsTail(this: HrcServerInstanceForHandlers, url: URL): 
       { field: 'limit', value: limit }
     )
   }
+  const beforeHrcSeq = parseOptionalSafeInteger(url.searchParams, 'beforeHrcSeq', 1)
+  const expectedLedgerIncarnationId = normalizeOptionalQuery(
+    url.searchParams.get('ledgerIncarnationId')
+  )
+  if (beforeHrcSeq !== undefined && expectedLedgerIncarnationId === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'beforeHrcSeq requires the ledgerIncarnationId it was minted against',
+      { field: 'ledgerIncarnationId' }
+    )
+  }
   const filters = this.parseEventsRouteFilters(url.searchParams)
-  return json(this.db.hrcEvents.tail(limit, filters))
+  try {
+    return json(
+      this.db.hrcEvents.tail(limit, filters, {
+        ...(beforeHrcSeq !== undefined ? { beforeHrcSeq } : {}),
+        ...(expectedLedgerIncarnationId !== undefined ? { expectedLedgerIncarnationId } : {}),
+      })
+    )
+  } catch (error) {
+    if (error instanceof HrcEventLedgerIncarnationMismatchError) {
+      throw new HrcConflictError(
+        HrcErrorCode.CURSOR_INVALID,
+        'event ledger incarnation is no longer current',
+        {
+          expectedLedgerIncarnationId: error.expectedLedgerIncarnationId,
+          currentLedgerIncarnationId: error.currentLedgerIncarnationId,
+        }
+      )
+    }
+    throw error
+  }
 }
 
 export function handleBoundedEvents(

@@ -221,6 +221,17 @@ export type WatchOptions = {
 
 export type HrcEventTailOptions = {
   limit: number
+  /**
+   * Exclusive-before history cursor (T-07719). Omit for the newest page; pass
+   * the oldest `hrcSeq` already loaded to fetch the bounded page before it.
+   * Requires {@link HrcEventTailOptions.ledgerIncarnationId}.
+   */
+  beforeHrcSeq?: number | undefined
+  /**
+   * Ledger incarnation the reverse cursor was minted against, taken from the
+   * first page's response. A replaced ledger fails with `cursor_invalid`.
+   */
+  ledgerIncarnationId?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   scopeRef?: string | undefined

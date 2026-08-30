@@ -110,6 +110,7 @@ export {
 } from './repositories/event-repositories.js'
 export type {
   EventAppendInput,
+  HrcEventTailCursor,
   HrcLifecycleEventInput,
   ImportedHrcLifecycleEventAppendResult,
   ImportedHrcLifecycleEventInput,

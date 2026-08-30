@@ -212,6 +212,25 @@ export class HrcEventLedgerIncarnationMismatchError extends Error {
   }
 }
 
+/**
+ * Reverse-history cursor for {@link HrcEventRepository.tail} (T-07719).
+ *
+ * Omitting `beforeHrcSeq` selects the newest page from the ledger head, which
+ * is what every pre-existing caller does. Supplying it selects the bounded page
+ * immediately *before* an already-loaded row, fenced by the incarnation the
+ * caller received with its first page: a replaced ledger invalidates the cursor
+ * rather than silently paging a different history.
+ *
+ * This is deliberately not the bounded live stream's `afterHrcSeq`: a history
+ * cursor walks backwards and never advances a consumer's forward position.
+ */
+export type HrcEventTailCursor = {
+  /** Exclusive upper bound — only rows with `hrc_seq < beforeHrcSeq` are selected. */
+  beforeHrcSeq?: number | undefined
+  /** Ledger incarnation the cursor was minted against. */
+  expectedLedgerIncarnationId?: string | undefined
+}
+
 export type ScanHrcLifecycleReplayInput = {
   expectedLedgerIncarnationId: string
   afterHrcSeq: number
@@ -376,14 +395,38 @@ export class HrcLifecycleEventRepository {
     return row.ledger_incarnation_id
   }
 
+  /**
+   * Bounded newest-first page, returned chronologically.
+   *
+   * `cursor.beforeHrcSeq` turns this into the exclusive-before reverse page:
+   * the exact filters are applied in SQL before the descending `limit + 1`
+   * read, so unrelated sessions and generations never consume page capacity,
+   * and `truncated` reports whether still-older *matching* rows exist relative
+   * to that boundary. The incarnation fence, head, and page are all read inside
+   * the one transaction.
+   */
   tail(
     limit: number,
-    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> = {}
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> = {},
+    cursor: HrcEventTailCursor = {}
   ): HrcEventTail {
     const read = this.db.transaction(() => {
       const ledgerIncarnationId = this.ledgerIncarnationId()
+      if (
+        cursor.expectedLedgerIncarnationId !== undefined &&
+        cursor.expectedLedgerIncarnationId !== ledgerIncarnationId
+      ) {
+        throw new HrcEventLedgerIncarnationMismatchError(
+          cursor.expectedLedgerIncarnationId,
+          ledgerIncarnationId
+        )
+      }
       const headHrcSeq = this.maxHrcSeq()
       const { where, values } = buildLifecycleWhere(filters, { includeSeqPredicates: false })
+      if (cursor.beforeHrcSeq !== undefined) {
+        where.push('hrc_seq < ?')
+        values.push(cursor.beforeHrcSeq)
+      }
       const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
       values.push(limit + 1)
       const rows = this.db

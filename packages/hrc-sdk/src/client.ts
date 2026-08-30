@@ -1083,6 +1083,8 @@ export class HrcClient {
   async tailEvents(options: HrcEventTailOptions): Promise<HrcEventTail> {
     const path = buildPath('/v1/events/tail', {
       limit: options.limit,
+      beforeHrcSeq: options.beforeHrcSeq,
+      ledgerIncarnationId: options.ledgerIncarnationId,
       ...eventFilterParams(options),
     })
     return this.getJson<HrcEventTail>(path)
