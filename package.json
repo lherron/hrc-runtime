@@ -63,7 +63,6 @@
     "spaces-harness-broker-pi-sdk": "latest",
     "spaces-harness-broker-client": "latest",
     "spaces-harness-broker-protocol": "latest",
-    "spaces-runtime": "latest",
-    "spaces-turn-runner": "latest"
+    "spaces-runtime": "latest"
   }
 }

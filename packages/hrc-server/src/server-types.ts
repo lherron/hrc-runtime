@@ -17,7 +17,6 @@ import type {
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
 import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
-import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
@@ -371,9 +370,6 @@ export type HrcServerOptions = {
    * Env override: `HRC_BROKER_DURABLE_IPC_ENABLED` (truthy enables).
    */
   brokerDurableIpcEnabled?: boolean | undefined
-  sdkInflightInputClient?: SdkInflightInputClient | undefined
-  sdkInflightInputRetryDelayMs?: number | undefined
-  sdkInflightInputMissingActiveRunRetryMs?: number | undefined
   commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
   /** Operator-ratified external-participant birth templates. No API mutates these. */
   registrationClasses?: readonly RegistrationClassConfig[] | undefined

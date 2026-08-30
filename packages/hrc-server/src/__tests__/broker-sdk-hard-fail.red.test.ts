@@ -10,7 +10,7 @@
  *
  * Pinned coordinator design (clod, C-02949):
  *   - Throw HrcRuntimeUnavailableError (hrc-core, code RUNTIME_UNAVAILABLE =
- *     HTTP 503) BEFORE runSdkTurn is reached, in every live SDK entry method:
+ *     HTTP 503) at every live SDK entry method:
  *       - executeHeadlessSdkTurn      (index.ts ~3556)
  *       - startRuntimeForSession      (runtime-io-handlers.ts)
  *       - handleSdkDispatchTurn       (index.ts ~9378)
@@ -18,20 +18,17 @@
  *     scope/sessionRef.
  *   - decideHeadlessExecutionRoute STILL returns 'sdk' for SDK harnesses; only
  *     the executor the 'sdk' route maps to becomes the hard-fail.
- *   - runSdkTurn stays exported (sdk-adapter.agent-tools.test.ts depends on it),
- *     but must NEVER be invoked once an SDK harness intent is dispatched/started.
+ *   - The retired in-process SDK executor is absent; only the typed route guards remain.
  *
  * GREEN behavior pinned by this test (driving the public HTTP boundary):
  *   1. POST /v1/turns with an SDK harness intent (agent-sdk / pi-sdk, or id-less
  *      anthropic — i.e. shouldUseHeadlessSdkExecutor(intent.harness) === true)
  *      REJECTS with HTTP 503 / error.code === 'runtime_unavailable'.
  *   2. POST /v1/runtimes/start with an SDK harness intent likewise hard-fails.
- *   3. runSdkTurn is NEVER invoked for any of the above.
- *   4. The error identifies the harness provider (and id when present) so the
+ *   3. The error identifies the harness provider (and id when present) so the
  *      hard-fail log is enumerable.
  *
- * This test currently FAILS (RED): today the SDK dispatch/start paths invoke
- * runSdkTurn and return 200. Larry makes it GREEN by inserting the hard-fail.
+ * This remains the regression bar after deletion of the retired SDK executor.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 

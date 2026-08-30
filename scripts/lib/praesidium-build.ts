@@ -30,7 +30,6 @@ export const ASP_PACKAGE_NAMES = [
   'spaces-harness-codex',
   'spaces-harness-pi',
   'spaces-harness-pi-sdk',
-  'spaces-turn-runner',
   'agent-spaces',
 ] as const
 

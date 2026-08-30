@@ -2,32 +2,20 @@
  * RED/GREEN tests for hrc-server Phase 3 — Semantic In-Flight Input (T-00969)
  *
  * Tests the server's POST /v1/in-flight-input endpoint:
- *   - Valid runtimeId + runId on supported SDK runtime -> 200 accepted
  *   - Unknown runtimeId -> 404 unknown_runtime
- *   - Wrong runId (mismatch) -> 409 run_mismatch
  *   - Tmux runtime -> 422 inflight_unsupported
- *   - Unsupported SDK runtime (openai/pi-sdk) -> 422 inflight_unsupported
- *   - inflight.accepted event emitted on success
+ *   - Retired SDK runtime -> 422 inflight_unsupported
  *   - inflight.rejected event emitted on rejection
- *   - last_activity_at updated after successful in-flight input
  *
  * Pass conditions for Larry (T-00969):
- *   1. POST /v1/in-flight-input with valid runtimeId + matching runId on a supported
- *      SDK runtime returns 200 { accepted: true }
- *   2. POST /v1/in-flight-input with unknown runtimeId returns 404
+ *   1. POST /v1/in-flight-input with unknown runtimeId returns 404
  *      { error: { code: 'unknown_runtime' } }
- *   3. POST /v1/in-flight-input with runtimeId whose activeRunId != request runId
- *      returns 409 { error: { code: 'run_mismatch' } }
- *   4. POST /v1/in-flight-input on a tmux-transport runtime returns 422
+ *   2. POST /v1/in-flight-input on a tmux-transport runtime returns 422
  *      { error: { code: 'inflight_unsupported' } }
- *   5. POST /v1/in-flight-input on an SDK runtime with supportsInflightInput=false
+ *   3. POST /v1/in-flight-input on a retired SDK runtime
  *      returns 422 { error: { code: 'inflight_unsupported' } }
- *   6. On success, an event with eventKind='inflight.accepted' is appended with
- *      correct runtimeId/runId, and payload containing the prompt
- *   7. On rejection (run_mismatch, inflight_unsupported), an event with
+ *   4. On rejection, an event with
  *      eventKind='inflight.rejected' is appended with the rejection reason
- *   8. On success, the runtime's last_activity_at is updated to a timestamp
- *      >= the pre-request timestamp
  *
  * Reference: wrkq T-00946 (agent-spaces/hrc/implementation-plan, archived).
  * The plan document itself no longer exists; docs/hrc-server-architecture.md
@@ -50,40 +38,6 @@ let server: HrcServer | undefined
 async function resolveSession(scope: string): Promise<string> {
   const resolved = await fixture.resolveSession(scope)
   return resolved.hostSessionId
-}
-
-/** Build a non-interactive (SDK) runtime intent.
- * Uses an explicit SDK harness id so Anthropic's default interactive routing does
- * not capture SDK-specific assertions. */
-function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
-  return {
-    placement: {
-      agentRoot: '/tmp/agent',
-      projectRoot: '/tmp/project',
-      cwd: '/tmp/project',
-      runMode: 'task',
-      bundle: { kind: 'compose', compose: [] },
-      dryRun: true,
-    },
-    harness: {
-      provider,
-      interactive: false,
-      id: provider === 'anthropic' ? 'agent-sdk' : 'pi-sdk',
-    },
-  }
-}
-
-/** Dispatch an SDK turn and return { runtimeId, runId } for in-flight testing */
-/** Dispatch a second SDK turn that will be in-flight (busy) for testing */
-async function _dispatchBusySdkTurn(hsid: string, _runtimeId: string): Promise<{ runId: string }> {
-  // Dispatch another turn — the server should create a new run on the existing runtime
-  const res = await fixture.postJson('/v1/turns', {
-    hostSessionId: hsid,
-    prompt: 'Busy turn for in-flight test',
-    runtimeIntent: sdkIntent('anthropic'),
-  })
-  const data = (await res.json()) as any
-  return { runId: data.runId }
 }
 
 function seedSdkActiveRuntime(input: {
@@ -234,10 +188,10 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 5. Unsupported SDK runtime (openai/pi-sdk) -> 422
+// Retired SDK runtime -> 422
 // ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — unsupported SDK provider', () => {
-  it('returns 422 with code inflight_unsupported for SDK runtime that does not support in-flight', async () => {
+describe('POST /v1/in-flight-input — retired SDK runtime', () => {
+  it('returns 422 even when historical metadata claims in-flight support', async () => {
     const runtimeId = 'rt-inflight-unsupported-openai'
     const runId = 'run-inflight-unsupported-openai'
     seedSdkActiveRuntime({
@@ -246,7 +200,7 @@ describe('POST /v1/in-flight-input — unsupported SDK provider', () => {
       runtimeId,
       runId,
       provider: 'openai',
-      supportsInflightInput: false,
+      supportsInflightInput: true,
     })
 
     const res = await fixture.postJson('/v1/in-flight-input', {
@@ -429,90 +383,6 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
     }
   })
 
-  it('marks the ledger ambiguous when enabled provider delivery throws after pending insert', async () => {
-    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
-    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
-    if (server) {
-      await server.stop()
-    }
-    server = await createHrcServer(
-      fixture.serverOpts({
-        sdkInflightInputMissingActiveRunRetryMs: 0,
-      })
-    )
-    seedSdkActiveRuntime({
-      hostSessionId: 'hsid-active-ambiguous',
-      scopeRef: 'agent:active-contrib-ambiguous',
-      runtimeId: 'rt-active-ambiguous',
-      runId: 'hrc-active-ambiguous',
-    })
-
-    try {
-      const request = {
-        selector: { runtimeId: 'rt-active-ambiguous' },
-        expectedRunId: 'hrc-active-ambiguous',
-        inputAttemptId: 'ia_ambiguous',
-        inputApplicationId: 'iap_ambiguous',
-        idempotencyKey: 'ambiguous-once',
-        prompt: 'provider call should throw',
-      }
-
-      const first = await fixture.postJson('/v1/active-run-contributions', request)
-      const dbAfterFirst = openHrcDatabase(fixture.dbPath)
-      const rowAfterFirst =
-        dbAfterFirst.activeInputDeliveries.getByInputApplicationId('iap_ambiguous')
-      dbAfterFirst.close()
-      const duplicate = await fixture.postJson('/v1/active-run-contributions', request)
-      const queried = await fixture.fetchSocket('/v1/active-run-contributions/iap_ambiguous')
-      const db = openHrcDatabase(fixture.dbPath)
-      const row = db.activeInputDeliveries.getByInputApplicationId('iap_ambiguous')
-      db.close()
-
-      expect(first.status).toBe(200)
-      expect(duplicate.status).toBe(200)
-      expect(queried.status).toBe(200)
-      expect(row?.status).toBe('ambiguous')
-      expect(row?.errorCode).toBe('delivery_ambiguous')
-      expect(row?.updatedAt).toBe(rowAfterFirst?.updatedAt)
-
-      const firstPayload = (await first.json()) as any
-      expect(firstPayload).toEqual(
-        expect.objectContaining({
-          status: 'pending',
-          inputApplicationId: 'iap_ambiguous',
-          runtimeId: 'rt-active-ambiguous',
-          runId: 'hrc-active-ambiguous',
-          errorCode: 'delivery_ambiguous',
-          capability: expect.objectContaining({ supported: true }),
-        })
-      )
-      expect(await duplicate.json()).toEqual(
-        expect.objectContaining({
-          status: 'pending',
-          inputApplicationId: 'iap_ambiguous',
-          runtimeId: 'rt-active-ambiguous',
-          runId: 'hrc-active-ambiguous',
-          errorCode: 'delivery_ambiguous',
-        })
-      )
-      expect(await queried.json()).toEqual(
-        expect.objectContaining({
-          status: 'pending',
-          inputApplicationId: 'iap_ambiguous',
-          runtimeId: 'rt-active-ambiguous',
-          runId: 'hrc-active-ambiguous',
-          errorCode: 'delivery_ambiguous',
-        })
-      )
-    } finally {
-      if (previousGate === undefined) {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
-      } else {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
-      }
-    }
-  })
-
   it('recommends queue fallback when SDK in-flight support is disabled by env', async () => {
     const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
     process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '0'
@@ -588,152 +458,6 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
         })
       )
       expect(payload.errorCode).toBeUndefined()
-    } finally {
-      if (previousGate === undefined) {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
-      } else {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
-      }
-    }
-  })
-
-  it('accepts and idempotently replays AgentSpaces SDK provider contributions', async () => {
-    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
-    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
-    const providerCalls: unknown[] = []
-    if (server) {
-      await server.stop()
-    }
-    server = await createHrcServer(
-      fixture.serverOpts({
-        sdkInflightInputClient: {
-          queueInFlightInput: async (request) => {
-            providerCalls.push(request)
-            return { accepted: true, pendingTurns: 1 }
-          },
-        },
-      })
-    )
-    seedSdkActiveRuntime({
-      hostSessionId: 'hsid-active-accepted',
-      scopeRef: 'agent:active-contrib-accepted',
-      runtimeId: 'rt-active-accepted',
-      runId: 'hrc-active-accepted',
-      supportsInflightInput: true,
-      provider: 'anthropic',
-    })
-
-    try {
-      const request = {
-        selector: { runtimeId: 'rt-active-accepted' },
-        expectedRunId: 'hrc-active-accepted',
-        inputAttemptId: 'ia_accepted',
-        inputApplicationId: 'iap_accepted',
-        idempotencyKey: 'accepted-once',
-        prompt: 'provider should enqueue this as a sequential follow-up',
-      }
-
-      const first = await fixture.postJson('/v1/active-run-contributions', request)
-      const duplicate = await fixture.postJson('/v1/active-run-contributions', request)
-      const queried = await fixture.fetchSocket('/v1/active-run-contributions/iap_accepted')
-      const db = openHrcDatabase(fixture.dbPath)
-      const row = db.activeInputDeliveries.getByInputApplicationId('iap_accepted')
-      db.close()
-
-      expect(first.status).toBe(200)
-      expect(duplicate.status).toBe(200)
-      expect(queried.status).toBe(200)
-
-      const payload = (await first.json()) as any
-      expect(payload).toEqual(
-        expect.objectContaining({
-          status: 'accepted',
-          inputApplicationId: 'iap_accepted',
-          hostSessionId: 'hsid-active-accepted',
-          generation: 1,
-          runtimeId: 'rt-active-accepted',
-          runId: 'hrc-active-accepted',
-          capability: {
-            supported: true,
-            deliverySemantics: 'sequential_followup',
-            ackSemantics: 'accepted_only',
-            ordering: 'fifo',
-            supportsAttachments: false,
-          },
-        })
-      )
-      expect(await duplicate.json()).toEqual(payload)
-      expect(await queried.json()).toEqual(payload)
-      expect(row?.status).toBe('accepted')
-      expect(row?.response).toEqual(payload)
-      expect(providerCalls).toEqual([
-        expect.objectContaining({
-          hostSessionId: 'hsid-active-accepted',
-          runId: 'hrc-active-accepted',
-          inputApplicationId: 'iap_accepted',
-          idempotencyKey: 'accepted-once',
-          prompt: 'provider should enqueue this as a sequential follow-up',
-        }),
-      ])
-    } finally {
-      if (previousGate === undefined) {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
-      } else {
-        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
-      }
-    }
-  })
-
-  it('retries a transient AgentSpaces SDK in-flight registry miss', async () => {
-    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
-    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
-    let providerCalls = 0
-    if (server) {
-      await server.stop()
-    }
-    server = await createHrcServer(
-      fixture.serverOpts({
-        sdkInflightInputRetryDelayMs: 1,
-        sdkInflightInputMissingActiveRunRetryMs: 50,
-        sdkInflightInputClient: {
-          queueInFlightInput: async () => {
-            providerCalls += 1
-            if (providerCalls === 1) {
-              throw new Error('No active in-flight run for hostSessionId hsid-active-retry')
-            }
-            return { accepted: true, pendingTurns: 1 }
-          },
-        },
-      })
-    )
-    seedSdkActiveRuntime({
-      hostSessionId: 'hsid-active-retry',
-      scopeRef: 'agent:active-contrib-retry',
-      runtimeId: 'rt-active-retry',
-      runId: 'hrc-active-retry',
-      supportsInflightInput: true,
-      provider: 'anthropic',
-    })
-
-    try {
-      const res = await fixture.postJson('/v1/active-run-contributions', {
-        selector: { runtimeId: 'rt-active-retry' },
-        expectedRunId: 'hrc-active-retry',
-        inputAttemptId: 'ia_retry',
-        inputApplicationId: 'iap_retry',
-        prompt: 'provider should enqueue after transient registry readiness',
-      })
-
-      expect(res.status).toBe(200)
-      expect(await res.json()).toEqual(
-        expect.objectContaining({
-          status: 'accepted',
-          inputApplicationId: 'iap_retry',
-          runtimeId: 'rt-active-retry',
-          runId: 'hrc-active-retry',
-        })
-      )
-      expect(providerCalls).toBe(2)
     } finally {
       if (previousGate === undefined) {
         process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined

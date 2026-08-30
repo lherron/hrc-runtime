@@ -24,10 +24,7 @@ import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
-import {
-  handleSdkDispatchTurn,
-  recordDetachedSemanticTurnFailure,
-} from './selector-message-handlers/sdk-dispatch.js'
+import { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.js'
 import {
   handleBrokerLiteralInputBySelector,
   handleCaptureBySelector,
@@ -43,10 +40,7 @@ import { SESSION_HAS_RUNNING_RUNTIME_SQL, SESSION_RECENCY_SQL } from './session-
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import { findTargetSession, toTargetView } from './target-view.js'
 
-export {
-  handleSdkDispatchTurn,
-  recordDetachedSemanticTurnFailure,
-} from './selector-message-handlers/sdk-dispatch.js'
+export { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.js'
 export {
   handleBrokerLiteralInputBySelector,
   handleCaptureBySelector,
@@ -515,7 +509,6 @@ export const selectorMessageHandlersMethods = {
   listIdleSessionCandidates,
   ensureRuntimeForSession,
   handleSdkDispatchTurn,
-  recordDetachedSemanticTurnFailure,
   ensureTargetSession,
   handleEnsureTarget,
   handleCreateMessage,

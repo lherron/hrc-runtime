@@ -11,7 +11,7 @@
  * `+model=sonnet` launched with `--model opus` in the process table and
  * self-reported claude-opus-5 (C-15425 / DM #230).
  *
- * These cases are deliberately at the three adapters — the last thing between
+ * These cases are deliberately at the live adapters — the last thing between
  * an intent and an actual process — because that is where the acceptance lives
  * ("process args AND self-report show sonnet"). Cycle 1's bar had no launch-path
  * case at all, which is exactly why it could not catch this.
@@ -23,15 +23,11 @@
  * the guarantee has to hold at the adapter, since that is the shape the
  * persisted intent actually has.
  *
- * WHERE `reasoning` IS OBSERVABLE. Only two of the three boundaries carry a
+ * WHERE `reasoning` IS OBSERVABLE. Both live boundaries carry a
  * reasoning field at all, so it is asserted exactly there rather than three
  * times mechanically:
  *   - cli-adapter     -> `BuildProcessInvocationSpecRequest.modelReasoningEffort`
  *   - compile-adapter -> `RuntimeCompileRequest.requested.reasoningEffort`
- *   - sdk-adapter     -> NOTHING. `RunTurnNonInteractiveRequest` (agent-spaces
- *     types.d.ts) declares model and yolo but no reasoning of any spelling, so
- *     there is no field to wire and no assertion to make. That door is
- *     model-only by contract, not by omission here.
  * Because `modelReasoningEffort` and `reasoningEffort` are fields of their own,
  * the cheap fix of projecting the overlaid model onto `harness.model` — which
  * the adapters already read — cannot turn this file green.
@@ -42,15 +38,12 @@ import { describe, expect, it } from 'bun:test'
 import type {
   BuildProcessInvocationSpecRequest,
   BuildProcessInvocationSpecResponse,
-  RunTurnNonInteractiveRequest,
-  RunTurnNonInteractiveResponse,
 } from 'agent-spaces'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { buildCliInvocation } from '../agent-spaces-adapter/cli-adapter'
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
-import { runSdkTurn } from '../agent-spaces-adapter/sdk-adapter'
 import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
 
 const DIRECTED_MODEL = 'sonnet'
@@ -149,31 +142,5 @@ describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch pa
 
     expect(captured.request?.requested.model).toBe(DIRECTED_MODEL)
     expect(captured.request?.requested.reasoningEffort).toBe(DIRECTED_REASONING)
-  })
-
-  it('sdk-adapter: the non-interactive turn runs on the directed model', async () => {
-    let captured: RunTurnNonInteractiveRequest | undefined
-
-    await runSdkTurn({
-      intent: directedIntent({ provider: 'anthropic', interactive: false }),
-      hostSessionId: 'hsid-t07398-c2',
-      runId: 'run-t07398-c2',
-      runtimeId: 'rt-t07398-c2',
-      prompt: 'which model are you?',
-      scopeRef: 'agent:clod:project:hrc-runtime:task:t07398c2',
-      laneRef: 'main',
-      generation: 1,
-      runner: async (request): Promise<RunTurnNonInteractiveResponse> => {
-        captured = request
-        return {
-          provider: 'anthropic',
-          frontend: request.frontend,
-          model: request.model,
-          result: { success: true, finalOutput: 'ok' },
-        }
-      },
-    })
-
-    expect(captured?.model).toBe(DIRECTED_MODEL)
   })
 })
