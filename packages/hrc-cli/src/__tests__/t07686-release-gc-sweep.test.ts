@@ -167,6 +167,10 @@ describe('T-07686 probe completeness', () => {
             { pid: 300, command: '/usr/libexec/secd', lstart: LSTART },
           ],
           probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+          // Synthetic pid 300 is part of this fixture's live process table. Do
+          // not let the production `ps -p` dependency consult the host's real
+          // pid 300 and turn the omission into a machine-dependent exit.
+          checkAlive: (pids) => pids,
         }),
       'probe-incomplete'
     )
@@ -313,6 +317,9 @@ describe('T-07686 bracketed scan tolerates unrelated churn', () => {
           return call % 3 === 0 ? [CUPSD] : [CUPSD, MDWORKER]
         },
         probeOpenPaths: () => ({ paths: [], inspectedPids: [100], privileged: true }),
+        // This scenario says the uninspected synthetic pid exited; keep that
+        // fact inside the fixture rather than asking the host about pid 900.
+        checkAlive: () => [],
       }),
     })
     expect(report.summary.wouldSweep).toBe(2)
