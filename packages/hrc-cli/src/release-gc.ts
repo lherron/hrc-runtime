@@ -135,6 +135,14 @@ function installLockPath(releaseRoot: string): string {
  */
 const PROBE_MAX_BUFFER = 256 * 1024 * 1024
 
+/**
+ * Every probe here is synchronous and was previously unbounded, so a single
+ * wedged child blocked the whole GC indefinitely. `lsof` in particular makes
+ * blocking kernel calls on mounted filesystems and can stall for tens of
+ * seconds on a degraded network mount. (T-07740)
+ */
+const PROBE_TIMEOUT_MS = 20_000
+
 function run(
   command: string,
   args: string[]
@@ -143,6 +151,8 @@ function run(
     encoding: 'utf8',
     maxBuffer: PROBE_MAX_BUFFER,
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: PROBE_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
   })
   // Node/Bun signal an exceeded buffer through `error` (ENOBUFS). Treat it as a
   // probe failure, never as a short but valid reading.
@@ -178,28 +188,54 @@ function defaultListPids(): PidRecord[] {
   return records
 }
 
+/**
+ * Pid-scoped, never `+D` — a tree walk over the release root does not converge.
+ *
+ * `-b` keeps lsof off blocking kernel calls against mounted filesystems. A
+ * degraded network mount otherwise stalls this probe for tens of seconds, and
+ * this probe is SYNCHRONOUS. Verified on max3 that `-b` preserves every
+ * release-root path this gate reads (parity across repeated samples); `-w`
+ * drops the mount warnings `-b` would otherwise print.
+ *
+ * `-b` is safe here ONLY because the selector is a pid list. With path
+ * arguments it forbids the stat() lsof needs to resolve a path to a dev/inode
+ * and silently reports nothing — and "nothing open" here means "unreferenced",
+ * which deletes a release out from under a running process. Do not convert this
+ * probe to path arguments. (T-07740)
+ */
+export function lsofOpenPathsArgv(pids: number[]): string[] {
+  return ['-b', '-w', '-n', '-P', '-Fpn', '-p', pids.join(',')]
+}
+
 function defaultReadOpenPaths(pids: number[]): {
   covered: number[]
   paths: string[]
   failed: boolean
 } {
-  // Pid-scoped, never `+D` — a tree walk over the release root does not converge.
-  const { stdout, truncated } = run('lsof', ['-n', '-P', '-Fpn', '-p', pids.join(',')])
+  const { stdout, truncated } = run('lsof', lsofOpenPathsArgv(pids))
   if (truncated) {
     throw new ReleaseGcAbort('probe-failed', 'open-paths probe output was truncated')
   }
+  const { covered, paths } = parseLsofOpenPaths(stdout)
+  // Partial coverage is expected and is NOT a failure; total silence is.
+  return { covered, paths, failed: covered.length === 0 }
+}
+
+export function parseLsofOpenPaths(stdout: string): { covered: number[]; paths: string[] } {
   const covered: number[] = []
   const paths: string[] = []
   for (const line of stdout.split('\n')) {
     if (line.startsWith('p')) {
       const pid = Number.parseInt(line.slice(1), 10)
       if (Number.isFinite(pid)) covered.push(pid)
-    } else if (line.startsWith('n')) {
+    } else if (line.startsWith('n/')) {
+      // Only ABSOLUTE names are paths. lsof also emits non-path `n` fields such
+      // as `ncount=3, state=0x10` for sockets; admitting those as "open paths"
+      // feeds noise to the release-id matcher. (T-07740)
       paths.push(line.slice(1))
     }
   }
-  // Partial coverage is expected and is NOT a failure; total silence is.
-  return { covered, paths, failed: covered.length === 0 }
+  return { covered, paths }
 }
 
 function defaultReadRuntimeRecords(): string[] {

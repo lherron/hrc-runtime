@@ -333,6 +333,7 @@ export async function reconcileStartupState(
   })
   await sweepOrphanedRendererControlSockets(options.runtimeRoot, {
     graceMs: resolveBrokerOrphanSweepGraceMs(),
+    holderEnumerationTimeoutMs: resolveHolderEnumerationTimeoutMs(),
   })
 
   // T-01760 (Wave C): legacy runtime sweep. The broker passes above
@@ -878,6 +879,22 @@ function resolveBrokerOrphanSweepGraceMs(): number {
   }
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS
+}
+
+/**
+ * Abort budget for holder discovery, overridable so a test can bound this
+ * WITHOUT depending on the runner's per-test timeout being larger.
+ *
+ * That coupling is a real trap: at bun's default 5000ms a test and the default
+ * budget are exactly equal, so a stalled `lsof` kills the test before the
+ * preserve path it is meant to exercise ever runs — an opaque timeout instead
+ * of a result. Tests that care set this small and stop caring. (T-07740)
+ */
+function resolveHolderEnumerationTimeoutMs(): number | undefined {
+  const raw = process.env['HRC_HOLDER_ENUMERATION_TIMEOUT_MS']
+  if (raw === undefined) return undefined
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
 function isOrphanableLaunchStatus(status: string): boolean {

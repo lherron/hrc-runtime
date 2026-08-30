@@ -646,8 +646,19 @@ export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandle
   const sweep = (async () => {
     const renderer = await sweepOrphanedRendererControlSockets(this.options.runtimeRoot, {
       graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+      // Quiet on the common path, but never on a failing one. Suppressing the
+      // summary unconditionally is how 18 production holder-enumeration
+      // failures on this 300s cadence left no `sweep_complete` line to count,
+      // and so read as "never happened". (T-07740)
       emitSummary: false,
     })
+    if (renderer.errors > 0) {
+      writeServerLog('WARN', 'broker.renderer_control_socket_sweep_complete', {
+        ...renderer,
+        graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+        cadence: 'recurring',
+      })
+    }
     const broker = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
       graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
       removeDeadSocketFiles: true,

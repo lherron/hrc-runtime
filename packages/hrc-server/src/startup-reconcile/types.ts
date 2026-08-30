@@ -32,6 +32,14 @@ export type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'
 export type RendererControlSocketSweepOptions = {
   graceMs: number
   emitSummary?: boolean | undefined
+  /**
+   * Holder discovery, injectable so tests never shell out to the real `lsof`.
+   * Production leaves it unset. A test that supplies one gets a deterministic
+   * sweep with no dependency on machine state, mounts, or wall-clock timing.
+   */
+  enumerateHeldPaths?: (() => Promise<Set<string>>) | undefined
+  /** Overrides the holder-enumeration abort budget. Tests only. */
+  holderEnumerationTimeoutMs?: number | undefined
 }
 
 export type RendererControlSocketSweepResult = {
@@ -42,6 +50,14 @@ export type RendererControlSocketSweepResult = {
   errors: number
   /** Wall time of the single `lsof` holder enumeration, when one was run. */
   holderEnumerationMs?: number
+  /**
+   * Why holder discovery failed, when it did. `aborted` means the enumeration
+   * outlived its budget and we killed it; `failed` means it returned an error
+   * of its own. The distinction exists because the two demand different
+   * responses and the raw stderr cannot tell them apart — see
+   * LSOF_HELD_UNIX_SOCKET_ARGV.
+   */
+  holderEnumerationOutcome?: 'ok' | 'aborted' | 'failed'
 }
 
 /**

@@ -1,5 +1,5 @@
-import { readdir, rm, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative } from 'node:path'
+import { readdir, realpath, rm, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {
@@ -110,16 +110,28 @@ export async function sweepOrphanedRendererControlSockets(
   }
 
   let heldPaths: Set<string>
+  const enumerate =
+    options.enumerateHeldPaths ??
+    (() => enumerateHeldUnixSocketPaths(options.holderEnumerationTimeoutMs))
   const enumerationStartedAt = performance.now()
   try {
-    heldPaths = await enumerateHeldUnixSocketPaths()
+    heldPaths = await enumerate()
     result.holderEnumerationMs = performance.now() - enumerationStartedAt
+    result.holderEnumerationOutcome = 'ok'
   } catch (error) {
     result.holderEnumerationMs = performance.now() - enumerationStartedAt
     // Holder state is mandatory evidence for removal. If it cannot be collected,
     // preserve every candidate rather than falling back to age-only cleanup.
     result.errors = entries.length
+    result.holderEnumerationOutcome =
+      error instanceof HolderEnumerationAbortedError ? 'aborted' : 'failed'
     writeServerLog('WARN', 'broker.renderer_control_socket_holder_enumeration_failed', {
+      // `outcome` is the field to read, NOT the message. On the aborted path the
+      // message is whatever the killed process had already written to stderr,
+      // which on macOS is a benign always-present mount warning that names an
+      // innocent bystander and never mentions the abort. (T-07740)
+      outcome: result.holderEnumerationOutcome,
+      elapsedMs: result.holderEnumerationMs,
       error,
       scanned: result.scanned,
     })
@@ -127,10 +139,11 @@ export async function sweepOrphanedRendererControlSockets(
     return result
   }
 
+  const isHeld = await buildHeldMatcher(dir, entries, heldPaths)
   const now = Date.now()
   for (const entry of entries) {
     const socketPath = join(dir, entry)
-    if (heldPaths.has(socketPath)) {
+    if (isHeld(entry)) {
       result.skippedHeld += 1
       continue
     }
@@ -168,23 +181,131 @@ export async function sweepOrphanedRendererControlSockets(
   return result
 }
 
-async function enumerateHeldUnixSocketPaths(): Promise<Set<string>> {
+/**
+ * Holder discovery outlived its budget and was killed. Distinct from a plain
+ * failure because the stderr of a killed process describes whatever it had
+ * already printed, not the kill — so the type is the only honest signal.
+ */
+export class HolderEnumerationAbortedError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`lsof holder enumeration exceeded ${timeoutMs}ms and was terminated`)
+    this.name = 'HolderEnumerationAbortedError'
+  }
+}
+
+async function enumerateHeldUnixSocketPaths(timeoutMs?: number): Promise<Set<string>> {
+  const budgetMs = timeoutMs ?? RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS
+  const signal = AbortSignal.timeout(budgetMs)
   const proc = Bun.spawn([...LSOF_HELD_UNIX_SOCKET_ARGV], {
     env: process.env,
     stdout: 'pipe',
     stderr: 'pipe',
-    signal: AbortSignal.timeout(RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS),
+    signal,
   })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
+
+  /**
+   * The deadline has to be raced, not merely armed.
+   *
+   * Killing the child does not end the read: the write end of these pipes is
+   * held by EVERY process that inherited it, so anything the child spawned (or
+   * orphaned) keeps stdout open and `Response.text()` pending long after the
+   * kill. Awaiting the reads and the exit together therefore inherits the
+   * lifetime of the slowest holder, which is exactly the unbounded wait this
+   * budget exists to prevent — the same defect in a second disguise, and the
+   * one that made a 250ms budget still take 5s in test. (T-07740)
+   */
+  const deadline = new Promise<never>((_, reject) => {
+    signal.addEventListener('abort', () => reject(new HolderEnumerationAbortedError(budgetMs)), {
+      once: true,
+    })
+  })
+  // The loser of the race always settles; swallow it so it is never an
+  // unhandled rejection.
+  deadline.catch(() => {})
+
+  let stdout: string
+  let stderr: string
+  let exitCode: number | null
+  try {
+    ;[stdout, stderr, exitCode] = await Promise.race([
+      Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]),
+      deadline,
+    ])
+  } catch (error) {
+    // SIGTERM is what the AbortSignal already sent; escalate rather than leave
+    // a wedged child holding the pipes.
+    try {
+      proc.kill('SIGKILL')
+    } catch {
+      // Already gone.
+    }
+    throw error
+  }
+
+  // Check the signal BEFORE the exit code: an aborted process exits non-zero
+  // with stale stderr, and reporting that stderr as the cause is what sent an
+  // earlier investigation after an innocent mount. (T-07740)
+  if (signal.aborted) throw new HolderEnumerationAbortedError(budgetMs)
   if (exitCode !== 0) {
     throw new Error(stderr.trim() || `lsof exited with status ${exitCode}`)
   }
 
   return parseLsofUnixSocketPaths(stdout)
+}
+
+/**
+ * Build a holder test that tolerates path-FORM differences.
+ *
+ * The held set carries the paths processes actually bound, which need not be
+ * the string form this sweep composed from `runtimeRoot` — `/tmp` vs
+ * `/private/tmp` on macOS is the obvious case, a symlinked runtime root the
+ * general one. A miss means "not held", and "not held" past grace means DELETE,
+ * so a string-equality miss is a live-socket deletion.
+ *
+ * Resolution goes through the PARENT DIRECTORY, never the socket: `realpath()`
+ * on a Unix socket fails with EOPNOTSUPP on macOS, and a fail-safe built on it
+ * marks every candidate held and silently disables the sweep. Directories
+ * resolve fine, and the basename is exact by construction.
+ *
+ * Only held paths whose basename matches a candidate are resolved, so this
+ * costs a couple of directory lookups rather than one per open socket.
+ */
+async function buildHeldMatcher(
+  dir: string,
+  entries: string[],
+  heldPaths: Set<string>
+): Promise<(entry: string) => boolean> {
+  const wanted = new Set(entries)
+  const normalized = new Set<string>()
+  const resolvedDirs = new Map<string, string>()
+
+  const resolveDir = async (path: string): Promise<string> => {
+    const cached = resolvedDirs.get(path)
+    if (cached !== undefined) return cached
+    let resolved: string
+    try {
+      resolved = await realpath(path)
+    } catch {
+      resolved = path
+    }
+    resolvedDirs.set(path, resolved)
+    return resolved
+  }
+
+  for (const held of heldPaths) {
+    const base = basename(held)
+    if (!wanted.has(base)) continue
+    normalized.add(held)
+    normalized.add(join(await resolveDir(dirname(held)), base))
+  }
+
+  const resolvedDir = await resolveDir(dir)
+  return (entry: string) =>
+    normalized.has(join(dir, entry)) || normalized.has(join(resolvedDir, entry))
 }
 
 export function parseLsofUnixSocketPaths(stdout: string): Set<string> {
