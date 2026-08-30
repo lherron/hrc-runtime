@@ -14,7 +14,7 @@ import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from './ledger-types.js'
  *   [T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]
  *   history: wrkc log T-07604   (14 messages · last 2h ago)
  *   <body>
- *   reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'
+ *   reply: wrkc say EN-01165 --to cody@hrc-runtime:T-07604 - <<'EOF'
  *   …
  *   EOF
  *   defer: wrkc defer EN-01165 --reason … [--retry-after 10m]
@@ -35,8 +35,8 @@ import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from './ledger-types.js'
  * The envelope's `EN-xxxxx` id was internal under rev 4 and is NOT any more: a
  * pointer form has to name the row the reader is being sent to read, and the
  * `defer:` line has to name the row the reader is being asked to defer. The
- * ROOM KEY is still the addressing token, and it is still what the reply line
- * carries.
+ * ROOM KEY is the header's display token, but the reply line addresses the
+ * ENVELOPE, not the room key — see formatReplyLine.
  */
 
 /** Body clip. The room holds the full text; the injection is a summons to it. */
@@ -295,11 +295,23 @@ function formatDuration(elapsedMs: number): string {
  * Predicting that resolver and getting it wrong reintroduces exactly this bug,
  * in the silent direction.
  */
+/**
+ * The reply line names the ENVELOPE (`wrkc say EN-xxxxx`), never the room key.
+ * A task room's key is a task id, and `wrkc say T-xxxxx` is not a stable
+ * selector for that room: wrkq strict-coalesces a task say into the campaign
+ * room the moment the task is enrolled (routeToTaskUUID), so a task room minted
+ * before enrollment becomes unreachable by its own key. Observed live on
+ * T-07731 (2026-08-30): EN-01499 landed in room T-07731 at 13:51, the campaign
+ * hcs/build was minted at 13:59, and every hinted `wrkc say T-07731` reply
+ * thereafter (EN-01504, EN-01511) landed in hcs/build and never acked. An
+ * EN- selector resolves to the envelope's own room with its task tag, in every
+ * room kind, so it cannot drift.
+ */
 function formatReplyLine(envelope: WrkqEnvelope): string | undefined {
   if (envelope.obligation !== 'reply_required') return undefined
   const to = replyAddressee(envelope)
   if (to === undefined) return undefined
-  return [`reply: wrkc say ${envelope.roomKey} --to ${to} - <<'EOF'`, '…', 'EOF'].join('\n')
+  return [`reply: wrkc say ${envelope.id} --to ${to} - <<'EOF'`, '…', 'EOF'].join('\n')
 }
 
 /**

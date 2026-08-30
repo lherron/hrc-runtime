@@ -53,7 +53,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       [
         '[T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]',
         'the body',
-        "reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
         '…',
         'EOF',
         'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
@@ -124,7 +124,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       '[R-00012 · mable@hrc-runtime:primary (gen 7) → you · reply required]'
     )
     expect(rendered).not.toContain('"')
-    expect(rendered).toContain("reply: wrkc say R-00012 --to mable@hrc-runtime:primary - <<'EOF'")
+    expect(rendered).toContain("reply: wrkc say EN-00042 --to mable@hrc-runtime:primary - <<'EOF'")
   })
 
   // T-07638, observed live on T-07616: a bare `--to clod` in task room T-07616
@@ -145,7 +145,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       NOW
     )
     expect(rendered).toContain(
-      "reply: wrkc say T-07616 --to clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab - <<'EOF'"
+      "reply: wrkc say EN-00042 --to clod@hrc-runtime:codex-019efeb5-1234-7abc-8def-0123456789ab - <<'EOF'"
     )
     // The bare name is exactly what misresolved; it must not survive anywhere
     // in the reply line.
@@ -218,7 +218,7 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
       [
         '[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply or defer]',
         'read: wrkc show EN-00042   ·   thread: wrkc log T-07604',
-        "reply: wrkc say T-07604 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
         '…',
         'EOF',
         'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',

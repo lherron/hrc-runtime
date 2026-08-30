@@ -129,7 +129,7 @@ describe('rev 5.1 scenario 1 — control', () => {
     const prompt = deterministic.prompts()[0] ?? ''
     expect(prompt).toContain(`[T-07704 · ${SENDER} → you · reply required]`)
     expect(prompt).toContain('the control body')
-    expect(prompt).toContain(`reply: wrkc say T-07704 --to ${SENDER} - <<'EOF'`)
+    expect(prompt).toMatch(new RegExp(`reply: wrkc say EN-\\d+ --to ${SENDER} - <<'EOF'`))
     expect(prompt).toContain('defer: wrkc defer EN-')
 
     const [envelope] = [...ledger.envelopes.values()]
