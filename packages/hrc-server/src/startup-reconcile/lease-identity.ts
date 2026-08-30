@@ -51,6 +51,28 @@ const LEASE_SOCKET_INSPECT_TIMEOUT_MS = 750
  * code exists to emit. Keep this strictly under that budget. (T-07604)
  */
 const RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS = 5_000
+
+/**
+ * `-b` is load-bearing, not tidiness. Without it lsof makes blocking `stat()`
+ * calls on every mounted filesystem before it answers, including network
+ * mounts. On max3 that includes a Time Machine **smbfs** share; when the NAS
+ * is degraded the call blocks in an uninterruptible kernel call, and a process
+ * stuck there cannot be killed until the call returns — so the AbortSignal
+ * above CANNOT bound it. Observed 18339ms and 8397ms against the 5s budget,
+ * plus 18 production occurrences on the recurring 300s sweep. (T-07740)
+ *
+ * `-w` suppresses the warning lsof prints about the mounts it skipped; that
+ * warning is otherwise re-thrown as the error message and misattributes every
+ * failure to the mount.
+ *
+ * `-b` is safe ONLY on this system-wide `-U` form: measured identical output
+ * with and without it. It is INCOMPATIBLE with per-file arguments, because it
+ * forbids the `stat()` lsof needs to resolve a path to a dev/inode —
+ * `lsof -b -Fn -- <socket paths>` reports nothing held, silently, with exit 0.
+ * Since unheld + past grace means delete, that variant would remove live
+ * sockets. Do not narrow this call to specific paths while `-b` is present.
+ */
+export const LSOF_HELD_UNIX_SOCKET_ARGV: readonly string[] = ['lsof', '-b', '-w', '-U', '-Fn']
 const RENDERER_CONTROL_SOCKET_PREFIX = 'codex-app-server-renderer-control.'
 // The btmux directory also contains Codex app renderer-control Unix sockets.
 // They are not tmux servers, so the orphan lease sweeper must not probe them.
@@ -147,7 +169,7 @@ export async function sweepOrphanedRendererControlSockets(
 }
 
 async function enumerateHeldUnixSocketPaths(): Promise<Set<string>> {
-  const proc = Bun.spawn(['lsof', '-U', '-Fn'], {
+  const proc = Bun.spawn([...LSOF_HELD_UNIX_SOCKET_ARGV], {
     env: process.env,
     stdout: 'pipe',
     stderr: 'pipe',
