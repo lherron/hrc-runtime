@@ -14,6 +14,10 @@ import type {
   WrkqEnvelopeShowParams,
   WrkqMonitorEventsView,
   WrkqMonitorEventsViewParams,
+  WrkqRoomLogView,
+  WrkqRoomLogViewParams,
+  WrkqRoomSayParams,
+  WrkqRoomSayResult,
   WrkqRoomShowParams,
   WrkqRoomView,
 } from '../../wrkq/ledger-types.js'
@@ -74,6 +78,8 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   presentCalls = 0
   readonly presentRequests: WrkqEnvelopePresentParams[] = []
   readonly failRequests: WrkqEnvelopeFailParams[] = []
+  readonly roomSayRequests: WrkqRoomSayParams[] = []
+  roomLogCalls = 0
 
   say(seed: SeedEnvelope): WrkqEnvelope {
     nextEnvelopeSeq += 1
@@ -357,6 +363,100 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     const room = this.rooms.get(params.room)
     if (room === undefined) throw new Error(`unknown room ${params.room}`)
     return room
+  }
+
+  async roomLog(params: WrkqRoomLogViewParams): Promise<WrkqRoomLogView> {
+    this.guard('wrkq.room.logView')
+    this.roomLogCalls += 1
+    const items = [...this.envelopes.values()].filter(
+      (envelope) => envelope.roomKey === params.room || envelope.roomUuid === params.room
+    )
+    const first = items[0]
+    const room =
+      this.rooms.get(params.room) ??
+      (first === undefined ? undefined : { key: first.roomKey, kind: first.roomKind })
+    if (room === undefined) throw new Error(`unknown room ${params.room}`)
+    const limited =
+      params.limit === undefined || params.limit <= 0 ? items : items.slice(-params.limit)
+    return { room, items: limited }
+  }
+
+  async roomSay(params: WrkqRoomSayParams): Promise<WrkqRoomSayResult> {
+    this.guard('wrkq.room.say')
+    this.roomSayRequests.push({
+      ...params,
+      to: params.to === undefined ? undefined : [...params.to],
+    })
+    if (
+      params.idempotencyKey !== undefined &&
+      [...this.envelopes.values()].some(
+        (envelope) =>
+          envelope.from.principalRef === params.principalRef &&
+          envelope.idempotencyKey === params.idempotencyKey
+      )
+    ) {
+      // The production refusal is intentionally untyped for rev 6. HRC must
+      // classify it by reading the room, never by inspecting this error.
+      throw new WrkqLedgerRequestError('idempotency key already used', 'wrkq.room.say', -32000, {
+        message: 'duplicate',
+      })
+    }
+    const roomKey = params.ref ?? 'R-auto-reply'
+    const existing = [...this.envelopes.values()].find((envelope) => envelope.roomKey === roomKey)
+    const roomKind = existing?.roomKind ?? 'adhoc'
+    const room = this.rooms.get(roomKey) ?? { key: roomKey, kind: roomKind }
+    this.rooms.set(roomKey, room)
+    nextEnvelopeSeq += 1
+    const id = `EN-${String(nextEnvelopeSeq).padStart(5, '0')}`
+    const now = new Date().toISOString()
+    const toToken = params.to?.[0]
+    const toPrincipal = `agent:${toToken?.split('@')[0] ?? 'unknown'}`
+    const envelope: WrkqEnvelope = {
+      uuid: `uuid-${id}`,
+      id,
+      roomUuid: existing?.roomUuid ?? `room-${roomKey}`,
+      roomKey,
+      roomKind,
+      groupId: id,
+      from: {
+        principalRef: params.principalRef ?? 'agent:hrc',
+        ...(params.scopeRef === undefined ? {} : { scopeRef: params.scopeRef }),
+      },
+      to:
+        toToken === undefined
+          ? null
+          : {
+              principalRef: toPrincipal,
+              ...(toToken.includes('@') ? { scopeRef: toToken } : {}),
+            },
+      ...(toToken === undefined ? {} : { replyTo: params.scopeRef ?? params.principalRef }),
+      obligation: toToken === undefined ? 'none' : params.fyi === true ? 'fyi' : 'reply_required',
+      body: params.body.trim(),
+      state: toToken === undefined ? 'acked' : 'pending',
+      terminal: toToken === undefined,
+      ...(params.idempotencyKey === undefined ? {} : { idempotencyKey: params.idempotencyKey }),
+      meta: params.meta ?? {},
+      presentedTo: [],
+      createdAt: now,
+      updatedAt: now,
+    }
+    this.envelopes.set(id, envelope)
+
+    const acked: string[] = []
+    for (const candidate of this.envelopes.values()) {
+      if (
+        candidate.id !== id &&
+        candidate.roomKey === roomKey &&
+        candidate.state === 'presented' &&
+        candidate.to?.scopeRef === params.scopeRef &&
+        (candidate.from.scopeRef === toToken || candidate.from.principalRef === toPrincipal)
+      ) {
+        candidate.state = 'acked'
+        candidate.terminal = true
+        acked.push(candidate.id)
+      }
+    }
+    return { room, groupId: id, envelopes: [envelope], acked }
   }
 
   async eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView> {

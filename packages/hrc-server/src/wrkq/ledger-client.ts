@@ -13,6 +13,10 @@ import type {
   WrkqMonitorEvent,
   WrkqMonitorEventsView,
   WrkqMonitorEventsViewParams,
+  WrkqRoomLogView,
+  WrkqRoomLogViewParams,
+  WrkqRoomSayParams,
+  WrkqRoomSayResult,
   WrkqRoomShowParams,
   WrkqRoomView,
 } from './ledger-types.js'
@@ -94,6 +98,10 @@ export type WrkqLedgerClient = {
   /** One envelope by id — the §5 failure notice's only source for its parties. */
   envelopeShow(params: WrkqEnvelopeShowParams): Promise<WrkqEnvelope>
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView>
+  /** Existing read used to verify an ambiguous plain say by idempotency key. */
+  roomLog(params: WrkqRoomLogViewParams): Promise<WrkqRoomLogView>
+  /** Existing plain say; rev 6 adds no method, params, or error mapping in wrkq. */
+  roomSay(params: WrkqRoomSayParams): Promise<WrkqRoomSayResult>
   /** The bounded, cursor-fenced event page the kicker's wake tail reads. */
   eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView>
   close(): Promise<void>
@@ -168,6 +176,14 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
 
   roomShow(params: WrkqRoomShowParams): Promise<WrkqRoomView> {
     return this.call<WrkqRoomView>('wrkq.room.show', params)
+  }
+
+  roomLog(params: WrkqRoomLogViewParams): Promise<WrkqRoomLogView> {
+    return this.call<WrkqRoomLogView>('wrkq.room.logView', params)
+  }
+
+  roomSay(params: WrkqRoomSayParams): Promise<WrkqRoomSayResult> {
+    return this.call<WrkqRoomSayResult>('wrkq.room.say', params)
   }
 
   async eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView> {

@@ -321,7 +321,7 @@ function formatDuration(elapsedMs: number): string {
  */
 function formatReplyLine(envelope: WrkqEnvelope): string | undefined {
   if (envelope.obligation !== 'reply_required') return undefined
-  const to = replyAddressee(envelope)
+  const to = envelopeReplyAddressee(envelope)
   if (to === undefined) return undefined
   return [`reply: wrkc say ${envelope.id} --to ${to} - <<'EOF'`, '…', 'EOF'].join('\n')
 }
@@ -339,7 +339,7 @@ function formatDeferLine(envelope: WrkqEnvelope): string | undefined {
   return `defer: wrkc defer ${envelope.id} --reason … [--retry-after 10m]`
 }
 
-function replyAddressee(envelope: WrkqEnvelope): string | undefined {
+export function envelopeReplyAddressee(envelope: WrkqEnvelope): string | undefined {
   const scope = envelope.from.scopeRef
   if (scope !== undefined && scope.trim().length > 0) return formatScopeHandle(scope)
   // A human is a scope-less principal: `--to lance` is already exact.

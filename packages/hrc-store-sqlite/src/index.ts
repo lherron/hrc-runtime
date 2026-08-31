@@ -171,6 +171,9 @@ export type {
 } from './mail/stop-refusal-repository.js'
 export type {
   CompleteHrcMailDriveResult,
+  HrcMailAutoReplyCandidate,
+  HrcMailAutoReplyIntent,
+  HrcMailAutoReplyIntentState,
   HrcMailDriveActionable,
   HrcMailDriveAttempt,
   HrcMailDriveAttemptState,

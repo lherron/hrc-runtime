@@ -155,6 +155,57 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
   })
 
+  it('persists the bodyless auto-reply intent inside successful drive completion', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00021'), {
+      driveAttemptId: 'drive-auto-reply',
+      runId: 'run-auto-reply',
+    })
+    db.mailDrives.presentForAttempt('drive-auto-reply', ['EN-00021'])
+    db.mailDrives.recordAutoReplyCandidate('drive-auto-reply', {
+      sourceRef: 'EN-00021',
+      sourceEnvelopeIds: ['EN-00021'],
+      roomKey: 'T-07820',
+      counterpartyRef: 'chief@hcs:T-07789',
+    })
+    startAttempt('run-auto-reply', 121)
+
+    db.mailDrives.completeStartedAttempt('run-auto-reply', 'turn.completed')
+    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply')).toMatchObject({
+      driveAttemptId: 'drive-auto-reply',
+      sourceRef: 'EN-00021',
+      sourceEnvelopeIds: ['EN-00021'],
+      roomKey: 'T-07820',
+      counterpartyRef: 'chief@hcs:T-07789',
+      runId: 'run-auto-reply',
+      targetSessionRef: target,
+      state: 'pending',
+      attemptCount: 0,
+    })
+
+    // The row, not an in-memory finalizer, is restart authority.
+    db.close()
+    db = openHrcDatabase(dbPath)
+    expect(db.mailDrives.listPendingAutoReplyIntents()).toHaveLength(1)
+  })
+
+  it('never creates auto-reply intent for an unsuccessful drive completion', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00022'), {
+      driveAttemptId: 'drive-auto-reply-failed',
+      runId: 'run-auto-reply-failed',
+    })
+    db.mailDrives.presentForAttempt('drive-auto-reply-failed', ['EN-00022'])
+    db.mailDrives.recordAutoReplyCandidate('drive-auto-reply-failed', {
+      sourceRef: 'EN-00022',
+      sourceEnvelopeIds: ['EN-00022'],
+      roomKey: 'T-07820',
+      counterpartyRef: 'chief@hcs:T-07789',
+    })
+    startAttempt('run-auto-reply-failed', 122)
+
+    db.mailDrives.completeStartedAttempt('run-auto-reply-failed', 'turn.failed')
+    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply-failed')).toBeUndefined()
+  })
+
   it('releases a no-op attempt without reporting anything to advance', () => {
     db.mailDrives.claim(target, 'insert', actionable('EN-00009'), {
       driveAttemptId: 'drive-clear',

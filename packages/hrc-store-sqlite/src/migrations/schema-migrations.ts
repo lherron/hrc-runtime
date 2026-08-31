@@ -2126,6 +2126,55 @@ const hrcmailEnvelopeLifetimeMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07612 rev 6 — durable auto-reply actuation lives in HRC because it joins a
+ * completed run to the collaboration ledger's unchanged plain-say surface.
+ *
+ * Candidate columns are populated before dispatch while the ledger envelopes
+ * are available. Only `completeStartedAttempt` copies them into the intent
+ * table, in the same transaction that closes a successful drive. The body is
+ * deliberately absent: restart recovery rebuilds the canonical turn-response
+ * projection from the run's durable output.
+ */
+const hrcmailAutoReplyMigration: HrcMigration = {
+  id: '0049_hrcmail_auto_reply',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN auto_reply_source_ref TEXT;
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN auto_reply_source_envelope_ids_json TEXT;
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN auto_reply_room_key TEXT;
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN auto_reply_counterparty_ref TEXT;
+
+      CREATE TABLE IF NOT EXISTS hrcmail_auto_reply_intents (
+        drive_attempt_id TEXT PRIMARY KEY,
+        source_ref TEXT NOT NULL,
+        source_envelope_ids_json TEXT NOT NULL,
+        room_key TEXT NOT NULL,
+        counterparty_ref TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+          state IN ('pending', 'minted', 'already-discharged', 'empty-response')
+        ),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        say_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (say_attempt_count >= 0),
+        verification_pending INTEGER NOT NULL DEFAULT 0
+          CHECK (verification_pending IN (0, 1)),
+        last_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        terminal_at TEXT,
+        FOREIGN KEY (drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_auto_reply_pending
+        ON hrcmail_auto_reply_intents(state, created_at, drive_attempt_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2170,4 +2219,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   wrkqLedgerConsumerMigration,
   hrcmailQueuedAttemptMigration,
   hrcmailEnvelopeLifetimeMigration,
+  hrcmailAutoReplyMigration,
 ]

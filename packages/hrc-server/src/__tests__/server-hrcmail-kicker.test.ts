@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
+import { appendHrcEvent } from '../hrc-event-helper.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import { resolveHrcMailKickerEnabled } from '../option-resolvers.js'
@@ -17,6 +18,7 @@ import {
   installDeterministicStart,
   installMailKickerAgentHome,
   queryCount,
+  serverInternals,
   startedRunId,
   waitUntil,
 } from './fixtures/mail-kicker-harness.js'
@@ -163,6 +165,44 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await Promise.all([(server as any).runMailKickerSweep(), (server as any).runMailKickerSweep()])
     expect(deterministic.calls()).toBe(1)
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+  })
+
+  it('mints the canonical completed-turn response through the full server path', async () => {
+    const envelope = say({ body: 'answer this without a manual say' })
+    await startServer()
+    installDeterministicStart(server as HrcServer)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+
+    const db = serverInternals(server as HrcServer).db
+    const runId = await startedRunId(db, TARGET, 0)
+    const run = db.runs.getByRunId(runId)
+    if (run === null) throw new Error(`missing started run ${runId}`)
+    const message = appendHrcEvent(db, 'turn.message', {
+      ts: timestamp(),
+      hostSessionId: run.hostSessionId,
+      scopeRef: run.scopeRef,
+      laneRef: run.laneRef,
+      generation: run.generation,
+      runtimeId: run.runtimeId,
+      runId,
+      transport: 'headless',
+      payload: { message: { role: 'assistant', content: 'server-path final response' } },
+    })
+    serverInternals(server as HrcServer).notifyEvent(message)
+    await completeRun(server as HrcServer, runId)
+
+    await waitUntil(() => ledger.roomSayRequests.length === 1, 'auto reply minted')
+    expect(ledger.roomSayRequests[0]).toMatchObject({
+      ref: envelope.roomKey,
+      body: 'server-path final response',
+      to: [SENDER],
+      idempotencyKey: expect.stringMatching(/^auto-reply:drive-/),
+      meta: { auto: 'turn_final' },
+      principalRef: 'agent:kicker-proof',
+      scopeRef: 'kicker-proof@hrc-runtime:T-07615',
+    })
+    expect(db.mailDrives.listPendingAutoReplyIntents()).toEqual([])
+    expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('completed')
   })
 
   it('injects the §4 full form, not an inbox pointer', async () => {

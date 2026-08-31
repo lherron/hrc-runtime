@@ -10,7 +10,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { appendHrcEvent } from './hrc-event-helper.js'
+import { TURN_TEXT_LIMIT, appendHrcEvent } from './hrc-event-helper.js'
 import { extractTextFromTurnMessagePayload } from './messages.js'
 import { isRecord } from './parsers/common.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -312,6 +312,42 @@ function recoverDurableTurnResponseFinalizer(
   }
 }
 
+/**
+ * The canonical body a completed semantic turn exposes to its response path.
+ *
+ * Rev 6 auto-reply and the pre-existing semantic handoff finalizer deliberately
+ * share this function: a run has one response projection, regardless of which
+ * durable intent consumes it. TURN_TEXT_LIMIT is the existing turn-text bound;
+ * returning the marker keeps inherited truncation observable to the reconciler.
+ */
+export function projectSemanticTurnResponse(
+  db: HrcDatabase,
+  runId: string
+): { body: string; truncated: boolean } {
+  const run = db.runs.getByRunId(runId)
+  const bufferedOutput = db.runtimeBuffers
+    .listByRunId(runId)
+    .map((chunk) => chunk.text)
+    .join('')
+  const semanticOutput =
+    bufferedOutput.length > 0
+      ? ''
+      : db.hrcEvents
+          .listByRun(runId, { eventKind: 'turn.message' })
+          .map((messageEvent) => extractTextFromTurnMessagePayload(messageEvent.payload))
+          .join('')
+  const unbounded =
+    bufferedOutput.length > 0
+      ? bufferedOutput
+      : semanticOutput.length > 0
+        ? semanticOutput
+        : (run?.errorMessage ?? '')
+  return {
+    body: unbounded.slice(0, TURN_TEXT_LIMIT),
+    truncated: unbounded.length > TURN_TEXT_LIMIT,
+  }
+}
+
 export function finalizeSemanticTurnResponse(
   this: HrcServerInstanceForHandlers,
   event: HrcLifecycleEvent
@@ -347,23 +383,7 @@ export function finalizeSemanticTurnResponse(
   const generation = event.generation
   const transport = event.transport ?? run?.transport ?? request.execution.transport
   const failed = Boolean(event.errorCode) || run?.status === 'failed'
-  const bufferedOutput = this.db.runtimeBuffers
-    .listByRunId(runId)
-    .map((chunk) => chunk.text)
-    .join('')
-  const semanticOutput =
-    bufferedOutput.length > 0
-      ? ''
-      : this.db.hrcEvents
-          .listByRun(runId, { eventKind: 'turn.message' })
-          .map((messageEvent) => extractTextFromTurnMessagePayload(messageEvent.payload))
-          .join('')
-  const body =
-    bufferedOutput.length > 0
-      ? bufferedOutput
-      : semanticOutput.length > 0
-        ? semanticOutput
-        : (run?.errorMessage ?? '')
+  const { body } = projectSemanticTurnResponse(this.db, runId)
   const ingress = request.metadataJson?.['federationIngress']
   const ingressDelivery = isRecord(ingress) ? ingress['delivery'] : undefined
   const federatedSemanticTurn =

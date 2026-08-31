@@ -13,6 +13,7 @@ import type {
   HrcMailEnvelopeReminder,
 } from 'hrc-store-sqlite'
 
+import { autoReplyCandidateFor } from './auto-reply-handlers.js'
 import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import { formatSessionRef } from './messages.js'
@@ -370,6 +371,7 @@ function observeAttempt(
     const completed = server.db.mailDrives.completeStartedAttempt(current.runId, terminal.eventKind)
     if (completed !== undefined) {
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
+      server.requestAutoReplyReconcile()
     }
     return 'finished'
   }
@@ -412,6 +414,7 @@ function observeAttempt(
     )
     if (completed !== undefined) {
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
+      server.requestAutoReplyReconcile()
     }
     return 'finished'
   }
@@ -804,6 +807,10 @@ async function presentIntoBusyTarget(
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(runtimeId === undefined ? {} : { runtimeId }),
+    ...(() => {
+      const candidate = autoReplyCandidateFor(envelopes.map((item) => item.envelope))
+      return candidate === undefined ? {} : { autoReplyCandidate: candidate }
+    })(),
   })
   for (const item of envelopes) {
     await server.wrkqLedger.present({
@@ -1394,6 +1401,10 @@ async function driveMailTargetOnce(
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
     const prompt = formatEnvelopePresentations(presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
+    server.db.mailDrives.recordAutoReplyCandidate(
+      attempt.driveAttemptId,
+      autoReplyCandidateFor(ordered.map((item) => item.envelope))
+    )
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
 
     const response = await server.dispatchTurnForSession(

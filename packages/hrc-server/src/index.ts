@@ -47,6 +47,7 @@ import {
   appSessionHandlersMethods,
 } from './app-session-handlers.js'
 import { projectAspToolchainStatus } from './asp-toolchain.js'
+import { type AutoReplyHandlersMethods, autoReplyHandlersMethods } from './auto-reply-handlers.js'
 import {
   type BridgeSurfaceHandlersMethods,
   bridgeSurfaceHandlersMethods,
@@ -751,6 +752,7 @@ function decorateSessionTitles(db: HrcDatabase, sessions: HrcSessionRecord[]): H
 // biome-ignore lint/correctness/noUnusedVariables: Declaration merges prototype-attached handler methods into HrcServerInstance.
 interface HrcServerInstance
   extends AppSessionHandlersMethods,
+    AutoReplyHandlersMethods,
     EventHandlersMethods,
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
@@ -841,6 +843,8 @@ class HrcServerInstance implements HrcServer {
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
   mailKickerSweepInFlight: Promise<void> | undefined
+  autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
+  autoReplyReconcileInFlight: Promise<void> | undefined
   wrkqLedgerTailInFlight: Promise<void> | undefined
   /** T-07643: a first-ever tail start owes one catch-up over its homed scopes. */
   mailKickerColdStartCatchupPending = false
@@ -1313,6 +1317,7 @@ class HrcServerInstance implements HrcServer {
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
     this.startMailKicker()
+    this.startAutoReplyReconciler()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
       if (grant.consumed) {
@@ -1612,6 +1617,17 @@ class HrcServerInstance implements HrcServer {
     const mailTargetOperations = [...this.mailKickerTargetOperations.values()]
     if (mailTargetOperations.length > 0) {
       await Promise.allSettled(mailTargetOperations)
+    }
+    if (this.autoReplyReconcileTimer) {
+      clearInterval(this.autoReplyReconcileTimer)
+      this.autoReplyReconcileTimer = undefined
+    }
+    if (this.autoReplyReconcileInFlight) {
+      try {
+        await this.autoReplyReconcileInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.auto_reply_reconcile_wait_failed', { error })
+      }
     }
     // The ledger transport is a child process; leaving it behind would strand a
     // `wrkq rpc --stdio` per daemon restart.
@@ -2771,6 +2787,7 @@ export type HrcServerInstanceClassBodyMethods = {
 Object.assign(
   HrcServerInstance.prototype,
   appSessionHandlersMethods,
+  autoReplyHandlersMethods,
   eventHandlersMethods,
   turnDispatchHandlersMethods,
   brokerInteractiveHandlersMethods,

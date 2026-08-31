@@ -109,7 +109,7 @@ export type AppendHrcEventParams = {
   payload?: unknown
 }
 
-const TURN_TEXT_LIMIT = 16 * 1024
+export const TURN_TEXT_LIMIT = 16 * 1024
 
 /**
  * Per-assistant-message slice of a multi-message turn. A turn that interleaves

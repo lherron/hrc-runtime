@@ -98,6 +98,8 @@ export type WrkqEnvelope = {
   groupId?: string | undefined
   from: WrkqEnvelopeParty
   to: WrkqEnvelopeParty | null
+  /** Exact token that addresses the sender; present on the installed surface. */
+  replyTo?: string | undefined
   obligation: WrkqEnvelopeObligation
   body: string
   taskId?: string | undefined
@@ -115,6 +117,9 @@ export type WrkqEnvelope = {
   retryAt?: string | undefined
   /** HRC birth directives, stored verbatim by wrkq and parsed here at kick time. */
   materializationIntent?: string | undefined
+  /** The originating SAY's exact replay-correlation key. */
+  idempotencyKey?: string | undefined
+  meta?: Record<string, unknown> | undefined
   presentedTo: WrkqEnvelopePresentation[]
   createdAt: string
   updatedAt: string
@@ -132,6 +137,40 @@ export type WrkqRoomShowParams = {
 export type WrkqRoomView = {
   key: string
   kind: WrkqRoomKind
+}
+
+/** Existing `wrkq.room.logView` read surface; no rev 6 wrkq contract change. */
+export type WrkqRoomLogViewParams = {
+  room: string
+  task?: string | undefined
+  limit?: number | undefined
+  principalRef?: string | undefined
+  scopeRef?: string | undefined
+}
+
+export type WrkqRoomLogView = {
+  room: WrkqRoomView
+  items: WrkqEnvelope[]
+}
+
+/** Existing plain-say surface used by agents and by rev 6 actuation alike. */
+export type WrkqRoomSayParams = {
+  ref?: string | undefined
+  body: string
+  to?: string[] | undefined
+  fyi?: boolean | undefined
+  idempotencyKey?: string | undefined
+  meta?: Record<string, unknown> | undefined
+  principalRef?: string | undefined
+  scopeRef?: string | undefined
+}
+
+export type WrkqRoomSayResult = {
+  room: WrkqRoomView
+  groupId: string
+  envelopes: WrkqEnvelope[]
+  acked: string[]
+  notices?: string[] | undefined
 }
 
 export type WrkqEnvelopePendingViewParams = {
