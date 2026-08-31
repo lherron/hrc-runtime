@@ -29,10 +29,10 @@ import {
   timestampVersion,
 } from './publish-local-verdaccio'
 
-const CLI_PACKAGES = {
-  'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts' },
-  'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts' },
-  'hrc-viewer': { bin: 'hrc-viewer', entrypoint: 'src/main.ts' },
+export const CLI_PACKAGES = {
+  'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
+  'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts', helpExitCode: 2 },
+  'hrc-viewer': { bin: 'hrc-viewer', entrypoint: 'src/main.ts', helpExitCode: 0 },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES
@@ -345,7 +345,8 @@ async function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  expectedExitCode = 0
 ): Promise<void> {
   const child = Bun.spawn([command, ...args], {
     cwd,
@@ -355,8 +356,10 @@ async function runCommand(
     stderr: 'inherit',
   })
   const exitCode = await child.exited
-  if (exitCode !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed with exit code ${exitCode}`)
+  if (exitCode !== expectedExitCode) {
+    throw new Error(
+      `${command} ${args.join(' ')} failed with exit code ${exitCode}; expected ${expectedExitCode}`
+    )
   }
 }
 
@@ -432,7 +435,9 @@ async function prepareProductionRelease(
     await runCommand(
       join(releasePath, 'packages', packageName, cli.entrypoint),
       ['--help'],
-      releasePath
+      releasePath,
+      process.env,
+      cli.helpExitCode
     )
   }
 

@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { type InstalledSurfacePaths, installAtomicRelease } from './atomic-install'
+import { CLI_PACKAGES, type InstalledSurfacePaths, installAtomicRelease } from './atomic-install'
 
 const fixtures: string[] = []
 
@@ -164,6 +164,12 @@ function invokeInstalled(binPath: string): { exitCode: number; stderr: string; s
 }
 
 describe('T-06685 installed CLI continuity harness', () => {
+  test('entrypoint smoke expects the hrcchat retirement exit', () => {
+    expect(CLI_PACKAGES['hrcchat-cli'].helpExitCode).toBe(2)
+    expect(CLI_PACKAGES['hrc-cli'].helpExitCode).toBe(0)
+    expect(CLI_PACKAGES['hrc-viewer'].helpExitCode).toBe(0)
+  })
+
   test('real atomic-install entrypoints are executable before publication', async () => {
     for (const entrypoint of [
       'packages/hrc-cli/src/cli.ts',
