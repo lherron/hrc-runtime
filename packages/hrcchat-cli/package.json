@@ -2,7 +2,7 @@
   "name": "hrcchat-cli",
   "version": "0.1.0",
   "private": true,
-  "description": "hrcchat: semantic directed messaging CLI for HRC",
+  "description": "Retired hrcchat CLI redirecting callers to wrkc",
   "type": "module",
   "bin": {
     "hrcchat": "./bin/hrcchat.js"

@@ -215,25 +215,36 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
     }
   })
 
-  test('records successful zero-RPC invocations for hrc and hrcchat', async () => {
-    for (const [entry, bin] of [
-      [HRC_ENTRY, 'hrc'],
-      [HRCCHAT_ENTRY, 'hrcchat'],
-    ] as const) {
-      const sandbox = await createSandbox()
-      const result = await runEntry(entry, ['info'], sandbox)
-      const line = await readOnlyMetric(sandbox.stateRoot)
+  test('records a successful hrc info invocation', async () => {
+    const sandbox = await createSandbox()
+    const result = await runEntry(HRC_ENTRY, ['info'], sandbox)
+    const line = await readOnlyMetric(sandbox.stateRoot)
 
-      expect(result.exitCode).toBe(0)
-      expectBaseMetric(line, {
-        bin,
-        cmd: 'info',
-        exitCode: 0,
-        stdoutBytes: result.stdout.byteLength,
-      })
-      expect(line.record.flags).toEqual([])
-      expect(line.record.rpc).toEqual([])
-    }
+    expect(result.exitCode).toBe(0)
+    expectBaseMetric(line, {
+      bin: 'hrc',
+      cmd: 'info',
+      exitCode: 0,
+      stdoutBytes: result.stdout.byteLength,
+    })
+    expect(line.record.flags).toEqual([])
+    expect(line.record.rpc).toEqual([])
+  })
+
+  test('records the hrcchat retirement fence without an RPC', async () => {
+    const sandbox = await createSandbox()
+    const result = await runEntry(HRCCHAT_ENTRY, ['info'], sandbox)
+    const line = await readOnlyMetric(sandbox.stateRoot)
+
+    expect(result.exitCode).toBe(2)
+    expectBaseMetric(line, {
+      bin: 'hrcchat',
+      cmd: '',
+      exitCode: 2,
+      stdoutBytes: 0,
+    })
+    expect(line.record.flags).toEqual([])
+    expect(line.record.rpc).toEqual([])
   })
 
   test('records commander usage errors without leaking an unknown positional', async () => {
