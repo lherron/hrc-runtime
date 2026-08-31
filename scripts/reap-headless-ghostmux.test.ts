@@ -273,6 +273,21 @@ describe('skipReasons (per-pane skip explanations)', () => {
     ).toEqual([])
   })
 
+  it('never reaps a chief@* attention-thread seat that is otherwise eligible (T-07819)', () => {
+    const chiefScope = 'agent:chief:project:hcs:task:T-07818'
+    const reasons = skipReasons(eligibleStatus({ scopeRef: chiefScope }))
+    expect(reasons).toEqual([
+      'chief@* attention-thread seat — idle between visits is its normal state; never reaped by this sweep',
+    ])
+    expect(isQuitEligible(eligibleStatus({ scopeRef: chiefScope }))).toBe(false)
+  })
+
+  it('exempts chief by agent regardless of project', () => {
+    expect(
+      isQuitEligible(eligibleStatus({ scopeRef: 'agent:chief:project:hrc-runtime:task:T-99999' }))
+    ).toBe(false)
+  })
+
   it('explains an already-terminated runtime and defers the pane to hrc-viewer', () => {
     const reasons = skipReasons(eligibleStatus({ runtimeStatus: 'terminated' }))
     expect(reasons).toHaveLength(1)
@@ -644,7 +659,7 @@ describe('isAlreadyTerminatedError (benign reap-failure classifier)', () => {
 })
 
 describe('simulated reap outcome presentation', () => {
-  it('reaps non-primary scopes and skips metadata- and title-derived primary scopes', () => {
+  it('reaps non-primary scopes and skips primary and chief attention-thread scopes', () => {
     const proc = Bun.spawnSync(
       [
         'bun',
@@ -666,11 +681,14 @@ describe('simulated reap outcome presentation', () => {
     expect(stdout).toContain('7BF21FAF reap sent smokey@agent-control-plane:T-02864 rt-smokey-s')
     expect(stdout).toContain('EB834507 reap sent curly@agent-control-plane:T-02864 rt-curly-si')
     expect(stdout).not.toContain('A11CE003 reap sent')
+    expect(stdout).not.toContain('CH1EF001 reap sent')
     expect(stdout).toContain('scope      larry@hrc-runtime:primary')
     expect(stdout).toContain('scope      clod@agent-spaces:primary')
+    expect(stdout).toContain('scope      chief@hcs:T-07818')
     expect(stdout.match(/:primary standing session — never reaped by this sweep/g)).toHaveLength(2)
+    expect(stdout.match(/chief@\* attention-thread seat/g)).toHaveLength(1)
     expect(stdout).toContain(
-      'Reap eligibility: 2 eligible, 2 skipped (requires scope task!=primary'
+      'Reap eligibility: 2 eligible, 3 skipped (requires scope task!=primary, agent!=chief'
     )
   })
 })

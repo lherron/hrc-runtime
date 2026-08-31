@@ -382,6 +382,17 @@ function skipReasons(status: PaneStatus): string[] {
     )
   }
 
+  // chief@* holds one hcs attention-thread seat per context (T-07729). These
+  // are task-scoped by design (never :primary), and sitting idle between
+  // Lance's visits is their NORMAL state — an idle chief seat is not an
+  // abandoned one. Exempt by agent, not project, so chief seats stay safe
+  // wherever they live (T-07819).
+  if (agentFromScope(status.scopeRef) === 'chief') {
+    reasons.push(
+      'chief@* attention-thread seat — idle between visits is its normal state; never reaped by this sweep'
+    )
+  }
+
   if (status.controllerKind !== 'harness-broker') {
     reasons.push(
       status.controllerKind === ''
@@ -529,6 +540,17 @@ function simPanes(): DiscoveredPane[] {
       metadata: {
         hrc_role: HEADLESS_PANE_ROLE,
         hrc_runtime_id: 'rt-larry-title-sim',
+      },
+    },
+    {
+      // chief attention-thread seat (hcs context): task-scoped, NOT :primary,
+      // otherwise fully eligible — exempt by agent (T-07819).
+      id: 'CH1EF001',
+      title: 'hcs · T-07818 · chief',
+      metadata: {
+        hrc_role: HEADLESS_PANE_ROLE,
+        hrc_runtime_id: 'rt-chief-sim',
+        hrc_scope_ref: 'agent:chief:project:hcs:task:T-07818',
       },
     },
     {
@@ -1154,7 +1176,7 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
       )
     )
   }
