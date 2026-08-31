@@ -170,6 +170,9 @@ export async function allocateSubstrateVia(
       ? { attachTokenRef: allocation.attachTokenRef }
       : {}),
     ...(allocation.brokerCommand !== undefined ? { brokerCommand: allocation.brokerCommand } : {}),
+    ...(allocation.aspToolchainSelection !== undefined
+      ? { aspToolchainSelection: allocation.aspToolchainSelection }
+      : {}),
     ...(allocation.observerSocketPath !== undefined
       ? { observerSocketPath: allocation.observerSocketPath }
       : {}),

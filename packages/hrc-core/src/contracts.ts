@@ -1141,6 +1141,35 @@ export type HrcReleaseStatus =
       runningEqualsInstalled: false
     }
 
+export type HrcAspToolchainBinaryKind =
+  | 'aspc-facade'
+  | 'harness-broker'
+  | 'harness-broker-pi'
+  | 'agent-harness'
+
+export type HrcAspToolchainHelloObservation = {
+  name: string
+  version: string
+  protocolVersion: string
+  observedAt: string
+}
+
+export type HrcAspToolchainStatus = {
+  configuredRoot?: string | undefined
+  toolchainRootActive: boolean
+  bundledAspBuild?: PraesidiumBuild | undefined
+  binaries: Array<{
+    kind: HrcAspToolchainBinaryKind
+    name: string
+    envVar: string
+    source: 'bundled' | 'toolchain-root' | 'env-override'
+    path: string
+    available: boolean
+    error?: string | undefined
+    hello?: HrcAspToolchainHelloObservation | undefined
+  }>
+}
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -1153,6 +1182,7 @@ export type HrcCapabilityStatus = {
   binaryPath: string
   packagePath: string
   release: HrcReleaseStatus
+  aspToolchain: HrcAspToolchainStatus
   sessionCount: number
   runtimeCount: number
   apiVersion: string

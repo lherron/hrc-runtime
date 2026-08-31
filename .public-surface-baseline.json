@@ -1359,6 +1359,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcAspToolchainBinaryKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAspToolchainBinaryKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAspToolchainHelloObservation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAspToolchainHelloObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAspToolchainStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAspToolchainStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcAttachDescriptor",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

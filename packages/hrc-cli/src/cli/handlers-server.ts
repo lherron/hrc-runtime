@@ -429,6 +429,34 @@ export async function cmdServerStatus(args: string[]): Promise<void> {
   }
 }
 
+export async function cmdAdminStatus(args: string[]): Promise<void> {
+  const status = await createClient().getStatus({ includeSessions: false })
+  if (hasFlag(args, '--json')) {
+    printJson(status.aspToolchain)
+    return
+  }
+
+  const report = status.aspToolchain
+  process.stdout.write(
+    `ASP toolchain root: ${report.configuredRoot ?? '(unset)'} (${report.toolchainRootActive ? 'active' : 'inactive'})\n`
+  )
+  if (report.bundledAspBuild !== undefined) {
+    process.stdout.write(
+      `Bundled ASP: ${report.bundledAspBuild.setVersion} (${report.bundledAspBuild.sourceCommit})\n`
+    )
+  }
+  for (const binary of report.binaries) {
+    process.stdout.write(
+      `${binary.kind}: ${binary.source} ${binary.path}${binary.available ? '' : ` [unavailable: ${binary.error ?? 'unknown error'}]`}\n`
+    )
+    if (binary.hello !== undefined) {
+      process.stdout.write(
+        `  hello: ${binary.hello.name}@${binary.hello.version} protocol=${binary.hello.protocolVersion} observed=${binary.hello.observedAt}\n`
+      )
+    }
+  }
+}
+
 export async function cmdServerSubscribers(args: string[]): Promise<void> {
   const snapshot = await createClient().getSubscribers()
   if (hasFlag(args, '--json')) {

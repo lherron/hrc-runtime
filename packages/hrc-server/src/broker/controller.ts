@@ -34,6 +34,7 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
+import { resolveAspToolchainBinary } from '../asp-toolchain'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
 import { droppedBrokerClientEventFields } from './client-observability'
@@ -54,7 +55,6 @@ import {
   BROKER_UNIX_CONNECT_MAX_DELAY_MS,
   type BrokerInspectionCapabilities,
   DEFAULT_BROKER_ARGS,
-  DEFAULT_BROKER_COMMAND,
   isBrokerSocketNotReadyError,
   isClosedDbError,
   isControllerFencedError,
@@ -338,7 +338,7 @@ export class HarnessBrokerController {
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
-  private readonly brokerCommand: string
+  private readonly resolveBrokerCommand: () => string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
   private readonly now: () => string
@@ -441,8 +441,13 @@ export class HarnessBrokerController {
       DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
-    this.brokerCommand =
-      deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
+    // Preserve brokerCommand as a constant test seam, but production selection
+    // is deliberately late-bound at each legacy stdio spawn.
+    this.resolveBrokerCommand =
+      deps.resolveBrokerCommand ??
+      (deps.brokerCommand !== undefined
+        ? () => deps.brokerCommand as string
+        : () => resolveAspToolchainBinary('harness-broker', deps.env ?? process.env).path)
     this.brokerArgs = deps.brokerArgs ?? DEFAULT_BROKER_ARGS
     this.env = deps.env
     this.now = deps.now ?? (() => new Date().toISOString())
@@ -487,7 +492,7 @@ export class HarnessBrokerController {
       mapper: this.mapper,
       brokerClientFactory: this.brokerClientFactory,
       brokerUnixClientFactory: this.brokerUnixClientFactory,
-      brokerCommand: this.brokerCommand,
+      resolveBrokerCommand: this.resolveBrokerCommand,
       brokerArgs: this.brokerArgs,
       env: this.env,
       now: this.now,

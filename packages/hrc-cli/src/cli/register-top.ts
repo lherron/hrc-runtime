@@ -26,6 +26,7 @@ import {
 } from './handlers-control.js'
 import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
+import { cmdAdminStatus } from './handlers-server.js'
 import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
 import { createClient } from './shared.js'
 
@@ -264,6 +265,14 @@ Semantics:
   // -- admin group (run-RECORD repair, distinct from runtime sweep) -----------
   // Legacy spellings are registered below as hard moved-command shims.
   const admin = program.command('admin').description('administrative maintenance commands')
+  admin
+    .command('status')
+    .description('show effective ASP child toolchain selection and observed handshakes')
+    .option('--json', 'output the ASP toolchain report as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      await cmdAdminStatus(toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json'] }))
+    })
   const adminRuns = admin
     .command('runs')
     .description('repair run records (sweep zombies, reconcile active)')

@@ -10,7 +10,6 @@
 import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
-import type { StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import type {
   BrokerHealthResponse,
   InvocationEventEnvelope,
@@ -22,6 +21,12 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
+import {
+  type AspToolchainBinarySelection,
+  describeAspToolchainCommand,
+  externalToolchainContractDriftDetail,
+  observeAspToolchainHello,
+} from '../../asp-toolchain'
 import { recordLaunchSpan } from '../../request-metrics'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import { preflightDriverSupportsResponseFormat } from '../../turn-response-format'
@@ -76,7 +81,7 @@ export type DispatchContext = {
   mapper: Pick<BrokerEventMapper, 'apply'>
   brokerClientFactory: BrokerClientFactory
   brokerUnixClientFactory: BrokerUnixClientFactory
-  brokerCommand: string
+  resolveBrokerCommand: () => string
   brokerArgs: string[]
   env: Record<string, string | undefined> | undefined
   now: () => string
@@ -292,12 +297,6 @@ export async function startController(
   ctx: DispatchContext,
   input: BrokerControllerStartInput
 ): Promise<BrokerControllerStartResult> {
-  const startOptions: StdioTransportStartOptions = {
-    command: ctx.brokerCommand,
-    args: ctx.brokerArgs,
-    env: compactEnv(ctx.env),
-  }
-
   // Launch-timing instrumentation (diagnostic). The broker has no log of its
   // own — its stderr is swallowed into a tail buffer by the stdio transport and
   // only surfaced on a transport error. These phase durations are the broker's
@@ -323,6 +322,7 @@ export async function startController(
 
   let client: BrokerClientLike | undefined
   let tmuxAllocation: BrokerTmuxAllocation | undefined
+  let spawnedSelection: AspToolchainBinarySelection | undefined
   try {
     // T-01812 Phase 3 — for an interactive broker-tmux profile, allocate the
     // per-runtime btmux lease UP FRONT. A durable allocator launches a 'broker'
@@ -365,7 +365,21 @@ export async function startController(
       )
       markPhase('broker-connect-unix')
     } else {
-      client = input.brokerClient ?? (await ctx.brokerClientFactory(startOptions))
+      if (input.brokerClient !== undefined) {
+        client = input.brokerClient
+      } else {
+        const command = ctx.resolveBrokerCommand()
+        spawnedSelection = describeAspToolchainCommand(
+          'harness-broker',
+          command,
+          ctx.env ?? process.env
+        )
+        client = await ctx.brokerClientFactory({
+          command,
+          args: ctx.brokerArgs,
+          env: compactEnv(ctx.env),
+        })
+      }
       markPhase(input.brokerClient ? 'broker-client-ready' : 'broker-spawn')
     }
     client.onPermissionRequest((request) => ctx.handlePermissionRequest(request))
@@ -392,6 +406,18 @@ export async function startController(
       capabilities: { permissionRequests: true },
     })
     markPhase('broker-hello')
+    const toolchainSelection = tmuxAllocation?.aspToolchainSelection ?? spawnedSelection
+    if (toolchainSelection !== undefined) {
+      observeAspToolchainHello(toolchainSelection, {
+        name: hello.brokerInfo.name,
+        version: hello.brokerInfo.version,
+        protocolVersion: hello.protocolVersion,
+      })
+    }
+    const externalDrift =
+      toolchainSelection === undefined
+        ? undefined
+        : externalToolchainContractDriftDetail(toolchainSelection)
 
     // T-01866 — reject any broker that selects a protocol other than
     // harness-broker/0.2 with a CLEAR unsupported-protocol failure, before the
@@ -412,8 +438,9 @@ export async function startController(
         ok: false,
         error: new BrokerControllerError(
           'broker_protocol_unsupported',
-          `harness broker selected unsupported protocol ${hello.protocolVersion}; HRC requires ${BROKER_PROTOCOL_VERSION}`,
-          detail
+          externalDrift?.remedy ??
+            `harness broker selected unsupported protocol ${hello.protocolVersion}; HRC requires ${BROKER_PROTOCOL_VERSION}`,
+          { ...detail, ...(externalDrift ?? {}) }
         ),
       }
     }
@@ -427,8 +454,8 @@ export async function startController(
         ok: false,
         error: new BrokerControllerError(
           'broker_admission_rejected',
-          'broker hello/capability admission rejected the runtime',
-          admission.detail
+          externalDrift?.remedy ?? 'broker hello/capability admission rejected the runtime',
+          { ...admission.detail, ...(externalDrift ?? {}) }
         ),
       }
     }

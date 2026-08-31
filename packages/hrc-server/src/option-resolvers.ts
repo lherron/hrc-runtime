@@ -1,10 +1,14 @@
-import { resolve } from 'node:path'
-
 import { HrcRuntimeUnavailableError } from 'hrc-core'
+import { ASPC_PROTOCOL_VERSION } from 'spaces-aspc-protocol'
+import type { AspcHelloResponse } from 'spaces-aspc-protocol'
 
 import { AspcFacadeBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
+import {
+  externalToolchainContractDriftDetail,
+  observeAspToolchainHello,
+  resolveAspToolchainBinary,
+} from './asp-toolchain.js'
 import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
-import { resolveHoistedBinary } from './hoisted-binary.js'
 import {
   type PrecompileLaunchTimingContext,
   observePrecompileLaunchSpan,
@@ -27,12 +31,7 @@ import {
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
 
-/** Workspace root derived from this module's location (packages/hrc-server/src/option-resolvers.ts → ../../..) */
-const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
-
-const HRC_ASPC_FACADE_CMD_ENV = 'HRC_ASPC_FACADE_CMD'
 const HRC_ASPC_FACADE_ARGS_ENV = 'HRC_ASPC_FACADE_ARGS'
-const DEFAULT_ASPC_FACADE_COMMAND = resolveHoistedBinary(WORKSPACE_ROOT, 'aspc-facade')
 const DEFAULT_ASPC_FACADE_ARGS = ['run', '--transport', 'stdio']
 
 export function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
@@ -152,25 +151,73 @@ export function resolveHrcMailKickerSweepIntervalMs(options: HrcServerOptions): 
   return DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS
 }
 
-export function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {
-  const command = process.env[HRC_ASPC_FACADE_CMD_ENV]?.trim() || DEFAULT_ASPC_FACADE_COMMAND
-  const rawArgs = process.env[HRC_ASPC_FACADE_ARGS_ENV]
-  const args =
-    rawArgs === undefined
-      ? DEFAULT_ASPC_FACADE_ARGS
-      : rawArgs
-          .split(/\s+/)
-          .map((arg) => arg.trim())
-          .filter((arg) => arg.length > 0)
+function resolveAspcFacadeArgs(env: Record<string, string | undefined>): string[] {
+  const rawArgs = env[HRC_ASPC_FACADE_ARGS_ENV]
+  return rawArgs === undefined
+    ? DEFAULT_ASPC_FACADE_ARGS
+    : rawArgs
+        .split(/\s+/)
+        .map((arg) => arg.trim())
+        .filter((arg) => arg.length > 0)
+}
+
+export function resolveAspcFacadeStartOptions(
+  env: Record<string, string | undefined> = process.env
+): { command: string; args: string[] } {
+  const command = resolveAspToolchainBinary('aspc-facade', env).path
+  const args = resolveAspcFacadeArgs(env)
   return { command, args }
+}
+
+export function assertAspcFacadeHello(
+  selection: ReturnType<typeof resolveAspToolchainBinary>,
+  hello: AspcHelloResponse
+): void {
+  const externalDrift = externalToolchainContractDriftDetail(selection)
+  if (hello.protocolVersion !== ASPC_PROTOCOL_VERSION) {
+    throw new HrcRuntimeUnavailableError(
+      externalDrift?.remedy ??
+        `ASPC facade selected unsupported protocol ${hello.protocolVersion}; HRC requires ${ASPC_PROTOCOL_VERSION}`,
+      {
+        facadeInfo: hello.facadeInfo,
+        protocolVersion: hello.protocolVersion,
+        requiredProtocolVersion: ASPC_PROTOCOL_VERSION,
+        ...(externalDrift ?? {}),
+      }
+    )
+  }
+  if (!hello.capabilities.compileHarnessInvocation) {
+    throw new HrcRuntimeUnavailableError(
+      externalDrift?.remedy ?? 'ASPC facade does not support harness invocation compilation',
+      {
+        facadeInfo: hello.facadeInfo,
+        protocolVersion: hello.protocolVersion,
+        ...(externalDrift ?? {}),
+      }
+    )
+  }
+  if (!hello.capabilities.cohostedBroker) {
+    throw new HrcRuntimeUnavailableError(
+      externalDrift?.remedy ?? 'ASPC facade did not co-host a broker',
+      {
+        facadeInfo: hello.facadeInfo,
+        protocolVersion: hello.protocolVersion,
+        ...(externalDrift ?? {}),
+      }
+    )
+  }
 }
 
 export async function startAspcFacadeBrokerClient(
   timing?: PrecompileLaunchTimingContext | undefined
 ): Promise<AspcFacadeBrokerClient> {
+  // Resolve once, immediately before this spawn. In particular, do not move
+  // this back to module load: agent-spaces bun-links may advance while HRC lives.
+  const selection = resolveAspToolchainBinary('aspc-facade')
   const startClient = () =>
     AspcFacadeBrokerClient.start({
-      ...resolveAspcFacadeStartOptions(),
+      command: selection.path,
+      args: resolveAspcFacadeArgs(process.env),
       env: process.env as Record<string, string>,
     })
   const client = timing
@@ -180,21 +227,12 @@ export async function startAspcFacadeBrokerClient(
     const hello = timing
       ? await observePrecompileLaunchSpan('precompile-facade-hello', timing, () => client.hello())
       : await client.hello()
-    if (!hello.capabilities.compileHarnessInvocation) {
-      throw new HrcRuntimeUnavailableError(
-        'ASPC facade does not support harness invocation compilation',
-        {
-          facadeInfo: hello.facadeInfo,
-          protocolVersion: hello.protocolVersion,
-        }
-      )
-    }
-    if (!hello.capabilities.cohostedBroker) {
-      throw new HrcRuntimeUnavailableError('ASPC facade did not co-host a broker', {
-        facadeInfo: hello.facadeInfo,
-        protocolVersion: hello.protocolVersion,
-      })
-    }
+    observeAspToolchainHello(selection, {
+      name: hello.facadeInfo.name,
+      version: hello.facadeInfo.version,
+      protocolVersion: hello.protocolVersion,
+    })
+    assertAspcFacadeHello(selection, hello)
     return client
   } catch (error) {
     await client.close().catch(() => undefined)

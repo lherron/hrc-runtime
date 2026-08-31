@@ -12,7 +12,6 @@ import { BrokerErrorCode } from 'spaces-harness-broker-protocol'
 
 import { BrokerControllerError } from './errors'
 
-export const DEFAULT_BROKER_COMMAND = 'harness-broker'
 export const DEFAULT_BROKER_ARGS = ['run', '--transport', 'stdio']
 
 // Durable-broker connect race (T-02009). The leased-tmux allocator launches the

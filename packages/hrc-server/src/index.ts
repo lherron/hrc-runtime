@@ -46,6 +46,7 @@ import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
 } from './app-session-handlers.js'
+import { projectAspToolchainStatus } from './asp-toolchain.js'
 import {
   type BridgeSurfaceHandlersMethods,
   bridgeSurfaceHandlersMethods,
@@ -2622,6 +2623,10 @@ class HrcServerInstance implements HrcServer {
       url?.searchParams.get('includePeerHealth') === 'true'
         ? (await this.collectFederationPeerHealth()).map((probe) => probe.health)
         : undefined
+    const release = projectServerRelease(this.capturedRelease)
+    const aspToolchain = projectAspToolchainStatus(
+      release.mode === 'atomic' ? release.aspBuild : undefined
+    )
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
       const tmuxStatus = await detectTmuxBackend()
@@ -2636,7 +2641,8 @@ class HrcServerInstance implements HrcServer {
         cwd: process.cwd(),
         binaryPath: HRC_SERVER_BINARY_PATH,
         packagePath: HRC_SERVER_PACKAGE_PATH,
-        release: projectServerRelease(this.capturedRelease),
+        release,
+        aspToolchain,
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
@@ -2688,7 +2694,8 @@ class HrcServerInstance implements HrcServer {
       cwd: process.cwd(),
       binaryPath: HRC_SERVER_BINARY_PATH,
       packagePath: HRC_SERVER_PACKAGE_PATH,
-      release: projectServerRelease(this.capturedRelease),
+      release,
+      aspToolchain,
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,

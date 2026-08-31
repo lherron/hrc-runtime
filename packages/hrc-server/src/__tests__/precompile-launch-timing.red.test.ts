@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
-import type { AspcCompileHarnessInvocationResponse } from 'spaces-aspc-protocol'
+import {
+  ASPC_PROTOCOL_VERSION,
+  type AspcCompileHarnessInvocationResponse,
+} from 'spaces-aspc-protocol'
 import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
@@ -111,7 +114,7 @@ function makeSuccessfulCompileResponse(
 function fakeFacadeClient() {
   return {
     hello: async () => ({
-      protocolVersion: 'aspc/1',
+      protocolVersion: ASPC_PROTOCOL_VERSION,
       facadeInfo: { name: 'timing-test' },
       capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
     }),

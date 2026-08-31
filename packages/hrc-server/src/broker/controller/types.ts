@@ -51,6 +51,7 @@ import type {
   CompiledRuntimePlan,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
+import type { AspToolchainBinarySelection } from '../../asp-toolchain.js'
 
 import type { BrokerEventMapper } from '../event-mapper'
 import type { BrokerAttachTokenRef } from '../runtime-state'
@@ -237,6 +238,7 @@ export type BrokerTmuxAllocation = {
   attachToken?: string | undefined
   attachTokenRef?: BrokerAttachTokenRef | undefined
   brokerCommand?: string | undefined
+  aspToolchainSelection?: AspToolchainBinarySelection | undefined
   brokerPid?: number | undefined
   brokerWindow?: BrokerWindowIdentity | undefined
   tuiWindow?: BrokerWindowIdentity | undefined
@@ -376,6 +378,8 @@ export type HarnessBrokerControllerDeps = {
    */
   reconcileBrokerTmuxLivenessOnClose?: ((runtimeId: string) => Promise<void>) | undefined
   brokerCommand?: string | undefined
+  /** Resolve immediately before each legacy stdio broker spawn. */
+  resolveBrokerCommand?: (() => string) | undefined
   brokerArgs?: string[] | undefined
   env?: Record<string, string | undefined> | undefined
   now?: () => string

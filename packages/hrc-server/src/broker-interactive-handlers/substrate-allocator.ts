@@ -1,8 +1,14 @@
 import { constants } from 'node:fs'
 import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
 
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
+import {
+  type AspToolchainBinarySelection,
+  brokerDriverToolchainKind,
+  describeAspToolchainCommand,
+  resolveAspToolchainBinary,
+} from '../asp-toolchain.js'
 import type {
   BrokerTmuxAllocation,
   BrokerTmuxAllocator,
@@ -15,7 +21,6 @@ import type {
   BrokerRuntimeSubstrate,
 } from '../broker/runtime-hosting.js'
 import { shellQuote } from '../dispatch-invocation.js'
-import { resolveHoistedBinary } from '../hoisted-binary.js'
 import type { HrcServerOptions } from '../server-types.js'
 import { timestamp } from '../server-util.js'
 import {
@@ -113,6 +118,7 @@ export type BrokerSubstrateAllocation = {
   /** Raw attach-token secret — used in-process only, NEVER persisted. */
   attachToken: string
   brokerCommand: string
+  aspToolchainSelection: AspToolchainBinarySelection
   /**
    * T-04921 — the HRC-owned read-only observer socket path the broker SERVES
    * (present only when `observerSocketPath` was requested). Echoed onto the
@@ -130,30 +136,7 @@ export type BrokerSubstrateAllocation = {
 }
 
 export function resolveBrokerBinary(driverKind: string): string {
-  const binary =
-    driverKind === 'pi-sdk'
-      ? {
-          env: 'HRC_HARNESS_BROKER_PI_CMD',
-          name: 'harness-broker-pi',
-        }
-      : driverKind === 'agent-harness' || driverKind === 'agent-harness-tmux'
-        ? {
-            env: 'HRC_AGENT_HARNESS_CMD',
-            name: 'agent-harness',
-          }
-        : {
-            env: 'HRC_HARNESS_BROKER_CMD',
-            name: 'harness-broker',
-          }
-  const override = process.env[binary.env]?.trim()
-  if (override !== undefined && override.length > 0) {
-    return override
-  }
-
-  // The daemon and every broker kind must come from one coherent atomic release.
-  // Nearest-match preserves that; see resolveHoistedBinary for why the location is
-  // searched rather than assumed.
-  return resolveHoistedBinary(resolve(import.meta.dir, '../../../..'), binary.name)
+  return resolveAspToolchainBinary(brokerDriverToolchainKind(driverKind)).path
 }
 
 export async function allocateBrokerSubstrate(
@@ -171,6 +154,10 @@ export async function allocateBrokerSubstrate(
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
 
   const brokerBinary = resolveBrokerBinary(driverKind)
+  const aspToolchainSelection = describeAspToolchainCommand(
+    brokerDriverToolchainKind(driverKind),
+    brokerBinary
+  )
   if (isAbsolute(brokerBinary)) {
     try {
       await access(brokerBinary, constants.X_OK)
@@ -273,6 +260,7 @@ export async function allocateBrokerSubstrate(
     allocatedAt: now(),
     attachToken,
     brokerCommand,
+    aspToolchainSelection,
     ...(observerSocketPath !== undefined ? { observerSocketPath } : {}),
     ...(brokerPid !== undefined ? { brokerPid } : {}),
     brokerWindow,
@@ -422,6 +410,7 @@ function projectBaseAllocation(sub: BrokerSubstrateAllocation): BrokerTmuxAlloca
       ? { attachTokenRef: sub.endpoint.attachTokenRef }
       : {}),
     brokerCommand: sub.brokerCommand,
+    aspToolchainSelection: sub.aspToolchainSelection,
     ...(sub.observerSocketPath !== undefined ? { observerSocketPath: sub.observerSocketPath } : {}),
     ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
     brokerWindow: sub.brokerWindow,

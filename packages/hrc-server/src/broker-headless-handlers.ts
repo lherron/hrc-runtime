@@ -668,13 +668,18 @@ export async function startHeadlessBrokerRuntime(
           result.error.detail
         )
       }
-      throw new HrcRuntimeUnavailableError('headless broker start failed', {
-        hostSessionId: session.hostSessionId,
-        runId,
-        code: result.error.code,
-        message: result.error.message,
-        route: 'broker',
-      })
+      const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
+      throw new HrcRuntimeUnavailableError(
+        externalToolchainFailure ? result.error.message : 'headless broker start failed',
+        {
+          hostSessionId: session.hostSessionId,
+          runId,
+          code: result.error.code,
+          message: result.error.message,
+          route: 'broker',
+          ...result.error.detail,
+        }
+      )
     }
 
     return result.runtime

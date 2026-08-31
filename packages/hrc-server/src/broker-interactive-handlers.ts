@@ -1365,14 +1365,19 @@ export async function startInteractiveTmuxBrokerRuntime(
           result.error.detail
         )
       }
-      throw new HrcRuntimeUnavailableError('interactive broker start failed', {
-        hostSessionId: session.hostSessionId,
-        runId: diagnosticRunId,
-        code: result.error.code,
-        message: result.error.message,
-        route: 'interactive-broker',
-        flag: flagOptions.flagEnvName,
-      })
+      const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
+      throw new HrcRuntimeUnavailableError(
+        externalToolchainFailure ? result.error.message : 'interactive broker start failed',
+        {
+          hostSessionId: session.hostSessionId,
+          runId: diagnosticRunId,
+          code: result.error.code,
+          message: result.error.message,
+          route: 'interactive-broker',
+          flag: flagOptions.flagEnvName,
+          ...result.error.detail,
+        }
+      )
     }
 
     return result.runtime
