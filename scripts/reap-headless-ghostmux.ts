@@ -85,8 +85,8 @@ title regex no longer matched. TITLE_REGEX remains an OPTIONAL secondary filter.
 Eligible = surface resolves to one runtime with controllerKind=harness-broker,
 a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
 substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
-status=ready, NO active run, latest turn=completed, and latest runtime activity
-strictly more than ${MIN_IDLE_MINUTES} minutes ago.
+scope task is NOT primary, status=ready, NO active run, latest turn=completed,
+and latest runtime activity strictly more than ${MIN_IDLE_MINUTES} minutes ago.
 
 Environment:
   PANE_ROLE            Default: ${HEADLESS_PANE_ROLE} (ghostmux hrc_role metadata)
@@ -296,6 +296,14 @@ function handleFromScope(scopeRef: string): string {
   return handle
 }
 
+function taskFromScope(scopeRef: string): string {
+  const parts = scopeRef.split(':')
+  for (let i = 2; i < parts.length - 1; i += 2) {
+    if (parts[i] === 'task') return parts[i + 1] ?? ''
+  }
+  return ''
+}
+
 function projectHandleFromScope(scopeRef: string): string {
   const handle = handleFromScope(scopeRef)
   return handle.split(':')[0] || handle
@@ -367,6 +375,12 @@ function skipReasons(status: PaneStatus): string[] {
   }
 
   const reasons: string[] = []
+
+  if (taskFromScope(status.scopeRef) === 'primary') {
+    reasons.push(
+      ':primary standing session — never reaped by this sweep; terminate manually with hrc runtime terminate if truly intended'
+    )
+  }
 
   if (status.controllerKind !== 'harness-broker') {
     reasons.push(
@@ -511,7 +525,7 @@ function simPanes(): DiscoveredPane[] {
       // Legacy title-derived scope: metadata identifies the runtime and pane
       // role, but the title is the only available scope source.
       id: 'A11CE003',
-      title: 'hrc headless agent:larry',
+      title: 'hrc headless agent:larry:project:hrc-runtime:task:primary',
       metadata: {
         hrc_role: HEADLESS_PANE_ROLE,
         hrc_runtime_id: 'rt-larry-title-sim',
@@ -1140,7 +1154,7 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
       )
     )
   }

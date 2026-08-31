@@ -255,6 +255,24 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(reasons[0]).toContain('rt-ghost123')
   })
 
+  it('never reaps a :primary standing session that is otherwise eligible', () => {
+    const reasons = skipReasons(
+      eligibleStatus({ scopeRef: 'agent:clod:project:hrc-runtime:task:primary' })
+    )
+    expect(reasons).toEqual([
+      ':primary standing session — never reaped by this sweep; terminate manually with hrc runtime terminate if truly intended',
+    ])
+    expect(
+      isQuitEligible(eligibleStatus({ scopeRef: 'agent:clod:project:hrc-runtime:task:primary' }))
+    ).toBe(false)
+  })
+
+  it('leaves non-primary task scopes unaffected', () => {
+    expect(
+      skipReasons(eligibleStatus({ scopeRef: 'agent:clod:project:hrc-runtime:task:T-primary' }))
+    ).toEqual([])
+  })
+
   it('explains an already-terminated runtime and defers the pane to hrc-viewer', () => {
     const reasons = skipReasons(eligibleStatus({ runtimeStatus: 'terminated' }))
     expect(reasons).toHaveLength(1)
@@ -626,7 +644,7 @@ describe('isAlreadyTerminatedError (benign reap-failure classifier)', () => {
 })
 
 describe('simulated reap outcome presentation', () => {
-  it('prints full scope handles and a sensible title-derived partial handle', () => {
+  it('reaps non-primary scopes and skips metadata- and title-derived primary scopes', () => {
     const proc = Bun.spawnSync(
       [
         'bun',
@@ -647,6 +665,12 @@ describe('simulated reap outcome presentation', () => {
     expect(proc.exitCode, stderr).toBe(0)
     expect(stdout).toContain('7BF21FAF reap sent smokey@agent-control-plane:T-02864 rt-smokey-s')
     expect(stdout).toContain('EB834507 reap sent curly@agent-control-plane:T-02864 rt-curly-si')
-    expect(stdout).toContain('A11CE003 reap sent larry rt-larry-ti')
+    expect(stdout).not.toContain('A11CE003 reap sent')
+    expect(stdout).toContain('scope      larry@hrc-runtime:primary')
+    expect(stdout).toContain('scope      clod@agent-spaces:primary')
+    expect(stdout.match(/:primary standing session — never reaped by this sweep/g)).toHaveLength(2)
+    expect(stdout).toContain(
+      'Reap eligibility: 2 eligible, 2 skipped (requires scope task!=primary'
+    )
   })
 })
