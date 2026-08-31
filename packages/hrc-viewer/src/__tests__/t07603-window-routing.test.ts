@@ -16,11 +16,13 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
+  CHIEF_WINDOW_KEY,
   DEFAULT_HEADLESS_WINDOW_KEY,
   GhostmuxManager,
   INTERACTIVE_WINDOW_KEY,
   defaultWindowKeyForTab,
   deriveHeadlessTabIdentity,
+  headlessWindowTitle,
   resolveWindowKey,
 } from '../ghostmux'
 
@@ -29,6 +31,9 @@ const windowKeyFor = (scopeRef: string, hint?: string | undefined) =>
 
 describe('T-07603 scope-shape routing', () => {
   it('sends real task scopes to the headless window', () => {
+    expect(windowKeyFor('agent:cody:project:hrc-runtime:task:T-12345')).toBe(
+      DEFAULT_HEADLESS_WINDOW_KEY
+    )
     expect(windowKeyFor('agent:cody:project:hrc-runtime:task:T-07595')).toBe(
       DEFAULT_HEADLESS_WINDOW_KEY
     )
@@ -38,7 +43,13 @@ describe('T-07603 scope-shape routing', () => {
     )
   })
 
+  it('sends every chief scope to the dedicated chief window', () => {
+    expect(windowKeyFor('agent:chief:project:hcs:task:T-07779')).toBe(CHIEF_WINDOW_KEY)
+    expect(windowKeyFor('agent:chief:project:hcs:task:primary')).toBe(CHIEF_WINDOW_KEY)
+  })
+
   it('sends operator-named scopes to the interactive window', () => {
+    expect(windowKeyFor('agent:vesta:project:hcs:task:primary')).toBe(INTERACTIVE_WINDOW_KEY)
     for (const scopeRef of [
       'agent:clod:project:hrc-runtime:task:primary',
       'agent:mable:project:hrc-runtime:task:primary-nova',
@@ -60,6 +71,9 @@ describe('T-07603 scope-shape routing', () => {
   })
 
   it('an explicit hint always wins over the derived key', () => {
+    expect(windowKeyFor('agent:chief:project:hcs:task:T-07779', 'console')).toBe(
+      INTERACTIVE_WINDOW_KEY
+    )
     // A task scope forced into the interactive window...
     expect(windowKeyFor('agent:cody:project:hrc-runtime:task:T-07595', 'console')).toBe('console')
     // ...and an operator scope forced into the headless pile.
@@ -68,6 +82,12 @@ describe('T-07603 scope-shape routing', () => {
     expect(windowKeyFor('agent:clod:project:hrc-runtime:task:primary', '   ')).toBe(
       INTERACTIVE_WINDOW_KEY
     )
+  })
+
+  it('gives the dedicated chief window its own presentation title', () => {
+    expect(headlessWindowTitle(CHIEF_WINDOW_KEY)).toBe('Chief Contexts')
+    expect(headlessWindowTitle(DEFAULT_HEADLESS_WINDOW_KEY)).toBe('Headless Sessions')
+    expect(headlessWindowTitle(INTERACTIVE_WINDOW_KEY)).toBe('Headless Sessions · console')
   })
 })
 

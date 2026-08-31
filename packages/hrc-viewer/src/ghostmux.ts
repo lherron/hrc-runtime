@@ -109,6 +109,9 @@ const HEADLESS_AGENT_PANE_ROLE = 'headless-agent-pane'
  */
 export const DEFAULT_HEADLESS_WINDOW_KEY = 'default'
 
+/** Dedicated keyed window for the hcs context-switcher manager (T-07781). */
+export const CHIEF_WINDOW_KEY = 'chief'
+
 /**
  * Window key for the operator's INTERACTIVE window (T-07603) — the one that is
  * not the headless pile. Resolved by adoption (`adoptInteractiveWindow`), never
@@ -145,7 +148,8 @@ function explicitWindowKey(metadata: unknown): string | undefined {
 }
 
 /** Presentation-only window title derived from the key. */
-function headlessWindowTitle(windowKey: string): string {
+export function headlessWindowTitle(windowKey: string): string {
+  if (windowKey === CHIEF_WINDOW_KEY) return 'Chief Contexts'
   return windowKey === DEFAULT_HEADLESS_WINDOW_KEY
     ? HEADLESS_SESSIONS_WINDOW_TITLE
     : `${HEADLESS_SESSIONS_WINDOW_TITLE} · ${windowKey}`
@@ -256,9 +260,11 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
  * Default window placement for a tab identity (T-07603).
  *
  * Machine-dispatched worker lanes (`task:T-XXXXX`, role-qualified seats
- * included) belong in the headless pile. Everything the operator summoned by
- * name — `primary`, roster slugs, `minisvc`/`minilab`, hand-named lanes such as
- * `viewrca` — belongs in the window they are actually working in.
+ * included) belong in the headless pile, except chief seats, which have their
+ * own context-switching window regardless of scope shape. Everything else the
+ * operator summoned by name — `primary`, roster slugs, `minisvc`/`minilab`,
+ * hand-named lanes such as `viewrca` — belongs in the window they are actually
+ * working in.
  *
  * The classification is `deriveHeadlessTabIdentity`'s, unchanged: this reads the
  * tabKey it already produced rather than re-testing the scope. So window
@@ -270,8 +276,9 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
  * panes into the operator's window; malformed input belongs in the background.
  */
 export function defaultWindowKeyForTab(tab: HeadlessTabIdentity): string {
-  if (tab.tabKey.startsWith('task:')) return DEFAULT_HEADLESS_WINDOW_KEY
   if (tab.tabKey.startsWith('unparsed:')) return DEFAULT_HEADLESS_WINDOW_KEY
+  if (tab.agentId === 'chief') return CHIEF_WINDOW_KEY
+  if (tab.tabKey.startsWith('task:')) return DEFAULT_HEADLESS_WINDOW_KEY
   return INTERACTIVE_WINDOW_KEY
 }
 
