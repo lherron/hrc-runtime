@@ -1,0 +1,70 @@
+id: hrc-runtime.collaboration-auto-reply-actuation
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: turn-final reply actuation for wrkq-driven single-conversation runtime turns
+predicate: >
+  When one runtime turn is driven by presentation of exactly one pending wrkq
+  envelope, or one fan-out group from one sender, successful turn completion and
+  a non-empty canonical dispatcher response establish an automatic-reply
+  obligation. The same durable local transaction that completes the drive
+  attempt records one bodyless pending intent containing its driveAttemptId,
+  envelope or group identity, room, counterparty, and runId. The body is the
+  exact canonical turn-response projection produced by the shared
+  finalizeSemanticTurnResponse path, including its established ordered
+  concatenation, TURN_TEXT_LIMIT truncation, and truncation marker; the
+  reconciler derives it from the durable run events and never stores a second
+  copy.
+  The reconciler first reads the presented envelope's authoritative wrkq
+  discharge state. A discharged envelope terminates the intent as
+  already-discharged. Otherwise it emits one ordinary say from the exact agent
+  principal at seat scope to the originating room and counterparty, carrying
+  idempotency key auto-reply:<driveAttemptId> and auto: turn_final provenance.
+  Confirmed success terminates the intent as minted. Every other write outcome,
+  including timeout, lost response, crash and replay, and wrkq's duplicate-key
+  refusal, is resolved by reading the existing authoritative wrkq envelope
+  surface for a committed envelope from that principal with the exact
+  idempotency key. A matching row is the mint receipt and terminates the intent
+  as minted; a successful read with no match leaves the intent retryable. A read
+  failure supplies no absence proof and leaves the intent pending. The
+  idempotency key is correlation and duplicate exclusion, never a replay
+  receipt. HRC's pending row is actuation bookkeeping only and is not room,
+  envelope, obligation, discharge, or reply-body authority.
+  A failed runtime turn records no pending automatic reply. A successful turn
+  with an empty canonical response records the terminal empty-response outcome,
+  emits no synthetic content, and leaves the envelope in its existing
+  undisposed lifecycle. Drives spanning multiple senders or rooms do not enter
+  this automatic path. An automatically minted ordinary say has exactly the
+  existing reply-is-ack and counterparty-obligation semantics. Driven-turn
+  priming treats the turn response as the reply; explicit wrkc say remains for
+  other rooms or counterparties, mid-turn communication, and FYI closure.
+  The discharge read and ordinary say are intentionally non-atomic by principal
+  ruling. A manual say that commits between them may therefore be followed by
+  the automatic reply; that duplicate window is the accepted risk
+  wrkq.collaboration-ledger.auto-reply-manual-race and is not an exactly-once
+  claim. No conditional wrkq mutation, new wrkq write surface, say error mapping,
+  or RoomSayParams contract is introduced.
+authority: Lance principal ruling 2026-08-31 / Daedalus approval wrkq:T-07789
+source:
+  - wrkq:T-07789
+  - packages/hrc-server/src/event-notification-handlers.ts
+  - packages/hrc-server/src/hrc-event-helper.ts
+required_tests:
+  - completion and bodyless pending-intent durability in one transaction, including daemon-restart replay
+  - canonical projection parity with finalizeSemanticTurnResponse, including ordered multi-message and truncation cases
+  - confirmed say, lost-response read-back, duplicate-refusal read-back, wrkq outage, and read-outage reconciliation cases
+  - discharge-before-mint, manual-race accepted duplicate, and replay-created automatic duplicate exclusion cases
+  - failed-turn, empty-response, single-envelope, same-sender fan-out, and multi-conversation exclusion cases
+  - driven-turn prompt sweep and ordinary manual/FYI say regression coverage
+last_verified:
+  date: 2026-08-31
+  evidence: Daedalus source-grounded architecture approval of T-07789; implementation gates pending.
+reopen_when:
+  - the canonical dispatcher response projection or its truncation semantics change
+  - pending-reply intent stores reply content or becomes collaboration-state authority
+  - uncertain say outcomes stop resolving through exact committed wrkq envelope identity
+  - automatic reply scope expands beyond one envelope or one same-sender fan-out group
+  - ordinary say attribution, idempotency, discharge, or reply-is-ack semantics change
+  - the accepted discharge-read/plain-say manual duplicate window changes
+supersedes: []
+superseded_by: []
