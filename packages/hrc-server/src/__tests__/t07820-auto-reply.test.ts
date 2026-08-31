@@ -33,7 +33,9 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
-async function pendingIntent(body: string | undefined = 'Canonical final answer'): Promise<{
+async function pendingIntent(
+  body: string | string[] | undefined = 'Canonical final answer'
+): Promise<{
   intent: HrcMailAutoReplyIntent
   sourceId: string
 }> {
@@ -70,16 +72,18 @@ async function pendingIntent(body: string | undefined = 'Canonical final answer'
       updatedAt: now,
       ancestorScopeRefs: [],
     })
-    appendHrcEvent(db, 'turn.message', {
-      ts: now,
-      hostSessionId: `hsid-auto-${sequence}`,
-      scopeRef: 'agent:cody:project:hrc-runtime:task:T-07820',
-      laneRef: 'main',
-      generation: 1,
-      runId,
-      runtimeId: `rt-auto-${sequence}`,
-      payload: { message: { role: 'assistant', content: body } },
-    })
+    for (const content of Array.isArray(body) ? body : [body]) {
+      appendHrcEvent(db, 'turn.message', {
+        ts: now,
+        hostSessionId: `hsid-auto-${sequence}`,
+        scopeRef: 'agent:cody:project:hrc-runtime:task:T-07820',
+        laneRef: 'main',
+        generation: 1,
+        runId,
+        runtimeId: `rt-auto-${sequence}`,
+        payload: { message: { role: 'assistant', content } },
+      })
+    }
   }
   db.mailDrives.recordStart({
     runId,
@@ -151,6 +155,18 @@ describe('T-07820 auto-reply reconciliation', () => {
         scopeRef: LEDGER_TARGET,
       },
     ])
+  })
+
+  it('separates multiple semantic turn messages in the canonical response body', async () => {
+    const { intent } = await pendingIntent([
+      "I'll check with pwd and return the exact path.",
+      '/Users/lherron/praesidium/signal-pipeline',
+    ])
+
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    expect(ledger.roomSayRequests[0]?.body).toBe(
+      "I'll check with pwd and return the exact path.\n\n/Users/lherron/praesidium/signal-pipeline"
+    )
   })
 
   it('records already-discharged when a manual reply won precedence', async () => {

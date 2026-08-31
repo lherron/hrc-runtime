@@ -335,7 +335,8 @@ export function projectSemanticTurnResponse(
       : db.hrcEvents
           .listByRun(runId, { eventKind: 'turn.message' })
           .map((messageEvent) => extractTextFromTurnMessagePayload(messageEvent.payload))
-          .join('')
+          .filter((text) => text.length > 0)
+          .join('\n\n')
   const unbounded =
     bufferedOutput.length > 0
       ? bufferedOutput
