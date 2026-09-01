@@ -7,7 +7,8 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { localizeFederatedRuntimeIntent } from '../federation/runtime-intent-localization.js'
 
-const SCOPE = 'agent:clod:project:hrc-runtime:task:t06698-localize'
+const PROJECT_ID = 't06698-fixture'
+const SCOPE = `agent:clod:project:${PROJECT_ID}:task:t06698-localize`
 
 describe('T-06698 federated runtime intent localization', () => {
   test('rebuilds origin placement from the accepting node and preserves a project-relative cwd', async () => {
@@ -17,18 +18,21 @@ describe('T-06698 federated runtime intent localization', () => {
       await mkdir(join(agentsRoot, 'clod'), { recursive: true })
       await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'version = 3\n')
       const checkoutRoot = join(root, 'checkouts')
-      const localProjectRoot = join(checkoutRoot, 'hrc-runtime')
+      // T-07749 makes the wrkq registry authoritative when cwd discovery
+      // misses. Use a fixture-only project id so the operator's live registry
+      // cannot redirect this sibling-checkout test into a real checkout.
+      const localProjectRoot = join(checkoutRoot, PROJECT_ID)
       await mkdir(join(localProjectRoot, '.git'), { recursive: true })
       const intent: HrcRuntimeIntent = {
         placement: {
           agentRoot: '/origin/praesidium/var/agents/clod',
-          projectRoot: '/origin/praesidium/hrc-runtime',
-          cwd: '/origin/praesidium/hrc-runtime/packages/hrc-server',
+          projectRoot: `/origin/praesidium/${PROJECT_ID}`,
+          cwd: `/origin/praesidium/${PROJECT_ID}/packages/hrc-server`,
           runMode: 'task',
           bundle: {
             kind: 'agent-project',
             agentName: 'clod',
-            projectRoot: '/origin/praesidium/hrc-runtime',
+            projectRoot: `/origin/praesidium/${PROJECT_ID}`,
           },
           dryRun: false,
         },

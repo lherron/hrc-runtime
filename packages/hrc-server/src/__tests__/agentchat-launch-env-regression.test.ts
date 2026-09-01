@@ -99,23 +99,24 @@ describe('agentchat launch env regression', () => {
     server = await createHrcServer(serverOpts())
 
     const session = await resolveSession('agent:larry:project:agent-spaces')
+    const runtimeIntent = {
+      placement: {
+        agentRoot: '/tmp/larry',
+        projectRoot: '/tmp/agent-spaces',
+        cwd: '/tmp/agent-spaces',
+        runMode: 'task' as const,
+        bundle: { kind: 'compose' as const, compose: [] },
+        dryRun: true,
+      },
+      harness: {
+        provider: 'openai' as const,
+        interactive: true,
+      },
+    }
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: session.hostSessionId,
-      intent: {
-        placement: {
-          agentRoot: '/tmp/larry',
-          projectRoot: '/tmp/agent-spaces',
-          cwd: '/tmp/agent-spaces',
-          runMode: 'task',
-          bundle: { kind: 'compose', compose: [] },
-          dryRun: true,
-        },
-        harness: {
-          provider: 'openai',
-          interactive: true,
-        },
-      },
+      intent: runtimeIntent,
       restartStyle: 'reuse_pty',
     })
 
@@ -126,6 +127,9 @@ describe('agentchat launch env regression', () => {
     const turnRes = await postJson('/v1/turns', {
       hostSessionId: session.hostSessionId,
       prompt: 'diagnostic prompt',
+      // T-07206 intentionally prevents a rejected ensure from becoming the
+      // session's implicit plan, so carry the candidate explicitly here.
+      runtimeIntent,
     })
 
     expect(turnRes.status).toBe(503)
