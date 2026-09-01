@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -54,6 +55,62 @@ function headlessBrokerIntent() {
     execution: {
       preferredMode: 'headless',
     },
+  }
+}
+
+function seedColdDurableHeadlessRuntime(hostSessionId: string, generation: number): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const now = new Date().toISOString()
+  const outsideRuntimeRoot = join(fixture.tmpDir, 'outside-runtime-root')
+  try {
+    db.runtimes.insert({
+      runtimeId: 'rt-t07196-cold-durable',
+      hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: 'default',
+      generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'stale',
+      supportsInflightInput: false,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        schemaVersion: 'runtime-state/v1',
+        kind: 'harness-broker',
+        runtimeId: 'rt-t07196-cold-durable',
+        hostSessionId,
+        generation,
+        status: 'stale',
+        broker: {
+          endpoint: {
+            kind: 'unix-jsonrpc-ndjson',
+            protocolVersion: 'harness-broker/0.2',
+            socketPath: join(outsideRuntimeRoot, 'broker.sock'),
+            attachTokenRef: {
+              kind: 'file',
+              path: join(outsideRuntimeRoot, 'attach.token'),
+              redacted: true,
+            },
+          },
+          substrate: {
+            kind: 'leased-tmux',
+            tmuxSocketPath: join(outsideRuntimeRoot, 'tmux.sock'),
+            sessionName: 'hrc-codex-cli-t07196',
+            brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+            generation,
+            eventLedgerPath: join(outsideRuntimeRoot, 'events.ndjson'),
+          },
+          presentation: { kind: 'none' },
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+  } finally {
+    db.close()
   }
 }
 
@@ -220,5 +277,109 @@ describe('headless broker dispatch start single-flight', () => {
     } finally {
       inspectionDb.close()
     }
+  })
+
+  it('holds single-flight ownership while a cold durable runtime is reattached or replaced', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    const db = openHrcDatabase(fixture.dbPath)
+    const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
+    db.close()
+    expect(session).toBeDefined()
+    seedColdDurableHeadlessRuntime(resolved.hostSessionId, resolved.generation)
+
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    let firstStartEntered!: () => void
+    const firstStart = new Promise<void>((resolve) => {
+      firstStartEntered = resolve
+    })
+    let startCalls = 0
+    let queuedDispatchCalls = 0
+    ;(server as any).startHeadlessBrokerRuntime = async () => {
+      startCalls += 1
+      firstStartEntered()
+      const call = startCalls
+      await startGate
+      const now = new Date().toISOString()
+      return {
+        runtimeId: `rt-t07196-fresh-${call}`,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: SCOPE_REF,
+        laneRef: 'default',
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        activeOperationId: `op-t07196-${call}`,
+        activeInvocationId: `inv-t07196-${call}`,
+        createdAt: now,
+        updatedAt: now,
+      }
+    }
+    ;(server as any).dispatchQueuedHeadlessTurnInput = async (
+      queuedSession: { hostSessionId: string; generation: number },
+      runtime: { runtimeId: string },
+      _prompt: string,
+      runId: string
+    ) => {
+      queuedDispatchCalls += 1
+      return Response.json({
+        runId,
+        hostSessionId: queuedSession.hostSessionId,
+        generation: queuedSession.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'headless',
+        status: 'started',
+        supportsInFlightInput: false,
+      })
+    }
+
+    const firstDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+      session,
+      headlessBrokerIntent(),
+      'first cold durable dispatch',
+      'run-t07196-first',
+      { waitForCompletion: false }
+    ) as Promise<Response>
+    const secondDispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+      session,
+      headlessBrokerIntent(),
+      'second cold durable dispatch',
+      'run-t07196-second',
+      { waitForCompletion: false }
+    ) as Promise<Response>
+
+    await firstStart
+    await Bun.sleep(0)
+    const startsWhileBothDispatchesAreInFlight = startCalls
+    releaseStart()
+
+    const [firstResponse, secondResponse] = await Promise.all([firstDispatch, secondDispatch])
+    const [firstBody, secondBody] = await Promise.all([
+      firstResponse.json() as Promise<{ runtimeId: string; runId: string }>,
+      secondResponse.json() as Promise<{ runtimeId: string; runId: string }>,
+    ])
+
+    expect({
+      startsWhileBothDispatchesAreInFlight,
+      startCalls,
+      queuedDispatchCalls,
+      runtimeStartOperationCount: (server as any).runtimeStartOperations.size,
+      runtimeIds: [firstBody.runtimeId, secondBody.runtimeId],
+      runIds: [firstBody.runId, secondBody.runId],
+    }).toEqual({
+      startsWhileBothDispatchesAreInFlight: 1,
+      startCalls: 1,
+      queuedDispatchCalls: 1,
+      runtimeStartOperationCount: 0,
+      runtimeIds: ['rt-t07196-fresh-1', 'rt-t07196-fresh-1'],
+      runIds: ['run-t07196-first', 'run-t07196-second'],
+    })
   })
 })

@@ -104,6 +104,25 @@ type JsonRepairRunCorrelation = {
   repairRunId: string
 }
 
+type RuntimeStartOwnership = {
+  operation: Promise<HrcRuntimeSnapshot>
+  resolve(runtime: HrcRuntimeSnapshot): void
+  reject(error: unknown): void
+}
+
+function createRuntimeStartOwnership(): RuntimeStartOwnership {
+  let resolve!: (runtime: HrcRuntimeSnapshot) => void
+  let reject!: (error: unknown) => void
+  const operation = new Promise<HrcRuntimeSnapshot>((resolveOperation, rejectOperation) => {
+    resolve = resolveOperation
+    reject = rejectOperation
+  })
+  // The owner may fail before a crossing caller joins. Keep that legitimate
+  // rejection observed while preserving the original promise for later joiners.
+  void operation.catch(() => undefined)
+  return { operation, resolve, reject }
+}
+
 function assertBrokerPermissionPolicyAdmitted(input: {
   mode: unknown
   hostSessionId: string
@@ -341,13 +360,9 @@ export async function handleHeadlessBrokerDispatchTurn(
   const highRiskActuatorSplit =
     normalizeActuatorSplitPolicy(dispatchIntent.execution?.actuatorSplit)?.mode === 'high-risk'
 
-  // A lifecycle-only `hrc start` may still be provisioning this session when
-  // a prompt-bearing start/turn arrives. Admit the prompt durably before
-  // waiting for boot so aborting the client only stops its wait, never the
-  // delivery. Reuse the one boot operation; a second broker start would split
-  // the session.
-  const bootOperation = this.runtimeStartOperations.get(session.hostSessionId)
-  if (bootOperation) {
+  const joinRuntimeStart = async (
+    bootOperation: Promise<HrcRuntimeSnapshot>
+  ): Promise<Response> => {
     // Low-risk behavior keeps the established accept-before-wait contract.
     // High-risk work must first prove that the booting runtime has exactly the
     // requested authority; otherwise a rejected request could already be queued.
@@ -376,6 +391,16 @@ export async function handleHeadlessBrokerDispatchTurn(
       runId,
       options
     )
+  }
+
+  // A lifecycle-only `hrc start` may still be provisioning this session when
+  // a prompt-bearing start/turn arrives. Admit the prompt durably before
+  // waiting for boot so aborting the client only stops its wait, never the
+  // delivery. Reuse the one boot operation; a second broker start would split
+  // the session.
+  const bootOperation = this.runtimeStartOperations.get(session.hostSessionId)
+  if (bootOperation) {
+    return await joinRuntimeStart(bootOperation)
   }
 
   const reusableRuntime = getReusableHeadlessRuntimeForSession(
@@ -451,51 +476,84 @@ export async function handleHeadlessBrokerDispatchTurn(
     dispatchIntent.harness.id
   )
   if (durableHeadless) {
-    const reattachResult = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
-      runtimeRoot: this.options.runtimeRoot,
-      controller: this.getHarnessBrokerController(),
-      brokerUnixClientFactory:
-        this.brokerUnixClientFactory ??
-        ((options) =>
-          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
-    })
-    const recovered =
-      reattachResult.state === 'reattached'
-        ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
-        : null
-    if (recovered && recovered.activeInvocationId !== undefined) {
-      writeServerLog('INFO', 'headless.durable_reattach.reused', {
-        hostSessionId: session.hostSessionId,
-        runtimeId: recovered.runtimeId,
+    // T-07196: the initial map check above is only a check, not ownership.
+    // Claim the host session synchronously before the first durable await and
+    // retain the SAME promise through reattach, termination, and any fresh
+    // replacement boot. Crossing callers join it instead of replacing it.
+    const crossingOperation = this.runtimeStartOperations.get(session.hostSessionId)
+    if (crossingOperation) {
+      return await joinRuntimeStart(crossingOperation)
+    }
+    const ownership = createRuntimeStartOwnership()
+    this.runtimeStartOperations.set(session.hostSessionId, ownership.operation)
+    const releaseOwnership = (): void => {
+      if (this.runtimeStartOperations.get(session.hostSessionId) === ownership.operation) {
+        this.runtimeStartOperations.delete(session.hostSessionId)
+      }
+    }
+
+    try {
+      const reattachResult = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
+        runtimeRoot: this.options.runtimeRoot,
+        controller: this.getHarnessBrokerController(),
+        brokerUnixClientFactory:
+          this.brokerUnixClientFactory ??
+          ((options) =>
+            connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
       })
-      assertActuatorSplitRuntimeReuse(dispatchIntent, recovered)
-      assertBrokerRuntimeReusableAdmission(this.db, recovered, options)
-      return await this.executeHeadlessBrokerInputTurn(
+      const recovered =
+        reattachResult.state === 'reattached'
+          ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+          : null
+      if (recovered && recovered.activeInvocationId !== undefined) {
+        writeServerLog('INFO', 'headless.durable_reattach.reused', {
+          hostSessionId: session.hostSessionId,
+          runtimeId: recovered.runtimeId,
+        })
+        assertActuatorSplitRuntimeReuse(dispatchIntent, recovered)
+        assertBrokerRuntimeReusableAdmission(this.db, recovered, options)
+        ownership.resolve(recovered)
+        releaseOwnership()
+        return await this.executeHeadlessBrokerInputTurn(
+          session,
+          recovered,
+          dispatchPrompt,
+          runId,
+          options
+        )
+      }
+      // Reattach failed or the persisted invocation is gone: terminate the cold
+      // durable runtime (reaps its broker dispose path; the orphan sweeper reaps the
+      // leased substrate since a terminal runtime no longer claims it) BEFORE we
+      // provision a fresh broker below — no second live broker tmux may remain.
+      writeServerLog('WARN', 'headless.durable_reattach.failed_reprovision', {
+        hostSessionId: session.hostSessionId,
+        runtimeId: durableHeadless.runtimeId,
+        reattachState: reattachResult.state,
+      })
+      if (reattachResult.state !== 'rejected-outside-runtime-root') {
+        await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
+          (error: unknown) => {
+            writeServerLog('WARN', 'headless.durable_reattach.reprovision_cleanup_failed', {
+              runtimeId: durableHeadless.runtimeId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        )
+      }
+
+      return await this.executeHeadlessBrokerStartTurn(
         session,
-        recovered,
+        dispatchIntent,
         dispatchPrompt,
         runId,
-        options
+        options,
+        ownership
       )
-    }
-    // Reattach failed or the persisted invocation is gone: terminate the cold
-    // durable runtime (reaps its broker dispose path; the orphan sweeper reaps the
-    // leased substrate since a terminal runtime no longer claims it) BEFORE we
-    // provision a fresh broker below — no second live broker tmux may remain.
-    writeServerLog('WARN', 'headless.durable_reattach.failed_reprovision', {
-      hostSessionId: session.hostSessionId,
-      runtimeId: durableHeadless.runtimeId,
-      reattachState: reattachResult.state,
-    })
-    if (reattachResult.state !== 'rejected-outside-runtime-root') {
-      await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
-        (error: unknown) => {
-          writeServerLog('WARN', 'headless.durable_reattach.reprovision_cleanup_failed', {
-            runtimeId: durableHeadless.runtimeId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
-      )
+    } catch (error) {
+      ownership.reject(error)
+      releaseOwnership()
+      throw error
     }
   }
 

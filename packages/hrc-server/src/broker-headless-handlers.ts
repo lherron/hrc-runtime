@@ -701,7 +701,14 @@ export async function executeHeadlessBrokerStartTurn(
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
-  }
+  },
+  runtimeStartOwnership?:
+    | {
+        operation: Promise<HrcRuntimeSnapshot>
+        resolve(runtime: HrcRuntimeSnapshot): void
+        reject(error: unknown): void
+      }
+    | undefined
 ): Promise<Response> {
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
   let rejectAccepted!: (error: unknown) => void
@@ -715,6 +722,9 @@ export async function executeHeadlessBrokerStartTurn(
   })
   // Publish the runtime-producing promise before yielding so crossing dispatches
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
+  // A cold-durable recovery may already own the map across its awaited
+  // reattach/cleanup work. In that case keep its promise as the stable join
+  // point and settle it from the fresh boot instead of replacing it here.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
@@ -753,9 +763,16 @@ export async function executeHeadlessBrokerStartTurn(
       return runtime
     })
     .finally(() => {
-      this.runtimeStartOperations.delete(session.hostSessionId)
+      const publishedOperation = runtimeStartOwnership?.operation ?? bootOperation
+      if (this.runtimeStartOperations.get(session.hostSessionId) === publishedOperation) {
+        this.runtimeStartOperations.delete(session.hostSessionId)
+      }
     })
-  this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  if (runtimeStartOwnership) {
+    void bootOperation.then(runtimeStartOwnership.resolve, runtimeStartOwnership.reject)
+  } else {
+    this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  }
   void bootOperation.catch((error) => {
     if (!acceptedSettled) rejectAccepted(error)
   })
