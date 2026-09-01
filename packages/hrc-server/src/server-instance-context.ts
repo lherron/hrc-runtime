@@ -9,6 +9,7 @@ import type {
 import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
+import type { DurableBrokerDispatchReattachResult } from './startup-reconcile.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
 import type { AcpEventBridge } from './acp-event-bridge.js'
@@ -169,6 +170,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
   readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
+  readonly brokerReattachOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>
   readonly attachedRunOperations: Map<string, PendingAttachedRunOperation>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>

@@ -138,6 +138,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
       {
         runtimeRoot: ph4.RUNTIME_ROOT,
         controller,
+        inFlightOperations: new Map(),
         brokerUnixClientFactory: async () => client,
         resolveAttachToken: async () => ph4.ATTACH_TOKEN,
         probeBrokerLease: async () => ({
@@ -181,6 +182,7 @@ describe('Scenario 9 (G5/G4): headless dispatch: no direct tmux pane fallback wh
       {
         runtimeRoot: ph4.RUNTIME_ROOT,
         controller: makeController(),
+        inFlightOperations: new Map(),
         brokerUnixClientFactory: async () => {
           dialed = true
           throw new Error('socket unavailable')

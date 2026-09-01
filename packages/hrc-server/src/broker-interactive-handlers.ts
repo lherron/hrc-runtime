@@ -496,6 +496,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       const reattachResult = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
         runtimeRoot: this.options.runtimeRoot,
         controller: this.getHarnessBrokerController(),
+        inFlightOperations: this.brokerReattachOperations,
         brokerUnixClientFactory:
           this.brokerUnixClientFactory ??
           ((options) =>
@@ -858,6 +859,7 @@ export async function executeInteractiveBrokerInputTurn(
     const reattachResult = await reattachDurableBrokerForDispatch(this.db, runtime, {
       runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
+      inFlightOperations: this.brokerReattachOperations,
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
         ((options) =>

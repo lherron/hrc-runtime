@@ -240,6 +240,7 @@ describe('T-04297 durable headless reboot-zombie reap', () => {
     const reattached = await reconcile.reattachDurableBrokerForDispatch(db, readRuntime(), {
       runtimeRoot: RUNTIME_ROOT,
       controller: makeController(),
+      inFlightOperations: new Map(),
       brokerUnixClientFactory: async () => {
         throw new Error('must not dial: IPC probe already reported unreachable')
       },

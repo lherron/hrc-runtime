@@ -282,7 +282,11 @@ import {
   type ShadowTeardownHandlersMethods,
   shadowTeardownHandlersMethods,
 } from './shadow-teardown-handlers.js'
-import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
+import {
+  type DurableBrokerDispatchReattachResult,
+  reconcileStartupState,
+  warmDurableBrokerBindings,
+} from './startup-reconcile.js'
 import { toStartRuntimeResponse, toStatusSessionView } from './status-views.js'
 import {
   type SteerClassDispatchMethods,
@@ -816,6 +820,10 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  readonly brokerReattachOperations = new Map<
+    string,
+    Promise<DurableBrokerDispatchReattachResult>
+  >()
   /**
    * Every request handler currently executing, as a promise that settles when
    * the handler does. `Bun.serve().stop(true)` closes the SOCKET, not the

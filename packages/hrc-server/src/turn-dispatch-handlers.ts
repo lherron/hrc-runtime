@@ -667,6 +667,7 @@ export async function reattachDurableBrokerSessionForOpen(
   return await reattachDurableBrokerForDispatch(this.db, runtime, {
     runtimeRoot: this.options.runtimeRoot,
     controller: this.getHarnessBrokerController(),
+    inFlightOperations: this.brokerReattachOperations,
     brokerUnixClientFactory:
       this.brokerUnixClientFactory ??
       ((options) =>

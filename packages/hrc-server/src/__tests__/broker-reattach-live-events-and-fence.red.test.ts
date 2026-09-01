@@ -189,6 +189,7 @@ class PushStream<T> implements AsyncIterable<T> {
 class MockClient implements DurableBrokerClientLike {
   closeHandler: CloseHandler | undefined
   closed = false
+  inputCalls = 0
   readonly liveStream = new PushStream<InvocationEventEnvelope>()
   attachResponse!: BrokerAttachResponse
   snapshotResponse!: InvocationSnapshot
@@ -231,6 +232,7 @@ class MockClient implements DurableBrokerClientLike {
     throw new Error('start not expected')
   }
   async input(): Promise<InvocationInputResponse> {
+    this.inputCalls += 1
     return {
       inputId: 'i' as InvocationInputResponse['inputId'],
       accepted: true,
@@ -385,6 +387,35 @@ describe('T-01801 GAP B — a fenced controller releases silently (no crash-term
     expect(rt.status).not.toBe('crashed')
     // Run must NOT be failed by the fenced (losing) controller.
     expect(db.runs.getByRunId(RUN_ID)?.status).not.toBe('failed')
+  })
+
+  it('does not let a fenced old client evict the replacement active binding', async () => {
+    seed()
+    const controller = makeController()
+    const oldClient = new MockClient({ events: [], currentSeq: 0, retentionFloorSeq: 0 })
+    oldClient.snapshotResponse = emptySnapshot()
+    oldClient.attachResponse = attachResponseFor(oldClient.snapshotResponse)
+    await attach(controller, oldClient)
+
+    const replacementClient = new MockClient({ events: [], currentSeq: 0, retentionFloorSeq: 0 })
+    replacementClient.snapshotResponse = emptySnapshot()
+    replacementClient.attachResponse = attachResponseFor(replacementClient.snapshotResponse)
+    await attach(controller, replacementClient)
+
+    oldClient.closeHandler?.(
+      Object.assign(new Error('Controller fenced by a newer attach'), {
+        name: 'BrokerRpcError',
+        code: BrokerErrorCode.ControllerFenced,
+      })
+    )
+
+    const dispatch = await controller.dispatchInput({
+      runtimeId: RUNTIME_ID,
+      input: { kind: 'user', content: [{ type: 'text', text: 'replacement still owns input' }] },
+    })
+    expect(dispatch.ok).toBe(true)
+    expect(replacementClient.inputCalls).toBe(1)
+    expect(readRuntime().status).not.toBe('crashed')
   })
 
   it('STILL marks crash-terminal on a genuine (non-fence) broker close', async () => {

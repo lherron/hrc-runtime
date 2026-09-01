@@ -480,8 +480,10 @@ export class HarnessBrokerController {
       logger: this.logger,
       getActiveInvocationId: (runtimeId) => this.active.get(runtimeId)?.invocationId,
       getActiveClient: (runtimeId) => this.active.get(runtimeId)?.client,
-      deleteActive: (runtimeId) => {
-        this.active.delete(runtimeId)
+      deleteActive: (runtimeId, client) => {
+        if (this.active.get(runtimeId)?.client === client) {
+          this.active.delete(runtimeId)
+        }
       },
       markBrokerClosing: (runtimeId, reason, client) =>
         this.markBrokerClosing(runtimeId, reason, client),
@@ -1626,6 +1628,14 @@ export class HarnessBrokerController {
   ): void {
     const active = this.active.get(runtimeId)
     const client = closingClient ?? active?.client
+    if (client && active && active.client !== client) {
+      this.intentionalClosingClients.delete(client)
+      this.logger.info?.('ignored broker close from superseded client', {
+        runtimeId,
+        error: error.message,
+      })
+      return
+    }
     const intentionalReason = client
       ? this.intentionalClosingClients.get(client)
       : active?.closing === true
@@ -1657,7 +1667,9 @@ export class HarnessBrokerController {
         runtimeId,
         error: error.message,
       })
-      this.active.delete(runtimeId)
+      if (active?.client === client) {
+        this.active.delete(runtimeId)
+      }
       return
     }
     // Lever 2 graceful exit: an interactive /quit typically tears the broker IPC

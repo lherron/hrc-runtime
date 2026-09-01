@@ -1015,6 +1015,7 @@ export async function executeHeadlessBrokerInputTurn(
       await reattachDurableBrokerForDispatch(this.db, runtime, {
         runtimeRoot: this.options.runtimeRoot,
         controller: this.getHarnessBrokerController(),
+        inFlightOperations: this.brokerReattachOperations,
         brokerUnixClientFactory:
           this.brokerUnixClientFactory ??
           ((options) =>
