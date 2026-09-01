@@ -1297,10 +1297,10 @@ export class HarnessBrokerController {
           invocationId: String(envelope.invocationId),
           committedThroughSeq: this.lastProjectedBrokerSeq(String(envelope.invocationId)),
         })
-        this.afterMappedEvent(runtimeId, envelope, result, options)
         if (!options.externalParticipant) {
           await this.ackCommittedProjection(runtimeId, String(envelope.invocationId))
         }
+        this.afterMappedEvent(runtimeId, envelope, result, options)
         return
       } catch (error) {
         if (this.shuttingDown || isClosedDbError(error)) {
@@ -1457,6 +1457,7 @@ export class HarnessBrokerController {
           invocationId,
           committedThroughSeq: this.lastProjectedBrokerSeq(invocationId),
         })
+        await this.ackCommittedProjection(runtimeId, invocationId)
         this.afterMappedEvent(runtimeId, envelope, result)
         if (!result.idempotent) {
           repairedSeqs.push(envelope.seq)
@@ -1484,8 +1485,6 @@ export class HarnessBrokerController {
           currentSeq: replay.currentSeq,
           retentionFloorSeq: replay.retentionFloorSeq,
         })
-      } else {
-        await this.ackCommittedProjection(runtimeId, invocationId)
       }
     } catch (error) {
       if (this.shuttingDown || isClosedDbError(error)) {

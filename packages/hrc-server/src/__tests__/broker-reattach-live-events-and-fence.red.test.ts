@@ -190,6 +190,7 @@ class MockClient implements DurableBrokerClientLike {
   closeHandler: CloseHandler | undefined
   closed = false
   inputCalls = 0
+  readonly ackCalls: InvocationAckEventsRequest[] = []
   readonly liveStream = new PushStream<InvocationEventEnvelope>()
   attachResponse!: BrokerAttachResponse
   snapshotResponse!: InvocationSnapshot
@@ -208,6 +209,7 @@ class MockClient implements DurableBrokerClientLike {
     return this.replay
   }
   async ackEvents(req: InvocationAckEventsRequest): Promise<InvocationAckEventsResponse> {
+    this.ackCalls.push(req)
     return { ackedThroughSeq: req.throughSeq }
   }
   async permissionRespond(
@@ -362,6 +364,24 @@ describe('T-01801 GAP A — attachAndReplay subscribes to the LIVE event stream'
     // Without the live subscription these never project (the e2e hang). With it,
     // the post-reattach turn projects through the same mapper.
     expect(projectedSeqs()).toEqual([1, 2, 3, 4])
+  })
+
+  it('acks a committed terminal envelope before lifecycle cleanup releases the active client', async () => {
+    seed()
+    const client = new MockClient({
+      events: [envelopeFor('invocation.ready', 1, { state: 'ready' })],
+      currentSeq: 1,
+      retentionFloorSeq: 1,
+    })
+    client.snapshotResponse = emptySnapshot({ currentSeq: 1, retentionFloorSeq: 1 })
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+
+    await attach(makeController(), client)
+    client.liveStream.push(envelopeFor('invocation.exited', 2, { exitCode: 0, signal: null }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(2)
+    expect(client.ackCalls.at(-1)?.throughSeq).toBe(2)
   })
 })
 
