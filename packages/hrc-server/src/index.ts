@@ -107,6 +107,10 @@ import {
   type PeerProtocolEndpointControl,
   startPeerProtocolEndpoint,
 } from './federation/peer-protocol.js'
+import {
+  PeerRuntimeProjectionCache,
+  peerRuntimeProjectionCacheKey,
+} from './federation/peer-runtime-projection-cache.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import {
   type BindingRegistryEndpointControl,
@@ -805,11 +809,8 @@ class HrcServerInstance implements HrcServer {
    */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
-  /** Last successful peer answers are isolated by node and exact runtime filter. */
-  readonly peerRuntimeProjectionCache = new Map<
-    string,
-    { answeredAt: string; runtimes: readonly HrcRuntimeSnapshot[] }
-  >()
+  /** Last successful peer answers are isolated by node and effective runtime filter. */
+  readonly peerRuntimeProjectionCache = new PeerRuntimeProjectionCache()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly externalRegistrationOperations = new Map<string, Promise<void>>()
   readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
@@ -1685,6 +1686,7 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    this.peerRuntimeProjectionCache.clear()
     // Handlers that were already running when the stop began keep executing
     // after the socket closes; let them finish (bounded) before the store goes
     // away underneath them.
@@ -2533,7 +2535,7 @@ class HrcServerInstance implements HrcServer {
       filter: url.searchParams,
     })
     for (const probe of probes) {
-      const cacheKey = `${probe.health.nodeId}\u0000${url.searchParams.toString()}`
+      const cacheKey = peerRuntimeProjectionCacheKey(probe.health.nodeId, url)
       if (probe.health.state === 'healthy' && probe.runtimes !== undefined) {
         const answeredAt = probe.health.answeredAt ?? new Date().toISOString()
         this.peerRuntimeProjectionCache.set(cacheKey, {
