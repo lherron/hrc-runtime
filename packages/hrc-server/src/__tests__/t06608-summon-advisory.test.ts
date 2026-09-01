@@ -28,7 +28,6 @@ function binding(overrides: Partial<PlacementBinding> = {}): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId: 'max3',
-    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
@@ -138,7 +137,7 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('max3')
-    expect(result.evaluation.placementSource).toBe('default_home_node(local)')
+    expect(result.evaluation.birthDesignation).toBeUndefined()
   })
 
   test('never a silent fallback: undeclared does NOT resolve to the local node', async () => {
@@ -168,7 +167,10 @@ describe('default_home_node routing', () => {
     })
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.placementSource).toBe('default_home_node')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'default_home_node',
+    })
   })
 
   test('default naming another node refuses toward home, never spawns', async () => {

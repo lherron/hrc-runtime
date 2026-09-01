@@ -45,7 +45,6 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'pin',
           now: '2026-07-20T00:00:00.000Z',
         },
       })
@@ -64,7 +63,6 @@ describe('T-06607 registry-first establishment', () => {
       const request = {
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        placementSource: 'default_home_node' as const,
         now: '2026-07-20T00:00:00.000Z',
       }
       const first = await establishLocalPlacement({
@@ -94,7 +92,6 @@ describe('T-06607 registry-first establishment', () => {
       const registered = h.registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        placementSource: 'explicit_local',
         now: '2026-07-20T00:00:00.000Z',
       }).binding
       expect(h.ledger.get(SCOPE)).toBeUndefined()
@@ -105,7 +102,6 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'pin',
           now: '2026-07-20T00:00:01.000Z',
         },
       })
@@ -130,7 +126,6 @@ describe('T-06607 registry-first establishment', () => {
       const existing = h.registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'max3',
-        placementSource: 'pin',
         now: '2026-07-20T00:00:00.000Z',
       }).binding
 
@@ -140,7 +135,6 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'default_home_node',
           now: '2026-07-20T00:00:01.000Z',
         },
       })

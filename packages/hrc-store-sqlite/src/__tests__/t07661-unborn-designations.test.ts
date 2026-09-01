@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { openBindingRegistry } from '../index.js'
-import type { BindingRegistry } from '../index.js'
+import type { BindingRegistry, BirthDesignationEstablishmentDecision } from '../index.js'
 
 /**
  * T-07661 — the registry's answer to "which virgin births does that node owe?".
@@ -49,12 +49,12 @@ function establish(
   store: BindingRegistry,
   scopeRef: string,
   homeNodeId: string,
-  placementSource: Parameters<BindingRegistry['establish']>[0]['placementSource']
+  birthDesignation?: BirthDesignationEstablishmentDecision
 ) {
   return store.establish({
     scopeRef,
     homeNodeId,
-    placementSource,
+    ...(birthDesignation === undefined ? {} : { birthDesignation }),
     now: '2026-08-28T07:01:00.000Z',
   })
 }
@@ -74,7 +74,7 @@ describe('T-07661 — unborn designations for a node', () => {
       // The birth its own designation authorised. The designation is STILL
       // live afterwards — a tier-5 establish agrees with it rather than
       // superseding it — so only the binding can retire it from this answer.
-      establish(store, BORN, 'max3', 'default_home_node(sender)')
+      establish(store, BORN, 'max3', { action: 'enforce-designated-home' })
       expect(store.liveDesignation(BORN)?.state).toBe('live')
 
       expect(store.listUnbornDesignationsForNode('max3').map((row) => row.scopeRef)).toEqual([
@@ -102,7 +102,7 @@ describe('T-07661 — unborn designations for a node', () => {
     const store = await registry()
     try {
       designate(store, RETIRED, 'max3')
-      establish(store, RETIRED, 'max3', 'default_home_node(sender)')
+      establish(store, RETIRED, 'max3', { action: 'enforce-designated-home' })
       const retired = store.deleteBinding({
         scopeRef: RETIRED,
         expectedHomeNodeId: 'max3',
@@ -125,7 +125,7 @@ describe('T-07661 — unborn designations for a node', () => {
       // A tier-1-4 establishment wins and supersedes the designation in the
       // same transaction. The scope is bound, so it leaves the answer for two
       // independent reasons; assert the designation state moved as well.
-      establish(store, UNBORN, 'lab', 'pin')
+      establish(store, UNBORN, 'lab', { action: 'supersede', supersededBy: 'pin' })
       expect(store.liveDesignation(UNBORN)).toBeUndefined()
       expect(store.listUnbornDesignationsForNode('max3')).toHaveLength(0)
       expect(store.listUnbornDesignationsForNode('lab')).toHaveLength(0)

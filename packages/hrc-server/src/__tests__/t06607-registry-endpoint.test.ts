@@ -51,7 +51,6 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
         post('/v1/federation/registry/establish', TOKEN, {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'pin',
         })
       )
       expect(established.status).toBe(200)
@@ -65,6 +64,8 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
       expect(JSON.stringify(body)).not.toContain('placementEpoch')
       expect(JSON.stringify(body)).not.toContain('birthClass')
       expect(JSON.stringify(body)).not.toContain('authorityProvenance')
+      expect(JSON.stringify(body)).not.toContain('placementSource')
+      expect(JSON.stringify(body)).not.toContain('establishmentProvenance')
 
       const consulted = await h.handler(
         new Request(
@@ -89,7 +90,6 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
         post('/v1/federation/registry/establish', TOKEN, {
           scopeRef: SCOPE,
           homeNodeId: 'max3',
-          placementSource: 'pin',
         })
       )
       expect(wrongEstablish.status).toBe(403)
@@ -98,7 +98,6 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
         post('/v1/federation/registry/establish', TOKEN, {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'pin',
         })
       )
       const wrongDelete = await h.handler(
@@ -122,7 +121,6 @@ describe('T-06607 authenticated home-only registry endpoint', () => {
         post('/v1/federation/registry/establish', TOKEN, {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'pin',
         })
       )
       const deleted = await h.handler(

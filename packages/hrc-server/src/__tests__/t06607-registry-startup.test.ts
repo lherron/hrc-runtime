@@ -93,7 +93,6 @@ describe('T-06607 isolated daemon registry lifecycle', () => {
           body: JSON.stringify({
             scopeRef: SCOPE,
             homeNodeId: 'lab',
-            placementSource: 'pin',
           }),
         })
         expect(established.status).toBe(200)

@@ -213,7 +213,6 @@ describe('T-06663 establishment compatibility', () => {
   const request = {
     scopeRef: SCOPE,
     homeNodeId: 'lab',
-    placementSource: 'pin' as const,
     now: '2026-07-20T00:00:00.000Z',
   }
 
@@ -221,6 +220,7 @@ describe('T-06663 establishment compatibility', () => {
     const response: BindingEstablishResult = { outcome: 'created', binding: BINDING }
     const client = clientWith((_url, init) => {
       expect(init.method).toBe('POST')
+      expect(JSON.parse(String(init.body))).toEqual(request)
       return Promise.resolve(json({ ok: true, authenticatedNodeId: 'lab', ...response }))
     })
     let installed: PlacementBinding | undefined
@@ -359,7 +359,6 @@ describe('T-06663 real registry endpoint integration', () => {
       expect(await client.consult(SCOPE)).toEqual({ outcome: 'unbound' })
       const established = await client.establish({
         ...BINDING,
-        placementSource: 'pin',
         now: BINDING.updatedAt,
       })
       expect(established).toMatchObject({
@@ -381,7 +380,6 @@ describe('T-06663 real registry endpoint integration', () => {
         ...BINDING,
         scopeRef: LOCAL_SCOPE,
         homeNodeId: 'svc',
-        placementSource: 'pin',
         now: BINDING.updatedAt,
       })
       expect(localEstablished).toMatchObject({

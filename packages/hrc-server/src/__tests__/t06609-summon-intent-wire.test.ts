@@ -112,7 +112,6 @@ describe('races have no priority rule: first registry write wins', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementSource: 'default_home_node',
           now: '2026-07-20T00:00:00.000Z',
         },
       })
@@ -125,7 +124,6 @@ describe('races have no priority rule: first registry write wins', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'max3',
-          placementSource: 'explicit_local',
           now: '2026-07-20T00:00:01.000Z',
         },
       })
@@ -149,7 +147,6 @@ describe('races have no priority rule: first registry write wins', () => {
           request: {
             scopeRef: SCOPE,
             homeNodeId: 'max3',
-            placementSource: 'explicit_local',
             now: '2026-07-20T00:00:00.000Z',
           },
         }),
@@ -159,7 +156,6 @@ describe('races have no priority rule: first registry write wins', () => {
           request: {
             scopeRef: SCOPE,
             homeNodeId: 'lab',
-            placementSource: 'default_home_node',
             now: '2026-07-20T00:00:00.000Z',
           },
         }),

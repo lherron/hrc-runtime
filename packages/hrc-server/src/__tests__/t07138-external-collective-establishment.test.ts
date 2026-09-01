@@ -177,7 +177,6 @@ describe('T-07138 post-mint collective establishment', () => {
     const registered = registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementSource: 'explicit_local',
       now: new Date().toISOString(),
     }).binding
     expect(createPlacementLedgerRepository(db.sqlite).activeAuthority(SCOPE)).toBeUndefined()
@@ -368,7 +367,6 @@ describe('T-07138 post-mint collective establishment', () => {
     registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'lab',
-      placementSource: 'pin',
       now: new Date().toISOString(),
     })
     const conflictServer = reconciliationServer(registryClient(registry))

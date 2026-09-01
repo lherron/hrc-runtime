@@ -4,11 +4,12 @@ import { dirname } from 'node:path'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type {
+  BirthDesignationEstablishmentDecision,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationState,
+  BirthDesignationSupersededBy,
   FederationPlacementBinding,
-  FederationPlacementSource,
 } from 'hrc-core'
 
 export type {
@@ -16,7 +17,8 @@ export type {
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
-  FederationPlacementSource,
+  BirthDesignationEstablishmentDecision,
+  BirthDesignationSupersededBy,
 } from 'hrc-core'
 
 export type PlacementLedgerState = 'active' | 'retired'
@@ -48,8 +50,8 @@ export type RetirePlacementResult = {
 export type EstablishBindingInput = {
   scopeRef: string
   homeNodeId: string
-  /** Transient T-07655 designation precedence input; it is not persisted. */
-  placementSource: FederationPlacementSource
+  /** T-07655-only arbitration input; ordinary establishment omits it. */
+  birthDesignation?: BirthDesignationEstablishmentDecision | undefined
   now: string
 }
 
@@ -77,18 +79,6 @@ export type RecordBirthDesignationInput = {
   now: string
 }
 
-const SUPERSEDING_SOURCES = new Set<FederationPlacementSource>([
-  'pin',
-  'task_default',
-  'default_home_node',
-  'explicit_local',
-])
-
-const DESIGNATED_SOURCES = new Set<FederationPlacementSource>([
-  'default_home_node(sender)',
-  'default_home_node(sender-retired)',
-])
-
 type PlacementRow = {
   scope_ref: string
   home_node_id: string
@@ -115,7 +105,7 @@ type DesignationRow = {
   sender_scope_ref: string
   designated_at: string
   state: BirthDesignationState
-  superseded_by: FederationPlacementSource | null
+  superseded_by: BirthDesignationSupersededBy | null
   superseded_at: string | null
 }
 
@@ -566,19 +556,24 @@ export class BindingRegistry {
         const designation = this.liveDesignation(scopeRef)
         if (designation !== undefined && current === undefined) {
           if (
-            DESIGNATED_SOURCES.has(input.placementSource) &&
+            input.birthDesignation?.action === 'enforce-designated-home' &&
             homeNodeId !== designation.homeNodeId
           ) {
             return { outcome: 'designation-mismatch', designation }
           }
-          if (SUPERSEDING_SOURCES.has(input.placementSource)) {
+          if (input.birthDesignation?.action === 'supersede') {
             this.sqlite
               .query(
                 `UPDATE birth_designation
                     SET state = 'superseded', superseded_by = ?, superseded_at = ?
                   WHERE scope_ref = ? AND designation_epoch = ?`
               )
-              .run(input.placementSource, input.now, scopeRef, designation.designationEpoch)
+              .run(
+                input.birthDesignation.supersededBy,
+                input.now,
+                scopeRef,
+                designation.designationEpoch
+              )
           }
         }
         if (current !== undefined) return { outcome: 'existing', binding: current }

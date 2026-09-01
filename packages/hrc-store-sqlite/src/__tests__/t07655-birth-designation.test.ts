@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { openBindingRegistry } from '../index.js'
-import type { BindingRegistry } from '../index.js'
+import type { BindingRegistry, BirthDesignationEstablishmentDecision } from '../index.js'
 
 /**
  * T-07655 — the registry half of the tier-5 birth designation.
@@ -44,13 +44,13 @@ function designate(store: BindingRegistry, homeNodeId: string, at = '2026-08-28T
 function establish(
   store: BindingRegistry,
   homeNodeId: string,
-  placementSource: Parameters<BindingRegistry['establish']>[0]['placementSource'],
+  birthDesignation?: BirthDesignationEstablishmentDecision,
   at = '2026-08-28T05:01:00.000Z'
 ) {
   return store.establish({
     scopeRef: TARGET,
     homeNodeId,
-    placementSource,
+    ...(birthDesignation === undefined ? {} : { birthDesignation }),
     now: at,
   })
 }
@@ -90,7 +90,7 @@ describe('T-07655 birth designation', () => {
     const store = await registry()
     try {
       designate(store, 'max3')
-      const refused = establish(store, 'svc', 'default_home_node(sender)')
+      const refused = establish(store, 'svc', { action: 'enforce-designated-home' })
 
       expect(refused.outcome).toBe('designation-mismatch')
       if (refused.outcome !== 'designation-mismatch') throw new Error('unreachable')
@@ -108,7 +108,7 @@ describe('T-07655 birth designation', () => {
     const store = await registry()
     try {
       designate(store, 'max3')
-      const created = establish(store, 'max3', 'default_home_node(sender)')
+      const created = establish(store, 'max3', { action: 'enforce-designated-home' })
 
       expect(created.outcome).toBe('created')
       if (created.outcome !== 'created') throw new Error('unreachable')
@@ -133,7 +133,7 @@ describe('T-07655 birth designation', () => {
       const store = await registry()
       try {
         designate(store, 'max3')
-        const created = establish(store, 'svc', provenance)
+        const created = establish(store, 'svc', { action: 'supersede', supersededBy: provenance })
 
         expect(created.outcome).toBe('created')
         if (created.outcome !== 'created') throw new Error('unreachable')
@@ -160,7 +160,7 @@ describe('T-07655 birth designation', () => {
     const store = await registry()
     try {
       designate(store, 'max3')
-      const created = establish(store, 'svc', 'default_home_node(local)')
+      const created = establish(store, 'svc')
 
       expect(created.outcome).toBe('created')
       expect(store.liveDesignation(TARGET)?.homeNodeId).toBe('max3')
@@ -176,7 +176,7 @@ describe('T-07655 birth designation', () => {
     const store = await registry()
     try {
       designate(store, 'max3')
-      establish(store, 'svc', 'explicit_local')
+      establish(store, 'svc', { action: 'supersede', supersededBy: 'explicit_local' })
       expect(store.liveDesignation(TARGET)).toBeUndefined()
 
       const second = designate(store, 'lab', '2026-08-28T06:00:00.000Z')
@@ -198,7 +198,6 @@ describe('T-07655 birth designation', () => {
     first.establish({
       scopeRef: 'agent:clod:project:hrc-runtime:task:T-00001',
       homeNodeId: 'max3',
-      placementSource: 'pin',
       now: '2026-08-01T00:00:00.000Z',
     })
     first.close()
@@ -208,7 +207,9 @@ describe('T-07655 birth designation', () => {
     try {
       expect(second.get('agent:clod:project:hrc-runtime:task:T-00001')?.homeNodeId).toBe('max3')
       expect(designate(second, 'max3').designationEpoch).toBe(1)
-      expect(establish(second, 'max3', 'default_home_node(sender)').outcome).toBe('created')
+      expect(establish(second, 'max3', { action: 'enforce-designated-home' }).outcome).toBe(
+        'created'
+      )
     } finally {
       second.close()
     }

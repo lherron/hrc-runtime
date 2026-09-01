@@ -12,28 +12,27 @@ import type { HrcMailEnvelope, HrcMailSendRequest } from './hrcmail-contracts.js
  * reachable from the client that has to deserialize it. hrc-core is the one
  * package everything downstream can see.
  *
- * Placement-source vocabulary remains here because the T-07655 birth
- * designation must distinguish declared tiers from its fallback tier while a
- * virgin binding is being established. It is transient decision input, not a
- * property of the established binding.
+ * The only retained provenance vocabulary belongs to the distinct T-07655
+ * birth-designation decision. Established bindings carry no provenance.
  */
 
-/** The placement decision used while attempting a virgin establishment. */
-export type FederationPlacementSource =
+/** A declared establishment that atomically supersedes a tier-5 designation. */
+export type BirthDesignationSupersededBy =
   | 'pin'
   | 'task_default'
   | 'default_home_node'
-  | 'default_home_node(local)'
   | 'explicit_local'
-  /**
-   * T-07655 — the two tier-5 provenances of a mail-triggered implicit summon
-   * whose birth node was DESIGNATED from the sender's own home. They sit at the
-   * same tier as `default_home_node(local)` and are the only provenances the
-   * establish fence can refuse; every tier-1-4 provenance supersedes a live
-   * designation instead of being refused by it.
-   */
-  | 'default_home_node(sender)'
-  | 'default_home_node(sender-retired)'
+
+/**
+ * Transient input to the birth-designation transaction, never binding data.
+ * Ordinary establishment omits it entirely.
+ */
+export type BirthDesignationEstablishmentDecision =
+  | {
+      readonly action: 'supersede'
+      readonly supersededBy: BirthDesignationSupersededBy
+    }
+  | { readonly action: 'enforce-designated-home' }
 
 /** The tier-5 provenances a birth designation can produce (T-07655). */
 export type BirthDesignationProvenance =
@@ -65,8 +64,8 @@ export type BirthDesignationRecord = {
   readonly designationEpoch: number
   readonly designatedAt: string
   readonly state: BirthDesignationState
-  /** The provenance of the tier-1-4 establishment that superseded it. */
-  readonly supersededBy?: FederationPlacementSource | undefined
+  /** The declared tier that superseded this designation. */
+  readonly supersededBy?: BirthDesignationSupersededBy | undefined
   readonly supersededAt?: string | undefined
 }
 

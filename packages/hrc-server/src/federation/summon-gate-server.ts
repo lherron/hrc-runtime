@@ -22,7 +22,7 @@ import {
   formatCanonicalScopeRef,
 } from 'hrc-core'
 import type {
-  FederationPlacementSource,
+  BirthDesignationEstablishmentDecision,
   FederationRemoteEstablishResult,
   SummonIntent,
 } from 'hrc-core'
@@ -652,7 +652,7 @@ export async function establishExternalRegistrationPlacement(
         ...(placement.homeNodeId === undefined ? {} : { homeNodeId: placement.homeNodeId }),
       }
     }
-    if (placement.kind !== 'virgin-policy' || typeof placement.provenance !== 'string') {
+    if (placement.kind !== 'virgin-policy') {
       return {
         outcome: 'noncanonical',
         cause: 'placement_refused',
@@ -668,7 +668,9 @@ export async function establishExternalRegistrationPlacement(
         request: {
           scopeRef: request.scopeRef,
           homeNodeId: deps.localNodeId,
-          placementSource: placement.provenance,
+          ...(placement.birthDesignation === undefined
+            ? {}
+            : { birthDesignation: placement.birthDesignation }),
           now: new Date().toISOString(),
         },
       })
@@ -811,12 +813,7 @@ export async function establishRemotePolicyAuthority(
         ...(placement.homeNodeId === undefined ? {} : { homeNodeId: placement.homeNodeId }),
       })
     }
-    if (
-      placement.kind !== 'virgin-policy' ||
-      typeof placement.provenance !== 'string' ||
-      placement.provenance === 'explicit_local' ||
-      placement.provenance === 'default_home_node(local)'
-    ) {
+    if (placement.kind !== 'virgin-policy') {
       return remoteEstablishRefusal({
         message: 'remote establishment is restricted to named policy-born virgin scopes',
         reason: 'claim-birth-authority-required',
@@ -831,7 +828,9 @@ export async function establishRemotePolicyAuthority(
         request: {
           scopeRef,
           homeNodeId: deps.localNodeId,
-          placementSource: placement.provenance,
+          ...(placement.birthDesignation === undefined
+            ? {}
+            : { birthDesignation: placement.birthDesignation }),
           now: new Date().toISOString(),
         },
       })
@@ -936,7 +935,7 @@ async function commitAuthorizedEstablishment(input: {
   request: SummonAuthorityRequest
   mode: SummonGateResult['mode']
   homeNodeId: string
-  placementSource: FederationPlacementSource
+  birthDesignation?: BirthDesignationEstablishmentDecision | undefined
   label: 'policy'
 }): Promise<void> {
   let established: Awaited<ReturnType<typeof establishLocalPlacement>>
@@ -947,7 +946,9 @@ async function commitAuthorizedEstablishment(input: {
       request: {
         scopeRef: input.request.scopeRef,
         homeNodeId: input.homeNodeId,
-        placementSource: input.placementSource,
+        ...(input.birthDesignation === undefined
+          ? {}
+          : { birthDesignation: input.birthDesignation }),
         now: new Date().toISOString(),
       },
     })
@@ -1119,16 +1120,16 @@ export async function assertSummonAuthority(
   if (
     result.evaluation.decision === 'allow' &&
     result.evaluation.reason === 'virgin-establishment' &&
-    result.evaluation.homeNodeId !== undefined &&
-    result.evaluation.placementSource !== undefined
+    result.evaluation.homeNodeId !== undefined
   ) {
-    const source = result.evaluation.placementSource
     await commitAuthorizedEstablishment({
       deps,
       request,
       mode: result.mode,
       homeNodeId: result.evaluation.homeNodeId,
-      placementSource: source,
+      ...(result.evaluation.birthDesignation === undefined
+        ? {}
+        : { birthDesignation: result.evaluation.birthDesignation }),
       label: 'policy',
     })
   }

@@ -271,6 +271,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "BirthDesignationEstablishmentDecision",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationEstablishmentDecision|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BirthDesignationProvenance",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -299,6 +307,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|BirthDesignationState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BirthDesignationSupersededBy",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthDesignationSupersededBy|type",
       "count": 1
     },
     {
@@ -891,14 +907,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationPlacementBinding|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationPlacementSource",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationPlacementSource|type",
       "count": 1
     },
     {

@@ -82,7 +82,6 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
       createPlacementLedgerRepository(db.sqlite).installActive({
         scopeRef,
         homeNodeId: 'svc-test',
-        placementSource: 'default_home_node',
         updatedAt: '2026-07-20T00:00:00.000Z',
       })
     } finally {

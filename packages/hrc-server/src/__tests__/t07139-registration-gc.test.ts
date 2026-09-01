@@ -105,7 +105,6 @@ describe('T-07139 operator-invoked registration retirement', () => {
     const binding = registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementSource: 'explicit_local',
       now: OLD,
     }).binding
     createPlacementLedgerRepository(db.sqlite).installActive(binding)

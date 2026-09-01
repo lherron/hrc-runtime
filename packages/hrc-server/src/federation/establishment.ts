@@ -1,7 +1,7 @@
 import type {
   BindingRegistry,
+  BirthDesignationEstablishmentDecision,
   BirthDesignationRecord,
-  FederationPlacementSource,
   PlacementBinding,
   PlacementLedgerRepository,
 } from 'hrc-store-sqlite'
@@ -11,7 +11,7 @@ import { parseNodeId } from './node-id.js'
 export type EstablishLocalPlacementRequest = {
   scopeRef: string
   homeNodeId: string
-  placementSource: FederationPlacementSource
+  birthDesignation?: BirthDesignationEstablishmentDecision | undefined
   now: string
 }
 
@@ -51,7 +51,9 @@ export async function establishLocalPlacement(input: {
   const registryResult = await input.registry.establish({
     scopeRef: input.request.scopeRef,
     homeNodeId,
-    placementSource: input.request.placementSource,
+    ...(input.request.birthDesignation === undefined
+      ? {}
+      : { birthDesignation: input.request.birthDesignation }),
     now: input.request.now,
   })
   if (registryResult.outcome === 'designation-mismatch') {
