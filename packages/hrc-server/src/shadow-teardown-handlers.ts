@@ -74,7 +74,12 @@ export function startForeignHomeShadowTeardown(this: HrcServerInstanceForHandler
   // yet — and a shadow is a standing condition, so waiting one interval costs
   // nothing.
   this.shadowTeardownTimer = setInterval(() => {
-    void this.runForeignHomeShadowTeardown()
+    void this.runForeignHomeShadowTeardown().catch((error) => {
+      writeServerLog('WARN', 'federation.shadow_teardown.pass_failed', {
+        localNodeId: this.federationNodeId,
+        error: errorText(error),
+      })
+    })
   }, SHADOW_TEARDOWN_INTERVAL_MS)
   this.shadowTeardownTimer.unref?.()
 }

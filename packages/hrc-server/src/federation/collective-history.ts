@@ -196,9 +196,9 @@ export class CollectiveHistoryCoordinator {
     }
     if (!this.isAuthority) {
       this.timer = setInterval(() => {
-        void this.drainDue()
+        this.requestDrain('poll')
       }, this.pollIntervalMs)
-      void this.drainDue()
+      this.requestDrain('startup')
     }
   }
 
@@ -381,7 +381,7 @@ export class CollectiveHistoryCoordinator {
         })
       } else {
         this.options.db.collectiveHistoryReplications.enqueue(observation, this.now().toISOString())
-        void this.drainDue()
+        this.requestDrain('message_observed', record.messageId)
       }
     } catch (error) {
       writeServerLog('WARN', 'federation.collective_history.observe_failed', {
@@ -390,6 +390,17 @@ export class CollectiveHistoryCoordinator {
         error: error instanceof Error ? error.message : String(error),
       })
     }
+  }
+
+  private requestDrain(trigger: string, messageId?: string): void {
+    void this.drainDue().catch((error) => {
+      writeServerLog('WARN', 'federation.collective_history.drain_failed', {
+        localNodeId: this.localNodeId,
+        trigger,
+        ...(messageId === undefined ? {} : { messageId }),
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 
   private async drainDueInner(): Promise<void> {

@@ -1541,7 +1541,14 @@ export function drainMailKickerTarget(
   })().finally(() => {
     this.mailKickerTargetOperations.delete(targetSessionRef)
     if (this.mailKickerPendingTargets.has(targetSessionRef) && !this.stopping) {
-      queueMicrotask(() => void this.drainMailKickerTarget(targetSessionRef))
+      queueMicrotask(() => {
+        void this.drainMailKickerTarget(targetSessionRef).catch((error: unknown) => {
+          writeServerLog('WARN', 'wrkq.kicker.rekick_failed', {
+            targetSessionRef,
+            error: errorText(error),
+          })
+        })
+      })
     }
   })
   this.mailKickerTargetOperations.set(targetSessionRef, operation)

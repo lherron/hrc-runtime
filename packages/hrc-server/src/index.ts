@@ -2042,6 +2042,14 @@ class HrcServerInstance implements HrcServer {
       runtimeId,
       runId,
       transport: 'tmux',
+    }).catch((error) => {
+      writeServerLog('ERROR', 'command_run.finalize_failed', {
+        configuredTargetId: body.configuredTargetId,
+        hostSessionId: session.hostSessionId,
+        runtimeId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     })
 
     return json({

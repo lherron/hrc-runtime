@@ -4,6 +4,7 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
 
 import {
+  type ShutdownIntent,
   collectServerRuntimeStatus,
   collectTmuxStatus,
   consumeShutdownIntent,
@@ -35,6 +36,72 @@ import { isHrcDomainErrorLike } from './errors.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
 const DEFAULT_RESTART_PROOF_TIMEOUT_MS = 30_000
+
+type SerializedRejectionCause = {
+  type: string
+  name?: string | undefined
+  message: string
+  stack?: string | undefined
+}
+
+function rejectionCauseChain(reason: unknown): SerializedRejectionCause[] {
+  const chain: SerializedRejectionCause[] = []
+  const seen = new Set<unknown>()
+  let current = reason
+
+  while (true) {
+    if ((typeof current === 'object' && current !== null) || typeof current === 'function') {
+      if (seen.has(current)) {
+        chain.push({ type: 'circular', message: '[circular cause]' })
+        break
+      }
+      seen.add(current)
+    }
+
+    if (!(current instanceof Error)) {
+      let message: string
+      try {
+        message = String(current)
+      } catch {
+        message = '[unprintable rejection]'
+      }
+      chain.push({ type: typeof current, message })
+      break
+    }
+
+    chain.push({
+      type: 'Error',
+      name: current.name,
+      message: current.message,
+      ...(current.stack === undefined ? {} : { stack: current.stack }),
+    })
+
+    let cause: unknown
+    try {
+      cause = current.cause
+    } catch {
+      cause = '[unreadable cause]'
+    }
+    if (cause === undefined) break
+    current = cause
+  }
+
+  return chain
+}
+
+function shutdownIntentLogDetails(intent: ShutdownIntent | undefined): Record<string, unknown> {
+  return {
+    requestedBy: intent?.requestedBy ?? null,
+    ...(intent
+      ? {
+          requestedAction: intent.action,
+          requestedRunId: intent.requestedRunId,
+          requestedReason: intent.reason,
+          requestedByPid: intent.byPid,
+        }
+      : {}),
+  }
+}
 
 /**
  * Run the HRC server in the foreground without probing launchd. Intended
@@ -507,6 +574,76 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     registrationClasses: await loadRegistrationClassesFromEnv(),
   })
 
+  let shutdownStarted = false
+  let shutdownReason: string | undefined
+  let shutdownIntent: ShutdownIntent | undefined
+  let shutdownExitCode = 0
+
+  const shutdown = (
+    reason: string,
+    options: { exitCode?: number; intent?: ShutdownIntent | undefined } = {}
+  ): void => {
+    shutdownExitCode = Math.max(shutdownExitCode, options.exitCode ?? 0)
+    if (shutdownStarted) return
+
+    shutdownStarted = true
+    shutdownReason = reason
+    shutdownIntent = options.intent ?? consumeShutdownIntent()
+    writeServerProcessLog('server.shutting_down', {
+      pid: process.pid,
+      reason,
+      ...shutdownIntentLogDetails(shutdownIntent),
+    })
+
+    // This promise is deliberately caught locally. The process-level rejection
+    // policy must not recursively handle a failure in its own graceful teardown.
+    void (async () => {
+      try {
+        await server.stop()
+      } catch (error) {
+        shutdownExitCode = 1
+        writeServerProcessLog('server.shutdown_failed', {
+          pid: process.pid,
+          reason,
+          causeChain: rejectionCauseChain(error),
+          ...shutdownIntentLogDetails(shutdownIntent),
+        })
+      }
+      try {
+        await unlink(paths.pidPath)
+      } catch {}
+      process.exit(shutdownExitCode)
+    })().catch((error) => {
+      writeServerProcessLog('server.shutdown_failed', {
+        pid: process.pid,
+        reason,
+        causeChain: rejectionCauseChain(error),
+        ...shutdownIntentLogDetails(shutdownIntent),
+      })
+      process.exit(1)
+    })
+  }
+
+  process.on('unhandledRejection', (reason) => {
+    const decision = shutdownStarted ? 'continue_shutdown' : 'fail_fast'
+    const intent = shutdownIntent ?? consumeShutdownIntent()
+    shutdownExitCode = 1
+    writeServerProcessLog('server.unhandled_rejection', {
+      pid: process.pid,
+      decision,
+      shutdownInProgress: shutdownStarted,
+      shutdownReason: shutdownReason ?? null,
+      causeChain: rejectionCauseChain(reason),
+      ...shutdownIntentLogDetails(intent),
+    })
+    if (!shutdownStarted) {
+      // Installing the listener prevents Bun's implicit immediate exit. The
+      // fail-fast path still exits non-zero, but only after server.stop() has
+      // deliberately drained and closed daemon-owned resources.
+      shutdown('unhandledRejection', { exitCode: 1, intent })
+    }
+  })
+
   // Write PID file for foreground too (used by status/stop)
   await mkdir(paths.runtimeRoot, { recursive: true })
   await writeFile(paths.pidPath, `${process.pid}\n`)
@@ -519,34 +656,11 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     tmuxSocketPath: paths.tmuxSocketPath,
   })
 
-  const shutdown = async (reason: string) => {
-    const intent = consumeShutdownIntent()
-    writeServerProcessLog('server.shutting_down', {
-      pid: process.pid,
-      reason,
-      requestedBy: intent?.requestedBy ?? null,
-      ...(intent
-        ? {
-            requestedAction: intent.action,
-            requestedRunId: intent.requestedRunId,
-            requestedReason: intent.reason,
-            requestedByPid: intent.byPid,
-          }
-        : {}),
-    })
-    await server.stop()
-    // Clean up PID file
-    try {
-      await unlink(paths.pidPath)
-    } catch {}
-    process.exit(0)
-  }
-
   // Ignore SIGHUP so the daemon survives when the parent terminal/session exits
   // (e.g., Claude Code terminating). SIGINT and SIGTERM still trigger graceful shutdown.
   process.on('SIGHUP', () => {})
-  process.on('SIGINT', () => void shutdown('SIGINT'))
-  process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
 }
 
 export async function cmdSessionResolve(args: string[]): Promise<void> {
