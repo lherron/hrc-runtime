@@ -21,7 +21,7 @@ import type { BrokerProjectionResult } from '../event-mapper'
 import type { BrokerControllerError } from './errors'
 import { isActiveBrokerRun } from './internal'
 import { findUserInitiatedContinuationClearReason } from './persistence'
-import type { BrokerControllerLogger, DurableBrokerClientLike } from './types'
+import type { BrokerClientLike, BrokerControllerLogger, DurableBrokerClientLike } from './types'
 
 export type LifecycleContext = {
   db: HrcDatabase
@@ -29,9 +29,9 @@ export type LifecycleContext = {
   serverInstanceId: string
   logger: BrokerControllerLogger
   getActiveInvocationId: (runtimeId: string) => string | undefined
-  getActiveClient: (runtimeId: string) => { close: () => Promise<void> } | undefined
+  getActiveClient: (runtimeId: string) => BrokerClientLike | undefined
   deleteActive: (runtimeId: string) => void
-  markBrokerClosing: (runtimeId: string, reason: string) => void
+  markBrokerClosing: (runtimeId: string, reason: string, client: BrokerClientLike) => void
   fireBrokerTmuxLeaseReap: (runtimeId: string, reason: string) => void
 }
 
@@ -189,7 +189,7 @@ export function markBrokerInvocationTerminal(
 
   const activeClient = ctx.getActiveClient(runtimeId)
   if (activeClient && ctx.getActiveInvocationId(runtimeId) === String(envelope.invocationId)) {
-    ctx.markBrokerClosing(runtimeId, 'broker_invocation_terminal')
+    ctx.markBrokerClosing(runtimeId, 'broker_invocation_terminal', activeClient)
     ctx.deleteActive(runtimeId)
     void activeClient.close().catch((error) => {
       ctx.logger.warn?.('harness broker close after terminal invocation failed', {
@@ -281,7 +281,7 @@ export async function failReplayStale(
     return
   }
   ctx.deleteActive(runtime.runtimeId)
-  ctx.markBrokerClosing(runtime.runtimeId, error.code)
+  ctx.markBrokerClosing(runtime.runtimeId, error.code, client)
   const now = ctx.now()
   ctx.db.brokerInvocations.update(invocation.invocationId, {
     invocationState: 'failed',

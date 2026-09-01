@@ -649,7 +649,7 @@ describe('T-05299 post-reattach same-client control proof', () => {
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
   })
 
-  it('publishes active only after health and matching status succeed', async () => {
+  it('registers close ownership before attach but publishes active only after control proof', async () => {
     const controller = makeController(fixture, undefined, 10)
     const client = readyClient()
 
@@ -660,9 +660,9 @@ describe('T-05299 post-reattach same-client control proof', () => {
     })
 
     expect(result.ok).toBe(true)
+    expect(client.calls.indexOf('onClose')).toBeLessThan(client.calls.indexOf('attach'))
     expect(client.calls.indexOf('health')).toBeGreaterThan(client.calls.indexOf('eventsSince'))
     expect(client.calls.indexOf('status')).toBeGreaterThan(client.calls.indexOf('health'))
-    expect(client.calls.indexOf('onClose')).toBeGreaterThan(client.calls.indexOf('status'))
 
     const dispatch = await controller.dispatchInput({
       runtimeId: RUNTIME_ID,

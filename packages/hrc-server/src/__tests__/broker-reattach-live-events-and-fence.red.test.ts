@@ -188,6 +188,7 @@ class PushStream<T> implements AsyncIterable<T> {
 
 class MockClient implements DurableBrokerClientLike {
   closeHandler: CloseHandler | undefined
+  closed = false
   readonly liveStream = new PushStream<InvocationEventEnvelope>()
   attachResponse!: BrokerAttachResponse
   snapshotResponse!: InvocationSnapshot
@@ -250,7 +251,10 @@ class MockClient implements DurableBrokerClientLike {
   onClose(handler: CloseHandler): void {
     this.closeHandler = handler
   }
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closed = true
+    this.closeHandler?.(new Error('client closed intentionally'))
+  }
 }
 
 function emptySnapshot(over: Partial<InvocationSnapshot> = {}): InvocationSnapshot {
@@ -397,5 +401,46 @@ describe('T-01801 GAP B — a fenced controller releases silently (no crash-term
     // narrow — only the ControllerFenced code is exempt).
     const rt = readRuntime()
     expect(['terminated', 'crashed', 'stale']).toContain(rt.status)
+  })
+})
+
+describe('T-07195 intentional-close ownership follows the client', () => {
+  it('crash-finalizes a same-runtime reattach after an earlier candidate fails and closes', async () => {
+    seed()
+    const controller = makeController()
+
+    const failedClient = new MockClient({ events: [], currentSeq: 3, retentionFloorSeq: 3 })
+    failedClient.snapshotResponse = emptySnapshot({ currentSeq: 3, retentionFloorSeq: 3 })
+    failedClient.attachResponse = attachResponseFor(failedClient.snapshotResponse)
+
+    const failed = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client: failedClient,
+      attachToken: 'first-candidate',
+    })
+    expect(failed.ok).toBe(false)
+    expect(failedClient.closed).toBe(true)
+    expect(readRuntime().status).toBe('stale')
+
+    const attachedClient = new MockClient({ events: [], currentSeq: 0, retentionFloorSeq: 0 })
+    attachedClient.snapshotResponse = emptySnapshot()
+    attachedClient.attachResponse = attachResponseFor(attachedClient.snapshotResponse)
+
+    const attached = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client: attachedClient,
+      attachToken: 'replacement-candidate',
+    })
+    expect(attached.ok).toBe(true)
+
+    attachedClient.closeHandler?.(new Error('replacement socket closed unexpectedly'))
+
+    expect(readRuntime().status).toBe('crashed')
+    expect(db.runs.getByRunId(RUN_ID)?.status).toBe('failed')
+    expect(
+      db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
+        .some((event) => event.eventKind === 'runtime.crashed')
+    ).toBe(true)
   })
 })

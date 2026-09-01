@@ -351,7 +351,10 @@ export class HarnessBrokerController {
       }) => void)
     | undefined
   private readonly active = new Map<string, ActiveBrokerRuntime>()
-  private readonly intentionalClosingRuntimeIds = new Map<string, string>()
+  // Intent belongs to the connection being closed, not the logical runtime ID:
+  // a replacement client may legitimately reuse that ID before an older close
+  // callback arrives.
+  private readonly intentionalClosingClients = new WeakMap<BrokerClientLike, string>()
   // Lever 2 graceful exit: runtimes whose broker-tmux lease reap has been fired,
   // so the several user-exit signals that can arrive for one /quit (continuation
   // clear, then invocation.exited and/or broker close) reap exactly once.
@@ -480,7 +483,8 @@ export class HarnessBrokerController {
       deleteActive: (runtimeId) => {
         this.active.delete(runtimeId)
       },
-      markBrokerClosing: (runtimeId, reason) => this.markBrokerClosing(runtimeId, reason),
+      markBrokerClosing: (runtimeId, reason, client) =>
+        this.markBrokerClosing(runtimeId, reason, client),
       fireBrokerTmuxLeaseReap: (runtimeId, reason) =>
         this.fireBrokerTmuxLeaseReap(runtimeId, reason),
     }
@@ -503,8 +507,10 @@ export class HarnessBrokerController {
       allocationContext: () => this.allocationContext(),
       lifecycleContext: () => this.lifecycleContext(),
       handlePermissionRequest: (request) => this.handlePermissionRequest(request),
-      handleBrokerClose: (runtimeId, error) => this.handleBrokerClose(runtimeId, error),
-      markBrokerClosing: (runtimeId, reason) => this.markBrokerClosing(runtimeId, reason),
+      handleBrokerClose: (runtimeId, error, client) =>
+        this.handleBrokerClose(runtimeId, error, client),
+      markBrokerClosing: (runtimeId, reason, client) =>
+        this.markBrokerClosing(runtimeId, reason, client),
       setActive: (record) => {
         this.active.set(record.runtimeId, record)
       },
@@ -976,7 +982,7 @@ export class HarnessBrokerController {
       return { ok: false, error: this.notActive(runtimeId) }
     }
     const reason = opts.reason ?? 'dispose'
-    this.markBrokerClosing(runtimeId, reason)
+    this.markBrokerClosing(runtimeId, reason, active.client)
     try {
       // Bound the broker RPC sequence: stop/dispose/close await acks from the
       // broker, and a wedged/unresponsive broker (e.g. a durable broker-tmux
@@ -1613,20 +1619,30 @@ export class HarnessBrokerController {
     })
   }
 
-  private handleBrokerClose(runtimeId: string, error: Error): void {
+  private handleBrokerClose(
+    runtimeId: string,
+    error: Error,
+    closingClient?: BrokerClientLike
+  ): void {
     const active = this.active.get(runtimeId)
-    const intentionalReason =
-      active?.closing === true
-        ? (active.closeReason ?? this.intentionalClosingRuntimeIds.get(runtimeId))
-        : this.intentionalClosingRuntimeIds.get(runtimeId)
+    const client = closingClient ?? active?.client
+    const intentionalReason = client
+      ? this.intentionalClosingClients.get(client)
+      : active?.closing === true
+        ? active.closeReason
+        : undefined
     if (intentionalReason) {
       this.logger.info?.('harness broker process closed intentionally', {
         runtimeId,
         reason: intentionalReason,
         error: error.message,
       })
-      this.active.delete(runtimeId)
-      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      if (active?.client === client) {
+        this.active.delete(runtimeId)
+      }
+      if (client) {
+        this.intentionalClosingClients.delete(client)
+      }
       return
     }
     // T-01801: a `control.fenced` close means a NEWER controller legitimately
@@ -1681,7 +1697,9 @@ export class HarnessBrokerController {
         error: error.message,
       })
       this.active.delete(runtimeId)
-      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      if (client) {
+        this.intentionalClosingClients.delete(client)
+      }
       if (this.reconcileBrokerTmuxLivenessOnClose) {
         void this.reconcileBrokerTmuxLivenessOnClose(runtimeId).catch((reapError) => {
           this.logger.warn?.('broker tmux close-path reconcile after user exit failed', {
@@ -1702,10 +1720,17 @@ export class HarnessBrokerController {
     this.markBrokerCrashTerminal(runtimeId, toControllerError('broker_process_closed', error))
   }
 
-  private markBrokerClosing(runtimeId: string, reason: string): void {
-    this.intentionalClosingRuntimeIds.set(runtimeId, reason)
+  private markBrokerClosing(
+    runtimeId: string,
+    reason: string,
+    closingClient?: BrokerClientLike
+  ): void {
     const active = this.active.get(runtimeId)
-    if (active) {
+    const client = closingClient ?? active?.client
+    if (client) {
+      this.intentionalClosingClients.set(client, reason)
+    }
+    if (active && active.client === client) {
       active.closing = true
       active.closeReason = reason
     }
@@ -1844,7 +1869,7 @@ export class HarnessBrokerController {
     active: ActiveBrokerRuntime,
     reason: string
   ): void {
-    this.markBrokerClosing(runtimeId, reason)
+    this.markBrokerClosing(runtimeId, reason, active.client)
     this.active.delete(runtimeId)
     void active.client.close().catch((error: unknown) => {
       this.logger.warn?.('broker close after active RPC timeout failed', {
