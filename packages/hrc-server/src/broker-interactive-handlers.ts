@@ -493,6 +493,35 @@ export async function handleHeadlessBrokerDispatchTurn(
     }
 
     try {
+      const durableInvocation =
+        durableHeadless.activeInvocationId !== undefined
+          ? this.db.brokerInvocations.getByInvocationId(durableHeadless.activeInvocationId)
+          : null
+      if (durableInvocation && isTerminalBrokerInvocationState(durableInvocation.invocationState)) {
+        writeServerLog('INFO', 'headless.durable_terminal_invocation.reprovision', {
+          hostSessionId: session.hostSessionId,
+          runtimeId: durableHeadless.runtimeId,
+          invocationId: durableInvocation.invocationId,
+          invocationState: durableInvocation.invocationState,
+        })
+        await this.terminateRuntime(durableHeadless, { dropContinuation: false }).catch(
+          (error: unknown) => {
+            writeServerLog('WARN', 'headless.durable_terminal_invocation.cleanup_failed', {
+              runtimeId: durableHeadless.runtimeId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        )
+        return await this.executeHeadlessBrokerStartTurn(
+          session,
+          dispatchIntent,
+          dispatchPrompt,
+          runId,
+          options,
+          ownership
+        )
+      }
+
       const reattachResult = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
         runtimeRoot: this.options.runtimeRoot,
         controller: this.getHarnessBrokerController(),

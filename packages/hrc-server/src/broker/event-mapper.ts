@@ -98,6 +98,7 @@ import {
   markRuntimeInputResumed,
   markRuntimeTurnTerminal,
 } from './event-mapper/runtime-state'
+import { isRetryableInvocationFailure } from './invocation-failure'
 
 export type { BrokerEventMapperDeps, BrokerProjectionResult } from './event-mapper/helpers'
 
@@ -313,7 +314,13 @@ export class BrokerEventMapper {
     const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
     this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
-    const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
+    // A retryable invocation failure is attempt-level evidence. Keep it in the
+    // broker ledger for diagnostics/replay, but do not publish a canonical
+    // invocation terminal while the harness has explicitly promised to retry.
+    const lifecycleEvent =
+      stale || isRetryableInvocationFailure(persistedEnvelope)
+        ? undefined
+        : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
     const derived = derivedDescriptors.map((descriptor) =>
       emitDerivedTurnEvent(db, descriptor.eventKind, persistedEnvelope, ctx, now, {
         toolUseId: descriptor.toolUseId,
@@ -804,6 +811,9 @@ export class BrokerEventMapper {
       }
       case 'invocation.failed': {
         const payload = envelope.payload as InvocationFailedPayload
+        if (isRetryableInvocationFailure(envelope)) {
+          break
+        }
         db.brokerInvocations.update(invocationId, {
           invocationState: 'failed',
           lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',

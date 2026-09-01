@@ -39,6 +39,7 @@ import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
 import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
+import { isRetryableInvocationFailure } from './invocation-failure'
 
 import type { AllocationContext } from './controller/allocation'
 import {
@@ -1515,7 +1516,10 @@ export class HarnessBrokerController {
       // `invocation.failed` describes invocation state, not externally-owned
       // process fate. Without the required clean `invocation.exited`, transport
       // loss is classified by the EPR owner as detached, never broker-crashed.
-    } else if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
+    } else if (
+      envelope.type === 'invocation.exited' ||
+      (envelope.type === 'invocation.failed' && !isRetryableInvocationFailure(envelope))
+    ) {
       this.flushBrokerEventGapBackfill(String(envelope.invocationId))
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
     }

@@ -12,7 +12,10 @@
 import { HrcErrorCode } from 'hrc-core'
 import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
+import type {
+  InvocationEventEnvelope,
+  InvocationFailedPayload,
+} from 'spaces-harness-broker-protocol'
 
 import { isExternalLifecycleOwner } from '../../external-participant-lifecycle'
 import { appendHrcEvent } from '../../hrc-event-helper'
@@ -104,10 +107,18 @@ export function markBrokerInvocationTerminal(
   const terminalStatus = userExitReason !== undefined ? 'terminated' : 'crashed'
   const occurredAt = envelope.time ?? now
   const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.crashed'
+  const invocationFailure =
+    envelope.type === 'invocation.failed'
+      ? (envelope.payload as InvocationFailedPayload)
+      : undefined
+  const providerFailureMessage =
+    invocationFailure?.message !== undefined && invocationFailure.message.trim().length > 0
+      ? invocationFailure.message
+      : undefined
   const terminalReason =
     userExitReason !== undefined
       ? 'user_initiated_session_end'
-      : 'broker_invocation_abnormal_terminal'
+      : (providerFailureMessage ?? 'broker_invocation_abnormal_terminal')
   if (runtime.activeRunId !== undefined) {
     const activeRun = ctx.db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && isActiveBrokerRun(activeRun)) {
@@ -119,7 +130,9 @@ export function markBrokerInvocationTerminal(
         errorMessage:
           userExitReason !== undefined
             ? `broker invocation ${String(envelope.invocationId)} ended by user request (${userExitReason})`
-            : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
+            : providerFailureMessage !== undefined
+              ? `broker invocation ${String(envelope.invocationId)} failed: ${providerFailureMessage}`
+              : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
       })
     }
     ctx.db.runtimes.updateRunId(runtimeId, undefined, now)
@@ -176,6 +189,12 @@ export function markBrokerInvocationTerminal(
                   : {}),
                 ...((envelope.payload as { signal?: unknown } | undefined)?.signal !== undefined
                   ? { signal: (envelope.payload as { signal?: unknown }).signal }
+                  : {}),
+                ...((envelope.payload as { message?: unknown } | undefined)?.message !== undefined
+                  ? { message: (envelope.payload as { message?: unknown }).message }
+                  : {}),
+                ...((envelope.payload as { code?: unknown } | undefined)?.code !== undefined
+                  ? { code: (envelope.payload as { code?: unknown }).code }
                   : {}),
                 ...((envelope.payload as { reason?: unknown } | undefined)?.reason !== undefined
                   ? { reason: (envelope.payload as { reason?: unknown }).reason }

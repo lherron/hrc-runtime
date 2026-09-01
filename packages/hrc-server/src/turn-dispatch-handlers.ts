@@ -596,36 +596,47 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (durableHeadless) {
-    const reattachResult = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
-    const recovered =
-      reattachResult.state === 'reattached'
-        ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+    const durableInvocation =
+      durableHeadless.activeInvocationId !== undefined
+        ? this.db.brokerInvocations.getByInvocationId(durableHeadless.activeInvocationId)
         : null
-    if (recovered && recovered.activeInvocationId !== undefined) {
-      assertActuatorSplitRuntimeReuse(intent, recovered)
-      assertBrokerRuntimeReusableAdmission(this.db, recovered)
-      return await finalizeHeadlessBrokerSessionOpen(this, recovered)
+    const terminalInvocation =
+      durableInvocation !== null &&
+      isTerminalBrokerInvocationState(durableInvocation.invocationState)
+    let shouldCleanUp = terminalInvocation
+    if (!terminalInvocation) {
+      const reattachResult = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
+      const recovered =
+        reattachResult.state === 'reattached'
+          ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+          : null
+      if (recovered && recovered.activeInvocationId !== undefined) {
+        assertActuatorSplitRuntimeReuse(intent, recovered)
+        assertBrokerRuntimeReusableAdmission(this.db, recovered)
+        return await finalizeHeadlessBrokerSessionOpen(this, recovered)
+      }
+      shouldCleanUp = reattachResult.state !== 'rejected-outside-runtime-root'
     }
 
-    if (reattachResult.state !== 'rejected-outside-runtime-root') {
-      await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
-        (error: unknown) => {
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          appendHrcEvent(this.db, 'runtime.stale', {
-            ts: timestamp(),
-            hostSessionId: session.hostSessionId,
-            scopeRef: session.scopeRef,
-            laneRef: session.laneRef,
-            generation: session.generation,
-            runtimeId: durableHeadless.runtimeId,
-            transport: 'headless',
-            payload: {
-              reason: 'broker-session-open-reattach-cleanup-failed',
-              error: errorMessage,
-            },
-          })
-        }
-      )
+    if (shouldCleanUp) {
+      await this.terminateRuntime(durableHeadless, {
+        dropContinuation: !terminalInvocation,
+      }).catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        appendHrcEvent(this.db, 'runtime.stale', {
+          ts: timestamp(),
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runtimeId: durableHeadless.runtimeId,
+          transport: 'headless',
+          payload: {
+            reason: 'broker-session-open-reattach-cleanup-failed',
+            error: errorMessage,
+          },
+        })
+      })
     }
   }
 

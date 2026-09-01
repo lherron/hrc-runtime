@@ -293,6 +293,112 @@ describe('HarnessBrokerController', () => {
     expect(fake.callOrder).toContain('close')
   })
 
+  it('keeps retryable invocation failures non-terminal until the definitive provider failure', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'invocation.failed',
+        9,
+        {
+          message: 'invalid peer certificate: UnsupportedCertVersion',
+          code: 'transport_error',
+          retryable: true,
+          data: { willRetry: true, attempt: 3 },
+        },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('ready')
+    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
+      'ready'
+    )
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+        .filter((event) => event.eventKind === 'invocation.failed')
+    ).toHaveLength(0)
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+        .filter((event) => event.eventKind === 'runtime.crashed')
+    ).toHaveLength(0)
+    expect(fake.callOrder).not.toContain('close')
+
+    fake.events.push(
+      envelope(
+        'diagnostic',
+        10,
+        {
+          level: 'warn',
+          source: 'driver',
+          message: 'Reconnecting... 4/5',
+        },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    expect(
+      fixture.db.brokerInvocationEvents.getByInvocationAndSeq('invocation_w2', 10)
+    ).not.toBeNull()
+
+    fake.events.push(
+      envelope(
+        'invocation.failed',
+        11,
+        {
+          message: 'invalid peer certificate: UnsupportedCertVersion',
+          code: 'transport_error',
+          retryable: false,
+          data: { willRetry: false, attempt: 5 },
+          reason: 'retry-exhausted',
+        },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    const runtime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+    expect(runtime?.status).toBe('crashed')
+    expect(runtime?.runtimeStateJson?.['terminalReason']).toBe(
+      'invalid peer certificate: UnsupportedCertVersion'
+    )
+    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')).toMatchObject({
+      invocationState: 'failed',
+      lifecycleTerminalReason: 'retry-exhausted',
+    })
+    expect(fixture.db.runs.getByRunId('run_w2')?.errorMessage).toContain(
+      'invalid peer certificate: UnsupportedCertVersion'
+    )
+    expect(fake.callOrder).toContain('close')
+
+    const crashEvents = fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+      .filter((event) => event.eventKind === 'runtime.crashed')
+    expect(crashEvents).toHaveLength(1)
+    expect(crashEvents[0]).toMatchObject({
+      payload: {
+        reason: 'invalid peer certificate: UnsupportedCertVersion',
+        providerTerminal: {
+          eventType: 'invocation.failed',
+          message: 'invalid peer certificate: UnsupportedCertVersion',
+          code: 'transport_error',
+          reason: 'retry-exhausted',
+        },
+      },
+    })
+  })
+
   it('marks a runtime terminated when a user-ended continuation exits', async () => {
     const fake = new FakeBrokerClient()
     const reaped: string[] = []
