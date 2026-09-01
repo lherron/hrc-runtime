@@ -98,7 +98,6 @@ export type RunRow = {
   broker_input_fenced_at: string | null
   broker_input_fence_reason: string | null
   dispatch_idempotency_key: string | null
-  dispatch_request_hash: string | null
   queue_snapshot_id: string | null
   queued_input_seq: number | null
   queue_snapshot_position: number | null

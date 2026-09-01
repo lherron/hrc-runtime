@@ -185,7 +185,6 @@ export function enqueueDurableHeadlessTurnInput(
       queuedInputSeq: nextQueueSeq,
       dispatchedInputId: `input-${randomUUID()}`,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-      dispatchRequestHash: options.dispatchRequestHash,
       ...dispatchOriginRunFields(options),
     })
     this.db.runs.setCorrelationJson(
@@ -869,9 +868,6 @@ export async function executeHeadlessBrokerInputTurn(
       ...(options.dispatchIdempotencyKey !== undefined
         ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
         : {}),
-      ...(options.dispatchRequestHash !== undefined
-        ? { dispatchRequestHash: options.dispatchRequestHash }
-        : {}),
     })
     if (steered !== 'floor') return steered
   }
@@ -910,7 +906,6 @@ export async function executeHeadlessBrokerInputTurn(
       invocationId,
       operationId: runtime.activeOperationId,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-      dispatchRequestHash: options.dispatchRequestHash,
       ...dispatchOriginRunFields(options),
       // Persist HRC's inputId on the run row so the broker event-mapper can
       // correlate a drained input.accepted envelope back to this run and flip

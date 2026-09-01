@@ -7,7 +7,6 @@ type SteerContributionRow = {
   contribution_id: string
   host_session_id: string
   idempotency_key: string | null
-  request_hash: string | null
   runtime_id: string
   invocation_id: string
   active_run_id: string
@@ -24,7 +23,6 @@ function mapRow(row: SteerContributionRow): HrcSteerContributionRecord {
     contributionId: row.contribution_id,
     hostSessionId: row.host_session_id,
     ...(row.idempotency_key === null ? {} : { idempotencyKey: row.idempotency_key }),
-    ...(row.request_hash === null ? {} : { requestHash: row.request_hash }),
     runtimeId: row.runtime_id,
     invocationId: row.invocation_id,
     activeRunId: row.active_run_id,
@@ -60,7 +58,6 @@ export class SteerContributionRepository {
     contributionId: string
     hostSessionId: string
     idempotencyKey?: string | undefined
-    requestHash?: string | undefined
     runtimeId: string
     invocationId: string
     activeRunId: string
@@ -71,15 +68,14 @@ export class SteerContributionRepository {
       this.db,
       `
         INSERT INTO steer_contributions (
-          contribution_id, host_session_id, idempotency_key, request_hash,
+          contribution_id, host_session_id, idempotency_key,
           runtime_id, invocation_id, active_run_id, input_id,
           state, outcome_code, outcome_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attempting', NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'attempting', NULL, NULL, ?, ?)
       `,
       record.contributionId,
       record.hostSessionId,
       record.idempotencyKey ?? null,
-      record.requestHash ?? null,
       record.runtimeId,
       record.invocationId,
       record.activeRunId,

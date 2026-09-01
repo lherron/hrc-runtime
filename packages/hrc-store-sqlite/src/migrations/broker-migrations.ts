@@ -607,9 +607,6 @@ const runsDispatchIdempotencyMigration: HrcMigration = {
     if (!runColumns.has('dispatch_idempotency_key')) {
       db.exec('ALTER TABLE runs ADD COLUMN dispatch_idempotency_key TEXT')
     }
-    if (!runColumns.has('dispatch_request_hash')) {
-      db.exec('ALTER TABLE runs ADD COLUMN dispatch_request_hash TEXT')
-    }
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_dispatch_idempotency
         ON runs(host_session_id, dispatch_idempotency_key)
@@ -675,7 +672,6 @@ const steerContributionsMigration: HrcMigration = {
         contribution_id       TEXT PRIMARY KEY,
         host_session_id       TEXT NOT NULL,
         idempotency_key       TEXT,
-        request_hash          TEXT,
         runtime_id            TEXT NOT NULL,
         invocation_id         TEXT NOT NULL,
         active_run_id         TEXT NOT NULL,

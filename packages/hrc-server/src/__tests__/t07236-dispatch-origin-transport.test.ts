@@ -59,7 +59,6 @@ describe('T-07236 option threading', () => {
     const origin = { actor: 'agent:mable', kind: 'agent' as const, causationRef: 'jrun-1' }
     const rethreaded = dispatchRunPersistence({
       dispatchIdempotencyKey: 'key-1',
-      dispatchRequestHash: 'hash-1',
       firstTurnTimeoutMs: 5_000,
       origin,
     })
@@ -67,7 +66,6 @@ describe('T-07236 option threading', () => {
     // addition cannot be dropped at one of the hops that use it.
     expect(rethreaded).toEqual({
       dispatchIdempotencyKey: 'key-1',
-      dispatchRequestHash: 'hash-1',
       firstTurnTimeoutMs: 5_000,
       origin,
     })

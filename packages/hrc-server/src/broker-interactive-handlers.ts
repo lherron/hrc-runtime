@@ -215,7 +215,6 @@ export async function handleHeadlessDispatchTurn(
     acceptedAt: now,
     updatedAt: now,
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-    dispatchRequestHash: options.dispatchRequestHash,
     ...dispatchOriginRunFields(options),
   })
 
@@ -371,7 +370,6 @@ export async function handleHeadlessBrokerDispatchTurn(
         source: 'boot',
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-        dispatchRequestHash: options.dispatchRequestHash,
       })
     }
     const bootedRuntime = await bootOperation
@@ -381,7 +379,6 @@ export async function handleHeadlessBrokerDispatchTurn(
         source: 'boot',
         responseFormat: options.responseFormat,
         dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-        dispatchRequestHash: options.dispatchRequestHash,
       })
     }
     return await this.dispatchQueuedHeadlessTurnInput(
@@ -773,9 +770,6 @@ export async function executeInteractiveBrokerInputTurn(
       ...(options.dispatchIdempotencyKey !== undefined
         ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
         : {}),
-      ...(options.dispatchRequestHash !== undefined
-        ? { dispatchRequestHash: options.dispatchRequestHash }
-        : {}),
     })
     if (steered !== 'floor') return steered
   }
@@ -798,7 +792,6 @@ export async function executeInteractiveBrokerInputTurn(
     operationId: runtime.activeOperationId,
     dispatchedInputId: inputId,
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-    dispatchRequestHash: options.dispatchRequestHash,
     ...dispatchOriginRunFields(options),
   })
   if (options.repairCorrelation !== undefined) {

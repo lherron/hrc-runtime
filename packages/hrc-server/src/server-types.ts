@@ -77,10 +77,7 @@ export type AttachBeforeInvocationStartOption = {
   pendingStartId: string
 }
 
-export type DispatchRunPersistenceOptions = Pick<
-  HrcRunRecord,
-  'dispatchIdempotencyKey' | 'dispatchRequestHash'
-> & {
+export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempotencyKey'> & {
   /**
    * Per-request override for the `first_turn_missing` watchdog window
    * (T-07235), in milliseconds. Rides the shared dispatch-persistence options
@@ -111,7 +108,6 @@ export function dispatchRunPersistence(
 ): DispatchRunPersistenceOptions {
   return {
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-    dispatchRequestHash: options.dispatchRequestHash,
     firstTurnTimeoutMs: options.firstTurnTimeoutMs,
     origin: options.origin,
   }

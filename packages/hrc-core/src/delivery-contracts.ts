@@ -131,7 +131,6 @@ export type HrcSteerContributionRecord = {
   contributionId: string
   hostSessionId: string
   idempotencyKey?: string | undefined
-  requestHash?: string | undefined
   runtimeId: string
   invocationId: string
   activeRunId: string

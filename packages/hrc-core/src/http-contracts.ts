@@ -343,7 +343,7 @@ export type DispatchTurnRequest = {
   hostSessionId: string
   /**
    * Caller-stable identity for retrying a dispatch after an ambiguous/lost
-   * response. Reuse with a different semantic request is rejected.
+   * response. The key itself is the replay identity.
    */
   idempotencyKey?: string | undefined
   prompt: string
@@ -376,9 +376,7 @@ export type DispatchTurnRequest = {
    * only thing that lets a dispatch carrying
    * `execution.allowInteractiveSurfaceReuse: false` reuse a healthy matching
    * live runtime, and only when it equals that runtime's ACTIVE invocation.
-   * Absent ⇒ never reuse (a first turn owns nothing yet). Participates in the
-   * idempotency request hash, so a replayed key cannot substitute a different
-   * identity.
+   * Absent ⇒ never reuse (a first turn owns nothing yet).
    */
   establishedBrokerInvocationId?: string | undefined
   /**

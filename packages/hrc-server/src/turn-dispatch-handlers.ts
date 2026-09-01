@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -99,7 +99,6 @@ import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.
 type PublicDispatchWaitStage = 'accepted' | 'turn_started' | 'terminal'
 
 type InFlightIdempotentDispatch = {
-  requestHash: string
   promise: Promise<DispatchTurnResponse>
 }
 
@@ -107,49 +106,6 @@ const idempotentDispatches = new WeakMap<
   HrcServerInstanceForHandlers,
   Map<string, InFlightIdempotentDispatch>
 >()
-
-function canonicalDispatchJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalDispatchJson).join(',')}]`
-  }
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalDispatchJson(record[key])}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
-}
-
-function dispatchRequestHash(input: {
-  prompt: string
-  runtimeIntent?: HrcRuntimeIntent | undefined
-  responseFormat?: HrcTurnResponseFormat | undefined
-  attachments?: unknown
-  whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
-  repair?: unknown
-  // T-07397: surface-ownership identity is part of the SEMANTIC request, so it
-  // must be hashed. `canonicalDispatchJson` always emits the key (absent
-  // serializes as null), giving absent != present != different-value — an
-  // idempotency key cannot be replayed with a substituted identity to smuggle
-  // reuse of a surface the replaying caller does not own.
-  establishedBrokerInvocationId?: string | undefined
-}): string {
-  return createHash('sha256')
-    .update(
-      canonicalDispatchJson({
-        prompt: input.prompt,
-        runtimeIntent: input.runtimeIntent,
-        responseFormat: input.responseFormat,
-        attachments: input.attachments,
-        whenBusy: input.whenBusy,
-        repair: input.repair,
-        establishedBrokerInvocationId: input.establishedBrokerInvocationId,
-      })
-    )
-    .digest('hex')
-}
 
 function resolvePublicWaitStage(input: {
   waitFor?: PublicDispatchWaitStage | undefined
@@ -456,15 +412,6 @@ export async function handleDispatchTurn(
   })
   const waitFor = resolvePublicWaitStage(body)
   const runId = `run-${randomUUID()}`
-  const requestHash = dispatchRequestHash({
-    prompt: body.prompt,
-    runtimeIntent: body.runtimeIntent ?? session.lastAppliedIntentJson,
-    responseFormat: body.responseFormat,
-    attachments: body.attachments,
-    whenBusy: body.whenBusy,
-    repair: body.repair,
-    establishedBrokerInvocationId: body.establishedBrokerInvocationId,
-  })
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
     session,
@@ -479,20 +426,6 @@ export async function handleDispatchTurn(
   if (idempotencyKey !== undefined) {
     const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
     if (existing !== null) {
-      if (
-        existing.dispatchRequestHash !== undefined &&
-        existing.dispatchRequestHash !== requestHash
-      ) {
-        throw new HrcConflictError(
-          HrcErrorCode.STALE_CONTEXT,
-          'dispatch idempotency key was already used for a different request',
-          {
-            hostSessionId: session.hostSessionId,
-            idempotencyKey,
-            runId: existing.runId,
-          }
-        )
-      }
       return await waitForPublicDispatchStage(
         this,
         replayDispatchBody(this, existing),
@@ -510,16 +443,6 @@ export async function handleDispatchTurn(
   }
   const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
   if (pending !== undefined) {
-    if (pending.requestHash !== requestHash) {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        'dispatch idempotency key is in flight for a different request',
-        {
-          hostSessionId: session.hostSessionId,
-          idempotencyKey,
-        }
-      )
-    }
     return await waitForPublicDispatchStage(this, await pending.promise, waitFor, true)
   }
 
@@ -541,7 +464,6 @@ export async function handleDispatchTurn(
       ...(idempotencyKey !== undefined
         ? {
             dispatchIdempotencyKey: idempotencyKey,
-            dispatchRequestHash: requestHash,
           }
         : {}),
       ...(body.repair !== undefined
@@ -561,7 +483,7 @@ export async function handleDispatchTurn(
 
   const dispatchPromise = dispatch()
   if (operationKey !== undefined) {
-    operations.set(operationKey, { requestHash, promise: dispatchPromise })
+    operations.set(operationKey, { promise: dispatchPromise })
   }
   try {
     return await waitForPublicDispatchStage(this, await dispatchPromise, waitFor, false)
