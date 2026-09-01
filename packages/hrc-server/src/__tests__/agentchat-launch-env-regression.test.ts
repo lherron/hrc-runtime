@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { HrcServer, HrcServerOptions } from '../index'
 import { createHrcServer } from '../index'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -58,7 +58,7 @@ async function resolveSession(scopeRef: string): Promise<{
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-agentchat-launch-env-'))
+  tmpDir = (await createSocketScratch('hrc-chat-env-')).root
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

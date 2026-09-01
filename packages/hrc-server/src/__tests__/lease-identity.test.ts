@@ -1,8 +1,7 @@
 import { afterAll, describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, rm, symlink } from 'node:fs/promises'
 import { type Server, createServer } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -11,6 +10,7 @@ import {
   parseLsofUnixSocketPaths,
   sweepOrphanedRendererControlSockets,
 } from '../startup-reconcile/lease-identity'
+import { assertShortSocketPath, createSocketScratch } from './fixtures/socket-scratch'
 
 describe('parseLsofUnixSocketPaths', () => {
   it.each([
@@ -48,7 +48,7 @@ describe('sweepOrphanedRendererControlSockets — deterministic holder semantics
   const servers: Server[] = []
 
   async function makeRoot(): Promise<{ runtimeRoot: string; btmuxDir: string }> {
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'hbo-det-'))
+    const runtimeRoot = (await createSocketScratch('hbo-det-')).root
     roots.push(runtimeRoot)
     const btmuxDir = join(runtimeRoot, 'btmux')
     await mkdir(btmuxDir, { recursive: true })
@@ -61,6 +61,7 @@ describe('sweepOrphanedRendererControlSockets — deterministic holder semantics
   // which is the entire point of this suite.
   async function candidate(btmuxDir: string, name = 'orphan'): Promise<string> {
     const socketPath = join(btmuxDir, `codex-app-server-renderer-control.${name}.sock`)
+    assertShortSocketPath(socketPath)
     const server = createServer()
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -166,7 +167,7 @@ describe('sweepOrphanedRendererControlSockets — deterministic holder semantics
     // two strings differ for the same inode — the general form of the macOS
     // /tmp vs /private/tmp split. String equality misses, and a miss past grace
     // DELETES a live socket, so the matcher must resolve before concluding.
-    const realRoot = await mkdtemp(join(tmpdir(), 'hbo-real-'))
+    const realRoot = (await createSocketScratch('hbo-real-')).root
     roots.push(realRoot)
     const linkRoot = `${realRoot}-link`
     await symlink(realRoot, linkRoot)

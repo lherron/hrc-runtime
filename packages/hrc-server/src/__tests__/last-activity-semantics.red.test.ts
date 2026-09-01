@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot, HrcTargetRuntimeView, InspectRuntimeResponse } from 'hrc-core'
@@ -26,18 +24,20 @@ import {
   makeSeededFixture,
   ts,
 } from './broker-event-mapper-fixtures'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 const OLD_ACTIVITY = '2026-07-17T16:00:00.000Z'
 const RECENT_MUTATION = '2026-07-18T16:00:00.000Z'
 
 async function withDatabase<T>(prefix: string, fn: (db: HrcDatabase, dir: string) => Promise<T>) {
-  const dir = await mkdtemp(join(tmpdir(), prefix))
+  const scratch = await createSocketScratch(prefix)
+  const dir = scratch.root
   const db = openHrcDatabase(join(dir, 'state.sqlite'))
   try {
     return await fn(db, dir)
   } finally {
     db.close()
-    await rm(dir, { recursive: true, force: true })
+    await scratch.cleanup()
   }
 }
 

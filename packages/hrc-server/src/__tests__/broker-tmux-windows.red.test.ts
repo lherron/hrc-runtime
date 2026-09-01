@@ -30,12 +30,10 @@
  * These use a REAL tmux binary on a TEMP socket (tmux behavior is under test).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { createTmuxManager } from '../index'
 import type { TmuxManager } from '../index'
+import { type SocketScratch, createSocketScratch } from './fixtures/socket-scratch'
 
 // Anything in this set carries the named-window contract under test.
 type NamedWindowOps = TmuxManager & {
@@ -57,7 +55,7 @@ type NamedWindowOps = TmuxManager & {
   ): Promise<{ command: string; pid: number; dead: boolean } | null>
 }
 
-let dir: string
+let scratch: SocketScratch
 const sockets: string[] = []
 
 async function killSocket(socketPath: string): Promise<void> {
@@ -73,18 +71,18 @@ async function killSocket(socketPath: string): Promise<void> {
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'hrc-btmux-windows-'))
+  scratch = await createSocketScratch('hrc-btmux-')
 })
 
 afterEach(async () => {
   for (const socketPath of sockets.splice(0)) {
     await killSocket(socketPath)
   }
-  await rm(dir, { recursive: true, force: true })
+  await scratch.cleanup()
 })
 
 function newManager(): { manager: NamedWindowOps; socketPath: string } {
-  const socketPath = join(dir, `btmux-${sockets.length}.sock`)
+  const socketPath = scratch.socketPath(`btmux-${sockets.length}.sock`)
   sockets.push(socketPath)
   const manager = createTmuxManager({ socketPath }) as NamedWindowOps
   return { manager, socketPath }

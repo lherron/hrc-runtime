@@ -27,12 +27,12 @@
  * describes the shipped architecture.
  */
 import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -167,7 +167,7 @@ beforeEach(async () => {
   // real compile in these integration tests yields the v0.2 profile HRC requires.
   process.env['ASP_HEADLESS_DURABLE_BROKER'] = '1'
 
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-test-'))
+  tmpDir = (await createSocketScratch('hrc-sdk-attach-')).root
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

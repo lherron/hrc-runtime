@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
@@ -17,11 +16,17 @@ import {
   reconcileDurableBrokerRuntimeReattach,
 } from '../startup-reconcile'
 import { type TmuxPaneState, createTmuxManager } from '../tmux'
+import {
+  type SocketScratch,
+  assertShortSocketPath,
+  createSocketScratch,
+} from './fixtures/socket-scratch'
 
 const HOST_SESSION_ID = 'hsid-runtime-root-guard'
 const RUNTIME_ID = 'runtime-runtime-root-guard'
 
 let fixtureRoot: string
+let scratch: SocketScratch
 let db: HrcDatabase
 let leaseSockets: string[]
 
@@ -95,6 +100,7 @@ function seedDurableRuntime(adoptionRoot: string): HrcRuntimeSnapshot {
 }
 
 async function createLeaseSession(socketPath: string, sessionName: string): Promise<TmuxPaneState> {
+  assertShortSocketPath(socketPath)
   await mkdir(dirname(socketPath), { recursive: true })
   leaseSockets.push(socketPath)
   const proc = Bun.spawn(
@@ -145,7 +151,8 @@ function seedLegacyRuntime(
 }
 
 beforeEach(async () => {
-  fixtureRoot = await mkdtemp(join(tmpdir(), 'hrc-adoption-root-guard-'))
+  scratch = await createSocketScratch('hrc-adopt-')
+  fixtureRoot = scratch.root
   db = openHrcDatabase(join(fixtureRoot, 'state.sqlite'))
   leaseSockets = []
 })
@@ -158,7 +165,7 @@ afterEach(async () => {
     }).exited
   }
   db.close()
-  await rm(fixtureRoot, { recursive: true, force: true })
+  await scratch.cleanup()
 })
 
 describe('broker adoption runtime-root confinement', () => {

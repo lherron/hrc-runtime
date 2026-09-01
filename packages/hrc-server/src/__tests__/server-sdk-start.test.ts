@@ -28,8 +28,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -44,6 +43,7 @@ import {
   seedTerminatedTmuxRuntime,
   waitForQueuedPrompt,
 } from './fixtures/sdk-dispatch-database.fixture'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -177,7 +177,7 @@ beforeEach(async () => {
   // real compile in these integration tests yields the v0.2 profile HRC requires.
   process.env['ASP_HEADLESS_DURABLE_BROKER'] = '1'
 
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-test-'))
+  tmpDir = (await createSocketScratch('hrc-sdk-start-')).root
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

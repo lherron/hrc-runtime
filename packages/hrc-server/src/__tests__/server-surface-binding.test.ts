@@ -28,8 +28,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { HrcHttpError, HrcSurfaceBindingRecord } from 'hrc-core'
@@ -40,6 +39,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
 import { TmuxManager } from '../tmux'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -211,7 +211,7 @@ async function fetchEvents(): Promise<
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-server-surface-test-'))
+  tmpDir = (await createSocketScratch('hrc-surface-')).root
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
   socketPath = join(runtimeRoot, 'hrc.sock')

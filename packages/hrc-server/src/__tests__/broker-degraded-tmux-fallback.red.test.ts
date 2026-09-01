@@ -30,8 +30,6 @@
  * matching the other broker-tmux lease tests in this suite.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcLifecycleEvent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
@@ -39,6 +37,7 @@ import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { deliverReassociatedBrokerTmuxInput } from '../broker-interactive-handlers'
 import { createTmuxManager } from '../tmux'
+import { createSocketScratch } from './fixtures/socket-scratch'
 
 const PROMPT = 'follow-up question after hrc restart'
 
@@ -74,8 +73,9 @@ async function createLiveSession(socketPath: string, sessionName: string): Promi
 }
 
 async function makeFixture(): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'hrc-degraded-tmux-fallback-'))
-  const leaseSocket = join(dir, 'lease.sock')
+  const scratch = await createSocketScratch('hrc-degraded-')
+  const dir = scratch.root
+  const leaseSocket = scratch.socketPath('lease.sock')
   const sessionName = 'hrc-claude-code-tmux-runtime_degraded'
 
   await createLiveSession(leaseSocket, sessionName)
@@ -97,7 +97,7 @@ async function makeFixture(): Promise<Fixture> {
       } catch {
         // fine when the server is already gone
       }
-      await rm(dir, { recursive: true, force: true })
+      await scratch.cleanup()
     },
   }
 }

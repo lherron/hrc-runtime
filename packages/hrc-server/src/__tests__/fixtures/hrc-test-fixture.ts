@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServerOptions } from '../../index'
 import type { TmuxManager } from '../../tmux'
+import { createSocketScratch } from './socket-scratch'
 
 export type ResolveSessionResult = {
   hostSessionId: string
@@ -96,14 +96,16 @@ function shellSingleQuote(value: string): string {
 }
 
 export async function createHrcTestFixture(prefix: string): Promise<HrcServerTestFixture> {
-  const tmpDir = await mkdtemp(join(tmpdir(), prefix))
+  const scratch = await createSocketScratch(prefix)
+  const tmpDir = scratch.root
   const runtimeRoot = join(tmpDir, 'runtime')
   const stateRoot = join(tmpDir, 'state')
-  const socketPath = join(runtimeRoot, 'hrc.sock')
+  const socketPath = scratch.socketPath('runtime', 'hrc.sock')
   const lockPath = join(runtimeRoot, 'server.lock')
   const spoolDir = join(runtimeRoot, 'spool')
   const dbPath = join(stateRoot, 'state.sqlite')
-  const tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
+  const tmuxSocketPath = scratch.socketPath('runtime', 'tmux.sock')
+  scratch.socketPath('runtime', 'ingest', 'events.sock')
 
   await mkdir(runtimeRoot, { recursive: true })
   await mkdir(stateRoot, { recursive: true })
@@ -314,7 +316,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       }
     }
 
-    await rm(tmpDir, { recursive: true, force: true })
+    await scratch.cleanup()
   }
 
   return {

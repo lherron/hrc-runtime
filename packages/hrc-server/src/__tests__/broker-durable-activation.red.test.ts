@@ -49,8 +49,7 @@
  * the persisted endpoint stays stdio, and the hello stays v1. Tests only.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
@@ -72,6 +71,7 @@ import {
   makeIdentity,
   makeInteractiveTmuxProfile,
 } from './broker-compile-fixtures'
+import { type SocketScratch, createSocketScratch } from './fixtures/socket-scratch'
 
 const NOW = '2026-06-01T22:00:00.000Z'
 
@@ -363,9 +363,11 @@ async function killBtmuxServers(dir: string): Promise<void> {
 let dir: string
 let db: HrcDatabase
 let savedBrokerCmd: string | undefined
+let scratch: SocketScratch
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'hrc-durable-activation-'))
+  scratch = await createSocketScratch('hrc-durable-')
+  dir = scratch.root
   db = openHrcDatabase(join(dir, 'state.sqlite'))
   seedSession(db)
   // Neutralize the default stdio factory: if getHarnessBrokerController ignores
@@ -379,7 +381,7 @@ beforeEach(async () => {
 afterEach(async () => {
   db.close()
   await killBtmuxServers(dir)
-  await rm(dir, { recursive: true, force: true })
+  await scratch.cleanup()
   if (savedBrokerCmd === undefined) {
     process.env['HRC_HARNESS_BROKER_CMD'] = undefined
   } else {
