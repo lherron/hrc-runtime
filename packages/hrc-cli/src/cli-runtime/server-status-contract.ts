@@ -16,6 +16,9 @@ import type { ServerRuntimeStatus } from './server-status.js'
  *   - the parity test, which walks it in both directions against one status
  *     object (every printed line is a documented path; every documented path
  *     resolves, with the same value the line shows), and
+ *   - the source-contract checker, which derives each line's member accesses
+ *     from the TypeScript AST so equal values at different paths cannot hide a
+ *     stale mapping, and
  *   - `hrc info`, which publishes the activation subset with the wrong path
  *     printed beside the right one.
  *
@@ -94,17 +97,38 @@ export const SERVER_STATUS_CONTRACT: readonly ServerStatusContractEntry[] = [
   { label: 'node config', paths: ['node.configPath', 'node.configExists'] },
   {
     label: 'peers',
-    paths: ['node.peerCount', 'node.peers[].nodeId', 'node.peers[].endpoint'],
+    paths: [
+      'node.peerCount',
+      'node.peers[].nodeId',
+      'node.peers[].endpoint',
+      'node.peers[].registryEndpoint',
+    ],
     multiline: true,
+    optional: ['node.peers[].registryEndpoint'],
   },
   {
     label: 'peer health',
-    paths: ['peerHealth[].nodeId', 'peerHealth[].state', 'peerHealth[].latencyMs'],
+    paths: [
+      'peerHealth[].nodeId',
+      'peerHealth[].state',
+      'peerHealth[].latencyMs',
+      'peerHealth[].answeredAt',
+      'peerHealth[].detail',
+    ],
     multiline: true,
+    optional: ['peerHealth[].answeredAt', 'peerHealth[].detail'],
   },
   { label: 'uptime', paths: ['api.uptime'] },
-  { label: 'started', paths: ['api.startedAt'] },
-  { label: 'apiVersion', paths: ['api.apiVersion'] },
+  {
+    label: 'started',
+    paths: ['api.startedAt', 'serverStatus.startedAt'],
+    optional: ['api.startedAt', 'serverStatus.startedAt'],
+  },
+  {
+    label: 'apiVersion',
+    paths: ['api.apiVersion', 'serverStatus.apiVersion'],
+    optional: ['api.apiVersion', 'serverStatus.apiVersion'],
+  },
   { label: 'error', paths: ['error'] },
 ]
 
