@@ -182,10 +182,9 @@ handoff/validation evidence.
   The controlling reason is resume-path integrity — terminated rows anchor
   the `scope_ref` → `host_session_id` → `harness_session_json` chain used
   by `--resume`; deleting them could orphan resumable state.
-- Federation binding-registry retirement rows and node-local epoch fences
-  are also keep-forever authority (no TTL) — a later active epoch makes an
-  older local fence inert but does not delete it, since registry recovery
-  consumes the fence as reconstruction evidence.
+- Federation node-local retirement fences are keep-forever authority (no TTL).
+  The shared active binding is conditionally deleted only after that old-home
+  fence is durable.
 - Before any bulk prune, take a full backup of `state.sqlite`. If disk
   cannot fit a full backup, defer the prune and surface that deferral —
   never perform a bulk prune without its backup. Rolling nightly increments

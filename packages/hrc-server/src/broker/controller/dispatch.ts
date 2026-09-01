@@ -84,6 +84,7 @@ export type DispatchContext = {
   resolveBrokerCommand: () => string
   brokerArgs: string[]
   env: Record<string, string | undefined> | undefined
+  metricsStateRoot: string | undefined
   now: () => string
   serverInstanceId: string
   attachControlProbeTimeoutMs: number
@@ -92,8 +93,8 @@ export type DispatchContext = {
   allocationContext: () => AllocationContext
   lifecycleContext: () => LifecycleContext
   handlePermissionRequest: (request: PermissionRequestParams) => Promise<PermissionDecision>
-  handleBrokerClose: (runtimeId: string, error: Error) => void
-  markBrokerClosing: (runtimeId: string, reason: string) => void
+  handleBrokerClose: (runtimeId: string, error: Error, client: BrokerClientLike) => void
+  markBrokerClosing: (runtimeId: string, reason: string, client: BrokerClientLike) => void
   setActive: (record: {
     runtimeId: string
     invocationId: string
@@ -312,7 +313,12 @@ export async function startController(
     })
     // The log line rotates; this is the durable population that
     // `hrc admin metrics report` aggregates.
-    recordLaunchSpan({ phase, runtimeId: String(input.identity.runtimeId), ms: durMs })
+    if (ctx.metricsStateRoot !== undefined) {
+      recordLaunchSpan(
+        { phase, runtimeId: String(input.identity.runtimeId), ms: durMs },
+        ctx.metricsStateRoot
+      )
+    }
   }
   const markPhase = (phase: string): void => {
     const nowMs = performance.now()
@@ -385,8 +391,9 @@ export async function startController(
     client.onPermissionRequest((request) => ctx.handlePermissionRequest(request))
 
     const identity = input.identity
+    const connectedClient = client
     client.onClose((error) => {
-      ctx.handleBrokerClose(String(identity.runtimeId), error)
+      ctx.handleBrokerClose(String(identity.runtimeId), error, connectedClient)
     })
 
     // T-01866 — HRC negotiates ONLY harness-broker/0.2. The durable route rides
@@ -432,7 +439,7 @@ export async function startController(
         endpointKind: durableSocketPath ? BROKER_TRANSPORT_UNIX : BROKER_TRANSPORT,
       }
       ctx.logger.warn?.('harness broker selected unsupported protocol', detail)
-      ctx.markBrokerClosing(String(input.identity.runtimeId), 'broker-protocol-unsupported')
+      ctx.markBrokerClosing(String(input.identity.runtimeId), 'broker-protocol-unsupported', client)
       await client.close().catch(() => undefined)
       return {
         ok: false,
@@ -448,7 +455,7 @@ export async function startController(
     const admission = admitBrokerHello(input.profile, hello, expectedNegotiation)
     if (!admission.ok) {
       ctx.logger.warn?.('harness broker pre-start admission rejected', admission.detail)
-      ctx.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected')
+      ctx.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected', client)
       await client.close().catch(() => undefined)
       return {
         ok: false,
@@ -487,7 +494,11 @@ export async function startController(
       ctx.logger.warn?.('harness broker response-format admission rejected', {
         ...responseFormatAdmission.detail,
       })
-      ctx.markBrokerClosing(String(identity.runtimeId), 'response-format-admission-rejected')
+      ctx.markBrokerClosing(
+        String(identity.runtimeId),
+        'response-format-admission-rejected',
+        client
+      )
       await client.close().catch(() => undefined)
       return {
         ok: false,
@@ -528,7 +539,7 @@ export async function startController(
         reason: 'initial-input-not-deliverable',
       }
       ctx.logger.warn?.('harness broker response-format undeliverable on start path', detail)
-      ctx.markBrokerClosing(String(identity.runtimeId), 'response-format-undeliverable')
+      ctx.markBrokerClosing(String(identity.runtimeId), 'response-format-undeliverable', client)
       await client.close().catch(() => undefined)
       return {
         ok: false,
@@ -630,7 +641,7 @@ export async function startController(
         startResult.response,
         invocationAdmission.detail
       )
-      ctx.markBrokerClosing(String(identity.runtimeId), 'post-start-admission-rejected')
+      ctx.markBrokerClosing(String(identity.runtimeId), 'post-start-admission-rejected', client)
       await client
         .dispose({ invocationId: startResult.invocationId as InvocationId })
         .catch(() => undefined)
@@ -713,7 +724,7 @@ export async function startController(
     const hostSessionId = String(identity.hostSessionId)
     const session = ctx.db.sessions.getByHostSessionId(hostSessionId)
     if (client) {
-      ctx.markBrokerClosing(String(identity.runtimeId), 'broker-start-failed')
+      ctx.markBrokerClosing(String(identity.runtimeId), 'broker-start-failed', client)
       await client.close().catch(() => undefined)
     }
     ctx.logger.error?.('harness broker start failed', {
@@ -797,6 +808,12 @@ export async function attachAndReplay(
   }
 
   const lastProjectedSeq = ctx.lastProjectedBrokerSeq(invocation.invocationId)
+  // The candidate owns every close from this point, including closes triggered
+  // by failReplayStale. Register before replay so an intentional-close marker
+  // cannot outlive the client that minted it and poison a later same-ID attach.
+  input.client.onClose((error) => {
+    ctx.handleBrokerClose(runtime.runtimeId, error, input.client)
+  })
   try {
     trace('attach.begin', { lastProjectedSeq })
     const attach = await input.client.attach({
@@ -930,9 +947,6 @@ export async function attachAndReplay(
       },
     })
 
-    input.client.onClose((error) => {
-      ctx.handleBrokerClose(runtime.runtimeId, error)
-    })
     ctx.setActive({
       runtimeId: runtime.runtimeId,
       invocationId: invocation.invocationId,

@@ -88,10 +88,7 @@ function homeScopeHere(): void {
   createPlacementLedgerRepository(serverDb().sqlite).installActive({
     scopeRef: SCOPE,
     homeNodeId: (server as unknown as { federationNodeId: string }).federationNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'pin' },
-    establishmentProvenance: 'pin',
+    placementSource: 'pin',
     updatedAt: timestamp(),
   })
 }

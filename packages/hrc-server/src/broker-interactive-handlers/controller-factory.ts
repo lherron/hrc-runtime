@@ -111,7 +111,7 @@ export function getHarnessBrokerController(
     tmuxManagerFactory,
     generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
   })
-  this.harnessBrokerController = new HarnessBrokerController({
+  this.harnessBrokerController = HarnessBrokerController.createProduction({
     db: this.db,
     mapper: {
       apply: (envelope) => {
@@ -134,6 +134,7 @@ export function getHarnessBrokerController(
     tmuxAllocator,
     headlessSubstrateAllocator,
     tmuxTuiAllocator,
+    metricsStateRoot: this.options.stateRoot,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
       const windowName = allocation.lease?.windowName ?? allocation.windowName

@@ -61,6 +61,31 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
 There is no archive migration. Observation history is retained in the live state
 database; only `runtime_buffers` rows past their window are deleted.
 
+## Collaboration state — keep forever
+
+The collaboration tables are also explicit **keep-forever** state. They are not
+an accidental omission from `--tables`, and they were not the source of the
+prior multi-gigabyte observation-ledger growth:
+
+- `messages` is the canonical local message and deduplication ledger. Startup
+  replays it into collective-history observation so the crash gap between the
+  bilateral message transaction and archive derivation is recoverable.
+- `collective_history_messages` and `collective_history_observations` are the
+  authority's canonical history and provenance. Delivered rows in
+  `collective_history_replications` are durable checkpoints; deleting them
+  would make every restart replay the corresponding local message.
+- Every `hrcmail_*` table is durable local execution or recovery state around
+  the wrkq-owned collaboration ledger: drive slots and attempts, presentation
+  receipts, reminders, failure notices, auto-reply intents, and legacy
+  idempotency records.
+
+None has a TTL or standing delete path. A future deletion policy requires its
+own approved terminality and replay-fence contract; row age alone is not
+authority to discard collaboration state. On the 2026-09-01 hrcdev store these
+surfaces were small: 501 `messages`, 501 delivered replication checkpoints, no
+collective-history message/observation rows, and only tens of populated hrcmail
+execution rows in a 484 MiB database.
+
 ## Runtime artifact directories — `first_turn_missing` bundles
 
 `first_turn_missing` diagnostic bundles (T-07235) are the first artifact class
@@ -92,12 +117,14 @@ keep-forever policy above. A missing bundle degrades diagnosis, never detection.
 
 ## Freelist control
 
-The database must use `PRAGMA auto_vacuum=INCREMENTAL` (mode `2`). Installing
-the pointer map into an existing database requires one coordinated full
-`VACUUM`; it cannot be retrofitted by `incremental_vacuum` alone. The nightly
-job fails before deleting anything when the mode is not `INCREMENTAL`, then
-runs `PRAGMA incremental_vacuum` after its batched deletes. The reclaim limit is
-configurable with `--incremental-vacuum-pages` /
+The database must use `PRAGMA auto_vacuum=INCREMENTAL` (mode `2`). New database
+files select that mode before migrations create the first table, so they are
+born with the required pointer map and their first scheduled prune can apply.
+Installing the pointer map into an existing mode-0 database still requires one
+coordinated full `VACUUM`; it cannot be retrofitted by `incremental_vacuum`
+alone. The nightly job fails before deleting anything when the effective mode is
+not `INCREMENTAL`, then runs `PRAGMA incremental_vacuum` after its batched
+deletes. The reclaim limit is configurable with `--incremental-vacuum-pages` /
 `HRC_INCREMENTAL_VACUUM_PAGES`; `0` (the default) drains the freelist.
 
 Freelist reclaim is chunked, never issued as a single unbounded
@@ -143,6 +170,16 @@ database grows:
 Deletes run before reclaim, so a tight budget always spends itself on retention
 first and leaves free pages for the following night.
 
+Candidate discovery and deletion are separate statements. Discovery is a
+read-only indexed query ordered by the table's retention predicate; it may scan
+an arbitrarily large old-but-ineligible prefix, but it never owns the SQLite
+writer. The DELETE receives only that read's adaptive-batch key set and
+re-evaluates the complete eligibility predicate by primary-key lookup under the
+write transaction. Thus live/nonterminal races remain fail-closed while writer
+work is bounded by selected-key cardinality rather than total table size. The
+deadline is checked again after discovery so an expensive read cannot begin a
+late write.
+
 Counting eligible rows is a full predicate scan per table. It is the point of a
 report run and pure overhead under `--apply`, so `--apply` skips it by default;
 `--count-eligible` forces it and `--no-count-eligible` suppresses it. When the
@@ -178,12 +215,10 @@ Terminated `runtimes` rows are keep-forever history: no TTL and no pruning under
 the standing policy. Lance's 2026-07-18 ruling is recorded in T-06531 comment
 C-10793; the fenced T-07598 manifest cleanup above is the sole named exception.
 
-Federation binding-registry retirement rows and node-local epoch fences are
-also keep-forever authority. They have no TTL: expiring either would turn an
-ever-born identity back into a virgin namespace and permit an epoch-1
-collision. A later active epoch makes an older local fence inert, but does not
-delete it because registry recovery consumes the fence as reconstruction
-evidence.
+Federation node-local retirement fences are also keep-forever authority. They
+have no TTL: the ordered retirement operation deletes the shared active binding
+only after the old-home fence is durable, and expiring that fence could restore
+authority on the old home.
 
 The controlling reason is resume-path integrity. Terminated rows anchor the
 `scope_ref` → `host_session_id` → `harness_session_json` chain used by

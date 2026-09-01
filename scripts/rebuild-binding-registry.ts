@@ -5,13 +5,9 @@ import { resolve } from 'node:path'
 import {
   openBindingRegistry,
   readPlacementLedgerRows,
-  readScopeRetirements,
   rebuildBindingRegistryFromLedgers,
 } from '../packages/hrc-store-sqlite/src/index.ts'
-import type {
-  PlacementLedgerRecord,
-  ScopeRetirementRecord,
-} from '../packages/hrc-store-sqlite/src/index.ts'
+import type { PlacementLedgerRecord } from '../packages/hrc-store-sqlite/src/index.ts'
 
 const [rawTarget, ...rawLedgers] = process.argv.slice(2)
 if (rawTarget === undefined || rawLedgers.length === 0) {
@@ -28,7 +24,6 @@ if (existsSync(targetPath)) {
 }
 
 const rows: PlacementLedgerRecord[] = []
-const fences: ScopeRetirementRecord[] = []
 for (const rawLedger of rawLedgers) {
   const ledgerPath = resolve(rawLedger)
   if (!existsSync(ledgerPath)) {
@@ -38,7 +33,6 @@ for (const rawLedger of rawLedgers) {
   const db = new Database(ledgerPath, { readonly: true })
   try {
     rows.push(...readPlacementLedgerRows(db))
-    fences.push(...readScopeRetirements(db))
   } finally {
     db.close()
   }
@@ -46,14 +40,13 @@ for (const rawLedger of rawLedgers) {
 
 const registry = openBindingRegistry(targetPath)
 try {
-  const result = rebuildBindingRegistryFromLedgers(registry, rows, fences)
+  const result = rebuildBindingRegistryFromLedgers(registry, rows)
   console.log(
     JSON.stringify({
       ok: true,
       targetPath,
       sourceLedgers: rawLedgers.length,
       sourceRows: rows.length,
-      sourceRetirementFences: fences.length,
       ...result,
     })
   )

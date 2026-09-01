@@ -194,9 +194,10 @@ hrc admin registrations gc <exact-scope-ref>...
 hrc admin registrations gc <exact-scope-ref>... --yes [--json]
 ```
 
-The command never runs from a timer or lifecycle transition. Retirement installs
-the local epoch fence before performing the exact registry CAS; an unavailable or
-conflicting authority remains visible for an explicit operator retry.
+The command never runs from a timer or lifecycle transition. Retirement writes
+the permanent old-home fence before conditionally deleting the shared binding;
+an unavailable registry leaves a visible `fenced-registry-pending` result for
+an explicit idempotent retry.
 
 ### `monitor show | watch | wait | events | transcript | stats`
 

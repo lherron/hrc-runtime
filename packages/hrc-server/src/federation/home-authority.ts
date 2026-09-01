@@ -32,7 +32,6 @@ import type { BindingRegistryClient } from './registry-client.js'
  */
 export type ForeignHome = Readonly<{
   homeNodeId: string
-  placementEpoch: number
   source: 'placement-ledger' | 'registry'
 }>
 
@@ -106,7 +105,6 @@ export async function resolveForeignHome(
     }
     return {
       homeNodeId: local.homeNodeId,
-      placementEpoch: local.placementEpoch,
       source: 'placement-ledger',
     }
   }
@@ -120,7 +118,6 @@ export async function resolveForeignHome(
     if (consulted.binding.homeNodeId === deps.localNodeId) return undefined
     const learned: ForeignHome = {
       homeNodeId: consulted.binding.homeNodeId,
-      placementEpoch: consulted.binding.placementEpoch,
       source: 'registry',
     }
     deps.memo.set(scopeRef, learned)

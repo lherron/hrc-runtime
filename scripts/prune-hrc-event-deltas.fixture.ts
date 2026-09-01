@@ -1,15 +1,22 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { Database } from 'bun:sqlite'
+import { openHrcDatabase } from '../packages/hrc-store-sqlite/src/database'
 
 export { Database }
 import { afterEach } from 'bun:test'
 
 export {
+  createPurgePlans,
+  createRetentionPlans,
+  deleteSelectedBatch,
+  deleteSelectedBatchSql,
   parsePruneStateRetentionArgs,
   pruneStateRetention,
+  selectEligibleBatch,
+  selectEligibleBatchSql,
   stripEnvelopePayloads,
 } from './prune-hrc-event-deltas'
 
@@ -90,6 +97,13 @@ export function makeStore(incrementalAutoVacuum = true): {
     );
   `)
   return { path, db }
+}
+
+export function makeProductStore() {
+  const dir = mkdtempSync(join(tmpdir(), 'hrc-product-state-retention-'))
+  tempDirs.push(dir)
+  const path = join(dir, 'state.sqlite')
+  return { path, db: openHrcDatabase(path) }
 }
 
 export function seedTerminalAuthority(
@@ -235,6 +249,9 @@ export function pruneOptions(path: string, apply: boolean, batchSize = 10_000) {
     busyMaxRetries: 8,
     countEligible: true,
     tables: ['events', 'hrc_events', 'broker_invocation_events', 'runtime_buffers'] as const,
+    runtimeRoot: join(dirname(path), 'runtime'),
+    firstTurnBundleKeep: 3,
+    firstTurnBundleTtlDays: 14,
     now: NOW,
   }
 }

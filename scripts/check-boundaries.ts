@@ -14,21 +14,6 @@ type Violation = {
   reason?: string
 }
 
-const aspPackages = [
-  'agent-scope',
-  'cli-kit',
-  'config',
-  'runtime',
-  'execution',
-  'harness-claude',
-  'harness-codex',
-  'harness-pi',
-  'harness-pi-sdk',
-  'turn-runner',
-  'agent-spaces',
-  'cli',
-]
-
 const hrcPackages = [
   'agent-action-render',
   'hrc-core',
@@ -44,11 +29,6 @@ const hrcPackages = [
 ]
 
 const layers: Layer[] = [
-  {
-    name: 'ASP',
-    roots: [...aspPackages.map((name) => `packages/${name}`), 'integration-tests'],
-    forbidden: ['hrc-', 'acp-', 'gateway-', 'coordination-substrate', 'wrkq-lib', 'wlearn'],
-  },
   {
     name: 'HRC',
     roots: hrcPackages.map((name) => `packages/${name}`),
@@ -133,6 +113,16 @@ async function collectExistingTsFiles(paths: string[]): Promise<string[]> {
   return files.flat()
 }
 
+async function collectRequiredTsFiles(groupName: string, paths: string[]): Promise<string[]> {
+  const files = await collectExistingTsFiles(paths)
+  if (files.length === 0) {
+    throw new Error(
+      `Boundary check configuration failed: ${groupName} resolved to zero TypeScript inputs from: ${paths.join(', ')}`
+    )
+  }
+  return files
+}
+
 function isForbidden(specifier: string, token: string): boolean {
   if (token.endsWith('-')) {
     return specifier.startsWith(token)
@@ -149,9 +139,7 @@ function packageGroup(file: string): string {
 }
 
 const brokerScopedPaths = [
-  // Broker-path scoped guard only: future broker subsystem files and compile adapters.
-  // This must not become a global hrc-server import ban because legacy launch/exec.ts
-  // still owns direct spaces-harness-codex integration until the cutover removes it.
+  // Broker-path scoped guard only: broker subsystem files and compile adapters.
   'packages/hrc-server/src/broker',
   'packages/hrc-server/src/agent-spaces-adapter/compile-*.ts',
 ]
@@ -168,7 +156,7 @@ const hrcViewerAllowedSdkMethods = new Set([
 
 async function findHrcViewerSdkViolations(): Promise<Violation[]> {
   const violations: Violation[] = []
-  const files = (await collectTsFiles('packages/hrc-viewer/src'))
+  const files = (await collectRequiredTsFiles('HRC viewer SDK scoped', ['packages/hrc-viewer/src']))
     .filter((file) => !file.includes('/__tests__/'))
     .sort()
   const clientCallPattern = /\b(?:this\.)?(?:client|hrcClient)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/g
@@ -188,23 +176,7 @@ async function findHrcViewerSdkViolations(): Promise<Violation[]> {
   return violations
 }
 
-function resolvesToHrcLaunchExec(file: string, specifier: string): boolean {
-  if (!specifier.startsWith('.')) {
-    return false
-  }
-
-  const resolved = resolve(dirname(file), specifier)
-  const launchExec = resolve('packages/hrc-server/src/launch/exec')
-  return (
-    resolved === launchExec || resolved === `${launchExec}.ts` || resolved === `${launchExec}.js`
-  )
-}
-
-function findBrokerScopedViolation(file: string, specifier: string): string | undefined {
-  if (resolvesToHrcLaunchExec(file, specifier)) {
-    return 'broker-path files must not import launch/exec.ts'
-  }
-
+function findBrokerScopedViolation(specifier: string): string | undefined {
   if (specifier === 'spaces-harness-codex' || specifier.startsWith('spaces-harness-codex/')) {
     return 'broker-path files must not import concrete spaces-harness-codex APIs'
   }
@@ -218,7 +190,7 @@ function findBrokerScopedViolation(file: string, specifier: string): string | un
 
 async function findBrokerScopedViolations(): Promise<Violation[]> {
   const violations: Violation[] = []
-  const files = (await collectExistingTsFiles(brokerScopedPaths)).sort()
+  const files = (await collectRequiredTsFiles('HRC broker-path scoped', brokerScopedPaths)).sort()
 
   for (const file of files) {
     const content = await readFile(file, 'utf8')
@@ -228,7 +200,7 @@ async function findBrokerScopedViolations(): Promise<Violation[]> {
         continue
       }
 
-      const reason = findBrokerScopedViolation(file, specifier)
+      const reason = findBrokerScopedViolation(specifier)
       if (reason) {
         violations.push({ file: relative(process.cwd(), file), specifier, reason })
       }
@@ -263,7 +235,7 @@ function findMailScopedViolation(file: string, specifier: string): string | unde
 
 async function findMailScopedViolations(paths: string[]): Promise<Violation[]> {
   const violations: Violation[] = []
-  const files = (await collectExistingTsFiles(paths)).sort()
+  const files = (await collectRequiredTsFiles('HRC mail persistence scoped', paths)).sort()
   for (const file of files) {
     const content = await readFile(file, 'utf8')
     for (const match of content.matchAll(importPattern)) {
@@ -280,7 +252,7 @@ async function findMailScopedViolations(paths: string[]): Promise<Violation[]> {
 
 async function findViolations(layer: Layer): Promise<Violation[]> {
   const violations: Violation[] = []
-  const files = (await Promise.all(layer.roots.map((root) => collectTsFiles(root)))).flat()
+  const files = await collectRequiredTsFiles(`${layer.name} layer`, layer.roots)
 
   for (const file of files.sort()) {
     const content = await readFile(file, 'utf8')
@@ -353,13 +325,6 @@ function fixForViolation(layerName: string, violation: Violation): string {
     ].join(' ')
   }
 
-  if (layerName === 'ASP') {
-    return [
-      `FIX: remove the '${violation.specifier}' import from ${violation.file}.`,
-      'Move shared contracts into an ASP-owned package, invert the dependency through a caller-supplied adapter, or keep the HRC/ACP call at the application edge.',
-    ].join(' ')
-  }
-
   return [
     `FIX: remove the '${violation.specifier}' import from ${violation.file}.`,
     'Use an HRC-owned package, an allowed pinned ASP package, or pass data through an adapter owned by the forbidden layer instead of importing that layer directly.',
@@ -383,13 +348,6 @@ function whyForViolation(layerName: string, violation: Violation): string {
     return [
       'WHY: broker-path files are the runtime-control boundary.',
       'Direct launch/harness internals couple durable broker dispatch to legacy execution details and make the broker split unenforceable.',
-    ].join(' ')
-  }
-
-  if (layerName === 'ASP') {
-    return [
-      'WHY: ASP packages are the lower reusable layer.',
-      'Pulling HRC/ACP/gateway/task implementations into ASP makes the platform split cyclic and breaks cross-repo package reuse.',
     ].join(' ')
   }
 
@@ -437,6 +395,7 @@ function reportBoundaryViolations(found: Map<string, Violation[]>): void {
 
 export {
   collectBoundaryViolations,
+  collectRequiredTsFiles,
   findHrcViewerSdkViolations,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,

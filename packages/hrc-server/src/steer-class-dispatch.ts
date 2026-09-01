@@ -86,7 +86,6 @@ export async function executeSteerClassDispatch(
     route: SteerRoute
     responseFormat?: HrcTurnResponseFormat | undefined
     dispatchIdempotencyKey?: string | undefined
-    dispatchRequestHash?: string | undefined
     /**
      * T-07214 best-effort (steer_else_queue): provably NON-actuated failures
      * return the 'floor' sentinel (caller delivers the route's ordinary
@@ -117,17 +116,6 @@ export async function executeSteerClassDispatch(
       idempotencyKey
     )
     if (existing !== null) {
-      if (
-        existing.requestHash !== undefined &&
-        options.dispatchRequestHash !== undefined &&
-        existing.requestHash !== options.dispatchRequestHash
-      ) {
-        throw new HrcDomainError(
-          HrcErrorCode.STALE_CONTEXT,
-          'dispatch idempotency key was already used for a different request',
-          { hostSessionId: session.hostSessionId, idempotencyKey }
-        )
-      }
       return replaySteerClassContribution(session, existing, route, transport)
     }
   }
@@ -186,9 +174,6 @@ export async function executeSteerClassDispatch(
     contributionId,
     hostSessionId: session.hostSessionId,
     ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
-    ...(options.dispatchRequestHash !== undefined
-      ? { requestHash: options.dispatchRequestHash }
-      : {}),
     runtimeId: runtime.runtimeId,
     invocationId,
     activeRunId: knownActiveRun?.runId ?? provisionalRunId,

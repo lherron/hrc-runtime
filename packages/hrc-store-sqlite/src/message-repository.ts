@@ -234,11 +234,14 @@ export class MessageRepository {
     }
 
     this.insertInTransaction = db.transaction(insertRow)
-    this.insertIdempotentInTransaction = db.transaction((input: MessageInsertInput) => {
+    const insertIdempotent = db.transaction((input: MessageInsertInput) => {
       const existing = this.getById(input.messageId)
       if (existing !== undefined) return { outcome: 'duplicate' as const, record: existing }
       return { outcome: 'inserted' as const, record: insertRow(input) }
     })
+    // Reserve the WAL writer before the dedupe read. Contention at BEGIN
+    // IMMEDIATE is covered by busy_timeout; a stale read snapshot is not.
+    this.insertIdempotentInTransaction = (input) => insertIdempotent.immediate(input)
   }
 
   insert(input: MessageInsertInput): HrcMessageRecord {

@@ -22,14 +22,14 @@ import {
 /**
  * T-07650 — the kicker stops claiming drives for scopes another node homes.
  *
- * The live shape, from lab and max3: a rebind moves a scope's authority away,
- * but the losing node keeps a live runtime row for it AND every attempt it
- * claimed for it, because an attempt that dies at the summon gate is only
- * annotated, never finished. Both of the sweep's candidate sources therefore
- * keep naming the scope forever, and every tick re-drove it into the same
- * `bound-elsewhere` refusal — 14 typed `wrkq.kicker.drive_failed` per tick on
- * max3, 170 in one afternoon on lab, plus one more permanently stuck attempt
- * row each time.
+ * The observed shape, from lab and max3: after authority was retired on one
+ * node and freshly established on another, the old node retained a live
+ * runtime row for the scope AND every attempt it claimed for it. An attempt
+ * that dies at the summon gate is only annotated, never finished. Both of the
+ * sweep's candidate sources therefore kept naming the scope forever, and every
+ * tick re-drove it into the same `bound-elsewhere` refusal — 14 typed
+ * `wrkq.kicker.drive_failed` per tick on max3, 170 in one afternoon on lab,
+ * plus one more permanently stuck attempt row each time.
  */
 
 const TARGET = 'agent:kicker-proof:project:hrc-runtime:task:T-07650/lane:main'
@@ -109,10 +109,7 @@ function registerScopeHomedOn(homeNodeId: string): void {
     registry.establish({
       scopeRef: SCOPE,
       homeNodeId,
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       now: NOW,
     })
   } finally {
@@ -233,7 +230,7 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
     // read is the same silence this replaced.
     expect(skipped[0]).toContain(TARGET)
     expect(skipped[0]).toContain(`"homeNodeId":"${HOME_NODE}"`)
-    expect(skipped[0]).toContain('"placementEpoch":1')
+    expect(skipped[0]).not.toContain('placementEpoch')
     expect(skipped[0]).toContain('"source":"registry"')
     expect(skipped[0]).not.toContain('[REDACTED]')
   })
@@ -288,10 +285,6 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
     createPlacementLedgerRepository(serverDb().sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId: HOME_NODE,
-      placementEpoch: 2,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'rebind',
       updatedAt: NOW,
     })
     const consults = countConsults()
@@ -304,35 +297,7 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
     const skipped = skipLines(lines)
     expect(skipped).toHaveLength(1)
     expect(skipped[0]).toContain('"source":"placement-ledger"')
-    expect(skipped[0]).toContain('"placementEpoch":2')
-  })
-
-  it('still drives a scope this node homes, and stops skipping one rebound back', async () => {
-    registerScopeHomedOn(HOME_NODE)
-    say({ body: 'delivered once authority returns' })
-    await startServer()
-    seedLiveRuntime()
-    const deterministic = installDeterministicStart(server as HrcServer)
-
-    await sweep()
-    expect(deterministic.calls()).toBe(0)
-
-    // What an activated rebind installs. The local ledger is read ahead of the
-    // remembered registry answer, so the scope resumes on the very next tick
-    // rather than waiting for a restart to forget.
-    createPlacementLedgerRepository(serverDb().sqlite).installActive({
-      scopeRef: SCOPE,
-      homeNodeId: LOCAL_NODE,
-      placementEpoch: 2,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'rebind',
-      updatedAt: timestamp(),
-    })
-
-    await sweep()
-    await waitUntil(() => deterministic.calls() === 1, 'the returned scope was driven')
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(1)
+    expect(skipped[0]).not.toContain('placementEpoch')
   })
 
   it('does not turn an unreachable registry into a skip', async () => {
@@ -370,10 +335,7 @@ describe('T-07650 — the receipt names the current seat, not the oldest row', (
     createPlacementLedgerRepository(serverDb().sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId: LOCAL_NODE,
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       updatedAt: timestamp(),
     })
   }
@@ -505,10 +467,7 @@ describe('T-07650 — shadow teardown retires seats this node has no authority f
     createPlacementLedgerRepository(serverDb().sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId: LOCAL_NODE,
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       updatedAt: timestamp(),
     })
     seedSession('hs-t07650-mine')

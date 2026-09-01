@@ -17,9 +17,7 @@ import type {
   DropContinuationResponse,
   FederationNodeRuntimeProjection,
   FederationPeerHealthObservation,
-  FederationRebindRequest,
-  FederationRebindResult,
-  FederationRebindStep,
+  FederationRetirementRequest,
   FederationRuntimeProjectionReport,
   HrcCapabilityStatus,
   HrcCommandLaunchSpec,
@@ -106,16 +104,13 @@ import type { ForeignHome } from './federation/home-authority.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import { locatePeerScope, probePeerHealth } from './federation/peer-observer.js'
 import {
-  PEER_PROTOCOL_VERSION,
   type PeerProtocolEndpointControl,
   startPeerProtocolEndpoint,
 } from './federation/peer-protocol.js'
 import {
-  activateFederationRebind,
-  casFederationRebind,
-  normalizeFederationRebindRequest,
-  revokeFederationRebind,
-} from './federation/rebind.js'
+  PeerRuntimeProjectionCache,
+  peerRuntimeProjectionCacheKey,
+} from './federation/peer-runtime-projection-cache.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import {
   type BindingRegistryEndpointControl,
@@ -124,6 +119,7 @@ import {
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
 import { resolveFederationRegistryClient } from './federation/registry-resolution.js'
+import { retireFederationScope } from './federation/retirement.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import {
   assertScopeNotRetired,
@@ -282,7 +278,11 @@ import {
   type ShadowTeardownHandlersMethods,
   shadowTeardownHandlersMethods,
 } from './shadow-teardown-handlers.js'
-import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
+import {
+  type DurableBrokerDispatchReattachResult,
+  reconcileStartupState,
+  warmDurableBrokerBindings,
+} from './startup-reconcile.js'
 import { toStartRuntimeResponse, toStatusSessionView } from './status-views.js'
 import {
   type SteerClassDispatchMethods,
@@ -330,6 +330,12 @@ const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000
  * that. A straggler past the bound is logged, not swallowed.
  */
 const SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS = 3_000
+/**
+ * Background tmux probes should settle inside their own 5s command deadline.
+ * This independent shutdown bound protects graceful stop even if a future
+ * sweep loses that guarantee or is wedged somewhere outside the child process.
+ */
+const SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS = 5_000
 
 export function resolveSqliteBusyTimeoutMs(
   optionValue?: number,
@@ -803,11 +809,8 @@ class HrcServerInstance implements HrcServer {
    */
   readonly isPeerUrgentDeliveryAuthorized: ((nodeId: string) => boolean) | undefined
   readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
-  /** Last successful peer answers are isolated by node and exact runtime filter. */
-  readonly peerRuntimeProjectionCache = new Map<
-    string,
-    { answeredAt: string; runtimes: readonly HrcRuntimeSnapshot[] }
-  >()
+  /** Last successful peer answers are isolated by node and effective runtime filter. */
+  readonly peerRuntimeProjectionCache = new PeerRuntimeProjectionCache()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly externalRegistrationOperations = new Map<string, Promise<void>>()
   readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
@@ -816,6 +819,12 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  private readonly runtimeStartPresentationAbortController = new AbortController()
+  readonly runtimeStartPresentationSignal = this.runtimeStartPresentationAbortController.signal
+  readonly brokerReattachOperations = new Map<
+    string,
+    Promise<DurableBrokerDispatchReattachResult>
+  >()
   /**
    * Every request handler currently executing, as a promise that settles when
    * the handler does. `Bun.serve().stop(true)` closes the SOCKET, not the
@@ -988,12 +997,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/federation/peers')]: () => this.handleFederationPeerHealth(),
     [exactRouteKey('GET', '/v1/federation/runtimes')]: (_request, url) =>
       this.handleFederationRuntimeProjection(url),
-    [exactRouteKey('POST', '/v1/federation/rebind/revoke')]: (request) =>
-      this.handleFederationRebind('revoke', request),
-    [exactRouteKey('POST', '/v1/federation/rebind/cas')]: (request) =>
-      this.handleFederationRebind('cas', request),
-    [exactRouteKey('POST', '/v1/federation/rebind/activate')]: (request) =>
-      this.handleFederationRebind('activate', request),
+    [exactRouteKey('POST', '/v1/federation/retire')]: (request) =>
+      this.handleFederationRetirement(request),
     [exactRouteKey('GET', '/v1/federation/bindings')]: () => this.handleFederationBindings(),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
@@ -1247,7 +1252,6 @@ class HrcServerInstance implements HrcServer {
         this.federationPeerEndpoint = this.peerProtocolEndpoint.url
         writeServerLog('INFO', 'server.start.peer_protocol_listener', {
           endpoint: this.peerProtocolEndpoint.url,
-          protocolVersion: PEER_PROTOCOL_VERSION,
           acceptEnabled: true,
           establishEnabled: true,
         })
@@ -1482,12 +1486,45 @@ class HrcServerInstance implements HrcServer {
     })
   }
 
+  private async drainTmuxSweepForStop(
+    sweep: Promise<unknown>,
+    label: 'active_run_reconcile' | 'tmux_aging'
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const startedAt = performance.now()
+    const outcome = await Promise.race([
+      sweep.then(
+        () => ({ kind: 'settled' as const }),
+        (error: unknown) => ({ kind: 'failed' as const, error })
+      ),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ kind: 'timeout' }),
+          SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS
+        )
+      }),
+    ])
+    if (timer !== undefined) clearTimeout(timer)
+
+    if (outcome.kind === 'failed') {
+      writeServerLog('WARN', `server.stop.${label}_wait_failed`, { error: outcome.error })
+      return
+    }
+    if (outcome.kind === 'timeout') {
+      writeServerLog('WARN', `server.stop.${label}_wait_timeout`, {
+        durMs: performance.now() - startedAt,
+        timeoutMs: SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS,
+      })
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) {
       return
     }
 
     this.stopping = true
+    this.runtimeStartPresentationAbortController.abort()
     writeServerLog('INFO', 'server.stop.begin', {
       socketPath: this.options.socketPath,
       dbPath: this.options.dbPath,
@@ -1534,11 +1571,7 @@ class HrcServerInstance implements HrcServer {
       this.activeRunReconcileTimer = undefined
     }
     if (this.activeRunReconcileInFlight) {
-      try {
-        await this.activeRunReconcileInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
-      }
+      await this.drainTmuxSweepForStop(this.activeRunReconcileInFlight, 'active_run_reconcile')
     }
     if (this.firstTurnEvalTimer) {
       clearInterval(this.firstTurnEvalTimer)
@@ -1567,11 +1600,7 @@ class HrcServerInstance implements HrcServer {
       this.tmuxAgingTimer = undefined
     }
     if (this.tmuxAgingInFlight) {
-      try {
-        await this.tmuxAgingInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.tmux_aging_wait_failed', { error })
-      }
+      await this.drainTmuxSweepForStop(this.tmuxAgingInFlight, 'tmux_aging')
     }
     if (this.sessionRetentionTimer) {
       clearInterval(this.sessionRetentionTimer)
@@ -1660,6 +1689,7 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    this.peerRuntimeProjectionCache.clear()
     // Handlers that were already running when the stop began keep executing
     // after the socket closes; let them finish (bounded) before the store goes
     // away underneath them.
@@ -1891,9 +1921,6 @@ class HrcServerInstance implements HrcServer {
                 ? {}
                 : { provision: parsed.runtimeIntent.provision }),
             }),
-        ...(parsed.birthCredential === undefined
-          ? {}
-          : { birthCredential: parsed.birthCredential }),
       },
       (claimAuthority) => {
         const raced = findContinuitySession(this.db, parsed.sessionRef)
@@ -1968,10 +1995,7 @@ class HrcServerInstance implements HrcServer {
     }
     validateConfiguredCommandRunTarget(body.configuredTargetId, command)
 
-    const session = await this.resolveOrCreateCommandRunSession(
-      body.sessionRef,
-      body.birthCredential
-    )
+    const session = await this.resolveOrCreateCommandRunSession(body.sessionRef)
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
 
@@ -2042,6 +2066,14 @@ class HrcServerInstance implements HrcServer {
       runtimeId,
       runId,
       transport: 'tmux',
+    }).catch((error) => {
+      writeServerLog('ERROR', 'command_run.finalize_failed', {
+        configuredTargetId: body.configuredTargetId,
+        hostSessionId: session.hostSessionId,
+        runtimeId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     })
 
     return json({
@@ -2054,10 +2086,7 @@ class HrcServerInstance implements HrcServer {
     } satisfies LaunchCommandScopedRunResponse)
   }
 
-  async resolveOrCreateCommandRunSession(
-    sessionRef: string,
-    birthCredential?: string
-  ): Promise<HrcSessionRecord> {
+  async resolveOrCreateCommandRunSession(sessionRef: string): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
     assertLocalPersonaAllowed(this, scopeRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
@@ -2076,7 +2105,6 @@ class HrcServerInstance implements HrcServer {
         laneRef,
         path: 'command-run',
         intent: 'implicit',
-        ...(birthCredential === undefined ? {} : { birthCredential }),
       },
       (claimAuthority) => {
         const racedContinuity = this.db.continuities.getByKey(scopeRef, laneRef)
@@ -2451,37 +2479,24 @@ class HrcServerInstance implements HrcServer {
     return json((await this.collectFederationPeerHealth()).map((probe) => probe.health))
   }
 
-  async handleFederationRebind(step: FederationRebindStep, request: Request): Promise<Response> {
+  async handleFederationRetirement(request: Request): Promise<Response> {
     const body = await parseJsonBody(request)
     if (
       !isRecord(body) ||
       typeof body['scopeRef'] !== 'string' ||
-      typeof body['expectedHomeNodeId'] !== 'string' ||
-      typeof body['expectedPlacementEpoch'] !== 'number' ||
-      typeof body['newHomeNodeId'] !== 'string'
+      typeof body['reason'] !== 'string'
     ) {
       throw new HrcBadRequestError(
         HrcErrorCode.MALFORMED_REQUEST,
-        'rebind requires scopeRef, expectedHomeNodeId, expectedPlacementEpoch, and newHomeNodeId'
+        'retirement requires scopeRef and reason'
       )
     }
-
-    let rebindRequest: FederationRebindRequest
-    try {
-      rebindRequest = normalizeFederationRebindRequest(body as FederationRebindRequest)
-    } catch (error) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        `invalid rebind request: ${error instanceof Error ? error.message : String(error)}`
-      )
-    }
-
     const config = this.options.federationConfig
     const registry = this.federationRegistryClient
     if (config === undefined || registry === undefined) {
       throw new HrcBadRequestError(
         HrcErrorCode.MALFORMED_REQUEST,
-        'federation rebind requires a configured federation registry'
+        'federation retirement requires a configured federation registry'
       )
     }
     const dependencies = {
@@ -2489,8 +2504,6 @@ class HrcServerInstance implements HrcServer {
       localNodeId: config.nodeId,
       ledger: createPlacementLedgerRepository(this.db.sqlite),
       registry,
-      peerForNodeId: (nodeId: string) =>
-        [...config.peers.values()].find((peer) => peer.nodeId === nodeId),
       liveRuntimeIds: (scopeRef: string) =>
         this.db.runtimes
           .listAll()
@@ -2501,19 +2514,7 @@ class HrcServerInstance implements HrcServer {
           .map((runtime) => runtime.runtimeId),
       log: writeServerLog,
     }
-    let result: FederationRebindResult
-    switch (step) {
-      case 'revoke':
-        result = await revokeFederationRebind(dependencies, rebindRequest)
-        break
-      case 'cas':
-        result = await casFederationRebind(dependencies, rebindRequest)
-        break
-      case 'activate':
-        result = await activateFederationRebind(dependencies, rebindRequest)
-        break
-    }
-    return json(result)
+    return json(await retireFederationScope(dependencies, body as FederationRetirementRequest))
   }
 
   async handleFederationRuntimeProjection(url: URL): Promise<Response> {
@@ -2537,7 +2538,7 @@ class HrcServerInstance implements HrcServer {
       filter: url.searchParams,
     })
     for (const probe of probes) {
-      const cacheKey = `${probe.health.nodeId}\u0000${url.searchParams.toString()}`
+      const cacheKey = peerRuntimeProjectionCacheKey(probe.health.nodeId, url)
       if (probe.health.state === 'healthy' && probe.runtimes !== undefined) {
         const answeredAt = probe.health.answeredAt ?? new Date().toISOString()
         this.peerRuntimeProjectionCache.set(cacheKey, {
@@ -2998,9 +2999,6 @@ export type {
 export { sendRemoteEstablish } from './federation/establish-client.js'
 export type { SendRemoteEstablishOptions } from './federation/establish-client.js'
 export {
-  PEER_PROTOCOL_MAJOR,
-  PEER_PROTOCOL_VERSION,
-  PEER_PROTOCOL_VERSION_HEADER,
   createPeerProtocolRequestHandler,
   parsePeerProtocolBind,
   startPeerProtocolEndpoint,
@@ -3014,19 +3012,15 @@ export type {
   PeerProtocolListenerConfig,
   PeerProtocolRequestHandlerOptions,
 } from './federation/peer-protocol.js'
-export { locateScope, projectBirthChain, scanLedgerForSkew } from './federation/locate.js'
+export { locateScope, scanLedgerForSkew } from './federation/locate.js'
 export type {
   LedgerSkewScan,
   LocateAuthority,
   LocateBindingRecord,
-  LocateBirthChain,
-  LocateBirthChainLink,
-  LocateBirthChainResult,
   LocateDeclaredPolicy,
   LocateDeps,
   LocateLedgerView,
   LocateNote,
-  LocateObservation,
   LocateObservedRuntime,
   LocateRegistryView,
   LocateSkew,

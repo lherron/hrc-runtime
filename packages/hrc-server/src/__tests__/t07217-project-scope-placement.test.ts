@@ -9,7 +9,8 @@ import { resolveNodeLocalPlacement } from '../federation/summon-capability.js'
 import { type HrcServer, createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
-const SCOPE_REF = 'agent:mable:project:hrc-runtime:task:primary'
+const PROJECT_ID = 't07217-fixture'
+const SCOPE_REF = `agent:mable:project:${PROJECT_ID}:task:primary`
 const SESSION_REF = `${SCOPE_REF}/lane:main`
 const HOST_SESSION_ID = 'hsid-t07217-stale-placement'
 
@@ -27,7 +28,9 @@ describe('T-07217 project-scoped spawn placement', () => {
     originalCwd = process.cwd()
     originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
     workspaceRoot = join(fixture.tmpDir, 'collective')
-    projectRoot = join(workspaceRoot, 'hrc-runtime')
+    // T-07749 makes a registered root authoritative after cwd discovery
+    // misses. A fixture-only id keeps the live registry out of this test.
+    projectRoot = join(workspaceRoot, PROJECT_ID)
     agentRoot = join(workspaceRoot, 'var', 'agents', 'mable')
 
     await mkdir(join(projectRoot, '.git'), { recursive: true })
@@ -36,7 +39,7 @@ describe('T-07217 project-scoped spawn placement', () => {
     await writeFile(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
 
     workspaceRoot = await realpath(workspaceRoot)
-    projectRoot = join(workspaceRoot, 'hrc-runtime')
+    projectRoot = join(workspaceRoot, PROJECT_ID)
     agentRoot = join(workspaceRoot, 'var', 'agents', 'mable')
 
     process.chdir(workspaceRoot)

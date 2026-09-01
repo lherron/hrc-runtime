@@ -17,10 +17,6 @@ import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
 
-export const PEER_PROTOCOL_VERSION = '1.0'
-export const PEER_PROTOCOL_MAJOR = 1
-export const PEER_PROTOCOL_VERSION_HEADER = 'x-hrc-peer-protocol-version'
-
 export type PeerProtocolListenerConfig = {
   readonly bind: string
 }
@@ -50,7 +46,6 @@ export type PeerProtocolHealthRequest = {
 
 export type PeerEstablishRequest = {
   readonly authenticatedNodeId: string
-  readonly protocolVersion: string
   readonly scopeRef: string
   readonly intent: 'implicit'
   readonly correlationId: string
@@ -76,7 +71,6 @@ export type PeerEstablishHandler = (request: PeerEstablishRequest) => Promise<Pe
 
 export type PeerRosterStartHandler = (request: {
   readonly authenticatedNodeId: string
-  readonly protocolVersion: string
   readonly body: Readonly<Record<string, unknown>>
 }) => Promise<StartRuntimeResponse>
 
@@ -85,7 +79,6 @@ export type PeerExactStartHandler = PeerRosterStartHandler
 
 export type PeerCollectiveHistoryReplicateHandler = (request: {
   readonly authenticatedNodeId: string
-  readonly protocolVersion: string
   readonly body: Readonly<Record<string, unknown>>
 }) =>
   | Promise<{ readonly outcome: 'accepted'; readonly messageId: string }>
@@ -96,7 +89,6 @@ export type PeerCollectiveHistoryReplicateHandler = (request: {
 
 export type PeerCollectiveHistoryCheckpointHandler = (request: {
   readonly authenticatedNodeId: string
-  readonly protocolVersion: string
   readonly body: Readonly<Record<string, unknown>>
 }) =>
   | Promise<{ readonly outcome: 'accepted'; readonly nodeId: string }>
@@ -107,7 +99,6 @@ export type PeerCollectiveHistoryCheckpointHandler = (request: {
 
 export type PeerCollectiveHistoryQueryHandler = (request: {
   readonly authenticatedNodeId: string
-  readonly protocolVersion: string
   readonly filter: Readonly<Record<string, unknown>>
 }) => Promise<ListMessagesResponse> | ListMessagesResponse
 
@@ -147,10 +138,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function responseJson(value: unknown, status: number): Response {
   return new Response(JSON.stringify(value), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      [PEER_PROTOCOL_VERSION_HEADER]: PEER_PROTOCOL_VERSION,
-    },
+    headers: { 'content-type': 'application/json; charset=utf-8' },
   })
 }
 
@@ -158,7 +146,6 @@ function refusal(status: number, code: string, detail: Record<string, unknown> =
   return responseJson(
     {
       ok: false,
-      protocolVersion: PEER_PROTOCOL_VERSION,
       error: { code, ...detail },
     },
     status
@@ -186,24 +173,6 @@ function authenticate(
   return authenticated
 }
 
-function requireCompatibleVersion(request: Request): string | Response {
-  const raw = request.headers.get(PEER_PROTOCOL_VERSION_HEADER)
-  if (raw === null || raw.trim().length === 0) {
-    return refusal(400, 'protocol_version_required')
-  }
-  const match = /^(\d+)\.(\d+)$/.exec(raw.trim())
-  if (match === null) return refusal(400, 'invalid_protocol_version')
-  const receivedMajor = Number(match[1])
-  if (!Number.isSafeInteger(receivedMajor)) return refusal(400, 'invalid_protocol_version')
-  if (receivedMajor !== PEER_PROTOCOL_MAJOR) {
-    return refusal(426, 'incompatible_protocol_major', {
-      supportedMajor: PEER_PROTOCOL_MAJOR,
-      receivedMajor,
-    })
-  }
-  return raw.trim()
-}
-
 async function requestRecord(request: Request): Promise<Record<string, unknown>> {
   let value: unknown
   try {
@@ -228,7 +197,6 @@ async function handleCollectiveHistoryRequest(input: {
   url: URL
   options: PeerProtocolRequestHandlerOptions
   peerNodeId: string
-  requestVersion: string
 }): Promise<Response | undefined> {
   if (
     input.request.method !== 'POST' ||
@@ -247,13 +215,11 @@ async function handleCollectiveHistoryRequest(input: {
     }
     const result = await input.options.collectiveHistoryReplicate({
       authenticatedNodeId: input.peerNodeId,
-      protocolVersion: input.requestVersion,
       body,
     })
     return responseJson(
       {
         ok: true,
-        protocolVersion: PEER_PROTOCOL_VERSION,
         ack: result,
       },
       200
@@ -271,7 +237,6 @@ async function handleCollectiveHistoryRequest(input: {
     return responseJson(
       await input.options.collectiveHistoryQuery({
         authenticatedNodeId: input.peerNodeId,
-        protocolVersion: input.requestVersion,
         filter: body['filter'],
       }),
       200
@@ -288,13 +253,11 @@ async function handleCollectiveHistoryRequest(input: {
     }
     const result = await input.options.collectiveHistoryCheckpoint({
       authenticatedNodeId: input.peerNodeId,
-      protocolVersion: input.requestVersion,
       body,
     })
     return responseJson(
       {
         ok: true,
-        protocolVersion: PEER_PROTOCOL_VERSION,
         ack: result,
       },
       200
@@ -340,7 +303,6 @@ async function handleHealthRequest(input: {
   return responseJson(
     {
       ok: true,
-      protocolVersion: PEER_PROTOCOL_VERSION,
       nodeId: input.options.localNodeId,
       ...health,
     },
@@ -358,7 +320,7 @@ async function handleLocateRequest(input: {
   }
   const body = await requestRecord(input.request)
   const location = await input.options.locate(requiredString(body, 'scopeRef'))
-  return responseJson({ ok: true, protocolVersion: PEER_PROTOCOL_VERSION, location }, 200)
+  return responseJson({ ok: true, location }, 200)
 }
 
 const ROSTER_START_FIELDS = new Set([
@@ -412,7 +374,6 @@ async function handleClaimStartRequest(input: {
   url: URL
   options: PeerProtocolRequestHandlerOptions
   peerNodeId: string
-  requestVersion: string
 }): Promise<Response | undefined> {
   const route = CLAIM_START_ROUTES.find((candidate) => candidate.path === input.url.pathname)
   if (input.request.method !== 'POST' || route === undefined) {
@@ -430,7 +391,6 @@ async function handleClaimStartRequest(input: {
     return responseJson(
       await handler({
         authenticatedNodeId: input.peerNodeId,
-        protocolVersion: input.requestVersion,
         body,
       }),
       200
@@ -463,9 +423,6 @@ export function createPeerProtocolRequestHandler(
     const peer = authenticate(request, options.peers)
     if (peer === undefined) return refusal(401, 'unauthorized')
 
-    const requestVersion = requireCompatibleVersion(request)
-    if (requestVersion instanceof Response) return requestVersion
-
     const url = new URL(request.url)
     try {
       const healthResponse = await handleHealthRequest({ request, url, options })
@@ -495,7 +452,6 @@ export function createPeerProtocolRequestHandler(
         try {
           result = await options.establish({
             authenticatedNodeId: peer.nodeId,
-            protocolVersion: requestVersion,
             scopeRef: requiredString(body, 'scopeRef'),
             intent: 'implicit',
             correlationId,
@@ -529,7 +485,6 @@ export function createPeerProtocolRequestHandler(
         return responseJson(
           {
             ok: true,
-            protocolVersion: PEER_PROTOCOL_VERSION,
             correlationId: result.correlationId,
             outcome: result.outcome,
             binding: result.binding,
@@ -543,7 +498,6 @@ export function createPeerProtocolRequestHandler(
         url,
         options,
         peerNodeId: peer.nodeId,
-        requestVersion,
       })
       if (claimStartResponse !== undefined) return claimStartResponse
 
@@ -559,7 +513,6 @@ export function createPeerProtocolRequestHandler(
         url,
         options,
         peerNodeId: peer.nodeId,
-        requestVersion,
       })
       if (historyResponse !== undefined) return historyResponse
 

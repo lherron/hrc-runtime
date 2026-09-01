@@ -76,7 +76,7 @@ The read-only credential split is also incomplete: it scrubs caller launch env (
 
 ### F-2 — High — T-06592 idempotency is not atomic with durable run acceptance
 
-The route first calls `dispatchTurnForSession`, which creates/accepts the durable run, and only after it returns updates that run with `dispatchIdempotencyKey` and `dispatchRequestHash` (`packages/hrc-server/src/turn-dispatch-handlers.ts:490-507`). A daemon crash between those operations leaves an accepted run without the caller key. The retry sees no existing key and can create a second run. The in-memory operation map at lines 469-487 only protects one live process.
+At the time of the audit, the route first called `dispatchTurnForSession`, which created/accepted the durable run, and only after it returned updated that run with caller idempotency metadata. A daemon crash between those operations left an accepted run without the caller key. The retry saw no existing key and could create a second run. The in-memory operation map protected only one live process.
 
 Replay also requires the runtime row and throws if it has been pruned, even if the durable run is terminal (`turn-dispatch-handlers.ts:178-190`).
 

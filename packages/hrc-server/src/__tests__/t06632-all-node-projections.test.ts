@@ -47,10 +47,7 @@ function installPlacement(fixture: HrcServerTestFixture, homeNodeId: string): vo
     createPlacementLedgerRepository(db.sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId,
-      placementEpoch: 3,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       updatedAt: new Date().toISOString(),
     })
   } finally {
@@ -156,7 +153,7 @@ describe('T-06632 all-node runtime projections and peer health', () => {
         const location = (await locateResponse.json()) as ScopeLocation
         expect(location.authority).toMatchObject({
           state: 'bound',
-          record: { homeNodeId: 'lab-test', placementEpoch: 3 },
+          record: { homeNodeId: 'lab-test' },
         })
         expect(location.peerResolution).toMatchObject({
           nodeId: 'lab-test',

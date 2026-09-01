@@ -91,7 +91,12 @@ export function notifyEvent(
     // The durable row is claimed atomically by the drain. Do not await here:
     // notification fan-out must remain synchronous, and duplicate terminal
     // projections are harmless because only one drain per session can run.
-    void this.drainDurableHeadlessTurnInputs(event.hostSessionId)
+    void this.drainDurableHeadlessTurnInputs(event.hostSessionId).catch((error) => {
+      writeServerLog('WARN', 'turn_input_queue.detached_drain_failed', {
+        hostSessionId: event.hostSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
   if (
     'hrcSeq' in event &&

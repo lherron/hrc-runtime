@@ -12,16 +12,19 @@
 import { HrcErrorCode } from 'hrc-core'
 import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
+import type {
+  InvocationEventEnvelope,
+  InvocationFailedPayload,
+} from 'spaces-harness-broker-protocol'
 
 import { isExternalLifecycleOwner } from '../../external-participant-lifecycle'
 import { appendHrcEvent } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import type { BrokerProjectionResult } from '../event-mapper'
 import type { BrokerControllerError } from './errors'
-import { isActiveBrokerRun } from './internal'
+import { isActiveBrokerRun, isControllerFencedError } from './internal'
 import { findUserInitiatedContinuationClearReason } from './persistence'
-import type { BrokerControllerLogger, DurableBrokerClientLike } from './types'
+import type { BrokerClientLike, BrokerControllerLogger, DurableBrokerClientLike } from './types'
 
 export type LifecycleContext = {
   db: HrcDatabase
@@ -29,9 +32,9 @@ export type LifecycleContext = {
   serverInstanceId: string
   logger: BrokerControllerLogger
   getActiveInvocationId: (runtimeId: string) => string | undefined
-  getActiveClient: (runtimeId: string) => { close: () => Promise<void> } | undefined
-  deleteActive: (runtimeId: string) => void
-  markBrokerClosing: (runtimeId: string, reason: string) => void
+  getActiveClient: (runtimeId: string) => BrokerClientLike | undefined
+  deleteActive: (runtimeId: string, client: BrokerClientLike) => void
+  markBrokerClosing: (runtimeId: string, reason: string, client: BrokerClientLike) => void
   fireBrokerTmuxLeaseReap: (runtimeId: string, reason: string) => void
 }
 
@@ -104,10 +107,18 @@ export function markBrokerInvocationTerminal(
   const terminalStatus = userExitReason !== undefined ? 'terminated' : 'crashed'
   const occurredAt = envelope.time ?? now
   const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.crashed'
+  const invocationFailure =
+    envelope.type === 'invocation.failed'
+      ? (envelope.payload as InvocationFailedPayload)
+      : undefined
+  const providerFailureMessage =
+    invocationFailure?.message !== undefined && invocationFailure.message.trim().length > 0
+      ? invocationFailure.message
+      : undefined
   const terminalReason =
     userExitReason !== undefined
       ? 'user_initiated_session_end'
-      : 'broker_invocation_abnormal_terminal'
+      : (providerFailureMessage ?? 'broker_invocation_abnormal_terminal')
   if (runtime.activeRunId !== undefined) {
     const activeRun = ctx.db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && isActiveBrokerRun(activeRun)) {
@@ -119,7 +130,9 @@ export function markBrokerInvocationTerminal(
         errorMessage:
           userExitReason !== undefined
             ? `broker invocation ${String(envelope.invocationId)} ended by user request (${userExitReason})`
-            : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
+            : providerFailureMessage !== undefined
+              ? `broker invocation ${String(envelope.invocationId)} failed: ${providerFailureMessage}`
+              : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
       })
     }
     ctx.db.runtimes.updateRunId(runtimeId, undefined, now)
@@ -177,6 +190,12 @@ export function markBrokerInvocationTerminal(
                 ...((envelope.payload as { signal?: unknown } | undefined)?.signal !== undefined
                   ? { signal: (envelope.payload as { signal?: unknown }).signal }
                   : {}),
+                ...((envelope.payload as { message?: unknown } | undefined)?.message !== undefined
+                  ? { message: (envelope.payload as { message?: unknown }).message }
+                  : {}),
+                ...((envelope.payload as { code?: unknown } | undefined)?.code !== undefined
+                  ? { code: (envelope.payload as { code?: unknown }).code }
+                  : {}),
                 ...((envelope.payload as { reason?: unknown } | undefined)?.reason !== undefined
                   ? { reason: (envelope.payload as { reason?: unknown }).reason }
                   : {}),
@@ -189,8 +208,8 @@ export function markBrokerInvocationTerminal(
 
   const activeClient = ctx.getActiveClient(runtimeId)
   if (activeClient && ctx.getActiveInvocationId(runtimeId) === String(envelope.invocationId)) {
-    ctx.markBrokerClosing(runtimeId, 'broker_invocation_terminal')
-    ctx.deleteActive(runtimeId)
+    ctx.markBrokerClosing(runtimeId, 'broker_invocation_terminal', activeClient)
+    ctx.deleteActive(runtimeId, activeClient)
     void activeClient.close().catch((error) => {
       ctx.logger.warn?.('harness broker close after terminal invocation failed', {
         runtimeId,
@@ -275,13 +294,18 @@ export async function failReplayStale(
   client: DurableBrokerClientLike,
   error: BrokerControllerError
 ): Promise<void> {
-  if (isExternalLifecycleOwner(runtime)) {
-    ctx.deleteActive(runtime.runtimeId)
+  if (isControllerFencedError(error)) {
+    ctx.markBrokerClosing(runtime.runtimeId, 'broker_controller_fenced', client)
     await client.close().catch(() => undefined)
     return
   }
-  ctx.deleteActive(runtime.runtimeId)
-  ctx.markBrokerClosing(runtime.runtimeId, error.code)
+  if (isExternalLifecycleOwner(runtime)) {
+    ctx.deleteActive(runtime.runtimeId, client)
+    await client.close().catch(() => undefined)
+    return
+  }
+  ctx.deleteActive(runtime.runtimeId, client)
+  ctx.markBrokerClosing(runtime.runtimeId, error.code, client)
   const now = ctx.now()
   ctx.db.brokerInvocations.update(invocation.invocationId, {
     invocationState: 'failed',
@@ -321,7 +345,10 @@ export function markBrokerCrashTerminal(
   if (ownedRuntime && isExternalLifecycleOwner(ownedRuntime)) {
     return
   }
-  ctx.deleteActive(runtimeId)
+  const activeClient = ctx.getActiveClient(runtimeId)
+  if (activeClient) {
+    ctx.deleteActive(runtimeId, activeClient)
+  }
   ctx.db.sqlite.transaction(() => {
     const now = ctx.now()
     const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)

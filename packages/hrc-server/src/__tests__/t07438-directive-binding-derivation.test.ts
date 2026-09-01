@@ -51,7 +51,12 @@ function unboundRegistry(): BindingRegistryClient & { establishCalls: number } {
       this.establishCalls += 1
       return {
         outcome: 'created',
-        binding: { ...request, placementEpoch: 1, updatedAt: request.now },
+        binding: {
+          scopeRef: request.scopeRef,
+          homeNodeId: request.homeNodeId,
+          createdAt: request.now,
+          updatedAt: request.now,
+        },
       }
     },
   }

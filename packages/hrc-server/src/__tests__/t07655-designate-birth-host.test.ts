@@ -42,10 +42,7 @@ function bindSender(store: BindingRegistry, homeNodeId: string): void {
   store.establish({
     scopeRef: SENDER,
     homeNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'pin' },
-    establishmentProvenance: 'pin',
+    placementSource: 'pin',
     now: '2026-08-28T04:00:00.000Z',
   })
 }
@@ -194,12 +191,9 @@ describe('T-07655 designateBirthOnHost', () => {
     const store = await registry()
     try {
       bindSender(store, 'lab')
-      store.retire({
+      store.deleteBinding({
         scopeRef: SENDER,
         expectedHomeNodeId: 'lab',
-        expectedPlacementEpoch: 1,
-        successorNodeId: null,
-        reason: 'test',
         retiredAt: '2026-08-28T04:30:00.000Z',
       })
 

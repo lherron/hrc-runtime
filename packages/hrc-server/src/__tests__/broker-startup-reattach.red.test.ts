@@ -673,6 +673,7 @@ describe('T-05299 startup/lazy reattach control-proof surfacing', () => {
     const reattached = await reconcile.reattachDurableBrokerForDispatch(db, readRuntime(), {
       runtimeRoot: RUNTIME_ROOT,
       controller,
+      inFlightOperations: new Map(),
       brokerUnixClientFactory: async () => client,
       resolveAttachToken: async () => ATTACH_TOKEN,
       probeBrokerLease: async () => ({

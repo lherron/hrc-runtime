@@ -126,7 +126,7 @@ async function startWithTiming(timing: TimingContext): Promise<AspcFacadeBrokerC
   const start = startAspcFacadeBrokerClient as unknown as (
     timing: TimingContext
   ) => Promise<AspcFacadeBrokerClient>
-  return start(timing)
+  return start({ ...timing, stateRoot })
 }
 
 async function waitForWarning(
@@ -199,6 +199,7 @@ describe('dark pre-compile launch timing (T-06402)', () => {
       timing: {
         transport: 'preview' as const,
         runtimeId: 'runtime-compile',
+        stateRoot,
         logger: capture.logger,
       },
     }
@@ -232,6 +233,7 @@ describe('dark pre-compile launch timing (T-06402)', () => {
       timing: {
         transport: 'headless' as const,
         runtimeId: 'runtime-compile',
+        stateRoot,
         boundMs: 5,
         logger: capture.logger,
       },

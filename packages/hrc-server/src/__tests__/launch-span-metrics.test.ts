@@ -11,7 +11,10 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { observePrecompileLaunchSpan } from '../precompile-launch-timing'
+import {
+  createPrecompileLaunchTimingContext,
+  observePrecompileLaunchSpan,
+} from '../precompile-launch-timing'
 import type { PrecompileLaunchTimingContext } from '../precompile-launch-timing'
 import { recordLaunchSpan } from '../request-metrics'
 
@@ -42,19 +45,47 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  process.env['HRC_STATE_DIR'] = originalStateDir
-  process.env['HRC_METRICS'] = originalMetrics
+  if (originalStateDir === undefined) Reflect.deleteProperty(process.env, 'HRC_STATE_DIR')
+  else process.env['HRC_STATE_DIR'] = originalStateDir
+  if (originalMetrics === undefined) Reflect.deleteProperty(process.env, 'HRC_METRICS')
+  else process.env['HRC_METRICS'] = originalMetrics
   await rm(stateRoot, { recursive: true, force: true })
 })
 
 describe('launch span metrics', () => {
+  test('keeps the owning server state root when ambient state changes before emission', async () => {
+    const ambientRoot = await mkdtemp(join(tmpdir(), 'hrc-launch-span-ambient-'))
+    const timing = createPrecompileLaunchTimingContext('preview', 'rt-owned-root', stateRoot)
+    process.env['HRC_STATE_DIR'] = ambientRoot
+
+    try {
+      await observePrecompileLaunchSpan('precompile-facade-spawn', timing, async () =>
+        Promise.resolve('done')
+      )
+
+      const spans = (await readServerRecords()).filter((row) => row['kind'] === 'launch_span')
+      expect(spans).toHaveLength(1)
+      expect(spans[0]).toMatchObject({
+        phase: 'precompile-facade-spawn',
+        transport: 'preview',
+        runtimeId: 'rt-owned-root',
+      })
+      expect(await readdir(join(ambientRoot, 'metrics')).catch(() => [])).toEqual([])
+    } finally {
+      await rm(ambientRoot, { recursive: true, force: true })
+    }
+  })
+
   test('records a phase span with its transport', async () => {
-    recordLaunchSpan({
-      phase: 'precompile-compile-rpc',
-      runtimeId: 'rt-1',
-      ms: 6463,
-      transport: 'interactive',
-    })
+    recordLaunchSpan(
+      {
+        phase: 'precompile-compile-rpc',
+        runtimeId: 'rt-1',
+        ms: 6463,
+        transport: 'interactive',
+      },
+      stateRoot
+    )
     const records = await readServerRecords()
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({
@@ -72,6 +103,7 @@ describe('launch span metrics', () => {
     const timing: PrecompileLaunchTimingContext = {
       transport: 'interactive',
       runtimeId: 'rt-2',
+      stateRoot,
       // A bound that cannot trip, so this exercises the ordinary path.
       boundMs: 60_000,
       logger: {
@@ -109,6 +141,7 @@ describe('launch span metrics', () => {
     const timing: PrecompileLaunchTimingContext = {
       transport: 'headless',
       runtimeId: 'rt-3',
+      stateRoot,
       boundMs: 60_000,
       logger: { info: () => undefined, warn: () => undefined },
     }

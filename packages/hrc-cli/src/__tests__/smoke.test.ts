@@ -38,7 +38,6 @@ function cliEnv(extra: Record<string, string> = {}): Record<string, string | und
     HRC_STATE_DIR: stateRoot,
     HRC_SESSION_REF: undefined,
     HRC_RUN_ID: undefined,
-    HRC_BIRTH_CREDENTIAL: undefined,
     ASP_SCOPE_REF: undefined,
     ASP_TASK_ID: undefined,
     ASP_DEFAULT_TASK: undefined,

@@ -37,8 +37,12 @@ import type {
 import { resolveAspToolchainBinary } from '../asp-toolchain'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
+import { isLiveProcess } from '../server-lock'
+import { createTmuxManager } from '../tmux'
 import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
+import { isRetryableInvocationFailure } from './invocation-failure'
+import { parseBrokerRuntimeHostingState } from './runtime-hosting'
 
 import type { AllocationContext } from './controller/allocation'
 import {
@@ -94,6 +98,7 @@ import type {
   DurableBrokerClientLike,
   HarnessBrokerControllerDeps,
   PendingAttachedBrokerStart,
+  ProductionHarnessBrokerControllerDeps,
 } from './controller/types'
 
 const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
@@ -315,6 +320,11 @@ function resolveBrokerPermissionPolicy(runtime: HrcRuntimeSnapshot | null): Brok
 export class HarnessBrokerController {
   readonly kind = 'harness-broker' as const
 
+  /** The production seam makes durable launch metrics impossible to omit silently. */
+  static createProduction(deps: ProductionHarnessBrokerControllerDeps): HarnessBrokerController {
+    return new HarnessBrokerController(deps)
+  }
+
   private readonly db: HrcDatabase
   private readonly mapper: Pick<BrokerEventMapper, 'apply'>
   private readonly brokerClientFactory: BrokerClientFactory
@@ -341,6 +351,7 @@ export class HarnessBrokerController {
   private readonly resolveBrokerCommand: () => string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
+  private readonly metricsStateRoot: string | undefined
   private readonly now: () => string
   private readonly serverInstanceId: string
   private readonly logger: BrokerControllerLogger
@@ -351,7 +362,10 @@ export class HarnessBrokerController {
       }) => void)
     | undefined
   private readonly active = new Map<string, ActiveBrokerRuntime>()
-  private readonly intentionalClosingRuntimeIds = new Map<string, string>()
+  // Intent belongs to the connection being closed, not the logical runtime ID:
+  // a replacement client may legitimately reuse that ID before an older close
+  // callback arrives.
+  private readonly intentionalClosingClients = new WeakMap<BrokerClientLike, string>()
   // Lever 2 graceful exit: runtimes whose broker-tmux lease reap has been fired,
   // so the several user-exit signals that can arrive for one /quit (continuation
   // clear, then invocation.exited and/or broker close) reap exactly once.
@@ -377,6 +391,7 @@ export class HarnessBrokerController {
   // late broker event cannot read a closed DB and crash teardown.
   private shuttingDown = false
 
+  /** Direct construction is retained for isolated controller tests. Production uses createProduction. */
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
     this.logger = deps.logger ?? {}
@@ -441,6 +456,7 @@ export class HarnessBrokerController {
       DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
+    this.metricsStateRoot = deps.metricsStateRoot
     // Preserve brokerCommand as a constant test seam, but production selection
     // is deliberately late-bound at each legacy stdio spawn.
     this.resolveBrokerCommand =
@@ -477,10 +493,13 @@ export class HarnessBrokerController {
       logger: this.logger,
       getActiveInvocationId: (runtimeId) => this.active.get(runtimeId)?.invocationId,
       getActiveClient: (runtimeId) => this.active.get(runtimeId)?.client,
-      deleteActive: (runtimeId) => {
-        this.active.delete(runtimeId)
+      deleteActive: (runtimeId, client) => {
+        if (this.active.get(runtimeId)?.client === client) {
+          this.active.delete(runtimeId)
+        }
       },
-      markBrokerClosing: (runtimeId, reason) => this.markBrokerClosing(runtimeId, reason),
+      markBrokerClosing: (runtimeId, reason, client) =>
+        this.markBrokerClosing(runtimeId, reason, client),
       fireBrokerTmuxLeaseReap: (runtimeId, reason) =>
         this.fireBrokerTmuxLeaseReap(runtimeId, reason),
     }
@@ -495,6 +514,7 @@ export class HarnessBrokerController {
       resolveBrokerCommand: this.resolveBrokerCommand,
       brokerArgs: this.brokerArgs,
       env: this.env,
+      metricsStateRoot: this.metricsStateRoot,
       now: this.now,
       serverInstanceId: this.serverInstanceId,
       attachControlProbeTimeoutMs: this.brokerAttachControlProbeTimeoutMs,
@@ -503,8 +523,10 @@ export class HarnessBrokerController {
       allocationContext: () => this.allocationContext(),
       lifecycleContext: () => this.lifecycleContext(),
       handlePermissionRequest: (request) => this.handlePermissionRequest(request),
-      handleBrokerClose: (runtimeId, error) => this.handleBrokerClose(runtimeId, error),
-      markBrokerClosing: (runtimeId, reason) => this.markBrokerClosing(runtimeId, reason),
+      handleBrokerClose: (runtimeId, error, client) =>
+        this.handleBrokerClose(runtimeId, error, client),
+      markBrokerClosing: (runtimeId, reason, client) =>
+        this.markBrokerClosing(runtimeId, reason, client),
       setActive: (record) => {
         this.active.set(record.runtimeId, record)
       },
@@ -976,7 +998,7 @@ export class HarnessBrokerController {
       return { ok: false, error: this.notActive(runtimeId) }
     }
     const reason = opts.reason ?? 'dispose'
-    this.markBrokerClosing(runtimeId, reason)
+    this.markBrokerClosing(runtimeId, reason, active.client)
     try {
       // Bound the broker RPC sequence: stop/dispose/close await acks from the
       // broker, and a wedged/unresponsive broker (e.g. a durable broker-tmux
@@ -1145,6 +1167,38 @@ export class HarnessBrokerController {
           runtimeId,
           error: controllerError.message,
         })
+        try {
+          const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+          const hosting = runtime ? parseBrokerRuntimeHostingState(runtime) : undefined
+          if (hosting?.substrate.kind === 'leased-tmux') {
+            const substrate = hosting.substrate
+            const leaseTmux = createTmuxManager({ socketPath: substrate.tmuxSocketPath })
+            const sessionExists = (await leaseTmux.listSessionNames()).includes(
+              substrate.sessionName
+            )
+            const paneProcess = sessionExists
+              ? await leaseTmux.inspectPaneProcess(substrate.brokerWindow.paneId)
+              : null
+            if (
+              paneProcess !== null &&
+              paneProcess.pid > 0 &&
+              !paneProcess.dead &&
+              isLiveProcess(paneProcess.pid)
+            ) {
+              this.logger.warn?.('runtime.condemnation_averted', {
+                runtimeId,
+                brokerErrorCode: controllerError.code,
+                tmuxSocketPath: substrate.tmuxSocketPath,
+                sessionName: substrate.sessionName,
+                paneId: substrate.brokerWindow.paneId,
+                panePid: paneProcess.pid,
+              })
+              return
+            }
+          }
+        } catch {
+          // A failed liveness probe is not proof that the leased substrate survived.
+        }
         this.markBrokerCrashTerminal(runtimeId, controllerError)
       }
     })()
@@ -1507,7 +1561,10 @@ export class HarnessBrokerController {
       // `invocation.failed` describes invocation state, not externally-owned
       // process fate. Without the required clean `invocation.exited`, transport
       // loss is classified by the EPR owner as detached, never broker-crashed.
-    } else if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
+    } else if (
+      envelope.type === 'invocation.exited' ||
+      (envelope.type === 'invocation.failed' && !isRetryableInvocationFailure(envelope))
+    ) {
       this.flushBrokerEventGapBackfill(String(envelope.invocationId))
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
     }
@@ -1613,20 +1670,38 @@ export class HarnessBrokerController {
     })
   }
 
-  private handleBrokerClose(runtimeId: string, error: Error): void {
+  private handleBrokerClose(
+    runtimeId: string,
+    error: Error,
+    closingClient?: BrokerClientLike
+  ): void {
     const active = this.active.get(runtimeId)
-    const intentionalReason =
-      active?.closing === true
-        ? (active.closeReason ?? this.intentionalClosingRuntimeIds.get(runtimeId))
-        : this.intentionalClosingRuntimeIds.get(runtimeId)
+    const client = closingClient ?? active?.client
+    if (client && active && active.client !== client) {
+      this.intentionalClosingClients.delete(client)
+      this.logger.info?.('ignored broker close from superseded client', {
+        runtimeId,
+        error: error.message,
+      })
+      return
+    }
+    const intentionalReason = client
+      ? this.intentionalClosingClients.get(client)
+      : active?.closing === true
+        ? active.closeReason
+        : undefined
     if (intentionalReason) {
       this.logger.info?.('harness broker process closed intentionally', {
         runtimeId,
         reason: intentionalReason,
         error: error.message,
       })
-      this.active.delete(runtimeId)
-      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      if (active?.client === client) {
+        this.active.delete(runtimeId)
+      }
+      if (client) {
+        this.intentionalClosingClients.delete(client)
+      }
       return
     }
     // T-01801: a `control.fenced` close means a NEWER controller legitimately
@@ -1641,7 +1716,9 @@ export class HarnessBrokerController {
         runtimeId,
         error: error.message,
       })
-      this.active.delete(runtimeId)
+      if (active?.client === client) {
+        this.active.delete(runtimeId)
+      }
       return
     }
     // Lever 2 graceful exit: an interactive /quit typically tears the broker IPC
@@ -1681,7 +1758,9 @@ export class HarnessBrokerController {
         error: error.message,
       })
       this.active.delete(runtimeId)
-      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      if (client) {
+        this.intentionalClosingClients.delete(client)
+      }
       if (this.reconcileBrokerTmuxLivenessOnClose) {
         void this.reconcileBrokerTmuxLivenessOnClose(runtimeId).catch((reapError) => {
           this.logger.warn?.('broker tmux close-path reconcile after user exit failed', {
@@ -1702,10 +1781,17 @@ export class HarnessBrokerController {
     this.markBrokerCrashTerminal(runtimeId, toControllerError('broker_process_closed', error))
   }
 
-  private markBrokerClosing(runtimeId: string, reason: string): void {
-    this.intentionalClosingRuntimeIds.set(runtimeId, reason)
+  private markBrokerClosing(
+    runtimeId: string,
+    reason: string,
+    closingClient?: BrokerClientLike
+  ): void {
     const active = this.active.get(runtimeId)
-    if (active) {
+    const client = closingClient ?? active?.client
+    if (client) {
+      this.intentionalClosingClients.set(client, reason)
+    }
+    if (active && active.client === client) {
       active.closing = true
       active.closeReason = reason
     }
@@ -1844,7 +1930,7 @@ export class HarnessBrokerController {
     active: ActiveBrokerRuntime,
     reason: string
   ): void {
-    this.markBrokerClosing(runtimeId, reason)
+    this.markBrokerClosing(runtimeId, reason, active.client)
     this.active.delete(runtimeId)
     void active.client.close().catch((error: unknown) => {
       this.logger.warn?.('broker close after active RPC timeout failed', {

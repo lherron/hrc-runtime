@@ -26,7 +26,6 @@ import type {
   HrcTurnResponseFormat,
 } from './contracts.js'
 import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
-import type { HrcBirthCredential } from './federation.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
 
@@ -83,7 +82,6 @@ export type ResolveSessionRequest = {
   /** Absent ⇒ `implicit`. Only operator commands send `explicit_local`. */
   summonIntent?: SummonIntent | undefined
   /** Present only for a dispatch inherited from a running parent runtime. */
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type ResolveSessionFoundResponse = {
@@ -288,7 +286,6 @@ export type LaunchCommandScopedRunRequest = {
   idempotencyKey: string
   binding: LaunchCommandScopedRunBinding
   stdinJson?: unknown
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type LaunchCommandScopedRunResponse = {
@@ -346,7 +343,7 @@ export type DispatchTurnRequest = {
   hostSessionId: string
   /**
    * Caller-stable identity for retrying a dispatch after an ambiguous/lost
-   * response. Reuse with a different semantic request is rejected.
+   * response. The key itself is the replay identity.
    */
   idempotencyKey?: string | undefined
   prompt: string
@@ -379,9 +376,7 @@ export type DispatchTurnRequest = {
    * only thing that lets a dispatch carrying
    * `execution.allowInteractiveSurfaceReuse: false` reuse a healthy matching
    * live runtime, and only when it equals that runtime's ACTIVE invocation.
-   * Absent ⇒ never reuse (a first turn owns nothing yet). Participates in the
-   * idempotency request hash, so a replayed key cannot substitute a different
-   * identity.
+   * Absent ⇒ never reuse (a first turn owns nothing yet).
    */
   establishedBrokerInvocationId?: string | undefined
   /**
@@ -499,7 +494,6 @@ export type ResumeContinuationRequest = {
   priorHostSessionId?: string | undefined
   intent?: HrcRuntimeIntent | undefined
   parsedScope?: Record<string, unknown> | undefined
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type ResumeContinuationResponse = {

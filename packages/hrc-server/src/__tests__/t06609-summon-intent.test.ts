@@ -16,7 +16,7 @@
 
 import { describe, expect, test } from 'bun:test'
 
-import type { PlacementBinding } from 'hrc-store-sqlite'
+import type { PlacementBinding, PlacementLedgerRecord } from 'hrc-store-sqlite'
 
 import type { BindingRegistryClient, RegistryConsultResult } from '../federation/registry-client.js'
 import {
@@ -33,10 +33,6 @@ function binding(overrides: Partial<PlacementBinding> = {}): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId: LOCAL,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-    establishmentProvenance: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
@@ -55,10 +51,15 @@ function registryStub(behavior: RegistryConsultResult | Error): BindingRegistryC
   }
 }
 
-function ledgerStub(row: PlacementBinding | undefined) {
+function ledgerStub(row: PlacementLedgerRecord | PlacementBinding | undefined) {
   return {
+    get() {
+      return row
+    },
     activeAuthority(_scopeRef: string) {
-      return row === undefined ? undefined : { ...row, state: 'active' as const }
+      return row === undefined || ('state' in row && row.state !== 'active')
+        ? undefined
+        : { ...row, state: 'active' as const }
     },
   }
 }
@@ -96,7 +97,7 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     expect(result.evaluation.homeNodeId).toBe(LOCAL)
     // Provenance keeps the binding explainable (§5): this is expected state,
     // not skew, precisely because it records WHY it landed here.
-    expect(result.evaluation.establishmentProvenance).toBe('explicit_local')
+    expect(result.evaluation.placementSource).toBe('explicit_local')
   })
 
   test('the SAME scope and policy under implicit intent routes away', async () => {
@@ -129,7 +130,7 @@ describe('explicit-start-wins: the operator start is the placement declaration',
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') return
-    expect(result.evaluation.establishmentProvenance).toBe('explicit_local')
+    expect(result.evaluation.placementSource).toBe('explicit_local')
   })
 
   test('implicit with no [provisioning] stanza still refuses, naming the stanza line', async () => {
@@ -164,7 +165,7 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     if (result.evaluation.decision !== 'allow') return
     // Both routes land on this node, but provenance must say which authority
     // put it here — the operator, not the policy default.
-    expect(result.evaluation.establishmentProvenance).toBe('explicit_local')
+    expect(result.evaluation.placementSource).toBe('explicit_local')
   })
 })
 
@@ -211,23 +212,7 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
     expect(result.evaluation.homeNodeId).toBe(REMOTE)
   })
 
-  test('local ledger row homed elsewhere: explicit start refuses (rebind is the remedy)', async () => {
-    const result = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'resolve-session',
-      intent: 'explicit_local',
-      deps: deps({ ledger: ledgerStub(binding({ homeNodeId: REMOTE, placementEpoch: 3 })) }),
-    })
-
-    expect(result.evaluation.decision).toBe('refuse')
-    if (result.evaluation.decision !== 'refuse') return
-    expect(result.evaluation.reason).toBe('bound-elsewhere')
-  })
-
-  test('rebuild state: old-home revoked but registry still names the old node -> refuse', async () => {
-    // Revocation alone is not unbound. A revoked local row reads as absent
-    // (`activeAuthority` returns undefined), so the registry is what stops the
-    // explicit start from establishing a second authority mid-rebuild.
+  test('registry still naming another home refuses when no local authority exists', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'resolve-session',
@@ -243,7 +228,7 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
     expect(result.evaluation.reason).toBe('bound-elsewhere')
   })
 
-  test('rebuild state: registry names THIS node, local row absent -> idempotent activation', async () => {
+  test('registry naming this node allows local ledger convergence', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'resolve-session',
@@ -252,17 +237,15 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
         ledger: ledgerStub(undefined),
         registry: registryStub({
           outcome: 'bound',
-          binding: binding({ homeNodeId: LOCAL, placementEpoch: 2 }),
+          binding: binding({ homeNodeId: LOCAL }),
         }),
       }),
     })
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') return
-    // Finishing an activation at the registry's existing epoch — NOT a virgin
-    // birth, so no establishment provenance is claimed for it.
     expect(result.evaluation.reason).toBe('registry-bound-local')
-    expect(result.evaluation.establishmentProvenance).toBeUndefined()
+    expect(result.evaluation.placementSource).toBeUndefined()
   })
 
   test('a retired scope refuses an explicit start too', async () => {
@@ -271,11 +254,11 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
       path: 'resolve-session',
       intent: 'explicit_local',
       deps: deps({
-        retirementFor: () => ({
-          retiredNodeId: LOCAL,
-          successorNodeId: REMOTE,
-          retiredPlacementEpoch: 4,
-          reason: 'namespace reconciliation',
+        ledger: ledgerStub({
+          ...binding(),
+          state: 'retired',
+          retiredAt: '2026-07-20T00:01:00.000Z',
+          retirementReason: 'operator retirement',
         }),
       }),
     })

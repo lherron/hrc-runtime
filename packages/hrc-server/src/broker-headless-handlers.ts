@@ -185,7 +185,6 @@ export function enqueueDurableHeadlessTurnInput(
       queuedInputSeq: nextQueueSeq,
       dispatchedInputId: `input-${randomUUID()}`,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-      dispatchRequestHash: options.dispatchRequestHash,
       ...dispatchOriginRunFields(options),
     })
     this.db.runs.setCorrelationJson(
@@ -322,6 +321,8 @@ export async function drainDurableHeadlessTurnInputs(
     const remainder = snapshot.slice(executing.length)
 
     const session = requireSession(this.db, hostSessionId)
+    // T-07206: fresh starts commit this field only after controller.start succeeds,
+    // so it is safe for an automatic drain to reuse as materialization authority.
     const intent = session.lastAppliedIntentJson
     if (!intent) {
       throw new HrcRuntimeUnavailableError('queued turn has no runtime intent', {
@@ -455,8 +456,7 @@ export async function startHeadlessBrokerRuntime(
   const turnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
-  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
+  const timing = createPrecompileLaunchTimingContext('headless', runtimeId, this.options.stateRoot)
 
   let handedOffToController = false
   const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
@@ -682,6 +682,11 @@ export async function startHeadlessBrokerRuntime(
       )
     }
 
+    // `lastAppliedIntentJson` is materialization authority for automatic queued
+    // drains and mail delivery. Commit only after the controller has admitted
+    // and launched this exact intent; every earlier error therefore leaves the
+    // prior authority untouched.
+    this.db.sessions.updateIntent(session.hostSessionId, turnIntent, timestamp(), timing)
     return result.runtime
   } catch (error) {
     if (!handedOffToController) {
@@ -701,7 +706,14 @@ export async function executeHeadlessBrokerStartTurn(
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
-  }
+  },
+  runtimeStartOwnership?:
+    | {
+        operation: Promise<HrcRuntimeSnapshot>
+        resolve(runtime: HrcRuntimeSnapshot): void
+        reject(error: unknown): void
+      }
+    | undefined
 ): Promise<Response> {
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
   let rejectAccepted!: (error: unknown) => void
@@ -715,6 +727,9 @@ export async function executeHeadlessBrokerStartTurn(
   })
   // Publish the runtime-producing promise before yielding so crossing dispatches
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
+  // A cold-durable recovery may already own the map across its awaited
+  // reattach/cleanup work. In that case keep its promise as the stable join
+  // point and settle it from the fresh boot instead of replacing it here.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
@@ -746,16 +761,23 @@ export async function executeHeadlessBrokerStartTurn(
       // The attachability gate that used to stand here is redundant:
       // publishPresentation computes `operatorAttachable` itself and records it
       // either way, and the in-daemon spawn it fronts re-checks the predicate.
-      void this.publishPresentation(runtime)
+      void this.publishPresentation(runtime, { signal: this.runtimeStartPresentationSignal })
       // Test doubles and older controller adapters may not implement the
       // acceptance callback. Full boot is a conservative fallback boundary.
       if (!acceptedSettled) resolveAccepted(runtime)
       return runtime
     })
     .finally(() => {
-      this.runtimeStartOperations.delete(session.hostSessionId)
+      const publishedOperation = runtimeStartOwnership?.operation ?? bootOperation
+      if (this.runtimeStartOperations.get(session.hostSessionId) === publishedOperation) {
+        this.runtimeStartOperations.delete(session.hostSessionId)
+      }
     })
-  this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  if (runtimeStartOwnership) {
+    void bootOperation.then(runtimeStartOwnership.resolve, runtimeStartOwnership.reject)
+  } else {
+    this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  }
   void bootOperation.catch((error) => {
     if (!acceptedSettled) rejectAccepted(error)
   })
@@ -846,9 +868,6 @@ export async function executeHeadlessBrokerInputTurn(
       ...(options.dispatchIdempotencyKey !== undefined
         ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
         : {}),
-      ...(options.dispatchRequestHash !== undefined
-        ? { dispatchRequestHash: options.dispatchRequestHash }
-        : {}),
     })
     if (steered !== 'floor') return steered
   }
@@ -887,7 +906,6 @@ export async function executeHeadlessBrokerInputTurn(
       invocationId,
       operationId: runtime.activeOperationId,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-      dispatchRequestHash: options.dispatchRequestHash,
       ...dispatchOriginRunFields(options),
       // Persist HRC's inputId on the run row so the broker event-mapper can
       // correlate a drained input.accepted envelope back to this run and flip
@@ -998,6 +1016,7 @@ export async function executeHeadlessBrokerInputTurn(
       await reattachDurableBrokerForDispatch(this.db, runtime, {
         runtimeRoot: this.options.runtimeRoot,
         controller: this.getHarnessBrokerController(),
+        inFlightOperations: this.brokerReattachOperations,
         brokerUnixClientFactory:
           this.brokerUnixClientFactory ??
           ((options) =>

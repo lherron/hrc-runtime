@@ -607,9 +607,6 @@ const runsDispatchIdempotencyMigration: HrcMigration = {
     if (!runColumns.has('dispatch_idempotency_key')) {
       db.exec('ALTER TABLE runs ADD COLUMN dispatch_idempotency_key TEXT')
     }
-    if (!runColumns.has('dispatch_request_hash')) {
-      db.exec('ALTER TABLE runs ADD COLUMN dispatch_request_hash TEXT')
-    }
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_dispatch_idempotency
         ON runs(host_session_id, dispatch_idempotency_key)
@@ -675,7 +672,6 @@ const steerContributionsMigration: HrcMigration = {
         contribution_id       TEXT PRIMARY KEY,
         host_session_id       TEXT NOT NULL,
         idempotency_key       TEXT,
-        request_hash          TEXT,
         runtime_id            TEXT NOT NULL,
         invocation_id         TEXT NOT NULL,
         active_run_id         TEXT NOT NULL,
@@ -721,6 +717,39 @@ const runtimePresentationRecordMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07200 — read-side candidate discovery for the state-retention job.
+ *
+ * Discovery is deliberately separate from the bounded writer recheck in the
+ * prune script. These indexes make that read efficient; they are not themselves
+ * the proof that a DELETE holds the writer for bounded work. This belongs in
+ * the broker phase because broker_invocation_events is created there.
+ */
+const pruneCandidateIndexesMigration: HrcMigration = {
+  id: '0050_prune_candidate_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_events_retention_ts
+        ON events(ts);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_retention_ts
+        ON hrc_events(ts);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_retention_time
+        ON broker_invocation_events(time);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_buffers_retention_created
+        ON runtime_buffers(created_at);
+
+      CREATE INDEX IF NOT EXISTS idx_events_broker_kind_nocase
+        ON events(event_kind COLLATE NOCASE);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_type
+        ON broker_invocation_events(type);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -737,4 +766,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   eventRepositoryQueryIndexesMigration,
   steerContributionsMigration,
   runtimePresentationRecordMigration,
+  pruneCandidateIndexesMigration,
 ]

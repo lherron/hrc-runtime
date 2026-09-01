@@ -13,6 +13,7 @@ import {
   insertBuffer,
   insertEvent,
   insertHrcEvent,
+  makeProductStore,
   makeStore,
   parsePruneStateRetentionArgs,
   pruneOptions,
@@ -22,6 +23,25 @@ import {
 } from './prune-hrc-event-deltas.fixture'
 
 describe('prune-hrc-event-deltas bounded state retention', () => {
+  test('a fresh product database is born incrementally vacuumable and accepts its first apply', async () => {
+    const { path, db } = makeProductStore()
+    try {
+      expect(db.sqlite.query<{ auto_vacuum: number }, []>('PRAGMA auto_vacuum').get()).toEqual({
+        auto_vacuum: 2,
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await pruneStateRetention({
+      ...pruneOptions(path, true),
+      tables: ['runtime_buffers'],
+    })
+    expect(result.autoVacuumMode).toBe(2)
+    expect(result.stopReason).toBe('complete')
+    expect(result.deleted).toBe(0)
+  })
+
   test('defaults are configurable by CLI and environment', () => {
     const defaults = parsePruneStateRetentionArgs([], {})
     expect(defaults.eventRetentionDays).toBe(3)

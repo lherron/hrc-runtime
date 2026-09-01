@@ -1,8 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { resolveStateRoot } from 'hrc-core'
-
 import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
@@ -122,11 +120,7 @@ export function pruneServerMetricFiles(metricsDir: string, now: number): void {
   }
 }
 
-export function writeServerMetric(
-  record: ServerMetricRecord,
-  now = new Date(),
-  stateRoot = resolveStateRoot()
-): void {
+export function writeServerMetric(record: ServerMetricRecord, now: Date, stateRoot: string): void {
   try {
     const metricsDir = join(stateRoot, 'metrics')
     mkdirSync(metricsDir, { recursive: true })
@@ -142,12 +136,15 @@ export function writeServerMetric(
  * Record a launch phase span. Never throws: a launch must not fail because its
  * own instrumentation could not be persisted.
  */
-export function recordLaunchSpan(span: {
-  phase: string
-  runtimeId: string
-  ms: number
-  transport?: 'headless' | 'interactive' | 'preview' | undefined
-}): void {
+export function recordLaunchSpan(
+  span: {
+    phase: string
+    runtimeId: string
+    ms: number
+    transport?: 'headless' | 'interactive' | 'preview' | undefined
+  },
+  stateRoot: string
+): void {
   const now = new Date()
   writeServerMetric(
     {
@@ -161,6 +158,7 @@ export function recordLaunchSpan(span: {
       // rendered report unreadable; one decimal millisecond is the useful unit.
       ms: Number(span.ms.toFixed(1)),
     },
-    now
+    now,
+    stateRoot
   )
 }

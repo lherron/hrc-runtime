@@ -35,6 +35,8 @@ export type PublishPresentationOptions = {
    * never written to the runtime row.
    */
   operatorAttachPending?: boolean | undefined
+  /** Stop-owned cancellation for presentation work launched by a background boot. */
+  signal?: AbortSignal | undefined
 }
 
 /**
@@ -63,6 +65,13 @@ export async function publishPresentation(
   runtime: HrcRuntimeSnapshot,
   options: PublishPresentationOptions = {}
 ): Promise<void> {
+  // A boot may settle after stop() has closed the store. There is no await
+  // below, so this one pre-read fence gives publication an atomic outcome with
+  // respect to stop: finish before stop can run, or abandon without touching a
+  // repository after stop has cancelled background boot completion work.
+  if (options.signal?.aborted) {
+    return
+  }
   const operatorAttachPending = options.operatorAttachPending === true
   try {
     // Re-read the row: callers hold snapshots taken before the substrate was

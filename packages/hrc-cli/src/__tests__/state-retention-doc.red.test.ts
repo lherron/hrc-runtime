@@ -24,12 +24,18 @@ test('documents the state retention policy and index adequacy evidence', () => {
   expect(doc).toMatch(
     /(?=[\s\S]*resume barriers are permanent)(?=[\s\S]*nonterminal runs)(?=[\s\S]*current active run)(?=[\s\S]*imported federation observations)(?=[\s\S]*no archive migration)(?=[\s\S]*auto_vacuum=INCREMENTAL)/i
   )
+  expect(doc).toMatch(
+    /(?=[\s\S]*collaboration state[^\n]*keep forever)(?=[\s\S]*`messages`[^\n]*canonical local message)(?=[\s\S]*collective_history_messages)(?=[\s\S]*collective_history_observations)(?=[\s\S]*collective_history_replications)(?=[\s\S]*every `hrcmail_\*` table)(?=[\s\S]*no TTL)(?=[\s\S]*replay-fence)/i
+  )
   // Writer-lock guards: the job shares state.sqlite with the live daemon.
   expect(doc).toMatch(
     /(?=[\s\S]*--deadline-minutes)(?=[\s\S]*--pace-millis)(?=[\s\S]*--max-write-hold-millis)(?=[\s\S]*--max-duty-cycle)(?=[\s\S]*--busy-max-retries)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*full backup)(?=[\s\S]*state\.sqlite)(?=[\s\S]*disk)(?=[\s\S]*defer)(?=[\s\S]*rolling nightly increments)(?=[\s\S]*C-10736)/i
+  )
+  expect(doc).toMatch(
+    /(?=[\s\S]*candidate discovery and deletion are separate statements)(?=[\s\S]*read-only indexed query)(?=[\s\S]*never owns[\s\S]*SQLite[\s\S]*writer)(?=[\s\S]*adaptive-batch key set)(?=[\s\S]*primary-key lookup)(?=[\s\S]*selected-key cardinality)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*sweep)(?=[\s\S]*never deletes)(?=[\s\S]*runtime prune)(?=[\s\S]*default[^\n]*stale)(?=[\s\S]*T-05441)(?=[\s\S]*only stale-row-reaping surface)/i

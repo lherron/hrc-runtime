@@ -28,7 +28,11 @@
 
 import { formatScopeRef, parseScopeHandle, parseScopeRef } from 'agent-scope'
 
-import type { BindingRegistry, BirthDesignationResult } from 'hrc-store-sqlite'
+import type {
+  BindingRegistry,
+  BirthDesignationRecord,
+  BirthDesignationResult,
+} from 'hrc-store-sqlite'
 
 /** The wrkq birth-envelope read, as the host performs it. Null means none. */
 export type BirthEnvelopeReader = (scopeRef: string) => Promise<{
@@ -82,7 +86,7 @@ function canonicalSenderScopeRef(raw: string): string | undefined {
 }
 
 export type DesignateBirthHostDeps = {
-  registry: Pick<BindingRegistry, 'liveDesignation' | 'recordDesignation' | 'getRecord'>
+  registry: Pick<BindingRegistry, 'liveDesignation' | 'recordDesignation' | 'get' | 'retiredHome'>
   /** Absent when this host has no ledger client; every designation is then `none`. */
   birthEnvelopeFor?: BirthEnvelopeReader | undefined
   now?: (() => string) | undefined
@@ -132,27 +136,32 @@ export async function designateBirthOnHost(
   const senderScopeRef = canonicalSenderScopeRef(rawSender)
   if (senderScopeRef === undefined) return { kind: 'none' }
 
-  const sender = deps.registry.getRecord(senderScopeRef)
-  if (sender === undefined) return { kind: 'none' }
+  const sender = deps.registry.get(senderScopeRef)
+  const retiredHomeNodeId =
+    sender === undefined ? deps.registry.retiredHome(senderScopeRef) : undefined
+  if (sender === undefined && retiredHomeNodeId === undefined) return { kind: 'none' }
 
   const now = (deps.now ?? (() => new Date().toISOString()))()
-  const designation =
-    sender.state === 'retired'
-      ? deps.registry.recordDesignation({
-          scopeRef,
-          homeNodeId: sender.retiredHomeNodeId,
-          provenance: 'default_home_node(sender-retired)',
-          birthEnvelopeId: birthEnvelope.envelopeId,
-          senderScopeRef,
-          now,
-        })
-      : deps.registry.recordDesignation({
-          scopeRef,
-          homeNodeId: sender.homeNodeId,
-          provenance: 'default_home_node(sender)',
-          birthEnvelopeId: birthEnvelope.envelopeId,
-          senderScopeRef,
-          now,
-        })
+  let designation: BirthDesignationRecord
+  if (sender !== undefined) {
+    designation = deps.registry.recordDesignation({
+      scopeRef,
+      homeNodeId: sender.homeNodeId,
+      provenance: 'default_home_node(sender)',
+      birthEnvelopeId: birthEnvelope.envelopeId,
+      senderScopeRef,
+      now,
+    })
+  } else {
+    if (retiredHomeNodeId === undefined) return { kind: 'none' }
+    designation = deps.registry.recordDesignation({
+      scopeRef,
+      homeNodeId: retiredHomeNodeId,
+      provenance: 'default_home_node(sender-retired)',
+      birthEnvelopeId: birthEnvelope.envelopeId,
+      senderScopeRef,
+      now,
+    })
+  }
   return { kind: 'designated', designation }
 }

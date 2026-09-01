@@ -1,0 +1,46 @@
+id: hrc-runtime.harness-broker-admission-client
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC submission API and policy authority over the per-seat harness-broker
+predicate: >
+  HRC owns cross-seat scheduling, caller policy, and principal authority while
+  the harness-broker owns per-seat admission mechanism. All HRC broker traffic
+  flows through exactly four class-specific submit methods, one each for steer,
+  queue, exclusive, and preempt; the concrete method names are not law.
+  Admission class is explicit in the method signature and is never selected by
+  a whenBusy parameter; composite behavior such as
+  steer-else-queue is caller composition of typed outcomes. Steer exposes no
+  wait, obligation, or own-response option and resolves only through truthful
+  absorbed or executed disposition. Every obligation-bearing call uses enqueue,
+  invoke, or preempt and originates its own turn; blocking callers correlate by
+  submission disposition and then the identified turn terminal rather than by
+  delivery inference. Preempt requires operator authority or the sender's
+  authority over the envelope driving the active turn, and never arises from a
+  silent class upgrade. HRC consumes broker capability, seat probe, queue,
+  disposition, manifest, and decision-ledger surfaces without reading harness
+  internals or moving per-seat mechanism into the runtime layer.
+authority: Lance principal ruling 2026-09-01 / Daedalus approval wrkq:T-07843 rev 7
+source:
+  - wrkq:T-07843
+  - commit:1c5d5e43
+  - packages/hrc-core/src/hrcchat-contracts.ts
+  - packages/hrcchat-cli/src/commands/turn.ts
+required_tests:
+  - the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four
+  - steer signatures cannot express wait obligation or own-response semantics
+  - legacy whenBusy fields and implicit steer-else-queue composition are absent after adoption
+  - obligation-bearing enqueue invoke and preempt calls correlate disposition to their originating turn terminal
+  - preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts
+  - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
+last_verified:
+  date: 2026-09-01
+  evidence: Daedalus round-5 source-grounded architecture approval of T-07843 rev 7; implementation gates pending.
+reopen_when:
+  - HRC adds removes or parameterizes an admission-class submit method
+  - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
+  - cross-seat scheduling moves into the broker or per-seat mechanism moves into HRC
+  - preempt authority or active-turn policy semantics change
+  - HRC reads harness internals instead of broker disposition manifest and decision surfaces
+supersedes: []
+superseded_by: []

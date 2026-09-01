@@ -382,6 +382,8 @@ export type HarnessBrokerControllerDeps = {
   resolveBrokerCommand?: (() => string) | undefined
   brokerArgs?: string[] | undefined
   env?: Record<string, string | undefined> | undefined
+  /** Durable launch metrics root owned by the enclosing server. Omit in isolated controller tests. */
+  metricsStateRoot?: string | undefined
   now?: () => string
   serverInstanceId?: string
   logger?: BrokerControllerLogger
@@ -391,6 +393,14 @@ export type HarnessBrokerControllerDeps = {
         record: HrcBrokerInvocationEventRecord
       }) => void)
     | undefined
+}
+
+/** Production construction requires a durable metrics root; direct construction is test-only. */
+export type ProductionHarnessBrokerControllerDeps = Omit<
+  HarnessBrokerControllerDeps,
+  'metricsStateRoot'
+> & {
+  metricsStateRoot: string
 }
 
 export type BrokerControllerStartInput = {
@@ -427,8 +437,6 @@ export type BrokerControllerStartInput = {
   firstTurnTimeoutMs?: number | undefined
   /** Caller retry identity persisted atomically with the accepted run row. */
   dispatchIdempotencyKey?: string | undefined
-  /** Canonical semantic request hash paired with dispatchIdempotencyKey. */
-  dispatchRequestHash?: string | undefined
   /**
    * Recorded initiating principal of the dispatch (T-07236). Dispatch-time
    * provenance, NOT compiler closure: like the watchdog override it never

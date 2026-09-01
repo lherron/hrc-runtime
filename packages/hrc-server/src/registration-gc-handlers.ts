@@ -7,15 +7,11 @@ import {
   type RetireRegistrationScopesRequest,
   type RetireRegistrationScopesResponse,
 } from 'hrc-core'
-import {
-  type ExternalRegistrationGrant,
-  createScopeRetirementRepository,
-  readScopeRetirement,
-} from 'hrc-store-sqlite'
+import { type ExternalRegistrationGrant, createPlacementLedgerRepository } from 'hrc-store-sqlite'
 
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS } from './external-registration-rendezvous.js'
-import { withScopeAuthorityLock } from './federation/authority-lock.js'
+import { retireFederationScope } from './federation/retirement.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
@@ -126,177 +122,60 @@ function parseRetirementRequest(value: unknown): RetireRegistrationScopesRequest
   return { scopeRefs: normalized }
 }
 
-function provenanceMatchesRegistration(provenance: unknown, registrationId: string): boolean {
-  return (
-    isRecord(provenance) &&
-    provenance['kind'] === 'external-registration' &&
-    provenance['registrationId'] === registrationId
-  )
-}
-
 async function retireCandidate(
   server: HrcServerInstanceForHandlers,
   scopeRef: string
 ): Promise<RegistrationGcResult> {
-  return await withScopeAuthorityLock(server as object, scopeRef, async () => {
-    const grant = server.db.externalRegistrationGrants
-      .listMinted()
-      .find((candidate) => candidate.derivedScope === scopeRef)
-    if (grant?.retirementReason === RETIREMENT_REASON) {
-      return { scopeRef, registrationId: grant.registrationId, status: 'idempotent' }
+  const grant = server.db.externalRegistrationGrants
+    .listMinted()
+    .find((candidate) => candidate.derivedScope === scopeRef)
+  if (grant?.retirementReason === RETIREMENT_REASON) {
+    return { scopeRef, registrationId: grant.registrationId, status: 'idempotent' }
+  }
+  const candidate = projectRegistrationGcCandidates(server).candidates.find(
+    (entry) => entry.scopeRef === scopeRef
+  )
+  if (grant === undefined || candidate === undefined) return { scopeRef, status: 'not_candidate' }
+  const registry = server.federationRegistryClient
+  const localNodeId = server.options.federationConfig?.nodeId
+  if (registry === undefined || localNodeId === undefined) {
+    return {
+      scopeRef,
+      registrationId: grant.registrationId,
+      status: 'authority_unavailable',
+      detail: 'federation retirement authority is unavailable',
     }
-    const candidate = projectRegistrationGcCandidates(server).candidates.find(
-      (entry) => entry.scopeRef === scopeRef
-    )
-    if (grant === undefined || candidate === undefined) {
-      return { scopeRef, status: 'not_candidate' }
+  }
+  const retiredAt = timestamp()
+  const result = await retireFederationScope(
+    {
+      owner: server as object,
+      localNodeId,
+      ledger: createPlacementLedgerRepository(server.db.sqlite),
+      registry,
+      liveRuntimeIds: () => [],
+      log: writeServerLog,
+      now: () => retiredAt,
+    },
+    { scopeRef, reason: RETIREMENT_REASON }
+  )
+  if (!result.ok) {
+    return {
+      scopeRef,
+      registrationId: grant.registrationId,
+      status:
+        result.outcome === 'refused' || result.outcome === 'conflict'
+          ? 'authority_conflict'
+          : 'authority_unavailable',
+      detail: result.detail,
     }
-
-    const registry = server.federationRegistryClient
-    if (registry === undefined || registry.retire === undefined) {
-      return {
-        scopeRef,
-        registrationId: grant.registrationId,
-        status: 'authority_unavailable',
-        detail: 'the federation binding registry retirement client is unavailable',
-      }
-    }
-
-    try {
-      const consulted = await registry.consult(scopeRef)
-      if (consulted.outcome === 'retired') {
-        const localNodeId = server.options.federationConfig?.nodeId
-        if (
-          localNodeId === undefined ||
-          consulted.retirement.reason !== RETIREMENT_REASON ||
-          consulted.retirement.retiredHomeNodeId !== localNodeId ||
-          !provenanceMatchesRegistration(
-            consulted.retirement.authorityProvenance,
-            grant.registrationId
-          )
-        ) {
-          return {
-            scopeRef,
-            registrationId: grant.registrationId,
-            status: 'authority_conflict',
-            detail: 'scope is already retired under different authority',
-          }
-        }
-        const existingFence = readScopeRetirement(server.db.sqlite, scopeRef)
-        if (
-          existingFence !== undefined &&
-          (existingFence.retiredNodeId !== localNodeId ||
-            existingFence.retiredPlacementEpoch !== consulted.retirement.placementEpoch ||
-            existingFence.successorNodeId !== null ||
-            existingFence.reason !== RETIREMENT_REASON)
-        ) {
-          return {
-            scopeRef,
-            registrationId: grant.registrationId,
-            status: 'authority_conflict',
-            detail: 'scope has a conflicting node-local retirement fence',
-          }
-        }
-        createScopeRetirementRepository(server.db.sqlite).retire({
-          scopeRef,
-          retiredNodeId: localNodeId,
-          retiredPlacementEpoch: consulted.retirement.placementEpoch,
-          successorNodeId: null,
-          reason: RETIREMENT_REASON,
-          retiredAt: consulted.retirement.retiredAt,
-        })
-        server.db.externalRegistrationGrants.markRetired(
-          grant.registrationId,
-          consulted.retirement.retiredAt
-        )
-        return { scopeRef, registrationId: grant.registrationId, status: 'idempotent' }
-      }
-      if (consulted.outcome === 'unbound') {
-        return {
-          scopeRef,
-          registrationId: grant.registrationId,
-          status: 'authority_conflict',
-          detail: 'scope has no active registry binding to retire',
-        }
-      }
-      const binding = consulted.binding
-      const localNodeId = server.options.federationConfig?.nodeId
-      if (
-        localNodeId === undefined ||
-        binding.homeNodeId !== localNodeId ||
-        !provenanceMatchesRegistration(binding.authorityProvenance, grant.registrationId)
-      ) {
-        return {
-          scopeRef,
-          registrationId: grant.registrationId,
-          status: 'authority_conflict',
-          detail: `registry binding is not this registration's local authority`,
-        }
-      }
-
-      const existingFence = readScopeRetirement(server.db.sqlite, scopeRef)
-      const retiredAt = existingFence?.retiredAt ?? timestamp()
-      if (
-        existingFence !== undefined &&
-        (existingFence.retiredNodeId !== localNodeId ||
-          existingFence.retiredPlacementEpoch !== binding.placementEpoch ||
-          existingFence.successorNodeId !== null ||
-          existingFence.reason !== RETIREMENT_REASON)
-      ) {
-        return {
-          scopeRef,
-          registrationId: grant.registrationId,
-          status: 'authority_conflict',
-          detail: 'scope has a conflicting node-local retirement fence',
-        }
-      }
-      createScopeRetirementRepository(server.db.sqlite).retire({
-        scopeRef,
-        retiredNodeId: localNodeId,
-        retiredPlacementEpoch: binding.placementEpoch,
-        successorNodeId: null,
-        reason: RETIREMENT_REASON,
-        retiredAt,
-      })
-
-      const retired = await registry.retire({
-        scopeRef,
-        expectedHomeNodeId: localNodeId,
-        expectedPlacementEpoch: binding.placementEpoch,
-        successorNodeId: null,
-        reason: RETIREMENT_REASON,
-        retiredAt,
-      })
-      if (retired.outcome !== 'retired' && retired.outcome !== 'idempotent') {
-        return {
-          scopeRef,
-          registrationId: grant.registrationId,
-          status: 'authority_conflict',
-          detail: `registry retirement returned ${retired.outcome}`,
-        }
-      }
-      server.db.externalRegistrationGrants.markRetired(grant.registrationId, retiredAt)
-      writeServerLog('INFO', 'external_registration.gc.retired', {
-        registrationId: grant.registrationId,
-        scopeRef,
-        homeNodeId: localNodeId,
-        placementEpoch: binding.placementEpoch,
-        retiredAt,
-      })
-      return {
-        scopeRef,
-        registrationId: grant.registrationId,
-        status: retired.outcome === 'retired' ? 'retired' : 'idempotent',
-      }
-    } catch (error) {
-      return {
-        scopeRef,
-        registrationId: grant.registrationId,
-        status: 'authority_unavailable',
-        detail: error instanceof Error ? error.message : String(error),
-      }
-    }
-  })
+  }
+  server.db.externalRegistrationGrants.markRetired(grant.registrationId, retiredAt)
+  return {
+    scopeRef,
+    registrationId: grant.registrationId,
+    status: result.outcome === 'idempotent' ? 'idempotent' : 'retired',
+  }
 }
 
 export async function handleListRegistrationGcCandidates(

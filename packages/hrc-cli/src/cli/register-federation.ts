@@ -13,40 +13,24 @@ import { toLegacyArgv } from './argv.js'
 import { annotateCommand } from './command-metadata.js'
 import {
   cmdDoctor,
-  cmdFederationRebind,
+  cmdFederationRetire,
   cmdTargetBindings,
   cmdTargetLocate,
 } from './handlers-federation.js'
 
 export function registerFederationCommands(program: Command): void {
   const federation = program.command('federation').description('inspect and operate federation')
-  const rebind = federation
-    .command('rebind')
-    .description('manually move one fenced placement binding from old E to new E+1')
-
-  const addRebindStep = (name: 'revoke' | 'cas' | 'activate', description: string): void => {
-    rebind
-      .command(name)
-      .argument('<scope>', 'scope ref or target handle')
-      .description(description)
-      .requiredOption('--expected-home <node>', 'exact current home node')
-      .requiredOption('--expected-epoch <n>', 'exact current placement epoch')
-      .requiredOption('--new-home <node>', 'intended successor node')
-      .option('--json', 'output the complete step result as JSON')
-      .action(async (scope: string, _opts, cmd: Command) => {
-        await cmdFederationRebind(
-          name,
-          toLegacyArgv([scope], cmd.opts(), {
-            strings: ['expected-home', 'expected-epoch', 'new-home'],
-            booleans: ['json'],
-          })
-        )
-      })
-  }
-
-  addRebindStep('revoke', 'fence the exact old tuple after draining its runtimes')
-  addRebindStep('cas', 'CAS the registry only after observing old-home revocation')
-  addRebindStep('activate', 'activate the exact rebound tuple on its new home')
+  federation
+    .command('retire')
+    .argument('<scope>', 'scope ref or target handle')
+    .description('permanently fence a scope on its old home and delete its binding')
+    .requiredOption('--reason <text>', 'operator reason recorded with the local fence')
+    .option('--json', 'output the complete result as JSON')
+    .action(async (scope: string, _opts, cmd: Command) => {
+      await cmdFederationRetire(
+        toLegacyArgv([scope], cmd.opts(), { strings: ['reason'], booleans: ['json'] })
+      )
+    })
 
   const target = program.command('target').description('inspect where scopes live (placement)')
 

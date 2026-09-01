@@ -24,7 +24,7 @@
  * - **Node-local, never git-synced.** It holds bearer tokens. Expected mode is
  *   `0600`; a looser mode produces a startup warning naming the file.
  * - **Single source of identity.** There is no environment override for
- *   `nodeId`. Changing a node's identity is a rebind-class operation, not an env
+ *   `nodeId`. Changing a node's identity is an operator lifecycle operation, not an env
  *   tweak, and env precedence on identity config has burned this estate before.
  *   Only the file location is env-selectable (`HRC_PEER_CONFIG_FILE`).
  * - **Absent file is valid single-node mode**, and still yields a deterministic

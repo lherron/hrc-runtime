@@ -96,13 +96,11 @@ export async function reconcileExternalRegistrationCollectiveEstablishment(
       state: 'CANONICAL',
       bindingState: 'BOUND',
       homeNodeId: result.binding.homeNodeId,
-      placementEpoch: result.binding.placementEpoch,
     })
     writeServerLog('INFO', 'external_registration.collective_establishment.canonical', {
       registrationId,
       scopeRef: grant.derivedScope,
       homeNodeId: result.binding.homeNodeId,
-      placementEpoch: result.binding.placementEpoch,
     })
     return 'canonical'
   }
@@ -113,7 +111,6 @@ export async function reconcileExternalRegistrationCollectiveEstablishment(
       cause: result.cause,
       detail: result.detail,
       ...(result.homeNodeId === undefined ? {} : { homeNodeId: result.homeNodeId }),
-      ...(result.binding === undefined ? {} : { placementEpoch: result.binding.placementEpoch }),
     })
     writeServerLog('WARN', 'external_registration.collective_establishment.noncanonical', {
       registrationId,

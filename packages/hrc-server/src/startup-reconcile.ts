@@ -713,6 +713,45 @@ export async function reattachDurableBrokerForDispatch(
     // script these to avoid touching a live socket / on-disk attach token.
     resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
     probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
+    /**
+     * Request-serving ownership for lazy reattach. Every request path shares
+     * this per-server map, so only one candidate may attach a durable runtime
+     * while crossing callers await the exact same result.
+     */
+    inFlightOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>
+  }
+): Promise<DurableBrokerDispatchReattachResult> {
+  const existing = deps.inFlightOperations.get(runtime.runtimeId)
+  if (existing) {
+    return await existing
+  }
+
+  let resolveOperation!: (result: DurableBrokerDispatchReattachResult) => void
+  let rejectOperation!: (error: unknown) => void
+  const operation = new Promise<DurableBrokerDispatchReattachResult>((resolve, reject) => {
+    resolveOperation = resolve
+    rejectOperation = reject
+  })
+  deps.inFlightOperations.set(runtime.runtimeId, operation)
+  void reattachDurableBrokerForDispatchOwned(db, runtime, deps)
+    .then(resolveOperation, rejectOperation)
+    .finally(() => {
+      if (deps.inFlightOperations.get(runtime.runtimeId) === operation) {
+        deps.inFlightOperations.delete(runtime.runtimeId)
+      }
+    })
+  return await operation
+}
+
+async function reattachDurableBrokerForDispatchOwned(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  deps: {
+    runtimeRoot: string
+    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
+    brokerUnixClientFactory: BrokerUnixClientFactory
+    resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
+    probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
   }
 ): Promise<DurableBrokerDispatchReattachResult> {
   if (!getPersistedDurableBrokerEndpoint(runtime)) {

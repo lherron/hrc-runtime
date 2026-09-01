@@ -1,4 +1,4 @@
-/** Exact origin routing resolution order from federation spec §5. */
+/** Home-node-only routing resolution from federation v1.3 §5. */
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 
@@ -9,8 +9,7 @@ import { RegistryUnreachableError } from './registry-client.js'
 type RoutingLedgerRecord = Readonly<{
   scopeRef: string
   homeNodeId: string
-  placementEpoch: number
-  state: 'active' | 'revoked'
+  state: 'active' | 'retired'
 }>
 
 export type FederationRoutingLedger = {
@@ -18,19 +17,11 @@ export type FederationRoutingLedger = {
 }
 
 export type FederationRoutingBindingSource = 'local-ledger' | 'cache' | 'registry'
-
 export type ResolvedFederationRoutingBinding = FederationRoutingBinding &
   Readonly<{ source: FederationRoutingBindingSource }>
 
 export type ResolveFederationRoutingBindingOptions = {
   readonly scopeRef: string
-  readonly minimumPlacementEpoch?: number | undefined
-  /**
-   * A node-local retirement fence makes this home ineligible even when an old
-   * active ledger row or cache hint still names it. Routing must consult the
-   * registry for the winner; the stale row remains available to the local
-   * execution gate as a forensic/fencing record.
-   */
   readonly excludedHomeNodeId?: string | undefined
   readonly ledger: FederationRoutingLedger
   readonly cache: BindingHintCache
@@ -40,7 +31,6 @@ export type ResolveFederationRoutingBindingOptions = {
 export type FederationRoutingResolutionErrorCode =
   | 'binding_unbound'
   | 'binding_retired'
-  | 'binding_epoch_stale'
   | 'registry_unreachable'
 
 export class FederationRoutingResolutionError extends Error {
@@ -60,46 +50,23 @@ export class FederationRoutingResolutionError extends Error {
   }
 }
 
-function requireMinimumEpoch(value: number | undefined): number {
-  const epoch = value ?? 1
-  if (!Number.isSafeInteger(epoch) || epoch < 1) {
-    throw new Error(`minimumPlacementEpoch must be a positive safe integer, got ${String(epoch)}`)
-  }
-  return epoch
-}
-
 function resolved(
   source: FederationRoutingBindingSource,
-  binding: Pick<FederationRoutingBinding, 'scopeRef' | 'homeNodeId' | 'placementEpoch'>
+  binding: Pick<FederationRoutingBinding, 'scopeRef' | 'homeNodeId'>
 ): ResolvedFederationRoutingBinding {
   return { purpose: 'routing-hint', source, ...binding }
 }
 
-/**
- * Resolves one routing-only binding. The ordering is intentionally linear and
- * visible in the code: active local ledger, epoch-valid cache, registry, then
- * a typed visible/retryable failure for the delivery layer to queue.
- */
 export async function resolveFederationRoutingBinding(
   options: ResolveFederationRoutingBindingOptions
 ): Promise<ResolvedFederationRoutingBinding> {
   const scopeRef = formatCanonicalScopeRef({ scopeRef: options.scopeRef })
-  const minimumPlacementEpoch = requireMinimumEpoch(options.minimumPlacementEpoch)
-
   const local = options.ledger.get(scopeRef)
-  if (
-    local?.state === 'active' &&
-    local.placementEpoch >= minimumPlacementEpoch &&
-    local.homeNodeId !== options.excludedHomeNodeId
-  ) {
-    return resolved('local-ledger', {
-      scopeRef,
-      homeNodeId: local.homeNodeId,
-      placementEpoch: local.placementEpoch,
-    })
+  if (local?.state === 'active' && local.homeNodeId !== options.excludedHomeNodeId) {
+    return resolved('local-ledger', { scopeRef, homeNodeId: local.homeNodeId })
   }
 
-  const cached = options.cache.get(scopeRef, minimumPlacementEpoch)
+  const cached = options.cache.get(scopeRef)
   if (cached !== undefined && cached.homeNodeId !== options.excludedHomeNodeId) {
     return { ...cached, source: 'cache' }
   }
@@ -113,30 +80,20 @@ export async function resolveFederationRoutingBinding(
         'registry_unreachable',
         scopeRef,
         true,
-        `routing binding for ${scopeRef} is uncached and the federation registry is unreachable; delivery may be retried`,
+        `routing binding for ${scopeRef} is uncached and the federation registry is unreachable`,
         error
       )
     }
     throw error
   }
-
   if (consulted.outcome === 'unbound') {
     throw new FederationRoutingResolutionError(
-      'binding_unbound',
+      local?.state === 'retired' ? 'binding_retired' : 'binding_unbound',
       scopeRef,
       true,
-      `no federation routing binding exists for ${scopeRef}; delivery may be retried`
-    )
-  }
-  if (consulted.outcome === 'retired') {
-    const successor = consulted.retirement.successorNodeId
-    throw new FederationRoutingResolutionError(
-      'binding_retired',
-      scopeRef,
-      successor !== null,
-      successor === null
-        ? `${scopeRef} is terminally retired at epoch ${consulted.retirement.placementEpoch}; delivery is barred`
-        : `${scopeRef} is retired at epoch ${consulted.retirement.placementEpoch}; successor ${successor} must activate before delivery can resume`
+      local?.state === 'retired'
+        ? `${scopeRef} is retired on ${local.homeNodeId}; delivery is barred until fresh establishment elsewhere`
+        : `no federation routing binding exists for ${scopeRef}`
     )
   }
   if (consulted.binding.homeNodeId === options.excludedHomeNodeId) {
@@ -144,18 +101,9 @@ export async function resolveFederationRoutingBinding(
       'binding_retired',
       scopeRef,
       true,
-      `registry still names retired home ${consulted.binding.homeNodeId} for ${scopeRef}; delivery may be retried`
+      `registry still names retired home ${consulted.binding.homeNodeId} for ${scopeRef}`
     )
   }
-  if (consulted.binding.placementEpoch < minimumPlacementEpoch) {
-    throw new FederationRoutingResolutionError(
-      'binding_epoch_stale',
-      scopeRef,
-      true,
-      `registry binding for ${scopeRef} is at epoch ${consulted.binding.placementEpoch}, below required epoch ${minimumPlacementEpoch}; delivery may be retried`
-    )
-  }
-
   const learned = options.cache.learn(consulted.binding)
   return resolved('registry', learned.current)
 }

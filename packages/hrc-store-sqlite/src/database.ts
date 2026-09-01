@@ -10,7 +10,6 @@ import { ExternalRegistrationGrantRepository } from './external-registration-gra
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
 import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
-import { ScopeRetirementRepository } from './federation-reconciliation.js'
 import { HrcMailDriveRepository } from './mail/drive-repository.js'
 import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
 import { HrcMailFederatedOriginRepository } from './mail/federated-origin-repository.js'
@@ -100,7 +99,6 @@ export type HrcDatabase = {
   federationAcceptedRequests: FederationAcceptedRequestRepository
   federationPeerAcceptances: FederationPeerAcceptanceRepository
   federationOutbox: FederationOutboxRepository
-  scopeRetirements: ScopeRetirementRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
@@ -135,6 +133,10 @@ export function createHrcDatabase(
   }
 
   const db = new Database(path)
+  // auto_vacuum must be selected before the first table is created. On a fresh
+  // file SQLite installs the incremental-vacuum pointer map as migrations run;
+  // on an existing mode-0 file this remains a no-op until an offline VACUUM.
+  db.exec('PRAGMA auto_vacuum = INCREMENTAL;')
   db.exec(`PRAGMA busy_timeout = ${resolveBusyTimeoutMs(options.busyTimeoutMs)};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
@@ -190,7 +192,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     federationPeerAcceptances: new FederationPeerAcceptanceRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),
-    scopeRetirements: new ScopeRetirementRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),

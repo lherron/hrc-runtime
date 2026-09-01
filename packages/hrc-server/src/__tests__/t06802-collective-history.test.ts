@@ -70,7 +70,6 @@ function insert(
           metadataJson: {
             federationIngress: {
               authenticatedNodeId: input.ingressOriginNodeId,
-              protocolVersion: '1.0',
             },
           },
         }),

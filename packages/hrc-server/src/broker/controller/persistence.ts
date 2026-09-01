@@ -163,7 +163,6 @@ export function persistStartGraph(
           operationId: String(identity.operationId),
           invocationId: String(identity.invocationId),
           dispatchIdempotencyKey: input.dispatchIdempotencyKey,
-          dispatchRequestHash: input.dispatchRequestHash,
           ...dispatchOriginRunFields(input),
         })
       : undefined

@@ -392,17 +392,20 @@ describe('T-07155 urgent delivery idempotency ledger', () => {
     expect(broker.calls).toHaveLength(1)
   })
 
-  it('G21: reusing a key for a different request is a stale-context conflict', async () => {
+  it('G21 (T-07407): reusing a key for a different request replays the recorded outcome', async () => {
     const seeded = await seed('g21', 'busy', { steerCapable: true })
-    installBroker()
+    const broker = installBroker()
 
     const first = await sendWithKey(seeded, 'STOP', 'idem-g21')
     expect(first.status).toBe(202)
 
+    // T-07407 deliberately made the idempotency key the sole dispatch
+    // identity. Changed request content must replay without a second actuation.
     const second = await sendWithKey(seeded, 'a completely different order', 'idem-g21')
-    expect(second.status).toBe(409)
-    const body = (await second.json()) as { error: { code: string } }
-    expect(body.error.code).toBe('stale_context')
+    expect(second.status).toBe(202)
+    const body = (await second.json()) as { delivery?: { code: string } }
+    expect(body.delivery?.code).toBe('admitted_into_active_turn')
+    expect(broker.calls).toHaveLength(1)
   })
 
   it('G22: an ambiguous result replays as ambiguous and never re-actuates', async () => {

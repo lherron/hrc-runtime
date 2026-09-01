@@ -80,10 +80,37 @@ export function compactEnv(
  * it as a `BrokerRpcError` carrying `BrokerErrorCode.ControllerFenced`.
  */
 export function isControllerFencedError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: number }).code === BrokerErrorCode.ControllerFenced
+  return containsControllerFence(error, 0)
+}
+
+function containsControllerFence(error: unknown, depth: number): boolean {
+  if (depth > 3 || typeof error !== 'object' || error === null) {
+    return false
+  }
+  const candidate = error as {
+    code?: unknown
+    data?: unknown
+    cause?: unknown
+    causeError?: unknown
+    detail?: unknown
+  }
+  if (candidate.code === BrokerErrorCode.ControllerFenced) {
+    return true
+  }
+  const data = candidate.data
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { brokerCode?: unknown }).brokerCode === 'control.fenced'
+  ) {
+    return true
+  }
+  const detailCause =
+    typeof candidate.detail === 'object' && candidate.detail !== null
+      ? (candidate.detail as { cause?: unknown }).cause
+      : undefined
+  return [candidate.cause, candidate.causeError, detailCause].some((nested) =>
+    containsControllerFence(nested, depth + 1)
   )
 }
 

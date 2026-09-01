@@ -216,6 +216,8 @@ function envelopeFor(
 class MockDurableBrokerClient implements DurableBrokerClientLike {
   readonly calls: string[] = []
   closed = false
+  attachGate: Promise<void> | undefined
+  onAttach: (() => void) | undefined
   attachResponse!: BrokerAttachResponse
   snapshotResponse!: InvocationSnapshot
   private eventsSinceQueue: InvocationEventsSinceResponse[] = []
@@ -225,6 +227,8 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   }
   async attach(_req: BrokerAttachRequest): Promise<BrokerAttachResponse> {
     this.calls.push('attach')
+    this.onAttach?.()
+    await this.attachGate
     return this.attachResponse
   }
   async snapshot(_req: InvocationSnapshotRequest): Promise<InvocationSnapshot> {
@@ -391,6 +395,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
     const reattached = await reattachDurableBrokerForDispatch(db, readRuntime(), {
       runtimeRoot: RUNTIME_ROOT,
       controller,
+      inFlightOperations: new Map(),
       brokerUnixClientFactory: async (opts) => {
         factoryCalls.push({ socketPath: opts.socketPath })
         return client
@@ -425,6 +430,7 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
     const reattached = await reattachDurableBrokerForDispatch(db, readRuntime(), {
       runtimeRoot: RUNTIME_ROOT,
       controller,
+      inFlightOperations: new Map(),
       brokerUnixClientFactory: async () => {
         dialed = true
         throw new Error('must not dial for a non-durable runtime')
@@ -433,5 +439,84 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
 
     expect(reattached.state).toBe('unavailable')
     expect(dialed).toBe(false)
+  })
+})
+
+describe('T-07192 concurrent lazy reattach ownership', () => {
+  it('single-flights two crossing request paths onto one attach and one active client', async () => {
+    seedDurableBrokerRuntime()
+    const controller = makeRequestServingController()
+    const inFlightOperations = new Map<
+      string,
+      ReturnType<typeof reattachDurableBrokerForDispatch>
+    >()
+
+    let releaseAttach!: () => void
+    const attachGate = new Promise<void>((resolve) => {
+      releaseAttach = resolve
+    })
+    let firstAttachEntered!: () => void
+    const firstAttach = new Promise<void>((resolve) => {
+      firstAttachEntered = resolve
+    })
+    const clients: MockDurableBrokerClient[] = []
+    const factory = async (): Promise<MockDurableBrokerClient> => {
+      const client = liveBrokerClient()
+      client.attachGate = attachGate
+      client.onAttach = firstAttachEntered
+      clients.push(client)
+      return client
+    }
+    const deps = {
+      runtimeRoot: RUNTIME_ROOT,
+      controller,
+      brokerUnixClientFactory: factory,
+      resolveAttachToken: async () => ATTACH_TOKEN,
+      probeBrokerLease: async () => ({
+        brokerSocketLive: true,
+        brokerWindow: BROKER_WINDOW,
+        tuiWindow: TUI_WINDOW,
+      }),
+      // This is the request-serving server's shared per-runtime ownership map.
+      // Interactive input, headless input, cold recovery, and session-open all
+      // converge on the same lazy-reattach seam with this exact map.
+      inFlightOperations,
+    }
+
+    const interactiveRetry = reattachDurableBrokerForDispatch(db, readRuntime(), deps)
+    await firstAttach
+    const sessionOpenRetry = reattachDurableBrokerForDispatch(db, readRuntime(), deps)
+    await Bun.sleep(0)
+    await Bun.sleep(0)
+    const attachCallsWhileBothRequestsAreInFlight = clients.reduce(
+      (sum, client) => sum + client.calls.filter((call) => call === 'attach').length,
+      0
+    )
+    releaseAttach()
+
+    const [interactiveResult, sessionOpenResult] = await Promise.all([
+      interactiveRetry,
+      sessionOpenRetry,
+    ])
+    const dispatch = await controller.dispatchInput({
+      runtimeId: RUNTIME_ID,
+      input: { kind: 'user', content: [{ type: 'text', text: 'winner stays bound' }] },
+    })
+
+    expect({
+      attachCallsWhileBothRequestsAreInFlight,
+      clients: clients.length,
+      states: [interactiveResult.state, sessionOpenResult.state],
+      inFlightOperationCount: inFlightOperations.size,
+      dispatchOk: dispatch.ok,
+      winnerInputCalls: clients[0]?.calls.filter((call) => call === 'input').length,
+    }).toEqual({
+      attachCallsWhileBothRequestsAreInFlight: 1,
+      clients: 1,
+      states: ['reattached', 'reattached'],
+      inFlightOperationCount: 0,
+      dispatchOk: true,
+      winnerInputCalls: 1,
+    })
   })
 })

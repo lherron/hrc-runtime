@@ -187,6 +187,7 @@ describe('broker adoption runtime-root confinement', () => {
 
     const outcome = await reattachDurableBrokerForDispatch(db, runtime, {
       runtimeRoot,
+      inFlightOperations: new Map(),
       probeBrokerLease: async () => {
         calls.push('probe')
         return {

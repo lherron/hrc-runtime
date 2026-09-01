@@ -1,13 +1,34 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   type Violation,
+  collectRequiredTsFiles,
   findHrcViewerSdkViolations,
   findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
 } from './check-boundaries.ts'
 
 describe('check-boundaries diagnostics', () => {
+  test('declared scan groups fail closed when they resolve to zero TypeScript inputs', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'hrc-boundaries-'))
+    const emptyRoot = join(fixtureRoot, 'empty')
+    await mkdir(emptyRoot)
+
+    try {
+      await expect(
+        collectRequiredTsFiles('missing fixture', [join(fixtureRoot, 'missing')])
+      ).rejects.toThrow('missing fixture')
+      await expect(collectRequiredTsFiles('empty fixture', [emptyRoot])).rejects.toThrow(
+        'empty fixture'
+      )
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
   test('hrc-viewer uses only its §5.4 side-effect-free SDK allowlist', async () => {
     expect(await findHrcViewerSdkViolations()).toEqual([])
   })
@@ -31,8 +52,8 @@ describe('check-boundaries diagnostics', () => {
   test('broker-scoped imports explain the broker seam', () => {
     const violation: Violation = {
       file: 'packages/hrc-server/src/broker/controller/dispatch.ts',
-      specifier: '../../launch/exec.js',
-      reason: 'broker-path files must not import launch/exec.ts',
+      specifier: 'spaces-harness-codex',
+      reason: 'broker-path files must not import concrete spaces-harness-codex APIs',
     }
 
     const diagnostic = formatBoundaryViolationDiagnostic('HRC broker-path scoped', violation).join(

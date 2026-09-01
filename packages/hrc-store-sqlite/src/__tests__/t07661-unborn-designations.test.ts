@@ -49,15 +49,12 @@ function establish(
   store: BindingRegistry,
   scopeRef: string,
   homeNodeId: string,
-  establishmentProvenance: Parameters<BindingRegistry['establish']>[0]['establishmentProvenance']
+  placementSource: Parameters<BindingRegistry['establish']>[0]['placementSource']
 ) {
   return store.establish({
     scopeRef,
     homeNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: establishmentProvenance },
-    establishmentProvenance,
+    placementSource,
     now: '2026-08-28T07:01:00.000Z',
   })
 }
@@ -106,19 +103,15 @@ describe('T-07661 — unborn designations for a node', () => {
     try {
       designate(store, RETIRED, 'max3')
       establish(store, RETIRED, 'max3', 'default_home_node(sender)')
-      const retired = store.retire({
+      const retired = store.deleteBinding({
         scopeRef: RETIRED,
         expectedHomeNodeId: 'max3',
-        expectedPlacementEpoch: 1,
-        successorNodeId: null,
-        reason: 'operator',
         retiredAt: '2026-08-28T07:02:00.000Z',
       })
-      expect(retired.outcome).toBe('retired')
+      expect(retired.outcome).toBe('deleted')
 
-      // A tombstone is not a binding, but it IS proof the scope was born once.
-      // Testing `state = 'active'` instead would hand a retired scope back to
-      // the kicker as a birth it still owes.
+      // Retirement clears the live designation so the old home is never
+      // re-woken as though it still owed the original birth.
       expect(store.listUnbornDesignationsForNode('max3')).toHaveLength(0)
     } finally {
       store.close()

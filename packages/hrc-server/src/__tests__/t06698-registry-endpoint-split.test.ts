@@ -13,7 +13,6 @@ import {
   resolveFederationConfig,
   summarizeFederationConfig,
 } from '../federation/federation-config.js'
-import { PEER_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION_HEADER } from '../federation/peer-protocol.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { resolveFederationRegistryClient } from '../federation/registry-resolution.js'
@@ -220,7 +219,6 @@ describe('two-listener route isolation', () => {
     const headers = {
       authorization: `Bearer ${TOKEN}`,
       'content-type': 'application/json',
-      [PEER_PROTOCOL_VERSION_HEADER]: PEER_PROTOCOL_VERSION,
     }
     try {
       const statusText = await (await fixture.fetchSocket('/v1/status')).text()
@@ -246,9 +244,7 @@ describe('two-listener route isolation', () => {
         body: JSON.stringify({
           scopeRef: SCOPE,
           homeNodeId: 'lab-test',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'pin' },
-          establishmentProvenance: 'pin',
+          placementSource: 'pin',
         }),
       })
       expect(establish.status).toBe(200)

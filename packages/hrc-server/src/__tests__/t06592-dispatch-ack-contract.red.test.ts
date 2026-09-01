@@ -134,6 +134,7 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       releaseStart = resolve
     })
     let provisions = 0
+    const presentationSignals: Array<AbortSignal | undefined> = []
     ;(server as any).startHeadlessBrokerRuntime = async (
       session: { hostSessionId: string; scopeRef: string; laneRef: string; generation: number },
       _intent: unknown,
@@ -141,7 +142,6 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       runId: string,
       options: {
         dispatchIdempotencyKey?: string
-        dispatchRequestHash?: string
         onAccepted?: (runtime: unknown) => Promise<void> | void
       }
     ) => {
@@ -185,7 +185,6 @@ describe('T-06592 durable dispatch acknowledgment', () => {
           operationId: 'op-t06592-cold',
           invocationId,
           dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-          dispatchRequestHash: options.dispatchRequestHash,
         })
         db.brokerInvocations.insert({
           invocationId,
@@ -208,6 +207,12 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       await options.onAccepted?.(runtime)
       await startGate
       return runtime
+    }
+    ;(server as any).publishPresentation = async (
+      _runtime: unknown,
+      options?: { signal?: AbortSignal }
+    ) => {
+      presentationSignals.push(options?.signal)
     }
 
     const body = dispatchBody(hostSessionId, 'idem-t06592-cold')
@@ -246,6 +251,9 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     server = undefined
     releaseStart()
     await Bun.sleep(10)
+    expect(presentationSignals).toHaveLength(1)
+    expect(presentationSignals[0]).toBeInstanceOf(AbortSignal)
+    expect(presentationSignals[0]?.aborted).toBe(true)
     server = await createHrcServer(
       fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
     )
@@ -301,18 +309,66 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     }
   })
 
-  it('rejects conflicting reuse of an idempotency key', async () => {
+  it('replays a durable idempotency key even when retry content changes', async () => {
     const { hostSessionId } = await seedReusableBroker()
-    await postTurn(dispatchBody(hostSessionId, 'idem-t06592-conflict'))
+    const firstResponse = await postTurn(dispatchBody(hostSessionId, 'idem-t06592-key-identity'))
+    const first = (await firstResponse.json()) as any
 
-    const conflict = await postTurn(
-      dispatchBody(hostSessionId, 'idem-t06592-conflict', 'accepted', 'different semantic dispatch')
+    const replayResponse = await postTurn(
+      dispatchBody(
+        hostSessionId,
+        'idem-t06592-key-identity',
+        'accepted',
+        'changed content must not redefine the key'
+      )
     )
-    const body = (await conflict.json()) as any
+    const replay = (await replayResponse.json()) as any
 
-    expect(conflict.status).toBe(409)
-    expect(body.error?.code).toBe('stale_context')
+    expect(replayResponse.status).toBe(firstResponse.status)
+    expect(replay).toMatchObject({ runId: first.runId, replayed: true })
     expect(dispatchCalls).toBe(1)
+  })
+
+  it('coalesces an in-flight idempotency key even when concurrent request content changes', async () => {
+    const { hostSessionId } = await fixture.resolveSession(SCOPE_REF)
+    let releaseDispatch!: () => void
+    const dispatchGate = new Promise<void>((resolve) => {
+      releaseDispatch = resolve
+    })
+    let coalescedDispatchCalls = 0
+    ;(server as any).dispatchTurnForSession = async (
+      session: { hostSessionId: string; generation: number },
+      _intent: unknown,
+      _prompt: string,
+      options: { runId: string }
+    ) => {
+      coalescedDispatchCalls += 1
+      await dispatchGate
+      return Response.json({
+        status: 'accepted',
+        hostSessionId: session.hostSessionId,
+        runId: options.runId,
+        generation: session.generation,
+        transport: 'headless',
+      })
+    }
+
+    const key = 'idem-t06592-in-flight-key-identity'
+    const firstPending = postTurn(dispatchBody(hostSessionId, key, 'accepted', 'first content'))
+    while (coalescedDispatchCalls === 0) await Bun.sleep(1)
+    const replayPending = postTurn(
+      dispatchBody(hostSessionId, key, 'accepted', 'different concurrent content')
+    )
+    await Bun.sleep(10)
+    releaseDispatch()
+
+    const [firstResponse, replayResponse] = await Promise.all([firstPending, replayPending])
+    const first = (await firstResponse.json()) as any
+    const replay = (await replayResponse.json()) as any
+    expect(firstResponse.status).toBe(202)
+    expect(replayResponse.status).toBe(202)
+    expect(replay).toMatchObject({ runId: first.runId, replayed: true })
+    expect(coalescedDispatchCalls).toBe(1)
   })
 
   it('persists the idempotency key atomically with run acceptance across restart', async () => {
@@ -323,7 +379,7 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     const update = runs.update.bind(runs)
     let postAcceptanceKeyUpdates = 0
     runs.update = (runId: string, patch: Record<string, unknown>) => {
-      if ('dispatchIdempotencyKey' in patch || 'dispatchRequestHash' in patch) {
+      if ('dispatchIdempotencyKey' in patch) {
         postAcceptanceKeyUpdates += 1
         throw new Error('simulated daemon crash at the legacy post-acceptance key update')
       }
@@ -374,7 +430,6 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       expect(durableRuns).toHaveLength(1)
       expect(durableRuns[0]).toMatchObject({
         dispatchIdempotencyKey: key,
-        dispatchRequestHash: expect.any(String),
       })
     } finally {
       afterRestart.close()

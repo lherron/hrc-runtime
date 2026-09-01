@@ -14,15 +14,14 @@
  * and an operator setting federation up needs it BEFORE the gate is live.
  * So this builds its own deps rather than reusing the gate's memoized context.
  *
- * READ-ONLY. Nothing here establishes, rebinds, or writes.
+ * READ-ONLY. Nothing here establishes, retires, or writes.
  */
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { LocateBindingsReport } from 'hrc-core'
-import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcDatabase, PlacementLedgerRecord } from 'hrc-store-sqlite'
 
-import { resolveLocalBirthAncestor } from './birth-credential.js'
 import { deriveNodeIdFromHostname } from './federation-config.js'
 import type { FederationConfig } from './federation-config.js'
 import {
@@ -30,7 +29,6 @@ import {
   type LocateObservedRuntime,
   type ScopeLocation,
   locateScope,
-  projectBirthChain,
   scanLedgerForSkew,
 } from './locate.js'
 import { resolvePlacementPolicy } from './placement-policy.js'
@@ -120,8 +118,6 @@ function buildLocateDeps(server: LocateServerContext): LocateDeps {
       locateRegistryClient(config, server.bindingRegistryEndpoint?.registryClient),
     policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
     observedFor: server.observedFor ?? defaultObservedFor(server),
-    retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
-    resolveBirthChain: (scopeRef) => projectBirthChain(resolveLocalBirthAncestor(ledger, scopeRef)),
   }
 }
 
@@ -162,7 +158,6 @@ export async function scanServerLedgerForSkew(
       bindings,
       localNodeId,
       policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
-      retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
     }),
   }
 }

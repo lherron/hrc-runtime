@@ -697,7 +697,6 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'brokerInputFencedAt', column: 'broker_input_fenced_at' },
   { key: 'brokerInputFenceReason', column: 'broker_input_fence_reason' },
   { key: 'dispatchIdempotencyKey', column: 'dispatch_idempotency_key' },
-  { key: 'dispatchRequestHash', column: 'dispatch_request_hash' },
   { key: 'queueSnapshotId', column: 'queue_snapshot_id' },
   { key: 'queuedInputSeq', column: 'queued_input_seq' },
   { key: 'queueSnapshotPosition', column: 'queue_snapshot_position' },
@@ -736,7 +735,6 @@ export class RunRepository {
           broker_input_fenced_at,
           broker_input_fence_reason,
           dispatch_idempotency_key,
-          dispatch_request_hash,
           queue_snapshot_id,
           queued_input_seq,
           queue_snapshot_position,
@@ -745,7 +743,7 @@ export class RunRepository {
           origin_actor,
           origin_kind,
           origin_causation_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -767,7 +765,6 @@ export class RunRepository {
       record.brokerInputFencedAt ?? null,
       record.brokerInputFenceReason ?? null,
       record.dispatchIdempotencyKey ?? null,
-      record.dispatchRequestHash ?? null,
       record.queueSnapshotId ?? null,
       record.queuedInputSeq ?? null,
       record.queueSnapshotPosition ?? null,

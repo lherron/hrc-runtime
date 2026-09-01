@@ -479,48 +479,6 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
     })
   })
 
-  it('(i) T-07397 v7: identity is inside the idempotency fence', async () => {
-    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
-    seedReadyBrokerRuntime({
-      hostSessionId,
-      generation,
-      runtimeId: 'rt-t07397-idem',
-      invocationId: 'inv-t07397-idem',
-      transport: 'tmux',
-      status: 'ready',
-      provider: 'anthropic',
-      harness: 'claude-code',
-      brokerDriver: 'claude-code-tmux',
-    })
-    installDispatchInputSpy()
-    const key = 'idem-t07397-identity'
-    const post = (extra: Record<string, unknown>) =>
-      fixture.postJson('/v1/turns', {
-        hostSessionId,
-        prompt: 'same prompt, same key',
-        runtimeIntent: claudeSdkIntent(false),
-        waitForCompletion: false,
-        idempotencyKey: key,
-        ...extra,
-      })
-
-    // First use of the key, carrying an identity.
-    const first = await post({ establishedBrokerInvocationId: 'inv-t07397-idem' })
-    // Replaying the SAME key with the identity REMOVED, or SUBSTITUTED, is a
-    // different semantic request and must be rejected — otherwise a replay could
-    // launder ownership of a surface the replaying caller does not hold.
-    for (const substitution of [{}, { establishedBrokerInvocationId: 'inv-someone-else' }]) {
-      const replay = await post(substitution)
-      expect(replay.status).toBe(409)
-      const body = (await replay.json()) as any
-      expect(body.error?.code).toBe(HrcErrorCode.STALE_CONTEXT)
-    }
-    // The identical request replays idempotently rather than dispatching twice.
-    const same = await post({ establishedBrokerInvocationId: 'inv-t07397-idem' })
-    expect(same.status).toBe(first.status)
-    expect(runIdsForRuntime('rt-t07397-idem').length).toBeLessThanOrEqual(1)
-  }, 20_000)
-
   it('(d) T-07397 codex control: admission decisions unchanged for openai intents', async () => {
     const codex = codexInteractiveIntent()
     const healthyCodexTui = {

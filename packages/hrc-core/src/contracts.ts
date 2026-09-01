@@ -579,8 +579,6 @@ export type HrcRunRecord = {
   brokerInputFenceReason?: string | undefined
   /** Caller-owned retry identity for shared /v1/turns dispatch. */
   dispatchIdempotencyKey?: string | undefined
-  /** Canonical semantic request hash used to reject conflicting key reuse. */
-  dispatchRequestHash?: string | undefined
   /** Durable snapshot fence for queued inputs awaiting ordered drain. */
   queueSnapshotId?: string | undefined
   /** Monotonic durable input-queue sequence assigned when the run is enqueued. */

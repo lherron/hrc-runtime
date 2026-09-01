@@ -379,7 +379,7 @@ export type SpillToolResultsResult = {
   checkpointed: boolean
 }
 
-type RetentionTable = keyof PruneStateRetentionResult['tables']
+export type RetentionTable = keyof PruneStateRetentionResult['tables']
 
 const RETENTION_TABLES: readonly RetentionTable[] = [
   'events',
@@ -397,12 +397,13 @@ const RETENTION_TABLES: readonly RetentionTable[] = [
  */
 const DEFAULT_RETENTION_TABLES: readonly RetentionTable[] = ['runtime_buffers']
 
-type TablePlan = {
+export type PruneTablePlan = {
   table: RetentionTable
   alias: string
   keyColumn: string
   predicateValue: string
   eligibleSql: string
+  selectionOrderSql: string
 }
 
 function usage(): string {
@@ -801,7 +802,7 @@ function tolerateBusy<T>(action: () => T, fallback: T): { value: T; busy: boolea
   }
 }
 
-function countEligible(db: Database, plan: TablePlan): number {
+function countEligible(db: Database, plan: PruneTablePlan): number {
   return (
     db
       .query<{ count: number }, [string]>(
@@ -813,19 +814,56 @@ function countEligible(db: Database, plan: TablePlan): number {
   )
 }
 
-function deleteBatch(db: Database, plan: TablePlan, batchSize: number): number {
+/**
+ * Discover candidates without owning the SQLite writer. The full predicate may
+ * traverse an arbitrarily large old-but-ineligible prefix; completing this read
+ * before DELETE is what keeps that cost out of the write-lock hold.
+ */
+export function selectEligibleBatch(
+  db: Database,
+  plan: PruneTablePlan,
+  batchSize: number
+): number[] {
   return db
-    .prepare<never, [string, number]>(
-      `DELETE FROM ${plan.table}
-        WHERE ${plan.keyColumn} IN (
-          SELECT ${plan.alias}.${plan.keyColumn}
+    .query<{ key: number }, [string, number]>(selectEligibleBatchSql(plan))
+    .all(plan.predicateValue, batchSize)
+    .map((row) => row.key)
+}
+
+export function selectEligibleBatchSql(plan: PruneTablePlan): string {
+  return `SELECT ${plan.alias}.${plan.keyColumn} AS key
             FROM ${plan.table} AS ${plan.alias}
            WHERE ${plan.eligibleSql}
-           ORDER BY ${plan.alias}.${plan.keyColumn} ASC
-           LIMIT ?
-        )`
-    )
-    .run(plan.predicateValue, batchSize).changes
+           ORDER BY ${plan.selectionOrderSql}
+           LIMIT ?`
+}
+
+/**
+ * Recheck the complete safety predicate under the writer, but only for the
+ * explicit bounded key set discovered by the preceding read. json_each keeps
+ * the statement at one binding even when an operator configures a large batch.
+ */
+export function deleteSelectedBatch(
+  db: Database,
+  plan: PruneTablePlan,
+  selectedKeys: readonly number[]
+): number {
+  if (selectedKeys.length === 0) return 0
+  return db
+    .prepare<never, [string, string]>(deleteSelectedBatchSql(plan))
+    .run(JSON.stringify(selectedKeys), plan.predicateValue).changes
+}
+
+export function deleteSelectedBatchSql(plan: PruneTablePlan): string {
+  return `DELETE FROM ${plan.table}
+           WHERE ${plan.keyColumn} IN (
+             SELECT ${plan.alias}.${plan.keyColumn}
+               FROM ${plan.table} AS ${plan.alias}
+              WHERE ${plan.alias}.${plan.keyColumn} IN (
+                SELECT CAST(value AS INTEGER) FROM json_each(?)
+              )
+                AND ${plan.eligibleSql}
+           )`
 }
 
 type EnvelopePayloadKey = {
@@ -997,7 +1035,7 @@ function assertPurgeDeltaBacklogGuardrails(options: PruneStateRetentionOptions):
  */
 async function deleteInBatches(
   db: Database,
-  plan: TablePlan,
+  plan: PruneTablePlan,
   maxBatchSize: number,
   budget: WriteBudget
 ): Promise<{ deleted: number; stopReason: PrunePhaseStop; batchSize: number }> {
@@ -1008,10 +1046,27 @@ async function deleteInBatches(
       return { deleted, stopReason: 'deadline', batchSize }
     }
     const requestedRows = batchSize
+    let selectedKeys: number[]
+    try {
+      selectedKeys = selectEligibleBatch(db, plan, requestedRows)
+    } catch (error) {
+      if (!isBusyError(error)) {
+        throw error
+      }
+      return { deleted, stopReason: 'busy', batchSize }
+    }
+    if (selectedKeys.length === 0) {
+      return { deleted, stopReason: 'complete', batchSize }
+    }
+    // Discovery can be expensive when many old rows remain live. Do not start
+    // a write after that read has consumed the remaining wall-clock budget.
+    if (deadlineReached(budget)) {
+      return { deleted, stopReason: 'deadline', batchSize }
+    }
     let batchDeleted: number
     let holdMillis: number
     try {
-      const step = await runWriteStep(budget, () => deleteBatch(db, plan, requestedRows))
+      const step = await runWriteStep(budget, () => deleteSelectedBatch(db, plan, selectedKeys))
       batchDeleted = step.value
       holdMillis = step.holdMillis
     } catch (error) {
@@ -1021,11 +1076,11 @@ async function deleteInBatches(
       return { deleted, stopReason: 'busy', batchSize }
     }
     deleted += batchDeleted
-    if (batchDeleted < requestedRows) {
+    if (selectedKeys.length < requestedRows) {
       return { deleted, stopReason: 'complete', batchSize }
     }
     batchSize = adaptStepSize(
-      requestedRows,
+      selectedKeys.length,
       holdMillis,
       budget.maxWriteHoldMillis,
       MIN_DELETE_BATCH_SIZE,
@@ -1650,6 +1705,67 @@ export async function spillToolResults(
   }
 }
 
+export function createRetentionPlans(
+  eventCutoff: string,
+  runtimeBufferCutoff: string
+): PruneTablePlan[] {
+  return [
+    {
+      table: 'events',
+      alias: 'e',
+      keyColumn: 'seq',
+      predicateValue: eventCutoff,
+      eligibleSql: EVENTS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.ts ASC, e.seq ASC',
+    },
+    {
+      table: 'hrc_events',
+      alias: 'e',
+      keyColumn: 'hrc_seq',
+      predicateValue: eventCutoff,
+      eligibleSql: HRC_EVENTS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.ts ASC, e.hrc_seq ASC',
+    },
+    {
+      table: 'broker_invocation_events',
+      alias: 'e',
+      keyColumn: 'id',
+      predicateValue: eventCutoff,
+      eligibleSql: BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.time ASC, e.id ASC',
+    },
+    {
+      table: 'runtime_buffers',
+      alias: 'e',
+      keyColumn: 'rowid',
+      predicateValue: runtimeBufferCutoff,
+      eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.created_at ASC, e.rowid ASC',
+    },
+  ]
+}
+
+export function createPurgePlans(): PruneTablePlan[] {
+  return [
+    {
+      table: 'events',
+      alias: 'e',
+      keyColumn: 'seq',
+      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
+      eligibleSql: PURGE_EVENTS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.event_kind COLLATE NOCASE ASC, e.seq ASC',
+    },
+    {
+      table: 'broker_invocation_events',
+      alias: 'e',
+      keyColumn: 'id',
+      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
+      eligibleSql: PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL,
+      selectionOrderSql: 'e.type ASC, e.id ASC',
+    },
+  ]
+}
+
 export async function pruneStateRetention(
   options: PruneStateRetentionOptions
 ): Promise<PruneStateRetentionResult> {
@@ -1670,52 +1786,8 @@ export async function pruneStateRetention(
   const runtimeBufferCutoff = new Date(
     options.now.getTime() - options.runtimeBufferRetentionDays * MILLISECONDS_PER_DAY
   ).toISOString()
-  const retentionPlans: TablePlan[] = [
-    {
-      table: 'events',
-      alias: 'e',
-      keyColumn: 'seq',
-      predicateValue: eventCutoff,
-      eligibleSql: EVENTS_ELIGIBLE_SQL,
-    },
-    {
-      table: 'hrc_events',
-      alias: 'e',
-      keyColumn: 'hrc_seq',
-      predicateValue: eventCutoff,
-      eligibleSql: HRC_EVENTS_ELIGIBLE_SQL,
-    },
-    {
-      table: 'broker_invocation_events',
-      alias: 'e',
-      keyColumn: 'id',
-      predicateValue: eventCutoff,
-      eligibleSql: BROKER_INVOCATION_EVENTS_ELIGIBLE_SQL,
-    },
-    {
-      table: 'runtime_buffers',
-      alias: 'e',
-      keyColumn: 'rowid',
-      predicateValue: runtimeBufferCutoff,
-      eligibleSql: RUNTIME_BUFFERS_ELIGIBLE_SQL,
-    },
-  ]
-  const purgePlans: TablePlan[] = [
-    {
-      table: 'events',
-      alias: 'e',
-      keyColumn: 'seq',
-      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
-      eligibleSql: PURGE_EVENTS_ELIGIBLE_SQL,
-    },
-    {
-      table: 'broker_invocation_events',
-      alias: 'e',
-      keyColumn: 'id',
-      predicateValue: PURGE_DELTA_BACKLOG_OPERATION,
-      eligibleSql: PURGE_BROKER_INVOCATION_DELTAS_ELIGIBLE_SQL,
-    },
-  ]
+  const retentionPlans = createRetentionPlans(eventCutoff, runtimeBufferCutoff)
+  const purgePlans = createPurgePlans()
   const allPlans = options.operation === PURGE_DELTA_BACKLOG_OPERATION ? purgePlans : retentionPlans
   const plans = allPlans.filter((plan) => options.tables.includes(plan.table))
 

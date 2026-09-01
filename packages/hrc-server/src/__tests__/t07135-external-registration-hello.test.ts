@@ -76,6 +76,17 @@ class ScriptedClient implements ExternalParticipantRpcClient {
   }
 }
 
+class SilentRpcClient extends ScriptedClient {
+  constructor(private readonly silentMethod: 'epr.hello' | 'epr.established') {
+    super()
+  }
+
+  override async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (method === this.silentMethod) return new Promise(() => undefined)
+    return super.request(method, params)
+  }
+}
+
 function futureIso(ms = 60_000): string {
   return new Date(Date.now() + ms).toISOString()
 }
@@ -220,6 +231,25 @@ describe('T-07135 EPR hello mint and establishment ACK', () => {
       raw.close()
     }
   })
+
+  test.each(['epr.hello', 'epr.established'] as const)(
+    'bounds the %s request by the configured EPR deadline',
+    async (method) => {
+      issue()
+      server.options.externalParticipantProbeDeadlineMs = 10
+
+      const outcome = await Promise.race([
+        performExternalRegistrationHello(server, REGISTRATION_ID, new SilentRpcClient(method)).then(
+          () => 'resolved' as const,
+          (error: unknown) => error
+        ),
+        Bun.sleep(100).then(() => 'test_watchdog_timeout' as const),
+      ])
+
+      expect(outcome).toBeInstanceOf(Error)
+      expect((outcome as Error).message).toContain(`${method} timed out after 10ms`)
+    }
+  )
 
   test('re-delivers identical minted authority after a lost established response', async () => {
     issue()

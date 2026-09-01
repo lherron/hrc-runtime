@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { HRC_BIRTH_CREDENTIAL_ENV, HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from 'hrc-core'
+import { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { buildHeadlessBrokerDispatchEnv } from '../broker-headless-handlers.js'
@@ -86,7 +86,6 @@ describe('T-05562 managed broker wrkq authority', () => {
             WRKQ_DB_PATH: '',
             WRKQ_DB_PATH_FILE: '',
             WRKQD_TOKEN_FILE: WRKQ_AUTHORITY_SOURCE.HRC_WRKQD_TOKEN_FILE,
-            [HRC_BIRTH_CREDENTIAL_ENV]: runtimeId,
             HRC_MAIL_STOP_SOCKET: '/run/hrc.sock',
           })
           expect(env).not.toHaveProperty('WRKQD_TOKEN')

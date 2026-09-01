@@ -74,7 +74,12 @@ export function startForeignHomeShadowTeardown(this: HrcServerInstanceForHandler
   // yet — and a shadow is a standing condition, so waiting one interval costs
   // nothing.
   this.shadowTeardownTimer = setInterval(() => {
-    void this.runForeignHomeShadowTeardown()
+    void this.runForeignHomeShadowTeardown().catch((error) => {
+      writeServerLog('WARN', 'federation.shadow_teardown.pass_failed', {
+        localNodeId: this.federationNodeId,
+        error: errorText(error),
+      })
+    })
   }, SHADOW_TEARDOWN_INTERVAL_MS)
   this.shadowTeardownTimer.unref?.()
 }
@@ -125,7 +130,7 @@ export async function runForeignHomeShadowTeardown(
       for (const runtime of runtimes) {
         try {
           await this.terminateRuntime(runtime, {
-            reason: `${scopeRef} is homed on ${foreign.homeNodeId} (epoch ${foreign.placementEpoch}); this node holds no authority to seat it`,
+            reason: `${scopeRef} is homed on ${foreign.homeNodeId}; this node holds no authority to seat it`,
             source: 'federation.shadow_teardown',
           })
           retired.push(runtime.runtimeId)
@@ -149,7 +154,6 @@ export async function runForeignHomeShadowTeardown(
         scopeRef,
         hostSessionId,
         homeNodeId: foreign.homeNodeId,
-        placementEpoch: foreign.placementEpoch,
         source: foreign.source,
         runtimeIds: retired,
         statuses: runtimes.map((runtime) => runtime.status),

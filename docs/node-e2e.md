@@ -16,7 +16,6 @@ Related contracts:
 - [Federation peer protocol](federation-peer-protocol.md)
 - [Registry retirement](federation-registry-retirement.md)
 - [State retention](state-retention.md)
-- [Manual fenced rebind](federation-manual-rebind.md)
 
 ## The oracle quartet
 
@@ -26,7 +25,7 @@ Every delivery scenario is graded from four mutually reinforcing legs.
 | --- | --- |
 | Pane | Capture what the target or origin user actually saw in Ghostty. |
 | Event | Read `turn.started`, `turn.completed`, and the expected runtime/node from `hrc monitor`. |
-| Registry/ledger | Read the established tuple, epoch, retirement, or genuine unbound state with `hrc target locate`. |
+| Registry/ledger | Read the established home, local retirement fence, or genuine unbound state with `hrc target locate`. |
 | Round trip | Issue from the origin with `--wait response` or `--wait final` and prove the correlated reply returned to that origin. |
 
 There is no one-way success row. A delivered ping must produce a deterministic
@@ -214,7 +213,7 @@ Require all of the following before proceeding:
 4. The target pane displays the incoming DM and reply.
 5. The same runtime journals `turn.started`, `turn.message`, and
    `turn.completed`.
-6. `target locate` still names the expected local home and epoch.
+6. `target locate` still names the expected local home.
 
 Prefer a runtime selector for event readback:
 
@@ -359,37 +358,33 @@ Release the max3 wake hold by interrupting/closing the retained
 
 ### 2. Preserve namespace truth
 
-Never delete or purge a born binding. Registry tombstones, node-local epoch
-fences, sessions, and terminated runtimes are keep-forever authority/history.
-Purging them can make an ever-born identity appear virgin and permit an epoch-1
-collision.
+Never delete a binding directly. Node-local retirement fences, sessions, and
+terminated runtimes are retained authority/history. The shared binding row is
+deleted only by the ordered old-home retirement operation.
 
 - A refusal scope that never birthed needs no authority mutation. Verify it is
   still unbound and has no runtime.
-- A disposable policy-born harness scope must be terminally retired if the run
-  requires a clean namespace afterward.
-- Do not apply this terminal-retirement shortcut to a standing, claim-born, or
-  child-born scope. Those require their owning authority and protocol.
+- A disposable harness scope may be retired if the run requires a clean shared
+  namespace afterward.
+- Do not retire a standing scope without its owner's explicit authorization.
 
-Terminal retirement is fence-first:
+Retirement is fence-first:
 
 1. Drain every live runtime for the exact scope.
-2. Record the exact `(homeNodeId, placementEpoch)` tuple.
-3. Dry-run a `NamespaceRetirementArtifact` through the repository's
-   `applyNamespaceRetirements` API for the old-home state store.
-4. Apply that artifact to archive the session and install the local terminal
-   fence (`successorNodeId:null`).
-5. Read the fence back from the old home.
-6. Only then call `openBindingRegistry(...).retire(...)` on the authoritative
-   registry with the same scope, home, epoch, timestamp, reason, and null
-   successor.
-7. Verify `authority.state:"retired"`, registry outcome `retired`, the exact
-   epoch, and terminal-bar note from each relevant node.
+2. Record the exact `homeNodeId` and confirm the command is running on that old
+   home.
+3. Run `hrc federation retire <scope> --reason node-e2e-teardown`.
+4. If it reports `fenced-registry-pending`, restore registry reachability and
+   repeat the same command; do not bypass the local fence.
+5. Verify the old home reports its permanent retirement fence and the shared
+   registry reports unbound.
+6. Refresh binding caches and visibly replay only deliveries that failed on a
+   stale hint, as documented in the registry rebuild runbook.
 
 Use repository APIs, never raw `UPDATE`/`DELETE` statements. The registry has no
 general-purpose purge path by design. See
 [Registry retirement](federation-registry-retirement.md) for the invariant and
-[State retention](state-retention.md) for why the tombstone remains forever.
+[State retention](state-retention.md) for why the local fence remains forever.
 
 ## T-06805 reference run
 
@@ -406,8 +401,9 @@ The 2026-07-22 Phase 0/1 run provides a known-good evidence shape:
 - CLI RED rows remained unbound with zero target events and no runtime on any
   node.
 - ACP ingress was svc while the virgin scribe scope designated max3.
-- All Phase 0 harness scopes were terminally retired at epoch 1 after runtime
-  and surface teardown. Refusal scopes remained genuinely unbound.
+- Historical v1.2 evidence recorded epoch-based retirement. Current v1.3 runs
+  use ordered old-home retirement without epochs. Refusal scopes remain
+  genuinely unbound.
 
 The complete run ledger is wrkq comment `C-11881` on T-06805. That run covered
 Phase 0 and Phase 1 RED only. It did not execute or claim evidence for the

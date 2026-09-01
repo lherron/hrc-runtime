@@ -10,7 +10,6 @@ import type { HrcDatabase, RecordCollectiveHistoryObservationInput } from 'hrc-s
 import { parseMessageFilter } from '../messages.js'
 import { writeServerLog } from '../server-log.js'
 import type { FederationConfig, PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export const COLLECTIVE_HISTORY_AUTHORITY_NODE_ID = 'svc'
@@ -196,9 +195,9 @@ export class CollectiveHistoryCoordinator {
     }
     if (!this.isAuthority) {
       this.timer = setInterval(() => {
-        void this.drainDue()
+        this.requestDrain('poll')
       }, this.pollIntervalMs)
-      void this.drainDue()
+      this.requestDrain('startup')
     }
   }
 
@@ -308,7 +307,7 @@ export class CollectiveHistoryCoordinator {
         new URL('/v1/federation/history/query', peer.endpoint),
         {
           method: 'POST',
-          headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+          headers: buildPeerProtocolHeaders(peer, {
             contentType: 'application/json',
           }),
           body: JSON.stringify({ filter }),
@@ -381,7 +380,7 @@ export class CollectiveHistoryCoordinator {
         })
       } else {
         this.options.db.collectiveHistoryReplications.enqueue(observation, this.now().toISOString())
-        void this.drainDue()
+        this.requestDrain('message_observed', record.messageId)
       }
     } catch (error) {
       writeServerLog('WARN', 'federation.collective_history.observe_failed', {
@@ -390,6 +389,17 @@ export class CollectiveHistoryCoordinator {
         error: error instanceof Error ? error.message : String(error),
       })
     }
+  }
+
+  private requestDrain(trigger: string, messageId?: string): void {
+    void this.drainDue().catch((error) => {
+      writeServerLog('WARN', 'federation.collective_history.drain_failed', {
+        localNodeId: this.localNodeId,
+        trigger,
+        ...(messageId === undefined ? {} : { messageId }),
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 
   private async drainDueInner(): Promise<void> {
@@ -404,7 +414,7 @@ export class CollectiveHistoryCoordinator {
           new URL('/v1/federation/history/replicate', peer.endpoint),
           {
             method: 'POST',
-            headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+            headers: buildPeerProtocolHeaders(peer, {
               contentType: 'application/json',
             }),
             body: JSON.stringify(body),
@@ -461,7 +471,7 @@ export class CollectiveHistoryCoordinator {
         new URL('/v1/federation/history/checkpoint', peer.endpoint),
         {
           method: 'POST',
-          headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+          headers: buildPeerProtocolHeaders(peer, {
             contentType: 'application/json',
           }),
           body: JSON.stringify({

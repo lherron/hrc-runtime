@@ -186,17 +186,41 @@ afterEach(async () => {
 })
 
 describe('publishPresentation — persisted record (§5.1)', () => {
-  it('a non-suppressed invocation records attachable + requested and the window key', async () => {
+  it('a non-suppressed, non-cancelled invocation records attachable + requested and the window key', async () => {
     seedSession('headless-sessions')
     const runtime = seedRuntime('tmux-tui')
+    const controller = new AbortController()
 
-    await publishPresentation.call(fixture.server, runtime, { operatorAttachPending: false })
+    await publishPresentation.call(fixture.server, runtime, {
+      operatorAttachPending: false,
+      signal: controller.signal,
+    })
 
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.presentation).toEqual({
       operatorAttachable: true,
       viewerRequested: true,
       viewerWindow: 'headless-sessions',
     })
+  })
+
+  it('returns on cancellation before reading any repository', async () => {
+    seedSession()
+    const runtime = seedRuntime('tmux-tui')
+    const controller = new AbortController()
+    controller.abort()
+    let repositoryRead = false
+    const server = {
+      get db() {
+        repositoryRead = true
+        return fixture.db
+      },
+      notifyEvent: fixture.server.notifyEvent,
+    } as unknown as HrcServerInstanceForHandlers
+
+    await publishPresentation.call(server, runtime, { signal: controller.signal })
+
+    expect(repositoryRead).toBe(false)
+    expect(ledgerCount('runtime.presentation')).toBe(0)
   })
 
   it('never persists operatorAttachPending, in any column shape', async () => {

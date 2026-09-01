@@ -52,6 +52,7 @@ ENV_FILE="${ROOT}/env.sh"
 PID_FILE="${ROOT}/daemon.pid"
 LOG_FILE="${ROOT}/daemon.log"
 SOCKET="${RUN_DIR}/hrc.sock"
+PROJECT_SEARCH_ROOT=""
 
 # Every agent id the suites address. A fixture home is a directory plus an
 # agent-profile.toml — the marker spaces-config actually looks for; a bare
@@ -83,6 +84,7 @@ export HRC_DEV_ENV_ROOT='${ROOT}'
 export HRC_RUNTIME_DIR='${RUN_DIR}'
 export HRC_STATE_DIR='${STATE_DIR}'
 export ASP_AGENTS_ROOT='${AGENTS_DIR}'
+export HRC_PROJECT_SEARCH_ROOTS='${PROJECT_SEARCH_ROOT}'
 EOF
 }
 
@@ -132,6 +134,18 @@ provision_build() {
   (cd "${REPO_ROOT}" && bun run build)
 }
 
+resolve_project_search_root() {
+  # A hook exports GIT_DIR/GIT_WORK_TREE for its own checkout. The helper drops
+  # every GIT_* override before asking Git for the common directory, whose owner
+  # is the canonical checkout even when this script runs from a linked worktree.
+  # HRC marker discovery then receives the stable parent containing registered
+  # project checkouts instead of borrowing HOME or the worktree's path shape.
+  PROJECT_SEARCH_ROOT="$(
+    bun "${REPO_ROOT}/scripts/resolve-project-search-root.ts" "${REPO_ROOT}"
+  )"
+  [[ -n "${PROJECT_SEARCH_ROOT}" ]] || die "canonical project search root resolved empty"
+}
+
 start_daemon() {
   if daemon_responds; then
     log "daemon already healthy on ${SOCKET} (reused)"
@@ -150,6 +164,7 @@ start_daemon() {
   (
     cd "${REPO_ROOT}"
     HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}" ASP_AGENTS_ROOT="${AGENTS_DIR}" \
+      HRC_PROJECT_SEARCH_ROOTS="${PROJECT_SEARCH_ROOT}" \
       nohup bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \
       >"${LOG_FILE}" 2>&1 &
     printf '%s\n' "$!" > "${PID_FILE}"
@@ -194,6 +209,7 @@ stop_daemon() {
 cmd_up() {
   mkdir -p "${ROOT}" "${RUN_DIR}" "${STATE_DIR}" "${AGENTS_DIR}"
   provision_build
+  resolve_project_search_root
   provision_agents
   start_daemon
   write_env_file
@@ -203,6 +219,7 @@ cmd_up() {
   log "  runtime dir  ${RUN_DIR}   (HRC_RUNTIME_DIR)"
   log "  state dir    ${STATE_DIR}   (HRC_STATE_DIR)"
   log "  agents root  ${AGENTS_DIR}   (ASP_AGENTS_ROOT, ${#FIXTURE_AGENTS[@]} fixture homes)"
+  log "  projects     ${PROJECT_SEARCH_ROOT}   (HRC_PROJECT_SEARCH_ROOTS)"
   log "  daemon       ${SOCKET}  pid $(cat "${PID_FILE}" 2>/dev/null || echo '?')"
   log "  daemon log   ${LOG_FILE}"
   log "  env file     ${ENV_FILE}   (source it to point a shell here)"

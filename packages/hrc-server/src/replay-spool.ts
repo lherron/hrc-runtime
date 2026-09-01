@@ -12,7 +12,7 @@ import {
   parseLaunchLifecyclePayload,
 } from './hook-lifecycle.js'
 import { appendHrcEvent, deriveSemanticTurnEventFromLaunchEvent } from './hrc-event-helper.js'
-import { readSpoolEntries } from './launch/index.js'
+import { CORRUPT_SPOOL_DIRNAME, readSpoolEntries } from './launch/index.js'
 import { requireSession } from './require-helpers.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestRunForRuntime } from './runtime-select.js'
@@ -30,13 +30,29 @@ export async function replaySpool(options: HrcServerOptions, db: HrcDatabase): P
   }
 
   for (const launchId of launchIds) {
+    if (launchId === CORRUPT_SPOOL_DIRNAME) {
+      continue
+    }
     const launchDir = join(options.spoolDir, launchId)
     const launchDirStat = await stat(launchDir).catch(() => null)
     if (!launchDirStat?.isDirectory()) {
       continue
     }
 
-    const entries = await readSpoolEntries(options.spoolDir, launchId)
+    const entries = await readSpoolEntries(options.spoolDir, launchId, {
+      onCorruptEntry: (entry) => {
+        logStartupIssue(
+          'corrupt spool entry quarantined',
+          {
+            launchId,
+            path: entry.path,
+            quarantinePath: entry.quarantinePath,
+            ...(entry.quarantineError ? { quarantineError: entry.quarantineError } : {}),
+          },
+          entry.error
+        )
+      },
+    })
     let hadFailure = false
     for (const entry of entries) {
       try {

@@ -23,7 +23,7 @@ describe('isCredentialClassKey', () => {
     expect(isCredentialClassKey('SOME_SECRET')).toBe(true)
     expect(isCredentialClassKey('DB_PASSWORD')).toBe(true)
     expect(isCredentialClassKey('OPENAI_API_KEY')).toBe(true)
-    expect(isCredentialClassKey('HRC_BIRTH_CREDENTIAL')).toBe(true)
+    expect(isCredentialClassKey('SERVICE_AUTH_TOKEN')).toBe(true)
     expect(isCredentialClassKey('WRKQ_ACTOR')).toBe(true)
     expect(isCredentialClassKey('WRKQD_TOKEN_FILE')).toBe(false)
     expect(isCredentialClassKey('WRKQ_PROJECT_ROOT')).toBe(false)

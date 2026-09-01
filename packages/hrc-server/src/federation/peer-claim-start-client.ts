@@ -23,7 +23,6 @@ import {
 } from 'hrc-core'
 
 import type { PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export type PeerClaimStartCapability = 'rosterStart' | 'exactStart'
@@ -143,7 +142,7 @@ export async function sendPeerClaimStart(
 
   try {
     const health = await fetchImpl(new URL('/v1/federation/health', options.peer.endpoint), {
-      headers: buildPeerProtocolHeaders(options.peer, PEER_PROTOCOL_VERSION),
+      headers: buildPeerProtocolHeaders(options.peer),
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (health.status === 404) throw peerUpgradeRequired(options.peer, options.label)
@@ -162,7 +161,7 @@ export async function sendPeerClaimStart(
 
     const response = await fetchImpl(new URL(options.path, options.peer.endpoint), {
       method: 'POST',
-      headers: buildPeerProtocolHeaders(options.peer, PEER_PROTOCOL_VERSION, {
+      headers: buildPeerProtocolHeaders(options.peer, {
         contentType: 'application/json',
       }),
       body: JSON.stringify(options.request),

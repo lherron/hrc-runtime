@@ -22,11 +22,7 @@ import type { ExactStartRuntimeRequest } from 'hrc-core'
 
 import { sendRemoteExactStart } from '../federation/exact-start-client.js'
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
-import {
-  PEER_PROTOCOL_VERSION,
-  PEER_PROTOCOL_VERSION_HEADER,
-  createPeerProtocolRequestHandler,
-} from '../federation/peer-protocol.js'
+import { createPeerProtocolRequestHandler } from '../federation/peer-protocol.js'
 import { PeerToken } from '../federation/peer-token.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
 import { preflightExactScope, resolveImplicitScopeHome } from '../federation/summon-gate-server.js'
@@ -55,7 +51,12 @@ function registryUnbound(): BindingRegistryClient {
     async establish(request) {
       return {
         outcome: 'created',
-        binding: { ...request, placementEpoch: 1, updatedAt: request.now },
+        binding: {
+          scopeRef: request.scopeRef,
+          homeNodeId: request.homeNodeId,
+          createdAt: request.now,
+          updatedAt: request.now,
+        },
       }
     },
   }
@@ -371,7 +372,6 @@ describe('T-07302 exact-start peer route', () => {
     const headers = new Headers({
       authorization: `Bearer ${TOKEN}`,
       'content-type': 'application/json',
-      [PEER_PROTOCOL_VERSION_HEADER]: PEER_PROTOCOL_VERSION,
     })
     return new Request('http://hrcdev.example.ts.net:18490/v1/federation/exact-start', {
       method: 'POST',

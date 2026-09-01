@@ -1018,7 +1018,7 @@ function kickerScopeRefFor(targetSessionRef: string): string | undefined {
  * is what closes it.
  *
  * Stale local RUNTIMES are deliberately NOT torn down here. Evicting a live
- * seat is a rebind's decision (`rebind.ts` already enumerates the scope's live
+ * seat is an operator retirement decision (the retirement primitive enumerates the scope's live
  * runtime ids at revoke time), never a delivery mechanism's; a routing verdict
  * must not kill a session an operator may be attached to. Nor is the exclusion
  * pushed into `listLiveSessionRefs()`: that query lives in hrc-store-sqlite,
@@ -1038,14 +1038,14 @@ function skipForeignHomedTarget(
     attempt?.state === 'claimed'
       ? server.db.mailDrives.failWithoutStart(
           attempt.driveAttemptId,
-          `${scopeRef} is homed on ${foreign.homeNodeId} (epoch ${foreign.placementEpoch}); this node has no authority to drive it`
+          `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`
         ).driveAttemptId
       : undefined
 
   // Announcement is deduped on its OWN map, not on the resolver's memo. The
   // memo is shared with the shadow teardown, and whichever mechanism happened
   // to resolve the scope first would otherwise silence this line for the other.
-  const announcement = `${foreign.homeNodeId}@${foreign.placementEpoch}`
+  const announcement = foreign.homeNodeId
   const alreadyAnnounced = server.mailKickerForeignHomeAnnounced.get(scopeRef) === announcement
   server.mailKickerForeignHomeAnnounced.set(scopeRef, announcement)
   if (alreadyAnnounced && failedAttemptId === undefined) return
@@ -1054,7 +1054,6 @@ function skipForeignHomedTarget(
     targetSessionRef,
     scopeRef,
     homeNodeId: foreign.homeNodeId,
-    placementEpoch: foreign.placementEpoch,
     source: foreign.source,
     wakeReason,
     ...(failedAttemptId === undefined ? {} : { failedAttemptId }),
@@ -1340,6 +1339,9 @@ async function driveMailTargetOnce(
   })
 
   try {
+    // T-07206: session intent is reusable authority because fresh broker starts
+    // commit it only after controller.start succeeds; rejected candidates never
+    // outrank the drive's own materialization intent here.
     const materializationIntent = session?.lastAppliedIntentJson ?? attempt.materializationIntent
     if (materializationIntent === undefined) {
       // Placement is HRC's, so a missing intent means this node could not find
@@ -1364,7 +1366,15 @@ async function driveMailTargetOnce(
       // This is the only message-traffic provisioning path. ensureTargetSession
       // enters the normal summon/placement gate before it mints anything, so a
       // scope this node does not home is refused here rather than pre-filtered.
-      session = await server.ensureTargetSession(targetSessionRef, materializationIntent)
+      session = await server.ensureTargetSession(
+        targetSessionRef,
+        materializationIntent,
+        undefined,
+        'local',
+        // The drive carries this candidate explicitly until dispatch succeeds.
+        // A rejected cold birth must leave no never-materialized session authority.
+        { persistIntent: false }
+      )
     }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: session.hostSessionId,
@@ -1541,7 +1551,14 @@ export function drainMailKickerTarget(
   })().finally(() => {
     this.mailKickerTargetOperations.delete(targetSessionRef)
     if (this.mailKickerPendingTargets.has(targetSessionRef) && !this.stopping) {
-      queueMicrotask(() => void this.drainMailKickerTarget(targetSessionRef))
+      queueMicrotask(() => {
+        void this.drainMailKickerTarget(targetSessionRef).catch((error: unknown) => {
+          writeServerLog('WARN', 'wrkq.kicker.rekick_failed', {
+            targetSessionRef,
+            error: errorText(error),
+          })
+        })
+      })
     }
   })
   this.mailKickerTargetOperations.set(targetSessionRef, operation)

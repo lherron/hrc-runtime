@@ -117,14 +117,6 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   // running a placeholder.
   process.env['HRC_ALLOW_HARNESS_SHIM'] = '1'
 
-  // Point every state-root consumer at this fixture's isolated root. Without
-  // this, anything the server writes through `resolveStateRoot()` - request
-  // metrics, and launch spans as of T-07706 - lands in the OPERATOR'S real
-  // ~/praesidium/var/state/hrc/metrics. Fixture launches complete in
-  // microseconds, so leaked records drag every real startup percentile toward
-  // zero: the store silently stops describing production.
-  process.env['HRC_STATE_DIR'] = stateRoot
-
   function now(): string {
     return new Date().toISOString()
   }
