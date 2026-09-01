@@ -5,8 +5,8 @@ import type {
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
+  BirthDesignationSupersededBy,
   DeleteBindingResult,
-  FederationPlacementSource,
   PlacementBinding,
 } from 'hrc-store-sqlite'
 
@@ -21,13 +21,10 @@ const DEFAULT_TOTAL_TIMEOUT_MS = 5_000
 const MAX_ATTEMPTS = 3
 const INITIAL_BACKOFF_MS = 250
 
-const PLACEMENT_SOURCES = new Set<FederationPlacementSource>([
+const DESIGNATION_SUPERSESSION_SOURCES = new Set<BirthDesignationSupersededBy>([
   'pin',
   'task_default',
   'default_home_node',
-  'default_home_node(local)',
-  'default_home_node(sender)',
-  'default_home_node(sender-retired)',
   'explicit_local',
 ])
 
@@ -357,8 +354,8 @@ function parseDesignation(
     designatedAt: value['designatedAt'],
     state: state as BirthDesignationState,
     ...(isNonemptyString(supersededBy) &&
-    PLACEMENT_SOURCES.has(supersededBy as FederationPlacementSource)
-      ? { supersededBy: supersededBy as FederationPlacementSource }
+    DESIGNATION_SUPERSESSION_SOURCES.has(supersededBy as BirthDesignationSupersededBy)
+      ? { supersededBy: supersededBy as BirthDesignationSupersededBy }
       : {}),
     ...(isNonemptyString(supersededAt) ? { supersededAt } : {}),
   }

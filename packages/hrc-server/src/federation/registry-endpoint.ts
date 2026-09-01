@@ -2,7 +2,8 @@ import { dirname, join } from 'node:path'
 
 import {
   type BindingRegistry,
-  type FederationPlacementSource,
+  type BirthDesignationEstablishmentDecision,
+  type BirthDesignationSupersededBy,
   openBindingRegistry,
 } from 'hrc-store-sqlite'
 
@@ -63,21 +64,31 @@ async function requestRecord(request: Request): Promise<Record<string, unknown>>
   return value
 }
 
-function parseFederationPlacementSource(value: unknown): FederationPlacementSource {
+function parseBirthDesignationSupersededBy(value: unknown): BirthDesignationSupersededBy {
   if (
     value === 'pin' ||
     value === 'task_default' ||
     value === 'default_home_node' ||
-    value === 'default_home_node(local)' ||
-    // T-07655. This whitelist is a WIRE boundary, so it is only crossed when a
-    // node establishes against a REMOTE registry — which is every node but the
-    // host. Omitting these two refused every designated birth with a 400 that
-    // read as `registry-refused`, i.e. as a credentials problem.
-    value === 'default_home_node(sender)' ||
-    value === 'default_home_node(sender-retired)' ||
     value === 'explicit_local'
   ) {
     return value
+  }
+  throw new InvalidRegistryRequest()
+}
+
+function parseBirthDesignationDecision(
+  value: unknown
+): BirthDesignationEstablishmentDecision | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new InvalidRegistryRequest()
+  if (value['action'] === 'enforce-designated-home') {
+    return { action: 'enforce-designated-home' }
+  }
+  if (value['action'] === 'supersede') {
+    return {
+      action: 'supersede',
+      supersededBy: parseBirthDesignationSupersededBy(value['supersededBy']),
+    }
   }
   throw new InvalidRegistryRequest()
 }
@@ -226,10 +237,14 @@ export function createBindingRegistryRequestHandler(input: {
         if (homeNodeId !== peer.nodeId) {
           return responseJson({ ok: false, error: 'authenticated_node_mismatch' }, 403)
         }
+        if ('placementSource' in body || 'establishmentProvenance' in body) {
+          throw new InvalidRegistryRequest()
+        }
+        const birthDesignation = parseBirthDesignationDecision(body['birthDesignation'])
         const result = input.registry.establish({
           scopeRef: requiredString(body, 'scopeRef'),
           homeNodeId,
-          placementSource: parseFederationPlacementSource(body['placementSource']),
+          ...(birthDesignation === undefined ? {} : { birthDesignation }),
           now: now(),
         })
         return responseJson({ ok: true, authenticatedNodeId: peer.nodeId, ...result })

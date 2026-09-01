@@ -42,7 +42,6 @@ function bindSender(store: BindingRegistry, homeNodeId: string): void {
   store.establish({
     scopeRef: SENDER,
     homeNodeId,
-    placementSource: 'pin',
     now: '2026-08-28T04:00:00.000Z',
   })
 }

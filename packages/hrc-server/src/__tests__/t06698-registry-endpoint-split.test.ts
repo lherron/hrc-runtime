@@ -244,7 +244,6 @@ describe('two-listener route isolation', () => {
         body: JSON.stringify({
           scopeRef: SCOPE,
           homeNodeId: 'lab-test',
-          placementSource: 'pin',
         }),
       })
       expect(establish.status).toBe(200)

@@ -109,7 +109,6 @@ function registerScopeHomedOn(homeNodeId: string): void {
     registry.establish({
       scopeRef: SCOPE,
       homeNodeId,
-      placementSource: 'pin',
       now: NOW,
     })
   } finally {
@@ -335,7 +334,6 @@ describe('T-07650 — the receipt names the current seat, not the oldest row', (
     createPlacementLedgerRepository(serverDb().sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId: LOCAL_NODE,
-      placementSource: 'pin',
       updatedAt: timestamp(),
     })
   }
@@ -467,7 +465,6 @@ describe('T-07650 — shadow teardown retires seats this node has no authority f
     createPlacementLedgerRepository(serverDb().sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId: LOCAL_NODE,
-      placementSource: 'pin',
       updatedAt: timestamp(),
     })
     seedSession('hs-t07650-mine')

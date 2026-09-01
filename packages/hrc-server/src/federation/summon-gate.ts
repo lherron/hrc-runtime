@@ -29,9 +29,9 @@
 import { parseScopeRef } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
 import type {
+  BirthDesignationEstablishmentDecision,
   BirthDesignationRecord,
   BirthDesignationResult,
-  FederationPlacementSource,
   PlacementBinding,
   PlacementLedgerRepository,
 } from 'hrc-store-sqlite'
@@ -163,7 +163,8 @@ export type SummonGateEvaluation =
       decision: 'allow'
       reason: SummonGateAllowReason
       homeNodeId?: string | undefined
-      placementSource?: FederationPlacementSource | undefined
+      /** T-07655-only transaction input; never established binding data. */
+      birthDesignation?: BirthDesignationEstablishmentDecision | undefined
       /** Registry authority to install locally after a registry-first crash. */
       registryBinding?: PlacementBinding | undefined
       /** Exact local authority observed by the placement resolver. */
@@ -183,10 +184,8 @@ export type SummonGateEvaluation =
       placementBinding?: PlacementBinding | undefined
       /** The live tier-5 designation this refusal is about (T-07655). */
       birthDesignation?: BirthDesignationRecord | undefined
-      /** Policy provenance for an unbound implicit request naming a remote home. */
-      candidateFederationPlacementSource?:
-        | Exclude<FederationPlacementSource, 'explicit_local' | 'default_home_node(local)'>
-        | undefined
+      /** True only when current named policy permits remote virgin establishment. */
+      remoteEstablishmentAllowed?: true | undefined
     }
 
 /**
@@ -206,7 +205,8 @@ export type PlacementDisposition =
       outcome: 'local-establish'
       kind: 'virgin-policy'
       homeNodeId: string
-      provenance: FederationPlacementSource
+      /** T-07655-only transaction input; absent for an ordinary local fallback. */
+      birthDesignation?: BirthDesignationEstablishmentDecision | undefined
     }
   | {
       outcome: 'remote-bound'
@@ -217,10 +217,6 @@ export type PlacementDisposition =
       kind: 'virgin-policy'
       candidateHomeNodeId: string
       reason: 'pin-mismatch' | 'routed-elsewhere'
-      policyProvenance: Exclude<
-        FederationPlacementSource,
-        'explicit_local' | 'default_home_node(local)'
-      >
     }
   | {
       outcome: 'refuse'
@@ -353,7 +349,7 @@ function allow(
   reason: SummonGateAllowReason,
   extra: {
     homeNodeId?: string
-    placementSource?: FederationPlacementSource
+    birthDesignation?: BirthDesignationEstablishmentDecision
     registryBinding?: PlacementBinding
     placementBinding?: PlacementBinding
   } = {}
@@ -370,10 +366,7 @@ function refuse(
     capability?: SummonCapabilityName
     capabilitySource?: 'presence-heuristic'
     placementBinding?: PlacementBinding
-    candidateFederationPlacementSource?: Exclude<
-      FederationPlacementSource,
-      'explicit_local' | 'default_home_node(local)'
-    >
+    remoteEstablishmentAllowed?: true
     birthDesignation?: BirthDesignationRecord
   } = {}
 ): SummonGateEvaluation {
@@ -390,9 +383,9 @@ function refuse(
     ...(options.placementBinding === undefined
       ? {}
       : { placementBinding: options.placementBinding }),
-    ...(options.candidateFederationPlacementSource === undefined
+    ...(options.remoteEstablishmentAllowed === undefined
       ? {}
-      : { candidateFederationPlacementSource: options.candidateFederationPlacementSource }),
+      : { remoteEstablishmentAllowed: options.remoteEstablishmentAllowed }),
     ...(options.birthDesignation === undefined
       ? {}
       : { birthDesignation: options.birthDesignation }),
@@ -490,13 +483,49 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
  */
 type DesignatedHome = {
   homeNodeId: string
-  provenance: FederationPlacementSource
+  selection:
+    | 'pin'
+    | 'task-default'
+    | 'directive'
+    | 'explicit-local'
+    | 'local-default'
+    | 'configured-default'
+    | 'birth-designation'
   matchedConstraint?:
     | { kind: 'pin'; key: string }
     | { kind: 'task-default'; key: string }
     | undefined
   /** Present only for a tier-5 home that came from a birth designation. */
   designation?: BirthDesignationRecord | undefined
+}
+
+function designationDecisionFor(
+  home: DesignatedHome
+): BirthDesignationEstablishmentDecision | undefined {
+  switch (home.selection) {
+    case 'pin':
+      return { action: 'supersede', supersededBy: 'pin' }
+    case 'task-default':
+      return { action: 'supersede', supersededBy: 'task_default' }
+    case 'directive':
+    case 'configured-default':
+      return { action: 'supersede', supersededBy: 'default_home_node' }
+    case 'explicit-local':
+      return { action: 'supersede', supersededBy: 'explicit_local' }
+    case 'birth-designation':
+      return { action: 'enforce-designated-home' }
+    case 'local-default':
+      return undefined
+  }
+}
+
+function permitsRemoteEstablishment(home: DesignatedHome): boolean {
+  return (
+    home.selection === 'pin' ||
+    home.selection === 'task-default' ||
+    home.selection === 'directive' ||
+    home.selection === 'configured-default'
+  )
 }
 
 /**
@@ -596,7 +625,7 @@ function resolveDesignatedHome(
     }
     return {
       homeNodeId: pin,
-      provenance: 'pin',
+      selection: 'pin',
       matchedConstraint: { kind: 'pin', key: pinKey },
     }
   }
@@ -618,7 +647,7 @@ function resolveDesignatedHome(
     }
     return {
       homeNodeId: home.nodeId,
-      provenance: 'task_default',
+      selection: 'task-default',
       matchedConstraint: { kind: 'task-default', key: home.key },
     }
   }
@@ -628,7 +657,7 @@ function resolveDesignatedHome(
   // input, not a declared constraint, so it must not acquire pin-mismatch
   // diagnostics or pin-grade authority anywhere downstream.
   if (directive !== undefined) {
-    return { homeNodeId: directive.nodeId, provenance: 'default_home_node' }
+    return { homeNodeId: directive.nodeId, selection: 'directive' }
   }
 
   // The scope is virgin and unconstrained, and a human ran `hrc run`/`hrc start`
@@ -636,7 +665,7 @@ function resolveDesignatedHome(
   // pre-declared policy — including on a profile with no [placement] stanza at
   // all.
   if (intent === 'explicit_local') {
-    return { homeNodeId: localNodeId, provenance: 'explicit_local' }
+    return { homeNodeId: localNodeId, selection: 'explicit-local' }
   }
 
   const fallback = policy?.provisioning?.node
@@ -665,7 +694,7 @@ function resolveDesignatedHome(
     // instead). So "omitted" here means what the addendum says it means — a
     // profile that declares no node — and the undeclared refusal below still
     // covers the case where the daemon could not establish any policy to read.
-    return { homeNodeId: localNodeId, provenance: 'default_home_node(local)' }
+    return { homeNodeId: localNodeId, selection: 'local-default' }
   }
 
   if (fallback === undefined) {
@@ -678,7 +707,7 @@ function resolveDesignatedHome(
       `Provisioning node "${fallback}" is invalid: "local" is not a node id. Name a real node.`
     )
   }
-  return { homeNodeId: fallback, provenance: 'default_home_node' }
+  return { homeNodeId: fallback, selection: 'configured-default' }
 }
 
 /**
@@ -696,12 +725,7 @@ export function resolveDeclaredPlacementHome(
         knownNodeIds?: readonly string[] | undefined
       }
     | undefined
-):
-  | {
-      homeNodeId: string
-      provenance: FederationPlacementSource
-    }
-  | undefined {
+): { homeNodeId: string } | undefined {
   const resolved = resolveDeclaredPlacementHomeOrRefusal(
     scopeRef,
     policy,
@@ -731,13 +755,7 @@ export function resolveDeclaredPlacementHomeOrRefusal(
         knownNodeIds?: readonly string[] | undefined
       }
     | undefined
-):
-  | {
-      homeNodeId: string
-      provenance: FederationPlacementSource
-    }
-  | Extract<SummonGateEvaluation, { decision: 'refuse' }>
-  | undefined {
+): { homeNodeId: string } | Extract<SummonGateEvaluation, { decision: 'refuse' }> | undefined {
   const designated = resolveDesignatedHome(
     scopeRef,
     policy,
@@ -748,7 +766,7 @@ export function resolveDeclaredPlacementHomeOrRefusal(
   if (isEvaluation(designated)) {
     return designated.decision === 'refuse' ? designated : undefined
   }
-  return { homeNodeId: designated.homeNodeId, provenance: designated.provenance }
+  return { homeNodeId: designated.homeNodeId }
 }
 
 function isEvaluation(value: unknown): value is SummonGateEvaluation {
@@ -758,17 +776,14 @@ function isEvaluation(value: unknown): value is SummonGateEvaluation {
 function nodeLocalRemoteEstablishRefusal(
   request: SummonGateRequest,
   scopeRef: string,
-  provenance: FederationPlacementSource
+  designated: DesignatedHome
 ): SummonGateEvaluation | undefined {
-  if (
-    request.origin !== 'federated-establish' ||
-    (provenance !== 'explicit_local' && provenance !== 'default_home_node(local)')
-  ) {
+  if (request.origin !== 'federated-establish' || permitsRemoteEstablishment(designated)) {
     return undefined
   }
   return refuse(
     'routed-elsewhere',
-    `${scopeRef} has no concrete named-node policy granting remote establishment authority; ${provenance} is node-local only.`,
+    `${scopeRef} has no concrete named-node policy granting remote establishment authority; ${designated.selection} is node-local only.`,
     { homeNodeId: request.deps.localNodeId }
   )
 }
@@ -807,7 +822,7 @@ async function applyBirthDesignation(
   const { deps } = request
   // Only the last tier is designatable. A declared pin, home, directive, or an
   // operator's explicit start already answered, and must not be re-asked.
-  if (designated.provenance !== 'default_home_node(local)') return designated
+  if (designated.selection !== 'local-default') return designated
   // Mail-triggered implicit summons only. An operator start is `explicit_local`
   // and never reaches here; a federated-establish is a peer acting on a
   // decision this tier does not produce.
@@ -849,7 +864,7 @@ async function applyBirthDesignation(
 
   return {
     homeNodeId: designation.homeNodeId,
-    provenance: designation.provenance,
+    selection: 'birth-designation',
     designation,
   }
 }
@@ -860,19 +875,16 @@ async function decideVirginPolicyPlacement(
   designated: DesignatedHome
 ): Promise<SummonGateEvaluation> {
   const { deps } = request
-  const remotePolicyRefusal = nodeLocalRemoteEstablishRefusal(
-    request,
-    scopeRef,
-    designated.provenance
-  )
+  const remotePolicyRefusal = nodeLocalRemoteEstablishRefusal(request, scopeRef, designated)
   if (remotePolicyRefusal !== undefined) return remotePolicyRefusal
 
   if (designated.homeNodeId === deps.localNodeId) {
+    const birthDesignation = designationDecisionFor(designated)
     return await requireMaterializationCapability(
       request,
       allow('virgin-establishment', {
         homeNodeId: designated.homeNodeId,
-        placementSource: designated.provenance,
+        ...(birthDesignation === undefined ? {} : { birthDesignation }),
       })
     )
   }
@@ -899,7 +911,7 @@ async function decideVirginPolicyPlacement(
         `${scopeRef} matches placement home [placement.homes] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that home line.`,
         {
           homeNodeId: designated.homeNodeId,
-          candidateFederationPlacementSource: 'task_default',
+          remoteEstablishmentAllowed: true,
         }
       )
     }
@@ -908,7 +920,7 @@ async function decideVirginPolicyPlacement(
       `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,
       {
         homeNodeId: designated.homeNodeId,
-        candidateFederationPlacementSource: 'pin',
+        remoteEstablishmentAllowed: true,
       }
     )
   }
@@ -918,10 +930,7 @@ async function decideVirginPolicyPlacement(
     `${scopeRef} routes to ${designated.homeNodeId} by provisioning.node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
     {
       homeNodeId: designated.homeNodeId,
-      ...(designated.provenance === 'explicit_local' ||
-      designated.provenance === 'default_home_node(local)'
-        ? {}
-        : { candidateFederationPlacementSource: designated.provenance }),
+      ...(permitsRemoteEstablishment(designated) ? { remoteEstablishmentAllowed: true } : {}),
     }
   )
 }
@@ -1052,7 +1061,7 @@ function placementDispositionFor(
     if (
       request.intent === 'implicit' &&
       evaluation.homeNodeId !== undefined &&
-      evaluation.candidateFederationPlacementSource !== undefined &&
+      evaluation.remoteEstablishmentAllowed === true &&
       (evaluation.reason === 'pin-mismatch' || evaluation.reason === 'routed-elsewhere')
     ) {
       return {
@@ -1060,7 +1069,6 @@ function placementDispositionFor(
         kind: 'virgin-policy',
         candidateHomeNodeId: evaluation.homeNodeId,
         reason: evaluation.reason,
-        policyProvenance: evaluation.candidateFederationPlacementSource,
       }
     }
     return {
@@ -1086,16 +1094,14 @@ function placementDispositionFor(
       source: 'registry',
     }
   }
-  if (
-    evaluation.reason === 'virgin-establishment' &&
-    evaluation.homeNodeId !== undefined &&
-    evaluation.placementSource !== undefined
-  ) {
+  if (evaluation.reason === 'virgin-establishment' && evaluation.homeNodeId !== undefined) {
     return {
       outcome: 'local-establish',
       kind: 'virgin-policy',
       homeNodeId: evaluation.homeNodeId,
-      provenance: evaluation.placementSource,
+      ...(evaluation.birthDesignation === undefined
+        ? {}
+        : { birthDesignation: evaluation.birthDesignation }),
     }
   }
   return undefined

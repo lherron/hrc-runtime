@@ -12,7 +12,6 @@ describe('federation v1.3 home-only placement storage', () => {
       const binding = registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'svc',
-        placementSource: 'pin',
         now: '2026-09-01T07:00:00.000Z',
       }).binding
       expect(binding).toEqual({
@@ -42,7 +41,6 @@ describe('federation v1.3 home-only placement storage', () => {
       const binding = registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'svc',
-        placementSource: 'pin',
         now: '2026-09-01T07:00:00.000Z',
       }).binding
       const ledger = createPlacementLedgerRepository(db.sqlite)

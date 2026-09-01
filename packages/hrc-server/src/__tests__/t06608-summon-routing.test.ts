@@ -34,7 +34,6 @@ function binding(overrides: Partial<PlacementBinding> = {}): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId: 'max3',
-    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
@@ -280,7 +279,7 @@ describe('placement policy — pins are hard constraints on every path', () => {
     }
   })
 
-  test('pin naming this node allows virgin establishment with pin provenance', async () => {
+  test('pin naming this node allows virgin establishment with a designation supersession decision', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'ensure-target',
@@ -297,13 +296,13 @@ describe('placement policy — pins are hard constraints on every path', () => {
     expect(result.evaluation.decision).toBe('allow')
     expect(result.evaluation.reason).toBe('virgin-establishment')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    // Pin beats default_home_node.
-    expect(result.evaluation.placementSource).toBe('pin')
+    // Pin beats default_home_node and only informs T-07655 arbitration.
+    expect(result.evaluation.birthDesignation).toEqual({ action: 'supersede', supersededBy: 'pin' })
     expect(result.placement).toEqual({
       outcome: 'local-establish',
       kind: 'virgin-policy',
       homeNodeId: 'max3',
-      provenance: 'pin',
+      birthDesignation: { action: 'supersede', supersededBy: 'pin' },
     })
   })
 
@@ -320,7 +319,6 @@ describe('placement policy — pins are hard constraints on every path', () => {
       kind: 'virgin-policy',
       candidateHomeNodeId: 'lab',
       reason: 'pin-mismatch',
-      policyProvenance: 'pin',
     })
     expect((pinnedElsewhere.ledger as ReturnType<typeof ledgerStub>).calls).toContain(SCOPE)
     expect((pinnedElsewhere.registry as ReturnType<typeof registryStub>).calls).toContain(SCOPE)
@@ -353,7 +351,10 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('max3')
-    expect(result.evaluation.placementSource).toBe('task_default')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'task_default',
+    })
   })
 
   test('a reserved-looking task stays independent when its base is undeclared', async () => {
@@ -423,7 +424,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.placementSource).toBe('pin')
+    expect(result.evaluation.birthDesignation).toEqual({ action: 'supersede', supersededBy: 'pin' })
     expect(result.evaluation.homeNodeId).toBe('max3')
   })
 
@@ -447,7 +448,10 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.placementSource).toBe('task_default')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'task_default',
+    })
     expect(result.evaluation.homeNodeId).toBe('lab')
   })
 })

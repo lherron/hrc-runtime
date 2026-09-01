@@ -22,7 +22,6 @@ function localBinding(homeNodeId = 'max3'): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId,
-    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
   } as PlacementBinding

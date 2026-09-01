@@ -54,14 +54,15 @@ export {
   rebuildBindingRegistryFromLedgers,
 } from './federation-repositories.js'
 export type {
+  BirthDesignationEstablishmentDecision,
   BindingEstablishResult,
   BindingRegistryRecord,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
+  BirthDesignationSupersededBy,
   EstablishBindingInput,
-  FederationPlacementSource,
   DeleteBindingInput,
   DeleteBindingResult,
   InstallActivePlacementInput,

@@ -10,21 +10,11 @@ import { createBindingRegistryRequestHandler } from '../federation/registry-endp
 import type { RegistryAuthPeer } from '../federation/registry-endpoint.js'
 
 /**
- * T-07655 — the establishment vocabulary at the HTTP boundary.
+ * T-07655 — the birth-designation decision at the HTTP boundary.
  *
- * The registry has ONE host, so every other node establishes over the wire.
- * That makes `parseFederationPlacementSource` a validator only remote nodes
- * cross — and every in-process test goes around it, which is exactly how two
- * new provenances shipped with the type, the SQL CHECK and the client set all
- * updated while the wire whitelist still rejected them.
- *
- * Live consequence on 2026-08-28T06:16:04Z: max3 resolved its own designated
- * birth, POSTed `default_home_node(sender)` to svc, and got a 400 back. The
- * daemon reported it as `registry-refused` with "Check this node's peer entry
- * and bearer token" — a credentials diagnostic for a vocabulary mismatch.
- *
- * The test drives the REAL handler with a REAL Request, so it fails if any
- * accepted provenance stops being spellable on the wire.
+ * Ordinary establishment has no provenance field. Only the distinct,
+ * transient decision needed to arbitrate a live birth designation may cross
+ * this boundary, and neither form becomes part of the binding DTO.
  */
 
 const SCOPE = 'agent:sparky:project:hrc-runtime:task:T-07655-wire'
@@ -45,56 +35,139 @@ async function registry(): Promise<BindingRegistry> {
   return openBindingRegistry(join(tempDir, 'binding-registry.sqlite'))
 }
 
-function establishRequest(provenance: string, scopeRef: string): Request {
+function establishRequest(scopeRef: string, extra: Record<string, unknown> = {}): Request {
   return new Request('http://registry.invalid/v1/federation/registry/establish', {
     method: 'POST',
     headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      scopeRef,
-      homeNodeId: 'max3',
-      placementSource: provenance,
-    }),
+    body: JSON.stringify({ scopeRef, homeNodeId: 'max3', ...extra }),
   })
 }
 
-describe('T-07655 transient establishment decision crosses the wire', () => {
-  test.each([
-    ['pin'],
-    ['task_default'],
-    ['default_home_node'],
-    ['default_home_node(local)'],
-    ['default_home_node(sender)'],
-    ['default_home_node(sender-retired)'],
-    ['explicit_local'],
-  ])('%s is accepted by the HTTP establish route', async (provenance) => {
+describe('T-07655 birth-designation decision crosses the wire', () => {
+  test('ordinary establishment has no provenance in its request, response, or stored binding', async () => {
     const store = await registry()
     try {
       const handler = createBindingRegistryRequestHandler({
         registry: store,
         peers: new Map([['max3', PEER]]),
       })
-      const scopeRef = `${SCOPE}-${provenance.replace(/[^a-z]/g, '')}`
-      const response = await handler(establishRequest(provenance, scopeRef))
+      const response = await handler(establishRequest(SCOPE))
 
       expect(response.status).toBe(200)
       const body = (await response.json()) as Record<string, unknown>
       expect(body['outcome']).toBe('created')
-      expect(store.get(scopeRef)).toMatchObject({ scopeRef, homeNodeId: 'max3' })
-      expect(JSON.stringify(store.get(scopeRef))).not.toContain('placementSource')
-      expect(JSON.stringify(body)).not.toContain('placementSource')
+      expect(store.get(SCOPE)).toEqual({
+        scopeRef: SCOPE,
+        homeNodeId: 'max3',
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      })
+      for (const value of [body, store.get(SCOPE)]) {
+        const encoded = JSON.stringify(value)
+        expect(encoded).not.toContain('placementSource')
+        expect(encoded).not.toContain('establishmentProvenance')
+        expect(encoded).not.toContain('birthDesignation')
+      }
     } finally {
       store.close()
     }
   })
 
-  test('an unknown provenance is still refused', async () => {
+  test.each(['placementSource', 'establishmentProvenance'])(
+    'refuses the obsolete generic %s field',
+    async (field) => {
+      const store = await registry()
+      try {
+        const handler = createBindingRegistryRequestHandler({
+          registry: store,
+          peers: new Map([['max3', PEER]]),
+        })
+        const response = await handler(establishRequest(SCOPE, { [field]: 'pin' }))
+
+        expect(response.status).toBe(400)
+        expect(store.get(SCOPE)).toBeUndefined()
+      } finally {
+        store.close()
+      }
+    }
+  )
+
+  test('a designation fence is accepted without entering the binding DTO', async () => {
+    const store = await registry()
+    try {
+      store.recordDesignation({
+        scopeRef: SCOPE,
+        homeNodeId: 'max3',
+        provenance: 'default_home_node(sender)',
+        birthEnvelopeId: 'EN-00722',
+        senderScopeRef: 'agent:mable:project:wrkq:task:primary',
+        now: '2026-08-28T05:00:00.000Z',
+      })
+      const handler = createBindingRegistryRequestHandler({
+        registry: store,
+        peers: new Map([['max3', PEER]]),
+      })
+      const response = await handler(
+        establishRequest(SCOPE, {
+          birthDesignation: { action: 'enforce-designated-home' },
+        })
+      )
+
+      expect(response.status).toBe(200)
+      expect((await response.json()) as Record<string, unknown>).toMatchObject({
+        outcome: 'created',
+      })
+      expect(JSON.stringify(store.get(SCOPE))).not.toContain('birthDesignation')
+      expect(store.liveDesignation(SCOPE)?.state).toBe('live')
+    } finally {
+      store.close()
+    }
+  })
+
+  test('an explicit supersession decision records only the designation disposition', async () => {
+    const store = await registry()
+    try {
+      store.recordDesignation({
+        scopeRef: SCOPE,
+        homeNodeId: 'svc',
+        provenance: 'default_home_node(sender)',
+        birthEnvelopeId: 'EN-00722',
+        senderScopeRef: 'agent:mable:project:wrkq:task:primary',
+        now: '2026-08-28T05:00:00.000Z',
+      })
+      const handler = createBindingRegistryRequestHandler({
+        registry: store,
+        peers: new Map([['max3', PEER]]),
+      })
+      const response = await handler(
+        establishRequest(SCOPE, {
+          birthDesignation: { action: 'supersede', supersededBy: 'pin' },
+        })
+      )
+
+      expect(response.status).toBe(200)
+      expect(store.get(SCOPE)?.homeNodeId).toBe('max3')
+      expect(store.latestDesignation(SCOPE)).toMatchObject({
+        state: 'superseded',
+        supersededBy: 'pin',
+      })
+    } finally {
+      store.close()
+    }
+  })
+
+  test.each([
+    { action: 'invented' },
+    { action: 'supersede', supersededBy: 'default_home_node(sender)' },
+  ])('refuses an invalid designation decision %#', async (birthDesignation) => {
     const store = await registry()
     try {
       const handler = createBindingRegistryRequestHandler({
         registry: store,
         peers: new Map([['max3', PEER]]),
       })
-      const response = await handler(establishRequest('default_home_node(invented)', SCOPE))
+      const response = await handler(establishRequest(SCOPE, { birthDesignation }))
+
       expect(response.status).toBe(400)
       expect(store.get(SCOPE)).toBeUndefined()
     } finally {

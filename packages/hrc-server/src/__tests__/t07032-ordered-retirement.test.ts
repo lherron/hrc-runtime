@@ -25,7 +25,6 @@ describe('T-07032 federation v1.3 ordered retirement', () => {
       const binding = registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'svc',
-        placementSource: 'pin',
         now: NOW,
       }).binding
       oldLedger.installActive(binding)
@@ -99,7 +98,6 @@ describe('T-07032 federation v1.3 ordered retirement', () => {
       const fresh = registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        placementSource: 'explicit_local',
         now: '2026-09-01T06:01:00.000Z',
       })
       expect(fresh).toMatchObject({ outcome: 'created', binding: { homeNodeId: 'lab' } })

@@ -162,7 +162,6 @@ describe('T-06697 federation v1.3 startup placement repair', () => {
       const established = h.registry.establish({
         scopeRef,
         homeNodeId: 'svc',
-        placementSource: 'default_home_node',
         now: NOW,
       })
       if (!('binding' in established)) throw new Error('expected fixture binding')

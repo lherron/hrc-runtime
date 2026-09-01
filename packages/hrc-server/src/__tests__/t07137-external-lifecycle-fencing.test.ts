@@ -115,7 +115,6 @@ describe('T-07137 lifecycleOwner fencing', () => {
     const binding = ledger.installActive({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementSource: 'explicit_local',
       updatedAt: OLD,
     })
     db.sessions.updateContinuation(

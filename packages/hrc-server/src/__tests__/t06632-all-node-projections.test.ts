@@ -47,7 +47,6 @@ function installPlacement(fixture: HrcServerTestFixture, homeNodeId: string): vo
     createPlacementLedgerRepository(db.sqlite).installActive({
       scopeRef: SCOPE,
       homeNodeId,
-      placementSource: 'pin',
       updatedAt: new Date().toISOString(),
     })
   } finally {

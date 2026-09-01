@@ -102,7 +102,6 @@ describe('T-07655 — hrc target locate renders the birth designation', () => {
             outcome: 'bound',
             record: {
               homeNodeId: 'svc',
-              placementSource: 'explicit_local',
               createdAt: '2026-08-28T05:01:00.000Z',
               updatedAt: '2026-08-28T05:01:00.000Z',
             },

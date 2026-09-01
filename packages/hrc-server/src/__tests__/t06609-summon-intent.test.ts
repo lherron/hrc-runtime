@@ -95,9 +95,10 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     if (result.evaluation.decision !== 'allow') return
     expect(result.evaluation.reason).toBe('virgin-establishment')
     expect(result.evaluation.homeNodeId).toBe(LOCAL)
-    // Provenance keeps the binding explainable (§5): this is expected state,
-    // not skew, precisely because it records WHY it landed here.
-    expect(result.evaluation.placementSource).toBe('explicit_local')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'explicit_local',
+    })
   })
 
   test('the SAME scope and policy under implicit intent routes away', async () => {
@@ -130,7 +131,10 @@ describe('explicit-start-wins: the operator start is the placement declaration',
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') return
-    expect(result.evaluation.placementSource).toBe('explicit_local')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'explicit_local',
+    })
   })
 
   test('implicit with no [provisioning] stanza still refuses, naming the stanza line', async () => {
@@ -147,7 +151,7 @@ describe('explicit-start-wins: the operator start is the placement declaration',
     expect(result.evaluation.diagnostic).toContain('[provisioning]')
   })
 
-  test('explicit_local wins over invalid provisioning.node = "local" and records itself', async () => {
+  test('explicit_local wins over invalid provisioning.node = "local"', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'resolve-session',
@@ -163,9 +167,10 @@ describe('explicit-start-wins: the operator start is the placement declaration',
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') return
-    // Both routes land on this node, but provenance must say which authority
-    // put it here — the operator, not the policy default.
-    expect(result.evaluation.placementSource).toBe('explicit_local')
+    expect(result.evaluation.birthDesignation).toEqual({
+      action: 'supersede',
+      supersededBy: 'explicit_local',
+    })
   })
 })
 
@@ -245,7 +250,7 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') return
     expect(result.evaluation.reason).toBe('registry-bound-local')
-    expect(result.evaluation.placementSource).toBeUndefined()
+    expect(result.evaluation.birthDesignation).toBeUndefined()
   })
 
   test('a retired scope refuses an explicit start too', async () => {

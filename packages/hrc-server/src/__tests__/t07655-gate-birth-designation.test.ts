@@ -84,7 +84,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     expect(result.evaluation.diagnostic).toContain('EN-00722')
   })
 
-  test('the designated node establishes with the designated provenance', async () => {
+  test('the designated node establishes under the birth-designation fence', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'ensure-target',
@@ -98,7 +98,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.reason).toBe('virgin-establishment')
-    expect(result.evaluation.placementSource).toBe('default_home_node(sender)')
+    expect(result.evaluation.birthDesignation).toEqual({ action: 'enforce-designated-home' })
     expect(result.evaluation.homeNodeId).toBe('max3')
   })
 
@@ -114,7 +114,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.placementSource).toBe('default_home_node(local)')
+    expect(result.evaluation.birthDesignation).toBeUndefined()
     expect(result.evaluation.homeNodeId).toBe(LOCAL_NODE)
   })
 
@@ -167,7 +167,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     ['a placement home', { pins: {}, homes: { 'T-07655': LOCAL_NODE } }, 'task_default'],
   ])(
     '%s answers without consulting the designation at all',
-    async (_label, placement, provenance) => {
+    async (_label, placement, supersededBy) => {
       let consulted = 0
       const result = await evaluateSummonGate({
         scopeRef: SCOPE,
@@ -185,20 +185,20 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
       expect(consulted).toBe(0)
       expect(result.evaluation.decision).toBe('allow')
       if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-      expect(result.evaluation.placementSource).toBe(provenance)
+      expect(result.evaluation.birthDesignation).toEqual({ action: 'supersede', supersededBy })
     }
   )
 
   test.each([
     ['an operator start here', 'explicit_local' as const],
     ['a node= directive', 'default_home_node' as const],
-  ])('%s answers without consulting the designation at all', async (_label, provenance) => {
+  ])('%s answers without consulting the designation at all', async (_label, supersededBy) => {
     let consulted = 0
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
       path: 'ensure-target',
-      intent: provenance === 'explicit_local' ? 'explicit_local' : 'implicit',
-      ...(provenance === 'default_home_node' ? { provision: { node: LOCAL_NODE } } : {}),
+      intent: supersededBy === 'explicit_local' ? 'explicit_local' : 'implicit',
+      ...(supersededBy === 'default_home_node' ? { provision: { node: LOCAL_NODE } } : {}),
       deps: deps({
         registry: registryStub(async () => {
           consulted += 1
@@ -210,6 +210,6 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     expect(consulted).toBe(0)
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.placementSource).toBe(provenance)
+    expect(result.evaluation.birthDesignation).toEqual({ action: 'supersede', supersededBy })
   })
 })

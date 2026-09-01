@@ -509,11 +509,12 @@ export type {
 } from './monitor/index.js'
 
 export type {
+  BirthDesignationEstablishmentDecision,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
-  FederationPlacementSource,
+  BirthDesignationSupersededBy,
   FederationGateModeValue,
   FederationExpectedPlacement,
   FederationInteractiveLifecycleSignal,
