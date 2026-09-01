@@ -395,6 +395,14 @@ export type HarnessBrokerControllerDeps = {
     | undefined
 }
 
+/** Production construction requires a durable metrics root; direct construction is test-only. */
+export type ProductionHarnessBrokerControllerDeps = Omit<
+  HarnessBrokerControllerDeps,
+  'metricsStateRoot'
+> & {
+  metricsStateRoot: string
+}
+
 export type BrokerControllerStartInput = {
   plan: CompiledRuntimePlan
   profile: BrokerExecutionProfile

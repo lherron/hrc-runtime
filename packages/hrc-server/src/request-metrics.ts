@@ -1,8 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { resolveStateRoot } from 'hrc-core'
-
 import { exactRouteKey, matchLaunchSubroute, matchSessionTitleRoute } from './server-routing.js'
 
 const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
@@ -122,11 +120,7 @@ export function pruneServerMetricFiles(metricsDir: string, now: number): void {
   }
 }
 
-export function writeServerMetric(
-  record: ServerMetricRecord,
-  now = new Date(),
-  stateRoot = resolveStateRoot()
-): void {
+export function writeServerMetric(record: ServerMetricRecord, now: Date, stateRoot: string): void {
   try {
     const metricsDir = join(stateRoot, 'metrics')
     mkdirSync(metricsDir, { recursive: true })

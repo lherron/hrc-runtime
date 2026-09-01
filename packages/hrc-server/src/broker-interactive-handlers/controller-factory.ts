@@ -111,7 +111,7 @@ export function getHarnessBrokerController(
     tmuxManagerFactory,
     generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
   })
-  this.harnessBrokerController = new HarnessBrokerController({
+  this.harnessBrokerController = HarnessBrokerController.createProduction({
     db: this.db,
     mapper: {
       apply: (envelope) => {

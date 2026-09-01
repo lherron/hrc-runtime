@@ -3,7 +3,18 @@
  * server metrics without changing or consuming the response it observes.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createHrcServer } from '../index'
@@ -43,7 +54,6 @@ let originalSqliteSlowStatementMs: string | undefined
 async function startServer(metrics = '1'): Promise<InspectableServer> {
   fixture = await createHrcTestFixture('hrc-request-metrics-')
   process.env['HRC_METRICS'] = metrics
-  process.env['HRC_STATE_DIR'] = fixture.stateRoot
   server = (await createHrcServer(fixture.serverOpts())) as InspectableServer
   return server
 }
@@ -88,6 +98,28 @@ afterEach(async () => {
 })
 
 describe('server request metrics', () => {
+  test('keeps the owning server state root when ambient state changes before a request', async () => {
+    await startServer()
+    if (!fixture) throw new Error('fixture is not initialized')
+    const ambientRoot = await mkdtemp(join(tmpdir(), 'hrc-request-metrics-ambient-'))
+    process.env['HRC_STATE_DIR'] = ambientRoot
+
+    try {
+      const response = await fixture.fetchSocket('/v1/health')
+      expect(response.status).toBe(200)
+      await response.text()
+
+      const requestRecords = (await readServerMetrics()).filter(
+        (record) => record.kind === 'server'
+      )
+      expect(requestRecords).toHaveLength(1)
+      expect(requestRecords[0]?.route).toBe('/v1/health')
+      expect(await readdir(join(ambientRoot, 'metrics')).catch(() => [])).toEqual([])
+    } finally {
+      await rm(ambientRoot, { recursive: true, force: true })
+    }
+  })
+
   test('uses a 5000ms SQLite busy timeout and accepts finite non-negative overrides', () => {
     expect(resolveSqliteBusyTimeoutMs(undefined, undefined)).toBe(5_000)
     expect(resolveSqliteBusyTimeoutMs(undefined, '125')).toBe(125)

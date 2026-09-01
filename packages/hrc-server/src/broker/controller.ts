@@ -98,6 +98,7 @@ import type {
   DurableBrokerClientLike,
   HarnessBrokerControllerDeps,
   PendingAttachedBrokerStart,
+  ProductionHarnessBrokerControllerDeps,
 } from './controller/types'
 
 const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
@@ -319,6 +320,11 @@ function resolveBrokerPermissionPolicy(runtime: HrcRuntimeSnapshot | null): Brok
 export class HarnessBrokerController {
   readonly kind = 'harness-broker' as const
 
+  /** The production seam makes durable launch metrics impossible to omit silently. */
+  static createProduction(deps: ProductionHarnessBrokerControllerDeps): HarnessBrokerController {
+    return new HarnessBrokerController(deps)
+  }
+
   private readonly db: HrcDatabase
   private readonly mapper: Pick<BrokerEventMapper, 'apply'>
   private readonly brokerClientFactory: BrokerClientFactory
@@ -385,6 +391,7 @@ export class HarnessBrokerController {
   // late broker event cannot read a closed DB and crash teardown.
   private shuttingDown = false
 
+  /** Direct construction is retained for isolated controller tests. Production uses createProduction. */
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
     this.logger = deps.logger ?? {}
