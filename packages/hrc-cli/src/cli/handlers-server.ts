@@ -36,6 +36,40 @@ import { isHrcDomainErrorLike } from './errors.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
 const DEFAULT_RESTART_PROOF_TIMEOUT_MS = 30_000
+/**
+ * Absolute process-level ceiling for graceful shutdown. Individual server
+ * teardown stages have narrower budgets where practical, but this final bound
+ * guarantees that an overlooked or future never-settling stage cannot keep a
+ * signalled daemon alive forever.
+ */
+const DEFAULT_SERVER_SHUTDOWN_TIMEOUT_MS = 30_000
+
+export class ServerShutdownTimeoutError extends Error {
+  readonly timeoutMs: number
+
+  constructor(timeoutMs: number) {
+    super(`server.stop() did not settle within ${timeoutMs}ms`)
+    this.name = 'ServerShutdownTimeoutError'
+    this.timeoutMs = timeoutMs
+  }
+}
+
+export async function stopServerWithinDeadline(
+  stop: () => Promise<void>,
+  timeoutMs = DEFAULT_SERVER_SHUTDOWN_TIMEOUT_MS
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      stop(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new ServerShutdownTimeoutError(timeoutMs)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 
 type SerializedRejectionCause = {
   type: string
@@ -599,7 +633,7 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     // policy must not recursively handle a failure in its own graceful teardown.
     void (async () => {
       try {
-        await server.stop()
+        await stopServerWithinDeadline(() => server.stop())
       } catch (error) {
         shutdownExitCode = 1
         writeServerProcessLog('server.shutdown_failed', {
