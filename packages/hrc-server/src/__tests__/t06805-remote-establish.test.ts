@@ -35,11 +35,8 @@ describe('T-06805 authenticated remote policy establishment', () => {
     closeables.push(db)
     const registryClient: BindingRegistryClient = {
       async consult(scopeRef) {
-        const record = registry.getRecord(scopeRef)
-        if (record === undefined) return { outcome: 'unbound' }
-        return record.state === 'retired'
-          ? { outcome: 'retired', retirement: record }
-          : { outcome: 'bound', binding: record }
+        const record = registry.get(scopeRef)
+        return record === undefined ? { outcome: 'unbound' } : { outcome: 'bound', binding: record }
       },
       async establish(request) {
         return registry.establish(request)
@@ -80,15 +77,11 @@ describe('T-06805 authenticated remote policy establishment', () => {
       binding: {
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        placementEpoch: 1,
-        birthClass: 'policy-born',
-        establishmentProvenance: 'pin',
       },
     })
     expect(registry.list()).toHaveLength(1)
     expect(createPlacementLedgerRepository(server.db.sqlite).activeAuthority(SCOPE)).toMatchObject({
       homeNodeId: 'lab',
-      placementEpoch: 1,
     })
     expect(
       server.db.sqlite.query<{ count: number }, []>('SELECT count(*) AS count FROM messages').get()
@@ -107,7 +100,7 @@ describe('T-06805 authenticated remote policy establishment', () => {
     expect(registry.list()).toHaveLength(1)
   })
 
-  test('registry CAS arbitrates competing receiver births and the loser installs no authority', async () => {
+  test('registry first-write arbitration gives exactly one receiver local authority', async () => {
     const registry = openBindingRegistry(':memory:')
     closeables.push(registry)
     const lab = harness('lab', registry, async () => ({
@@ -142,7 +135,7 @@ describe('T-06805 authenticated remote policy establishment', () => {
     ).toBe(winner.homeNodeId)
   })
 
-  test('invalid local node and claim birth fail closed without advertising authority', async () => {
+  test('invalid local node fails closed without advertising authority', async () => {
     const registry = openBindingRegistry(':memory:')
     closeables.push(registry)
     const localSentinel = harness('lab', registry, async () => ({
@@ -161,20 +154,6 @@ describe('T-06805 authenticated remote policy establishment', () => {
       retryable: false,
     })
 
-    const claim = harness('lab', registry, async () => ({
-      placement: { pins: { 'hrc-runtime:T-06805-remote': 'lab' }, homes: {} },
-      claimsTask: true,
-    }))
-    const claimResult = await establishRemotePolicyAuthority(claim, {
-      scopeRef: SCOPE,
-      correlationId: 'claim',
-    })
-    expect(claimResult).toMatchObject({
-      outcome: 'refused',
-      code: 'stale_context',
-      reason: 'claim-birth-authority-required',
-      retryable: false,
-    })
     expect(registry.list()).toEqual([])
   })
 

@@ -1,11 +1,11 @@
 /**
  * Per-daemon, per-scope reader/writer serialization shared by summon/mint
- * paths and manual rebind steps. Summons remain concurrent with one another,
- * while a rebind step is exclusive and cannot pass an in-flight summon
+ * paths and ordered retirement. Summons remain concurrent with one another,
+ * while retirement is exclusive and cannot pass an in-flight summon
  * between its authority check and session mint.
  */
 
-type LockKind = 'summon' | 'rebind'
+type LockKind = 'summon' | 'retirement'
 
 interface LockWaiter {
   kind: LockKind
@@ -22,12 +22,12 @@ const ownerLocks = new WeakMap<object, Map<string, ScopeAuthorityLock>>()
 const ownerSessionMintTails = new WeakMap<object, Map<string, Promise<void>>>()
 
 function acquire(lock: ScopeAuthorityLock, kind: LockKind): Promise<void> {
-  const writerQueued = lock.queue.some((waiter) => waiter.kind === 'rebind')
+  const writerQueued = lock.queue.some((waiter) => waiter.kind === 'retirement')
   if (kind === 'summon' && !lock.writer && !writerQueued) {
     lock.readers += 1
     return Promise.resolve()
   }
-  if (kind === 'rebind' && !lock.writer && lock.readers === 0 && lock.queue.length === 0) {
+  if (kind === 'retirement' && !lock.writer && lock.readers === 0 && lock.queue.length === 0) {
     lock.writer = true
     return Promise.resolve()
   }
@@ -37,7 +37,7 @@ function acquire(lock: ScopeAuthorityLock, kind: LockKind): Promise<void> {
 function drain(lock: ScopeAuthorityLock): void {
   if (lock.writer || lock.readers > 0 || lock.queue.length === 0) return
 
-  if (lock.queue[0]?.kind === 'rebind') {
+  if (lock.queue[0]?.kind === 'retirement') {
     const waiter = lock.queue.shift()
     if (waiter === undefined) return
     lock.writer = true
@@ -94,13 +94,13 @@ export async function withScopeAuthorityLock<T>(
   scopeRef: string,
   operation: () => T | Promise<T>
 ): Promise<T> {
-  return await withLock(owner, scopeRef, 'rebind', operation)
+  return await withLock(owner, scopeRef, 'retirement', operation)
 }
 
 /**
  * Exclusive per-scope/lane mint serialization nested inside a summon reader.
  *
- * Summons for different lanes remain concurrent and rebind still waits for all
+ * Summons for different lanes remain concurrent and retirement still waits for all
  * summon readers. The mint callback must re-read continuity after entering.
  */
 export async function withSessionMintLock<T>(

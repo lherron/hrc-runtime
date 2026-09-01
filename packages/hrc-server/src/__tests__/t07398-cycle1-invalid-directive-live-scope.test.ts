@@ -57,7 +57,12 @@ function registryUnbound(): BindingRegistryClient {
     async establish(request) {
       return {
         outcome: 'created',
-        binding: { ...request, placementEpoch: 1, updatedAt: request.now },
+        binding: {
+          scopeRef: request.scopeRef,
+          homeNodeId: request.homeNodeId,
+          createdAt: request.now,
+          updatedAt: request.now,
+        },
       }
     },
   }

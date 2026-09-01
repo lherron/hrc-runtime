@@ -38,9 +38,8 @@
 import { resolveQualifiedScopeInput } from 'agent-scope'
 import type {
   FederationPeerHealthObservation,
-  FederationRebindRequest,
-  FederationRebindResult,
-  FederationRebindStep,
+  FederationRetirementRequest,
+  FederationRetirementResult,
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
@@ -108,14 +107,10 @@ function describeAuthority(location: ScopeLocation): string {
     case 'bound': {
       const record = authority.record
       const where = authority.isLocal ? ' (this node)' : ''
-      return `${record.homeNodeId}${where}  epoch ${record.placementEpoch}  ${record.birthClass}  established by ${record.establishmentProvenance}`
+      return `${record.homeNodeId}${where}`
     }
     case 'unbound':
       return 'unbound (no binding established yet)'
-    case 'retired':
-      return authority.successorNodeId === null
-        ? `retired at epoch ${authority.placementEpoch} (terminal bar)`
-        : `retired at epoch ${authority.placementEpoch} -> successor ${authority.successorNodeId}`
     case 'unknown':
       return `UNKNOWN — ${authority.detail}`
     default:
@@ -143,11 +138,8 @@ function formatLocation(location: ScopeLocation): string {
   }
 
   lines.push(`authority:  ${describeAuthority(location)}`)
-  if (location.authority.state === 'bound') {
+  if (location.authority.state === 'bound')
     lines.push(`            source: ${location.authority.source}`)
-    const prior = location.authority.record.priorHomeNodeId
-    if (prior !== undefined) lines.push(`            rebound from: ${prior}`)
-  }
 
   lines.push(
     `ledger:     ${location.ledger.state === 'absent' ? 'no row on this node' : `${location.ledger.state} -> ${location.ledger.record.homeNodeId}`}`
@@ -156,13 +148,9 @@ function formatLocation(location: ScopeLocation): string {
     `registry:   ${
       location.registry.outcome === 'bound'
         ? `bound -> ${location.registry.record.homeNodeId}`
-        : location.registry.outcome === 'retired'
-          ? location.registry.record.successorNodeId === null
-            ? `retired at epoch ${location.registry.record.placementEpoch} (terminal bar)`
-            : `retired at epoch ${location.registry.record.placementEpoch} -> successor ${location.registry.record.successorNodeId}`
-          : location.registry.outcome === 'unbound'
-            ? 'unbound'
-            : `${location.registry.outcome} — ${location.registry.detail}`
+        : location.registry.outcome === 'unbound'
+          ? 'unbound'
+          : `${location.registry.outcome} — ${location.registry.detail}`
     }`
   )
 
@@ -218,17 +206,6 @@ function formatLocation(location: ScopeLocation): string {
     }
   }
 
-  if (location.birthChain.state === 'resolved') {
-    lines.push('')
-    lines.push('birth chain:')
-    for (const link of location.birthChain.links) {
-      lines.push(`            ${link.scopeRef}  ${link.birthClass}  @${link.homeNodeId}`)
-    }
-  } else if (location.birthChain.state === 'unresolved') {
-    lines.push('')
-    lines.push(`birth chain: ${location.birthChain.detail}`)
-  }
-
   if (location.skew !== undefined) {
     lines.push('')
     lines.push('!! SKEW')
@@ -276,38 +253,21 @@ const STATUS_GLYPH: Record<DoctorCheck['status'], string> = {
   fail: 'x',
 }
 
-function parseRebindRequest(args: string[]): FederationRebindRequest {
+function parseRetirementRequest(args: string[]): FederationRetirementRequest {
   const scopeArg = args.find((arg) => !arg.startsWith('-'))
-  if (scopeArg === undefined) fatal('federation rebind requires a scope or target handle')
-  const expectedHomeNodeId = parseFlag(args, '--expected-home')
-  const epochText = parseFlag(args, '--expected-epoch')
-  const newHomeNodeId = parseFlag(args, '--new-home')
-  if (expectedHomeNodeId === undefined) fatal('federation rebind requires --expected-home <node>')
-  if (epochText === undefined) fatal('federation rebind requires --expected-epoch <n>')
-  if (newHomeNodeId === undefined) fatal('federation rebind requires --new-home <node>')
-  const expectedPlacementEpoch = Number(epochText)
-  if (
-    !Number.isSafeInteger(expectedPlacementEpoch) ||
-    expectedPlacementEpoch < 1 ||
-    expectedPlacementEpoch >= Number.MAX_SAFE_INTEGER
-  ) {
-    fatal('--expected-epoch must be a positive safe integer with room for E+1')
-  }
-  return {
-    scopeRef: resolveScopeArg(scopeArg),
-    expectedHomeNodeId,
-    expectedPlacementEpoch,
-    newHomeNodeId,
-  }
+  if (scopeArg === undefined) fatal('federation retire requires a scope or target handle')
+  const reason = parseFlag(args, '--reason')
+  if (reason === undefined || reason.trim().length === 0)
+    fatal('federation retire requires --reason <text>')
+  return { scopeRef: resolveScopeArg(scopeArg), reason }
 }
 
-function formatRebindHuman(result: FederationRebindResult): string {
+function formatRetirementHuman(result: FederationRetirementResult): string {
   const marker = result.ok ? 'OK' : 'REFUSED'
-  const tuple = `${result.request.expectedHomeNodeId}@${result.request.expectedPlacementEpoch} -> ${result.request.newHomeNodeId}@${result.request.expectedPlacementEpoch + 1}`
   const lines = [
-    `${marker} ${result.step.toUpperCase()} ${result.outcome}: ${result.state}`,
+    `${marker} RETIRE ${result.outcome}: ${result.state}`,
     `scope: ${result.request.scopeRef}`,
-    `tuple: ${tuple}`,
+    `reason: ${result.request.reason}`,
     result.detail,
   ]
   if (result.liveRuntimeIds !== undefined) {
@@ -316,20 +276,11 @@ function formatRebindHuman(result: FederationRebindResult): string {
   return `${lines.join('\n')}\n`
 }
 
-export async function cmdFederationRebind(
-  step: FederationRebindStep,
-  args: string[]
-): Promise<void> {
-  const request = parseRebindRequest(args)
-  const client = createClient()
-  const result =
-    step === 'revoke'
-      ? await client.revokeFederationRebind(request)
-      : step === 'cas'
-        ? await client.compareAndSwapFederationRebind(request)
-        : await client.activateFederationRebind(request)
+export async function cmdFederationRetire(args: string[]): Promise<void> {
+  const request = parseRetirementRequest(args)
+  const result = await createClient().retireFederationScope(request)
   if (hasFlag(args, '--json')) printJson(result)
-  else process.stdout.write(formatRebindHuman(result))
+  else process.stdout.write(formatRetirementHuman(result))
   if (!result.ok) throw new CliStatusExit(1)
 }
 
@@ -383,7 +334,7 @@ function peerHealthChecks(observations: readonly FederationPeerHealthObservation
     status: peer.state === 'healthy' ? ('ok' as const) : ('warn' as const),
     detail:
       peer.state === 'healthy'
-        ? `healthy, answered ${peer.answeredAt ?? 'at unknown time'} in ${peer.latencyMs}ms (protocol ${peer.protocolVersion ?? 'unknown'})`
+        ? `healthy, answered ${peer.answeredAt ?? 'at unknown time'} in ${peer.latencyMs}ms`
         : `${peer.state}, checked ${peer.checkedAt} in ${peer.latencyMs}ms — ${peer.detail ?? 'no detail'}`,
   }))
 }
@@ -409,7 +360,7 @@ function placementSkewChecks(report: LocateBindingsReport): DoctorCheck[] {
       checks.push({
         name: 'placement-skew',
         status: 'warn',
-        detail: `${finding.scopeRef}: ${describeSkewConstraint(finding.skew)}, established on ${finding.skew.boundNodeId} (epoch ${finding.skew.placementEpoch}). ${finding.skew.boundNodeId} keeps summon authority; the policy edit is not acted on. Rebuild the binding to move it. See: hrc target locate ${finding.scopeRef}`,
+        detail: `${finding.scopeRef}: ${describeSkewConstraint(finding.skew)}, established on ${finding.skew.boundNodeId}. ${finding.skew.boundNodeId} keeps summon authority; the policy edit is not acted on. Retire the old binding before establishing fresh elsewhere. See: hrc target locate ${finding.scopeRef}`,
       })
     }
   }

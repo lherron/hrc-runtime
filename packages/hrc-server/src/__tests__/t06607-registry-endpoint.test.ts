@@ -14,7 +14,7 @@ import {
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06607'
 const TOKEN = 'super-secret-lab-token'
 
-describe('T-06607 authenticated registry endpoint', () => {
+describe('T-06607 authenticated home-only registry endpoint', () => {
   let tempDir: string | undefined
 
   afterEach(async () => {
@@ -25,46 +25,46 @@ describe('T-06607 authenticated registry endpoint', () => {
   async function harness() {
     tempDir = await mkdtemp(join(tmpdir(), 'hrc-t06607-endpoint-'))
     const registry = openBindingRegistry(join(tempDir, 'binding-registry.sqlite'))
-    let clock = 0
     const handler = createBindingRegistryRequestHandler({
       registry,
       peers: new Map([
         ['lab', { nodeId: 'lab', token: new PeerToken(TOKEN) }],
         ['max3', { nodeId: 'max3', token: new PeerToken('max3-token') }],
-        ['svc', { nodeId: 'svc', token: new PeerToken('svc-token') }],
       ]),
-      now: () => `2026-07-20T00:00:0${clock++}.000Z`,
+      now: () => '2026-07-20T00:00:00.000Z',
     })
     return { registry, handler }
   }
 
-  function establishRequest(token: string | null = TOKEN, homeNodeId = 'lab'): Request {
-    const headers = new Headers({ 'content-type': 'application/json' })
-    if (token !== null) headers.set('authorization', `Bearer ${token}`)
-    return new Request('http://registry/v1/federation/registry/establish', {
+  function post(path: string, token: string, body: object): Request {
+    return new Request(`http://registry${path}`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({
-        scopeRef: SCOPE,
-        homeNodeId,
-        birthClass: 'policy-born',
-        authorityProvenance: { kind: 'policy', source: 'pin' },
-        establishmentProvenance: 'pin',
-      }),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     })
   }
 
-  test('valid token establishes with 200 and consults the binding', async () => {
+  test('establishes and consults a home-only binding', async () => {
     const h = await harness()
     try {
-      const established = await h.handler(establishRequest())
+      const established = await h.handler(
+        post('/v1/federation/registry/establish', TOKEN, {
+          scopeRef: SCOPE,
+          homeNodeId: 'lab',
+          placementSource: 'pin',
+        })
+      )
       expect(established.status).toBe(200)
-      expect(await established.json()).toMatchObject({
+      const body = await established.json()
+      expect(body).toMatchObject({
         ok: true,
         outcome: 'created',
         authenticatedNodeId: 'lab',
-        binding: { scopeRef: SCOPE, homeNodeId: 'lab', placementEpoch: 1 },
+        binding: { scopeRef: SCOPE, homeNodeId: 'lab' },
       })
+      expect(JSON.stringify(body)).not.toContain('placementEpoch')
+      expect(JSON.stringify(body)).not.toContain('birthClass')
+      expect(JSON.stringify(body)).not.toContain('authorityProvenance')
 
       const consulted = await h.handler(
         new Request(
@@ -74,8 +74,7 @@ describe('T-06607 authenticated registry endpoint', () => {
       )
       expect(consulted.status).toBe(200)
       expect(await consulted.json()).toMatchObject({
-        ok: true,
-        authenticatedNodeId: 'lab',
+        outcome: 'bound',
         binding: { scopeRef: SCOPE, homeNodeId: 'lab' },
       })
     } finally {
@@ -83,188 +82,86 @@ describe('T-06607 authenticated registry endpoint', () => {
     }
   })
 
-  test('missing and unknown tokens return 401 without token material', async () => {
+  test('authenticated node cannot establish or delete another home', async () => {
     const h = await harness()
     try {
-      for (const request of [establishRequest(null), establishRequest('wrong-secret')]) {
-        const response = await h.handler(request)
-        expect(response.status).toBe(401)
-        const body = await response.text()
-        expect(body).not.toContain(TOKEN)
-        expect(body).not.toContain('wrong-secret')
-      }
+      const wrongEstablish = await h.handler(
+        post('/v1/federation/registry/establish', TOKEN, {
+          scopeRef: SCOPE,
+          homeNodeId: 'max3',
+          placementSource: 'pin',
+        })
+      )
+      expect(wrongEstablish.status).toBe(403)
+
+      await h.handler(
+        post('/v1/federation/registry/establish', TOKEN, {
+          scopeRef: SCOPE,
+          homeNodeId: 'lab',
+          placementSource: 'pin',
+        })
+      )
+      const wrongDelete = await h.handler(
+        post('/v1/federation/registry/delete', 'max3-token', {
+          scopeRef: SCOPE,
+          expectedHomeNodeId: 'lab',
+          retiredAt: '2026-07-20T00:01:00.000Z',
+        })
+      )
+      expect(wrongDelete.status).toBe(403)
+      expect(h.registry.get(SCOPE)?.homeNodeId).toBe('lab')
     } finally {
       h.registry.close()
     }
   })
 
-  test('authenticated node cannot establish or CAS authority for another node', async () => {
+  test('conditionally deletes only the authenticated old-home binding', async () => {
     const h = await harness()
     try {
-      const wrongEstablish = await h.handler(establishRequest(TOKEN, 'max3'))
-      expect(wrongEstablish.status).toBe(403)
+      await h.handler(
+        post('/v1/federation/registry/establish', TOKEN, {
+          scopeRef: SCOPE,
+          homeNodeId: 'lab',
+          placementSource: 'pin',
+        })
+      )
+      const deleted = await h.handler(
+        post('/v1/federation/registry/delete', TOKEN, {
+          scopeRef: SCOPE,
+          expectedHomeNodeId: 'lab',
+          retiredAt: '2026-07-20T00:01:00.000Z',
+        })
+      )
+      expect(deleted.status).toBe(200)
+      expect(await deleted.json()).toMatchObject({ outcome: 'deleted' })
       expect(h.registry.get(SCOPE)).toBeUndefined()
 
-      await h.handler(establishRequest())
-      const wrongCas = await h.handler(
-        new Request('http://registry/v1/federation/registry/cas', {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${TOKEN}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            scopeRef: SCOPE,
-            expectedHomeNodeId: 'lab',
-            expectedPlacementEpoch: 1,
-            newHomeNodeId: 'max3',
-          }),
+      const repeated = await h.handler(
+        post('/v1/federation/registry/delete', TOKEN, {
+          scopeRef: SCOPE,
+          expectedHomeNodeId: 'lab',
+          retiredAt: '2026-07-20T00:01:00.000Z',
         })
       )
-      expect(wrongCas.status).toBe(403)
-      expect(h.registry.get(SCOPE)?.placementEpoch).toBe(1)
+      expect(await repeated.json()).toMatchObject({ outcome: 'idempotent' })
     } finally {
       h.registry.close()
     }
   })
 
-  test('CAS succeeds for the authenticated new node and stale tuples return 409', async () => {
+  test('missing tokens and removed movement routes refuse without leaking secrets', async () => {
     const h = await harness()
     try {
-      await h.handler(establishRequest())
-      const casBody = {
-        scopeRef: SCOPE,
-        expectedHomeNodeId: 'lab',
-        expectedPlacementEpoch: 1,
-        newHomeNodeId: 'max3',
+      const unauthorized = await h.handler(
+        new Request('http://registry/v1/federation/registry/consult')
+      )
+      expect(unauthorized.status).toBe(401)
+      expect(await unauthorized.text()).not.toContain(TOKEN)
+
+      for (const route of ['cas', 'retire', 'activate-retired']) {
+        const response = await h.handler(post(`/v1/federation/registry/${route}`, TOKEN, {}))
+        expect(response.status).toBe(404)
       }
-      const moved = await h.handler(
-        new Request('http://registry/v1/federation/registry/cas', {
-          method: 'POST',
-          headers: {
-            authorization: 'Bearer max3-token',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify(casBody),
-        })
-      )
-      expect(moved.status).toBe(200)
-      expect(await moved.json()).toMatchObject({
-        ok: true,
-        outcome: 'updated',
-        binding: { homeNodeId: 'max3', placementEpoch: 2 },
-      })
-
-      const stale = await h.handler(
-        new Request('http://registry/v1/federation/registry/cas', {
-          method: 'POST',
-          headers: {
-            authorization: 'Bearer svc-token',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ ...casBody, newHomeNodeId: 'svc' }),
-        })
-      )
-      expect(stale.status).toBe(409)
-      expect((await stale.json()).binding.placementEpoch).toBe(2)
-    } finally {
-      h.registry.close()
-    }
-  })
-
-  test('retirement remains visible to consult and only the disclosed successor can activate E+1', async () => {
-    const h = await harness()
-    try {
-      await h.handler(establishRequest())
-      const retired = await h.handler(
-        new Request('http://registry/v1/federation/registry/retire', {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${TOKEN}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            scopeRef: SCOPE,
-            expectedHomeNodeId: 'lab',
-            expectedPlacementEpoch: 1,
-            successorNodeId: 'max3',
-            reason: 'namespace_reconciliation',
-            retiredAt: '2026-07-20T00:01:00.000Z',
-          }),
-        })
-      )
-      expect(await retired.json()).toMatchObject({
-        outcome: 'retired',
-        retirement: { placementEpoch: 1, successorNodeId: 'max3' },
-      })
-
-      const consulted = await h.handler(
-        new Request(
-          `http://registry/v1/federation/registry/consult?scopeRef=${encodeURIComponent(SCOPE)}`,
-          { headers: { authorization: `Bearer ${TOKEN}` } }
-        )
-      )
-      expect(await consulted.json()).toMatchObject({
-        outcome: 'retired',
-        retirement: { scopeRef: SCOPE, birthClass: 'policy-born', successorNodeId: 'max3' },
-      })
-
-      const activationBody = JSON.stringify({
-        scopeRef: SCOPE,
-        successorNodeId: 'max3',
-        expectedPlacementEpoch: 1,
-      })
-      expect(
-        (
-          await h.handler(
-            new Request('http://registry/v1/federation/registry/activate-retired', {
-              method: 'POST',
-              headers: {
-                authorization: `Bearer ${TOKEN}`,
-                'content-type': 'application/json',
-              },
-              body: activationBody,
-            })
-          )
-        ).status
-      ).toBe(403)
-
-      const activated = await h.handler(
-        new Request('http://registry/v1/federation/registry/activate-retired', {
-          method: 'POST',
-          headers: {
-            authorization: 'Bearer max3-token',
-            'content-type': 'application/json',
-          },
-          body: activationBody,
-        })
-      )
-      expect(await activated.json()).toMatchObject({
-        outcome: 'activated',
-        binding: { homeNodeId: 'max3', priorHomeNodeId: 'lab', placementEpoch: 2 },
-      })
-    } finally {
-      h.registry.close()
-    }
-  })
-
-  test('malformed requests and error paths never reflect bearer material', async () => {
-    const h = await harness()
-    try {
-      const response = await h.handler(
-        new Request('http://registry/v1/federation/registry/establish', {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${TOKEN}`,
-            'content-type': 'application/json',
-          },
-          body: `{ "scopeRef": "${TOKEN}", broken`,
-        })
-      )
-      expect(response.status).toBe(400)
-      const body = await response.text()
-      expect(body).not.toContain(TOKEN)
-      expect(JSON.stringify({ peers: h.handler })).not.toContain(TOKEN)
     } finally {
       h.registry.close()
     }

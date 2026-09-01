@@ -6,7 +6,6 @@ import type {
 } from 'hrc-core'
 
 import type { PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export type SendRemoteEstablishOptions = {
@@ -34,26 +33,9 @@ function upgradeRequired(peer: PeerEntry): FederationRemoteEstablishResult {
 
 function parseBinding(value: unknown, scopeRef: string): FederationPlacementBinding {
   if (!isRecord(value)) throw new Error('peer establish response binding must be an object')
-  const authority = value['authorityProvenance']
-  const priorHomeNodeId = value['priorHomeNodeId']
   if (
     value['scopeRef'] !== scopeRef ||
     typeof value['homeNodeId'] !== 'string' ||
-    !Number.isSafeInteger(value['placementEpoch']) ||
-    (value['placementEpoch'] as number) < 1 ||
-    (value['birthClass'] !== 'policy-born' && value['birthClass'] !== 'mechanism-born') ||
-    !isRecord(authority) ||
-    typeof authority['kind'] !== 'string' ||
-    (value['establishmentProvenance'] !== 'pin' &&
-      value['establishmentProvenance'] !== 'task_default' &&
-      value['establishmentProvenance'] !== 'default_home_node' &&
-      value['establishmentProvenance'] !== 'default_home_node(local)' &&
-      // T-07655: a peer may now answer with a designated tier-5 birth.
-      value['establishmentProvenance'] !== 'default_home_node(sender)' &&
-      value['establishmentProvenance'] !== 'default_home_node(sender-retired)' &&
-      value['establishmentProvenance'] !== 'explicit_local' &&
-      value['establishmentProvenance'] !== 'rebind') ||
-    (priorHomeNodeId !== undefined && typeof priorHomeNodeId !== 'string') ||
     typeof value['createdAt'] !== 'string' ||
     !Number.isFinite(Date.parse(value['createdAt'])) ||
     typeof value['updatedAt'] !== 'string' ||
@@ -64,11 +46,6 @@ function parseBinding(value: unknown, scopeRef: string): FederationPlacementBind
   return {
     scopeRef,
     homeNodeId: value['homeNodeId'],
-    placementEpoch: value['placementEpoch'] as number,
-    birthClass: value['birthClass'],
-    authorityProvenance: authority as FederationPlacementBinding['authorityProvenance'],
-    establishmentProvenance: value['establishmentProvenance'],
-    ...(priorHomeNodeId === undefined ? {} : { priorHomeNodeId }),
     createdAt: value['createdAt'],
     updatedAt: value['updatedAt'],
   }
@@ -92,7 +69,7 @@ export async function sendRemoteEstablish(
   const scopeRef = formatCanonicalScopeRef({ scopeRef: options.request.scopeRef })
 
   const health = await fetchImpl(new URL('/v1/federation/health', options.peer.endpoint), {
-    headers: buildPeerProtocolHeaders(options.peer, PEER_PROTOCOL_VERSION),
+    headers: buildPeerProtocolHeaders(options.peer),
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (health.status === 404) return upgradeRequired(options.peer)
@@ -115,7 +92,7 @@ export async function sendRemoteEstablish(
 
   const response = await fetchImpl(new URL('/v1/federation/establish', options.peer.endpoint), {
     method: 'POST',
-    headers: buildPeerProtocolHeaders(options.peer, PEER_PROTOCOL_VERSION, {
+    headers: buildPeerProtocolHeaders(options.peer, {
       contentType: 'application/json',
     }),
     body: JSON.stringify({ ...options.request, scopeRef }),

@@ -22,10 +22,7 @@ function localBinding(homeNodeId = 'max3'): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-    establishmentProvenance: 'default_home_node',
+    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
   } as PlacementBinding

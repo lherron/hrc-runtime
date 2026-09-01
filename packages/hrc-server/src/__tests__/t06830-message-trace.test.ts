@@ -65,7 +65,6 @@ function deliveredOutbox(): FederationOutboxDeliveryRecord {
     peerNodeId: 'max3',
     stage: 'delivering',
     envelope: {
-      protocolVersion: '1.0',
       messageId: MESSAGE_ID,
       kind: 'dm',
       phase: 'request',
@@ -73,7 +72,7 @@ function deliveredOutbox(): FederationOutboxDeliveryRecord {
       to: { kind: 'session', sessionRef: SESSION },
       body: 'trace me',
       rootMessageId: MESSAGE_ID,
-      expected: { homeNodeId: 'max3', placementEpoch: 4 },
+      expected: { homeNodeId: 'max3' },
     },
     state: 'delivered',
     totalAttempts: 1,

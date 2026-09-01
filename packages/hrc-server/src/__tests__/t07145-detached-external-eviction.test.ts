@@ -85,10 +85,7 @@ describe('T-07145 detached external operator eviction', () => {
       const binding = ledger.installActive({
         scopeRef: SCOPE,
         homeNodeId: 'svc',
-        placementEpoch: 1,
-        birthClass: 'policy-born',
-        authorityProvenance: { kind: 'policy', source: 'explicit_local' },
-        establishmentProvenance: 'explicit_local',
+        placementSource: 'explicit_local',
         updatedAt: now,
       })
 

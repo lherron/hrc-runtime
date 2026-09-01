@@ -1,12 +1,9 @@
 import type {
   BindingRegistry,
-  BirthAuthorityProvenance,
   BirthDesignationRecord,
-  EstablishmentProvenance,
-  FederationBirthClass,
+  FederationPlacementSource,
   PlacementBinding,
   PlacementLedgerRepository,
-  RegistryRetirementRecord,
 } from 'hrc-store-sqlite'
 
 import { parseNodeId } from './node-id.js'
@@ -14,9 +11,7 @@ import { parseNodeId } from './node-id.js'
 export type EstablishLocalPlacementRequest = {
   scopeRef: string
   homeNodeId: string
-  birthClass: FederationBirthClass
-  authorityProvenance: BirthAuthorityProvenance
-  establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
+  placementSource: FederationPlacementSource
   now: string
 }
 
@@ -25,7 +20,6 @@ export type EstablishLocalPlacementResult =
       outcome: 'established' | 'already-established' | 'bound-elsewhere'
       binding: PlacementBinding
     }
-  | { outcome: 'retired'; retirement: RegistryRetirementRecord }
   /**
    * The T-07655 establish fence: this node tried a tier-5 designated birth for
    * a scope the registry has designated to a DIFFERENT node. Nothing was
@@ -57,15 +51,9 @@ export async function establishLocalPlacement(input: {
   const registryResult = await input.registry.establish({
     scopeRef: input.request.scopeRef,
     homeNodeId,
-    placementEpoch: 1,
-    birthClass: input.request.birthClass,
-    authorityProvenance: input.request.authorityProvenance,
-    establishmentProvenance: input.request.establishmentProvenance,
+    placementSource: input.request.placementSource,
     now: input.request.now,
   })
-  if (registryResult.outcome === 'retired') {
-    return { outcome: 'retired', retirement: registryResult.retirement }
-  }
   if (registryResult.outcome === 'designation-mismatch') {
     return { outcome: 'designation-mismatch', designation: registryResult.designation }
   }

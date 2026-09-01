@@ -29,23 +29,17 @@
 import { parseScopeRef } from 'agent-scope'
 import type { ProvisioningScalars } from 'agent-scope'
 import type {
-  BirthAuthorityProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
-  EstablishmentProvenance,
+  FederationPlacementSource,
   PlacementBinding,
   PlacementLedgerRepository,
-  RegistryRetirementRecord,
 } from 'hrc-store-sqlite'
 import { ROSTER_SLOT_TOKENS, type RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'
 
-import type {
-  BirthCredentialValidation,
-  ChildBirthAuthorityProvenance,
-} from './birth-credential.js'
 import { isReservedNodeId, isValidNodeId } from './node-id.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
 import type { BindingRegistryClient } from './registry-client.js'
@@ -89,24 +83,12 @@ export type SummonPath =
  */
 export type { SummonIntent }
 
-/** Node-local retirement mark written by reconciliation (T-06614 C-11125). */
-export type ScopeRetirement = {
-  retiredNodeId: string
-  retiredPlacementEpoch: number
-  successorNodeId: string | null
-  reason: string
-}
-
 export type SummonGateAllowReason =
   | 'gate-dark'
   | 'non-agent-scope'
   | 'local-authority'
   | 'registry-bound-local'
-  | 'retired-policy-succession'
   | 'virgin-establishment'
-  | 'child-birth'
-  | 'claim-birth'
-  | 'claim-rebind'
 
 export type SummonGateRefuseReason =
   | 'scope-retired'
@@ -118,14 +100,10 @@ export type SummonGateRefuseReason =
   | 'policy-unavailable'
   | 'registry-unreachable'
   | 'registry-refused'
-  | 'rebind-revoked'
-  | 'rebind-activation-pending'
   | `capability-${SummonCapabilityName}-missing`
   | 'capability-project-root-unresolvable'
   | 'capability-observation-failed'
-  | 'invalid-birth-credential'
   | 'zombie-runtime'
-  | 'claim-birth-authority-required'
   /**
    * T-07398 — the three directive refusals. They are refusals of the REQUEST,
    * not of this node's authority, so the server maps them to their own typed
@@ -185,13 +163,9 @@ export type SummonGateEvaluation =
       decision: 'allow'
       reason: SummonGateAllowReason
       homeNodeId?: string | undefined
-      establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'> | undefined
-      birthClass?: 'mechanism-born' | undefined
-      authorityProvenance?: BirthAuthorityProvenance | undefined
+      placementSource?: FederationPlacementSource | undefined
       /** Registry authority to install locally after a registry-first crash. */
       registryBinding?: PlacementBinding | undefined
-      /** Exact tombstone to consume in a registry-owned E -> E+1 transition. */
-      registryRetirement?: RegistryRetirementRecord | undefined
       /** Exact local authority observed by the placement resolver. */
       placementBinding?: PlacementBinding | undefined
     }
@@ -210,8 +184,8 @@ export type SummonGateEvaluation =
       /** The live tier-5 designation this refusal is about (T-07655). */
       birthDesignation?: BirthDesignationRecord | undefined
       /** Policy provenance for an unbound implicit request naming a remote home. */
-      candidateEstablishmentProvenance?:
-        | Exclude<EstablishmentProvenance, 'rebind' | 'explicit_local' | 'default_home_node(local)'>
+      candidateFederationPlacementSource?:
+        | Exclude<FederationPlacementSource, 'explicit_local' | 'default_home_node(local)'>
         | undefined
     }
 
@@ -230,13 +204,9 @@ export type PlacementDisposition =
     }
   | {
       outcome: 'local-establish'
-      kind: 'virgin-policy' | 'retired-successor' | 'child' | 'claim'
+      kind: 'virgin-policy'
       homeNodeId: string
-      provenance:
-        | Exclude<EstablishmentProvenance, 'rebind'>
-        | BirthAuthorityProvenance
-        | RegistryRetirementRecord
-        | { claim: 'birth' | 'rebind' }
+      provenance: FederationPlacementSource
     }
   | {
       outcome: 'remote-bound'
@@ -248,8 +218,8 @@ export type PlacementDisposition =
       candidateHomeNodeId: string
       reason: 'pin-mismatch' | 'routed-elsewhere'
       policyProvenance: Exclude<
-        EstablishmentProvenance,
-        'rebind' | 'explicit_local' | 'default_home_node(local)'
+        FederationPlacementSource,
+        'explicit_local' | 'default_home_node(local)'
       >
     }
   | {
@@ -313,10 +283,6 @@ export type SummonGateDeps = {
    * than trusting the resolution the origin forwarded.
    */
   knownNodeIds?: readonly string[] | undefined
-  /** Node-local retirement lookup (T-06614). Absent until that task lands. */
-  retirementFor?: ((scopeRef: string) => ScopeRetirement | undefined) | undefined
-  /** Daemon-owned runtime/live-run lookup. Never trusts caller parent assertions. */
-  validateBirthCredential?: ((credential: string) => BirthCredentialValidation) | undefined
   log?: SummonGateLog | undefined
 }
 
@@ -324,8 +290,6 @@ export type SummonGateRequest = {
   scopeRef: string
   path: SummonPath
   intent: SummonIntent
-  /** Opaque runtime-stable capability. Absent means ordinary summon intent. */
-  birthCredential?: string | undefined
   /** Remote bare addressing can route to an existing scope, never create claim authority. */
   origin?: 'local' | 'federated-ingress' | 'federated-establish' | 'startup-repair' | undefined
   /** Daemon-owned proof that the summon is a successor of a known local session. */
@@ -389,11 +353,8 @@ function allow(
   reason: SummonGateAllowReason,
   extra: {
     homeNodeId?: string
-    establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'>
-    birthClass?: 'mechanism-born'
-    authorityProvenance?: BirthAuthorityProvenance
+    placementSource?: FederationPlacementSource
     registryBinding?: PlacementBinding
-    registryRetirement?: RegistryRetirementRecord
     placementBinding?: PlacementBinding
   } = {}
 ): Extract<SummonGateEvaluation, { decision: 'allow' }> {
@@ -409,9 +370,9 @@ function refuse(
     capability?: SummonCapabilityName
     capabilitySource?: 'presence-heuristic'
     placementBinding?: PlacementBinding
-    candidateEstablishmentProvenance?: Exclude<
-      EstablishmentProvenance,
-      'rebind' | 'explicit_local' | 'default_home_node(local)'
+    candidateFederationPlacementSource?: Exclude<
+      FederationPlacementSource,
+      'explicit_local' | 'default_home_node(local)'
     >
     birthDesignation?: BirthDesignationRecord
   } = {}
@@ -429,9 +390,9 @@ function refuse(
     ...(options.placementBinding === undefined
       ? {}
       : { placementBinding: options.placementBinding }),
-    ...(options.candidateEstablishmentProvenance === undefined
+    ...(options.candidateFederationPlacementSource === undefined
       ? {}
-      : { candidateEstablishmentProvenance: options.candidateEstablishmentProvenance }),
+      : { candidateFederationPlacementSource: options.candidateFederationPlacementSource }),
     ...(options.birthDesignation === undefined
       ? {}
       : { birthDesignation: options.birthDesignation }),
@@ -529,7 +490,7 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
  */
 type DesignatedHome = {
   homeNodeId: string
-  provenance: Exclude<EstablishmentProvenance, 'rebind'>
+  provenance: FederationPlacementSource
   matchedConstraint?:
     | { kind: 'pin'; key: string }
     | { kind: 'task-default'; key: string }
@@ -738,7 +699,7 @@ export function resolveDeclaredPlacementHome(
 ):
   | {
       homeNodeId: string
-      provenance: Exclude<EstablishmentProvenance, 'rebind'>
+      provenance: FederationPlacementSource
     }
   | undefined {
   const resolved = resolveDeclaredPlacementHomeOrRefusal(
@@ -773,7 +734,7 @@ export function resolveDeclaredPlacementHomeOrRefusal(
 ):
   | {
       homeNodeId: string
-      provenance: Exclude<EstablishmentProvenance, 'rebind'>
+      provenance: FederationPlacementSource
     }
   | Extract<SummonGateEvaluation, { decision: 'refuse' }>
   | undefined {
@@ -794,18 +755,10 @@ function isEvaluation(value: unknown): value is SummonGateEvaluation {
   return typeof value === 'object' && value !== null && 'decision' in value
 }
 
-function forbidsClaimBirth(origin: SummonGateRequest['origin']): boolean {
-  return (
-    origin === 'federated-ingress' ||
-    origin === 'federated-establish' ||
-    origin === 'startup-repair'
-  )
-}
-
 function nodeLocalRemoteEstablishRefusal(
   request: SummonGateRequest,
   scopeRef: string,
-  provenance: EstablishmentProvenance
+  provenance: FederationPlacementSource
 ): SummonGateEvaluation | undefined {
   if (
     request.origin !== 'federated-establish' ||
@@ -919,7 +872,7 @@ async function decideVirginPolicyPlacement(
       request,
       allow('virgin-establishment', {
         homeNodeId: designated.homeNodeId,
-        establishmentProvenance: designated.provenance,
+        placementSource: designated.provenance,
       })
     )
   }
@@ -946,7 +899,7 @@ async function decideVirginPolicyPlacement(
         `${scopeRef} matches placement home [placement.homes] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that home line.`,
         {
           homeNodeId: designated.homeNodeId,
-          candidateEstablishmentProvenance: 'task_default',
+          candidateFederationPlacementSource: 'task_default',
         }
       )
     }
@@ -955,7 +908,7 @@ async function decideVirginPolicyPlacement(
       `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,
       {
         homeNodeId: designated.homeNodeId,
-        candidateEstablishmentProvenance: 'pin',
+        candidateFederationPlacementSource: 'pin',
       }
     )
   }
@@ -968,36 +921,8 @@ async function decideVirginPolicyPlacement(
       ...(designated.provenance === 'explicit_local' ||
       designated.provenance === 'default_home_node(local)'
         ? {}
-        : { candidateEstablishmentProvenance: designated.provenance }),
+        : { candidateFederationPlacementSource: designated.provenance }),
     }
-  )
-}
-
-async function decideLocalClaimBirth(
-  request: SummonGateRequest,
-  scopeRef: string,
-  local: { homeNodeId: string; establishmentProvenance: EstablishmentProvenance }
-): Promise<SummonGateEvaluation> {
-  const { deps } = request
-  if (local.establishmentProvenance !== 'rebind') {
-    return refuse(
-      'claim-birth-authority-required',
-      `${scopeRef} is claim-born on ${deps.localNodeId}. A bare address cannot recreate or parent this mechanism-born identity; resume its known local session or establish fresh wrkq claim authority explicitly.`
-    )
-  }
-  if (forbidsClaimBirth(request.origin)) {
-    return refuse(
-      'claim-birth-authority-required',
-      request.origin === 'startup-repair'
-        ? `${scopeRef} is a rebound claim-born identity without a local session. Startup repair cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
-        : request.origin === 'federated-establish'
-          ? `${scopeRef} is a rebound claim-born identity without a local session. Federated remote establishment cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
-          : `${scopeRef} is a rebound claim-born identity without a local session. Federated bare addressing cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
-    )
-  }
-  return await requireMaterializationCapability(
-    request,
-    allow('claim-rebind', { homeNodeId: local.homeNodeId })
   )
 }
 
@@ -1020,81 +945,23 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     return allow('non-agent-scope')
   }
 
-  // A PRESENT credential is an explicit child-birth claim. It must validate or
-  // refuse; it never degrades into a policy summon. Absence is different: it
-  // follows typed/provisional summon intent exactly as before.
-  let childBirth: ChildBirthAuthorityProvenance | undefined
-  if (request.birthCredential !== undefined) {
-    const validation = deps.validateBirthCredential?.(request.birthCredential) ?? {
-      valid: false as const,
-      reason: 'invalid-birth-credential' as const,
-      diagnostic: 'This daemon has no birth-credential validator configured; refusing child-birth.',
-    }
-    if (!validation.valid) {
-      return refuse(validation.reason, validation.diagnostic)
-    }
-    childBirth = validation.provenance
-  }
-
-  // (1) Retirement, before any authority logic (T-06614 C-11125).
-  //
-  // Ordering is load-bearing: on a losing node the retirement mark is precisely
-  // what must override an ACTIVE local ledger row. That node established the
-  // scope independently pre-federation, so it legitimately holds authority —
-  // check it after the ledger and the loser allows, and reconciliation never binds.
-  const retirement = deps.retirementFor?.(scopeRef)
-
-  // (2) Local ledger — the hot path, deliberately free of network unless a
-  // local epoch fence suppresses it. A later active epoch makes the retained
-  // fence inert and permits a deliberate return to this node.
+  // The permanent local retirement fence is checked before every other source
+  // of authority. Federation v1.3 never permits a later epoch to supersede it.
   const localRecord = deps.ledger.get?.(scopeRef)
+  if (localRecord?.state === 'retired') {
+    return refuse(
+      'scope-retired',
+      `${scopeRef} is permanently retired on ${deps.localNodeId}; establish it fresh on another node after the shared binding is absent.`
+    )
+  }
   const local =
     deps.ledger.get === undefined
       ? deps.ledger.activeAuthority(scopeRef)
       : localRecord?.state === 'active'
         ? localRecord
         : undefined
-  const localFenceApplies =
-    retirement !== undefined &&
-    retirement.retiredNodeId === deps.localNodeId &&
-    (local === undefined || local.placementEpoch <= retirement.retiredPlacementEpoch)
-  if (localFenceApplies && retirement.successorNodeId !== deps.localNodeId) {
-    if (retirement.successorNodeId === null) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is terminally retired on ${deps.localNodeId} at epoch ${retirement.retiredPlacementEpoch}; it has no successor and cannot be summoned.`
-      )
-    }
-    if (retirement.retiredPlacementEpoch === Number.MAX_SAFE_INTEGER) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is retired on ${deps.localNodeId} at the maximum safe placement epoch; successor activation is refused rather than wrapping the epoch.`
-      )
-    }
-    return refuse(
-      'scope-retired',
-      `${scopeRef} was retired on this node (${deps.localNodeId}) at epoch ${retirement.retiredPlacementEpoch}. Its successor is ${retirement.successorNodeId} at epoch ${retirement.retiredPlacementEpoch + 1}; summon it there.`,
-      { homeNodeId: retirement.successorNodeId }
-    )
-  }
-
-  if (localRecord?.state === 'revoked') {
-    return refuse(
-      'rebind-revoked',
-      `${scopeRef} is locally revoked on ${deps.localNodeId} at epoch ${localRecord.placementEpoch}. It is summonable nowhere until the fenced registry CAS and explicit activation finish; retry the manual rebind procedure.`,
-      { retryable: true }
-    )
-  }
-
-  if (local !== undefined && !localFenceApplies) {
+  if (local !== undefined) {
     if (local.homeNodeId === deps.localNodeId) {
-      if (
-        local.birthClass === 'mechanism-born' &&
-        local.authorityProvenance.kind === 'claim-birth' &&
-        request.knownSession !== true
-      ) {
-        return await decideLocalClaimBirth(request, scopeRef, local)
-      }
       return await requireMaterializationCapability(
         request,
         allow('local-authority', {
@@ -1105,7 +972,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     }
     return refuse(
       'bound-elsewhere',
-      `${scopeRef} is homed on ${local.homeNodeId} (epoch ${local.placementEpoch}), not this node (${deps.localNodeId}). Summon it on ${local.homeNodeId}; moving it requires a rebind.`,
+      `${scopeRef} is homed on ${local.homeNodeId}, not this node (${deps.localNodeId}). Summon it there.`,
       { homeNodeId: local.homeNodeId, placementBinding: local }
     )
   }
@@ -1135,23 +1002,6 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   if (consult.outcome === 'bound') {
     const bound = consult.binding
     if (bound.homeNodeId === deps.localNodeId) {
-      if (bound.establishmentProvenance === 'rebind') {
-        return refuse(
-          'rebind-activation-pending',
-          `${scopeRef} is registered on ${deps.localNodeId} at rebound epoch ${bound.placementEpoch}, but this node has not activated that tuple locally. It remains summonable nowhere; retry the ACTIVATE step.`,
-          { retryable: true, homeNodeId: deps.localNodeId }
-        )
-      }
-      if (
-        bound.birthClass === 'mechanism-born' &&
-        bound.authorityProvenance.kind === 'claim-birth' &&
-        request.knownSession !== true
-      ) {
-        return refuse(
-          'claim-birth-authority-required',
-          `${scopeRef} is registered as claim-born on ${deps.localNodeId}, but this daemon has no known session proving continuity. A bare address cannot recreate or parent it; recover or release the wrkq claim before retrying.`
-        )
-      }
       // Registered here but no local row: the crash window in registry-first
       // establishment. Converging is correct; this is not a virgin birth.
       return await requireMaterializationCapability(
@@ -1164,92 +1014,12 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     }
     return refuse(
       'bound-elsewhere',
-      `${scopeRef} is already established on ${bound.homeNodeId} (epoch ${bound.placementEpoch}). A placement policy edit alone never grants this node authority — summon it on ${bound.homeNodeId}, or rebind it.`,
+      `${scopeRef} is already established on ${bound.homeNodeId}. A placement policy edit alone never grants this node authority.`,
       { homeNodeId: bound.homeNodeId, placementBinding: bound }
     )
   }
 
-  if (consult.outcome === 'retired') {
-    const retired = consult.retirement
-    if (request.origin === 'federated-establish') {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is retired at epoch ${retired.placementEpoch}; remote establishment is virgin policy birth only.`,
-        retired.successorNodeId === null ? {} : { homeNodeId: retired.successorNodeId }
-      )
-    }
-    if (retired.successorNodeId === null) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is terminally retired at epoch ${retired.placementEpoch}; it has no successor and cannot be summoned.`
-      )
-    }
-    if (retired.successorNodeId !== deps.localNodeId) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is retired at epoch ${retired.placementEpoch}; only successor ${retired.successorNodeId} may activate it at epoch ${retired.placementEpoch + 1}.`,
-        { homeNodeId: retired.successorNodeId }
-      )
-    }
-    if (retired.birthClass === 'mechanism-born' || childBirth !== undefined) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} is a retired mechanism-bound identity. Generic succession is refused; a future claim-succession mechanism must preserve its birth authority.`
-      )
-    }
-    if (retired.placementEpoch === Number.MAX_SAFE_INTEGER) {
-      return refuse(
-        'scope-retired',
-        `${scopeRef} cannot activate because its placement epoch is exhausted at ${retired.placementEpoch}; refusing rather than wrapping authority.`
-      )
-    }
-
-    let policy: SummonGatePolicy | undefined
-    try {
-      policy = await deps.policyFor(scopeRef)
-    } catch (error) {
-      return refuse(
-        'policy-unavailable',
-        `Cannot resolve placement policy for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}`,
-        { retryable: true }
-      )
-    }
-    const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent, {
-      provision: request.provision,
-      knownNodeIds: deps.knownNodeIds,
-    })
-    if (isEvaluation(designated)) return designated
-    if (designated.homeNodeId !== deps.localNodeId) {
-      return refuse(
-        designated.matchedConstraint === undefined ? 'routed-elsewhere' : 'pin-mismatch',
-        `${scopeRef} names ${deps.localNodeId} as registry successor, but current placement policy designates ${designated.homeNodeId}; refusing activation until policy and the immutable successor agree.`,
-        { homeNodeId: designated.homeNodeId }
-      )
-    }
-    return await requireMaterializationCapability(
-      request,
-      allow('retired-policy-succession', {
-        homeNodeId: deps.localNodeId,
-        registryRetirement: retired,
-      })
-    )
-  }
-
-  // The registry proved this identity globally UNBOUND. A live parent permit
-  // therefore chooses the immutable mechanism-born class and this daemon's own
-  // node. Placement is intentionally not consulted.
-  if (childBirth !== undefined) {
-    return await requireMaterializationCapability(
-      request,
-      allow('child-birth', {
-        homeNodeId: deps.localNodeId,
-        birthClass: 'mechanism-born',
-        authorityProvenance: childBirth,
-      })
-    )
-  }
-
-  // (4) Virgin: placement policy decides where it is born.
+  // The registry proved the scope unbound: normal policy chooses a fresh home.
   let policy: SummonGatePolicy | undefined
   try {
     policy = await deps.policyFor(scopeRef)
@@ -1258,24 +1028,6 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'policy-unavailable',
       `Cannot resolve placement policy for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}`,
       { retryable: true }
-    )
-  }
-
-  if (policy?.claimsTask === true && placementPinKey(scopeRef) !== undefined) {
-    if (forbidsClaimBirth(request.origin)) {
-      return refuse(
-        'claim-birth-authority-required',
-        request.origin === 'startup-repair'
-          ? `${scopeRef} is a legacy live claims_task identity without claim-birth authority. Startup repair will not retroactively claim it; drain and re-enter it through a fresh local dispatch.`
-          : `${scopeRef} is an unknown claims_task identity. Federated bare addressing cannot acquire its wrkq claim or stand in for birth authority; dispatch it from the destination node.`
-      )
-    }
-    return await requireMaterializationCapability(
-      request,
-      allow('claim-birth', {
-        homeNodeId: deps.localNodeId,
-        birthClass: 'mechanism-born',
-      })
     )
   }
 
@@ -1300,7 +1052,7 @@ function placementDispositionFor(
     if (
       request.intent === 'implicit' &&
       evaluation.homeNodeId !== undefined &&
-      evaluation.candidateEstablishmentProvenance !== undefined &&
+      evaluation.candidateFederationPlacementSource !== undefined &&
       (evaluation.reason === 'pin-mismatch' || evaluation.reason === 'routed-elsewhere')
     ) {
       return {
@@ -1308,7 +1060,7 @@ function placementDispositionFor(
         kind: 'virgin-policy',
         candidateHomeNodeId: evaluation.homeNodeId,
         reason: evaluation.reason,
-        policyProvenance: evaluation.candidateEstablishmentProvenance,
+        policyProvenance: evaluation.candidateFederationPlacementSource,
       }
     }
     return {
@@ -1337,48 +1089,13 @@ function placementDispositionFor(
   if (
     evaluation.reason === 'virgin-establishment' &&
     evaluation.homeNodeId !== undefined &&
-    evaluation.establishmentProvenance !== undefined
+    evaluation.placementSource !== undefined
   ) {
     return {
       outcome: 'local-establish',
       kind: 'virgin-policy',
       homeNodeId: evaluation.homeNodeId,
-      provenance: evaluation.establishmentProvenance,
-    }
-  }
-  if (
-    evaluation.reason === 'retired-policy-succession' &&
-    evaluation.homeNodeId !== undefined &&
-    evaluation.registryRetirement !== undefined
-  ) {
-    return {
-      outcome: 'local-establish',
-      kind: 'retired-successor',
-      homeNodeId: evaluation.homeNodeId,
-      provenance: evaluation.registryRetirement,
-    }
-  }
-  if (
-    evaluation.reason === 'child-birth' &&
-    evaluation.homeNodeId !== undefined &&
-    evaluation.authorityProvenance !== undefined
-  ) {
-    return {
-      outcome: 'local-establish',
-      kind: 'child',
-      homeNodeId: evaluation.homeNodeId,
-      provenance: evaluation.authorityProvenance,
-    }
-  }
-  if (
-    (evaluation.reason === 'claim-birth' || evaluation.reason === 'claim-rebind') &&
-    evaluation.homeNodeId !== undefined
-  ) {
-    return {
-      outcome: 'local-establish',
-      kind: 'claim',
-      homeNodeId: evaluation.homeNodeId,
-      provenance: { claim: evaluation.reason === 'claim-birth' ? 'birth' : 'rebind' },
+      provenance: evaluation.placementSource,
     }
   }
   return undefined
@@ -1435,7 +1152,6 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
       // reading `legacy-boolean` came from the T-06608 derivation, a line
       // reading `typed` from a signal the caller actually sent.
       intentSource: 'typed',
-      birthCredentialPresent: request.birthCredential !== undefined,
       diagnostic: evaluation.diagnostic,
     })
   }

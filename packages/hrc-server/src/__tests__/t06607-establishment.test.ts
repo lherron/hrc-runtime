@@ -45,9 +45,7 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'pin' },
-          establishmentProvenance: 'pin',
+          placementSource: 'pin',
           now: '2026-07-20T00:00:00.000Z',
         },
       })
@@ -66,9 +64,7 @@ describe('T-06607 registry-first establishment', () => {
       const request = {
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        birthClass: 'policy-born' as const,
-        authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-        establishmentProvenance: 'default_home_node' as const,
+        placementSource: 'default_home_node' as const,
         now: '2026-07-20T00:00:00.000Z',
       }
       const first = await establishLocalPlacement({
@@ -92,16 +88,13 @@ describe('T-06607 registry-first establishment', () => {
     }
   })
 
-  test('crash after registry write converges on retry and preserves the winning birth class', async () => {
+  test('crash after registry write converges on retry without adding binding provenance', async () => {
     const h = await harness()
     try {
       const registered = h.registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'lab',
-        placementEpoch: 1,
-        birthClass: 'mechanism-born',
-        authorityProvenance: { kind: 'child', parentScopeRef: 'agent:mable' },
-        establishmentProvenance: 'explicit_local',
+        placementSource: 'explicit_local',
         now: '2026-07-20T00:00:00.000Z',
       }).binding
       expect(h.ledger.get(SCOPE)).toBeUndefined()
@@ -112,17 +105,20 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'pin' },
-          establishmentProvenance: 'pin',
+          placementSource: 'pin',
           now: '2026-07-20T00:00:01.000Z',
         },
       })
 
       expect(retry.outcome).toBe('established')
       expect(retry.binding).toEqual(registered)
-      expect(retry.binding.birthClass).toBe('mechanism-born')
-      expect(h.ledger.activeAuthority(SCOPE)?.birthClass).toBe('mechanism-born')
+      expect(retry.binding).toEqual({
+        scopeRef: SCOPE,
+        homeNodeId: 'lab',
+        createdAt: '2026-07-20T00:00:00.000Z',
+        updatedAt: '2026-07-20T00:00:00.000Z',
+      })
+      expect(h.ledger.activeAuthority(SCOPE)).toEqual({ ...retry.binding, state: 'active' })
     } finally {
       h.close()
     }
@@ -134,10 +130,7 @@ describe('T-06607 registry-first establishment', () => {
       const existing = h.registry.establish({
         scopeRef: SCOPE,
         homeNodeId: 'max3',
-        placementEpoch: 1,
-        birthClass: 'policy-born',
-        authorityProvenance: { kind: 'policy', source: 'pin' },
-        establishmentProvenance: 'pin',
+        placementSource: 'pin',
         now: '2026-07-20T00:00:00.000Z',
       }).binding
 
@@ -147,9 +140,7 @@ describe('T-06607 registry-first establishment', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-          establishmentProvenance: 'default_home_node',
+          placementSource: 'default_home_node',
           now: '2026-07-20T00:00:01.000Z',
         },
       })

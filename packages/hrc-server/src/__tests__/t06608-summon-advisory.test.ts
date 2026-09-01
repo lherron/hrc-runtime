@@ -28,10 +28,7 @@ function binding(overrides: Partial<PlacementBinding> = {}): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId: 'max3',
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-    establishmentProvenance: 'default_home_node',
+    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
@@ -141,7 +138,7 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('max3')
-    expect(result.evaluation.establishmentProvenance).toBe('default_home_node(local)')
+    expect(result.evaluation.placementSource).toBe('default_home_node(local)')
   })
 
   test('never a silent fallback: undeclared does NOT resolve to the local node', async () => {
@@ -171,7 +168,7 @@ describe('default_home_node routing', () => {
     })
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe('default_home_node')
+    expect(result.evaluation.placementSource).toBe('default_home_node')
   })
 
   test('default naming another node refuses toward home, never spawns', async () => {
@@ -331,88 +328,6 @@ describe('advisory log content — the soak data T-06615 collects', () => {
       deps: deps({ federationConfigured: false, log: (_l, event) => logged.push(event) }),
     })
     expect(logged).toEqual([])
-  })
-})
-
-describe('scope retirement (T-06614 C-11125) — checked before authority logic', () => {
-  const retired = {
-    retiredNodeId: 'max3',
-    successorNodeId: 'lab',
-    retiredPlacementEpoch: 2,
-    reason: 'namespace_reconciliation',
-  }
-
-  test('a retirement OVERRIDES an active local ledger row on the losing node', async () => {
-    // The losing node legitimately holds active authority — it established the
-    // scope independently pre-federation. If retirement were checked after the
-    // ledger, this would allow and reconciliation would never bind.
-    const result = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'archived-successor',
-      intent: 'implicit',
-      deps: deps({
-        localNodeId: 'max3',
-        ledger: ledgerStub(binding({ homeNodeId: 'max3' })),
-        retirementFor: () => retired,
-      }),
-    })
-
-    expect(result.evaluation.decision).toBe('refuse')
-    expect(result.evaluation.reason).toBe('scope-retired')
-    if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
-    expect(result.evaluation.homeNodeId).toBe('lab')
-    expect(result.evaluation.diagnostic).toContain('lab')
-  })
-
-  test('a retirement for ANOTHER node does not affect this one', async () => {
-    const result = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'ensure-target',
-      intent: 'implicit',
-      deps: deps({
-        localNodeId: 'max3',
-        ledger: ledgerStub(binding({ homeNodeId: 'max3' })),
-        retirementFor: () => ({ ...retired, retiredNodeId: 'lab', successorNodeId: 'max3' }),
-      }),
-    })
-    expect(result.evaluation.decision).toBe('allow')
-    expect(result.evaluation.reason).toBe('local-authority')
-  })
-
-  test('retirement is not consulted when the gate is dark', async () => {
-    let calls = 0
-    const result = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'ensure-target',
-      intent: 'implicit',
-      deps: deps({
-        federationConfigured: false,
-        retirementFor: () => {
-          calls += 1
-          return retired
-        },
-      }),
-    })
-    expect(result.evaluation.reason).toBe('gate-dark')
-    expect(calls).toBe(0)
-  })
-
-  test('retirement refusal is advisory during the F0 soak, enforced after the flip', async () => {
-    const advisory = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'archived-successor',
-      intent: 'implicit',
-      deps: deps({ localNodeId: 'max3', retirementFor: () => retired }),
-    })
-    expect(advisory.enforced).toBe(false)
-
-    const enforcing = await evaluateSummonGate({
-      scopeRef: SCOPE,
-      path: 'archived-successor',
-      intent: 'implicit',
-      deps: deps({ mode: 'enforce', localNodeId: 'max3', retirementFor: () => retired }),
-    })
-    expect(enforcing.enforced).toBe(true)
   })
 })
 

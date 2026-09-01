@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { openBindingRegistry } from 'hrc-store-sqlite'
-import type { BindingRegistry, EstablishmentProvenance } from 'hrc-store-sqlite'
+import type { BindingRegistry } from 'hrc-store-sqlite'
 
 import { createBindingRegistryRequestHandler } from '../federation/registry-endpoint.js'
 import type { RegistryAuthPeer } from '../federation/registry-endpoint.js'
@@ -13,7 +13,7 @@ import type { RegistryAuthPeer } from '../federation/registry-endpoint.js'
  * T-07655 — the establishment vocabulary at the HTTP boundary.
  *
  * The registry has ONE host, so every other node establishes over the wire.
- * That makes `parseEstablishmentProvenance` a validator only remote nodes
+ * That makes `parseFederationPlacementSource` a validator only remote nodes
  * cross — and every in-process test goes around it, which is exactly how two
  * new provenances shipped with the type, the SQL CHECK and the client set all
  * updated while the wire whitelist still rejected them.
@@ -52,15 +52,12 @@ function establishRequest(provenance: string, scopeRef: string): Request {
     body: JSON.stringify({
       scopeRef,
       homeNodeId: 'max3',
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: provenance },
-      establishmentProvenance: provenance,
+      placementSource: provenance,
     }),
   })
 }
 
-describe('T-07655 establishment provenance crosses the wire', () => {
+describe('T-07655 transient establishment decision crosses the wire', () => {
   test.each([
     ['pin'],
     ['task_default'],
@@ -82,9 +79,9 @@ describe('T-07655 establishment provenance crosses the wire', () => {
       expect(response.status).toBe(200)
       const body = (await response.json()) as Record<string, unknown>
       expect(body['outcome']).toBe('created')
-      expect(store.get(scopeRef)?.establishmentProvenance).toBe(
-        provenance as EstablishmentProvenance
-      )
+      expect(store.get(scopeRef)).toMatchObject({ scopeRef, homeNodeId: 'max3' })
+      expect(JSON.stringify(store.get(scopeRef))).not.toContain('placementSource')
+      expect(JSON.stringify(body)).not.toContain('placementSource')
     } finally {
       store.close()
     }

@@ -3,11 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type {
-  BindingEstablishResult,
-  PlacementBinding,
-  RegistryRetirementRecord,
-} from 'hrc-store-sqlite'
+import type { BindingEstablishResult, PlacementBinding } from 'hrc-store-sqlite'
 
 import { establishLocalPlacement } from '../federation/establishment.js'
 import type { PeerEntry } from '../federation/federation-config.js'
@@ -35,25 +31,8 @@ const TOKEN = 'registry-client-secret'
 const BINDING: PlacementBinding = {
   scopeRef: SCOPE,
   homeNodeId: 'lab',
-  placementEpoch: 1,
-  birthClass: 'policy-born',
-  authorityProvenance: { kind: 'policy', source: 'pin' },
-  establishmentProvenance: 'pin',
   createdAt: '2026-07-20T00:00:00.000Z',
   updatedAt: '2026-07-20T00:00:00.000Z',
-}
-const RETIREMENT: RegistryRetirementRecord = {
-  state: 'retired',
-  scopeRef: SCOPE,
-  placementEpoch: 1,
-  birthClass: 'policy-born',
-  authorityProvenance: { kind: 'policy', source: 'pin' },
-  createdAt: '2026-07-20T00:00:00.000Z',
-  updatedAt: '2026-07-20T00:01:00.000Z',
-  retiredHomeNodeId: 'lab',
-  retiredAt: '2026-07-20T00:01:00.000Z',
-  reason: 'namespace_reconciliation',
-  successorNodeId: 'max3',
 }
 
 function peer(endpoint = 'http://svc.example.ts.net:18491'): PeerEntry {
@@ -102,39 +81,6 @@ describe('T-06663 registry consult result contract', () => {
 
     expect(await client.consult(SCOPE)).toEqual({ outcome: 'bound', binding: BINDING })
     expect(await client.consult(SCOPE)).toEqual({ outcome: 'unbound' })
-  })
-
-  test('maps retired consults and successor activation without collapsing identity metadata', async () => {
-    let calls = 0
-    const client = clientWith((url, init) => {
-      calls += 1
-      if (calls === 1) {
-        expect(new URL(url).pathname).toBe('/v1/federation/registry/consult')
-        return Promise.resolve(json({ ok: true, outcome: 'retired', retirement: RETIREMENT }))
-      }
-      expect(new URL(url).pathname).toBe('/v1/federation/registry/activate-retired')
-      expect(init.method).toBe('POST')
-      return Promise.resolve(
-        json({
-          ok: true,
-          outcome: 'activated',
-          binding: { ...BINDING, homeNodeId: 'max3', placementEpoch: 2, priorHomeNodeId: 'lab' },
-        })
-      )
-    })
-
-    expect(await client.consult(SCOPE)).toEqual({ outcome: 'retired', retirement: RETIREMENT })
-    expect(
-      await client.activateRetired({
-        scopeRef: SCOPE,
-        successorNodeId: 'max3',
-        expectedPlacementEpoch: 1,
-        now: '2026-07-20T00:02:00.000Z',
-      })
-    ).toMatchObject({
-      outcome: 'activated',
-      binding: { homeNodeId: 'max3', placementEpoch: 2, priorHomeNodeId: 'lab' },
-    })
   })
 
   test('a non-unbound 404 never becomes virgin authority', async () => {
@@ -267,10 +213,7 @@ describe('T-06663 establishment compatibility', () => {
   const request = {
     scopeRef: SCOPE,
     homeNodeId: 'lab',
-    placementEpoch: 1,
-    birthClass: 'policy-born' as const,
-    authorityProvenance: { kind: 'policy', source: 'pin' },
-    establishmentProvenance: 'pin' as const,
+    placementSource: 'pin' as const,
     now: '2026-07-20T00:00:00.000Z',
   }
 
@@ -414,14 +357,16 @@ describe('T-06663 real registry endpoint integration', () => {
       )
 
       expect(await client.consult(SCOPE)).toEqual({ outcome: 'unbound' })
-      const established = await client.establish({ ...BINDING, now: BINDING.updatedAt })
+      const established = await client.establish({
+        ...BINDING,
+        placementSource: 'pin',
+        now: BINDING.updatedAt,
+      })
       expect(established).toMatchObject({
         outcome: 'created',
         binding: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          placementEpoch: 1,
-          birthClass: 'policy-born',
         },
       })
       expect(await client.consult(SCOPE)).toEqual({
@@ -436,6 +381,7 @@ describe('T-06663 real registry endpoint integration', () => {
         ...BINDING,
         scopeRef: LOCAL_SCOPE,
         homeNodeId: 'svc',
+        placementSource: 'pin',
         now: BINDING.updatedAt,
       })
       expect(localEstablished).toMatchObject({

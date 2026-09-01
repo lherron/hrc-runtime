@@ -34,10 +34,7 @@ function binding(overrides: Partial<PlacementBinding> = {}): PlacementBinding {
   return {
     scopeRef: SCOPE,
     homeNodeId: 'max3',
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-    establishmentProvenance: 'default_home_node',
+    placementSource: 'default_home_node',
     createdAt: '2026-07-20T00:00:00.000Z',
     updatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
@@ -168,7 +165,7 @@ describe('local ledger authority — the hot path, no network', () => {
     expect(result.placement).toMatchObject({
       outcome: 'local-bound',
       source: 'local-ledger',
-      binding: { homeNodeId: 'max3', placementEpoch: 1 },
+      binding: { homeNodeId: 'max3' },
     })
     expect(registry.calls).toEqual([])
   })
@@ -187,7 +184,7 @@ describe('local ledger authority — the hot path, no network', () => {
     expect(result.evaluation.homeNodeId).toBe('lab')
     expect(result.placement).toMatchObject({
       outcome: 'remote-bound',
-      binding: { homeNodeId: 'lab', placementEpoch: 1 },
+      binding: { homeNodeId: 'lab' },
     })
     expect(result.evaluation.diagnostic).toContain('lab')
   })
@@ -301,7 +298,7 @@ describe('placement policy — pins are hard constraints on every path', () => {
     expect(result.evaluation.reason).toBe('virgin-establishment')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     // Pin beats default_home_node.
-    expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.evaluation.placementSource).toBe('pin')
     expect(result.placement).toEqual({
       outcome: 'local-establish',
       kind: 'virgin-policy',
@@ -356,7 +353,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('max3')
-    expect(result.evaluation.establishmentProvenance).toBe('task_default')
+    expect(result.evaluation.placementSource).toBe('task_default')
   })
 
   test('a reserved-looking task stays independent when its base is undeclared', async () => {
@@ -426,7 +423,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.evaluation.placementSource).toBe('pin')
     expect(result.evaluation.homeNodeId).toBe('max3')
   })
 
@@ -450,7 +447,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe('task_default')
+    expect(result.evaluation.placementSource).toBe('task_default')
     expect(result.evaluation.homeNodeId).toBe('lab')
   })
 })

@@ -1,22 +1,6 @@
-/**
- * T-06613 — CLI surface for `hrc target locate` and `hrc doctor`.
- *
- * Renders against a stubbed client: the placement semantics are proven in
- * hrc-server's locate suite, and what matters here is that an operator reading
- * the output can tell skew from expected divergence WITHOUT already knowing the
- * rule. A report that renders a skew and an unpinned-elsewhere note identically
- * would pass every server-side test and still mislead every reader.
- */
-
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import type {
-  FederationOutboxDeliveryRecord,
-  FederationRebindResult,
-  FederationRuntimeProjectionReport,
-  LocateBindingsReport,
-  ScopeLocation,
-} from 'hrc-core'
+import type { FederationRuntimeProjectionReport, ScopeLocation } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import { cmdTargetLocate } from '../cli/handlers-federation.js'
@@ -24,35 +8,11 @@ import { cmdRuntimeList } from '../cli/handlers-runtime.js'
 import { CliStatusExit } from '../cli/shared.js'
 
 const SCOPE = 'agent:mable:project:hrc-runtime:task:T-06613'
-
-function baseLocation(overrides: Partial<ScopeLocation> = {}): ScopeLocation {
-  return {
-    scopeRef: SCOPE,
-    localNodeId: 'max3',
-    federationConfigured: true,
-    gateMode: 'advisory',
-    declared: { source: 'none', detail: 'no stanza' },
-    ledger: { state: 'absent' },
-    registry: { outcome: 'unbound' },
-    designation: { outcome: 'none' },
-    authority: { state: 'unbound' },
-    observed: { scope: 'local-node-only', nodeId: 'max3', runtimeCount: 0, runtimes: [] },
-    notes: [],
-    birthChain: { state: 'not-applicable', detail: 'policy-born' },
-    ...overrides,
-  } as ScopeLocation
-}
-
-const boundRecord = {
+const BINDING = {
   homeNodeId: 'max3',
-  placementEpoch: 2,
-  birthClass: 'policy-born' as const,
-  establishmentProvenance: 'default_home_node' as const,
-  authorityProvenance: { kind: 'policy' },
   createdAt: '2026-07-20T00:00:00.000Z',
   updatedAt: '2026-07-20T00:00:00.000Z',
 }
-
 const restores: (() => void)[] = []
 
 afterEach(() => {
@@ -72,6 +32,23 @@ function captureStdout(): () => string {
   return () => chunks.join('')
 }
 
+function baseLocation(overrides: Partial<ScopeLocation> = {}): ScopeLocation {
+  return {
+    scopeRef: SCOPE,
+    localNodeId: 'max3',
+    federationConfigured: true,
+    gateMode: 'advisory',
+    declared: { source: 'none', detail: 'no stanza' },
+    ledger: { state: 'absent' },
+    registry: { outcome: 'unbound' },
+    designation: { outcome: 'none' },
+    authority: { state: 'unbound' },
+    observed: { scope: 'local-node-only', nodeId: 'max3', runtimeCount: 0, runtimes: [] },
+    notes: [],
+    ...overrides,
+  }
+}
+
 function stubLocate(location: ScopeLocation): void {
   const original = HrcClient.prototype.locateScope
   HrcClient.prototype.locateScope = async () => location
@@ -80,193 +57,26 @@ function stubLocate(location: ScopeLocation): void {
   })
 }
 
-function stubBindings(report: LocateBindingsReport): void {
-  const originalBindings = HrcClient.prototype.listPlacementBindings
-  const originalStatus = HrcClient.prototype.getStatus
-  const originalOutbox = HrcClient.prototype.listFederationOutbox
-  HrcClient.prototype.listPlacementBindings = async () => report
-  HrcClient.prototype.listFederationOutbox = async () => []
-  HrcClient.prototype.getStatus = (async () => ({
-    uptime: 42,
-    node: {
-      nodeId: 'max3',
-      nodeIdProvenance: 'declared',
-      mode: 'federated',
-      configPath: '/state/federation.json',
-      configExists: true,
-      peerCount: 1,
-      peers: [],
-    },
-    peerHealth: [
-      {
-        nodeId: 'lab',
-        state: 'healthy',
-        checkedAt: '2026-07-20T00:00:00.000Z',
-        answeredAt: '2026-07-20T00:00:00.010Z',
-        latencyMs: 10,
-        protocolVersion: '1.0',
-      },
-      {
-        nodeId: 'svc',
-        state: 'unreachable',
-        checkedAt: '2026-07-20T00:00:00.000Z',
-        latencyMs: 1500,
-        detail: 'probe timed out',
-      },
-    ],
-  })) as typeof HrcClient.prototype.getStatus
-  restores.push(() => {
-    HrcClient.prototype.listPlacementBindings = originalBindings
-    HrcClient.prototype.getStatus = originalStatus
-    HrcClient.prototype.listFederationOutbox = originalOutbox
-  })
-}
-
-function outboxDelivery(
-  overrides: Partial<FederationOutboxDeliveryRecord> = {}
-): FederationOutboxDeliveryRecord {
-  return {
-    deliveryId: 'delivery-1',
-    messageId: 'msg-11111111-1111-4111-8111-111111111111',
-    peerNodeId: 'lab',
-    envelope: {
-      protocolVersion: '1.0',
-      messageId: 'msg-11111111-1111-4111-8111-111111111111',
-      kind: 'dm',
-      phase: 'request',
-      from: { kind: 'session', sessionRef: SCOPE },
-      to: { kind: 'session', sessionRef: `${SCOPE}:role:peer` },
-      body: 'sleep envelope',
-      rootMessageId: 'msg-11111111-1111-4111-8111-111111111111',
-      expected: { homeNodeId: 'lab', placementEpoch: 1 },
-    },
-    state: 'dead_letter',
-    totalAttempts: 5,
-    cycleAttempts: 5,
-    replayCount: 0,
-    retryWindowStartedAt: '2026-07-01T00:00:00.000Z',
-    lastAttemptAt: '2026-07-15T00:00:00.000Z',
-    deadLetteredAt: '2026-07-15T00:00:00.000Z',
-    lastErrorCode: 'peer_unreachable',
-    lastErrorMessage: 'connection refused',
-    createdAt: '2026-07-01T00:00:00.000Z',
-    updatedAt: '2026-07-15T00:00:00.000Z',
-    ...overrides,
-  }
-}
-
-function stubOutbox(deliveries: FederationOutboxDeliveryRecord[]): {
-  replayed: string[]
-  replayedPeers: string[]
-  dropped: string[]
-  cancelled: string[]
-} {
-  const originalList = HrcClient.prototype.listFederationOutbox
-  const originalReplay = HrcClient.prototype.replayFederationOutbox
-  const originalReplayPeer = HrcClient.prototype.replayFederationOutboxPeer
-  const originalDrop = HrcClient.prototype.dropFederationOutbox
-  const originalCancel = HrcClient.prototype.cancelFederationOutbox
-  const calls = {
-    replayed: [] as string[],
-    replayedPeers: [] as string[],
-    dropped: [] as string[],
-    cancelled: [] as string[],
-  }
-  HrcClient.prototype.listFederationOutbox = async () => deliveries
-  HrcClient.prototype.replayFederationOutbox = async (deliveryId) => {
-    calls.replayed.push(deliveryId)
-    return outboxDelivery({ deliveryId, state: 'pending', replayCount: 1 })
-  }
-  HrcClient.prototype.replayFederationOutboxPeer = async (peerNodeId) => {
-    calls.replayedPeers.push(peerNodeId)
-    return deliveries.filter(
-      (delivery) => delivery.peerNodeId === peerNodeId && delivery.state === 'dead_letter'
-    )
-  }
-  HrcClient.prototype.dropFederationOutbox = async (deliveryId) => {
-    calls.dropped.push(deliveryId)
-    return outboxDelivery({ deliveryId })
-  }
-  HrcClient.prototype.cancelFederationOutbox = async (deliveryId) => {
-    calls.cancelled.push(deliveryId)
-    return outboxDelivery({
-      deliveryId,
-      state: 'dead_letter',
-      lastErrorCode: 'operator_cancelled',
-    })
-  }
-  restores.push(() => {
-    HrcClient.prototype.listFederationOutbox = originalList
-    HrcClient.prototype.replayFederationOutbox = originalReplay
-    HrcClient.prototype.replayFederationOutboxPeer = originalReplayPeer
-    HrcClient.prototype.dropFederationOutbox = originalDrop
-    HrcClient.prototype.cancelFederationOutbox = originalCancel
-  })
-  return calls
-}
-
-function stubRebind(): { calls: string[] } {
-  const originalRevoke = HrcClient.prototype.revokeFederationRebind
-  const originalCas = HrcClient.prototype.compareAndSwapFederationRebind
-  const originalActivate = HrcClient.prototype.activateFederationRebind
-  const calls: string[] = []
-  const response = (step: 'revoke' | 'cas' | 'activate'): FederationRebindResult => ({
-    step,
-    ok: true,
-    outcome: step === 'revoke' ? 'revoked' : step === 'cas' ? 'registry-updated' : 'activated',
-    state:
-      step === 'revoke'
-        ? 'revoked-nowhere'
-        : step === 'cas'
-          ? 'registry-moved-activation-pending'
-          : 'active-new-home',
-    retryable: step !== 'activate',
-    detail: `${step} complete`,
-    request: {
-      scopeRef: SCOPE,
-      expectedHomeNodeId: 'svc',
-      expectedPlacementEpoch: 1,
-      newHomeNodeId: 'lab',
-    },
-  })
-  HrcClient.prototype.revokeFederationRebind = async (request) => {
-    calls.push(`revoke:${request.expectedHomeNodeId}@${request.expectedPlacementEpoch}`)
-    return response('revoke')
-  }
-  HrcClient.prototype.compareAndSwapFederationRebind = async () => {
-    calls.push('cas')
-    return response('cas')
-  }
-  HrcClient.prototype.activateFederationRebind = async () => {
-    calls.push('activate')
-    return response('activate')
-  }
-  restores.push(() => {
-    HrcClient.prototype.revokeFederationRebind = originalRevoke
-    HrcClient.prototype.compareAndSwapFederationRebind = originalCas
-    HrcClient.prototype.activateFederationRebind = originalActivate
-  })
-  return { calls }
-}
-
-void stubBindings
-void stubOutbox
-void stubRebind
-
 describe('hrc target locate', () => {
-  test('--json emits the location verbatim', async () => {
-    const location = baseLocation({
-      authority: { state: 'bound', source: 'ledger', record: boundRecord, isLocal: true },
-    })
-    stubLocate(location)
+  test('--json emits a home-only binding with no epoch or birth provenance', async () => {
+    stubLocate(
+      baseLocation({
+        ledger: { state: 'active', record: BINDING },
+        authority: { state: 'bound', source: 'ledger', record: BINDING, isLocal: true },
+      })
+    )
     const read = captureStdout()
 
     await cmdTargetLocate([SCOPE, '--json'])
 
-    expect(JSON.parse(read())).toMatchObject({ scopeRef: SCOPE })
+    const result = JSON.parse(read()) as ScopeLocation
+    expect(result.authority).toMatchObject({ state: 'bound', record: { homeNodeId: 'max3' } })
+    expect(read()).not.toContain('placementEpoch')
+    expect(read()).not.toContain('birthClass')
+    expect(read()).not.toContain('authorityProvenance')
   })
 
-  test('human output shows declared, authority, ledger, registry, and observed on their own lines', async () => {
+  test('human output keeps declared, authority, ledger, registry, and observed separate', async () => {
     stubLocate(
       baseLocation({
         declared: {
@@ -274,134 +84,39 @@ describe('hrc target locate', () => {
           nodeId: 'max3',
           profilePath: '/agents/mable/agent-profile.toml',
         },
-        ledger: { state: 'active', record: boundRecord },
+        ledger: { state: 'active', record: BINDING },
         registry: { outcome: 'not-consulted', detail: 'local ledger answered' },
-        authority: { state: 'bound', source: 'ledger', record: boundRecord, isLocal: true },
-      })
-    )
-    const read = captureStdout()
-
-    await cmdTargetLocate([SCOPE])
-    const out = read()
-
-    expect(out).toContain('declared:')
-    expect(out).toContain('authority:')
-    expect(out).toContain('ledger:')
-    expect(out).toContain('registry:')
-    expect(out).toContain('observed:')
-    // Birth class and establishment provenance are part of the AC's contract.
-    expect(out).toContain('policy-born')
-    expect(out).toContain('default_home_node')
-  })
-
-  test('SKEW is rendered prominently and names the remedy', async () => {
-    stubLocate(
-      baseLocation({
-        declared: {
-          source: 'pin',
-          pinKey: 'hrc-runtime:T-06613',
-          nodeId: 'mini',
-          profilePath: '/agents/mable/agent-profile.toml',
-        },
-        authority: { state: 'bound', source: 'ledger', record: boundRecord, isLocal: true },
-        skew: {
-          kind: 'pin-vs-binding',
-          pinKey: 'hrc-runtime:T-06613',
-          pinnedNodeId: 'mini',
-          boundNodeId: 'max3',
-          placementEpoch: 2,
-          establishmentProvenance: 'default_home_node',
-          detail:
-            'SKEW: pin says mini, established on max3.\nmax3 keeps summon authority.\nRebuild the binding to move it.',
-        },
-      })
-    )
-    const read = captureStdout()
-
-    await cmdTargetLocate([SCOPE])
-    const out = read()
-
-    expect(out).toContain('!! SKEW')
-    expect(out).toContain('keeps summon authority')
-    expect(out).toContain('Rebuild')
-  })
-
-  test('human output names a matched task-default declaration', async () => {
-    stubLocate(
-      baseLocation({
-        declared: {
-          source: 'task-default',
-          taskKey: 'T-06613',
-          nodeId: 'lab',
-          profilePath: '/agents/mable/agent-profile.toml',
-        },
+        authority: { state: 'bound', source: 'ledger', record: BINDING, isLocal: true },
       })
     )
     const read = captureStdout()
 
     await cmdTargetLocate([SCOPE])
 
-    expect(read()).toContain('task-default "T-06613" = lab')
+    expect(read()).toContain('declared:')
+    expect(read()).toContain('authority:')
+    expect(read()).toContain('ledger:')
+    expect(read()).toContain('registry:')
+    expect(read()).toContain('observed:')
   })
 
-  test('an unpinned scope established elsewhere renders as a NOTE, never as skew', async () => {
-    stubLocate(
-      baseLocation({
-        declared: {
-          source: 'default_home_node',
-          nodeId: 'max3',
-          profilePath: '/agents/mable/agent-profile.toml',
-        },
-        authority: {
-          state: 'bound',
-          source: 'ledger',
-          record: { ...boundRecord, homeNodeId: 'mini' },
-          isLocal: false,
-        },
-        notes: [
-          {
-            code: 'unpinned-established-elsewhere',
-            detail: 'Not skew: default_home_node routes implicit summons; it does not constrain.',
-          },
-        ],
-      })
-    )
-    const read = captureStdout()
-
-    await cmdTargetLocate([SCOPE])
-    const out = read()
-
-    expect(out).not.toContain('!! SKEW')
-    expect(out).toContain('note: Not skew')
-  })
-
-  test('--fail-on-skew exits 1 only when skew is present', async () => {
-    stubLocate(baseLocation())
-    const read = captureStdout()
-    await cmdTargetLocate([SCOPE, '--fail-on-skew'])
-    read()
-  })
-
-  test('--fail-on-skew exits 1 when skew IS present', async () => {
+  test('--fail-on-skew exits 1 when a declared constraint disagrees with the home', async () => {
     stubLocate(
       baseLocation({
         skew: {
           kind: 'pin-vs-binding',
-          pinKey: 'k',
-          pinnedNodeId: 'mini',
+          pinKey: 'hrc-runtime:T-06613',
+          pinnedNodeId: 'lab',
           boundNodeId: 'max3',
-          placementEpoch: 1,
-          establishmentProvenance: 'pin',
-          detail: 'skewed',
+          detail: 'retire on max3 before fresh establishment on lab',
         },
       })
     )
     captureStdout()
-
     await expect(cmdTargetLocate([SCOPE, '--fail-on-skew'])).rejects.toBeInstanceOf(CliStatusExit)
   })
 
-  test('an unreachable registry renders as UNKNOWN, not as unbound', async () => {
+  test('an unreachable registry renders as UNKNOWN, not unbound', async () => {
     stubLocate(
       baseLocation({
         registry: { outcome: 'unknown', detail: 'connect ECONNREFUSED', retryable: true },
@@ -409,52 +124,14 @@ describe('hrc target locate', () => {
       })
     )
     const read = captureStdout()
-
     await cmdTargetLocate([SCOPE])
-    const out = read()
-
-    expect(out).toContain('UNKNOWN')
-    expect(out).not.toMatch(/authority:\s+unbound/)
-  })
-
-  test('remote authority renders the peer answer and node-local observed runtime', async () => {
-    stubLocate(
-      baseLocation({
-        authority: {
-          state: 'bound',
-          source: 'registry',
-          record: { ...boundRecord, homeNodeId: 'lab' },
-          isLocal: false,
-        },
-        peerResolution: {
-          nodeId: 'lab',
-          state: 'answered',
-          checkedAt: '2026-07-20T00:00:00.000Z',
-          answeredAt: '2026-07-20T00:00:00.010Z',
-          latencyMs: 10,
-          location: baseLocation({
-            localNodeId: 'lab',
-            observed: {
-              scope: 'local-node-only',
-              nodeId: 'lab',
-              runtimeCount: 1,
-              runtimes: [{ runtimeId: 'rt-lab', laneRef: 'main', status: 'ready' }],
-            },
-          }),
-        },
-      })
-    )
-    const read = captureStdout()
-
-    await cmdTargetLocate([SCOPE])
-
-    expect(read()).toContain('peer:       lab answered')
-    expect(read()).toContain('rt-lab')
+    expect(read()).toContain('UNKNOWN')
+    expect(read()).not.toMatch(/authority:\s+unbound/)
   })
 })
 
 describe('hrc runtime list --all-nodes', () => {
-  test('renders answer timestamps and stale unreachable cache under explicit node labels', async () => {
+  test('renders node-labelled peer observations', async () => {
     const original = HrcClient.prototype.listFederatedRuntimes
     const report: FederationRuntimeProjectionReport = {
       localNodeId: 'svc',
@@ -475,23 +152,7 @@ describe('hrc runtime list --all-nodes', () => {
           answeredAt: '2026-07-20T00:00:00.000Z',
           latencyMs: 1500,
           detail: 'probe timed out',
-          runtimes: [
-            {
-              runtimeId: 'rt-lab',
-              hostSessionId: 'hs-lab',
-              scopeRef: SCOPE,
-              laneRef: 'main',
-              generation: 1,
-              transport: 'headless',
-              harness: 'codex',
-              provider: 'openai',
-              status: 'ready',
-              supportsInflightInput: true,
-              adopted: false,
-              createdAt: '2026-07-20T00:00:00.000Z',
-              updatedAt: '2026-07-20T00:00:00.000Z',
-            },
-          ],
+          runtimes: [],
         },
       ],
     }
@@ -502,11 +163,8 @@ describe('hrc runtime list --all-nodes', () => {
     const read = captureStdout()
 
     await cmdRuntimeList(['--all-nodes'])
-    const out = read()
 
-    expect(out).toContain('node svc: answered')
-    expect(out).toContain('node lab: unreachable')
-    expect(out).toContain('1m old')
-    expect(out).toContain('rt-lab')
+    expect(read()).toContain('node svc: answered')
+    expect(read()).toContain('node lab: unreachable')
   })
 })

@@ -7,7 +7,6 @@ import type {
 } from 'hrc-core'
 
 import type { PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export const FEDERATION_PEER_OBSERVE_TIMEOUT_MS = 1_500
@@ -101,7 +100,7 @@ export async function probePeerHealth(
   for (const [name, value] of options.filter ?? []) url.searchParams.append(name, value)
   try {
     const response = await (options.fetch ?? globalThis.fetch)(url, {
-      headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION),
+      headers: buildPeerProtocolHeaders(peer),
       signal: AbortSignal.timeout(options.timeoutMs ?? FEDERATION_PEER_OBSERVE_TIMEOUT_MS),
     })
     const body = (await response.json()) as unknown
@@ -118,14 +117,12 @@ export async function probePeerHealth(
     }
     const nodeId = isRecord(body) ? nonEmptyString(body['nodeId']) : undefined
     const capabilities = isRecord(body) ? parseCapabilities(body['capabilities']) : undefined
-    const protocolVersion = isRecord(body) ? nonEmptyString(body['protocolVersion']) : undefined
     const startedAt = isRecord(body) ? nonEmptyString(body['startedAt']) : undefined
     const answeredAt = isRecord(body) ? nonEmptyString(body['observedAt']) : undefined
     const runtimes = isRecord(body) ? parseRuntimes(body['runtimes']) : undefined
     if (
       nodeId !== peer.nodeId ||
       capabilities === undefined ||
-      protocolVersion === undefined ||
       startedAt === undefined ||
       (options.includeRuntimes === true && runtimes === undefined)
     ) {
@@ -149,7 +146,6 @@ export async function probePeerHealth(
         checkedAt,
         answeredAt: answeredAt ?? new Date().toISOString(),
         latencyMs: elapsedMs(startedMs),
-        protocolVersion,
         startedAt,
         capabilities,
       },
@@ -184,7 +180,7 @@ export async function locatePeerScope(
       new URL('/v1/federation/locate', peer.endpoint),
       {
         method: 'POST',
-        headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+        headers: buildPeerProtocolHeaders(peer, {
           contentType: 'application/json',
         }),
         body: JSON.stringify({ scopeRef }),

@@ -1,7 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { LaunchCommandScopedRunBinding, LaunchCommandScopedRunRequest } from 'hrc-core'
 
-import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { isRecord, requireTrimmedStringField } from './common.js'
 
 const BINDING_KEYS = [
@@ -44,13 +43,11 @@ export function parseLaunchCommandScopedRunRequest(input: unknown): LaunchComman
     binding[key] = requireTrimmedStringField(bindingInput, key)
   }
 
-  const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
   return {
     configuredTargetId: requireTrimmedStringField(input, 'configuredTargetId'),
     sessionRef: requireTrimmedStringField(input, 'sessionRef'),
     idempotencyKey: requireTrimmedStringField(input, 'idempotencyKey'),
     binding,
     ...(input['stdinJson'] !== undefined ? { stdinJson: input['stdinJson'] } : {}),
-    ...(birthCredential === undefined ? {} : { birthCredential }),
   }
 }

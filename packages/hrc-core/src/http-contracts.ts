@@ -26,7 +26,6 @@ import type {
   HrcTurnResponseFormat,
 } from './contracts.js'
 import type { HrcDeliveryOutcome, HrcDeliveryWarning } from './delivery-contracts.js'
-import type { HrcBirthCredential } from './federation.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
 
@@ -83,7 +82,6 @@ export type ResolveSessionRequest = {
   /** Absent ⇒ `implicit`. Only operator commands send `explicit_local`. */
   summonIntent?: SummonIntent | undefined
   /** Present only for a dispatch inherited from a running parent runtime. */
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type ResolveSessionFoundResponse = {
@@ -288,7 +286,6 @@ export type LaunchCommandScopedRunRequest = {
   idempotencyKey: string
   binding: LaunchCommandScopedRunBinding
   stdinJson?: unknown
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type LaunchCommandScopedRunResponse = {
@@ -499,7 +496,6 @@ export type ResumeContinuationRequest = {
   priorHostSessionId?: string | undefined
   intent?: HrcRuntimeIntent | undefined
   parsedScope?: Record<string, unknown> | undefined
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type ResumeContinuationResponse = {

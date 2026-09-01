@@ -2,11 +2,7 @@ import packageJson from '../package.json' with { type: 'json' }
 
 export const HRC_API_VERSION = packageJson.version
 
-export {
-  HRC_BIRTH_CREDENTIAL_ENV,
-  HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV,
-} from './federation.js'
-export type { HrcBirthCredential } from './federation.js'
+export { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from './federation.js'
 
 export { environmentWithoutGitOverrides } from './git-environment.js'
 
@@ -513,13 +509,11 @@ export type {
 } from './monitor/index.js'
 
 export type {
-  BirthAuthorityProvenance,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
-  EstablishmentProvenance,
-  FederationBirthClass,
+  FederationPlacementSource,
   FederationGateModeValue,
   FederationExpectedPlacement,
   FederationInteractiveLifecycleSignal,
@@ -538,18 +532,15 @@ export type {
   FederationPeerHealthObservation,
   FederationRemoteEstablishRequest,
   FederationRemoteEstablishResult,
-  FederationRebindOutcome,
-  FederationRebindRequest,
-  FederationRebindResult,
-  FederationRebindState,
-  FederationRebindStep,
+  FederationRetirementOutcome,
+  FederationRetirementRequest,
+  FederationRetirementResult,
+  FederationRetirementState,
   FederationRuntimeProjectionReport,
   LedgerSkewScan,
   LocateAuthority,
   LocateBindingRecord,
   LocateBindingsReport,
-  LocateBirthChain,
-  LocateBirthChainLink,
   LocateDeclaredPolicy,
   LocateDesignationView,
   LocateLedgerView,

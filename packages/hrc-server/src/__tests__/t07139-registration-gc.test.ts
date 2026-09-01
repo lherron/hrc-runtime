@@ -7,7 +7,6 @@ import {
   createPlacementLedgerRepository,
   openBindingRegistry,
   openHrcDatabase,
-  readScopeRetirement,
 } from 'hrc-store-sqlite'
 import type { BindingRegistry, HrcDatabase } from 'hrc-store-sqlite'
 
@@ -15,7 +14,10 @@ import {
   type ExternalParticipantRpcClient,
   performExternalRegistrationHello,
 } from '../external-registration-rendezvous.js'
-import type { BindingRegistryClient } from '../federation/registry-client.js'
+import {
+  type BindingRegistryClient,
+  RegistryUnreachableError,
+} from '../federation/registry-client.js'
 import {
   handleRetireRegistrationScopes,
   projectRegistrationGcCandidates,
@@ -103,14 +105,7 @@ describe('T-07139 operator-invoked registration retirement', () => {
     const binding = registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementEpoch: 1,
-      birthClass: 'mechanism-born',
-      authorityProvenance: {
-        kind: 'external-registration',
-        registrationId: REGISTRATION_ID,
-        classId: 'arris-agent',
-      },
-      establishmentProvenance: 'explicit_local',
+      placementSource: 'explicit_local',
       now: OLD,
     }).binding
     createPlacementLedgerRepository(db.sqlite).installActive(binding)
@@ -135,22 +130,19 @@ describe('T-07139 operator-invoked registration retirement', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  function client(beforeRetire?: () => void): BindingRegistryClient {
+  function client(beforeDelete?: () => void): BindingRegistryClient {
     return {
       async consult(scopeRef) {
-        const record = registry.getRecord(scopeRef)
-        if (record === undefined) return { outcome: 'unbound' }
-        if (record.state === 'retired') return { outcome: 'retired', retirement: record }
         const binding = registry.get(scopeRef)
-        if (binding === undefined) throw new Error('active binding missing')
+        if (binding === undefined) return { outcome: 'unbound' }
         return { outcome: 'bound', binding }
       },
       async establish(request) {
         return registry.establish(request)
       },
-      async retire(request) {
-        beforeRetire?.()
-        return registry.retire(request)
+      async deleteBinding(request) {
+        beforeDelete?.()
+        return registry.deleteBinding(request)
       },
     }
   }
@@ -180,8 +172,8 @@ describe('T-07139 operator-invoked registration retirement', () => {
         eligibleAt: '2026-08-09T20:00:01.000Z',
       }),
     ])
-    expect(registry.getRecord(SCOPE)?.state).toBe('active')
-    expect(readScopeRetirement(db.sqlite, SCOPE)).toBeUndefined()
+    expect(registry.get(SCOPE)).toBeDefined()
+    expect(createPlacementLedgerRepository(db.sqlite).get(SCOPE)?.state).toBe('active')
     expect(db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)?.retiredAt).toBe(
       undefined
     )
@@ -199,16 +191,15 @@ describe('T-07139 operator-invoked registration retirement', () => {
     expect(projectRegistrationGcCandidates(server, NOW).candidates).toEqual([])
   })
 
-  test('retirement installs the terminal local epoch fence before the registry CAS', async () => {
+  test('retirement installs the permanent local fence before deleting the registry binding', async () => {
     setClient(
       client(() => {
-        expect(readScopeRetirement(db.sqlite, SCOPE)).toMatchObject({
-          retiredNodeId: 'svc',
-          retiredPlacementEpoch: 1,
-          successorNodeId: null,
-          reason: 'external_registration_gc',
+        expect(createPlacementLedgerRepository(db.sqlite).get(SCOPE)).toMatchObject({
+          homeNodeId: 'svc',
+          state: 'retired',
+          retirementReason: 'external_registration_gc',
         })
-        expect(registry.getRecord(SCOPE)?.state).toBe('active')
+        expect(registry.get(SCOPE)).toBeDefined()
       })
     )
 
@@ -217,10 +208,10 @@ describe('T-07139 operator-invoked registration retirement', () => {
       results: [{ scopeRef: SCOPE, registrationId: REGISTRATION_ID, status: 'retired' }],
       summary: { requested: 1, retired: 1, idempotent: 0, skipped: 0, errors: 0 },
     })
-    expect(registry.getRecord(SCOPE)).toMatchObject({
+    expect(registry.get(SCOPE)).toBeUndefined()
+    expect(createPlacementLedgerRepository(db.sqlite).get(SCOPE)).toMatchObject({
       state: 'retired',
-      successorNodeId: null,
-      reason: 'external_registration_gc',
+      retirementReason: 'external_registration_gc',
     })
     expect(db.externalRegistrationGrants.getByRegistrationId(REGISTRATION_ID)).toMatchObject({
       retirementReason: 'external_registration_gc',
@@ -233,18 +224,23 @@ describe('T-07139 operator-invoked registration retirement', () => {
     let fail = true
     setClient({
       ...client(),
-      async retire(request) {
-        if (fail) throw new Error('registry unavailable after local fence')
-        return registry.retire(request)
+      async deleteBinding(request) {
+        if (fail) {
+          throw new RegistryUnreachableError('registry unavailable after local fence')
+        }
+        return registry.deleteBinding(request)
       },
     })
     const first = (await (await handleRetireRegistrationScopes.call(server, request())).json()) as {
       results: Array<{ status: string }>
     }
     expect(first.results[0]?.status).toBe('authority_unavailable')
-    const fence = readScopeRetirement(db.sqlite, SCOPE)
-    expect(fence?.reason).toBe('external_registration_gc')
-    expect(registry.getRecord(SCOPE)?.state).toBe('active')
+    const fence = createPlacementLedgerRepository(db.sqlite).get(SCOPE)
+    expect(fence).toMatchObject({
+      state: 'retired',
+      retirementReason: 'external_registration_gc',
+    })
+    expect(registry.get(SCOPE)).toBeDefined()
 
     fail = false
     const second = (await (
@@ -253,14 +249,15 @@ describe('T-07139 operator-invoked registration retirement', () => {
       results: Array<{ status: string }>
     }
     expect(second.results[0]?.status).toBe('retired')
-    expect((registry.getRecord(SCOPE) as { retiredAt?: string }).retiredAt).toBe(fence?.retiredAt)
+    expect(registry.get(SCOPE)).toBeUndefined()
+    expect(createPlacementLedgerRepository(db.sqlite).get(SCOPE)?.retiredAt).toBe(fence?.retiredAt)
   })
 
   test('empty or non-candidate mutation requests cannot reach authority retirement', async () => {
-    let retires = 0
+    let deletes = 0
     setClient(
       client(() => {
-        retires += 1
+        deletes += 1
       })
     )
     await expect(handleRetireRegistrationScopes.call(server, request([]))).rejects.toThrow(
@@ -274,7 +271,7 @@ describe('T-07139 operator-invoked registration retirement', () => {
     expect(await missing.json()).toMatchObject({
       results: [{ status: 'not_candidate' }],
     })
-    expect(retires).toBe(0)
-    expect(registry.getRecord(SCOPE)?.state).toBe('active')
+    expect(deletes).toBe(0)
+    expect(registry.get(SCOPE)).toBeDefined()
   })
 })

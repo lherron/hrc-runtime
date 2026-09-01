@@ -1,7 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeIntent, SummonIntent } from 'hrc-core'
 
-import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { isRecord } from './common.js'
 import { parseRuntimeIntent } from './runtime.js'
 
@@ -12,7 +11,6 @@ export function parseResolveSessionRequest(input: unknown): {
   create?: boolean
   runtimeIntent?: HrcRuntimeIntent
   summonIntent?: SummonIntent
-  birthCredential?: string
 } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -54,15 +52,12 @@ export function parseResolveSessionRequest(input: unknown): {
       { field: 'summonIntent' }
     )
   }
-  const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
-
   parseSessionRef(sessionRef)
   return {
     sessionRef: sessionRef.trim(),
     ...(create !== undefined ? { create } : {}),
     ...(runtimeIntent !== undefined ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) } : {}),
     ...(summonIntent !== undefined ? { summonIntent: summonIntent as SummonIntent } : {}),
-    ...(birthCredential !== undefined ? { birthCredential } : {}),
   }
 }
 

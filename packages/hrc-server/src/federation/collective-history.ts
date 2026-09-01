@@ -10,7 +10,6 @@ import type { HrcDatabase, RecordCollectiveHistoryObservationInput } from 'hrc-s
 import { parseMessageFilter } from '../messages.js'
 import { writeServerLog } from '../server-log.js'
 import type { FederationConfig, PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export const COLLECTIVE_HISTORY_AUTHORITY_NODE_ID = 'svc'
@@ -308,7 +307,7 @@ export class CollectiveHistoryCoordinator {
         new URL('/v1/federation/history/query', peer.endpoint),
         {
           method: 'POST',
-          headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+          headers: buildPeerProtocolHeaders(peer, {
             contentType: 'application/json',
           }),
           body: JSON.stringify({ filter }),
@@ -415,7 +414,7 @@ export class CollectiveHistoryCoordinator {
           new URL('/v1/federation/history/replicate', peer.endpoint),
           {
             method: 'POST',
-            headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+            headers: buildPeerProtocolHeaders(peer, {
               contentType: 'application/json',
             }),
             body: JSON.stringify(body),
@@ -472,7 +471,7 @@ export class CollectiveHistoryCoordinator {
         new URL('/v1/federation/history/checkpoint', peer.endpoint),
         {
           method: 'POST',
-          headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION, {
+          headers: buildPeerProtocolHeaders(peer, {
             contentType: 'application/json',
           }),
           body: JSON.stringify({

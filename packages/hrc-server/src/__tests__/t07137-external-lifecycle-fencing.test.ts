@@ -115,10 +115,7 @@ describe('T-07137 lifecycleOwner fencing', () => {
     const binding = ledger.installActive({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'explicit_local' },
-      establishmentProvenance: 'explicit_local',
+      placementSource: 'explicit_local',
       updatedAt: OLD,
     })
     db.sessions.updateContinuation(

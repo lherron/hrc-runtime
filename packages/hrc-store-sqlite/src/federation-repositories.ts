@@ -4,97 +4,70 @@ import { dirname } from 'node:path'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type {
-  BirthAuthorityProvenance,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationState,
-  EstablishmentProvenance,
-  FederationBirthClass,
   FederationPlacementBinding,
+  FederationPlacementSource,
 } from 'hrc-core'
 
-import type { ScopeRetirementRecord } from './federation-reconciliation.js'
-
-/**
- * The placement vocabulary is defined in hrc-core (federation-contracts.ts) and
- * re-exported here, so storage, the wire, and locate cannot drift on the
- * spelling of a value that is CHECK-constrained in two schemas.
- */
 export type {
-  BirthAuthorityProvenance,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
-  EstablishmentProvenance,
-  FederationBirthClass,
+  FederationPlacementSource,
 } from 'hrc-core'
 
-export type PlacementLedgerState = 'active' | 'revoked'
-
+export type PlacementLedgerState = 'active' | 'retired'
 export type PlacementBinding = FederationPlacementBinding
-
-export type RegistryRetirementRecord = {
-  state: 'retired'
-  scopeRef: string
-  /** Last disclosed/active epoch. A successor, when present, activates at E+1. */
-  placementEpoch: number
-  birthClass: FederationBirthClass
-  authorityProvenance: BirthAuthorityProvenance
-  createdAt: string
-  updatedAt: string
-  retiredHomeNodeId: string
-  retiredAt: string
-  reason: string
-  /** Null is an explicit terminal bar. */
-  successorNodeId: string | null
-}
-
-export type BindingRegistryRecord =
-  | (PlacementBinding & { state: 'active' })
-  | RegistryRetirementRecord
+export type BindingRegistryRecord = PlacementBinding
 
 export type PlacementLedgerRecord = PlacementBinding & {
   state: PlacementLedgerState
+  retiredAt?: string | undefined
+  retirementReason?: string | undefined
 }
 
-export type InstallActivePlacementInput = Omit<PlacementLedgerRecord, 'state' | 'createdAt'> & {
+export type InstallActivePlacementInput = Omit<PlacementBinding, 'createdAt'> & {
   createdAt?: string | undefined
-  state?: 'active' | undefined
 }
 
-export type RevokePlacementInput = {
+export type RetirePlacementInput = {
   scopeRef: string
   expectedHomeNodeId: string
-  expectedPlacementEpoch: number
-  updatedAt: string
+  reason: string
+  retiredAt: string
 }
 
-export type RevokePlacementResult = {
-  outcome: 'revoked' | 'idempotent' | 'conflict' | 'not_found'
+export type RetirePlacementResult = {
+  outcome: 'retired' | 'idempotent' | 'conflict' | 'not_found'
   record?: PlacementLedgerRecord | undefined
 }
 
-export type EstablishBindingInput = Omit<
-  PlacementBinding,
-  'createdAt' | 'updatedAt' | 'priorHomeNodeId' | 'establishmentProvenance'
-> & {
-  establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
+export type EstablishBindingInput = {
+  scopeRef: string
+  homeNodeId: string
+  /** Transient T-07655 designation precedence input; it is not persisted. */
+  placementSource: FederationPlacementSource
   now: string
 }
 
 export type BindingEstablishResult =
   | { outcome: 'created' | 'existing'; binding: PlacementBinding }
-  | { outcome: 'retired'; retirement: RegistryRetirementRecord }
-  /**
-   * T-07655 — the establish fence. Returned ONLY for a tier-5 designated
-   * establishment (`default_home_node(sender|sender-retired)`) whose node is
-   * not the live designation's home. Every other provenance is unfenced: tiers
-   * 1-4 supersede the designation instead, in this same transaction.
-   */
   | { outcome: 'designation-mismatch'; designation: BirthDesignationRecord }
 
-/** Recording input for a designation the registry host has already derived. */
+export type DeleteBindingInput = {
+  scopeRef: string
+  expectedHomeNodeId: string
+  retiredAt: string
+}
+
+export type DeleteBindingResult = {
+  outcome: 'deleted' | 'idempotent' | 'conflict'
+  binding?: PlacementBinding | undefined
+}
+
 export type RecordBirthDesignationInput = {
   scopeRef: string
   homeNodeId: string
@@ -104,128 +77,59 @@ export type RecordBirthDesignationInput = {
   now: string
 }
 
-/** Tier-1-4 provenances: they supersede a live designation, never lose to it. */
-const SUPERSEDING_PROVENANCE = new Set<EstablishmentProvenance>([
+const SUPERSEDING_SOURCES = new Set<FederationPlacementSource>([
   'pin',
   'task_default',
   'default_home_node',
   'explicit_local',
 ])
 
-/** The two provenances the establish fence is allowed to refuse. */
-const DESIGNATED_PROVENANCE = new Set<EstablishmentProvenance>([
+const DESIGNATED_SOURCES = new Set<FederationPlacementSource>([
   'default_home_node(sender)',
   'default_home_node(sender-retired)',
 ])
 
-export type BindingCasInput = {
-  scopeRef: string
-  expectedHomeNodeId: string
-  expectedPlacementEpoch: number
-  newHomeNodeId: string
-  now: string
-}
-
-export type BindingCasResult = {
-  outcome: 'updated' | 'idempotent' | 'conflict' | 'not_found'
-  binding?: PlacementBinding | undefined
-  retirement?: RegistryRetirementRecord | undefined
-}
-
-export type RetireBindingInput = {
-  scopeRef: string
-  expectedHomeNodeId: string
-  expectedPlacementEpoch: number
-  successorNodeId: string | null
-  reason: string
-  retiredAt: string
-}
-
-export type RetireBindingResult = {
-  outcome: 'retired' | 'idempotent' | 'conflict' | 'not_found'
-  retirement?: RegistryRetirementRecord | undefined
-  binding?: PlacementBinding | undefined
-}
-
-export type ActivateRetiredBindingInput = {
-  scopeRef: string
-  successorNodeId: string
-  expectedPlacementEpoch: number
-  now: string
-}
-
-export type ActivateRetiredBindingResult = {
-  outcome:
-    | 'activated'
-    | 'idempotent'
-    | 'conflict'
-    | 'not_found'
-    | 'mechanism_refused'
-    | 'epoch_exhausted'
-  binding?: PlacementBinding | undefined
-  retirement?: RegistryRetirementRecord | undefined
-}
-
-export type RetargetRetiredBindingInput = {
-  scopeRef: string
-  expectedSuccessorNodeId: string | null
-  expectedPlacementEpoch: number
-  newSuccessorNodeId: string | null
-  now: string
-}
-
-export type RetargetRetiredBindingResult = {
-  outcome: 'updated' | 'idempotent' | 'conflict' | 'not_found' | 'epoch_exhausted'
-  retirement?: RegistryRetirementRecord | undefined
-  binding?: PlacementBinding | undefined
-}
-
 type PlacementRow = {
   scope_ref: string
   home_node_id: string
-  placement_epoch: number
-  state?: PlacementLedgerState | undefined
-  birth_class: FederationBirthClass
-  authority_provenance_json: string
-  establishment_provenance: EstablishmentProvenance
-  prior_home_node_id: string | null
+  state: PlacementLedgerState
+  retired_at: string | null
+  retirement_reason: string | null
   created_at: string
   updated_at: string
 }
 
 type RegistryRow = {
   scope_ref: string
-  state: 'active' | 'retired'
-  placement_epoch: number
-  birth_class: FederationBirthClass
-  authority_provenance_json: string
+  home_node_id: string
   created_at: string
   updated_at: string
-  home_node_id: string | null
-  establishment_provenance: EstablishmentProvenance | null
-  prior_home_node_id: string | null
-  retired_home_node_id: string | null
-  retired_at: string | null
-  retirement_reason: string | null
-  successor_node_id: string | null
 }
 
-const REGISTRY_COLUMNS = `
+type DesignationRow = {
+  scope_ref: string
+  designation_epoch: number
+  home_node_id: string
+  provenance: BirthDesignationProvenance
+  birth_envelope_id: string
+  sender_scope_ref: string
+  designated_at: string
+  state: BirthDesignationState
+  superseded_by: FederationPlacementSource | null
+  superseded_at: string | null
+}
+
+const LEDGER_COLUMNS = `
   scope_ref,
-  state,
-  placement_epoch,
-  birth_class,
-  authority_provenance_json,
-  created_at,
-  updated_at,
   home_node_id,
-  establishment_provenance,
-  prior_home_node_id,
-  retired_home_node_id,
+  state,
   retired_at,
   retirement_reason,
-  successor_node_id
+  created_at,
+  updated_at
 `
+
+const REGISTRY_COLUMNS = 'scope_ref, home_node_id, created_at, updated_at'
 
 const DESIGNATION_COLUMNS = `
   scope_ref,
@@ -240,17 +144,32 @@ const DESIGNATION_COLUMNS = `
   superseded_at
 `
 
-type DesignationRow = {
-  scope_ref: string
-  designation_epoch: number
-  home_node_id: string
-  provenance: BirthDesignationProvenance
-  birth_envelope_id: string
-  sender_scope_ref: string
-  designated_at: string
-  state: BirthDesignationState
-  superseded_by: EstablishmentProvenance | null
-  superseded_at: string | null
+function canonicalScopeRef(scopeRef: string): string {
+  return formatCanonicalScopeRef({ scopeRef })
+}
+
+function requireNodeId(nodeId: string, field: string): string {
+  const normalized = nodeId.trim()
+  if (normalized.length === 0) throw new Error(`${field} must not be empty`)
+  return normalized
+}
+
+function mapBinding(row: RegistryRow | PlacementRow): PlacementBinding {
+  return {
+    scopeRef: row.scope_ref,
+    homeNodeId: row.home_node_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapLedger(row: PlacementRow): PlacementLedgerRecord {
+  return {
+    ...mapBinding(row),
+    state: row.state,
+    ...(row.retired_at === null ? {} : { retiredAt: row.retired_at }),
+    ...(row.retirement_reason === null ? {} : { retirementReason: row.retirement_reason }),
+  }
 }
 
 function mapDesignation(row: DesignationRow): BirthDesignationRecord {
@@ -268,243 +187,67 @@ function mapDesignation(row: DesignationRow): BirthDesignationRecord {
   }
 }
 
-const LEDGER_COLUMNS = `
-  scope_ref,
-  home_node_id,
-  placement_epoch,
-  state,
-  birth_class,
-  authority_provenance_json,
-  establishment_provenance,
-  prior_home_node_id,
-  created_at,
-  updated_at
-`
-
-function canonicalScopeRef(scopeRef: string): string {
-  return formatCanonicalScopeRef({ scopeRef })
-}
-
-function requirePositiveEpoch(epoch: number): number {
-  if (!Number.isSafeInteger(epoch) || epoch < 1) {
-    throw new Error(`placementEpoch must be a positive safe integer, got ${String(epoch)}`)
-  }
-  return epoch
-}
-
-function requireNodeId(nodeId: string, field: string): string {
-  const normalized = nodeId.trim()
-  if (normalized.length === 0) throw new Error(`${field} must not be empty`)
-  return normalized
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
-}
-
-function serializeAuthority(value: BirthAuthorityProvenance): string {
-  if (typeof value.kind !== 'string' || value.kind.trim().length === 0) {
-    throw new Error('authorityProvenance.kind must be a non-empty string')
-  }
-  return stableJson(value)
-}
-
-function parseAuthority(value: string): BirthAuthorityProvenance {
-  const parsed = JSON.parse(value) as unknown
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('stored authority provenance is not an object')
-  }
-  return parsed as BirthAuthorityProvenance
-}
-
-function mapBinding(row: PlacementRow): PlacementBinding {
-  return {
-    scopeRef: row.scope_ref,
-    homeNodeId: row.home_node_id,
-    placementEpoch: row.placement_epoch,
-    birthClass: row.birth_class,
-    authorityProvenance: parseAuthority(row.authority_provenance_json),
-    establishmentProvenance: row.establishment_provenance,
-    ...(row.prior_home_node_id === null ? {} : { priorHomeNodeId: row.prior_home_node_id }),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
-function mapRegistryRecord(row: RegistryRow): BindingRegistryRecord {
-  const common = {
-    scopeRef: row.scope_ref,
-    placementEpoch: row.placement_epoch,
-    birthClass: row.birth_class,
-    authorityProvenance: parseAuthority(row.authority_provenance_json),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-  if (row.state === 'active') {
-    if (row.home_node_id === null || row.establishment_provenance === null) {
-      throw new Error(`active registry row ${row.scope_ref} is missing active fields`)
-    }
-    return {
-      state: 'active',
-      ...common,
-      homeNodeId: row.home_node_id,
-      establishmentProvenance: row.establishment_provenance,
-      ...(row.prior_home_node_id === null ? {} : { priorHomeNodeId: row.prior_home_node_id }),
-    }
-  }
-  if (
-    row.retired_home_node_id === null ||
-    row.retired_at === null ||
-    row.retirement_reason === null
-  ) {
-    throw new Error(`retired registry row ${row.scope_ref} is missing retirement fields`)
-  }
-  return {
-    state: 'retired',
-    ...common,
-    retiredHomeNodeId: row.retired_home_node_id,
-    retiredAt: row.retired_at,
-    reason: row.retirement_reason,
-    successorNodeId: row.successor_node_id,
-  }
-}
-
-function activeBinding(record: BindingRegistryRecord): PlacementBinding | undefined {
-  if (record.state !== 'active') return undefined
-  const { state: _state, ...binding } = record
-  return binding
-}
-
-function mapLedger(row: PlacementRow): PlacementLedgerRecord {
-  return { ...mapBinding(row), state: row.state ?? 'active' }
-}
-
-function sameBinding(left: PlacementBinding, right: PlacementBinding): boolean {
-  return (
-    left.scopeRef === right.scopeRef &&
-    left.homeNodeId === right.homeNodeId &&
-    left.placementEpoch === right.placementEpoch &&
-    left.birthClass === right.birthClass &&
-    stableJson(left.authorityProvenance) === stableJson(right.authorityProvenance) &&
-    left.establishmentProvenance === right.establishmentProvenance &&
-    left.priorHomeNodeId === right.priorHomeNodeId
-  )
-}
-
-function requireStoredBinding(
-  binding: PlacementBinding | undefined,
-  operation: string
-): PlacementBinding {
-  if (binding === undefined) {
-    throw new Error(`binding registry invariant failed after ${operation}`)
-  }
-  return binding
-}
-
-function requireStoredLedger(
-  record: PlacementLedgerRecord | undefined,
-  operation: string
-): PlacementLedgerRecord {
-  if (record === undefined) {
-    throw new Error(`placement ledger invariant failed after ${operation}`)
-  }
-  return record
-}
-
-export class PlacementEpochRegressionError extends Error {
-  constructor(scopeRef: string, currentEpoch: number, attemptedEpoch: number) {
-    super(
-      `placement epoch regression for ${scopeRef}: current epoch ${currentEpoch}, attempted ${attemptedEpoch}`
-    )
-    this.name = 'PlacementEpochRegressionError'
-  }
-}
-
-export class PlacementLedgerConflictError extends Error {
-  constructor(scopeRef: string, epoch: number) {
-    super(`conflicting placement ledger row for ${scopeRef} at epoch ${epoch}`)
-    this.name = 'PlacementLedgerConflictError'
-  }
+function createPlacementLedgerTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE placement_ledger (
+      scope_ref TEXT PRIMARY KEY,
+      home_node_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'retired')),
+      retired_at TEXT,
+      retirement_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (
+        (state = 'active' AND retired_at IS NULL AND retirement_reason IS NULL) OR
+        (state = 'retired' AND retired_at IS NOT NULL AND retirement_reason IS NOT NULL)
+      )
+    );
+  `)
 }
 
 function ensurePlacementLedgerSchema(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS placement_ledger (
-      scope_ref TEXT PRIMARY KEY,
-      home_node_id TEXT NOT NULL,
-      placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
-      state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
-      birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
-      authority_provenance_json TEXT NOT NULL,
-      establishment_provenance TEXT NOT NULL CHECK (
-        establishment_provenance IN (
-          'pin',
-          'task_default',
-          'default_home_node',
-          'default_home_node(local)',
-          'default_home_node(sender)',
-          'default_home_node(sender-retired)',
-          'explicit_local',
-          'rebind'
-        )
-      ),
-      prior_home_node_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `)
-
   const schema = db
     .query<{ sql: string }, [string]>(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
     )
     .get('placement_ledger')?.sql
-  if (schema?.includes("'default_home_node(sender)'")) return
+  if (schema === undefined) {
+    createPlacementLedgerTable(db)
+    return
+  }
+  if (!schema.includes('placement_epoch') && schema.includes("'retired'")) return
 
-  // T-06697 widened this CHECK-constrained vocabulary; T-07655 widens it again
-  // with the two designated tier-5 provenances. SQLite cannot alter a CHECK in
-  // place, so preserve every row while rebuilding the table once. The gate
-  // tests for the NEWEST value on purpose: keying it on 'task_default' would
-  // have skipped every table the previous rebuild already produced.
   db.transaction(() => {
+    db.exec('ALTER TABLE placement_ledger RENAME TO placement_ledger_legacy_v12;')
+    createPlacementLedgerTable(db)
     db.exec(`
-      ALTER TABLE placement_ledger RENAME TO placement_ledger_legacy_t07655;
-      CREATE TABLE placement_ledger (
-        scope_ref TEXT PRIMARY KEY,
-        home_node_id TEXT NOT NULL,
-        placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
-        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
-        birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
-        authority_provenance_json TEXT NOT NULL,
-        establishment_provenance TEXT NOT NULL CHECK (
-          establishment_provenance IN (
-            'pin',
-            'task_default',
-            'default_home_node',
-            'default_home_node(local)',
-            'default_home_node(sender)',
-            'default_home_node(sender-retired)',
-            'explicit_local',
-            'rebind'
-          )
-        ),
-        prior_home_node_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
       INSERT INTO placement_ledger (${LEDGER_COLUMNS})
-      SELECT ${LEDGER_COLUMNS} FROM placement_ledger_legacy_t07655;
-      DROP TABLE placement_ledger_legacy_t07655;
+      SELECT
+        scope_ref,
+        home_node_id,
+        CASE WHEN state = 'active' THEN 'active' ELSE 'retired' END,
+        CASE WHEN state = 'active' THEN NULL ELSE updated_at END,
+        CASE WHEN state = 'active' THEN NULL ELSE 'migrated-v1.2-local-fence' END,
+        created_at,
+        updated_at
+      FROM placement_ledger_legacy_v12;
+      DROP TABLE placement_ledger_legacy_v12;
     `)
   }).immediate()
+}
+
+export class PlacementLedgerConflictError extends Error {
+  constructor(scopeRef: string) {
+    super(`conflicting placement ledger row for ${scopeRef}`)
+    this.name = 'PlacementLedgerConflictError'
+  }
+}
+
+export class PlacementLedgerRetiredError extends Error {
+  constructor(scopeRef: string) {
+    super(`scope ${scopeRef} is permanently retired on this node`)
+    this.name = 'PlacementLedgerRetiredError'
+  }
 }
 
 export class PlacementLedgerRepository {
@@ -530,106 +273,62 @@ export class PlacementLedgerRepository {
     return readPlacementLedgerRows(this.db)
   }
 
-  /**
-   * Fence one exact local authority tuple before the collective registry moves.
-   * The retained row is forensic state and makes retry idempotent; it is never
-   * treated as summon authority by activeAuthority().
-   */
-  revoke(input: RevokePlacementInput): RevokePlacementResult {
+  retire(input: RetirePlacementInput): RetirePlacementResult {
     const scopeRef = canonicalScopeRef(input.scopeRef)
     const expectedHomeNodeId = requireNodeId(input.expectedHomeNodeId, 'expectedHomeNodeId')
-    const expectedPlacementEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
-
+    if (input.reason.trim().length === 0) throw new Error('retirement reason must not be empty')
     return this.db
       .transaction(() => {
         const current = this.get(scopeRef)
         if (current === undefined) return { outcome: 'not_found' }
-        if (
-          current.homeNodeId !== expectedHomeNodeId ||
-          current.placementEpoch !== expectedPlacementEpoch
-        ) {
+        if (current.homeNodeId !== expectedHomeNodeId) {
           return { outcome: 'conflict', record: current }
         }
-        if (current.state === 'revoked') return { outcome: 'idempotent', record: current }
-
+        if (current.state === 'retired') return { outcome: 'idempotent', record: current }
         const changed = this.db
           .query(
             `UPDATE placement_ledger
-             SET state = 'revoked', updated_at = ?
-             WHERE scope_ref = ? AND state = 'active' AND home_node_id = ? AND placement_epoch = ?`
+                SET state = 'retired', retired_at = ?, retirement_reason = ?, updated_at = ?
+              WHERE scope_ref = ? AND state = 'active' AND home_node_id = ?`
           )
-          .run(input.updatedAt, scopeRef, expectedHomeNodeId, expectedPlacementEpoch)
+          .run(input.retiredAt, input.reason, input.retiredAt, scopeRef, expectedHomeNodeId)
         if (changed.changes !== 1) return { outcome: 'conflict', record: current }
-        return {
-          outcome: 'revoked',
-          record: requireStoredLedger(this.get(scopeRef), 'revoke'),
-        }
+        return { outcome: 'retired', record: this.get(scopeRef) }
       })
-      .immediate() as RevokePlacementResult
+      .immediate() as RetirePlacementResult
   }
 
   installActive(input: InstallActivePlacementInput): PlacementLedgerRecord {
-    const normalized: PlacementLedgerRecord = {
+    const normalized: PlacementBinding = {
       scopeRef: canonicalScopeRef(input.scopeRef),
       homeNodeId: requireNodeId(input.homeNodeId, 'homeNodeId'),
-      placementEpoch: requirePositiveEpoch(input.placementEpoch),
-      state: 'active',
-      birthClass: input.birthClass,
-      authorityProvenance: input.authorityProvenance,
-      establishmentProvenance: input.establishmentProvenance,
-      ...(input.priorHomeNodeId === undefined
-        ? {}
-        : { priorHomeNodeId: requireNodeId(input.priorHomeNodeId, 'priorHomeNodeId') }),
       createdAt: input.createdAt ?? input.updatedAt,
       updatedAt: input.updatedAt,
     }
-    const authorityJson = serializeAuthority(normalized.authorityProvenance)
-
     return this.db
       .transaction(() => {
         const current = this.get(normalized.scopeRef)
+        if (current?.state === 'retired') throw new PlacementLedgerRetiredError(normalized.scopeRef)
         if (current !== undefined) {
-          if (normalized.placementEpoch < current.placementEpoch) {
-            throw new PlacementEpochRegressionError(
-              normalized.scopeRef,
-              current.placementEpoch,
-              normalized.placementEpoch
-            )
+          if (current.homeNodeId !== normalized.homeNodeId) {
+            throw new PlacementLedgerConflictError(normalized.scopeRef)
           }
-          if (normalized.placementEpoch === current.placementEpoch) {
-            if (current.state === 'active' && sameBinding(current, normalized)) return current
-            throw new PlacementLedgerConflictError(normalized.scopeRef, normalized.placementEpoch)
-          }
+          return current
         }
-
         this.db
           .query(
-            `
-            INSERT INTO placement_ledger (${LEDGER_COLUMNS})
-            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope_ref) DO UPDATE SET
-              home_node_id = excluded.home_node_id,
-              placement_epoch = excluded.placement_epoch,
-              state = excluded.state,
-              birth_class = excluded.birth_class,
-              authority_provenance_json = excluded.authority_provenance_json,
-              establishment_provenance = excluded.establishment_provenance,
-              prior_home_node_id = excluded.prior_home_node_id,
-              updated_at = excluded.updated_at
-          `
+            `INSERT INTO placement_ledger (${LEDGER_COLUMNS})
+             VALUES (?, ?, 'active', NULL, NULL, ?, ?)`
           )
           .run(
             normalized.scopeRef,
             normalized.homeNodeId,
-            normalized.placementEpoch,
-            normalized.birthClass,
-            authorityJson,
-            normalized.establishmentProvenance,
-            normalized.priorHomeNodeId ?? null,
             normalized.createdAt,
             normalized.updatedAt
           )
-        return requireStoredLedger(this.get(normalized.scopeRef), 'install')
+        const stored = this.get(normalized.scopeRef)
+        if (stored === undefined) throw new Error('placement ledger insert did not store a row')
+        return stored
       })
       .immediate()
   }
@@ -639,7 +338,6 @@ export function createPlacementLedgerRepository(db: Database): PlacementLedgerRe
   return new PlacementLedgerRepository(db)
 }
 
-/** Read-only reconstruction surface; returns no rows for a pre-federation DB. */
 export function readPlacementLedgerRows(db: Database): PlacementLedgerRecord[] {
   const table = db
     .query<{ name: string }, [string]>(
@@ -657,67 +355,23 @@ function createRegistryTable(db: Database): void {
   db.exec(`
     CREATE TABLE binding_registry (
       scope_ref TEXT PRIMARY KEY,
-      state TEXT NOT NULL CHECK (state IN ('active', 'retired')),
-      placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
-      birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
-      authority_provenance_json TEXT NOT NULL,
+      home_node_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      home_node_id TEXT,
-      establishment_provenance TEXT CHECK (
-        establishment_provenance IN (
-          'pin',
-          'task_default',
-          'default_home_node',
-          'default_home_node(local)',
-          'default_home_node(sender)',
-          'default_home_node(sender-retired)',
-          'explicit_local',
-          'rebind'
-        )
-      ),
-      prior_home_node_id TEXT,
-      retired_home_node_id TEXT,
-      retired_at TEXT,
-      retirement_reason TEXT,
-      successor_node_id TEXT,
-      CHECK (
-        (
-          state = 'active' AND
-          home_node_id IS NOT NULL AND
-          establishment_provenance IS NOT NULL AND
-          retired_home_node_id IS NULL AND
-          retired_at IS NULL AND
-          retirement_reason IS NULL AND
-          successor_node_id IS NULL
-        ) OR (
-          state = 'retired' AND
-          home_node_id IS NULL AND
-          establishment_provenance IS NULL AND
-          prior_home_node_id IS NULL AND
-          retired_home_node_id IS NOT NULL AND
-          retired_at IS NOT NULL AND
-          retirement_reason IS NOT NULL
-        )
-      )
+      updated_at TEXT NOT NULL
     );
   `)
 }
 
-/**
- * The tier-5 birth designations (T-07655), deliberately in the REGISTRY
- * database rather than a node-local one.
- *
- * Co-location is the whole mechanism: a tier-1-4 establishment must supersede a
- * live designation in the SAME SQLite transaction that writes the binding, and
- * the establish fence must read the designation under that transaction too. A
- * designation living in another file could only be updated after the binding
- * committed, which is a window in which the two records disagree.
- *
- * The partial unique index is the structural half of idempotency: at most ONE
- * live designation per scope exists, so a second designateBirth for a scope
- * already designated cannot mint a second row even if two hosts raced.
- */
+function createRetirementAuditTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS binding_retirement_audit (
+      scope_ref TEXT PRIMARY KEY,
+      last_home_node_id TEXT NOT NULL,
+      retired_at TEXT NOT NULL
+    );
+  `)
+}
+
 function createBirthDesignationTable(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS birth_designation (
@@ -744,18 +398,16 @@ function createBirthDesignationTable(db: Database): void {
   `)
 }
 
-export type OpenBindingRegistryOptions = {
-  busyTimeoutMs?: number | undefined
-}
-
-function resolveRegistryBusyTimeoutMs(value: number | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 5_000
-}
+export type OpenBindingRegistryOptions = { busyTimeoutMs?: number | undefined }
 
 function createRegistryDatabase(path: string, options: OpenBindingRegistryOptions = {}): Database {
   mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
-  db.exec(`PRAGMA busy_timeout = ${resolveRegistryBusyTimeoutMs(options.busyTimeoutMs)};`)
+  const busyTimeout =
+    typeof options.busyTimeoutMs === 'number' && Number.isFinite(options.busyTimeoutMs)
+      ? Math.max(0, options.busyTimeoutMs)
+      : 5_000
+  db.exec(`PRAGMA busy_timeout = ${busyTimeout};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
 
@@ -764,69 +416,23 @@ function createRegistryDatabase(path: string, options: OpenBindingRegistryOption
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
     )
     .get('binding_registry')?.sql
-  if (schema === undefined) {
-    createRegistryTable(db)
-    createBirthDesignationTable(db)
-    return db
-  }
-  createBirthDesignationTable(db)
-  if (schema.includes("'default_home_node(sender)'")) return db
-
-  // T-06681 added the retirement state; T-07655 widens the establishment
-  // vocabulary with the two designated tier-5 provenances. Both are rebuilds of
-  // a CHECK SQLite cannot alter in place, and the same copy handles either
-  // starting shape: pre-T-06681 rows are all active, and a post-T-06681 table
-  // already carries the state column the copy names.
-  const legacyActiveOnly = !schema.includes(
-    "state TEXT NOT NULL CHECK (state IN ('active', 'retired'))"
-  )
-  db.transaction(() => {
-    db.exec('ALTER TABLE binding_registry RENAME TO binding_registry_legacy_t06681;')
-    createRegistryTable(db)
-    if (!legacyActiveOnly) {
+  if (schema === undefined) createRegistryTable(db)
+  else if (schema.includes('placement_epoch') || schema.includes('establishment_provenance')) {
+    db.transaction(() => {
+      db.exec('ALTER TABLE binding_registry RENAME TO binding_registry_legacy_v12;')
+      createRegistryTable(db)
+      const hasState = schema.includes("state TEXT NOT NULL CHECK (state IN ('active', 'retired'))")
       db.exec(`
         INSERT INTO binding_registry (${REGISTRY_COLUMNS})
-        SELECT ${REGISTRY_COLUMNS} FROM binding_registry_legacy_t06681;
-        DROP TABLE binding_registry_legacy_t06681;
+        SELECT scope_ref, home_node_id, created_at, updated_at
+          FROM binding_registry_legacy_v12
+          ${hasState ? "WHERE state = 'active'" : ''};
+        DROP TABLE binding_registry_legacy_v12;
       `)
-      return
-    }
-    db.exec(`
-      INSERT INTO binding_registry (
-        scope_ref,
-        state,
-        placement_epoch,
-        birth_class,
-        authority_provenance_json,
-        created_at,
-        updated_at,
-        home_node_id,
-        establishment_provenance,
-        prior_home_node_id,
-        retired_home_node_id,
-        retired_at,
-        retirement_reason,
-        successor_node_id
-      )
-      SELECT
-        scope_ref,
-        'active',
-        placement_epoch,
-        birth_class,
-        authority_provenance_json,
-        created_at,
-        updated_at,
-        home_node_id,
-        establishment_provenance,
-        prior_home_node_id,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-      FROM binding_registry_legacy_t06681;
-      DROP TABLE binding_registry_legacy_t06681;
-    `)
-  }).immediate()
+    }).immediate()
+  }
+  createBirthDesignationTable(db)
+  createRetirementAuditTable(db)
   return db
 }
 
@@ -837,40 +443,40 @@ export class BindingRegistry {
     this.sqlite.close()
   }
 
-  getRecord(scopeRef: string): BindingRegistryRecord | undefined {
+  get(scopeRef: string): PlacementBinding | undefined {
     const row = this.sqlite
       .query<RegistryRow, [string]>(
         `SELECT ${REGISTRY_COLUMNS} FROM binding_registry WHERE scope_ref = ?`
       )
       .get(canonicalScopeRef(scopeRef))
-    return row === null ? undefined : mapRegistryRecord(row)
+    return row === null ? undefined : mapBinding(row)
   }
 
-  /** Compatibility active lookup. A tombstone is deliberately not a binding. */
-  get(scopeRef: string): PlacementBinding | undefined {
-    const record = this.getRecord(scopeRef)
-    return record === undefined ? undefined : activeBinding(record)
+  getRecord(scopeRef: string): BindingRegistryRecord | undefined {
+    return this.get(scopeRef)
+  }
+
+  retiredHome(scopeRef: string): string | undefined {
+    return (
+      this.sqlite
+        .query<{ last_home_node_id: string }, [string]>(
+          'SELECT last_home_node_id FROM binding_retirement_audit WHERE scope_ref = ?'
+        )
+        .get(canonicalScopeRef(scopeRef))?.last_home_node_id ?? undefined
+    )
   }
 
   list(): PlacementBinding[] {
     return this.sqlite
-      .query<RegistryRow, []>(
-        `SELECT ${REGISTRY_COLUMNS} FROM binding_registry WHERE state = 'active' ORDER BY scope_ref`
-      )
+      .query<RegistryRow, []>(`SELECT ${REGISTRY_COLUMNS} FROM binding_registry ORDER BY scope_ref`)
       .all()
-      .map(mapRegistryRecord)
-      .map(activeBinding)
-      .filter((binding): binding is PlacementBinding => binding !== undefined)
+      .map(mapBinding)
   }
 
   listRecords(): BindingRegistryRecord[] {
-    return this.sqlite
-      .query<RegistryRow, []>(`SELECT ${REGISTRY_COLUMNS} FROM binding_registry ORDER BY scope_ref`)
-      .all()
-      .map(mapRegistryRecord)
+    return this.list()
   }
 
-  /** The one live tier-5 designation for a scope, if it has one (T-07655). */
   liveDesignation(scopeRef: string): BirthDesignationRecord | undefined {
     const row = this.sqlite
       .query<DesignationRow, [string]>(
@@ -881,11 +487,6 @@ export class BindingRegistry {
     return row === null ? undefined : mapDesignation(row)
   }
 
-  /**
-   * The designation locate reports: the LIVE one, or the most recent superseded
-   * one when a declared tier has since won. A superseded row is kept and shown
-   * because it is the only record of why a scope was born where it was.
-   */
   latestDesignation(scopeRef: string): BirthDesignationRecord | undefined {
     const row = this.sqlite
       .query<DesignationRow, [string]>(
@@ -896,24 +497,6 @@ export class BindingRegistry {
     return row === null ? undefined : mapDesignation(row)
   }
 
-  /**
-   * Live designations naming a node whose scope has NEVER been established
-   * (T-07661).
-   *
-   * This is the registry's answer to "which virgin births does that node still
-   * owe?", and it exists because a designated scope whose establish was refused
-   * has no other wake source: the ledger tail's insert wake is consumed once,
-   * and the kicker's periodic sweep only looks at scopes a node already seats.
-   * Nobody seats a scope that was never born, so without this the retry
-   * depended on unrelated later traffic arriving.
-   *
-   * `NOT EXISTS ... binding_registry` is deliberately unfiltered by state. A
-   * designation stays `live` after the tier-5 birth it authorised — nothing
-   * supersedes it — so keying on `state = 'active'` alone would keep every born
-   * scope in the answer forever, and a RETIRED scope is not a virgin birth
-   * either. A row in that table at all means this scope has been established
-   * once, which is exactly what "unborn" denies.
-   */
   listUnbornDesignationsForNode(homeNodeId: string, limit = 200): BirthDesignationRecord[] {
     return this.sqlite
       .query<DesignationRow, [string, number]>(
@@ -926,11 +509,10 @@ export class BindingRegistry {
           ORDER BY d.scope_ref
           LIMIT ?`
       )
-      .all(homeNodeId, limit)
+      .all(requireNodeId(homeNodeId, 'homeNodeId'), limit)
       .map(mapDesignation)
   }
 
-  /** Every designation a scope has ever had, oldest first. Locate reads it. */
   designationHistory(scopeRef: string): BirthDesignationRecord[] {
     return this.sqlite
       .query<DesignationRow, [string]>(
@@ -941,17 +523,6 @@ export class BindingRegistry {
       .map(mapDesignation)
   }
 
-  /**
-   * Records a designation the host has already derived, and returns the live
-   * one either way.
-   *
-   * IDEMPOTENT BY CONSTRUCTION. A scope that already has a live designation
-   * gets that row back untouched — a second caller, a re-asking kicker, and a
-   * sender that has since retired and reactivated all converge on the FIRST
-   * answer, which is what makes the designation a stable fact rather than a
-   * per-asker one. The epoch advances only after a supersession clears the
-   * live row.
-   */
   recordDesignation(input: RecordBirthDesignationInput): BirthDesignationRecord {
     const scopeRef = canonicalScopeRef(input.scopeRef)
     const homeNodeId = requireNodeId(input.homeNodeId, 'homeNodeId')
@@ -989,357 +560,76 @@ export class BindingRegistry {
   establish(input: EstablishBindingInput): BindingEstablishResult {
     const scopeRef = canonicalScopeRef(input.scopeRef)
     const homeNodeId = requireNodeId(input.homeNodeId, 'homeNodeId')
-    const placementEpoch = requirePositiveEpoch(input.placementEpoch)
-    if (placementEpoch !== 1) {
-      throw new Error(`virgin establishment must use placementEpoch 1, got ${placementEpoch}`)
-    }
-    const authorityJson = serializeAuthority(input.authorityProvenance)
-
     return this.sqlite
       .transaction(() => {
-        const current = this.getRecord(scopeRef)
-        if (current?.state === 'retired') {
-          return { outcome: 'retired', retirement: current }
-        }
-
-        // The T-07655 fence and its supersession, both inside the transaction
-        // that writes the binding. A designation is a tier-5 DEFAULT: it can
-        // refuse only another tier-5 establishment that disagrees with it, and
-        // every declared tier clears it by winning rather than by asking.
+        const current = this.get(scopeRef)
         const designation = this.liveDesignation(scopeRef)
         if (designation !== undefined && current === undefined) {
           if (
-            DESIGNATED_PROVENANCE.has(input.establishmentProvenance) &&
+            DESIGNATED_SOURCES.has(input.placementSource) &&
             homeNodeId !== designation.homeNodeId
           ) {
             return { outcome: 'designation-mismatch', designation }
           }
-          if (SUPERSEDING_PROVENANCE.has(input.establishmentProvenance)) {
+          if (SUPERSEDING_SOURCES.has(input.placementSource)) {
             this.sqlite
               .query(
                 `UPDATE birth_designation
                     SET state = 'superseded', superseded_by = ?, superseded_at = ?
                   WHERE scope_ref = ? AND designation_epoch = ?`
               )
-              .run(input.establishmentProvenance, input.now, scopeRef, designation.designationEpoch)
+              .run(input.placementSource, input.now, scopeRef, designation.designationEpoch)
           }
         }
-
-        if (current?.state === 'active') {
-          const binding = activeBinding(current)
-          if (binding === undefined) throw new Error('active registry record mapping failed')
-          return { outcome: 'existing', binding }
-        }
-        const result = this.sqlite
+        if (current !== undefined) return { outcome: 'existing', binding: current }
+        const inserted = this.sqlite
           .query(
-            `
-            INSERT INTO binding_registry (${REGISTRY_COLUMNS})
-            VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
-            ON CONFLICT(scope_ref) DO NOTHING
-          `
+            `INSERT INTO binding_registry (${REGISTRY_COLUMNS})
+             VALUES (?, ?, ?, ?) ON CONFLICT(scope_ref) DO NOTHING`
           )
-          .run(
-            scopeRef,
-            placementEpoch,
-            input.birthClass,
-            authorityJson,
-            input.now,
-            input.now,
-            homeNodeId,
-            input.establishmentProvenance
-          )
-        const stored = this.getRecord(scopeRef)
-        if (stored?.state === 'retired') return { outcome: 'retired', retirement: stored }
-        return {
-          outcome: result.changes === 1 ? 'created' : 'existing',
-          binding: requireStoredBinding(this.get(scopeRef), 'establishment'),
-        }
+          .run(scopeRef, homeNodeId, input.now, input.now)
+        const stored = this.get(scopeRef)
+        if (stored === undefined) throw new Error('binding registry insert did not store a row')
+        return { outcome: inserted.changes === 1 ? 'created' : 'existing', binding: stored }
       })
       .immediate() as BindingEstablishResult
   }
 
-  compareAndSwap(input: BindingCasInput): BindingCasResult {
-    const scopeRef = canonicalScopeRef(input.scopeRef)
-    const expectedHome = requireNodeId(input.expectedHomeNodeId, 'expectedHomeNodeId')
-    const expectedEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
-    const newHome = requireNodeId(input.newHomeNodeId, 'newHomeNodeId')
-    if (newHome === expectedHome) {
-      throw new Error('binding CAS newHomeNodeId must differ from expectedHomeNodeId')
-    }
-    if (expectedEpoch === Number.MAX_SAFE_INTEGER) {
-      throw new Error(`placement epoch exhausted for ${scopeRef}`)
-    }
-    const nextEpoch = expectedEpoch + 1
-
-    return this.sqlite
-      .transaction(() => {
-        const record = this.getRecord(scopeRef)
-        if (record?.state === 'retired') {
-          return { outcome: 'conflict', retirement: record }
-        }
-        const current = record === undefined ? undefined : activeBinding(record)
-        if (current === undefined) return { outcome: 'not_found' }
-        if (
-          current.homeNodeId === newHome &&
-          current.placementEpoch === nextEpoch &&
-          current.priorHomeNodeId === expectedHome
-        ) {
-          return { outcome: 'idempotent', binding: current }
-        }
-        if (current.homeNodeId !== expectedHome || current.placementEpoch !== expectedEpoch) {
-          return { outcome: 'conflict', binding: current }
-        }
-
-        this.sqlite
-          .query(
-            `
-            UPDATE binding_registry
-            SET home_node_id = ?,
-                placement_epoch = ?,
-                establishment_provenance = 'rebind',
-                prior_home_node_id = ?,
-                updated_at = ?
-            WHERE scope_ref = ? AND state = 'active' AND home_node_id = ? AND placement_epoch = ?
-          `
-          )
-          .run(newHome, nextEpoch, expectedHome, input.now, scopeRef, expectedHome, expectedEpoch)
-        return {
-          outcome: 'updated',
-          binding: requireStoredBinding(this.get(scopeRef), 'compare-and-swap'),
-        }
-      })
-      .immediate() as BindingCasResult
-  }
-
-  retire(input: RetireBindingInput): RetireBindingResult {
+  deleteBinding(input: DeleteBindingInput): DeleteBindingResult {
     const scopeRef = canonicalScopeRef(input.scopeRef)
     const expectedHomeNodeId = requireNodeId(input.expectedHomeNodeId, 'expectedHomeNodeId')
-    const expectedPlacementEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
-    const successorNodeId =
-      input.successorNodeId === null
-        ? null
-        : requireNodeId(input.successorNodeId, 'successorNodeId')
-    if (input.reason.trim().length === 0) throw new Error('retirement reason must not be empty')
-
     return this.sqlite
       .transaction(() => {
-        const current = this.getRecord(scopeRef)
-        if (current === undefined) return { outcome: 'not_found' }
-        if (current.state === 'retired') {
-          if (
-            current.retiredHomeNodeId === expectedHomeNodeId &&
-            current.placementEpoch === expectedPlacementEpoch &&
-            current.successorNodeId === successorNodeId &&
-            current.reason === input.reason &&
-            current.retiredAt === input.retiredAt
-          ) {
-            return { outcome: 'idempotent', retirement: current }
-          }
-          return { outcome: 'conflict', retirement: current }
+        const current = this.get(scopeRef)
+        if (current === undefined) return { outcome: 'idempotent' }
+        if (current.homeNodeId !== expectedHomeNodeId) {
+          return { outcome: 'conflict', binding: current }
         }
-        const binding = activeBinding(current)
-        if (binding === undefined) throw new Error('active registry record mapping failed')
-        if (
-          binding.homeNodeId !== expectedHomeNodeId ||
-          binding.placementEpoch !== expectedPlacementEpoch
-        ) {
-          return { outcome: 'conflict', binding }
-        }
-
-        const changed = this.sqlite
-          .query(
-            `UPDATE binding_registry
-             SET state = 'retired',
-                 home_node_id = NULL,
-                 establishment_provenance = NULL,
-                 prior_home_node_id = NULL,
-                 retired_home_node_id = ?,
-                 retired_at = ?,
-                 retirement_reason = ?,
-                 successor_node_id = ?,
-                 updated_at = ?
-             WHERE scope_ref = ?
-               AND state = 'active'
-               AND home_node_id = ?
-               AND placement_epoch = ?`
-          )
-          .run(
-            expectedHomeNodeId,
-            input.retiredAt,
-            input.reason,
-            successorNodeId,
-            input.retiredAt,
-            scopeRef,
-            expectedHomeNodeId,
-            expectedPlacementEpoch
-          )
-        if (changed.changes !== 1) return { outcome: 'conflict', binding }
-        const retirement = this.getRecord(scopeRef)
-        if (retirement?.state !== 'retired') {
-          throw new Error('binding registry invariant failed after retirement')
-        }
-        return { outcome: 'retired', retirement }
-      })
-      .immediate() as RetireBindingResult
-  }
-
-  activateRetired(input: ActivateRetiredBindingInput): ActivateRetiredBindingResult {
-    const scopeRef = canonicalScopeRef(input.scopeRef)
-    const successorNodeId = requireNodeId(input.successorNodeId, 'successorNodeId')
-    const expectedPlacementEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
-    if (expectedPlacementEpoch === Number.MAX_SAFE_INTEGER) {
-      return { outcome: 'epoch_exhausted' }
-    }
-    const nextEpoch = expectedPlacementEpoch + 1
-
-    return this.sqlite
-      .transaction(() => {
-        const current = this.getRecord(scopeRef)
-        if (current === undefined) return { outcome: 'not_found' }
-        if (current.state === 'active') {
-          const binding = activeBinding(current)
-          if (binding === undefined) throw new Error('active registry record mapping failed')
-          if (binding.homeNodeId === successorNodeId && binding.placementEpoch === nextEpoch) {
-            return { outcome: 'idempotent', binding }
-          }
-          return { outcome: 'conflict', binding }
-        }
-        if (current.birthClass === 'mechanism-born') {
-          return { outcome: 'mechanism_refused', retirement: current }
-        }
-        if (
-          current.placementEpoch !== expectedPlacementEpoch ||
-          current.successorNodeId !== successorNodeId
-        ) {
-          return { outcome: 'conflict', retirement: current }
-        }
-
-        const changed = this.sqlite
-          .query(
-            `UPDATE binding_registry
-             SET state = 'active',
-                 placement_epoch = ?,
-                 home_node_id = ?,
-                 establishment_provenance = 'rebind',
-                 prior_home_node_id = retired_home_node_id,
-                 retired_home_node_id = NULL,
-                 retired_at = NULL,
-                 retirement_reason = NULL,
-                 successor_node_id = NULL,
-                 updated_at = ?
-             WHERE scope_ref = ?
-               AND state = 'retired'
-               AND placement_epoch = ?
-               AND successor_node_id = ?`
-          )
-          .run(
-            nextEpoch,
-            successorNodeId,
-            input.now,
-            scopeRef,
-            expectedPlacementEpoch,
-            successorNodeId
-          )
-        if (changed.changes !== 1) return { outcome: 'conflict', retirement: current }
-        return {
-          outcome: 'activated',
-          binding: requireStoredBinding(this.get(scopeRef), 'retired activation'),
-        }
-      })
-      .immediate() as ActivateRetiredBindingResult
-  }
-
-  retargetRetired(input: RetargetRetiredBindingInput): RetargetRetiredBindingResult {
-    const scopeRef = canonicalScopeRef(input.scopeRef)
-    const expectedPlacementEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
-    const expectedSuccessorNodeId =
-      input.expectedSuccessorNodeId === null
-        ? null
-        : requireNodeId(input.expectedSuccessorNodeId, 'expectedSuccessorNodeId')
-    const newSuccessorNodeId =
-      input.newSuccessorNodeId === null
-        ? null
-        : requireNodeId(input.newSuccessorNodeId, 'newSuccessorNodeId')
-    if (expectedPlacementEpoch === Number.MAX_SAFE_INTEGER) {
-      return { outcome: 'epoch_exhausted' }
-    }
-    const nextEpoch = expectedPlacementEpoch + 1
-
-    return this.sqlite
-      .transaction(() => {
-        const current = this.getRecord(scopeRef)
-        if (current === undefined) return { outcome: 'not_found' }
-        if (current.state === 'active')
-          return { outcome: 'conflict', binding: activeBinding(current) }
-        if (
-          current.placementEpoch !== expectedPlacementEpoch ||
-          current.successorNodeId !== expectedSuccessorNodeId
-        ) {
-          return { outcome: 'conflict', retirement: current }
-        }
+        const deleted = this.sqlite
+          .query('DELETE FROM binding_registry WHERE scope_ref = ? AND home_node_id = ?')
+          .run(scopeRef, expectedHomeNodeId)
+        if (deleted.changes !== 1) return { outcome: 'conflict', binding: current }
+        this.sqlite
+          .query("DELETE FROM birth_designation WHERE scope_ref = ? AND state = 'live'")
+          .run(scopeRef)
         this.sqlite
           .query(
-            `UPDATE binding_registry
-             SET placement_epoch = ?, successor_node_id = ?, updated_at = ?
-             WHERE scope_ref = ? AND state = 'retired' AND placement_epoch = ?
-               AND successor_node_id IS ?`
+            `INSERT INTO binding_retirement_audit (scope_ref, last_home_node_id, retired_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(scope_ref) DO UPDATE SET
+               last_home_node_id = excluded.last_home_node_id,
+               retired_at = excluded.retired_at`
           )
-          .run(
-            nextEpoch,
-            newSuccessorNodeId,
-            input.now,
-            scopeRef,
-            expectedPlacementEpoch,
-            expectedSuccessorNodeId
-          )
-        const retirement = this.getRecord(scopeRef)
-        if (retirement?.state !== 'retired') {
-          throw new Error('binding registry invariant failed after retirement retarget')
-        }
-        return { outcome: 'updated', retirement }
+          .run(scopeRef, expectedHomeNodeId, input.retiredAt)
+        return { outcome: 'deleted' }
       })
-      .immediate() as RetargetRetiredBindingResult
+      .immediate() as DeleteBindingResult
   }
 
-  /** Rebuild-only insertion. The target registry must be empty. */
-  insertRebuilt(record: BindingRegistryRecord | PlacementBinding): void {
-    if ('state' in record && record.state === 'retired') {
-      this.sqlite
-        .query(
-          `INSERT INTO binding_registry (${REGISTRY_COLUMNS})
-           VALUES (?, 'retired', ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)`
-        )
-        .run(
-          canonicalScopeRef(record.scopeRef),
-          requirePositiveEpoch(record.placementEpoch),
-          record.birthClass,
-          serializeAuthority(record.authorityProvenance),
-          record.createdAt,
-          record.updatedAt,
-          requireNodeId(record.retiredHomeNodeId, 'retiredHomeNodeId'),
-          record.retiredAt,
-          record.reason,
-          record.successorNodeId
-        )
-      return
-    }
-    const binding = record as PlacementBinding
+  insertRebuilt(binding: PlacementBinding): void {
     this.sqlite
-      .query(
-        `INSERT INTO binding_registry (${REGISTRY_COLUMNS})
-         VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)`
-      )
-      .run(
-        canonicalScopeRef(binding.scopeRef),
-        requirePositiveEpoch(binding.placementEpoch),
-        binding.birthClass,
-        serializeAuthority(binding.authorityProvenance),
-        binding.createdAt,
-        binding.updatedAt,
-        requireNodeId(binding.homeNodeId, 'homeNodeId'),
-        binding.establishmentProvenance,
-        binding.priorHomeNodeId ?? null
-      )
+      .query(`INSERT INTO binding_registry (${REGISTRY_COLUMNS}) VALUES (?, ?, ?, ?)`)
+      .run(binding.scopeRef, binding.homeNodeId, binding.createdAt, binding.updatedAt)
   }
 }
 
@@ -1352,245 +642,30 @@ export function openBindingRegistry(
 
 export function rebuildBindingRegistryFromLedgers(
   target: BindingRegistry,
-  ledgerRows: readonly PlacementLedgerRecord[],
-  retirementFences: readonly ScopeRetirementRecord[] = []
+  ledgerRows: readonly PlacementLedgerRecord[]
 ): { inserted: number; duplicates: number } {
-  if (target.listRecords().length !== 0) {
-    throw new Error('binding registry rebuild target must be empty')
-  }
-
+  if (target.list().length !== 0) throw new Error('binding registry rebuild target must be empty')
   const selected = new Map<string, PlacementLedgerRecord>()
-  const rowsByScopeAndEpoch = new Map<string, PlacementLedgerRecord[]>()
   let duplicates = 0
   for (const row of ledgerRows) {
+    if (row.state !== 'active') continue
     const scopeRef = canonicalScopeRef(row.scopeRef)
-    const epochKey = `${scopeRef}\u0000${String(row.placementEpoch)}`
-    const epochRows = rowsByScopeAndEpoch.get(epochKey) ?? []
-    epochRows.push({ ...row, scopeRef })
-    rowsByScopeAndEpoch.set(epochKey, epochRows)
     const current = selected.get(scopeRef)
-    if (current === undefined || row.placementEpoch > current.placementEpoch) {
+    if (current === undefined) {
       selected.set(scopeRef, { ...row, scopeRef })
       continue
     }
-    if (row.placementEpoch < current.placementEpoch) continue
-    if (!sameBinding(current, row)) {
-      throw new PlacementLedgerConflictError(scopeRef, row.placementEpoch)
-    }
+    if (current.homeNodeId !== row.homeNodeId) throw new PlacementLedgerConflictError(scopeRef)
     duplicates += 1
   }
-
-  const selectedFences = new Map<string, ScopeRetirementRecord>()
-  for (const fence of retirementFences) {
-    const scopeRef = canonicalScopeRef(fence.scopeRef)
-    const normalized = { ...fence, scopeRef }
-    const current = selectedFences.get(scopeRef)
-    if (current === undefined || fence.retiredPlacementEpoch > current.retiredPlacementEpoch) {
-      selectedFences.set(scopeRef, normalized)
-      continue
-    }
-    if (fence.retiredPlacementEpoch < current.retiredPlacementEpoch) continue
-    if (
-      current.retiredNodeId !== normalized.retiredNodeId ||
-      current.successorNodeId !== normalized.successorNodeId ||
-      current.reason !== normalized.reason
-    ) {
-      throw new PlacementLedgerConflictError(scopeRef, fence.retiredPlacementEpoch)
-    }
-    duplicates += 1
-  }
-
-  const rebuiltRecords = new Map<string, BindingRegistryRecord | PlacementBinding>()
-  const scopeRefs = new Set([...selected.keys(), ...selectedFences.keys()])
-  for (const scopeRef of scopeRefs) {
-    const highestLedger = selected.get(scopeRef)
-    const fence = selectedFences.get(scopeRef)
-    if (fence === undefined) {
-      if (highestLedger?.state === 'active') rebuiltRecords.set(scopeRef, highestLedger)
-      continue
-    }
-    if (
-      highestLedger?.state === 'active' &&
-      highestLedger.placementEpoch > fence.retiredPlacementEpoch
-    ) {
-      rebuiltRecords.set(scopeRef, highestLedger)
-      continue
-    }
-
-    const epochRows =
-      rowsByScopeAndEpoch.get(`${scopeRef}\u0000${String(fence.retiredPlacementEpoch)}`) ?? []
-    const retiredLedger = epochRows.find((row) => row.homeNodeId === fence.retiredNodeId)
-    if (retiredLedger === undefined) {
-      throw new Error(
-        `cannot rebuild retirement for ${scopeRef} at epoch ${fence.retiredPlacementEpoch}: matching retired-home ledger metadata is absent`
-      )
-    }
-    rebuiltRecords.set(scopeRef, {
-      state: 'retired',
-      scopeRef,
-      placementEpoch: fence.retiredPlacementEpoch,
-      birthClass: retiredLedger.birthClass,
-      authorityProvenance: retiredLedger.authorityProvenance,
-      createdAt: retiredLedger.createdAt,
-      updatedAt: fence.retiredAt,
-      retiredHomeNodeId: fence.retiredNodeId,
-      retiredAt: fence.retiredAt,
-      reason: fence.reason,
-      successorNodeId: fence.successorNodeId,
-    })
-  }
-
   target.sqlite
     .transaction(() => {
-      for (const record of [...rebuiltRecords.values()].sort((a, b) =>
+      for (const row of [...selected.values()].sort((a, b) =>
         a.scopeRef.localeCompare(b.scopeRef)
       )) {
-        target.insertRebuilt(record)
+        target.insertRebuilt(row)
       }
     })
     .immediate()
-  return { inserted: rebuiltRecords.size, duplicates }
-}
-
-const T06681_F0_RETIREMENTS = [
-  {
-    scopeRef: 'agent:cody:project:agent-control-plane:task:wrkq-refactor',
-    retiredHomeNodeId: 'svc',
-    placementEpoch: 1,
-    successorNodeId: 'lab',
-    correctedAuthority: {
-      kind: 'policy',
-      source: 'pin',
-      pinKey: 'agent-control-plane:wrkq-refactor',
-      designatedNodeId: 'lab',
-      rationaleRef: 'T-06681/Lance-ruling-A',
-    },
-  },
-  {
-    scopeRef: 'agent:cody:project:hrc-runtime:task:pin-probe',
-    retiredHomeNodeId: 'svc',
-    placementEpoch: 1,
-    successorNodeId: null,
-    correctedAuthority: null,
-  },
-  {
-    scopeRef: 'agent:mable:project:hrc-runtime:task:max3',
-    retiredHomeNodeId: 'svc',
-    placementEpoch: 1,
-    successorNodeId: 'max3',
-    correctedAuthority: {
-      kind: 'policy',
-      source: 'reconciliation-ruling',
-      designatedNodeId: 'max3',
-      rationaleRef: 'T-06681/Lance-ruling-A',
-    },
-  },
-] as const
-
-export type T06681F0RetirementMigrationResult = {
-  dryRun: boolean
-  rows: Array<{
-    scopeRef: string
-    action: 'would_insert' | 'inserted' | 'existing'
-    retirement: RegistryRetirementRecord
-  }>
-}
-
-/**
- * One-time, exact F0 data correction from T-06681/Lance-ruling-A.
- *
- * This deliberately accepts no caller-selected scopes, birth classes,
- * successors, or authority payloads. It is not a general identity rewrite
- * capability: the three identities and two policy corrections are embedded in
- * source, while pin-probe preserves its mechanism-born ledger identity.
- */
-export function applyT06681F0RetirementMigration(input: {
-  target: BindingRegistry
-  ledgerRows: readonly PlacementLedgerRecord[]
-  retirementFences: readonly ScopeRetirementRecord[]
-  dryRun: boolean
-}): T06681F0RetirementMigrationResult {
-  const planned = T06681_F0_RETIREMENTS.map((disposition) => {
-    const fence = input.retirementFences.find(
-      (candidate) =>
-        canonicalScopeRef(candidate.scopeRef) === disposition.scopeRef &&
-        candidate.retiredNodeId === disposition.retiredHomeNodeId &&
-        candidate.retiredPlacementEpoch === disposition.placementEpoch &&
-        candidate.successorNodeId === disposition.successorNodeId
-    )
-    if (fence === undefined) {
-      throw new Error(
-        `T-06681 F0 migration requires the exact retirement fence for ${disposition.scopeRef}`
-      )
-    }
-    const ledger = input.ledgerRows.find(
-      (candidate) =>
-        canonicalScopeRef(candidate.scopeRef) === disposition.scopeRef &&
-        candidate.homeNodeId === disposition.retiredHomeNodeId &&
-        candidate.placementEpoch === disposition.placementEpoch
-    )
-    if (ledger === undefined) {
-      throw new Error(
-        `T-06681 F0 migration requires retired-home ledger metadata for ${disposition.scopeRef}`
-      )
-    }
-    if (disposition.correctedAuthority === null && ledger.birthClass !== 'mechanism-born') {
-      throw new Error('T-06681 pin-probe migration must preserve a mechanism-born identity')
-    }
-    const retirement: RegistryRetirementRecord = {
-      state: 'retired',
-      scopeRef: disposition.scopeRef,
-      placementEpoch: disposition.placementEpoch,
-      birthClass: disposition.correctedAuthority === null ? ledger.birthClass : 'policy-born',
-      authorityProvenance:
-        disposition.correctedAuthority === null
-          ? ledger.authorityProvenance
-          : disposition.correctedAuthority,
-      createdAt: ledger.createdAt,
-      updatedAt: fence.retiredAt,
-      retiredHomeNodeId: disposition.retiredHomeNodeId,
-      retiredAt: fence.retiredAt,
-      reason: fence.reason,
-      successorNodeId: disposition.successorNodeId,
-    }
-    const current = input.target.getRecord(disposition.scopeRef)
-    if (current !== undefined) {
-      if (
-        current.state !== 'retired' ||
-        current.placementEpoch !== retirement.placementEpoch ||
-        current.retiredHomeNodeId !== retirement.retiredHomeNodeId ||
-        current.successorNodeId !== retirement.successorNodeId ||
-        current.birthClass !== retirement.birthClass ||
-        stableJson(current.authorityProvenance) !== stableJson(retirement.authorityProvenance) ||
-        current.createdAt !== retirement.createdAt ||
-        current.retiredAt !== retirement.retiredAt ||
-        current.reason !== retirement.reason
-      ) {
-        throw new Error(
-          `T-06681 F0 migration conflicts with registry authority for ${disposition.scopeRef}`
-        )
-      }
-      return { action: 'existing' as const, retirement: current }
-    }
-    return { action: input.dryRun ? ('would_insert' as const) : ('inserted' as const), retirement }
-  })
-
-  if (!input.dryRun) {
-    input.target.sqlite
-      .transaction(() => {
-        for (const row of planned) {
-          if (row.action === 'inserted') input.target.insertRebuilt(row.retirement)
-        }
-      })
-      .immediate()
-  }
-
-  return {
-    dryRun: input.dryRun,
-    rows: planned.map((row) => ({
-      scopeRef: row.retirement.scopeRef,
-      action: row.action,
-      retirement: row.retirement,
-    })),
-  }
+  return { inserted: selected.size, duplicates }
 }

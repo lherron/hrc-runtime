@@ -98,7 +98,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     expect(result.evaluation.reason).toBe('virgin-establishment')
-    expect(result.evaluation.establishmentProvenance).toBe('default_home_node(sender)')
+    expect(result.evaluation.placementSource).toBe('default_home_node(sender)')
     expect(result.evaluation.homeNodeId).toBe('max3')
   })
 
@@ -114,7 +114,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe('default_home_node(local)')
+    expect(result.evaluation.placementSource).toBe('default_home_node(local)')
     expect(result.evaluation.homeNodeId).toBe(LOCAL_NODE)
   })
 
@@ -185,7 +185,7 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
       expect(consulted).toBe(0)
       expect(result.evaluation.decision).toBe('allow')
       if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-      expect(result.evaluation.establishmentProvenance).toBe(provenance)
+      expect(result.evaluation.placementSource).toBe(provenance)
     }
   )
 
@@ -210,6 +210,6 @@ describe('T-07655 tier-5 birth designation in the summon gate', () => {
     expect(consulted).toBe(0)
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe(provenance)
+    expect(result.evaluation.placementSource).toBe(provenance)
   })
 })

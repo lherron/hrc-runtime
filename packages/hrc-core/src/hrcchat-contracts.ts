@@ -4,7 +4,6 @@ import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
 } from './federation-contracts.js'
-import type { HrcBirthCredential } from './federation.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
  *
@@ -245,7 +244,6 @@ export type EnsureTargetRequest = {
   sessionRef: string
   runtimeIntent: HrcRuntimeIntent
   parsedScopeJson?: Record<string, unknown> | undefined
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type EnsureTargetResponse = HrcTargetView
@@ -281,7 +279,6 @@ export type DispatchTurnBySelectorRequest = {
   whenBusy?: 'reject' | 'steer' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   fences?: HrcFence | undefined
-  birthCredential?: HrcBirthCredential | undefined
 }
 
 export type DispatchTurnBySelectorResponse = {
@@ -460,7 +457,6 @@ export type SemanticDmRequest = {
    */
   whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
-  birthCredential?: HrcBirthCredential | undefined
   wait?:
     | {
         enabled: boolean

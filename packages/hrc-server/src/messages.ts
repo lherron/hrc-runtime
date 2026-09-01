@@ -14,7 +14,6 @@ import type {
   HrcTurnResponseFormat,
   SemanticDmRequest,
 } from 'hrc-core'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { parseOptionalProvisionBlock } from './parsers/provision.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
 
@@ -317,7 +316,6 @@ export function parseSemanticDmRequest(input: unknown): {
   createIfMissing?: boolean | undefined
   whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
-  birthCredential?: string | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
   freshContext?: boolean | undefined
@@ -374,8 +372,6 @@ export function parseSemanticDmRequest(input: unknown): {
   const parsedScopeJson = isRecord(input['parsedScopeJson'])
     ? (input['parsedScopeJson'] as Record<string, unknown>)
     : undefined
-
-  const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
 
   const waitInput = input['wait']
   const wait =
@@ -448,7 +444,6 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
     ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
-    ...(birthCredential !== undefined ? { birthCredential } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(freshContext !== undefined ? { freshContext } : {}),

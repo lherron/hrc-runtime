@@ -93,9 +93,7 @@ describe('T-06607 isolated daemon registry lifecycle', () => {
           body: JSON.stringify({
             scopeRef: SCOPE,
             homeNodeId: 'lab',
-            birthClass: 'policy-born',
-            authorityProvenance: { kind: 'policy', source: 'pin' },
-            establishmentProvenance: 'pin',
+            placementSource: 'pin',
           }),
         })
         expect(established.status).toBe(200)
@@ -107,8 +105,6 @@ describe('T-06607 isolated daemon registry lifecycle', () => {
       try {
         expect(registry.get(SCOPE)).toMatchObject({
           homeNodeId: 'lab',
-          placementEpoch: 1,
-          birthClass: 'policy-born',
         })
       } finally {
         registry.close()

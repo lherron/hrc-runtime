@@ -160,12 +160,6 @@ describe('T-07138 post-mint collective establishment', () => {
     expect(binding).toMatchObject({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      birthClass: 'mechanism-born',
-      authorityProvenance: {
-        kind: 'external-registration',
-        registrationId: REGISTRATION_ID,
-        classId: 'arris-agent',
-      },
     })
     expect(createPlacementLedgerRepository(db.sqlite).activeAuthority(SCOPE)).toEqual({
       ...binding,
@@ -175,7 +169,6 @@ describe('T-07138 post-mint collective establishment', () => {
       state: 'CANONICAL',
       bindingState: 'BOUND',
       homeNodeId: 'svc',
-      placementEpoch: 1,
     })
     expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('ready')
   })
@@ -184,14 +177,7 @@ describe('T-07138 post-mint collective establishment', () => {
     const registered = registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'svc',
-      placementEpoch: 1,
-      birthClass: 'mechanism-born',
-      authorityProvenance: {
-        kind: 'external-registration',
-        registrationId: REGISTRATION_ID,
-        classId: 'arris-agent',
-      },
-      establishmentProvenance: 'explicit_local',
+      placementSource: 'explicit_local',
       now: new Date().toISOString(),
     }).binding
     expect(createPlacementLedgerRepository(db.sqlite).activeAuthority(SCOPE)).toBeUndefined()
@@ -382,10 +368,7 @@ describe('T-07138 post-mint collective establishment', () => {
     registry.establish({
       scopeRef: SCOPE,
       homeNodeId: 'lab',
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       now: new Date().toISOString(),
     })
     const conflictServer = reconciliationServer(registryClient(registry))
@@ -440,7 +423,6 @@ describe('T-07138 post-mint collective establishment', () => {
       bindingState: 'BOUND',
       cause: 'placement_refused',
       homeNodeId: 'lab',
-      placementEpoch: 1,
     })
     expect(registry.get(SCOPE)?.homeNodeId).toBe('svc')
   })

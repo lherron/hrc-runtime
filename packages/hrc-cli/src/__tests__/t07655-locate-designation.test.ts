@@ -68,7 +68,6 @@ function location(overrides: Partial<ScopeLocation> = {}): ScopeLocation {
     authority: { state: 'unbound' },
     observed: { scope: 'local-node-only', nodeId: 'svc', runtimeCount: 0, runtimes: [] },
     notes: [],
-    birthChain: { state: 'not-applicable', detail: 'policy-born' },
     ...overrides,
   } as ScopeLocation
 }
@@ -103,10 +102,7 @@ describe('T-07655 — hrc target locate renders the birth designation', () => {
             outcome: 'bound',
             record: {
               homeNodeId: 'svc',
-              placementEpoch: 1,
-              birthClass: 'policy-born',
-              establishmentProvenance: 'explicit_local',
-              authorityProvenance: { kind: 'policy' },
+              placementSource: 'explicit_local',
               createdAt: '2026-08-28T05:01:00.000Z',
               updatedAt: '2026-08-28T05:01:00.000Z',
             },

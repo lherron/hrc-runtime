@@ -11,8 +11,9 @@
  *
  * 2. RACES HAVE NO PRIORITY RULE (§5). Explicit intent decides *where a virgin
  *    scope is designated*, never *who wins a concurrent establishment*. First
- *    registry CAS wins either way; the loser is told bound-elsewhere. Rebind is
- *    the remedy for lost human intent — a priority rule here would reopen the
+ *    atomic registry establishment wins either way; the loser is told
+ *    bound-elsewhere. Correcting lost human intent requires ordered retirement
+ *    followed by a fresh birth — a priority rule here would reopen the
  *    linearization point the registry exists to close.
  */
 
@@ -111,9 +112,7 @@ describe('races have no priority rule: first registry write wins', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'lab',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-          establishmentProvenance: 'default_home_node',
+          placementSource: 'default_home_node',
           now: '2026-07-20T00:00:00.000Z',
         },
       })
@@ -126,9 +125,7 @@ describe('races have no priority rule: first registry write wins', () => {
         request: {
           scopeRef: SCOPE,
           homeNodeId: 'max3',
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: 'explicit_local' },
-          establishmentProvenance: 'explicit_local',
+          placementSource: 'explicit_local',
           now: '2026-07-20T00:00:01.000Z',
         },
       })
@@ -152,9 +149,7 @@ describe('races have no priority rule: first registry write wins', () => {
           request: {
             scopeRef: SCOPE,
             homeNodeId: 'max3',
-            birthClass: 'policy-born',
-            authorityProvenance: { kind: 'policy', source: 'explicit_local' },
-            establishmentProvenance: 'explicit_local',
+            placementSource: 'explicit_local',
             now: '2026-07-20T00:00:00.000Z',
           },
         }),
@@ -164,9 +159,7 @@ describe('races have no priority rule: first registry write wins', () => {
           request: {
             scopeRef: SCOPE,
             homeNodeId: 'lab',
-            birthClass: 'policy-born',
-            authorityProvenance: { kind: 'policy', source: 'default_home_node' },
-            establishmentProvenance: 'default_home_node',
+            placementSource: 'default_home_node',
             now: '2026-07-20T00:00:00.000Z',
           },
         }),

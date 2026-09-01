@@ -25,7 +25,6 @@ function registryUnbound(): BindingRegistryClient {
         outcome: 'created',
         binding: {
           ...request,
-          placementEpoch: 1,
           updatedAt: request.now,
         },
       }

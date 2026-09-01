@@ -8,7 +8,6 @@ import type {
   SessionIndexRecord,
 } from 'hrc-store-sqlite'
 import type { PeerEntry } from './federation/federation-config.js'
-import { PEER_PROTOCOL_VERSION } from './federation/peer-protocol.js'
 import { buildPeerProtocolHeaders } from './federation/peer-request.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { normalizeOptionalQuery } from './server-parsers.js'
@@ -336,7 +335,7 @@ function queryParams(filters: SessionIndexFilters): URLSearchParams {
 
 async function fetchPeerJson(peer: PeerEntry, url: URL): Promise<unknown> {
   const response = await fetch(url, {
-    headers: buildPeerProtocolHeaders(peer, PEER_PROTOCOL_VERSION),
+    headers: buildPeerProtocolHeaders(peer),
     signal: AbortSignal.timeout(PEER_PAGE_TIMEOUT_MS),
   })
   let body: unknown

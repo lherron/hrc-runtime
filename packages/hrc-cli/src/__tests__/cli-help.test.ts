@@ -150,12 +150,9 @@ describe('nested group commander help', () => {
       child: 'status',
     },
     {
-      // `federation outbox` was the original case here; it went with the
-      // federation MESSAGE path at the T-07616 flag day. `federation rebind` is
-      // the same shape: a nested group with its own children.
-      args: ['federation', 'rebind', '--help'],
-      usage: 'Usage: hrc federation rebind',
-      child: 'revoke',
+      args: ['federation', '--help'],
+      usage: 'Usage: hrc federation',
+      child: 'retire',
     },
     {
       args: ['admin', 'broker-verify', '--help'],

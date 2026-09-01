@@ -8,7 +8,6 @@ const MESSAGE_ID = 'msg-11111111-1111-4111-8111-111111111111'
 
 function envelope(): FederationMessageEnvelope {
   return {
-    protocolVersion: '1.0',
     messageId: MESSAGE_ID,
     kind: 'dm',
     phase: 'request',
@@ -16,7 +15,7 @@ function envelope(): FederationMessageEnvelope {
     to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime:task:T-06619' },
     body: 'queued while lab sleeps',
     rootMessageId: MESSAGE_ID,
-    expected: { homeNodeId: 'lab', placementEpoch: 7 },
+    expected: { homeNodeId: 'lab' },
   }
 }
 
@@ -56,7 +55,7 @@ describe('T-06619 durable federation outbox', () => {
       const delivering = db.federationOutbox.advanceToDelivery(
         establishing.deliveryId,
         'registry-winner',
-        { ...pending, expected: { homeNodeId: 'registry-winner', placementEpoch: 1 } },
+        { ...pending, expected: { homeNodeId: 'registry-winner' } },
         '2026-07-20T00:00:01.000Z'
       )
       expect(delivering).toMatchObject({
@@ -64,7 +63,7 @@ describe('T-06619 durable federation outbox', () => {
         messageId: MESSAGE_ID,
         stage: 'delivering',
         peerNodeId: 'registry-winner',
-        envelope: { expected: { homeNodeId: 'registry-winner', placementEpoch: 1 } },
+        envelope: { expected: { homeNodeId: 'registry-winner' } },
       })
       expect(db.federationOutbox.list()).toHaveLength(1)
     } finally {
@@ -230,7 +229,7 @@ describe('T-06619 durable federation outbox', () => {
           to: envelope().from,
           body: 'historical delivered reply',
           replyToMessageId: MESSAGE_ID,
-          expected: { homeNodeId: 'svc', placementEpoch: 3 },
+          expected: { homeNodeId: 'svc' },
         },
         now: '2026-07-20T00:01:00.000Z',
       })

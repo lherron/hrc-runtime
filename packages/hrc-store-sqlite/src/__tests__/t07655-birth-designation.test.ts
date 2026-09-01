@@ -44,16 +44,13 @@ function designate(store: BindingRegistry, homeNodeId: string, at = '2026-08-28T
 function establish(
   store: BindingRegistry,
   homeNodeId: string,
-  establishmentProvenance: Parameters<BindingRegistry['establish']>[0]['establishmentProvenance'],
+  placementSource: Parameters<BindingRegistry['establish']>[0]['placementSource'],
   at = '2026-08-28T05:01:00.000Z'
 ) {
   return store.establish({
     scopeRef: TARGET,
     homeNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: establishmentProvenance },
-    establishmentProvenance,
+    placementSource,
     now: at,
   })
 }
@@ -116,7 +113,6 @@ describe('T-07655 birth designation', () => {
       expect(created.outcome).toBe('created')
       if (created.outcome !== 'created') throw new Error('unreachable')
       expect(created.binding.homeNodeId).toBe('max3')
-      expect(created.binding.establishmentProvenance).toBe('default_home_node(sender)')
       expect(store.liveDesignation(TARGET)?.state).toBe('live')
     } finally {
       store.close()
@@ -202,10 +198,7 @@ describe('T-07655 birth designation', () => {
     first.establish({
       scopeRef: 'agent:clod:project:hrc-runtime:task:T-00001',
       homeNodeId: 'max3',
-      placementEpoch: 1,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source: 'pin' },
-      establishmentProvenance: 'pin',
+      placementSource: 'pin',
       now: '2026-08-01T00:00:00.000Z',
     })
     first.close()

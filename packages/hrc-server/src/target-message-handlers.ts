@@ -40,7 +40,6 @@ import { dispatchOriginFromMessageAddress } from './acp-event-bridge.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
   assertProvisionDirectiveAdmissible,
@@ -221,7 +220,6 @@ export async function handleCreateSessionSuccessor(
     priorHostSessionId !== undefined
       ? requireSession(this.db, priorHostSessionId)
       : findTargetSession(this.db, sessionRef)
-  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
   if (!prior) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
       sessionRef,
@@ -237,13 +235,7 @@ export async function handleCreateSessionSuccessor(
 
   // Raw successor mint (POST /v1/sessions/create-successor) — a summon path in
   // its own right, not reachable through ensureTargetSession.
-  const successor = await createNotifiedSessionSuccessor(
-    this,
-    prior,
-    undefined,
-    undefined,
-    birthCredential
-  )
+  const successor = await createNotifiedSessionSuccessor(this, prior, undefined, undefined)
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -299,8 +291,6 @@ export async function handleResumeContinuation(
   const parsedScopeJson = isObjectRecord(body['parsedScope'])
     ? (body['parsedScope'] as Record<string, unknown>)
     : undefined
-  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
-
   const selection = selectResumeContinuationCandidate(this.db, {
     sessionRef,
     ...(priorHostSessionId !== undefined ? { priorHostSessionId } : {}),
@@ -342,13 +332,7 @@ export async function handleResumeContinuation(
     )
   }
 
-  const successor = await createNotifiedSessionSuccessor(
-    this,
-    prior,
-    intent,
-    parsedScopeJson,
-    birthCredential
-  )
+  const successor = await createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -508,7 +492,6 @@ async function createNotifiedSessionSuccessor(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
   parsedScopeJson: Record<string, unknown> | undefined,
-  birthCredential?: string,
   origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
@@ -542,7 +525,6 @@ async function createNotifiedSessionSuccessor(
               ? {}
               : { provision: capabilityIntent.provision }),
           }),
-      ...(birthCredential === undefined ? {} : { birthCredential }),
     },
     (claimAuthority) => {
       const raced = findTargetSession(
@@ -876,7 +858,6 @@ export async function deliverPersistedSemanticTurnHandoff(
       body.to.sessionRef,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential,
       summonOrigin
     )
   }
@@ -900,7 +881,6 @@ export async function deliverPersistedSemanticTurnHandoff(
       session,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential,
       summonOrigin
     )
   }
@@ -1429,7 +1409,6 @@ export async function deliverPersistedSemanticDm(
           body.to.sessionRef,
           intent,
           body.parsedScopeJson,
-          body.birthCredential,
           summonOrigin
         )
       }
@@ -1442,7 +1421,6 @@ export async function deliverPersistedSemanticDm(
           session,
           body.runtimeIntent,
           body.parsedScopeJson,
-          body.birthCredential,
           summonOrigin
         )
       }

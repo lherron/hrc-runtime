@@ -22,13 +22,11 @@ import {
   formatCanonicalScopeRef,
 } from 'hrc-core'
 import type {
-  BirthAuthorityProvenance,
-  EstablishmentProvenance,
-  FederationBirthClass,
+  FederationPlacementSource,
   FederationRemoteEstablishResult,
   SummonIntent,
 } from 'hrc-core'
-import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcDatabase, PlacementBinding, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
@@ -37,7 +35,6 @@ import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
 import { markRuntimeStale } from '../startup-reconcile/runtime-mutations.js'
 import { withScopeSummonLock, withSessionMintLock } from './authority-lock.js'
-import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
 import {
@@ -122,10 +119,6 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
     registry:
       server.registryClient ??
       resolveFederationRegistryClient(config, server.bindingRegistryEndpoint?.registryClient),
-    // Node-local, synchronous, and undefined before the table exists
-    // (T-06614 C-11125 / larry #190). Checked before all authority logic.
-    retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
-    validateBirthCredential: (credential) => validateRuntimeBirthCredential(server.db, credential),
     // Locate and the gate deliberately share this one profile reader. The
     // closure is cheap to construct here; actual profile discovery/read stays
     // lazy until a configured, non-dark gate reaches the virgin-policy branch.
@@ -501,7 +494,6 @@ export type SummonAuthorityRequest = (
     }
 ) & {
   /** Common mint context; neither field widens the typed intent arm. */
-  birthCredential?: string | undefined
   capabilityHint?: SummonCapabilityHint | undefined
   origin?: 'local' | 'federated-ingress' | 'federated-establish' | 'startup-repair' | undefined
   /** True only when this daemon owns the predecessor session being continued. */
@@ -676,26 +668,10 @@ export async function establishExternalRegistrationPlacement(
         request: {
           scopeRef: request.scopeRef,
           homeNodeId: deps.localNodeId,
-          birthClass: 'mechanism-born',
-          authorityProvenance: {
-            kind: 'external-registration',
-            registrationId: request.registrationId,
-            classId: request.classId,
-          },
-          establishmentProvenance: placement.provenance,
+          placementSource: placement.provenance,
           now: new Date().toISOString(),
         },
       })
-      if (established.outcome === 'retired') {
-        return {
-          outcome: 'noncanonical',
-          cause: 'placement_refused',
-          detail: `${request.scopeRef} is retired at epoch ${established.retirement.placementEpoch}`,
-          ...(established.retirement.successorNodeId === null
-            ? {}
-            : { homeNodeId: established.retirement.successorNodeId }),
-        }
-      }
       if (established.outcome === 'designation-mismatch') {
         return {
           outcome: 'noncanonical',
@@ -735,7 +711,6 @@ export async function resolvePlacementOnServer(
     scopeRef: request.scopeRef,
     path: request.path,
     intent: request.intent ?? 'implicit',
-    ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
     ...(request.origin === undefined ? {} : { origin: request.origin }),
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     deps,
@@ -856,22 +831,10 @@ export async function establishRemotePolicyAuthority(
         request: {
           scopeRef,
           homeNodeId: deps.localNodeId,
-          birthClass: 'policy-born',
-          authorityProvenance: { kind: 'policy', source: placement.provenance },
-          establishmentProvenance: placement.provenance,
+          placementSource: placement.provenance,
           now: new Date().toISOString(),
         },
       })
-      if (established.outcome === 'retired') {
-        return remoteEstablishRefusal({
-          message: 'remote policy establishment lost to a retirement fence',
-          reason: 'scope-retired',
-          retryable: false,
-          ...(established.retirement.successorNodeId === null
-            ? {}
-            : { homeNodeId: established.retirement.successorNodeId }),
-        })
-      }
       if (established.outcome === 'designation-mismatch') {
         return remoteEstablishRefusal({
           message: 'remote policy establishment lost to a birth designation',
@@ -973,10 +936,8 @@ async function commitAuthorizedEstablishment(input: {
   request: SummonAuthorityRequest
   mode: SummonGateResult['mode']
   homeNodeId: string
-  birthClass: FederationBirthClass
-  authorityProvenance: BirthAuthorityProvenance
-  establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
-  label: 'policy' | 'child-birth' | 'claim-birth'
+  placementSource: FederationPlacementSource
+  label: 'policy'
 }): Promise<void> {
   let established: Awaited<ReturnType<typeof establishLocalPlacement>>
   try {
@@ -986,9 +947,7 @@ async function commitAuthorizedEstablishment(input: {
       request: {
         scopeRef: input.request.scopeRef,
         homeNodeId: input.homeNodeId,
-        birthClass: input.birthClass,
-        authorityProvenance: input.authorityProvenance,
-        establishmentProvenance: input.establishmentProvenance,
+        placementSource: input.placementSource,
         now: new Date().toISOString(),
       },
     })
@@ -1010,7 +969,6 @@ async function commitAuthorizedEstablishment(input: {
       retryable,
       localNodeId: input.deps.localNodeId,
       intent: input.request.intent,
-      birthCredentialPresent: input.request.birthCredential !== undefined,
       diagnostic,
     })
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
@@ -1018,21 +976,6 @@ async function commitAuthorizedEstablishment(input: {
       path: input.request.path,
       reason,
       retryable,
-    })
-  }
-
-  if (established.outcome === 'retired') {
-    const successor = established.retirement.successorNodeId
-    const diagnostic =
-      successor === null
-        ? `${input.request.scopeRef} became terminally retired while ${input.label} establishment was being committed; it cannot be established again.`
-        : `${input.request.scopeRef} became retired toward successor ${successor} while ${input.label} establishment was being committed; summon it on ${successor}.`
-    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
-      scopeRef: input.request.scopeRef,
-      path: input.request.path,
-      reason: 'scope-retired',
-      retryable: false,
-      ...(successor === null ? {} : { homeNodeId: successor }),
     })
   }
 
@@ -1056,7 +999,6 @@ async function commitAuthorizedEstablishment(input: {
       homeNodeId: designation.homeNodeId,
       designationEpoch: designation.designationEpoch,
       intent: input.request.intent,
-      birthCredentialPresent: input.request.birthCredential !== undefined,
       diagnostic,
     })
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
@@ -1082,7 +1024,6 @@ async function commitAuthorizedEstablishment(input: {
       localNodeId: input.deps.localNodeId,
       homeNodeId: established.binding.homeNodeId,
       intent: input.request.intent,
-      birthCredentialPresent: input.request.birthCredential !== undefined,
       diagnostic,
     })
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
@@ -1116,7 +1057,6 @@ export async function assertSummonAuthority(
     // Absent ⇒ implicit (spec §5). The default lives here, at the one seam
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
-    ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
     ...(request.origin === undefined ? {} : { origin: request.origin }),
     ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     deps,
@@ -1178,182 +1118,19 @@ export async function assertSummonAuthority(
 
   if (
     result.evaluation.decision === 'allow' &&
-    result.evaluation.reason === 'retired-policy-succession' &&
-    result.evaluation.registryRetirement !== undefined
-  ) {
-    const retirement = result.evaluation.registryRetirement
-    const activate = deps.registry.activateRetired
-    if (activate === undefined) {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        `The binding registry does not expose retired-scope activation for ${request.scopeRef}; refusing rather than treating the tombstone as virgin.`,
-        {
-          scopeRef: request.scopeRef,
-          path: request.path,
-          reason: 'registry-refused',
-          retryable: false,
-        }
-      )
-    }
-
-    let activated: Awaited<ReturnType<NonNullable<typeof deps.registry.activateRetired>>>
-    try {
-      activated = await activate.call(deps.registry, {
-        scopeRef: request.scopeRef,
-        successorNodeId: deps.localNodeId,
-        expectedPlacementEpoch: retirement.placementEpoch,
-        now: new Date().toISOString(),
-      })
-    } catch (error) {
-      const refused = error instanceof RegistryRefusedError
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        `Cannot activate retired authority for ${request.scopeRef} at the binding registry (${error instanceof Error ? error.message : String(error)}).`,
-        {
-          scopeRef: request.scopeRef,
-          path: request.path,
-          reason: refused ? 'registry-refused' : 'registry-unreachable',
-          retryable: !refused,
-        }
-      )
-    }
-
-    if (
-      (activated.outcome !== 'activated' && activated.outcome !== 'idempotent') ||
-      activated.binding === undefined
-    ) {
-      const diagnostic = `Retired activation for ${request.scopeRef} did not commit (${activated.outcome}); refusing local authority.`
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
-        scopeRef: request.scopeRef,
-        path: request.path,
-        reason: 'scope-retired',
-        retryable: false,
-        outcome: activated.outcome,
-      })
-    }
-    deps.ledger.installActive(activated.binding)
-  }
-
-  if (
-    result.evaluation.decision === 'allow' &&
     result.evaluation.reason === 'virgin-establishment' &&
     result.evaluation.homeNodeId !== undefined &&
-    result.evaluation.establishmentProvenance !== undefined
+    result.evaluation.placementSource !== undefined
   ) {
-    const source = result.evaluation.establishmentProvenance
+    const source = result.evaluation.placementSource
     await commitAuthorizedEstablishment({
       deps,
       request,
       mode: result.mode,
       homeNodeId: result.evaluation.homeNodeId,
-      birthClass: 'policy-born',
-      authorityProvenance: { kind: 'policy', source },
-      establishmentProvenance: source,
+      placementSource: source,
       label: 'policy',
     })
-  }
-
-  if (
-    result.evaluation.decision === 'allow' &&
-    result.evaluation.reason === 'child-birth' &&
-    result.evaluation.homeNodeId !== undefined &&
-    result.evaluation.authorityProvenance !== undefined
-  ) {
-    await commitAuthorizedEstablishment({
-      deps,
-      request,
-      mode: result.mode,
-      homeNodeId: result.evaluation.homeNodeId,
-      birthClass: 'mechanism-born',
-      authorityProvenance: result.evaluation.authorityProvenance,
-      // Establishment provenance is descriptive for policy-born scopes. The
-      // mechanism's exact chain lives in authorityProvenance; this existing
-      // value is the registry schema's local one-shot establishment marker.
-      establishmentProvenance: 'explicit_local',
-      label: 'child-birth',
-    })
-  }
-
-  if (
-    result.evaluation.decision === 'allow' &&
-    (result.evaluation.reason === 'claim-birth' || result.evaluation.reason === 'claim-rebind')
-  ) {
-    const claimRequest = taskClaimRequestForScope(request.scopeRef)
-    if (claimRequest === undefined) {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        `Cannot derive task claim authority from ${request.scopeRef}; refusing before session mint.`,
-        {
-          scopeRef: request.scopeRef,
-          path: request.path,
-          reason: 'claim-birth-authority-required',
-          retryable: false,
-        }
-      )
-    }
-
-    let authority: TaskClaimAuthority
-    try {
-      authority = await claimClientFor(server).claim(claimRequest)
-    } catch (error) {
-      const diagnostic = error instanceof Error ? error.message : String(error)
-      writeServerLog('WARN', 'federation.summon_gate.refusal', {
-        path: request.path,
-        scopeRef: request.scopeRef,
-        reason: 'claim-refused',
-        wouldBeDecision: 'refuse',
-        enforced: true,
-        mode: result.mode,
-        retryable: false,
-        localNodeId: deps.localNodeId,
-        diagnostic,
-      })
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
-        scopeRef: request.scopeRef,
-        path: request.path,
-        reason: 'claim-refused',
-        retryable: false,
-      })
-    }
-
-    if (result.evaluation.reason === 'claim-birth') {
-      const provenance: BirthAuthorityProvenance = {
-        kind: 'claim-birth',
-        taskId: authority.taskId,
-        claimedBy: authority.claimedBy,
-        claimedScope: authority.claimedScope,
-        claimedNode: authority.claimedNode,
-        claimGeneration: authority.claimGeneration,
-      }
-      try {
-        await commitAuthorizedEstablishment({
-          deps,
-          request,
-          mode: result.mode,
-          homeNodeId: deps.localNodeId,
-          birthClass: 'mechanism-born',
-          authorityProvenance: provenance,
-          establishmentProvenance: 'explicit_local',
-          label: 'claim-birth',
-        })
-      } catch (error) {
-        await releaseClaimBestEffort(server, authority, 'establishment')
-        throw error
-      }
-    }
-    writeServerLog(
-      'INFO',
-      result.evaluation.reason === 'claim-rebind'
-        ? 'federation.claim_birth.reacquired_after_rebind'
-        : 'federation.claim_birth.acquired',
-      {
-        scopeRef: request.scopeRef,
-        taskId: authority.taskId,
-        claimedNode: authority.claimedNode,
-        claimGeneration: authority.claimGeneration,
-      }
-    )
-    return { ...result, claimAuthority: authority }
   }
 
   return result
@@ -1489,11 +1266,7 @@ export async function repairLiveUnboundPlacements(
     // local ledger or wedge the whole daemon at boot.
     try {
       const registry = await deps.registry.consult(scopeRef)
-      if (
-        registry.outcome === 'bound' &&
-        registry.binding.homeNodeId === deps.localNodeId &&
-        registry.binding.establishmentProvenance !== 'rebind'
-      ) {
+      if (registry.outcome === 'bound' && registry.binding.homeNodeId === deps.localNodeId) {
         deps.ledger.installActive(registry.binding)
         summary.repaired += 1
         continue
@@ -1548,7 +1321,7 @@ export async function repairLiveUnboundPlacements(
 }
 
 /**
- * Refuses a locally retired or rebind-revoked scope before an existing target
+ * Refuses a locally retired scope before an existing target
  * row can bypass the summon gate entirely.
  *
  * This is deliberately limited to node-local hard stops: target selection also
@@ -1569,14 +1342,8 @@ export async function assertScopeNotRetired(
   const deps = gateDepsFor(server)
   if (deps === undefined) return undefined
 
-  const retirement = deps.retirementFor?.(request.scopeRef)
-  const localAuthority = deps.ledger.activeAuthority(request.scopeRef)
-  const locallyRetired =
-    retirement?.retiredNodeId === deps.localNodeId &&
-    (localAuthority === undefined ||
-      localAuthority.placementEpoch <= retirement.retiredPlacementEpoch)
-  const locallyRevoked = deps.ledger.get?.(request.scopeRef)?.state === 'revoked'
-  if (!locallyRetired && !locallyRevoked) {
+  const locallyRetired = deps.ledger.get?.(request.scopeRef)?.state === 'retired'
+  if (!locallyRetired) {
     return undefined
   }
 

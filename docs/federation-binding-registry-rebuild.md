@@ -1,29 +1,20 @@
-# Binding registry rebuild from node ledgers
+# Binding registry rebuild and cache refresh
 
-The binding registry at
-`~/praesidium/var/state/federation/binding-registry.sqlite` is reconstructible
-from the union of every node's local `placement_ledger` and
-`federation_scope_retirements` epoch fences. The rebuild chooses the highest
-placement epoch for each ScopeRef and refuses conflicts at the same epoch. A
-fence at or above the highest ledger rebuilds a durable retired row; an active
-ledger above the fence rebuilds active authority. Retirement is never collapsed
-to virgin. The command never overwrites an existing registry.
+The shared binding registry contains active `ScopeRef -> homeNodeId` rows only.
+It is reconstructible from the union of active node-local `placement_ledger`
+rows. A node-local `retired` row is a permanent fence on that node; it is not a
+shared tombstone and must never be imported as an active registry binding.
 
-This is a recovery procedure, not normal rebind choreography:
+This is a recovery procedure, not a relocation mechanism. Federation v1.3 has
+no movement operation. If two node backups contain active rows for the same
+scope with different homes, the rebuild refuses the conflict. An operator must
+investigate it; selecting a winner would conceal split authority.
 
-1. Stop federation establishment/rebind writes on every node. Resolve any
-   known registered-but-not-yet-established crash window by retrying the
-   establishment first; until its local row exists, that newly registered row
-   is intentionally not present in the ledger union.
-2. Capture each node's HRC SQLite database with a WAL-aware backup. For example:
+## Rebuild
 
-   ```bash
-   sqlite3 ~/praesidium/var/state/hrc/state.sqlite \
-     ".backup '/tmp/max3-state.sqlite'"
-   ```
-
-   Repeat on `svc`, `lab`, and every node that has ever held a binding, then
-   place those backup files together on the recovery node.
+1. Stop all registry writers and federation establishment on every node.
+2. Take WAL-aware SQLite backups of every node store. Never copy a live
+   `state.sqlite` without its WAL.
 3. Build a new registry at a fresh path:
 
    ```bash
@@ -34,31 +25,42 @@ This is a recovery procedure, not normal rebind choreography:
      /tmp/max3-state.sqlite
    ```
 
-   A same-epoch conflict is a hard refusal and must be investigated; choosing
-   a row heuristically would recreate split authority. Older epochs are ignored
-   because epochs never regress.
 4. Compare the emitted counts with the source inventory and inspect the staged
-   registry before activation:
+   rows:
 
    ```bash
    sqlite3 /tmp/binding-registry.rebuilt.sqlite \
-     "SELECT scope_ref,state,home_node_id,retired_home_node_id,successor_node_id,placement_epoch,birth_class FROM binding_registry ORDER BY scope_ref;"
+     "SELECT scope_ref,home_node_id,created_at,updated_at FROM binding_registry ORDER BY scope_ref;"
    ```
 
-5. Back up the current registry with `sqlite3 .backup`, stop its listener, move
-   the verified rebuilt database into the canonical path, and restart the
-   pinned svc service. Keep establishment/rebind disabled until registry
-   consults agree with the active local rows.
+5. Back up the current registry with `sqlite3 .backup`. With writers still
+   stopped, atomically replace it with the verified staged database, restart
+   the registry host, and read every active binding back through the registry
+   API before re-enabling establishment.
 
-The registry and local databases use WAL mode. Never reconstruct by copying a
-live `.sqlite` file without its WAL or by selecting a lower epoch to make a
-conflict disappear.
+The rebuild never overwrites its output path. Retired local rows remain in the
+node stores and continue to prevent that old home from re-establishing the
+scope after the shared row is deleted.
 
-An orphan retirement fence—one whose retired-home ledger row is absent from
-the supplied backups—is not evidence that the fence is stale. On its source
-node it remains an effective fail-closed fence because no later active local
-ledger epoch proves that authority returned there. The rebuild refuses that
-scope because the fence alone cannot reconstruct immutable birth class and
-authority provenance. Recover the missing WAL-aware node backup or otherwise
-restore the matching ledger evidence before retrying; never delete or ignore
-an orphan fence merely to make the rebuild converge.
+## Refresh stale binding caches after retirement
+
+Retirement fences the old home before deleting the shared row. Other nodes can
+temporarily retain a stale cache hint naming that old home. The hint grants no
+authority: the retired home refuses the request and the sender must surface the
+failed delivery or retry after fresh discovery.
+
+After an ordered retirement:
+
+1. Confirm the retirement result is `retired` or `idempotent`, not
+   `fenced-registry-pending`.
+2. Refresh each participating daemon's binding cache by restarting it through
+   that node's documented supervisor path. Do not edit SQLite cache rows.
+3. Re-run `hrc target locate <scope> --json` from each node. The old home must
+   report its durable local retirement fence and no summon authority; the
+   registry must report unbound until a fresh establishment occurs elsewhere.
+4. Replay only deliveries that visibly failed because of the stale hint, using
+   their owning subsystem's retry surface. Never rewrite their destination or
+   suppress a dead letter.
+5. If a fresh establishment is intended, issue a new ordinary establishment on
+   the chosen node. It creates new continuity; it does not inherit the retired
+   home's session, binding metadata, or history.

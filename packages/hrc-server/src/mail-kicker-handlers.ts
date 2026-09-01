@@ -1018,7 +1018,7 @@ function kickerScopeRefFor(targetSessionRef: string): string | undefined {
  * is what closes it.
  *
  * Stale local RUNTIMES are deliberately NOT torn down here. Evicting a live
- * seat is a rebind's decision (`rebind.ts` already enumerates the scope's live
+ * seat is an operator retirement decision (the retirement primitive enumerates the scope's live
  * runtime ids at revoke time), never a delivery mechanism's; a routing verdict
  * must not kill a session an operator may be attached to. Nor is the exclusion
  * pushed into `listLiveSessionRefs()`: that query lives in hrc-store-sqlite,
@@ -1038,14 +1038,14 @@ function skipForeignHomedTarget(
     attempt?.state === 'claimed'
       ? server.db.mailDrives.failWithoutStart(
           attempt.driveAttemptId,
-          `${scopeRef} is homed on ${foreign.homeNodeId} (epoch ${foreign.placementEpoch}); this node has no authority to drive it`
+          `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`
         ).driveAttemptId
       : undefined
 
   // Announcement is deduped on its OWN map, not on the resolver's memo. The
   // memo is shared with the shadow teardown, and whichever mechanism happened
   // to resolve the scope first would otherwise silence this line for the other.
-  const announcement = `${foreign.homeNodeId}@${foreign.placementEpoch}`
+  const announcement = foreign.homeNodeId
   const alreadyAnnounced = server.mailKickerForeignHomeAnnounced.get(scopeRef) === announcement
   server.mailKickerForeignHomeAnnounced.set(scopeRef, announcement)
   if (alreadyAnnounced && failedAttemptId === undefined) return
@@ -1054,7 +1054,6 @@ function skipForeignHomedTarget(
     targetSessionRef,
     scopeRef,
     homeNodeId: foreign.homeNodeId,
-    placementEpoch: foreign.placementEpoch,
     source: foreign.source,
     wakeReason,
     ...(failedAttemptId === undefined ? {} : { failedAttemptId }),

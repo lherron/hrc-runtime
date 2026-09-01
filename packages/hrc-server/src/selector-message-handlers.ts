@@ -14,7 +14,6 @@ import {
   isMatchingInteractiveTmuxBrokerRuntime,
   validateEnsureRuntimeIntent,
 } from './broker-decisions.js'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import {
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
@@ -240,7 +239,6 @@ export async function ensureTargetSession(
   sessionRef: string,
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>,
-  birthCredential?: string,
   origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
@@ -265,7 +263,6 @@ export async function ensureTargetSession(
           // T-07398: a successor is a birth, so its directive block still
           // decides placement (gap-filling only) and provisioning.
           ...(intent.provision === undefined ? {} : { provision: intent.provision }),
-          ...(birthCredential === undefined ? {} : { birthCredential }),
         },
         (claimAuthority) => {
           const raced = findTargetSession(this.db, normalized)
@@ -323,7 +320,6 @@ export async function ensureTargetSession(
       // T-07398: the dm/ensure door is the second provisioning door, and it
       // honors the same directive block on the same terms as the claim doors.
       ...(intent.provision === undefined ? {} : { provision: intent.provision }),
-      ...(birthCredential === undefined ? {} : { birthCredential }),
     },
     (claimAuthority) => {
       const raced = findTargetSession(this.db, normalized)
@@ -390,13 +386,10 @@ export async function handleEnsureTarget(
   const parsedScopeJson = isRecord(body['parsedScopeJson'])
     ? (body['parsedScopeJson'] as Record<string, unknown>)
     : undefined
-  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
-
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
-    parsedScopeJson,
-    birthCredential
+    parsedScopeJson
   )
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }

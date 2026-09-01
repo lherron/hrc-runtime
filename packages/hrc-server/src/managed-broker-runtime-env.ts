@@ -1,6 +1,5 @@
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
 import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { injectRuntimeWrkqAuthority } from './federation/wrkq-authority.js'
 
@@ -26,10 +25,7 @@ export function buildManagedBrokerDispatchEnv(
 ): Record<string, string> {
   return {
     ...injectRuntimeTaskClaimCredentialFile(
-      injectRuntimeWrkqAuthority(
-        injectRuntimeBirthCredential(input.baseEnv, input.runtimeId),
-        input.wrkqAuthoritySource
-      ),
+      injectRuntimeWrkqAuthority(input.baseEnv, input.wrkqAuthoritySource),
       {
         db: input.db,
         runtimeRoot: input.runtimeRoot,

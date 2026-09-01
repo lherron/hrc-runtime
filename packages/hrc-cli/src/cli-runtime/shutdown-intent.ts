@@ -35,7 +35,6 @@ export type ServerLifecycleAuthorization =
 const SERVER_LIFECYCLE_ENVELOPE_KEYS = [
   'HRC_SESSION_REF',
   'HRC_RUN_ID',
-  'HRC_BIRTH_CREDENTIAL',
   'ASP_SCOPE_REF',
   'ASP_TASK_ID',
   'ASP_DEFAULT_TASK',

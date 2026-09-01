@@ -43,7 +43,7 @@ describe('collective message history repository', () => {
         createdAt: '2026-07-24T12:00:02.000Z',
         execution: { state: 'not_applicable' },
         metadataJson: {
-          federationIngress: { authenticatedNodeId: 'max3', protocolVersion: '1.0' },
+          federationIngress: { authenticatedNodeId: 'max3' },
         },
       })
       db.collectiveHistory.recordObservation({

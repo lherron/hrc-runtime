@@ -178,12 +178,10 @@ Terminated `runtimes` rows are keep-forever history: no TTL and no pruning under
 the standing policy. Lance's 2026-07-18 ruling is recorded in T-06531 comment
 C-10793; the fenced T-07598 manifest cleanup above is the sole named exception.
 
-Federation binding-registry retirement rows and node-local epoch fences are
-also keep-forever authority. They have no TTL: expiring either would turn an
-ever-born identity back into a virgin namespace and permit an epoch-1
-collision. A later active epoch makes an older local fence inert, but does not
-delete it because registry recovery consumes the fence as reconstruction
-evidence.
+Federation node-local retirement fences are also keep-forever authority. They
+have no TTL: the ordered retirement operation deletes the shared active binding
+only after the old-home fence is durable, and expiring that fence could restore
+authority on the old home.
 
 The controlling reason is resume-path integrity. Terminated rows anchor the
 `scope_ref` → `host_session_id` → `harness_session_json` chain used by

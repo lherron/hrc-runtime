@@ -271,14 +271,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "BirthAuthorityProvenance",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|BirthAuthorityProvenance|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "BirthDesignationProvenance",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -775,14 +767,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "EstablishmentProvenance",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|EstablishmentProvenance|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "ExactStartRuntimeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -795,14 +779,6 @@
       "kind": "value",
       "file": "packages/hrc-core/src/project-registry.ts",
       "hash": "hrc-core|expandRegistryHome|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationBirthClass",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationBirthClass|type",
       "count": 1
     },
     {
@@ -919,42 +895,10 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "FederationRebindOutcome",
+      "symbol": "FederationPlacementSource",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationRebindOutcome|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationRebindRequest",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationRebindRequest|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationRebindResult",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationRebindResult|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationRebindState",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationRebindState|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "FederationRebindStep",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|FederationRebindStep|type",
+      "hash": "hrc-core|FederationPlacementSource|type",
       "count": 1
     },
     {
@@ -971,6 +915,38 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationRemoteEstablishResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRetirementOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRetirementOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRetirementRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRetirementRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRetirementResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRetirementResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRetirementState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRetirementState|type",
       "count": 1
     },
     {
@@ -1099,14 +1075,6 @@
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HRC_ARTIFACT_REPORTED_EVENT|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HRC_BIRTH_CREDENTIAL_ENV",
-      "kind": "value",
-      "file": "packages/hrc-core/src/federation.ts",
-      "hash": "hrc-core|HRC_BIRTH_CREDENTIAL_ENV|value",
       "count": 1
     },
     {
@@ -1395,14 +1363,6 @@
       "kind": "value",
       "file": "packages/hrc-core/src/errors.ts",
       "hash": "hrc-core|HrcBadRequestError|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "HrcBirthCredential",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation.ts",
-      "hash": "hrc-core|HrcBirthCredential|type",
       "count": 1
     },
     {
@@ -3115,22 +3075,6 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|LocateBindingsReport|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "LocateBirthChain",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|LocateBirthChain|type",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
-      "symbol": "LocateBirthChainLink",
-      "kind": "type",
-      "file": "packages/hrc-core/src/federation-contracts.ts",
-      "hash": "hrc-core|LocateBirthChainLink|type",
       "count": 1
     },
     {

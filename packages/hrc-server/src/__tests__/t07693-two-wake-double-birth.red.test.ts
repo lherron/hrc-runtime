@@ -116,10 +116,7 @@ function homeScopeHere(instance: HrcServer): void {
   createPlacementLedgerRepository(peek(instance).db.sqlite).installActive({
     scopeRef: SCOPE,
     homeNodeId: peek(instance).federationNodeId,
-    placementEpoch: 1,
-    birthClass: 'policy-born',
-    authorityProvenance: { kind: 'policy', source: 'pin' },
-    establishmentProvenance: 'pin',
+    placementSource: 'pin',
     updatedAt: timestamp(),
   })
 }

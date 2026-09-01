@@ -12,30 +12,19 @@ import type { HrcMailEnvelope, HrcMailSendRequest } from './hrcmail-contracts.js
  * reachable from the client that has to deserialize it. hrc-core is the one
  * package everything downstream can see.
  *
- * `hrc-store-sqlite` re-exports the three enums from here, so there is still
- * exactly ONE definition of what an establishment provenance may be. That
- * matters more than the file it lives in: the value is CHECK-constrained in two
- * SQL schemas, re-validated on two HTTP boundaries, and now rendered by locate.
+ * Placement-source vocabulary remains here because the T-07655 birth
+ * designation must distinguish declared tiers from its fallback tier while a
+ * virgin binding is being established. It is transient decision input, not a
+ * property of the established binding.
  */
 
-/** How a scope came to exist (federation spec §3). */
-export type FederationBirthClass = 'policy-born' | 'mechanism-born'
-
-/**
- * WHICH placement rule established a binding — locate's display vocabulary.
- *
- * `explicit_local` is an establishment provenance only, never a declared
- * policy: it records that an operator's start at a node WAS the declaration,
- * which by definition cannot be read out of a profile. `rebind` is writable
- * only by a compare-and-swap, never by an establish.
- */
-export type EstablishmentProvenance =
+/** The placement decision used while attempting a virgin establishment. */
+export type FederationPlacementSource =
   | 'pin'
   | 'task_default'
   | 'default_home_node'
   | 'default_home_node(local)'
   | 'explicit_local'
-  | 'rebind'
   /**
    * T-07655 — the two tier-5 provenances of a mail-triggered implicit summon
    * whose birth node was DESIGNATED from the sender's own home. They sit at the
@@ -77,7 +66,7 @@ export type BirthDesignationRecord = {
   readonly designatedAt: string
   readonly state: BirthDesignationState
   /** The provenance of the tier-1-4 establishment that superseded it. */
-  readonly supersededBy?: EstablishmentProvenance | undefined
+  readonly supersededBy?: FederationPlacementSource | undefined
   readonly supersededAt?: string | undefined
 }
 
@@ -92,28 +81,21 @@ export type BirthDesignationResult =
   | { readonly kind: 'designated'; readonly designation: BirthDesignationRecord }
   | { readonly kind: 'none' }
 
-/** Open-ended birth credential chain payload; `kind` discriminates. */
-export type BirthAuthorityProvenance = Readonly<Record<string, unknown>> & {
-  readonly kind: string
-}
-
 /** Gate enforcement level for this node. */
 export type FederationGateModeValue = 'off' | 'advisory' | 'enforce'
 
 // -- Peer message envelope ---------------------------------------------------
 
-/** Epoch-fenced destination named by an origin before it enters the outbox. */
+/** Destination home named by an origin before it enters the retained outbox store. */
 export type FederationExpectedPlacement = {
   readonly homeNodeId: string
-  readonly placementEpoch: number
 }
 
 /**
  * Optional delivery context needed to preserve today's local summon/queue
  * behavior after the receiver durably inserts the transcript row.
  *
- * It deliberately excludes wait (which stays origin-local) and birthCredential
- * (child birth never crosses nodes).
+ * It deliberately excludes wait, which stays origin-local.
  */
 export type FederationMessageDelivery = {
   readonly runtimeIntent?: HrcRuntimeIntent | undefined
@@ -216,7 +198,7 @@ export type FederationInteractiveLifecycleSignal = {
 }
 
 /**
- * hrcmail's additive payload on the existing epoch-fenced federation message.
+ * hrcmail's additive payload on the existing home-fenced federation message.
  *
  * The ordinary message fields remain the transport identity and response
  * fence. A request creates one destination-local envelope; a disposition is
@@ -237,7 +219,6 @@ export type FederationMailPayload =
 
 /** Federation v1 tolerant-reader envelope (spec §6). */
 export type FederationMessageEnvelope = {
-  readonly protocolVersion: string
   readonly messageId: string
   readonly kind: HrcMessageKind
   readonly phase: HrcMessagePhase
@@ -366,7 +347,6 @@ export type FederationPeerHealthObservation = {
   readonly checkedAt: string
   readonly answeredAt?: string | undefined
   readonly latencyMs: number
-  readonly protocolVersion?: string | undefined
   readonly startedAt?: string | undefined
   readonly capabilities?: FederationPeerCapabilities | undefined
   readonly detail?: string | undefined
@@ -393,44 +373,35 @@ export type FederationRuntimeProjectionReport = {
   readonly nodes: readonly FederationNodeRuntimeProjection[]
 }
 
-// -- F3 fenced manual rebind -------------------------------------------------
+// -- F3 ordered retirement ---------------------------------------------------
 
-export type FederationRebindStep = 'revoke' | 'cas' | 'activate'
-
-/** The exact old tuple and intended successor used by every idempotent step. */
-export type FederationRebindRequest = {
+export type FederationRetirementRequest = {
   readonly scopeRef: string
-  readonly expectedHomeNodeId: string
-  readonly expectedPlacementEpoch: number
-  readonly newHomeNodeId: string
+  readonly reason: string
 }
 
-export type FederationRebindOutcome =
-  | 'revoked'
-  | 'registry-updated'
-  | 'activated'
+export type FederationRetirementOutcome =
+  | 'retired'
   | 'idempotent'
   | 'conflict'
   | 'refused'
-  | 'peer-unreachable'
+  | 'registry-unavailable'
   | 'live-runtime-present'
 
-export type FederationRebindState =
+export type FederationRetirementState =
   | 'unchanged'
   | 'old-home-live'
-  | 'revoked-nowhere'
-  | 'registry-moved-activation-pending'
-  | 'active-new-home'
+  | 'fenced-registry-pending'
+  | 'retired'
 
-/** Visible result of one retryable manual-rebind step; never contains peer tokens. */
-export type FederationRebindResult = {
-  readonly step: FederationRebindStep
+/** Visible result of the authenticated, idempotent old-home operation. */
+export type FederationRetirementResult = {
   readonly ok: boolean
-  readonly outcome: FederationRebindOutcome
-  readonly state: FederationRebindState
+  readonly outcome: FederationRetirementOutcome
+  readonly state: FederationRetirementState
   readonly retryable: boolean
   readonly detail: string
-  readonly request: FederationRebindRequest
+  readonly request: FederationRetirementRequest
   readonly binding?: LocateBindingRecord | undefined
   readonly ledger?: LocateLedgerView | undefined
   readonly liveRuntimeIds?: readonly string[] | undefined
@@ -438,10 +409,7 @@ export type FederationRebindResult = {
 
 // -- `hrc target locate` -----------------------------------------------------
 
-/**
- * What placement policy DECLARES for a scope, in the same vocabulary used to
- * stamp `establishmentProvenance` — so a reader can line the two up directly.
- */
+/** What placement policy declares for a scope. */
 export type LocateDeclaredPolicy =
   | { source: 'pin'; pinKey: string; nodeId: string; profilePath: string }
   | {
@@ -469,35 +437,16 @@ export type LocateDeclaredPolicy =
 
 export type LocateBindingRecord = {
   homeNodeId: string
-  placementEpoch: number
-  birthClass: FederationBirthClass
-  establishmentProvenance: EstablishmentProvenance
-  authorityProvenance: BirthAuthorityProvenance
-  priorHomeNodeId?: string | undefined
   createdAt: string
   updatedAt: string
 }
 
 export type LocateLedgerView =
-  | { state: 'active' | 'revoked'; record: LocateBindingRecord }
+  | { state: 'active' | 'retired'; record: LocateBindingRecord }
   | { state: 'absent' }
 
 export type LocateRegistryView =
   | { outcome: 'bound'; record: LocateBindingRecord }
-  | {
-      outcome: 'retired'
-      record: {
-        placementEpoch: number
-        retiredHomeNodeId: string
-        successorNodeId: string | null
-        birthClass: FederationBirthClass
-        authorityProvenance: BirthAuthorityProvenance
-        createdAt: string
-        updatedAt: string
-        retiredAt: string
-        reason: string
-      }
-    }
   | { outcome: 'unbound' }
   /** Consulted and failed. Never collapsed into `unbound` (§5 fail-closed). */
   | { outcome: 'unknown'; detail: string; retryable: boolean }
@@ -507,14 +456,6 @@ export type LocateRegistryView =
 /** Who holds summon authority, and which layer said so. */
 export type LocateAuthority =
   | { state: 'bound'; source: 'ledger' | 'registry'; record: LocateBindingRecord; isLocal: boolean }
-  | {
-      state: 'retired'
-      placementEpoch: number
-      retiredHomeNodeId: string
-      successorNodeId: string | null
-      birthClass: FederationBirthClass
-      authorityProvenance: BirthAuthorityProvenance
-    }
   | { state: 'unbound' }
   | { state: 'unknown'; detail: string; retryable: boolean }
 
@@ -560,8 +501,6 @@ export type LocateSkew =
       pinKey: string
       pinnedNodeId: string
       boundNodeId: string
-      placementEpoch: number
-      establishmentProvenance: EstablishmentProvenance
       detail: string
     }
   | {
@@ -569,17 +508,13 @@ export type LocateSkew =
       taskKey: string
       taskDefaultNodeId: string
       boundNodeId: string
-      placementEpoch: number
-      establishmentProvenance: EstablishmentProvenance
       detail: string
     }
   | {
-      /** EPR scopes are mechanism-born locally but remain governed by declared placement. */
+      /** External registrations remain governed by declared placement. */
       kind: 'default-home-vs-binding'
       defaultHomeNodeId: string
       boundNodeId: string
-      placementEpoch: number
-      establishmentProvenance: EstablishmentProvenance
       detail: string
     }
 
@@ -591,31 +526,14 @@ export type LocateNote = {
     | 'pin-honored'
     | 'task-default-honored'
     | 'scope-retired'
-    | 'birth-chain-unresolved'
-    | 'rebind-revoked'
-    | 'rebind-activation-pending'
   detail: string
 }
 
-export type LocateBirthChainLink = {
-  scopeRef: string
-  birthClass: FederationBirthClass
-  homeNodeId: string
-  authorityProvenance: BirthAuthorityProvenance
-}
-
-export type LocateBirthChain =
-  | { state: 'not-applicable'; detail: string }
-  /** `ancestor` is the terminating policy-born or claim-born link. */
-  | { state: 'resolved'; links: readonly LocateBirthChainLink[]; ancestor: LocateBirthChainLink }
-  | { state: 'unresolved'; detail: string }
-
-/** Node-local retirement mark written by reconciliation (T-06614). */
+/** Durable node-local retirement fence. */
 export type LocateRetirement = {
   retiredNodeId: string
-  retiredPlacementEpoch: number
-  successorNodeId: string | null
   reason: string
+  retiredAt: string
 }
 
 /** `GET /v1/federation/locate?scopeRef=…` */
@@ -658,7 +576,6 @@ export type ScopeLocation = {
   skew?: LocateSkew | undefined
   notes: readonly LocateNote[]
   retirement?: LocateRetirement | undefined
-  birthChain: LocateBirthChain
 }
 
 export type LedgerSkewScan = {

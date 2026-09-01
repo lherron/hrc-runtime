@@ -10,7 +10,6 @@ import { ExternalRegistrationGrantRepository } from './external-registration-gra
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
 import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
-import { ScopeRetirementRepository } from './federation-reconciliation.js'
 import { HrcMailDriveRepository } from './mail/drive-repository.js'
 import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
 import { HrcMailFederatedOriginRepository } from './mail/federated-origin-repository.js'
@@ -100,7 +99,6 @@ export type HrcDatabase = {
   federationAcceptedRequests: FederationAcceptedRequestRepository
   federationPeerAcceptances: FederationPeerAcceptanceRepository
   federationOutbox: FederationOutboxRepository
-  scopeRetirements: ScopeRetirementRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
@@ -190,7 +188,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     federationPeerAcceptances: new FederationPeerAcceptanceRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),
-    scopeRetirements: new ScopeRetirementRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),

@@ -45,57 +45,34 @@ export type {
 } from './federation-outbox-repository.js'
 export {
   BindingRegistry,
-  PlacementEpochRegressionError,
   PlacementLedgerConflictError,
+  PlacementLedgerRetiredError,
   PlacementLedgerRepository,
-  applyT06681F0RetirementMigration,
   createPlacementLedgerRepository,
   openBindingRegistry,
   readPlacementLedgerRows,
   rebuildBindingRegistryFromLedgers,
 } from './federation-repositories.js'
 export type {
-  ActivateRetiredBindingInput,
-  ActivateRetiredBindingResult,
-  BindingCasInput,
-  BindingCasResult,
   BindingEstablishResult,
   BindingRegistryRecord,
-  BirthAuthorityProvenance,
   BirthDesignationProvenance,
   BirthDesignationRecord,
   BirthDesignationResult,
   BirthDesignationState,
   EstablishBindingInput,
-  EstablishmentProvenance,
-  FederationBirthClass,
+  FederationPlacementSource,
+  DeleteBindingInput,
+  DeleteBindingResult,
   InstallActivePlacementInput,
   PlacementBinding,
   PlacementLedgerRecord,
   PlacementLedgerState,
   RecordBirthDesignationInput,
-  RegistryRetirementRecord,
-  RevokePlacementInput,
-  RevokePlacementResult,
-  RetargetRetiredBindingInput,
-  RetargetRetiredBindingResult,
-  RetireBindingInput,
-  RetireBindingResult,
-  T06681F0RetirementMigrationResult,
+  RetirePlacementInput,
+  RetirePlacementResult,
 } from './federation-repositories.js'
 export type { OpenBindingRegistryOptions } from './federation-repositories.js'
-export {
-  ScopeRetirementConflictError,
-  ScopeRetirementRepository,
-  createScopeRetirementRepository,
-  readScopeRetirement,
-  readScopeRetirements,
-} from './federation-reconciliation.js'
-export type {
-  RetireScopeInput,
-  ScopeRetirementReason,
-  ScopeRetirementRecord,
-} from './federation-reconciliation.js'
 export type {
   AppManagedSessionFindOptions,
   AppManagedSessionRecord,
