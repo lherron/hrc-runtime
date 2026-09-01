@@ -75,7 +75,7 @@ export class EventRepository {
   private readonly appendInTransaction: (event: EventAppendInput) => HrcEventEnvelope
 
   constructor(private readonly db: Database) {
-    this.appendInTransaction = db.transaction((event: EventAppendInput) => {
+    const append = db.transaction((event: EventAppendInput) => {
       const streamSeq = allocateStreamSeq(this.db)
       execute(
         this.db,
@@ -123,6 +123,9 @@ export class EventRepository {
 
       return mapEventRow(stored)
     })
+    // allocateStreamSeq reads before it updates. Reserve the WAL writer first
+    // so ordinary busy_timeout handling applies instead of BUSY_SNAPSHOT.
+    this.appendInTransaction = (event) => append.immediate(event)
   }
 
   append(event: EventAppendInput): HrcEventEnvelope {
@@ -250,7 +253,7 @@ export class HrcLifecycleEventRepository {
     private readonly db: Database,
     private readonly toolResultBlobs = new ToolResultBlobRepository(db)
   ) {
-    this.appendInTransaction = db.transaction((event: HrcLifecycleEventInput) => {
+    const append = db.transaction((event: HrcLifecycleEventInput) => {
       const streamSeq = allocateStreamSeq(this.db)
       execute(
         this.db,
@@ -318,6 +321,9 @@ export class HrcLifecycleEventRepository {
 
       return this.mapRow(stored)
     })
+    // allocateStreamSeq reads before it updates. Reserve the WAL writer first
+    // so ordinary busy_timeout handling applies instead of BUSY_SNAPSHOT.
+    this.appendInTransaction = (event) => append.immediate(event)
   }
 
   private mapRow(row: HrcEventRow, options: { hydrate?: boolean } = {}): HrcLifecycleEvent {
