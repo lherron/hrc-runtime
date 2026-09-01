@@ -929,7 +929,6 @@ export async function deliverPersistedSemanticTurnHandoff(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId,
       record.createdAt
     )
 
@@ -1501,7 +1500,6 @@ export async function deliverPersistedSemanticDm(
             body.to,
             body.body,
             record.messageSeq,
-            record.messageId,
             record.createdAt
           )
           this.enqueueDurableHeadlessTurnInput(session, payload, runId, {
@@ -1636,7 +1634,6 @@ export async function steerBusyHeadlessSemanticDm(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId,
       record.createdAt
     )
     // T-07203: the shared steer-class flow owns capability gating, the
@@ -1767,7 +1764,6 @@ export async function executeSemanticTurn(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId,
       record.createdAt
     )
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {

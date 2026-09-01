@@ -39,23 +39,19 @@ export function formatDmAddress(addr: HrcMessageAddress): string {
 }
 
 /**
- * Format a DM body for literal tmux injection. Includes --reply-to so the
- * recipient's reply threads onto the originating request (required for
- * --wait on the sender side and for clean thread history).
+ * Format a semantic turn request for harness delivery.
  *
- *   [DM #<seq> sentAt=<createdAt> <from> → <to>]: <content>
+ *   [Turn request from <from> · #<seq> · sentAt=<createdAt> · to <to>]
+ *   <content>
  *
- *     reply_cmd if reply requested:
- *     hrcchat dm <from> --reply-to <id> - <<'__HRC_REPLY__'
- *     <your reply>
- *     __HRC_REPLY__
+ * The completed turn's canonical response is correlated by the server's
+ * turn-response finalizer. The receiver does not need a manual reply command.
  */
 export function formatDmPayload(
   from: HrcMessageAddress,
   to: HrcMessageAddress,
   body: string,
   messageSeq: number,
-  messageId: string,
   createdAt: string
 ): string {
   const fromDisplay = formatDmAddress(from)
@@ -66,13 +62,7 @@ export function formatDmPayload(
     const suffix = `… (truncated; hrcchat show '#${messageSeq}')`
     content = content.slice(0, maxChars - suffix.length) + suffix
   }
-  const replyHint = [
-    'reply_cmd if reply requested:',
-    `hrcchat dm ${fromDisplay} --reply-to ${messageId} - <<'__HRC_REPLY__'`,
-    '<your reply>',
-    '__HRC_REPLY__',
-  ].join('\n')
-  return `[DM #${messageSeq} sentAt=${createdAt} ${fromDisplay} → ${toDisplay}]: ${content}\n\n${replyHint}`
+  return `[Turn request from ${fromDisplay} · #${messageSeq} · sentAt=${createdAt} · to ${toDisplay}]\n${content}`
 }
 
 export function extractTextFromTurnMessagePayload(payload: unknown): string {
