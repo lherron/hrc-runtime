@@ -260,11 +260,14 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
  * Default window placement for a tab identity (T-07603).
  *
  * Machine-dispatched worker lanes (`task:T-XXXXX`, role-qualified seats
- * included) belong in the headless pile, except chief seats, which have their
- * own context-switching window regardless of scope shape. Everything else the
- * operator summoned by name — `primary`, roster slugs, `minisvc`/`minilab`,
- * hand-named lanes such as `viewrca` — belongs in the window they are actually
- * working in.
+ * included) belong in the headless pile, except chief seats and hcs-project
+ * task seats, which share the Chief Contexts window. The hcs board mints those
+ * Lance-attention contexts as `<agent>@hcs:T-XXXXX` regardless of the target
+ * checkout, so the scope project — not cwd — determines whether a seat is in
+ * hcs. The accepted tradeoff is that machine-dispatched implementation workers
+ * on hcs-project tasks land there too. Everything else the operator summoned by
+ * name — `primary`, roster slugs, `minisvc`/`minilab`, hand-named lanes such as
+ * `viewrca` — belongs in the window they are actually working in.
  *
  * The classification is `deriveHeadlessTabIdentity`'s, unchanged: this reads the
  * tabKey it already produced rather than re-testing the scope. So window
@@ -278,6 +281,7 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
 export function defaultWindowKeyForTab(tab: HeadlessTabIdentity): string {
   if (tab.tabKey.startsWith('unparsed:')) return DEFAULT_HEADLESS_WINDOW_KEY
   if (tab.agentId === 'chief') return CHIEF_WINDOW_KEY
+  if (tab.projectId === 'hcs' && tab.tabKey.startsWith('task:')) return CHIEF_WINDOW_KEY
   if (tab.tabKey.startsWith('task:')) return DEFAULT_HEADLESS_WINDOW_KEY
   return INTERACTIVE_WINDOW_KEY
 }
