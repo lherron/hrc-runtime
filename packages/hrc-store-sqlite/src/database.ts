@@ -133,6 +133,10 @@ export function createHrcDatabase(
   }
 
   const db = new Database(path)
+  // auto_vacuum must be selected before the first table is created. On a fresh
+  // file SQLite installs the incremental-vacuum pointer map as migrations run;
+  // on an existing mode-0 file this remains a no-op until an offline VACUUM.
+  db.exec('PRAGMA auto_vacuum = INCREMENTAL;')
   db.exec(`PRAGMA busy_timeout = ${resolveBusyTimeoutMs(options.busyTimeoutMs)};`)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
