@@ -26,6 +26,7 @@ export const HRC_EVENT_FORWARD_URL_ENV = 'HRC_EVENT_FORWARD_URL'
 export const HRC_EVENT_INGEST_TCP_PORT_ENV = 'HRC_EVENT_INGEST_TCP_PORT'
 export const HRC_EVENT_INGEST_TCP_HOST = '127.0.0.1'
 const CURSOR_FILE = 'event-forward-cursors.json'
+const EVENT_FORWARD_MAX_RETRY_MS = 60_000
 const serveIngest = Bun.serve
 
 type IngestCounters = {
@@ -56,13 +57,37 @@ type ForwardCursors = {
   toolResultBlobs: number
   hrcEvents: number
   brokerInvocationEvents: number
+  deadLetters: ForwardDeadLetter[]
 }
 
-const INITIAL_CURSORS: ForwardCursors = {
-  version: 1,
-  toolResultBlobs: 0,
-  hrcEvents: 0,
-  brokerInvocationEvents: 0,
+type ForwardFeed = HrcEventIngestBatch['feed']
+type ForwardCursorKey = 'toolResultBlobs' | 'hrcEvents' | 'brokerInvocationEvents'
+type ForwardDeadLetterCode = 'invalid_batch' | 'divergent_duplicate' | 'oversized_event'
+
+type ForwardDeadLetter = {
+  sourceRef: string
+  feed: ForwardFeed
+  cursor: number
+  code: ForwardDeadLetterCode
+  message: string
+  deadLetteredAt: string
+}
+
+function initialCursors(): ForwardCursors {
+  return {
+    version: 1,
+    toolResultBlobs: 0,
+    hrcEvents: 0,
+    brokerInvocationEvents: 0,
+    deadLetters: [],
+  }
+}
+
+class OversizedForwardEventError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OversizedForwardEventError'
+  }
 }
 
 function jsonResponse(body: HrcEventIngestAck, status: number): Response {
@@ -417,12 +442,13 @@ async function readCursors(path: string): Promise<ForwardCursors> {
           : 0,
         hrcEvents: parsed.hrcEvents as number,
         brokerInvocationEvents: parsed.brokerInvocationEvents as number,
+        deadLetters: Array.isArray(parsed.deadLetters) ? parsed.deadLetters : [],
       }
     }
   } catch {
     // Missing or invalid cursor state starts at the ledger beginning.
   }
-  return { ...INITIAL_CURSORS }
+  return initialCursors()
 }
 
 async function writeCursors(path: string, cursors: ForwardCursors): Promise<void> {
@@ -444,6 +470,16 @@ function takeBatchPrefix(batch: HrcEventIngestBatch, eventCount: number): HrcEve
     return { ...batch, events: batch.events.slice(0, eventCount) }
   }
   return { ...batch, events: batch.events.slice(0, eventCount) }
+}
+
+function dropBatchPrefix(batch: HrcEventIngestBatch, eventCount: number): HrcEventIngestBatch {
+  if (batch.feed === 'tool_result_blobs') {
+    return { ...batch, events: batch.events.slice(eventCount) }
+  }
+  if (batch.feed === 'hrc_events') {
+    return { ...batch, events: batch.events.slice(eventCount) }
+  }
+  return { ...batch, events: batch.events.slice(eventCount) }
 }
 
 function chunkUtf8(value: string, maximumBytes = 256 * 1024): string[] {
@@ -495,7 +531,7 @@ function prepareBoundedBatch(batch: HrcEventIngestBatch): {
       batch.feed === 'tool_result_blobs'
         ? undefined
         : (batch.events[0] as { originSeq: number } | undefined)?.originSeq
-    throw new Error(
+    throw new OversizedForwardEventError(
       `ingest event${originSeq === undefined ? '' : ` at originSeq ${originSeq}`} exceeds byte limit and cannot be split`
     )
   }
@@ -524,43 +560,209 @@ async function postBatch(
   }
 }
 
+function refusalMessage(ack: Extract<HrcEventIngestAck, { ok: false }>): string {
+  return `${ack.code}: ${ack.message}`
+}
+
+function isPermanentRefusal(ack: HrcEventIngestAck): ack is Extract<
+  HrcEventIngestAck,
+  { ok: false }
+> & {
+  code: 'invalid_batch' | 'divergent_duplicate'
+} {
+  return !ack.ok && (ack.code === 'invalid_batch' || ack.code === 'divergent_duplicate')
+}
+
+async function deadLetterAndAdvance(options: {
+  cursorPath: string
+  cursors: ForwardCursors
+  cursorKey: ForwardCursorKey
+  sourceRef: string
+  feed: ForwardFeed
+  cursor: number
+  code: ForwardDeadLetterCode
+  message: string
+}): Promise<void> {
+  options.cursors[options.cursorKey] = Math.max(options.cursors[options.cursorKey], options.cursor)
+  if (
+    !options.cursors.deadLetters.some(
+      (letter) => letter.feed === options.feed && letter.cursor === options.cursor
+    )
+  ) {
+    options.cursors.deadLetters.push({
+      sourceRef: options.sourceRef,
+      feed: options.feed,
+      cursor: options.cursor,
+      code: options.code,
+      message: options.message,
+      deadLetteredAt: new Date().toISOString(),
+    })
+  }
+  await writeCursors(options.cursorPath, options.cursors)
+  writeServerLog('WARN', 'event_forwarder.dead_letter', {
+    sourceRef: options.sourceRef,
+    feed: options.feed,
+    cursor: options.cursor,
+    code: options.code,
+    message: options.message,
+  })
+}
+
+async function forwardSequencedBatch(options: {
+  batch: Extract<HrcEventIngestBatch, { feed: 'hrc_events' | 'broker_invocation_events' }>
+  target: EventForwardTarget
+  cursorPath: string
+  cursors: ForwardCursors
+  cursorKey: 'hrcEvents' | 'brokerInvocationEvents'
+}): Promise<{ forwarded: number; deadLettered: number }> {
+  let forwarded = 0
+  let deadLettered = 0
+
+  const forward = async (
+    batch: Extract<HrcEventIngestBatch, { feed: 'hrc_events' | 'broker_invocation_events' }>
+  ): Promise<void> => {
+    if (batch.events.length === 0) return
+
+    let posted: { ack: HrcEventIngestAck; eventCount: number }
+    try {
+      posted = await postBatch(options.target, batch)
+    } catch (error) {
+      if (!(error instanceof OversizedForwardEventError)) throw error
+      const first = batch.events[0]
+      if (first === undefined) throw error
+      await deadLetterAndAdvance({
+        cursorPath: options.cursorPath,
+        cursors: options.cursors,
+        cursorKey: options.cursorKey,
+        sourceRef: batch.sourceRef,
+        feed: batch.feed,
+        cursor: first.originSeq,
+        code: 'oversized_event',
+        message: error.message,
+      })
+      deadLettered += 1
+      await forward(dropBatchPrefix(batch, 1) as typeof batch)
+      return
+    }
+
+    if (posted.ack.ok) {
+      options.cursors[options.cursorKey] = posted.ack.ackedThrough
+      forwarded += posted.eventCount
+      await writeCursors(options.cursorPath, options.cursors)
+      await forward(dropBatchPrefix(batch, posted.eventCount) as typeof batch)
+      return
+    }
+    const refusal = posted.ack
+    if (!isPermanentRefusal(refusal)) {
+      throw new Error(refusalMessage(refusal))
+    }
+
+    const sent = batch.events.slice(0, posted.eventCount)
+    let rejectedIndex =
+      refusal.rejectedOriginSeq === undefined
+        ? -1
+        : sent.findIndex((event) => event.originSeq === refusal.rejectedOriginSeq)
+    if (rejectedIndex < 0 && posted.eventCount > 1) {
+      await forward(takeBatchPrefix(batch, 1) as typeof batch)
+      await forward(dropBatchPrefix(batch, 1) as typeof batch)
+      return
+    }
+    if (rejectedIndex < 0) rejectedIndex = 0
+    const rejected = sent[rejectedIndex]
+    if (rejected === undefined) throw new Error('permanent ingest refusal identified no event')
+
+    forwarded += rejectedIndex
+    await deadLetterAndAdvance({
+      cursorPath: options.cursorPath,
+      cursors: options.cursors,
+      cursorKey: options.cursorKey,
+      sourceRef: batch.sourceRef,
+      feed: batch.feed,
+      cursor: rejected.originSeq,
+      code: refusal.code,
+      message: refusal.message,
+    })
+    deadLettered += 1
+    await forward(dropBatchPrefix(batch, rejectedIndex + 1) as typeof batch)
+  }
+
+  await forward(options.batch)
+  return { forwarded, deadLettered }
+}
+
 export async function forwardAvailableEvents(options: {
   db: HrcDatabase
   sourceRef: string
   target: EventForwardTarget
   cursorPath: string
   batchSize?: number
-}): Promise<{ cursors: ForwardCursors; forwarded: number }> {
+}): Promise<{ cursors: ForwardCursors; forwarded: number; deadLettered: number }> {
   const batchSize = Math.min(
     HRC_INGEST_MAX_BATCH_EVENTS,
     Math.max(1, options.batchSize ?? HRC_INGEST_MAX_BATCH_EVENTS)
   )
   const cursors = await readCursors(options.cursorPath)
   let forwarded = 0
+  let deadLettered = 0
 
   const blobs = options.db.toolResultBlobs.listLocalFromRowid(cursors.toolResultBlobs, batchSize)
   for (const blob of blobs) {
     const chunks = chunkUtf8(blob.resultJson)
+    let blobDeadLettered = false
     for (const [part, chunk] of chunks.entries()) {
-      const { ack } = await postBatch(options.target, {
-        version: 1,
-        sourceRef: options.sourceRef,
-        feed: 'tool_result_blobs',
-        events: [
-          {
-            blobId: blob.blobId,
-            runtimeId: blob.runtimeId,
-            kind: blob.kind,
-            bytes: blob.bytes,
-            part,
-            parts: chunks.length,
-            chunk,
-          },
-        ],
-      })
-      if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
+      let posted: { ack: HrcEventIngestAck; eventCount: number }
+      try {
+        posted = await postBatch(options.target, {
+          version: 1,
+          sourceRef: options.sourceRef,
+          feed: 'tool_result_blobs',
+          events: [
+            {
+              blobId: blob.blobId,
+              runtimeId: blob.runtimeId,
+              kind: blob.kind,
+              bytes: blob.bytes,
+              part,
+              parts: chunks.length,
+              chunk,
+            },
+          ],
+        })
+      } catch (error) {
+        if (!(error instanceof OversizedForwardEventError)) throw error
+        await deadLetterAndAdvance({
+          cursorPath: options.cursorPath,
+          cursors,
+          cursorKey: 'toolResultBlobs',
+          sourceRef: options.sourceRef,
+          feed: 'tool_result_blobs',
+          cursor: blob.rowid,
+          code: 'oversized_event',
+          message: error.message,
+        })
+        deadLettered += 1
+        blobDeadLettered = true
+        break
+      }
+      if (!posted.ack.ok) {
+        if (!isPermanentRefusal(posted.ack)) throw new Error(refusalMessage(posted.ack))
+        await deadLetterAndAdvance({
+          cursorPath: options.cursorPath,
+          cursors,
+          cursorKey: 'toolResultBlobs',
+          sourceRef: options.sourceRef,
+          feed: 'tool_result_blobs',
+          cursor: blob.rowid,
+          code: posted.ack.code,
+          message: posted.ack.message,
+        })
+        deadLettered += 1
+        blobDeadLettered = true
+        break
+      }
       forwarded += 1
     }
+    if (blobDeadLettered) continue
     cursors.toolResultBlobs = blob.rowid
     await writeCursors(options.cursorPath, cursors)
   }
@@ -574,16 +776,20 @@ export async function forwardAvailableEvents(options: {
     { hydrate: false }
   )
   if (lifecycle.length > 0) {
-    const { ack, eventCount } = await postBatch(options.target, {
-      version: 1,
-      sourceRef: options.sourceRef,
-      feed: 'hrc_events',
-      events: lifecycle.map((event) => ({ originSeq: event.streamSeq, event })),
+    const result = await forwardSequencedBatch({
+      batch: {
+        version: 1,
+        sourceRef: options.sourceRef,
+        feed: 'hrc_events',
+        events: lifecycle.map((event) => ({ originSeq: event.streamSeq, event })),
+      },
+      target: options.target,
+      cursorPath: options.cursorPath,
+      cursors,
+      cursorKey: 'hrcEvents',
     })
-    if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
-    cursors.hrcEvents = ack.ackedThrough
-    forwarded += eventCount
-    await writeCursors(options.cursorPath, cursors)
+    forwarded += result.forwarded
+    deadLettered += result.deadLettered
   }
 
   const broker = options.db.brokerInvocationEvents.listLocalFromId(
@@ -596,19 +802,35 @@ export async function forwardAvailableEvents(options: {
       if (event.id === undefined) throw new Error('local broker row is missing its table id')
       return { originSeq: event.id, event }
     })
-    const { ack, eventCount } = await postBatch(options.target, {
-      version: 1,
-      sourceRef: options.sourceRef,
-      feed: 'broker_invocation_events',
-      events,
+    const result = await forwardSequencedBatch({
+      batch: {
+        version: 1,
+        sourceRef: options.sourceRef,
+        feed: 'broker_invocation_events',
+        events,
+      },
+      target: options.target,
+      cursorPath: options.cursorPath,
+      cursors,
+      cursorKey: 'brokerInvocationEvents',
     })
-    if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
-    cursors.brokerInvocationEvents = ack.ackedThrough
-    forwarded += eventCount
-    await writeCursors(options.cursorPath, cursors)
+    forwarded += result.forwarded
+    deadLettered += result.deadLettered
   }
 
-  return { cursors, forwarded }
+  return { cursors, forwarded, deadLettered }
+}
+
+export function eventForwardRetryDelayMs(
+  consecutiveFailures: number,
+  baseMs = 1_000,
+  maxMs = EVENT_FORWARD_MAX_RETRY_MS
+): number {
+  const cap = Number.isFinite(maxMs) ? Math.max(1, Math.trunc(maxMs)) : 1
+  const base = Number.isFinite(baseMs) ? Math.min(cap, Math.max(1, Math.trunc(baseMs))) : cap
+  const failureCount = Number.isFinite(consecutiveFailures) ? Math.trunc(consecutiveFailures) : 1
+  const exponent = Math.max(0, Math.min(30, failureCount - 1))
+  return Math.min(cap, base * 2 ** exponent)
 }
 
 export function startEventForwarder(options: {
@@ -617,14 +839,18 @@ export function startEventForwarder(options: {
   sourceRef: string
   target: EventForwardTarget
   retryMs?: number
+  maxRetryMs?: number
 }): EventForwarder {
   const cursorPath = join(options.stateRoot, CURSOR_FILE)
   const retryMs = Math.max(100, options.retryMs ?? 1_000)
+  const maxRetryMs = Math.max(retryMs, options.maxRetryMs ?? EVENT_FORWARD_MAX_RETRY_MS)
   let stopping = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let running: Promise<void> = Promise.resolve()
+  let consecutiveFailures = 0
 
   const run = async (): Promise<void> => {
+    let nextDelayMs = retryMs
     while (!stopping) {
       try {
         const result = await forwardAvailableEvents({
@@ -633,17 +859,22 @@ export function startEventForwarder(options: {
           target: options.target,
           cursorPath,
         })
-        if (result.forwarded === 0) break
+        consecutiveFailures = 0
+        if (result.forwarded === 0 && result.deadLettered === 0) break
       } catch (error) {
+        consecutiveFailures += 1
+        nextDelayMs = eventForwardRetryDelayMs(consecutiveFailures, retryMs, maxRetryMs)
         writeServerLog('WARN', 'event_forwarder.retry', {
           sourceRef: options.sourceRef,
           target: options.target,
+          consecutiveFailures,
+          retryInMs: nextDelayMs,
           error,
         })
         break
       }
     }
-    if (!stopping) timer = setTimeout(schedule, retryMs)
+    if (!stopping) timer = setTimeout(schedule, nextDelayMs)
   }
   const schedule = (): void => {
     running = run()
@@ -682,7 +913,9 @@ export async function drainEventDatabase(options: {
         cursorPath,
       })
       forwarded += result.forwarded
-      if (result.forwarded === 0) return { forwarded, cursors: result.cursors }
+      if (result.forwarded === 0 && result.deadLettered === 0) {
+        return { forwarded, cursors: result.cursors }
+      }
     }
   } finally {
     db.close()
