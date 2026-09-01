@@ -14,10 +14,10 @@ import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from './ledger-types.js'
  *   [T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]
  *   history: wrkc log T-07604   (14 messages · last 2h ago)
  *   <body>
- *   reply: wrkc say EN-01165 --to cody@hrc-runtime:T-07604 - <<'EOF'
- *   …
- *   EOF
  *   defer: wrkc defer EN-01165 --reason … [--retry-after 10m]
+ *
+ * The runtime's canonical final response is auto-minted as the reply on this
+ * driven form. Only defer remains an explicit verb.
  *
  * POINTER FORM — every later surface. It carries NO BODY. That is a rule and
  * not a size optimization: the reminder goes to the runtime that already has
@@ -96,7 +96,7 @@ export function formatEnvelopePresentation(
   } else {
     lines.push(`read: wrkc show ${envelope.id}   ·   thread: wrkc log ${envelope.roomKey}`)
   }
-  const reply = formatReplyLine(envelope)
+  const reply = formatReplyLine(presentable)
   if (reply !== undefined) lines.push(reply)
   const defer = formatDeferLine(envelope)
   if (defer !== undefined) lines.push(defer)
@@ -290,9 +290,11 @@ function formatDuration(elapsedMs: number): string {
 }
 
 /**
- * The reply line, which is also the ack: saying back into the room with `--to`
- * discharges every presented obligation from that sender (section 6). An `fyi`
- * is auto-acked at its own presentation and therefore carries no reply line.
+ * The reply line on a pointer form, which is also the ack: saying back into the
+ * room with `--to` discharges every presented obligation from that sender
+ * (section 6). The initial driven form carries no line because the runtime's
+ * canonical final response is auto-minted as the reply. An `fyi` is auto-acked
+ * at its own presentation and therefore carries no reply line either.
  *
  * T-07638: it addresses the sender's EXACT scope, never the bare agent name.
  * A bare name resolves against the ROOM, and the room default is not always the
@@ -319,7 +321,9 @@ function formatDuration(elapsedMs: number): string {
  * EN- selector resolves to the envelope's own room with its task tag, in every
  * room kind, so it cannot drift.
  */
-function formatReplyLine(envelope: WrkqEnvelope): string | undefined {
+function formatReplyLine(presentable: PresentableEnvelope): string | undefined {
+  if (formOf(presentable) === 'full') return undefined
+  const { envelope } = presentable
   if (envelope.obligation !== 'reply_required') return undefined
   const to = envelopeReplyAddressee(envelope)
   if (to === undefined) return undefined

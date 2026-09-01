@@ -215,12 +215,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const prompt = deterministic.prompts()[0] ?? ''
     expect(prompt).toContain('[T-07615 · mable@hrc-runtime:T-07615 → you · reply required]')
     expect(prompt).toContain('the body that must be injected verbatim')
-    expect(prompt).toContain(
-      `reply: wrkc say ${envelope.id} --to mable@hrc-runtime:T-07615 - <<'EOF'`
-    )
+    expect(prompt).not.toContain('reply: wrkc say')
     // rev 5.1: the id is no longer internal. The defer line has to name the row
-    // the reader is being asked to defer, and the reply line addresses the
-    // envelope too (a task-room key stops routing to its room once enrolled).
+    // the reader is being asked to defer. A completed driven turn replies via
+    // the auto-minted canonical response, so no manual reply hint is injected.
     expect(prompt).toContain(`defer: wrkc defer ${envelope.id} --reason …`)
     // No room history is ever injected; the first message in a room has no cue.
     expect(prompt).not.toContain('history:')

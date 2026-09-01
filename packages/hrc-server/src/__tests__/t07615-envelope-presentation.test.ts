@@ -47,15 +47,12 @@ function presentable(overrides: Partial<PresentableEnvelope> = {}): PresentableE
 }
 
 describe('T-07612 rev 5.1 §4 presentation', () => {
-  it('renders header, body, reply and defer lines in the full form', () => {
+  it('renders the driven full form without a manual reply block but with defer', () => {
     const rendered = formatEnvelopePresentation(presentable({ senderGeneration: 3 }), NOW)
     expect(rendered).toBe(
       [
         '[T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]',
         'the body',
-        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
-        '…',
-        'EOF',
         'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
       ].join('\n')
     )
@@ -86,7 +83,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     )
     expect(cold).toContain('history: wrkc log T-07604   (14 messages · last 2h ago)')
     // A cue, never the history itself: no room content is ever injected.
-    expect(cold.split('\n')).toHaveLength(7)
+    expect(cold.split('\n')).toHaveLength(4)
   })
 
   it('never cues a brand-new room even when asked', () => {
@@ -128,14 +125,16 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     expect(rendered).not.toContain('defer:')
   })
 
-  // The other side of the axis: reply_required still says so, unchanged.
-  it('still marks a reply_required header and carries its reply line', () => {
+  // The other side of the axis: reply_required still says so, but a completed
+  // driven turn replies implicitly through the auto-minted canonical response.
+  it('marks a reply_required driven header without manual reply ceremony', () => {
     const rendered = formatEnvelopePresentation(
       presentable({ envelope: envelope({ obligation: 'reply_required' }) }),
       NOW
     )
     expect(rendered).toContain('· reply required]')
-    expect(rendered).toContain('reply: wrkc say')
+    expect(rendered).not.toContain('reply: wrkc say')
+    expect(rendered).toContain('defer: wrkc defer EN-00042')
   })
 
   // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,
@@ -143,6 +142,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
   it('renders an ad-hoc room as its bare key and addresses that key', () => {
     const rendered = formatEnvelopePresentation(
       presentable({
+        form: 'reminder',
         envelope: envelope({
           roomKey: 'R-00012',
           roomKind: 'adhoc',
@@ -153,7 +153,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
       NOW
     )
     expect(rendered).toContain(
-      '[R-00012 · mable@hrc-runtime:primary (gen 7) → you · reply required]'
+      '[R-00012 · mable@hrc-runtime:primary (gen 7) → you · reply required · still owed'
     )
     expect(rendered).not.toContain('"')
     expect(rendered).toContain("reply: wrkc say EN-00042 --to mable@hrc-runtime:primary - <<'EOF'")
@@ -166,6 +166,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
   it('addresses the exact sender scope, not the room-default seat of that agent', () => {
     const rendered = formatEnvelopePresentation(
       presentable({
+        form: 'reminder',
         envelope: envelope({
           roomKey: 'T-07616',
           from: {
@@ -186,10 +187,13 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
 
   it('addresses a scope-less human sender by their principal', () => {
     const rendered = formatEnvelopePresentation(
-      presentable({ envelope: envelope({ from: { principalRef: 'agent:lance' } }) }),
+      presentable({
+        form: 'reminder',
+        envelope: envelope({ from: { principalRef: 'agent:lance' } }),
+      }),
       NOW
     )
-    expect(rendered).toContain('· lance → you · reply required]')
+    expect(rendered).toContain('· lance → you · reply required · still owed')
     expect(rendered).toContain('--to lance')
   })
 
@@ -284,6 +288,7 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
       '· reply required · you deferred this: "mid-restart drain, back in 10"]'
     )
     expect(rendered).toContain('read: wrkc show EN-00042   ·   thread: wrkc log T-07604')
+    expect(rendered).toContain("reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'")
     expect(rendered).not.toContain('the body')
   })
 
