@@ -1366,7 +1366,15 @@ async function driveMailTargetOnce(
       // This is the only message-traffic provisioning path. ensureTargetSession
       // enters the normal summon/placement gate before it mints anything, so a
       // scope this node does not home is refused here rather than pre-filtered.
-      session = await server.ensureTargetSession(targetSessionRef, materializationIntent)
+      session = await server.ensureTargetSession(
+        targetSessionRef,
+        materializationIntent,
+        undefined,
+        'local',
+        // The drive carries this candidate explicitly until dispatch succeeds.
+        // A rejected cold birth must leave no never-materialized session authority.
+        { persistIntent: false }
+      )
     }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: session.hostSessionId,

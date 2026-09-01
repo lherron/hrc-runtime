@@ -194,7 +194,6 @@ export async function ensureRuntimeForSession(
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   validateEnsureRuntimeIntent(intent)
-  this.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
   const brokerOptions = this.selectInteractiveTmuxBrokerOptions(intent)
   if (!brokerOptions) {
     throw new HrcRuntimeUnavailableError('ensureRuntime supports only broker-admissible runtimes', {
@@ -216,6 +215,7 @@ export async function ensureRuntimeForSession(
       brokerOptions.allowedBrokerDriver
     )
   ) {
+    this.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
     return existingBrokerRuntime
   }
 
@@ -239,7 +239,8 @@ export async function ensureTargetSession(
   sessionRef: string,
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>,
-  origin: 'local' | 'federated-ingress' = 'local'
+  origin: 'local' | 'federated-ingress' = 'local',
+  options: { persistIntent?: boolean | undefined } = {}
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
@@ -269,7 +270,7 @@ export async function ensureTargetSession(
           if (raced !== null && raced.hostSessionId !== existing.hostSessionId) return raced
           const successor = this.db.sqlite.transaction(() => {
             const created = createSessionSuccessorFromContinuation(this.db, existing, {
-              lastAppliedIntentJson: intent,
+              ...(options.persistIntent === false ? {} : { lastAppliedIntentJson: intent }),
               ...(parsedScopeJson ? { parsedScopeJson } : {}),
             })
             if (claimAuthority !== undefined) {
@@ -300,7 +301,9 @@ export async function ensureTargetSession(
         }
       )
     }
-    this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
+    if (options.persistIntent !== false) {
+      this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
+    }
     if (parsedScopeJson) {
       this.db.sessions.updateParsedScope(existing.hostSessionId, parsedScopeJson, now)
     }
@@ -335,7 +338,7 @@ export async function ensureTargetSession(
         createdAt: now,
         updatedAt: now,
         ancestorScopeRefs: [],
-        lastAppliedIntentJson: intent,
+        ...(options.persistIntent === false ? {} : { lastAppliedIntentJson: intent }),
         ...(parsedScopeJson ? { parsedScopeJson } : {}),
       }
 

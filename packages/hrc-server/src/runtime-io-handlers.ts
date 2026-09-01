@@ -310,9 +310,6 @@ export async function startRuntimeForSession(
         options.attachBeforeInvocationStart !== undefined || options.operatorAttachPending === true,
     }
     if (shouldUseHeadlessTransport(startIntent)) {
-      const now = timestamp()
-      this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
-
       // T-01757 (Wave C, A2): codex headless START provisions THROUGH the
       // HarnessBrokerController (parent acceptance: "Codex headless sessions
       // start through HarnessBrokerController") — never exec.ts. SDK start
@@ -340,6 +337,7 @@ export async function startRuntimeForSession(
           assertActuatorSplitRuntimeReuse(startIntent, reusableBrokerRuntime)
           await this.publishPresentation(reusableBrokerRuntime, presentationOptions)
           const initialPrompt = startIntent.initialPrompt ?? ''
+          let resolvedRuntime = reusableBrokerRuntime
           if (initialPrompt.length > 0) {
             await this.executeHeadlessBrokerInputTurn(
               session,
@@ -348,9 +346,10 @@ export async function startRuntimeForSession(
               `run-${randomUUID()}`,
               { waitForCompletion: true }
             )
-            return requireRuntime(this.db, reusableBrokerRuntime.runtimeId)
+            resolvedRuntime = requireRuntime(this.db, reusableBrokerRuntime.runtimeId)
           }
-          return reusableBrokerRuntime
+          this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
+          return resolvedRuntime
         }
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
           this.markRuntimeStaleForBrokerReprovision(session, reusableBrokerRuntime, {
@@ -392,6 +391,7 @@ export async function startRuntimeForSession(
       )
       if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
         assertActuatorSplitRuntimeReuse(startIntent, reusableRuntime)
+        this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
         return reusableRuntime
       }
 

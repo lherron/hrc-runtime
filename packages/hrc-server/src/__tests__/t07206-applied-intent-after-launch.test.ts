@@ -93,6 +93,36 @@ async function seededSession() {
 }
 
 describe('T-07206 applied intent authority', () => {
+  it('keeps prior authority through the public headless start API', async () => {
+    const { db, session } = await seededSession()
+
+    const response = await fixture.postJson('/v1/runtimes/start', {
+      hostSessionId: session.hostSessionId,
+      intent: candidateIntent(false),
+      restartStyle: 'reuse_pty',
+    })
+
+    expect(response.status).toBe(503)
+    expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
+      PRIOR_INTENT
+    )
+  })
+
+  it('keeps prior authority through the public interactive ensure API', async () => {
+    const { db, session } = await seededSession()
+
+    const response = await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: session.hostSessionId,
+      intent: candidateIntent(true),
+      restartStyle: 'reuse_pty',
+    })
+
+    expect(response.status).toBe(503)
+    expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
+      PRIOR_INTENT
+    )
+  })
+
   it('keeps the prior applied intent when headless compile admission rejects', async () => {
     const { db, session } = await seededSession()
 
@@ -188,5 +218,45 @@ describe('T-07206 applied intent authority', () => {
     expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
       PRIOR_INTENT
     )
+  })
+
+  it('does not pre-authorize a cold mail-kicker birth before launch succeeds', async () => {
+    const db = (server as unknown as { db: HrcDatabase }).db
+    const intent = candidateIntent(false)
+    const coldScope = `${SCOPE}/lane:mail-cold`
+    const session = await (
+      server as unknown as {
+        ensureTargetSession(
+          sessionRef: string,
+          intent: HrcRuntimeIntent,
+          parsedScopeJson: undefined,
+          origin: 'local',
+          options: { persistIntent: false }
+        ): Promise<Awaited<ReturnType<typeof seededSession>>['session']>
+      }
+    ).ensureTargetSession(coldScope, intent, undefined, 'local', {
+      persistIntent: false,
+    })
+
+    expect(
+      db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson
+    ).toBeUndefined()
+
+    await expect(
+      (
+        server as unknown as {
+          startHeadlessBrokerRuntime(
+            session: typeof session,
+            intent: HrcRuntimeIntent,
+            prompt: string,
+            runId: string
+          ): Promise<unknown>
+        }
+      ).startHeadlessBrokerRuntime(session, intent, 'rejected mail drive', 'run-t07206-mail-cold')
+    ).rejects.toThrow('headless broker compile/admission rejected')
+
+    expect(
+      db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson
+    ).toBeUndefined()
   })
 })
