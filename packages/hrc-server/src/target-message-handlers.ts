@@ -1886,7 +1886,6 @@ export async function executeSemanticTurn(
       err instanceof HrcDomainError &&
       (err.code === HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED ||
         err.code === HrcErrorCode.URGENT_DELIVERY_RACE_LOST ||
-        err.code === HrcErrorCode.URGENT_DELIVERY_REFUSED ||
         err.code === HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS)
     ) {
       this.db.messages.updateExecution(record.messageId, {

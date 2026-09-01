@@ -124,9 +124,6 @@ export type HrcSteerContributionState =
   // audit-only: records the attempt-to-floor transition; never replayed.
   | 'queued_fallback'
   | 'unsupported'
-  // T-07676: the unchanged active run refused before actuation. This is a
-  // per-run fence, not a turnover race and not a capability failure.
-  | 'refused'
   | 'race_lost'
   | 'ambiguous'
 

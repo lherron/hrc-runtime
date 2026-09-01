@@ -154,31 +154,6 @@ export class SteerContributionRepository {
     return row ? mapRow(row) : null
   }
 
-  /**
-   * T-07676: an unchanged active run's committed non-actuated refusal is the
-   * once-per-run fence. Later wakes observe it instead of probing the same
-   * broker turn again; a different run id deliberately misses this lookup.
-   */
-  findRefusalForActiveRun(
-    hostSessionId: string,
-    runtimeId: string,
-    activeRunId: string
-  ): HrcSteerContributionRecord | null {
-    const row = this.db
-      .query<SteerContributionRow, [string, string, string]>(
-        `SELECT *
-           FROM steer_contributions
-          WHERE host_session_id = ?
-            AND runtime_id = ?
-            AND active_run_id = ?
-            AND state = 'refused'
-          ORDER BY updated_at DESC
-          LIMIT 1`
-      )
-      .get(hostSessionId, runtimeId, activeRunId)
-    return row ? mapRow(row) : null
-  }
-
   listAttempting(): HrcSteerContributionRecord[] {
     return this.db
       .query<SteerContributionRow, []>(
