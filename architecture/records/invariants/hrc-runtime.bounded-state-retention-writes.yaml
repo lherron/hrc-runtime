@@ -1,0 +1,35 @@
+id: hrc-runtime.bounded-state-retention-writes
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: state.sqlite retention activation and writer-bounded row deletion
+predicate: >
+  A fresh HRC database selects incremental auto-vacuum before journal setup or
+  migration DDL. An existing database whose effective auto-vacuum mode is not
+  incremental remains fail-closed for retention deletes until a coordinated
+  offline full VACUUM installs the pointer map. Each retention batch completes
+  full-predicate candidate discovery as a read before any write begins. The
+  subsequent DELETE receives no more than the adaptive batch size of selected
+  integer primary keys through one bounded JSON set, searches target rows by
+  primary key, and re-evaluates the complete eligibility and terminal/live
+  safety predicate inside the write transaction. Discovery may traverse an
+  arbitrarily large eligible range without writer authority; target-table scan
+  work under the writer is forbidden and bounded-key virtual-table scan work is
+  permitted. The deadline is checked again between discovery and deletion, and
+  concurrent state changes may reduce the deleted count without widening the
+  writer's candidate universe.
+authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01
+source:
+  - wrkq:T-07200
+  - packages/hrc-store-sqlite/src/database.ts
+  - scripts/prune-hrc-event-deltas.ts
+  - docs/state-retention.md
+required_tests:
+  - just architecture-records
+  - T-07200 fresh incremental-auto-vacuum and existing-mode refusal gates
+  - T-07200 indexed read-discovery and bounded primary-key writer-plan gates
+  - T-07200 authority-race safety recheck and old-ineligible-prefix gates
+last_verified: 2026-09-01 design approval; implementation gates pending
+reopen_when: Database creation mode, retention candidate discovery, writer candidate cardinality, eligibility recheck, deadline seam, or retention deletion authority changes.
+supersedes: []
+superseded_by: []

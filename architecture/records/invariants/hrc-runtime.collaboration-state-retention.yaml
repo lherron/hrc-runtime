@@ -1,0 +1,35 @@
+id: hrc-runtime.collaboration-state-retention
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: standing retention for local and collective collaboration state in state.sqlite
+predicate: >
+  messages, collective_history_messages, collective_history_observations,
+  collective_history_replications, and every hrcmail_* table are keep-forever
+  durable collaboration state with no standing TTL or scheduled deletion path.
+  messages is the canonical local message and dedupe ledger and the startup
+  source for collective-history observation. Collective-history message and
+  observation rows preserve authority and provenance, while delivered
+  replication rows are the durable checkpoint that prevents full replay on
+  every restart. hrcmail_* rows preserve local execution, presentation,
+  reminder, failure-notice, automatic-reply, idempotency, and recovery state
+  around the wrkq-owned collaboration ledger; they do not become room,
+  envelope, obligation, discharge, or reply-body authority. No TTL or delete
+  path for these classes is introduced without separately approved terminality
+  and replay-fence authority.
+authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01
+source:
+  - wrkq:T-07200
+  - packages/hrc-store-sqlite/src/message-repository.ts
+  - packages/hrc-store-sqlite/src/collective-history-repository.ts
+  - packages/hrc-server/src/federation/collective-history.ts
+  - packages/hrc-store-sqlite/src/mail
+  - architecture/records/invariants/hrc-runtime.collaboration-auto-reply-actuation.yaml
+required_tests:
+  - just architecture-records
+  - T-07200 collaboration-retention policy documentation gate
+  - existing message dedupe, collective-history restart, and hrcmail recovery gates
+last_verified: 2026-09-01 design approval; implementation gates pending
+reopen_when: Collaboration state authority, replay semantics, terminality fences, or any standing TTL or deletion path for the named tables changes.
+supersedes: []
+superseded_by: []
