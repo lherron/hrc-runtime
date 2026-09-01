@@ -110,6 +110,16 @@ export const DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS = 10 * 60 * 1_000
 const DEFAULT_PROBE_INTERVAL_MS = 30_000
 const DEFAULT_PROBE_DEADLINE_MS = 2_000
 const DEFAULT_PROBE_FAILURE_THRESHOLD = 3
+// The socket is untrusted. Retain at most one reasonably large JSON-RPC frame
+// and a finite burst of event hints for a consumer that is temporarily busy.
+const MAX_EXTERNAL_PARTICIPANT_NDJSON_LINE_BYTES = 1024 * 1024
+const MAX_EXTERNAL_PARTICIPANT_BUFFERED_NOTIFICATIONS = 1024
+
+function externalParticipantRpcDeadlineMs(
+  options: HrcServerInstanceForHandlers['options']
+): number {
+  return options.externalParticipantProbeDeadlineMs ?? DEFAULT_PROBE_DEADLINE_MS
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -515,7 +525,7 @@ function establishedDelivery(
     lingerMs: options.externalParticipantLingerMs ?? DEFAULT_EXTERNAL_PARTICIPANT_LINGER_MS,
     probe: {
       intervalMs: options.externalParticipantProbeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS,
-      deadlineMs: options.externalParticipantProbeDeadlineMs ?? DEFAULT_PROBE_DEADLINE_MS,
+      deadlineMs: externalParticipantRpcDeadlineMs(options),
       failureThreshold:
         options.externalParticipantProbeFailureThreshold ?? DEFAULT_PROBE_FAILURE_THRESHOLD,
     },
@@ -547,11 +557,17 @@ export async function performExternalRegistrationHello(
   registrationId: string,
   client: ExternalParticipantRpcClient
 ): Promise<{ branch: 'minted' | 'redelivered'; delivery: EprEstablishedDelivery }> {
-  const rawHello = await requestExternalParticipantRpc(client, 'epr.hello', {
-    protocolVersions: [EPR_PROTOCOL_VERSION],
-    controllerInfo: { name: 'hrc-server' },
-    registrationId,
-  })
+  const rpcDeadlineMs = externalParticipantRpcDeadlineMs(server.options)
+  const rawHello = await requestExternalParticipantRpc(
+    client,
+    'epr.hello',
+    {
+      protocolVersions: [EPR_PROTOCOL_VERSION],
+      controllerInfo: { name: 'hrc-server' },
+      registrationId,
+    },
+    rpcDeadlineMs
+  )
   const hello = parseEprHelloResponse(rawHello, registrationId)
   let grant = server.db.externalRegistrationGrants.getByRegistrationId(registrationId)
   if (grant === null) {
@@ -613,7 +629,8 @@ export async function performExternalRegistrationHello(
   const established = await requestExternalParticipantRpc(
     client,
     'epr.established',
-    delivery as unknown as Record<string, unknown>
+    delivery as unknown as Record<string, unknown>,
+    rpcDeadlineMs
   )
   validateEstablishedResponse(established)
   const establishedAt = timestamp()
@@ -673,6 +690,13 @@ type EprRpcFailureMetadata = {
   failureCode?: string | undefined
 }
 
+class EprRpcDeadlineError extends Error {
+  constructor(label: string, deadlineMs: number) {
+    super(`${label} timed out after ${deadlineMs}ms`)
+    this.name = 'EprRpcDeadlineError'
+  }
+}
+
 function annotateRpcError(
   error: unknown,
   method: string,
@@ -704,22 +728,28 @@ function rpcFailureCode(error: unknown): number | string {
 async function requestExternalParticipantRpc(
   client: ExternalParticipantRpcClient,
   method: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  deadlineMs: number
 ): Promise<unknown> {
   try {
-    return await client.request(method, params)
+    return await withDeadline(client.request(method, params), deadlineMs, method)
   } catch (error) {
-    throw annotateRpcError(error, method)
+    throw annotateRpcError(
+      error,
+      method,
+      error instanceof EprRpcDeadlineError ? 'deadline_exceeded' : 'transport_error'
+    )
   }
 }
 
 async function requestReplayPlane(
   client: ExternalParticipantRpcClient,
   method: 'epr.reattach' | 'invocation.snapshot' | 'invocation.eventsSince',
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  deadlineMs: number
 ): Promise<unknown> {
   try {
-    return await requestExternalParticipantRpc(client, method, params)
+    return await requestExternalParticipantRpc(client, method, params, deadlineMs)
   } catch (error) {
     if (rpcErrorCode(error) === EPR_REPLAY_UNAVAILABLE_CODE) {
       throw new EprReplayGapError(`${method} reported that event replay is unavailable`)
@@ -747,10 +777,7 @@ async function withDeadline<T>(
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${deadlineMs}ms`)),
-      deadlineMs
-    )
+    timer = setTimeout(() => reject(new EprRpcDeadlineError(label, deadlineMs)), deadlineMs)
     timer.unref?.()
   })
   try {
@@ -941,11 +968,17 @@ async function projectReplayAndAck(
   controllerInstanceId: string
 ): Promise<{ throughSeq: number; cleanExit: boolean }> {
   assertMintLinkage(grant)
+  const rpcDeadlineMs = externalParticipantRpcDeadlineMs(server.options)
   const lastAckedSeq = lastAckedExternalSeq(server, grant.runtimeId)
-  const rawReplay = await requestReplayPlane(client, 'invocation.eventsSince', {
-    invocationId: grant.invocationId,
-    afterSeq: lastAckedSeq,
-  })
+  const rawReplay = await requestReplayPlane(
+    client,
+    'invocation.eventsSince',
+    {
+      invocationId: grant.invocationId,
+      afterSeq: lastAckedSeq,
+    },
+    rpcDeadlineMs
+  )
   const replay = parseEventsSinceResponse(rawReplay)
   if (lastAckedSeq < replay.retentionFloorSeq) {
     throw new EprReplayGapError(
@@ -977,11 +1010,16 @@ async function projectReplayAndAck(
     )
   }
   if (throughSeq > lastAckedSeq) {
-    const ack = await requestExternalParticipantRpc(client, 'invocation.ackEvents', {
-      invocationId: grant.invocationId,
-      throughSeq,
-      controllerInstanceId,
-    })
+    const ack = await requestExternalParticipantRpc(
+      client,
+      'invocation.ackEvents',
+      {
+        invocationId: grant.invocationId,
+        throughSeq,
+        controllerInstanceId,
+      },
+      rpcDeadlineMs
+    )
     if (!isRecord(ack) || ack['ackedThroughSeq'] !== throughSeq) {
       throw new Error('invocation.ackEvents did not acknowledge the replay high-water')
     }
@@ -997,10 +1035,11 @@ async function probeAttachedControl(
   full: boolean
 ): Promise<void> {
   if (full) {
-    const health = await withDeadline(
-      requestExternalParticipantRpc(client, 'broker.health', { probeDrivers: false }),
-      deadlineMs,
-      'broker.health'
+    const health = await requestExternalParticipantRpc(
+      client,
+      'broker.health',
+      { probeDrivers: false },
+      deadlineMs
     )
     if (!isRecord(health) || !Number.isInteger(health['activeInvocations'])) {
       throw new Error('broker.health returned a malformed response')
@@ -1010,10 +1049,11 @@ async function probeAttachedControl(
       throw new Error(`participant health status is ${String(health['status'])}`)
     }
   }
-  const status = await withDeadline(
-    requestExternalParticipantRpc(client, 'invocation.status', { invocationId }),
-    deadlineMs,
-    'invocation.status'
+  const status = await requestExternalParticipantRpc(
+    client,
+    'invocation.status',
+    { invocationId },
+    deadlineMs
   )
   if (
     !isRecord(status) ||
@@ -1057,7 +1097,7 @@ export async function performExternalParticipantAttach(
   assertMintLinkage(grant)
   const probe: EprEstablishedDelivery['probe'] = {
     intervalMs: server.options.externalParticipantProbeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS,
-    deadlineMs: server.options.externalParticipantProbeDeadlineMs ?? DEFAULT_PROBE_DEADLINE_MS,
+    deadlineMs: externalParticipantRpcDeadlineMs(server.options),
     failureThreshold:
       server.options.externalParticipantProbeFailureThreshold ?? DEFAULT_PROBE_FAILURE_THRESHOLD,
   }
@@ -1070,13 +1110,18 @@ export async function performExternalParticipantAttach(
     if (mode === 'reattach') {
       controllerInstanceId = `controller-${randomUUID()}`
       const attachToken = (await readFile(grant.attachTokenRef, 'utf8')).trim()
-      const attached = await requestReplayPlane(client, 'epr.reattach', {
-        registrationId,
-        invocationId: grant.invocationId,
-        attachToken,
-        controllerInstanceId,
-        lastAckedSeq: lastAckedExternalSeq(server, grant.runtimeId),
-      })
+      const attached = await requestReplayPlane(
+        client,
+        'epr.reattach',
+        {
+          registrationId,
+          invocationId: grant.invocationId,
+          attachToken,
+          controllerInstanceId,
+          lastAckedSeq: lastAckedExternalSeq(server, grant.runtimeId),
+        },
+        probe.deadlineMs
+      )
       const response = parseReattachResponse(attached, grant.invocationId)
       if (lastAckedExternalSeq(server, grant.runtimeId) < response.retentionFloorSeq) {
         throw new EprReplayGapError('reattach retention floor is past HRC ACK high-water')
@@ -1092,9 +1137,12 @@ export async function performExternalParticipantAttach(
       }
       writeExternalRegistrationState(server, grant.runtimeId, { controllerInstanceId })
     } else {
-      const rawSnapshot = await requestReplayPlane(client, 'invocation.snapshot', {
-        invocationId: grant.invocationId,
-      })
+      const rawSnapshot = await requestReplayPlane(
+        client,
+        'invocation.snapshot',
+        { invocationId: grant.invocationId },
+        probe.deadlineMs
+      )
       snapshot = parseInvocationSnapshot(rawSnapshot, grant.invocationId)
     }
 
@@ -1147,22 +1195,45 @@ class ExternalParticipantNotificationQueue
   implements AsyncIterable<ExternalParticipantNotification>
 {
   private readonly buffered: ExternalParticipantNotification[] = []
-  private readonly waiters: Array<
-    (value: IteratorResult<ExternalParticipantNotification>) => void
-  > = []
+  private readonly waiters: Array<{
+    resolve(value: IteratorResult<ExternalParticipantNotification>): void
+    reject(error: Error): void
+  }> = []
   private ended = false
+  private failure: Error | undefined
 
   push(notification: ExternalParticipantNotification): void {
     if (this.ended) return
     const waiter = this.waiters.shift()
-    if (waiter !== undefined) waiter({ done: false, value: notification })
-    else this.buffered.push(notification)
+    if (waiter !== undefined) {
+      waiter.resolve({ done: false, value: notification })
+      return
+    }
+    if (this.buffered.length >= MAX_EXTERNAL_PARTICIPANT_BUFFERED_NOTIFICATIONS) {
+      // Notifications signal durable protocol facts, so eviction or silent
+      // dropping can hide an exit/event. Fail the participant and replay after
+      // a clean reattach instead.
+      throw new Error(
+        `external participant notification queue exceeded ${MAX_EXTERNAL_PARTICIPANT_BUFFERED_NOTIFICATIONS}`
+      )
+    }
+    this.buffered.push(notification)
   }
 
   end(): void {
     if (this.ended) return
     this.ended = true
-    for (const waiter of this.waiters.splice(0)) waiter({ done: true, value: undefined })
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.resolve({ done: true, value: undefined })
+    }
+  }
+
+  fail(error: Error): void {
+    if (this.ended) return
+    this.ended = true
+    this.failure = error
+    this.buffered.length = 0
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error)
   }
 
   [Symbol.asyncIterator](): AsyncIterator<ExternalParticipantNotification> {
@@ -1170,8 +1241,9 @@ class ExternalParticipantNotificationQueue
       next: async () => {
         const notification = this.buffered.shift()
         if (notification !== undefined) return { done: false, value: notification }
+        if (this.failure !== undefined) throw this.failure
         if (this.ended) return { done: true, value: undefined }
-        return new Promise((resolve) => this.waiters.push(resolve))
+        return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }))
       },
     }
   }
@@ -1184,6 +1256,7 @@ class NdjsonExternalParticipantClient implements ExternalParticipantRpcClient {
   >()
   private nextId = 1
   private buffer = ''
+  private bufferBytes = 0
   private closed = false
   private readonly notificationQueue = new ExternalParticipantNotificationQueue()
   private readonly closedPromise: Promise<void>
@@ -1239,11 +1312,32 @@ class NdjsonExternalParticipantClient implements ExternalParticipantRpcClient {
 
   private onData(chunk: string): void {
     this.buffer += chunk
+    this.bufferBytes += Buffer.byteLength(chunk, 'utf8')
     while (true) {
       const newline = this.buffer.indexOf('\n')
-      if (newline < 0) return
-      const line = this.buffer.slice(0, newline).trim()
+      if (newline < 0) {
+        if (this.bufferBytes > MAX_EXTERNAL_PARTICIPANT_NDJSON_LINE_BYTES) {
+          this.failInput(
+            new Error(
+              `external participant NDJSON line exceeded ${MAX_EXTERNAL_PARTICIPANT_NDJSON_LINE_BYTES} bytes`
+            )
+          )
+        }
+        return
+      }
+      const rawLine = this.buffer.slice(0, newline)
+      const consumed = this.buffer.slice(0, newline + 1)
       this.buffer = this.buffer.slice(newline + 1)
+      this.bufferBytes -= Buffer.byteLength(consumed, 'utf8')
+      if (Buffer.byteLength(rawLine, 'utf8') > MAX_EXTERNAL_PARTICIPANT_NDJSON_LINE_BYTES) {
+        this.failInput(
+          new Error(
+            `external participant NDJSON line exceeded ${MAX_EXTERNAL_PARTICIPANT_NDJSON_LINE_BYTES} bytes`
+          )
+        )
+        return
+      }
+      const line = rawLine.trim()
       if (line.length === 0) continue
       let message: unknown
       try {
@@ -1260,10 +1354,15 @@ class NdjsonExternalParticipantClient implements ExternalParticipantRpcClient {
           typeof message['method'] === 'string' &&
           !Object.hasOwn(message, 'id')
         ) {
-          this.notificationQueue.push({
-            method: message['method'],
-            params: message['params'],
-          })
+          try {
+            this.notificationQueue.push({
+              method: message['method'],
+              params: message['params'],
+            })
+          } catch (error) {
+            this.failInput(error instanceof Error ? error : new Error(String(error)))
+            return
+          }
         }
         continue
       }
@@ -1286,11 +1385,19 @@ class NdjsonExternalParticipantClient implements ExternalParticipantRpcClient {
     }
   }
 
-  private failAll(error: Error): void {
+  private failInput(error: Error): void {
+    this.buffer = ''
+    this.bufferBytes = 0
+    this.failAll(error, true)
+    this.socket.destroy()
+  }
+
+  private failAll(error: Error, discardNotifications = false): void {
     if (!this.closed) this.closed = true
     for (const pending of this.pending.values()) pending.reject(error)
     this.pending.clear()
-    this.notificationQueue.end()
+    if (discardNotifications) this.notificationQueue.fail(error)
+    else this.notificationQueue.end()
     this.resolveClosed()
   }
 }

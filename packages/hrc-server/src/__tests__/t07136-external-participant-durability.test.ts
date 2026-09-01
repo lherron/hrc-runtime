@@ -148,6 +148,24 @@ class AttachClient implements ExternalParticipantRpcClient {
   async close(): Promise<void> {}
 }
 
+class SilentAttachClient extends AttachClient {
+  constructor(
+    invocationId: string,
+    events: InvocationEventEnvelope[],
+    private readonly silentMethod: string
+  ) {
+    super(invocationId, events)
+  }
+
+  override async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (method === this.silentMethod) {
+      this.calls.push(method)
+      return new Promise(() => undefined)
+    }
+    return super.request(method, params)
+  }
+}
+
 class FailingProbeClient extends AttachClient {
   private closeResolve!: () => void
   private readonly closePromise = new Promise<void>((resolve) => {
@@ -274,6 +292,40 @@ describe('T-07136 EPR durable event, reattach, and detached semantics', () => {
       control: { mode: 'epr', brokerAttached: true },
       externalRegistration: { ackedThroughSeq: 2 },
     })
+  })
+
+  test.each([
+    { method: 'epr.reattach', mode: 'reattach' as const, events: [] },
+    { method: 'invocation.snapshot', mode: 'established' as const, events: [] },
+    { method: 'invocation.eventsSince', mode: 'established' as const, events: [] },
+    {
+      method: 'invocation.ackEvents',
+      mode: 'established' as const,
+      events: [
+        event('placeholder', 1, 'invocation.started', {
+          command: 'arris',
+          args: ['agent'],
+          cwd: '/tmp',
+        }),
+      ],
+    },
+    { method: 'broker.health', mode: 'established' as const, events: [] },
+    { method: 'invocation.status', mode: 'established' as const, events: [] },
+  ])('bounds $method by the configured EPR deadline', async ({ method, mode, events }) => {
+    server.options.externalParticipantProbeDeadlineMs = 10
+    const boundEvents = events.map((item) => ({ ...item, invocationId: delivery.invocationId }))
+    const client = new SilentAttachClient(delivery.invocationId, boundEvents, method)
+
+    const outcome = await Promise.race([
+      performExternalParticipantAttach(server, REGISTRATION_ID, client, mode).then(
+        () => 'resolved' as const,
+        (error: unknown) => error
+      ),
+      Bun.sleep(100).then(() => 'test_watchdog_timeout' as const),
+    ])
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toContain(`${method} timed out after 10ms`)
   })
 
   test('rejects an envelope outside the 0.2 closed registry before ACK', async () => {
