@@ -79,7 +79,8 @@ export function markBrokerInvocationTerminal(
   ctx: LifecycleContext,
   runtimeId: string,
   envelope: InvocationEventEnvelope,
-  result: BrokerProjectionResult
+  result: BrokerProjectionResult,
+  options: { preserveActiveClient?: boolean } = {}
 ): void {
   const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime || runtime.activeInvocationId !== String(envelope.invocationId)) {
@@ -207,7 +208,11 @@ export function markBrokerInvocationTerminal(
   }
 
   const activeClient = ctx.getActiveClient(runtimeId)
-  if (activeClient && ctx.getActiveInvocationId(runtimeId) === String(envelope.invocationId)) {
+  if (
+    !options.preserveActiveClient &&
+    activeClient &&
+    ctx.getActiveInvocationId(runtimeId) === String(envelope.invocationId)
+  ) {
     ctx.markBrokerClosing(runtimeId, 'broker_invocation_terminal', activeClient)
     ctx.deleteActive(runtimeId, activeClient)
     void activeClient.close().catch((error) => {

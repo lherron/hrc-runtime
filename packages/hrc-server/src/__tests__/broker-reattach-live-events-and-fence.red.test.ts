@@ -383,6 +383,46 @@ describe('T-01801 GAP A — attachAndReplay subscribes to the LIVE event stream'
     expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(2)
     expect(client.ackCalls.at(-1)?.throughSeq).toBe(2)
   })
+
+  it('keeps explicit disposal attached through the final disposed envelope', async () => {
+    seed()
+    class TerminalDisposeClient extends MockClient {
+      private async waitForAck(throughSeq: number): Promise<void> {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if ((this.ackCalls.at(-1)?.throughSeq ?? 0) >= throughSeq) return
+          await new Promise((resolve) => setTimeout(resolve, 1))
+        }
+        throw new Error(`timed out waiting for ack through ${throughSeq}`)
+      }
+
+      override async stop(): Promise<InvocationStopResponse> {
+        this.liveStream.push(envelopeFor('invocation.exited', 2, { exitCode: 0, signal: null }))
+        await this.waitForAck(2)
+        return { accepted: true, state: 'stopping' }
+      }
+
+      override async dispose(_req: InvocationDisposeRequest): Promise<void> {
+        this.liveStream.push(envelopeFor('invocation.disposed', 3, { disposed: true }))
+        await this.waitForAck(3)
+      }
+    }
+
+    const client = new TerminalDisposeClient({
+      events: [envelopeFor('invocation.ready', 1, { state: 'ready' })],
+      currentSeq: 1,
+      retentionFloorSeq: 1,
+    })
+    client.snapshotResponse = emptySnapshot({ currentSeq: 1, retentionFloorSeq: 1 })
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+    const controller = makeController()
+
+    await attach(controller, client)
+    const disposed = await controller.dispose(RUNTIME_ID, { reason: 'test-terminal-cursor' })
+
+    expect(disposed.ok).toBe(true)
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(3)
+    expect(client.ackCalls.map((call) => call.throughSeq)).toEqual([1, 2, 3])
+  })
 })
 
 describe('T-01801 GAP B — a fenced controller releases silently (no crash-terminal)', () => {

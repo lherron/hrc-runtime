@@ -385,6 +385,11 @@ export class HarnessBrokerController {
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
   private readonly pendingBrokerEventGapBackfills = new Map<string, PendingBrokerEventGapBackfill>()
+  // Explicit dispose is a two-RPC terminal sequence: stop emits
+  // invocation.exited, then dispose emits invocation.disposed. Keep the fenced
+  // control client alive through both facts so the committed projection cursor
+  // and broker acknowledgement cover the complete invocation ledger.
+  private readonly pendingBrokerDisposals = new Set<string>()
   private readonly pendingBrokerCrashTerminalRetries = new Map<
     string,
     {
@@ -1023,6 +1028,7 @@ export class HarnessBrokerController {
     }
     const reason = opts.reason ?? 'dispose'
     this.markBrokerClosing(runtimeId, reason, active.client)
+    this.pendingBrokerDisposals.add(runtimeId)
     try {
       // Bound the broker RPC sequence: stop/dispose/close await acks from the
       // broker, and a wedged/unresponsive broker (e.g. a durable broker-tmux
@@ -1075,6 +1081,8 @@ export class HarnessBrokerController {
       this.active.delete(runtimeId)
       await active.client.close().catch(() => undefined)
       return { ok: false, error: toControllerError('broker_dispose_failed', error) }
+    } finally {
+      this.pendingBrokerDisposals.delete(runtimeId)
     }
   }
 
@@ -1604,7 +1612,10 @@ export class HarnessBrokerController {
       (envelope.type === 'invocation.failed' && !isRetryableInvocationFailure(envelope))
     ) {
       this.flushBrokerEventGapBackfill(String(envelope.invocationId))
-      markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
+      markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result, {
+        preserveActiveClient:
+          envelope.type === 'invocation.exited' && this.pendingBrokerDisposals.has(runtimeId),
+      })
     }
 
     if (envelope.type === 'invocation.disposed') {
