@@ -170,6 +170,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
   readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
+  /** Cancelled by stop() before the store closes; never used as a shutdown drain. */
+  readonly runtimeStartPresentationSignal: AbortSignal
   readonly brokerReattachOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>
   readonly attachedRunOperations: Map<string, PendingAttachedRunOperation>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>

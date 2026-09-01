@@ -819,6 +819,8 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  private readonly runtimeStartPresentationAbortController = new AbortController()
+  readonly runtimeStartPresentationSignal = this.runtimeStartPresentationAbortController.signal
   readonly brokerReattachOperations = new Map<
     string,
     Promise<DurableBrokerDispatchReattachResult>
@@ -1522,6 +1524,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     this.stopping = true
+    this.runtimeStartPresentationAbortController.abort()
     writeServerLog('INFO', 'server.stop.begin', {
       socketPath: this.options.socketPath,
       dbPath: this.options.dbPath,

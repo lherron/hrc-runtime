@@ -134,6 +134,7 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       releaseStart = resolve
     })
     let provisions = 0
+    const presentationSignals: Array<AbortSignal | undefined> = []
     ;(server as any).startHeadlessBrokerRuntime = async (
       session: { hostSessionId: string; scopeRef: string; laneRef: string; generation: number },
       _intent: unknown,
@@ -207,6 +208,12 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       await startGate
       return runtime
     }
+    ;(server as any).publishPresentation = async (
+      _runtime: unknown,
+      options?: { signal?: AbortSignal }
+    ) => {
+      presentationSignals.push(options?.signal)
+    }
 
     const body = dispatchBody(hostSessionId, 'idem-t06592-cold')
     const firstResponse = await postTurn(body)
@@ -244,6 +251,9 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     server = undefined
     releaseStart()
     await Bun.sleep(10)
+    expect(presentationSignals).toHaveLength(1)
+    expect(presentationSignals[0]).toBeInstanceOf(AbortSignal)
+    expect(presentationSignals[0]?.aborted).toBe(true)
     server = await createHrcServer(
       fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
     )

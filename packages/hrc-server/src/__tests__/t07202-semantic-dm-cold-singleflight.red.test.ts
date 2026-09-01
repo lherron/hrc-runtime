@@ -77,6 +77,7 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
     let startCalls = 0
     const startPrompts: string[] = []
     const reusedPrompts: Array<{ prompt: string; runtimeId: string }> = []
+    const presentationSignals: Array<AbortSignal | undefined> = []
     ;(server as any).startInteractiveTmuxBrokerRuntime = async (
       _session: unknown,
       turnIntent: HrcRuntimeIntent,
@@ -119,7 +120,12 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         db.close()
       }
     }
-    ;(server as any).publishPresentation = async () => undefined
+    ;(server as any).publishPresentation = async (
+      _runtime: unknown,
+      options?: { signal?: AbortSignal }
+    ) => {
+      presentationSignals.push(options?.signal)
+    }
     ;(server as any).executeInteractiveBrokerInputTurn = async (
       session: { hostSessionId: string; generation: number },
       runtime: HrcRuntimeSnapshot,
@@ -170,6 +176,7 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         distinctResponseRuntimeIds: new Set(runtimeIds).size,
         initialPrompts: startPrompts,
         reusedPrompts,
+        presentationSignals: presentationSignals.length,
       }).toEqual({
         startsWhileAllRequestsWereInFlight: 1,
         runtimeCount: 1,
@@ -179,7 +186,10 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
           { prompt: expect.stringContaining('crossing DM 2'), runtimeId: runtimes[0]!.runtimeId },
           { prompt: expect.stringContaining('crossing DM 3'), runtimeId: runtimes[0]!.runtimeId },
         ],
+        presentationSignals: 1,
       })
+      expect(presentationSignals[0]).toBeInstanceOf(AbortSignal)
+      expect(presentationSignals[0]?.aborted).toBe(false)
     } finally {
       afterDb.close()
     }

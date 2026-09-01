@@ -677,6 +677,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
         void this.publishPresentation(runtime, {
           operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+          signal: this.runtimeStartPresentationSignal,
         })
       }
       if (!acceptedSettled) resolveAccepted(runtime)

@@ -761,7 +761,7 @@ export async function executeHeadlessBrokerStartTurn(
       // The attachability gate that used to stand here is redundant:
       // publishPresentation computes `operatorAttachable` itself and records it
       // either way, and the in-daemon spawn it fronts re-checks the predicate.
-      void this.publishPresentation(runtime)
+      void this.publishPresentation(runtime, { signal: this.runtimeStartPresentationSignal })
       // Test doubles and older controller adapters may not implement the
       // acceptance callback. Full boot is a conservative fallback boundary.
       if (!acceptedSettled) resolveAccepted(runtime)
