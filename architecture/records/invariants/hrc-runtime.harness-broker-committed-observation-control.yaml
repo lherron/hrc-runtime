@@ -1,0 +1,60 @@
+id: hrc-runtime.harness-broker-committed-observation-control
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC projection, retention acknowledgement, and closed-loop control over harness-broker facts
+predicate: >
+  HRC observes and projects only committed normalized harness-broker envelopes,
+  and BrokerEventMapper remains their sole interpreter. For each broker sequence,
+  one SQLite transaction idempotently mirrors the normalized envelope, projects
+  runtime run buffer continuation surface and permission state, appends canonical
+  hrc_events, and advances a contiguous projection cursor or records a typed
+  fenced disposition. The cursor advances across intentionally non-mirrored
+  high-volume deltas without treating mirror retention as a source gap. Only
+  after that transaction commits may HRC acknowledge the broker sequence, notify
+  followers, or evaluate a control policy that depends on the fact. HRC is the
+  sole broker-ledger retention-bearing consumer: its fenced control connection
+  owns one durable scalar acknowledgement per invocation, bounded by forensic
+  and active-invocation holds; read-only observer clients have no acknowledgement
+  identity or retention claim and fail typed below the retained floor. This does
+  not change the keep-forever HRC projection law in
+  hrc-runtime.ledger-tool-result-storage. Control attempts remain typed durable
+  intent over the existing specialized stores, and RPC acceptance never proves
+  provider effect; effects return as later committed observations. The wrkq
+  kicker acts only when committed terminal execution truth and authoritative
+  pending-obligation truth agree, no newer input or turn supersedes them, and the
+  one-reminder bound permits the attempt. Explicit policy operator and API
+  permission decisions are HRC-owned and persist before permission.respond on
+  the fenced control connection. A deadline fallback is broker-owned; HRC later
+  projects its already committed permission.resolved timeout fact.
+authority: Lance HCS T-07827 / Daedalus approval wrkq:T-07853, 2026-09-01
+source:
+  - wrkq:T-07853
+  - wrkq:T-07827
+  - commit:6d04d5de
+  - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
+  - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
+  - packages/hrc-server/src/broker/controller.ts
+  - packages/hrc-server/src/broker/event-mapper.ts
+required_tests:
+  - normalized broker append failure publishes nothing to HRC
+  - projection commit rollback idempotent replay conflict and contiguous-cursor gates cover mirrored and intentionally non-mirrored envelopes
+  - HRC crash after projection before acknowledgement replays idempotently and re-acknowledges after matching the committed projection
+  - persisted scalar acknowledgement and retention floor survive broker restart while a below-floor attach becomes replay-stale without snapshot inference
+  - the observer surface has no mutation or acknowledgement methods and stale control connections cannot mutate or acknowledge
+  - kicker actuation requires committed terminal truth pending wrkq obligation truth no superseding input or turn and exactly one reminder
+  - explicit permission decisions persist before fenced response while disconnected timeout fallback projects only from the broker's committed fact
+  - control RPC acceptance remains distinct from committed input turn permission and effect observations
+last_verified:
+  date: 2026-09-01
+  evidence: Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws; implementation gates pending.
+reopen_when:
+  - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter
+  - projection transaction cursor acknowledgement or post-commit ordering changes
+  - another broker-ledger retention-bearing consumer is introduced
+  - HRC projected ledger retention changes
+  - observation and mutation fencing or effect-proof semantics change
+  - kicker trigger obligation authority or reminder bound changes
+  - explicit-versus-timeout permission decision ownership changes
+supersedes: []
+superseded_by: []
