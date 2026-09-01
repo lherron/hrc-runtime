@@ -38,7 +38,12 @@ import type {
 } from 'hrc-core'
 import { dispatchOriginFromMessageAddress } from './acp-event-bridge.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
-import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
+import type { BrokerUnixClientFactory } from './broker/controller.js'
+import {
+  hasLeasedBrokerSubstrate,
+  parseBrokerRuntimeHostingState,
+} from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
@@ -71,6 +76,7 @@ import {
   HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE,
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
+import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
 import {
@@ -82,11 +88,16 @@ import {
 import { selectResumeContinuationCandidate } from './session-resume-continuation.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import {
+  type DurableBrokerDispatchReattachResult,
+  reattachDurableBrokerForDispatch,
+} from './startup-reconcile.js'
+import {
   findTargetSession,
   isActiveTargetSession,
   toTargetView,
   toTargetViewWithArtifactProbe,
 } from './target-view.js'
+import { createTmuxManager } from './tmux.js'
 
 /**
  * Spreadable dispatch option carrying the DM sender's recorded identity
@@ -1740,6 +1751,15 @@ export async function executeSemanticTurn(
   if (!baseIntent) return {}
 
   try {
+    const latestRuntime = this.db.runtimes.listByHostSessionId(session.hostSessionId).at(-1)
+    if (
+      latestRuntime?.controllerKind === 'harness-broker' &&
+      (latestRuntime.status === 'crashed' || latestRuntime.status === 'stale') &&
+      hasLeasedBrokerSubstrate(latestRuntime)
+    ) {
+      await this.reattachLiveSemanticDmSubstrate(latestRuntime)
+    }
+
     const runId = `run-${randomUUID()}`
     const normalizedIntent = normalizeDispatchIntent(baseIntent, session, runId)
     const payload = formatDmPayload(
@@ -1898,6 +1918,84 @@ export async function executeSemanticTurn(
   }
 }
 
+type SemanticDmLiveSubstrateGuardDeps = {
+  createTmuxManager(options: { socketPath: string }): {
+    listSessionNames(): Promise<string[]>
+    inspectPaneProcess(
+      paneId: string
+    ): Promise<{ command: string; pid: number; dead: boolean } | null>
+  }
+  isLiveProcess(pid: number): boolean
+  reattach(runtime: HrcRuntimeSnapshot): Promise<DurableBrokerDispatchReattachResult>
+  log(level: 'INFO', message: string, fields: Record<string, unknown>): void
+}
+
+/**
+ * T-07047: a crashed/stale row is not sufficient authority to mint over a
+ * broker whose recorded leased-tmux substrate is still alive. This is the one
+ * exceptional probe on the semantic-DM mint edge: prove the recorded session
+ * and broker-pane PID, then prefer the existing durable reattach. Any probe or
+ * clean reattach miss leaves the row untouched and falls through to today's
+ * ordinary fresh-provision path.
+ */
+export async function reattachLiveSemanticDmSubstrate(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  deps: Partial<SemanticDmLiveSubstrateGuardDeps> = {}
+): Promise<boolean> {
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (
+    runtime.controllerKind !== 'harness-broker' ||
+    (runtime.status !== 'crashed' && runtime.status !== 'stale') ||
+    hosting?.substrate.kind !== 'leased-tmux'
+  ) {
+    return false
+  }
+
+  try {
+    const substrate = hosting.substrate
+    const leaseTmux = (deps.createTmuxManager ?? createTmuxManager)({
+      socketPath: substrate.tmuxSocketPath,
+    })
+    const sessionExists = (await leaseTmux.listSessionNames()).includes(substrate.sessionName)
+    const paneProcess = sessionExists
+      ? await leaseTmux.inspectPaneProcess(substrate.brokerWindow.paneId)
+      : null
+    if (
+      paneProcess === null ||
+      paneProcess.pid <= 0 ||
+      paneProcess.dead ||
+      !(deps.isLiveProcess ?? isLiveProcess)(paneProcess.pid)
+    ) {
+      return false
+    }
+
+    const outcome = deps.reattach
+      ? await deps.reattach(runtime)
+      : await reattachDurableBrokerForDispatch(this.db, runtime, {
+          runtimeRoot: this.options.runtimeRoot,
+          controller: this.getHarnessBrokerController(),
+          inFlightOperations: this.brokerReattachOperations,
+          brokerUnixClientFactory:
+            this.brokerUnixClientFactory ??
+            ((options) =>
+              connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
+        })
+    if (outcome.state !== 'reattached') {
+      return false
+    }
+    ;(deps.log ?? writeServerLog)('INFO', 'dm.mint_averted_live_substrate', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+    })
+    return true
+  } catch {
+    // A failed direct probe/reattach is not proof that the recorded substrate
+    // can serve input. Preserve the existing semantic-DM mint fallthrough.
+    return false
+  }
+}
+
 export const targetMessageHandlersMethods = {
   handleListTargets,
   handleGetTarget,
@@ -1913,6 +2011,7 @@ export const targetMessageHandlersMethods = {
   rejectBusyHeadlessSemanticDm,
   steerBusyHeadlessSemanticDm,
   executeSemanticTurn,
+  reattachLiveSemanticDmSubstrate,
 }
 
 export type TargetMessageHandlersMethods = typeof targetMessageHandlersMethods
