@@ -149,7 +149,7 @@ async function seedInteractive(
 
 type DispatchCall = {
   policy?: { whenBusy?: string } | undefined
-  input: { inputId: string }
+  input: { inputId: string; metadata?: { runId?: string | undefined } | undefined }
 }
 
 function installBroker(
@@ -334,7 +334,7 @@ describe('T-07203 steer-class delivery on the interactive route', () => {
     expect(broker.calls).toHaveLength(2)
   })
 
-  it('r4: a turn that began and ended entirely inside the probe window is a typed race loss', async () => {
+  it('T-07676 turnover fence: a run that ended inside the probe window remains race_lost', async () => {
     const seeded = await seedInteractive('doublerace', 'ready')
     const broker = installBroker(() => ({
       ok: false,
@@ -343,8 +343,80 @@ describe('T-07203 steer-class delivery on the interactive route', () => {
 
     const response = await sendDm(seeded, 'STOP', 'steer')
     expect(response.status).toBe(409)
-    const body = (await response.json()) as { error: { code: string } }
+    const body = (await response.json()) as { error: { code: string; message: string } }
     expect(body.error.code).toBe('urgent_delivery_race_lost')
+    expect(body.error.message).toContain('began and ended around the steer request')
+    expect(broker.calls).toHaveLength(1)
+  })
+
+  it('T-07676: commits one non-actuated refusal for an unchanged active run', async () => {
+    const seeded = await seedInteractive('steady-refusal', 'ready')
+    const broker = installBroker((request) => {
+      const activeRunId = request.input.metadata?.runId
+      if (activeRunId === undefined) throw new Error('probe carried no provisional run identity')
+
+      // Production repro: while the reject probe is in flight, broker event
+      // projection makes that same provisioned run the runtime's active run.
+      // The broker then returns its provably non-actuated busy refusal.
+      const db = openHrcDatabase(fixture.dbPath)
+      const now = fixture.now()
+      try {
+        db.runs.update(activeRunId, {
+          status: 'started',
+          startedAt: now,
+          updatedAt: now,
+        })
+        db.runtimes.update(seeded.runtimeId, {
+          activeRunId,
+          status: 'busy',
+          statusChangedAt: now,
+          updatedAt: now,
+        })
+        db.brokerInvocations.update(seeded.invocationId, {
+          invocationState: 'turn_active',
+          runId: activeRunId,
+          updatedAt: now,
+        })
+      } finally {
+        db.close()
+      }
+      return {
+        ok: false,
+        error: { code: 'broker_input_failed', message: 'input rejected: busy_rejected' },
+      }
+    })
+
+    const first = await sendDm(seeded, 'STOP', 'steer')
+    expect(first.status).toBe(409)
+    expect((await first.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: 'urgent_delivery_refused' },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    let activeRunId: string
+    try {
+      activeRunId = db.runtimes.getByRuntimeId(seeded.runtimeId)?.activeRunId ?? ''
+      expect(activeRunId).not.toBe('')
+      expect(db.runs.getByRunId(activeRunId)?.status).toBe('started')
+      expect(
+        db.steerContributions.findRefusalForActiveRun(
+          seeded.hostSessionId,
+          seeded.runtimeId,
+          activeRunId
+        )?.state
+      ).toBe('refused')
+    } finally {
+      db.close()
+    }
+
+    // A later wake against the same run observes the committed refusal and
+    // does not probe or steer the broker again. Run turnover remains the key
+    // that permits a future attempt.
+    const second = await sendDm(seeded, 'STOP again', 'steer')
+    expect(second.status).toBe(409)
+    expect((await second.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: 'urgent_delivery_refused' },
+    })
     expect(broker.calls).toHaveLength(1)
   })
 

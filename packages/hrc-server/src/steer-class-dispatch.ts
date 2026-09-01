@@ -142,6 +142,23 @@ export async function executeSteerClassDispatch(
     runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
   const knownActiveRun = activeRun !== null && isRunActive(activeRun) ? activeRun : null
 
+  // T-07676: a steady active run gets one broker refusal, not one per wake.
+  // The contribution ledger is durable and keyed by the exact run identity;
+  // turnover deliberately misses this fence and may attempt the new run.
+  if (knownActiveRun !== null) {
+    const priorRefusal = this.db.steerContributions.findRefusalForActiveRun(
+      session.hostSessionId,
+      runtime.runtimeId,
+      knownActiveRun.runId
+    )
+    if (priorRefusal !== null) {
+      // The committed refusal is still provably non-actuated, so the
+      // best-effort class retains its ordinary-floor contract on replay.
+      if (options.bestEffort === true) return 'floor'
+      return replaySteerClassContribution(session, priorRefusal, route, transport)
+    }
+  }
+
   // The provisional run row: keyless (r3 — the ledger owns retry identity),
   // internally minted (its runId must never surface in any response, so it can
   // never collide with route-layer run projections), inserted BEFORE dispatch
@@ -226,7 +243,22 @@ export async function executeSteerClassDispatch(
       freshRuntime?.activeRunId !== undefined
         ? this.db.runs.getByRunId(freshRuntime.activeRunId)
         : null
-    if (resolved !== null && isRunActive(resolved) && resolved.runId !== provisionalRunId) {
+    if (resolved !== null && isRunActive(resolved)) {
+      if (resolved.runId === provisionalRunId) {
+        // T-07676: the run did not turn over. The broker's reject policy proves
+        // this refusal was non-actuated, so commit that exact per-run fact and
+        // leave the still-active run untouched. `race_lost` would be both false
+        // and retryable, producing a fresh broker call on every later wake.
+        if (options.bestEffort === true) {
+          return flow.floorFallback('refused', { preserveProvisionalRun: true })
+        }
+        flow.sealActiveRunRefusal()
+        throw new HrcDomainError(
+          HrcErrorCode.URGENT_DELIVERY_REFUSED,
+          'the unchanged active turn refused urgent delivery before actuation',
+          { runtimeId: runtime.runtimeId, invocationId, runId: resolved.runId, route }
+        )
+      }
       this.db.steerContributions.updateAttemptingRunPointer(contributionId, {
         activeRunId: resolved.runId,
         runtimeId: runtime.runtimeId,
@@ -510,19 +542,24 @@ class SteerClassFlow {
    * state recording the non-actuated attempt, the provisional row is
    * terminalized, and the caller delivers the route's ordinary floor.
    */
-  floorFallback(attempt: 'unsupported' | 'race_lost'): 'floor' {
+  floorFallback(
+    attempt: 'unsupported' | 'race_lost' | 'refused',
+    options: { preserveProvisionalRun?: boolean | undefined } = {}
+  ): 'floor' {
     const now = timestamp()
     this.server.db.steerContributions.seal(this.ctx.contributionId, {
       state: 'queued_fallback',
       outcome: { attempt },
       now,
     })
-    this.server.db.runs.markCompleted(this.ctx.provisionalRunId, {
-      status: 'cancelled',
-      completedAt: now,
-      updatedAt: now,
-      errorMessage: 'superseded_by_floor_fallback',
-    })
+    if (options.preserveProvisionalRun !== true) {
+      this.server.db.runs.markCompleted(this.ctx.provisionalRunId, {
+        status: 'cancelled',
+        completedAt: now,
+        updatedAt: now,
+        errorMessage: 'superseded_by_floor_fallback',
+      })
+    }
     writeServerLog('INFO', 'steer_class.best_effort_floor', {
       runtimeId: this.runtime.runtimeId,
       invocationId: this.ctx.invocationId,
@@ -531,6 +568,24 @@ class SteerClassFlow {
       attempt,
     })
     return 'floor'
+  }
+
+  /** Commit the steady-run refusal without terminalizing the active run. */
+  sealActiveRunRefusal(): void {
+    const now = timestamp()
+    this.server.db.steerContributions.seal(this.ctx.contributionId, {
+      state: 'refused',
+      outcomeCode: HrcErrorCode.URGENT_DELIVERY_REFUSED,
+      now,
+    })
+    writeServerLog('WARN', 'steer_class.failed', {
+      runtimeId: this.runtime.runtimeId,
+      invocationId: this.ctx.invocationId,
+      contributionId: this.ctx.contributionId,
+      route: this.ctx.route,
+      state: 'refused',
+      errorCode: HrcErrorCode.URGENT_DELIVERY_REFUSED,
+    })
   }
 
   sealFailure(state: 'unsupported' | 'race_lost' | 'ambiguous', code: HrcErrorCode): void {
@@ -593,11 +648,13 @@ function replaySteerClassContribution(
     })
   }
   const code =
-    record.state === 'race_lost'
-      ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST
-      : record.state === 'ambiguous'
-        ? HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS
-        : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED
+    record.state === 'refused'
+      ? HrcErrorCode.URGENT_DELIVERY_REFUSED
+      : record.state === 'race_lost'
+        ? HrcErrorCode.URGENT_DELIVERY_RACE_LOST
+        : record.state === 'ambiguous'
+          ? HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS
+          : HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED
   throw new HrcDomainError(code, `urgent delivery previously resolved as ${record.state}`, {
     runtimeId: record.runtimeId,
     invocationId: record.invocationId,

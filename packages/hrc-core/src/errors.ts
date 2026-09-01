@@ -31,6 +31,8 @@ export const HrcErrorCode = {
   URGENT_DELIVERY_UNSUPPORTED: 'urgent_delivery_unsupported',
   /** The active turn ended between the busy check and the steer; the sender retries deliberately. */
   URGENT_DELIVERY_RACE_LOST: 'urgent_delivery_race_lost',
+  /** The unchanged active run refused the steer before actuation; retry only after run turnover. */
+  URGENT_DELIVERY_REFUSED: 'urgent_delivery_refused',
   /** The steer RPC timed out or was interrupted; whether the harness applied it is genuinely unknown. */
   URGENT_DELIVERY_AMBIGUOUS: 'urgent_delivery_ambiguous',
   /** The destination peer cannot accept urgent delivery, so the origin refuses before send. */
@@ -152,6 +154,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.UNSUPPORTED_WHEN_BUSY]: 422,
   [HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED]: 422,
   [HrcErrorCode.URGENT_DELIVERY_RACE_LOST]: 409,
+  [HrcErrorCode.URGENT_DELIVERY_REFUSED]: 409,
   [HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS]: 503,
   [HrcErrorCode.URGENT_DELIVERY_UNROUTABLE]: 409,
   [HrcErrorCode.BROKER_DESCRIPTOR_ABSENT]: 422,
