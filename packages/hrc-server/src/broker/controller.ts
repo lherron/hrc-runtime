@@ -37,9 +37,12 @@ import type {
 import { resolveAspToolchainBinary } from '../asp-toolchain'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
 import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
+import { isLiveProcess } from '../server-lock'
+import { createTmuxManager } from '../tmux'
 import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
+import { parseBrokerRuntimeHostingState } from './runtime-hosting'
 
 import type { AllocationContext } from './controller/allocation'
 import {
@@ -1154,6 +1157,38 @@ export class HarnessBrokerController {
           runtimeId,
           error: controllerError.message,
         })
+        try {
+          const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+          const hosting = runtime ? parseBrokerRuntimeHostingState(runtime) : undefined
+          if (hosting?.substrate.kind === 'leased-tmux') {
+            const substrate = hosting.substrate
+            const leaseTmux = createTmuxManager({ socketPath: substrate.tmuxSocketPath })
+            const sessionExists = (await leaseTmux.listSessionNames()).includes(
+              substrate.sessionName
+            )
+            const paneProcess = sessionExists
+              ? await leaseTmux.inspectPaneProcess(substrate.brokerWindow.paneId)
+              : null
+            if (
+              paneProcess !== null &&
+              paneProcess.pid > 0 &&
+              !paneProcess.dead &&
+              isLiveProcess(paneProcess.pid)
+            ) {
+              this.logger.warn?.('runtime.condemnation_averted', {
+                runtimeId,
+                brokerErrorCode: controllerError.code,
+                tmuxSocketPath: substrate.tmuxSocketPath,
+                sessionName: substrate.sessionName,
+                paneId: substrate.brokerWindow.paneId,
+                panePid: paneProcess.pid,
+              })
+              return
+            }
+          }
+        } catch {
+          // A failed liveness probe is not proof that the leased substrate survived.
+        }
         this.markBrokerCrashTerminal(runtimeId, controllerError)
       }
     })()

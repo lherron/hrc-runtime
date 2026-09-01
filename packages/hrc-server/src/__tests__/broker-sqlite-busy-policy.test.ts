@@ -1,9 +1,11 @@
 import { Database } from 'bun:sqlite'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { dirname, join } from 'node:path'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { HarnessBrokerController } from '../broker/controller'
 import { BrokerEventMapper } from '../broker/event-mapper'
+import { createTmuxManager } from '../tmux'
 import {
   INVOCATION_ID,
   RUNTIME_ID,
@@ -21,10 +23,18 @@ type LogRecord = {
 const fixtures: SeededFixture[] = []
 const controllers: HarnessBrokerController[] = []
 const writers: Database[] = []
+const leaseSockets: string[] = []
 
 afterEach(async () => {
   for (const controller of controllers.splice(0)) {
     controller.shutdown()
+  }
+  for (const socketPath of leaseSockets.splice(0)) {
+    const { exited } = Bun.spawn(['tmux', '-S', socketPath, 'kill-server'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+    await exited
   }
   for (const writer of writers.splice(0)) {
     try {
@@ -190,6 +200,73 @@ describe('T-07051 daemon SQLITE_BUSY policy', () => {
     expect(fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 1)).toBeNull()
     expect(logs.error.map((entry) => entry.message)).toContain(
       'harness broker event consumer failed'
+    )
+  })
+
+  it('averts condemnation when the runtime still owns a live leased tmux pane', async () => {
+    const { fixture, controller, writer, logs } = await setup(50)
+    writer.exec('COMMIT')
+    const socketPath = join(dirname(fixture.dbPath), 'lease.sock')
+    const sessionName = 'hrc-live-condemnation-guard'
+    leaseSockets.push(socketPath)
+    const leaseTmux = createTmuxManager({ socketPath })
+    await leaseTmux.initialize()
+    const brokerWindow = await leaseTmux.createWindowWithCommand({
+      sessionName,
+      windowName: 'broker',
+      command: 'exec sleep 120',
+    })
+    fixture.db.runtimes.update(RUNTIME_ID, {
+      status: 'busy',
+      runtimeStateJson: {
+        schemaVersion: 'runtime-state/v1',
+        kind: 'harness-broker',
+        broker: {
+          endpoint: {
+            kind: 'unix-jsonrpc-ndjson',
+            socketPath: join(dirname(fixture.dbPath), 'broker.sock'),
+            attachTokenRef: {
+              kind: 'file',
+              path: join(dirname(fixture.dbPath), 'attach.token'),
+              redacted: true,
+            },
+            protocolVersion: 'harness-broker/0.2',
+          },
+          substrate: {
+            kind: 'leased-tmux',
+            tmuxSocketPath: socketPath,
+            sessionName,
+            brokerWindow: {
+              sessionId: brokerWindow.sessionId,
+              windowId: brokerWindow.windowId,
+              paneId: brokerWindow.paneId,
+            },
+            generation: 1,
+            eventLedgerPath: join(dirname(fixture.dbPath), 'events.ndjson'),
+          },
+          presentation: { kind: 'none' },
+        },
+      },
+      updatedAt: ts(1),
+    })
+    writer.exec('BEGIN IMMEDIATE')
+
+    consume(controller, RUNTIME_ID, [diagnostic()])
+    await Bun.sleep(75)
+    writer.exec('COMMIT')
+
+    await waitFor(
+      () => logs.warn.some((entry) => entry.message === 'runtime.condemnation_averted'),
+      1_500,
+      'live leased substrate did not avert broker-event condemnation'
+    )
+
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.status).toBe('busy')
+    expect(logs.error.map((entry) => entry.message)).toContain(
+      'harness broker event consumer failed'
+    )
+    expect(logs.error.map((entry) => entry.message)).not.toContain(
+      'harness broker crash bookkeeping failed'
     )
   })
 })
