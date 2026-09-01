@@ -1068,7 +1068,11 @@ export class BrokerEventMapper {
         break
       }
       case 'assistant.message.started': {
-        // No text yet; the emitted HRC event records the message start.
+        // No text yet, but a new assistant message beginning after buffered
+        // output needs a boundary: the buffer is later joined with '' as the
+        // raw-stream turn body, and without a separator narrate→tool→answer
+        // turns glue messages together (T-07824, buffered branch).
+        this.appendMessageBoundaryBuffer(ctx, now)
         break
       }
     }
@@ -1306,6 +1310,23 @@ export class BrokerEventMapper {
       createdAt: now,
     })
     this.nextBufferChunkSeqByRunId.set(ctx.runId, chunkSeq + 1)
+  }
+
+  /** Separate consecutive assistant messages inside the raw runtime buffer.
+   *
+   * Appends a blank-line chunk when the run already has buffered output, so
+   * the buffered turn body (joined with '') keeps message boundaries. No-op
+   * on an empty buffer (first message) or when the boundary already exists.
+   */
+  private appendMessageBoundaryBuffer(ctx: ProjectionContext, now: string): void {
+    if (ctx.runId === undefined) {
+      return
+    }
+    const tail = this.db.runtimeBuffers.listTailByRunId(ctx.runId, 1).at(-1)?.text
+    if (tail === undefined || tail === '\n\n') {
+      return
+    }
+    this.appendBuffer(ctx, '\n\n', now)
   }
 
   private appendCompletedMessageBuffer(ctx: ProjectionContext, text: string, now: string): void {

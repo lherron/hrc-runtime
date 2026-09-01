@@ -48,6 +48,7 @@ import {
   bufferTextForRun,
   envelope,
   headlessSequence,
+  messageId,
   ts,
 } from './broker-event-mapper-fixtures'
 
@@ -158,6 +159,70 @@ describe('projection mapping (ordered sequence)', () => {
 
     expect(bufferTextForRun(db, RUN_ID)).toBe(ASSISTANT_TEXT)
     expect(db.runtimeBuffers.listByRunId(RUN_ID)).toHaveLength(1)
+  })
+
+  it('separates consecutive assistant messages in the buffered turn body', () => {
+    // T-07824 buffered branch: narrate -> tool -> answer streams two assistant
+    // messages; without a boundary chunk the raw buffer join('') glues them
+    // ("...path./Users/..."). message.started after buffered output appends '\n\n'.
+    const mapper = harness.makeMapper()
+    const db = harness.fixture.db
+    const tid = 'turn_message_boundary' as TurnId
+
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_message_boundary' }))
+    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('assistant.message.started', 5, { messageId: messageId('msg_narrate') }))
+    mapper.apply(
+      envelope(
+        'assistant.message.delta',
+        6,
+        { messageId: messageId('msg_narrate'), text: "I'll check with pwd." },
+        { turnId: tid }
+      )
+    )
+    mapper.apply(
+      envelope(
+        'assistant.message.completed',
+        7,
+        {
+          messageId: messageId('msg_narrate'),
+          content: [{ type: 'text', text: "I'll check with pwd." }],
+          final: false,
+        },
+        { turnId: tid }
+      )
+    )
+    mapper.apply(envelope('assistant.message.started', 8, { messageId: messageId('msg_answer') }))
+    mapper.apply(
+      envelope(
+        'assistant.message.delta',
+        9,
+        { messageId: messageId('msg_answer'), text: '/tmp/answer-path' },
+        { turnId: tid }
+      )
+    )
+
+    expect(bufferTextForRun(db, RUN_ID)).toBe("I'll check with pwd.\n\n/tmp/answer-path")
+  })
+
+  it('does not prepend a boundary before the first assistant message', () => {
+    const mapper = harness.makeMapper()
+    const db = harness.fixture.db
+    const tid = 'turn_first_message' as TurnId
+
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_first_message' }))
+    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('assistant.message.started', 5, { messageId: messageId('msg_only') }))
+    mapper.apply(
+      envelope(
+        'assistant.message.delta',
+        6,
+        { messageId: messageId('msg_only'), text: 'single message' },
+        { turnId: tid }
+      )
+    )
+
+    expect(bufferTextForRun(db, RUN_ID)).toBe('single message')
   })
 
   it('does not re-read the full run buffer while appending a long streamed message', () => {
