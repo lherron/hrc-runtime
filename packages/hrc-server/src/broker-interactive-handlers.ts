@@ -1177,7 +1177,6 @@ export async function startInteractiveTmuxBrokerRuntime(
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('interactive', runtimeId)
-  this.db.sessions.updateIntent(session.hostSessionId, effectiveTurnIntent, now, timing)
 
   const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(effectiveTurnIntent), effectiveTurnIntent.launch),
@@ -1469,6 +1468,10 @@ export async function startInteractiveTmuxBrokerRuntime(
       )
     }
 
+    // Match the headless authority invariant: rejected compilation, policy,
+    // route selection, and controller starts must not become the implicit plan
+    // used by later automatic dispatches.
+    this.db.sessions.updateIntent(session.hostSessionId, effectiveTurnIntent, timestamp(), timing)
     return result.runtime
   } catch (error) {
     if (!handedOffToController) {

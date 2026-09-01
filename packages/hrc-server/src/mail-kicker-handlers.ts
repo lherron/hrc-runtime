@@ -1339,6 +1339,9 @@ async function driveMailTargetOnce(
   })
 
   try {
+    // T-07206: session intent is reusable authority because fresh broker starts
+    // commit it only after controller.start succeeds; rejected candidates never
+    // outrank the drive's own materialization intent here.
     const materializationIntent = session?.lastAppliedIntentJson ?? attempt.materializationIntent
     if (materializationIntent === undefined) {
       // Placement is HRC's, so a missing intent means this node could not find

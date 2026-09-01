@@ -322,6 +322,8 @@ export async function drainDurableHeadlessTurnInputs(
     const remainder = snapshot.slice(executing.length)
 
     const session = requireSession(this.db, hostSessionId)
+    // T-07206: fresh starts commit this field only after controller.start succeeds,
+    // so it is safe for an automatic drain to reuse as materialization authority.
     const intent = session.lastAppliedIntentJson
     if (!intent) {
       throw new HrcRuntimeUnavailableError('queued turn has no runtime intent', {
@@ -456,7 +458,6 @@ export async function startHeadlessBrokerRuntime(
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
-  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
 
   let handedOffToController = false
   const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
@@ -682,6 +683,11 @@ export async function startHeadlessBrokerRuntime(
       )
     }
 
+    // `lastAppliedIntentJson` is materialization authority for automatic queued
+    // drains and mail delivery. Commit only after the controller has admitted
+    // and launched this exact intent; every earlier error therefore leaves the
+    // prior authority untouched.
+    this.db.sessions.updateIntent(session.hostSessionId, turnIntent, timestamp(), timing)
     return result.runtime
   } catch (error) {
     if (!handedOffToController) {
