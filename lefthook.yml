@@ -48,5 +48,9 @@ pre-push:
       # sockets at ~96 of the 104-char sun_path limit. The longest-named
       # fixtures cross it, so the gate fails on a CLEAN tree (8/2401 on
       # 2026-08-21) and the failure set drifts as fixtures are renamed.
+      # The fast tiers still contain CLI contract tests that discover a daemon.
+      # Provision and export the same isolated daemon + fixture agent homes as
+      # `just verify`; otherwise the hook silently borrows the operator's live
+      # environment and changes result across hosts (T-07506).
       # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
-      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && TMPDIR=/tmp bun run test:fast' {files}
+      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast' {files}

@@ -237,7 +237,7 @@ describe('lefthook v2 configuration', () => {
         // repo is its own workspace root, so a bare install here repopulates a
         // repo-local node_modules with registry copies and shadows the source
         // links of a parent praesidium dev workspace. See scripts/lib/workspace-root.ts.
-        run: "bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && TMPDIR=/tmp bun run test:fast' {files}",
+        run: 'bun scripts/run-if-code-changed.ts pre-push -- sh -c \'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast\' {files}',
       },
     })
   })
