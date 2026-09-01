@@ -326,6 +326,12 @@ const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000
  * that. A straggler past the bound is logged, not swallowed.
  */
 const SERVER_STOP_REQUEST_DRAIN_TIMEOUT_MS = 3_000
+/**
+ * Background tmux probes should settle inside their own 5s command deadline.
+ * This independent shutdown bound protects graceful stop even if a future
+ * sweep loses that guarantee or is wedged somewhere outside the child process.
+ */
+const SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS = 5_000
 
 export function resolveSqliteBusyTimeoutMs(
   optionValue?: number,
@@ -1477,6 +1483,38 @@ class HrcServerInstance implements HrcServer {
     })
   }
 
+  private async drainTmuxSweepForStop(
+    sweep: Promise<unknown>,
+    label: 'active_run_reconcile' | 'tmux_aging'
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const startedAt = performance.now()
+    const outcome = await Promise.race([
+      sweep.then(
+        () => ({ kind: 'settled' as const }),
+        (error: unknown) => ({ kind: 'failed' as const, error })
+      ),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ kind: 'timeout' }),
+          SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS
+        )
+      }),
+    ])
+    if (timer !== undefined) clearTimeout(timer)
+
+    if (outcome.kind === 'failed') {
+      writeServerLog('WARN', `server.stop.${label}_wait_failed`, { error: outcome.error })
+      return
+    }
+    if (outcome.kind === 'timeout') {
+      writeServerLog('WARN', `server.stop.${label}_wait_timeout`, {
+        durMs: performance.now() - startedAt,
+        timeoutMs: SERVER_STOP_TMUX_SWEEP_DRAIN_TIMEOUT_MS,
+      })
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) {
       return
@@ -1529,11 +1567,7 @@ class HrcServerInstance implements HrcServer {
       this.activeRunReconcileTimer = undefined
     }
     if (this.activeRunReconcileInFlight) {
-      try {
-        await this.activeRunReconcileInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
-      }
+      await this.drainTmuxSweepForStop(this.activeRunReconcileInFlight, 'active_run_reconcile')
     }
     if (this.firstTurnEvalTimer) {
       clearInterval(this.firstTurnEvalTimer)
@@ -1562,11 +1596,7 @@ class HrcServerInstance implements HrcServer {
       this.tmuxAgingTimer = undefined
     }
     if (this.tmuxAgingInFlight) {
-      try {
-        await this.tmuxAgingInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.tmux_aging_wait_failed', { error })
-      }
+      await this.drainTmuxSweepForStop(this.tmuxAgingInFlight, 'tmux_aging')
     }
     if (this.sessionRetentionTimer) {
       clearInterval(this.sessionRetentionTimer)

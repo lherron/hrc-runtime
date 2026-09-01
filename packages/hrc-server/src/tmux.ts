@@ -14,6 +14,7 @@ export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 export type TmuxManagerOptions = {
   socketPath: string
   tmuxBin?: string | undefined
+  commandTimeoutMs?: number | undefined
 }
 
 export type TmuxPaneState = {
@@ -44,6 +45,8 @@ type TmuxExecResult = {
   stdout: string
   stderr: string
 }
+
+export const DEFAULT_TMUX_COMMAND_TIMEOUT_MS = 5_000
 
 export class TmuxCommandTimeoutError extends Error {
   constructor(
@@ -241,10 +244,14 @@ export class TmuxManager {
 
   constructor(
     private readonly socketPath: string,
-    tmuxBinary = 'tmux'
+    tmuxBinary = 'tmux',
+    commandTimeoutMs = DEFAULT_TMUX_COMMAND_TIMEOUT_MS
   ) {
     this.tmuxBinary = resolveTmuxBinary(tmuxBinary)
+    this.commandTimeoutMs = Math.max(1, Math.trunc(commandTimeoutMs))
   }
+
+  private readonly commandTimeoutMs: number
 
   async initialize(): Promise<void> {
     await this.checkVersion()
@@ -733,7 +740,7 @@ export class TmuxManager {
   }
 
   private async exec(args: string[]): Promise<TmuxExecResult> {
-    return this.execRaw(['-S', this.socketPath, ...args])
+    return this.execWithTimeout(args, this.commandTimeoutMs)
   }
 
   private async execWithTimeout(args: string[], timeoutMs: number): Promise<TmuxExecResult> {
@@ -779,27 +786,10 @@ export class TmuxManager {
   }
 
   private async execRaw(args: string[]): Promise<TmuxExecResult> {
-    const proc = Bun.spawn([this.tmuxBinary, ...args], {
-      env: sanitizeTmuxClientEnv(process.env),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-
-    if (exitCode !== 0) {
-      const rendered = stderr.trim() || stdout.trim() || `tmux exited with status ${exitCode}`
-      throw new Error(rendered)
-    }
-
-    return { stdout, stderr }
+    return this.execRawWithTimeout(args, this.commandTimeoutMs)
   }
 }
 
 export function createTmuxManager(options: TmuxManagerOptions): TmuxManager {
-  return new TmuxManager(options.socketPath, options.tmuxBin)
+  return new TmuxManager(options.socketPath, options.tmuxBin, options.commandTimeoutMs)
 }
