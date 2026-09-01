@@ -750,6 +750,50 @@ const pruneCandidateIndexesMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07862 — committed broker projection authority.
+ *
+ * `broker_invocation_events` deliberately omits high-volume deltas, so its
+ * MAX(seq) cannot be a contiguous replay/ack cursor. Keep the scalar on the
+ * invocation and a payload-hash disposition for every sequence, including
+ * non-mirrored deltas. The mapper writes projection, disposition and cursor in
+ * one transaction. Existing invocations seed from the legacy replay boundary,
+ * last_event_seq. That preserves the pre-migration no-reprojection contract
+ * for active invocations whose intentionally non-mirrored envelopes have no
+ * recoverable per-sequence hashes; all post-migration advancement is strictly
+ * contiguous through dispositions.
+ */
+const brokerCommittedProjectionCursorMigration: HrcMigration = {
+  id: '0051_broker_committed_projection_cursor',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(broker_invocations)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!columns.has('last_projected_seq')) {
+      db.exec(
+        'ALTER TABLE broker_invocations ADD COLUMN last_projected_seq INTEGER NOT NULL DEFAULT 0'
+      )
+      db.exec(`
+        UPDATE broker_invocations
+        SET last_projected_seq = COALESCE(last_event_seq, 0)
+      `)
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS broker_projection_dispositions (
+        invocation_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        envelope_hash TEXT NOT NULL,
+        disposition TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (invocation_id, seq)
+      );
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -767,4 +811,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   steerContributionsMigration,
   runtimePresentationRecordMigration,
   pruneCandidateIndexesMigration,
+  brokerCommittedProjectionCursorMigration,
 ]

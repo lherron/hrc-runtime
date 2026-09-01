@@ -49,7 +49,7 @@ import {
   HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND,
   HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { BrokerInvocationEventConflictError, type HrcDatabase } from 'hrc-store-sqlite'
 import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
 import type {
   AssistantMessageCompletedPayload,
@@ -219,6 +219,9 @@ export class BrokerEventMapper {
       runId: resolvedRunId,
     }
     const persistedEnvelope = this.envelopeWithWriteTimeRepairCorrelation(envelope, ctx.runId)
+    const projectionEnvelopeHash = `sha256:${createHash('sha256')
+      .update(JSON.stringify(persistedEnvelope))
+      .digest('hex')}`
 
     // (a) Idempotent append keyed by (invocationId, seq). Raw assistant/tool
     // deltas deliberately skip this row by default (T-07039): they keep their
@@ -279,7 +282,46 @@ export class BrokerEventMapper {
       createdAt: envelope.time,
     }
 
-    if (appended?.idempotent) {
+    const priorDisposition = db.brokerInvocationEvents.getProjectionDisposition(
+      String(envelope.invocationId),
+      envelope.seq
+    )
+    if (priorDisposition) {
+      if (priorDisposition.envelopeHash !== projectionEnvelopeHash) {
+        throw new BrokerInvocationEventConflictError(String(envelope.invocationId), envelope.seq)
+      }
+      return { idempotent: true, brokerEvent, events: [], lifecycleEvents: [] }
+    }
+
+    // Migration bridge: pre-T-07862 invocations seed lastProjectedSeq from the
+    // successfully mapped lastEventSeq, but have no per-seq hash rows for old
+    // intentionally non-mirrored deltas. Never re-project an already committed
+    // historical sequence. Mirrored rows still pass appendEvent's payload
+    // conflict check above before reaching this branch.
+    if ((invocation.lastProjectedSeq ?? 0) >= envelope.seq) {
+      return { idempotent: true, brokerEvent, events: [], lifecycleEvents: [] }
+    }
+
+    // An applied mirrored row can exist without a disposition only across the
+    // one-time migration boundary. Materialize its committed disposition and
+    // cursor without re-emitting HRC state/events.
+    if (
+      appended?.idempotent &&
+      (appended.record.projectionStatus === 'applied' ||
+        appended.record.projectionStatus === 'skipped_fenced')
+    ) {
+      db.brokerInvocationEvents.recordProjectionDisposition({
+        invocationId: String(envelope.invocationId),
+        seq: envelope.seq,
+        envelopeHash: projectionEnvelopeHash,
+        disposition:
+          appended.record.projectionStatus === 'skipped_fenced' ? 'skipped_fenced' : 'applied',
+        createdAt: now,
+      })
+      db.brokerInvocationEvents.advanceContiguousProjectionCursor(
+        String(envelope.invocationId),
+        now
+      )
       return { idempotent: true, brokerEvent, events: [], lifecycleEvents: [] }
     }
 
@@ -293,6 +335,17 @@ export class BrokerEventMapper {
             `broker input fenced at ${fencedRun.brokerInputFencedAt}`,
         })
       }
+      db.brokerInvocationEvents.recordProjectionDisposition({
+        invocationId: String(envelope.invocationId),
+        seq: envelope.seq,
+        envelopeHash: projectionEnvelopeHash,
+        disposition: 'skipped_fenced',
+        createdAt: now,
+      })
+      db.brokerInvocationEvents.advanceContiguousProjectionCursor(
+        String(envelope.invocationId),
+        now
+      )
       return {
         idempotent: false,
         brokerEvent,
@@ -336,6 +389,14 @@ export class BrokerEventMapper {
         projectionStatus: 'applied',
       })
     }
+    db.brokerInvocationEvents.recordProjectionDisposition({
+      invocationId: String(envelope.invocationId),
+      seq: envelope.seq,
+      envelopeHash: projectionEnvelopeHash,
+      disposition: 'applied',
+      createdAt: now,
+    })
+    db.brokerInvocationEvents.advanceContiguousProjectionCursor(String(envelope.invocationId), now)
 
     return {
       idempotent: false,

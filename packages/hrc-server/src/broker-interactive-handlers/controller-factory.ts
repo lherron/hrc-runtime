@@ -131,6 +131,12 @@ export function getHarnessBrokerController(
         subscriber(event)
       }
     },
+    ...(this.options.testOnlyAfterBrokerProjectionCommitBeforeAck
+      ? {
+          testOnlyAfterProjectionCommitBeforeAck:
+            this.options.testOnlyAfterBrokerProjectionCommitBeforeAck,
+        }
+      : {}),
     tmuxAllocator,
     headlessSubstrateAllocator,
     tmuxTuiAllocator,

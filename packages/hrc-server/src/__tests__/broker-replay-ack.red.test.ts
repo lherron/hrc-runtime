@@ -40,6 +40,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -288,7 +289,12 @@ function spyMapper(fix: SeededFixture): {
 function makeController(
   fix: SeededFixture,
   mapper?: Pick<BrokerEventMapper, 'apply'>,
-  brokerAttachControlProbeTimeoutMs?: number
+  brokerAttachControlProbeTimeoutMs?: number,
+  testOnlyAfterProjectionCommitBeforeAck?: (input: {
+    runtimeId: string
+    invocationId: string
+    committedThroughSeq: number
+  }) => void
 ): HarnessBrokerController {
   return new HarnessBrokerController({
     db: fix.db,
@@ -296,6 +302,7 @@ function makeController(
     ...(brokerAttachControlProbeTimeoutMs !== undefined
       ? { brokerAttachControlProbeTimeoutMs }
       : {}),
+    ...(testOnlyAfterProjectionCommitBeforeAck ? { testOnlyAfterProjectionCommitBeforeAck } : {}),
     now: () => ts(0),
     serverInstanceId: SERVER_INSTANCE_ID,
   })
@@ -371,6 +378,44 @@ describe('T-01811 replay reuses the live event-mapper apply() path', () => {
 //    stored last_event_seq), and ack only the max seq actually projected.
 // ───────────────────────────────────────────────────────────────────────────
 describe('T-01811 high-water uses the last successfully PROJECTED broker seq', () => {
+  it('cannot reach the ack boundary until the projection transaction and cursor commit', async () => {
+    const order: string[] = []
+    const controller = makeController(fixture, undefined, undefined, ({ committedThroughSeq }) => {
+      order.push(`commit:${committedThroughSeq}`)
+      expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(
+        committedThroughSeq
+      )
+      expect(fixture.db.brokerInvocationEvents.hasProjectionDisposition(INVOCATION_ID, 1)).toBe(
+        true
+      )
+    })
+    const client = new MockDurableBrokerClient()
+    client.snapshotResponse = emptySnapshot({ currentSeq: 1, retentionFloorSeq: 1 })
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+    client.queueEventsSince({
+      events: headlessSequence().slice(0, 1),
+      currentSeq: 1,
+      retentionFloorSeq: 1,
+    })
+    const ack = client.ackEvents.bind(client)
+    client.ackEvents = async (request) => {
+      order.push(`ack:${request.throughSeq}`)
+      expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(
+        request.throughSeq
+      )
+      return ack(request)
+    }
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(order).toEqual(['commit:1', 'ack:1'])
+  })
+
   it('asks eventsSince(afterSeq=lastProjected) ignoring a divergent stored last_event_seq, and acks max projected', async () => {
     // Pre-project seq 1..3 through the REAL mapper => ledger applied through 3.
     const seedMapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(0) })
@@ -408,6 +453,46 @@ describe('T-01811 high-water uses the last successfully PROJECTED broker seq', (
     expect(spy.appliedSeqs()).toEqual([4, 5, 6])
     expect(client.ackCalls[0]?.throughSeq).toBe(6)
     expect(result.ackedThroughSeq).toBe(6)
+  })
+
+  it('re-acks an already committed cursor after a crash-before-ack without duplicate HRC events', async () => {
+    const committedMapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(0) })
+    for (const event of headlessSequence().slice(0, 3)) committedMapper.apply(event)
+    const eventCountBeforeRestart = lifecycleEventKinds(fixture).length
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(3)
+
+    // A second database connection and fresh controller represent hrc-server
+    // after kill -9. The broker has no replay payload because attach starts
+    // from HRC's durable committed cursor; HRC must nevertheless re-ack that
+    // cursor idempotently.
+    const reopenedDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const restartedFixture = { ...fixture, db: reopenedDb }
+      const controller = makeController(restartedFixture)
+      const client = new MockDurableBrokerClient()
+      client.snapshotResponse = emptySnapshot({ currentSeq: 3, retentionFloorSeq: 1 })
+      client.attachResponse = attachResponseFor(client.snapshotResponse)
+      client.queueEventsSince({ events: [], currentSeq: 3, retentionFloorSeq: 1 })
+
+      const result = await controller.attachAndReplay({
+        runtimeId: RUNTIME_ID,
+        client,
+        attachToken: ATTACH_TOKEN,
+      })
+
+      expect(result.ok).toBe(true)
+      expect(client.eventsSinceCalls).toEqual([{ invocationId: INVOCATION_ID, afterSeq: 3 }])
+      expect(client.ackCalls).toEqual([
+        {
+          invocationId: INVOCATION_ID,
+          throughSeq: 3,
+          controllerInstanceId: SERVER_INSTANCE_ID,
+        },
+      ])
+      expect(lifecycleEventKinds(restartedFixture)).toHaveLength(eventCountBeforeRestart)
+    } finally {
+      reopenedDb.close()
+    }
   })
 })
 
@@ -587,6 +672,18 @@ describe('T-01811 retention-floor gap is unsafe (conservative stale)', () => {
     expect(client.closed).toBe(true)
     expect(client.calls).not.toContain('ackEvents')
     expect(spy.appliedSeqs()).toEqual([])
+    const replayState = fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.runtimeStateJson?.[
+      'brokerReplay'
+    ] as { status?: string; reason?: { code?: string } } | undefined
+    expect(replayState).toMatchObject({
+      status: 'replay-stale',
+      reason: { code: 'broker_replay_retention_gap' },
+    })
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
+        .filter((event) => event.eventKind === 'runtime.stale')
+    ).toHaveLength(1)
 
     const dispatch = await controller.dispatchInput({
       runtimeId: RUNTIME_ID,
@@ -594,6 +691,50 @@ describe('T-01811 retention-floor gap is unsafe (conservative stale)', () => {
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
+  })
+
+  it('maps only the broker replay_below_floor discriminator to typed replay-stale without snapshot inference', async () => {
+    const controller = makeController(fixture)
+    const client = new MockDurableBrokerClient()
+    const detail = {
+      reason: 'replay_below_floor',
+      invocationId: INVOCATION_ID,
+      afterSeq: 0,
+      retentionFloorSeq: 4,
+      currentSeq: 9,
+    }
+    client.attach = async () => {
+      client.calls.push('attach')
+      throw Object.assign(new Error('event replay unavailable'), {
+        name: 'BrokerRpcError',
+        code: -32013,
+        data: detail,
+      })
+    }
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error.code).toBe('broker_replay_below_floor')
+    expect(result.ok === false && result.error.detail).toEqual(detail)
+    expect(client.calls).not.toContain('snapshot')
+    expect(client.calls).not.toContain('eventsSince')
+    expect(client.calls).not.toContain('ackEvents')
+    const replayState = fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.runtimeStateJson?.[
+      'brokerReplay'
+    ] as { status?: string; reason?: { code?: string; detail?: unknown } } | undefined
+    expect(replayState).toEqual({
+      status: 'replay-stale',
+      reason: {
+        code: 'broker_replay_below_floor',
+        message: 'broker rejected replay below its retained event floor',
+        detail,
+      },
+    })
   })
 })
 

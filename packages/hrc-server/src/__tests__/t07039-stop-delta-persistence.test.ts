@@ -139,4 +139,38 @@ describe('T-07039 raw broker delta persistence gate', () => {
     ])
     expect(rows.every((record) => record.projectionStatus === 'applied')).toBe(true)
   })
+
+  it('advances one contiguous committed cursor across non-mirrored deltas and rejects divergent replay', () => {
+    fixture.db.brokerInvocations.update(INVOCATION_ID, {
+      lastProjectedSeq: 2,
+      updatedAt: ts(99),
+    })
+    const eventMapper = mapper()
+    const seq3 = envelope('diagnostic', 3, { level: 'info', message: 'three' })
+    const seq4 = envelope('diagnostic', 4, { level: 'info', message: 'four' })
+    const seq5 = envelope('assistant.message.delta', 5, {
+      messageId: MESSAGE_ID,
+      text: 'non-mirrored five',
+    })
+
+    eventMapper.apply(seq3)
+    eventMapper.apply(seq5)
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(3)
+    expect(fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 5)).toBeNull()
+    expect(
+      fixture.db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 5)?.disposition
+    ).toBe('applied')
+
+    eventMapper.apply(seq4)
+    expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(5)
+    expect(eventMapper.apply(seq5).idempotent).toBe(true)
+    expect(() =>
+      eventMapper.apply(
+        envelope('assistant.message.delta', 5, {
+          messageId: MESSAGE_ID,
+          text: 'divergent replay',
+        })
+      )
+    ).toThrow('conflict')
+  })
 })

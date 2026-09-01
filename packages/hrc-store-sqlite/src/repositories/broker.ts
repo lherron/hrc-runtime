@@ -77,6 +77,7 @@ export type BrokerInvocationRow = {
   spec_projection_json: string | null
   start_request_projection_json: string | null
   last_event_seq: number | null
+  last_projected_seq: number
   owner_server_instance_id: string | null
   lifecycle_policy_hash: string | null
   current_harness_generation: number | null
@@ -197,6 +198,7 @@ export const BROKER_INVOCATION_COLUMNS = `
   spec_projection_json,
   start_request_projection_json,
   last_event_seq,
+  last_projected_seq,
   owner_server_instance_id,
   lifecycle_policy_hash,
   current_harness_generation,
@@ -333,6 +335,7 @@ export function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvoc
       ? { startRequestProjectionJson: row.start_request_projection_json }
       : {}),
     ...(row.last_event_seq !== null ? { lastEventSeq: row.last_event_seq } : {}),
+    lastProjectedSeq: row.last_projected_seq,
     ...(row.owner_server_instance_id !== null
       ? { ownerServerInstanceId: row.owner_server_instance_id }
       : {}),

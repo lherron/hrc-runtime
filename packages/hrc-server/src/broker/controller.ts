@@ -100,6 +100,7 @@ import type {
   PendingAttachedBrokerStart,
   ProductionHarnessBrokerControllerDeps,
 } from './controller/types'
+import { isDurableBrokerClient } from './controller/types'
 
 const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 
@@ -361,6 +362,13 @@ export class HarnessBrokerController {
         record: HrcBrokerInvocationEventRecord
       }) => void)
     | undefined
+  private readonly testOnlyAfterProjectionCommitBeforeAck:
+    | ((input: {
+        runtimeId: string
+        invocationId: string
+        committedThroughSeq: number
+      }) => Promise<void> | void)
+    | undefined
   private readonly active = new Map<string, ActiveBrokerRuntime>()
   // Intent belongs to the connection being closed, not the logical runtime ID:
   // a replacement client may legitimately reuse that ID before an older close
@@ -469,6 +477,7 @@ export class HarnessBrokerController {
     this.now = deps.now ?? (() => new Date().toISOString())
     this.serverInstanceId = deps.serverInstanceId ?? 'hrc-server'
     this.notifyRawBrokerEvent = deps.notifyRawBrokerEvent
+    this.testOnlyAfterProjectionCommitBeforeAck = deps.testOnlyAfterProjectionCommitBeforeAck
   }
 
   private persistenceContext(): PersistenceContext {
@@ -536,6 +545,11 @@ export class HarnessBrokerController {
       resolveAttachInvocation: (runtime, runtimeId) =>
         this.resolveAttachInvocation(runtime, runtimeId),
       lastProjectedBrokerSeq: (invocationId) => this.lastProjectedBrokerSeq(invocationId),
+      ...(this.testOnlyAfterProjectionCommitBeforeAck
+        ? {
+            testOnlyAfterProjectionCommitBeforeAck: this.testOnlyAfterProjectionCommitBeforeAck,
+          }
+        : {}),
       connectDurableBrokerWithRetry: (socketPath, runtimeId) =>
         this.connectDurableBrokerWithRetry(socketPath, runtimeId),
       pauseForAttachedInvocationStart: (input) => this.pauseForAttachedInvocationStart(input),
@@ -746,24 +760,34 @@ export class HarnessBrokerController {
         invocationId: invocation.invocationId as InvocationId,
         afterSeq: lastProjectedSeq,
       })
-      let ackedThroughSeq = lastProjectedSeq
       for (const envelope of replay.events) {
         const result = this.mapper.apply(envelope)
+        await this.testOnlyAfterProjectionCommitBeforeAck?.({
+          runtimeId: runtime.runtimeId,
+          invocationId: String(envelope.invocationId),
+          committedThroughSeq: this.lastProjectedBrokerSeq(String(envelope.invocationId)),
+        })
         this.afterMappedEvent(runtime.runtimeId, envelope, result)
-        const projected = this.db.brokerInvocationEvents.getByInvocationAndSeq(
-          String(envelope.invocationId),
-          envelope.seq
-        )
-        if (projected?.projectionStatus === 'applied') {
-          ackedThroughSeq = Math.max(ackedThroughSeq, envelope.seq)
-        }
       }
-      if (ackedThroughSeq > lastProjectedSeq) {
-        await client.ackEvents({
+      const committedThroughSeq = this.lastProjectedBrokerSeq(invocation.invocationId)
+      if (committedThroughSeq > 0) {
+        const ack = await client.ackEvents({
           invocationId: invocation.invocationId as InvocationId,
-          throughSeq: ackedThroughSeq,
+          throughSeq: committedThroughSeq,
           controllerInstanceId: this.serverInstanceId,
         })
+        if (ack.ackedThroughSeq < committedThroughSeq) {
+          throw new BrokerControllerError(
+            'broker_ack_incomplete',
+            'broker acknowledgement did not reach HRC committed projection cursor',
+            {
+              runtimeId: runtime.runtimeId,
+              invocationId: invocation.invocationId,
+              committedThroughSeq,
+              ackedThroughSeq: ack.ackedThroughSeq,
+            }
+          )
+        }
       }
       return this.runtimeHasFinalSummary(input.runtimeId)
         ? { state: 'recovered' }
@@ -1240,12 +1264,12 @@ export class HarnessBrokerController {
           })
           return
         }
-        const lastEventSeq = invocation.lastEventSeq ?? 0
-        if (envelope.seq > lastEventSeq + 1) {
+        const lastProjectedSeq = invocation.lastProjectedSeq ?? 0
+        if (envelope.seq > lastProjectedSeq + 1) {
           const missingSeqs: number[] = []
-          for (let seq = lastEventSeq + 1; seq < envelope.seq; seq++) {
+          for (let seq = lastProjectedSeq + 1; seq < envelope.seq; seq++) {
             if (
-              !this.db.brokerInvocationEvents.getByInvocationAndSeq(
+              !this.db.brokerInvocationEvents.hasProjectionDisposition(
                 String(envelope.invocationId),
                 seq
               )
@@ -1268,7 +1292,15 @@ export class HarnessBrokerController {
           }
         }
         const result = this.mapper.apply(envelope)
+        await this.testOnlyAfterProjectionCommitBeforeAck?.({
+          runtimeId,
+          invocationId: String(envelope.invocationId),
+          committedThroughSeq: this.lastProjectedBrokerSeq(String(envelope.invocationId)),
+        })
         this.afterMappedEvent(runtimeId, envelope, result, options)
+        if (!options.externalParticipant) {
+          await this.ackCommittedProjection(runtimeId, String(envelope.invocationId))
+        }
         return
       } catch (error) {
         if (this.shuttingDown || isClosedDbError(error)) {
@@ -1355,7 +1387,7 @@ export class HarnessBrokerController {
     let missingSeqs: number[]
     try {
       missingSeqs = candidateSeqs.filter(
-        (seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq)
+        (seq) => !this.db.brokerInvocationEvents.hasProjectionDisposition(invocationId, seq)
       )
     } catch (error) {
       // A delayed debounce can race a test/server teardown that closes the DB
@@ -1415,11 +1447,16 @@ export class HarnessBrokerController {
       for (const envelope of replay.events) {
         if (
           !missingSet.has(envelope.seq) ||
-          this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, envelope.seq)
+          this.db.brokerInvocationEvents.hasProjectionDisposition(invocationId, envelope.seq)
         ) {
           continue
         }
         const result = this.mapper.apply(envelope)
+        await this.testOnlyAfterProjectionCommitBeforeAck?.({
+          runtimeId,
+          invocationId,
+          committedThroughSeq: this.lastProjectedBrokerSeq(invocationId),
+        })
         this.afterMappedEvent(runtimeId, envelope, result)
         if (!result.idempotent) {
           repairedSeqs.push(envelope.seq)
@@ -1436,7 +1473,7 @@ export class HarnessBrokerController {
       }
 
       const stillMissing = missingSeqs.filter(
-        (seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq)
+        (seq) => !this.db.brokerInvocationEvents.hasProjectionDisposition(invocationId, seq)
       )
       if (stillMissing.length > 0) {
         this.logger.warn?.('broker.event_gap_unrecoverable', {
@@ -1447,6 +1484,8 @@ export class HarnessBrokerController {
           currentSeq: replay.currentSeq,
           retentionFloorSeq: replay.retentionFloorSeq,
         })
+      } else {
+        await this.ackCommittedProjection(runtimeId, invocationId)
       }
     } catch (error) {
       if (this.shuttingDown || isClosedDbError(error)) {
@@ -1612,10 +1651,28 @@ export class HarnessBrokerController {
   }
 
   private lastProjectedBrokerSeq(invocationId: string): number {
-    return this.db.brokerInvocationEvents
-      .listByInvocationId(invocationId)
-      .filter((event: HrcBrokerInvocationEventRecord) => event.projectionStatus === 'applied')
-      .reduce((max, event) => Math.max(max, event.seq), 0)
+    return this.db.brokerInvocations.getByInvocationId(invocationId)?.lastProjectedSeq ?? 0
+  }
+
+  private async ackCommittedProjection(runtimeId: string, invocationId: string): Promise<void> {
+    const active = this.active.get(runtimeId)
+    if (!active || active.invocationId !== invocationId || !isDurableBrokerClient(active.client)) {
+      return
+    }
+    const committedThroughSeq = this.lastProjectedBrokerSeq(invocationId)
+    if (committedThroughSeq <= 0) return
+    const ack = await active.client.ackEvents({
+      invocationId: invocationId as InvocationId,
+      throughSeq: committedThroughSeq,
+      controllerInstanceId: this.serverInstanceId,
+    })
+    if (ack.ackedThroughSeq < committedThroughSeq) {
+      throw new BrokerControllerError(
+        'broker_ack_incomplete',
+        'broker acknowledgement did not reach HRC committed projection cursor',
+        { runtimeId, invocationId, committedThroughSeq, ackedThroughSeq: ack.ackedThroughSeq }
+      )
+    }
   }
 
   private runtimeHasFinalSummary(runtimeId: string): boolean {

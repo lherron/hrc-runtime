@@ -73,6 +73,8 @@ describe('transaction atomicity', () => {
 
     // Neither the broker event row nor the run-state projection persisted.
     expect(db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 7)).toBeNull()
+    expect(db.brokerInvocationEvents.getProjectionDisposition(INVOCATION_ID, 7)).toBeNull()
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.lastProjectedSeq).toBe(0)
     const run = db.runs.getByRunId(RUN_ID)!
     expect(run.status).toBe('accepted')
     expect(run.completedAt).toBeUndefined()

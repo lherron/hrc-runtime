@@ -393,6 +393,14 @@ export type HarnessBrokerControllerDeps = {
         record: HrcBrokerInvocationEventRecord
       }) => void)
     | undefined
+  /** Test-build crash/fault injection seam; production wiring must omit it. */
+  testOnlyAfterProjectionCommitBeforeAck?:
+    | ((input: {
+        runtimeId: string
+        invocationId: string
+        committedThroughSeq: number
+      }) => Promise<void> | void)
+    | undefined
 }
 
 /** Production construction requires a durable metrics root; direct construction is test-only. */

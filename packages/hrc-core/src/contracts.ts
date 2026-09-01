@@ -785,6 +785,12 @@ export type HrcBrokerInvocationRecord = {
   specProjectionJson?: string | undefined
   startRequestProjectionJson?: string | undefined
   lastEventSeq?: number | undefined
+  /**
+   * Highest contiguous broker sequence whose HRC projection transaction
+   * committed (including intentionally non-mirrored or typed-fenced events).
+   * This is the only authority for broker replay and acknowledgement.
+   */
+  lastProjectedSeq?: number | undefined
   ownerServerInstanceId?: string | undefined
   lifecyclePolicyHash?: string | undefined
   currentHarnessGeneration?: number | undefined

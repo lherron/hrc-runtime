@@ -270,6 +270,18 @@ export type HrcServerOptions = {
    */
   hrcMailKickerAfterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   /**
+   * Test-build crash seam for committed broker observations. Production CLI
+   * construction never supplies it; an installed-package validation harness
+   * may terminate its isolated server at this exact post-commit/pre-ack edge.
+   */
+  testOnlyAfterBrokerProjectionCommitBeforeAck?:
+    | ((input: {
+        runtimeId: string
+        invocationId: string
+        committedThroughSeq: number
+      }) => void | Promise<void>)
+    | undefined
+  /**
    * The wrkq collaboration ledger this daemon consumes (T-07612 wave 3).
    * Production spawns the installed `wrkq rpc --stdio` under the daemon's own
    * wrkq authority; tests inject a fake so the kicker is exercisable without a

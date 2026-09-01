@@ -305,6 +305,7 @@ const BROKER_INVOCATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<BrokerInvocati
   { key: 'specProjectionJson', column: 'spec_projection_json' },
   { key: 'startRequestProjectionJson', column: 'start_request_projection_json' },
   { key: 'lastEventSeq', column: 'last_event_seq' },
+  { key: 'lastProjectedSeq', column: 'last_projected_seq' },
   { key: 'ownerServerInstanceId', column: 'owner_server_instance_id' },
   { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash' },
   { key: 'currentHarnessGeneration', column: 'current_harness_generation' },
@@ -340,6 +341,7 @@ export class BrokerInvocationRepository {
           spec_projection_json,
           start_request_projection_json,
           last_event_seq,
+          last_projected_seq,
           owner_server_instance_id,
           lifecycle_policy_hash,
           current_harness_generation,
@@ -348,7 +350,7 @@ export class BrokerInvocationRepository {
           last_lifecycle_escalation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.invocationId,
       record.operationId,
@@ -368,6 +370,7 @@ export class BrokerInvocationRepository {
       record.specProjectionJson ?? null,
       record.startRequestProjectionJson ?? null,
       record.lastEventSeq ?? null,
+      record.lastProjectedSeq ?? 0,
       record.ownerServerInstanceId ?? null,
       record.lifecyclePolicyHash ?? null,
       record.currentHarnessGeneration ?? null,
@@ -462,6 +465,14 @@ export type ImportedBrokerInvocationEventInput = {
   sourceRef: string
   originSeq: number
   event: HrcBrokerInvocationEventRecord
+}
+
+export type BrokerProjectionDisposition = {
+  invocationId: string
+  seq: number
+  envelopeHash: string
+  disposition: 'applied' | 'skipped_fenced'
+  createdAt: string
 }
 
 export type BrokerInvocationEventAppendResult = {
@@ -854,6 +865,110 @@ export class BrokerInvocationEventRepository {
       .get(invocationId)
 
     return row?.max_seq ?? 0
+  }
+
+  getProjectionDisposition(invocationId: string, seq: number): BrokerProjectionDisposition | null {
+    const row = this.db
+      .query<
+        {
+          invocation_id: string
+          seq: number
+          envelope_hash: string
+          disposition: 'applied' | 'skipped_fenced'
+          created_at: string
+        },
+        [string, number]
+      >(
+        `SELECT invocation_id, seq, envelope_hash, disposition, created_at
+         FROM broker_projection_dispositions
+         WHERE invocation_id = ? AND seq = ?`
+      )
+      .get(invocationId, seq)
+    return row
+      ? {
+          invocationId: row.invocation_id,
+          seq: row.seq,
+          envelopeHash: row.envelope_hash,
+          disposition: row.disposition,
+          createdAt: row.created_at,
+        }
+      : null
+  }
+
+  hasProjectionDisposition(invocationId: string, seq: number): boolean {
+    return this.getProjectionDisposition(invocationId, seq) !== null
+  }
+
+  /**
+   * Resolve one broker sequence without storing a second envelope copy. A
+   * replay with the same hash is idempotent; a divergent hash is the same
+   * fail-closed conflict as the normalized-envelope mirror.
+   */
+  recordProjectionDisposition(input: BrokerProjectionDisposition): {
+    disposition: BrokerProjectionDisposition
+    idempotent: boolean
+  } {
+    const existing = this.getProjectionDisposition(input.invocationId, input.seq)
+    if (existing) {
+      if (
+        existing.envelopeHash !== input.envelopeHash ||
+        existing.disposition !== input.disposition
+      ) {
+        throw new BrokerInvocationEventConflictError(input.invocationId, input.seq)
+      }
+      return { disposition: existing, idempotent: true }
+    }
+    execute(
+      this.db,
+      `INSERT INTO broker_projection_dispositions (
+         invocation_id, seq, envelope_hash, disposition, created_at
+       ) VALUES (?, ?, ?, ?, ?)`,
+      input.invocationId,
+      input.seq,
+      input.envelopeHash,
+      input.disposition,
+      input.createdAt
+    )
+    return { disposition: input, idempotent: false }
+  }
+
+  /**
+   * Advance only across an unbroken run of committed dispositions. This is
+   * independent of broker_invocation_events retention/mirroring, so raw deltas
+   * cannot create false source gaps.
+   */
+  advanceContiguousProjectionCursor(invocationId: string, updatedAt: string): number {
+    const invocation = this.db
+      .query<{ last_projected_seq: number }, [string]>(
+        'SELECT last_projected_seq FROM broker_invocations WHERE invocation_id = ?'
+      )
+      .get(invocationId)
+    if (!invocation) throw new Error(`broker invocation not found: ${invocationId}`)
+
+    let throughSeq = invocation.last_projected_seq
+    const rows = this.db
+      .query<{ seq: number }, [string, number]>(
+        `SELECT seq FROM broker_projection_dispositions
+         WHERE invocation_id = ? AND seq > ?
+         ORDER BY seq ASC`
+      )
+      .all(invocationId, throughSeq)
+    for (const row of rows) {
+      if (row.seq !== throughSeq + 1) break
+      throughSeq = row.seq
+    }
+    if (throughSeq !== invocation.last_projected_seq) {
+      execute(
+        this.db,
+        `UPDATE broker_invocations
+         SET last_projected_seq = ?, updated_at = ?
+         WHERE invocation_id = ?`,
+        throughSeq,
+        updatedAt,
+        invocationId
+      )
+    }
+    return throughSeq
   }
 
   listFromAfterSeq(

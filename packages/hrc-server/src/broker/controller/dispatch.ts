@@ -53,7 +53,12 @@ import {
 } from './allocation'
 import type { AllocationContext } from './allocation'
 import { BrokerControllerError } from './errors'
-import { compactEnv, rehydrateInspectionCapabilities, toControllerError } from './internal'
+import {
+  compactEnv,
+  rehydrateInspectionCapabilities,
+  replayBelowFloorDetail,
+  toControllerError,
+} from './internal'
 import { failReplayStale } from './lifecycle'
 import type { LifecycleContext } from './lifecycle'
 import {
@@ -113,6 +118,13 @@ export type DispatchContext = {
     runtimeId: string
   ) => HrcBrokerInvocationRecord | null
   lastProjectedBrokerSeq: (invocationId: string) => number
+  testOnlyAfterProjectionCommitBeforeAck?:
+    | ((input: {
+        runtimeId: string
+        invocationId: string
+        committedThroughSeq: number
+      }) => Promise<void> | void)
+    | undefined
   connectDurableBrokerWithRetry: (
     socketPath: string,
     runtimeId: string
@@ -876,23 +888,37 @@ export async function attachAndReplay(
     let ackedThroughSeq = lastProjectedSeq
     for (const envelope of replay.events) {
       const result = ctx.mapper.apply(envelope)
+      await ctx.testOnlyAfterProjectionCommitBeforeAck?.({
+        runtimeId: runtime.runtimeId,
+        invocationId: String(envelope.invocationId),
+        committedThroughSeq: ctx.lastProjectedBrokerSeq(String(envelope.invocationId)),
+      })
       ctx.afterMappedEvent(runtime.runtimeId, envelope, result)
       replayedThroughSeq = Math.max(replayedThroughSeq, envelope.seq)
-      const projected = ctx.db.brokerInvocationEvents.getByInvocationAndSeq(
-        String(envelope.invocationId),
-        envelope.seq
-      )
-      if (projected?.projectionStatus === 'applied') {
-        ackedThroughSeq = Math.max(ackedThroughSeq, envelope.seq)
-      }
     }
 
+    // The durable contiguous projection cursor is the acknowledgement
+    // authority. Re-read it after every transaction and re-ack even when this
+    // replay returned no envelopes (crash after commit, before prior ack).
+    ackedThroughSeq = ctx.lastProjectedBrokerSeq(invocation.invocationId)
     if (ackedThroughSeq > 0) {
       const ack = await input.client.ackEvents({
         invocationId: invocation.invocationId as InvocationId,
         throughSeq: ackedThroughSeq,
         controllerInstanceId: ctx.serverInstanceId,
       })
+      if (ack.ackedThroughSeq < ackedThroughSeq) {
+        throw new BrokerControllerError(
+          'broker_ack_incomplete',
+          'broker acknowledgement did not reach HRC committed projection cursor',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            committedThroughSeq: ackedThroughSeq,
+            ackedThroughSeq: ack.ackedThroughSeq,
+          }
+        )
+      }
       ackedThroughSeq = ack.ackedThroughSeq
     }
     trace('replay.ack', { replayedThroughSeq, ackedThroughSeq })
@@ -989,8 +1015,14 @@ export async function attachAndReplay(
         .map(([inputId]) => inputId),
     }
   } catch (error) {
-    const controllerError =
-      error instanceof BrokerInvocationEventConflictError
+    const belowFloor = replayBelowFloorDetail(error)
+    const controllerError = belowFloor
+      ? new BrokerControllerError(
+          'broker_replay_below_floor',
+          'broker rejected replay below its retained event floor',
+          belowFloor
+        )
+      : error instanceof BrokerInvocationEventConflictError
         ? new BrokerControllerError(
             'broker_replay_conflict',
             'broker replay produced a conflicting durable event payload',

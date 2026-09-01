@@ -122,6 +122,7 @@ export type {
 export type {
   BrokerInvocationEventAppendInput,
   BrokerInvocationEventAppendResult,
+  BrokerProjectionDisposition,
   ImportedBrokerInvocationEventInput,
   BrokerInvocationUpdatePatch,
   RuntimeOperationUpdatePatch,

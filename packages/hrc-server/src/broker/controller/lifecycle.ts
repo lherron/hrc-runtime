@@ -307,6 +307,8 @@ export async function failReplayStale(
   ctx.deleteActive(runtime.runtimeId, client)
   ctx.markBrokerClosing(runtime.runtimeId, error.code, client)
   const now = ctx.now()
+  const replayStale =
+    error.code === 'broker_replay_retention_gap' || error.code === 'broker_replay_below_floor'
   ctx.db.brokerInvocations.update(invocation.invocationId, {
     invocationState: 'failed',
     ownerServerInstanceId: ctx.serverInstanceId,
@@ -316,6 +318,18 @@ export async function failReplayStale(
     status: 'stale',
     now,
     diagnostic: {
+      ...(replayStale
+        ? {
+            brokerReplay: {
+              status: 'replay-stale',
+              reason: {
+                code: error.code,
+                message: error.message,
+                detail: error.detail,
+              },
+            },
+          }
+        : {}),
       control: {
         mode: 'broker-ipc',
         brokerAttached: false,
@@ -327,6 +341,26 @@ export async function failReplayStale(
       },
     },
   })
+  if (replayStale) {
+    appendHrcEvent(ctx.db, 'runtime.stale', {
+      ts: now,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      runtimeId: runtime.runtimeId,
+      ...(runtime.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+      ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
+        ? { transport: runtime.transport }
+        : {}),
+      payload: {
+        reason: 'broker_replay_stale',
+        code: error.code,
+        invocationId: invocation.invocationId,
+        detail: error.detail,
+      },
+    })
+  }
   await client.close().catch((closeError: unknown) => {
     ctx.logger.warn?.('harness broker close after replay failure failed', {
       runtimeId: runtime.runtimeId,

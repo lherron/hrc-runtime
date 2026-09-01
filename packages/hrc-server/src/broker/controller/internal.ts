@@ -83,6 +83,39 @@ export function isControllerFencedError(error: unknown): boolean {
   return containsControllerFence(error, 0)
 }
 
+export function replayBelowFloorDetail(error: unknown): Record<string, unknown> | undefined {
+  return findReplayBelowFloorDetail(error, 0)
+}
+
+function findReplayBelowFloorDetail(
+  error: unknown,
+  depth: number
+): Record<string, unknown> | undefined {
+  if (depth > 3 || typeof error !== 'object' || error === null) return undefined
+  const candidate = error as {
+    data?: unknown
+    cause?: unknown
+    causeError?: unknown
+    detail?: unknown
+  }
+  if (
+    typeof candidate.data === 'object' &&
+    candidate.data !== null &&
+    (candidate.data as { reason?: unknown }).reason === 'replay_below_floor'
+  ) {
+    return candidate.data as Record<string, unknown>
+  }
+  const detailCause =
+    typeof candidate.detail === 'object' && candidate.detail !== null
+      ? (candidate.detail as { cause?: unknown }).cause
+      : undefined
+  for (const nested of [candidate.cause, candidate.causeError, detailCause]) {
+    const found = findReplayBelowFloorDetail(nested, depth + 1)
+    if (found) return found
+  }
+  return undefined
+}
+
 function containsControllerFence(error: unknown, depth: number): boolean {
   if (depth > 3 || typeof error !== 'object' || error === null) {
     return false
