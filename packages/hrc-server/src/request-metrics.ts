@@ -142,12 +142,15 @@ export function writeServerMetric(
  * Record a launch phase span. Never throws: a launch must not fail because its
  * own instrumentation could not be persisted.
  */
-export function recordLaunchSpan(span: {
-  phase: string
-  runtimeId: string
-  ms: number
-  transport?: 'headless' | 'interactive' | 'preview' | undefined
-}): void {
+export function recordLaunchSpan(
+  span: {
+    phase: string
+    runtimeId: string
+    ms: number
+    transport?: 'headless' | 'interactive' | 'preview' | undefined
+  },
+  stateRoot: string
+): void {
   const now = new Date()
   writeServerMetric(
     {
@@ -161,6 +164,7 @@ export function recordLaunchSpan(span: {
       // rendered report unreadable; one decimal millisecond is the useful unit.
       ms: Number(span.ms.toFixed(1)),
     },
-    now
+    now,
+    stateRoot
   )
 }

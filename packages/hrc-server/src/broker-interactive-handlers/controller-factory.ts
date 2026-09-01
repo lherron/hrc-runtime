@@ -134,6 +134,7 @@ export function getHarnessBrokerController(
     tmuxAllocator,
     headlessSubstrateAllocator,
     tmuxTuiAllocator,
+    metricsStateRoot: this.options.stateRoot,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
       const windowName = allocation.lease?.windowName ?? allocation.windowName

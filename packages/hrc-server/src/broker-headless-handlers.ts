@@ -456,7 +456,7 @@ export async function startHeadlessBrokerRuntime(
   const turnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
+  const timing = createPrecompileLaunchTimingContext('headless', runtimeId, this.options.stateRoot)
 
   let handedOffToController = false
   const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({

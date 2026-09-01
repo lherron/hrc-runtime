@@ -76,9 +76,15 @@ afterEach(async () => {
   await fixture?.cleanup()
   server = undefined
   fixture = undefined
-  process.env['HRC_METRICS'] = originalMetrics
-  process.env['HRC_STATE_DIR'] = originalStateDir
-  process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = originalSqliteSlowStatementMs
+  if (originalMetrics === undefined) Reflect.deleteProperty(process.env, 'HRC_METRICS')
+  else process.env['HRC_METRICS'] = originalMetrics
+  if (originalStateDir === undefined) Reflect.deleteProperty(process.env, 'HRC_STATE_DIR')
+  else process.env['HRC_STATE_DIR'] = originalStateDir
+  if (originalSqliteSlowStatementMs === undefined) {
+    Reflect.deleteProperty(process.env, 'HRC_SQLITE_SLOW_STATEMENT_MS')
+  } else {
+    process.env['HRC_SQLITE_SLOW_STATEMENT_MS'] = originalSqliteSlowStatementMs
+  }
 })
 
 describe('server request metrics', () => {

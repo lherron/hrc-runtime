@@ -345,6 +345,7 @@ export class HarnessBrokerController {
   private readonly resolveBrokerCommand: () => string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
+  private readonly metricsStateRoot: string | undefined
   private readonly now: () => string
   private readonly serverInstanceId: string
   private readonly logger: BrokerControllerLogger
@@ -448,6 +449,7 @@ export class HarnessBrokerController {
       DEFAULT_BROKER_DB_BUSY_RETRY_BASE_DELAY_MS
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
+    this.metricsStateRoot = deps.metricsStateRoot
     // Preserve brokerCommand as a constant test seam, but production selection
     // is deliberately late-bound at each legacy stdio spawn.
     this.resolveBrokerCommand =
@@ -505,6 +507,7 @@ export class HarnessBrokerController {
       resolveBrokerCommand: this.resolveBrokerCommand,
       brokerArgs: this.brokerArgs,
       env: this.env,
+      metricsStateRoot: this.metricsStateRoot,
       now: this.now,
       serverInstanceId: this.serverInstanceId,
       attachControlProbeTimeoutMs: this.brokerAttachControlProbeTimeoutMs,

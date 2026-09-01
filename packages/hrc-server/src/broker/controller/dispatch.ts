@@ -84,6 +84,7 @@ export type DispatchContext = {
   resolveBrokerCommand: () => string
   brokerArgs: string[]
   env: Record<string, string | undefined> | undefined
+  metricsStateRoot: string | undefined
   now: () => string
   serverInstanceId: string
   attachControlProbeTimeoutMs: number
@@ -312,7 +313,12 @@ export async function startController(
     })
     // The log line rotates; this is the durable population that
     // `hrc admin metrics report` aggregates.
-    recordLaunchSpan({ phase, runtimeId: String(input.identity.runtimeId), ms: durMs })
+    if (ctx.metricsStateRoot !== undefined) {
+      recordLaunchSpan(
+        { phase, runtimeId: String(input.identity.runtimeId), ms: durMs },
+        ctx.metricsStateRoot
+      )
+    }
   }
   const markPhase = (phase: string): void => {
     const nowMs = performance.now()

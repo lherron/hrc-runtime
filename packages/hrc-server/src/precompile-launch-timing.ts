@@ -11,6 +11,7 @@ export type PrecompileLaunchTimingLogger = {
 export type PrecompileLaunchTimingContext = {
   transport: PrecompileLaunchTransport
   runtimeId: string
+  stateRoot: string
   boundMs?: number | undefined
   logger: PrecompileLaunchTimingLogger
 }
@@ -19,11 +20,13 @@ export const DEFAULT_PRECOMPILE_LAUNCH_BOUND_MS = 15_000
 
 export function createPrecompileLaunchTimingContext(
   transport: PrecompileLaunchTransport,
-  runtimeId: string
+  runtimeId: string,
+  stateRoot: string
 ): PrecompileLaunchTimingContext {
   return {
     transport,
     runtimeId,
+    stateRoot,
     boundMs: DEFAULT_PRECOMPILE_LAUNCH_BOUND_MS,
     logger: {
       info: (message, fields) => writeServerLog('INFO', message, fields),
@@ -99,10 +102,13 @@ function emitSpan(timing: PrecompileLaunchTimingContext, phase: string, durMs: n
     runtimeId: timing.runtimeId,
     durMs,
   })
-  recordLaunchSpan({
-    phase,
-    runtimeId: timing.runtimeId,
-    ms: durMs,
-    transport: timing.transport,
-  })
+  recordLaunchSpan(
+    {
+      phase,
+      runtimeId: timing.runtimeId,
+      ms: durMs,
+      transport: timing.transport,
+    },
+    timing.stateRoot
+  )
 }

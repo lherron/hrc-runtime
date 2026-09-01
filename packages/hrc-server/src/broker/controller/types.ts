@@ -382,6 +382,8 @@ export type HarnessBrokerControllerDeps = {
   resolveBrokerCommand?: (() => string) | undefined
   brokerArgs?: string[] | undefined
   env?: Record<string, string | undefined> | undefined
+  /** Durable launch metrics root owned by the enclosing server. Omit in isolated controller tests. */
+  metricsStateRoot?: string | undefined
   now?: () => string
   serverInstanceId?: string
   logger?: BrokerControllerLogger

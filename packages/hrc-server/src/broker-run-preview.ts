@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { HrcRuntimeIntent, RestartStyle } from 'hrc-core'
+import { type HrcRuntimeIntent, type RestartStyle, resolveStateRoot } from 'hrc-core'
 
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { isInteractiveTmuxBrokerIntent, shouldUseHeadlessTransport } from './broker-decisions.js'
@@ -41,7 +41,7 @@ export async function buildBrokerRunPreview(
   }
 
   const runtimeId = `dry-rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext('preview', runtimeId)
+  const timing = createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot())
   const client = await startAspcFacadeBrokerClient(timing)
 
   try {

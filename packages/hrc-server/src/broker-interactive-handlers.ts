@@ -1169,7 +1169,11 @@ export async function startInteractiveTmuxBrokerRuntime(
   const effectiveTurnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
-  const timing = createPrecompileLaunchTimingContext('interactive', runtimeId)
+  const timing = createPrecompileLaunchTimingContext(
+    'interactive',
+    runtimeId,
+    this.options.stateRoot
+  )
 
   const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
     baseEnv: mergeEnv(buildHrcCorrelationEnv(effectiveTurnIntent), effectiveTurnIntent.launch),
