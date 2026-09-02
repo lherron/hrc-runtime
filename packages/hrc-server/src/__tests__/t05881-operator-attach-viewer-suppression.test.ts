@@ -105,4 +105,38 @@ describe('T-05881 operator attach viewer suppression', () => {
     expect(response.status).toBe(200)
     expect(publishCalls).toEqual([{ operatorAttachPending: false }])
   })
+
+  it('observes a synchronous cold-start rejection without emitting an unhandled rejection', async () => {
+    const startupFailure = new Error('compile-not-ok')
+    const unhandledRejections: unknown[] = []
+    const captureUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason)
+    }
+    process.on('unhandledRejection', captureUnhandledRejection)
+
+    try {
+      const dispatch = handleInteractiveTmuxBrokerDispatchTurn.call(
+        {
+          startInteractiveTmuxBrokerRuntime: async () => {
+            throw startupFailure
+          },
+        } as Parameters<typeof handleInteractiveTmuxBrokerDispatchTurn.call>[0],
+        session(),
+        intent(),
+        'cold-start failure',
+        'run-t07880-boot-failure',
+        {
+          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER',
+          allowedBrokerDriver: 'claude-code-tmux',
+          waitForCompletion: true,
+        }
+      )
+
+      await expect(dispatch).rejects.toBe(startupFailure)
+      await Bun.sleep(0)
+      expect(unhandledRejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', captureUnhandledRejection)
+    }
+  })
 })

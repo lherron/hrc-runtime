@@ -626,8 +626,15 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       acceptedSettled = true
       resolve(runtime)
     }
-    rejectAccepted = reject
+    rejectAccepted = (error) => {
+      acceptedSettled = true
+      reject(error)
+    }
   })
+  // A blocking caller awaits bootOperation directly, so the early-acceptance
+  // promise has no consumer on that route. Observe its legitimate startup
+  // rejection here; detached callers still await the original promise below.
+  void accepted.catch(() => undefined)
   const bootOperation = this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
     flagEnvName: flagOptions.flagEnvName,
     allowedBrokerDriver: flagOptions.allowedBrokerDriver,
