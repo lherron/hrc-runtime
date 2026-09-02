@@ -45,7 +45,7 @@ export function registerTopLevelCommands(program: Command): void {
     .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
     .allowExcessArguments(true)
     .allowUnknownOption(true)
-    .option('--force-restart', 'replace existing runtime with a fresh PTY')
+    .option('--force-restart', 'replace runtime with a fresh PTY; preserve the conversation')
     .option('--new-session', 'rotate to a fresh host session before starting')
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
@@ -120,7 +120,8 @@ export function registerTopLevelCommands(program: Command): void {
     .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
     .allowExcessArguments(true)
     .allowUnknownOption(true)
-    .option('--force-restart', 'replace existing runtime with a fresh PTY')
+    .option('--force-restart', 'replace runtime with a fresh PTY; preserve the conversation')
+    .option('--new-session', 'rotate to a fresh host session before starting')
     .option(
       '--attach-only',
       'reattach to the existing runtime without starting one (like `hrc attach`)'
@@ -158,6 +159,7 @@ export function registerTopLevelCommands(program: Command): void {
       assertNoUnknownOptions(rawArgv, {
         boolean: [
           '--force-restart',
+          '--new-session',
           '--attach-only',
           '--dry-run',
           '--debug',
@@ -168,7 +170,7 @@ export function registerTopLevelCommands(program: Command): void {
       })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
+        booleans: ['force-restart', 'new-session', 'attach-only', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['register'],
       })
       await cmdRun(args)

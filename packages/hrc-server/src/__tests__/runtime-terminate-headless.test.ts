@@ -153,6 +153,32 @@ describe('POST /v1/terminate transport branching', () => {
     })
   })
 
+  it('honors explicit drop-continuation for tmux runtimes', async () => {
+    fixture.seedSession('hsid-tmux-drop', 'terminate-tmux-drop')
+    fixture.seedTmuxRuntime('hsid-tmux-drop', 'terminate-tmux-drop', 'rt-tmux-drop', {
+      status: 'ready',
+    })
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sessions.updateContinuation(
+        'hsid-tmux-drop',
+        { provider: 'anthropic', key: 'cont-tmux-drop' },
+        fixture.now()
+      )
+    } finally {
+      db.close()
+    }
+
+    const body = await terminate('rt-tmux-drop', true)
+
+    expect(body.droppedContinuation).toBe(true)
+    expect(readContinuationJson('hsid-tmux-drop')).toBeNull()
+    expect(listTerminatedEvents('rt-tmux-drop')[0]?.payload).toMatchObject({
+      transport: 'tmux',
+      droppedContinuation: true,
+    })
+  })
+
   it('terminates headless runtimes without active runs without dropping by default', async () => {
     fixture.seedSession('hsid-headless-ready', 'terminate-headless-ready')
     seedRuntime({
@@ -177,7 +203,7 @@ describe('POST /v1/terminate transport branching', () => {
     })
   })
 
-  it('drops continuation by default for busy headless runtimes', async () => {
+  it('honors explicit drop-continuation for busy headless runtimes', async () => {
     fixture.seedSession('hsid-headless-busy', 'terminate-headless-busy')
     seedRuntime({
       runtimeId: 'rt-headless-busy',
@@ -188,7 +214,7 @@ describe('POST /v1/terminate transport branching', () => {
       continuationKey: 'cont-busy',
     })
 
-    const body = await terminate('rt-headless-busy')
+    const body = await terminate('rt-headless-busy', true)
 
     expect(body.droppedContinuation).toBe(true)
     expect(readContinuationJson('hsid-headless-busy')).toBeNull()

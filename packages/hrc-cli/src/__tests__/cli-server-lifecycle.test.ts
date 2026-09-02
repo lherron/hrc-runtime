@@ -56,6 +56,8 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--force-restart')
+    expect(result.stdout).toContain('preserve the conversation')
+    expect(result.stdout).toContain('--new-session')
     expect(result.stdout).not.toContain('--no-attach')
     expect(result.stdout).toContain('--attach-only')
     expect(result.stdout).toContain('--dry-run')

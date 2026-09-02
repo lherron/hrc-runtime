@@ -362,6 +362,7 @@ export async function terminateRuntime(
   }
   if (runtime.transport === 'tmux') {
     return await this.terminateTmuxRuntime(runtime, {
+      ...(opts.dropContinuation !== undefined ? { dropContinuation: opts.dropContinuation } : {}),
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       ...(opts.source !== undefined ? { source: opts.source } : {}),
       ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
@@ -380,6 +381,7 @@ export async function terminateTmuxRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
   opts: {
+    dropContinuation?: boolean | undefined
     reason?: string | undefined
     source?: string | undefined
     actor?: string | undefined
@@ -390,6 +392,12 @@ export async function terminateTmuxRuntime(
   }
   const session = requireSession(this.db, runtime.hostSessionId)
   const tmux = requireTmuxPane(runtime)
+  const dropContinuation = opts.dropContinuation === true
+  const now = timestamp()
+
+  if (dropContinuation) {
+    this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+  }
 
   // Idempotency: a runtime we already finalized is `terminated`. A repeated
   // terminate (e.g. two reap requests, or a reap racing the broker close-path)
@@ -405,11 +413,10 @@ export async function terminateTmuxRuntime(
       ok: true,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
-      droppedContinuation: false,
+      droppedContinuation: dropContinuation,
     } satisfies TerminateRuntimeResponse)
   }
 
-  const now = timestamp()
   // Broker-tmux runtimes own a tmux server on a PER-RUNTIME lease socket
   // (`tmuxJson.socketPath`), NOT the shared default `this.tmux` server. Tear
   // the lease down via a TmuxManager bound to the lease socket and kill its
@@ -440,7 +447,7 @@ export async function terminateTmuxRuntime(
     payload: {
       transport: 'tmux',
       sessionName: tmux.sessionName,
-      droppedContinuation: false,
+      droppedContinuation: dropContinuation,
       // Operator intent + attribution: the AUTHORITATIVE audit record lives here
       // on the HRC event (broker `stop` reason delivery can race/vanish during
       // dispose). Lets a reap be distinguished from a generic terminate.
@@ -455,7 +462,7 @@ export async function terminateTmuxRuntime(
     ok: true,
     hostSessionId: session.hostSessionId,
     runtimeId: runtime.runtimeId,
-    droppedContinuation: false,
+    droppedContinuation: dropContinuation,
   } satisfies TerminateRuntimeResponse)
 }
 

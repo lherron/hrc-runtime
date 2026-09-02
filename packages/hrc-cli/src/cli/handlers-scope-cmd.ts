@@ -167,9 +167,12 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
     ? '  --attach-only        Reattach to the existing runtime without starting one\n'
     : ''
   const newSessionOption =
+    command !== 'resume'
+      ? '  --new-session        Rotate to a fresh host session before starting\n'
+      : ''
+  const startOnlyOptions =
     command === 'start'
-      ? '  --new-session        Rotate to a fresh host session before starting\n' +
-        '  --viewer-window <key> Place the session viewer tab in the keyed window\n' +
+      ? '  --viewer-window <key> Place the session viewer tab in the keyed window\n' +
         '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
         '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''
@@ -187,8 +190,8 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
            automatically (e.g. "larry" becomes "larry@agent-spaces").${attachSummary}
 
 Options:
-  --force-restart      Replace any existing runtime with a fresh PTY
-${noAttachOption}${newSessionOption}  --dry-run            Local plan preview — no server calls, no side effects
+  --force-restart      Replace the runtime with a fresh PTY; preserve the conversation
+${noAttachOption}${newSessionOption}${startOnlyOptions}  --dry-run            Local plan preview — no server calls, no side effects
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
   --project-root <dir> Override project root (defaults to cwd when --project-id is set)
@@ -225,6 +228,7 @@ export async function cmdRun(
 
   const scopeInput = requireArg(args, 0, '<scope>')
   const forceRestart = hasFlag(args, '--force-restart')
+  const newSession = hasFlag(args, '--new-session')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
@@ -235,6 +239,7 @@ export async function cmdRun(
     command: 'run',
     passthroughFlags: [
       '--force-restart',
+      '--new-session',
       '--dry-run',
       '--debug',
       '--no-register',
@@ -302,11 +307,18 @@ export async function cmdRun(
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)
     }
+    const targetSession =
+      newSession && !resolved.created
+        ? await client.clearContext({
+            hostSessionId: resolved.hostSessionId,
+            dropContinuation: true,
+          })
+        : resolved
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
     const tPrepare = performance.now()
     const prepared = await client.prepareAttachedRun({
-      hostSessionId: resolved.hostSessionId,
+      hostSessionId: targetSession.hostSessionId,
       intent,
       restartStyle,
       ...(hasPrompt ? { prompt } : {}),
@@ -331,7 +343,7 @@ export async function cmdRun(
       startupMs: Number((performance.now() - launchT0).toFixed(1)),
       phases: launchPhases,
     })
-    await waitForAttachProcess(attached, client, resolved.hostSessionId)
+    await waitForAttachProcess(attached, client, targetSession.hostSessionId)
     // The tmux client has restored the operator's terminal (primary screen) by
     // now, so anything we print lands cleanly in their shell scrollback. Render
     // the broker-pushed session summary recorded at graceful /quit, if any.

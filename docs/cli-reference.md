@@ -96,7 +96,7 @@ hrc attach cody@agent-spaces
 hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 ```
 
-Shared notable flags (`run`/`start`): `--force-restart` (replace runtime with a fresh PTY), `--new-session` (`start` only — rotate to a fresh host session), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
+Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
 #### Viewer placement and the collision roster (`start` only)
 
@@ -297,7 +297,10 @@ ensure|adopt`.
 `hrc session rotate <hostSessionId>` archives the active host session, creates
 generation+1, and copies continuation forward by default. This is distinct from
 `hrc session drop-continuation <hostSessionId>`, which removes the continuation
-key in place and records its barrier.
+key in place and records its barrier. The three operator gestures for a fresh
+conversation are `/quit` (or `/clear`) inside the harness,
+`hrc session drop-continuation <hostSessionId>`, and
+`hrc run|start <scope> --new-session`.
 
 ### Migration fences
 
