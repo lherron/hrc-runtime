@@ -1,6 +1,7 @@
 import type { HrcSessionRecord } from 'hrc-core'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
+import { presentationKeyFor } from '../auto-reply-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import {
@@ -123,6 +124,16 @@ export async function prepareHeldBatchForBoundary(
   const surviving = await revalidateHeldBatch(server, appended.attempt)
   if (surviving.length === 0) return undefined
 
+  const oldest = surviving[0]
+  if (oldest === undefined) return undefined
+  const presentationKey = presentationKeyFor(oldest.envelope)
+  const selected =
+    presentationKey === undefined
+      ? surviving.slice(0, 1)
+      : surviving
+          .filter((item) => presentationKeyFor(item.envelope) === presentationKey)
+          .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+
   const boundarySeat = await observeSeat(session)
   if (!seatCanDispatch(boundarySeat)) {
     writeServerLog('INFO', 'wrkq.kicker.queue_batch_foreign_turn_won', {
@@ -136,7 +147,10 @@ export async function prepareHeldBatchForBoundary(
     return undefined
   }
 
-  const activated = server.db.mailDrives.activateHeldAttempt(held.driveAttemptId)
+  const activated = server.db.mailDrives.activateHeldAttempt(
+    held.driveAttemptId,
+    selected.map((item) => item.envelope.id)
+  )
   if (activated.outcome !== 'acquired') {
     writeServerLog('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
       targetSessionRef,
@@ -147,5 +161,14 @@ export async function prepareHeldBatchForBoundary(
     })
     return undefined
   }
-  return { attempt: activated.attempt, actionable: surviving }
+  const leftHeldCount = server.db.mailDrives.getHeldAttempt(targetSessionRef)?.presentedCount ?? 0
+  writeServerLog('INFO', 'wrkq.kicker.queue_batch_flush_selected', {
+    targetSessionRef,
+    driveAttemptId: activated.attempt.driveAttemptId,
+    wakeReason,
+    presentationKey,
+    selectedEnvelopeIds: selected.map((item) => item.envelope.id),
+    leftHeldCount,
+  })
+  return { attempt: activated.attempt, actionable: selected }
 }

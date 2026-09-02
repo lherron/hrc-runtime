@@ -73,6 +73,7 @@ export type SeedEnvelope = {
   toScopeRef: string
   fromScopeRef?: string
   fromPrincipalRef?: string
+  groupId?: string
   body?: string
   obligation?: WrkqEnvelopeObligation
   delivery?: WrkqEnvelope['delivery']
@@ -113,6 +114,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       roomUuid: `room-${roomKey}`,
       roomKey,
       roomKind: seed.roomKind ?? 'task',
+      ...(seed.groupId === undefined ? {} : { groupId: seed.groupId }),
       from: {
         principalRef: seed.fromPrincipalRef ?? 'agent:mable',
         ...(seed.fromScopeRef === undefined ? {} : { scopeRef: seed.fromScopeRef }),

@@ -31,6 +31,23 @@ function senderIdentity(envelope: WrkqEnvelope): string {
 }
 
 /**
+ * The exact identity shared by one presentation input and its automatic reply.
+ *
+ * JSON is deliberate: it is an unambiguous, loggable encoding of the tuple,
+ * including values that may themselves contain punctuation.
+ */
+export function presentationKeyFor(envelope: WrkqEnvelope): string | undefined {
+  const counterpartyRef = envelopeReplyAddressee(envelope)
+  if (counterpartyRef === undefined) return undefined
+  return JSON.stringify([
+    envelope.roomKey,
+    senderIdentity(envelope),
+    counterpartyRef,
+    envelope.groupId ?? envelope.id,
+  ])
+}
+
+/**
  * The exact rev 6 trigger projection.
  *
  * A drive carrying unrelated envelopes is a manual-discipline batch. The only
@@ -44,19 +61,12 @@ export function autoReplyCandidateFor(
   if (first === undefined || envelopes.some((envelope) => envelope.state !== 'pending')) {
     return undefined
   }
+  const presentationKey = presentationKeyFor(first)
+  if (presentationKey === undefined) return undefined
   const groupId = first.groupId ?? first.id
-  const sender = senderIdentity(first)
   const counterpartyRef = envelopeReplyAddressee(first)
   if (counterpartyRef === undefined) return undefined
-  if (
-    envelopes.some(
-      (envelope) =>
-        (envelope.groupId ?? envelope.id) !== groupId ||
-        envelope.roomKey !== first.roomKey ||
-        senderIdentity(envelope) !== sender ||
-        envelopeReplyAddressee(envelope) !== counterpartyRef
-    )
-  ) {
+  if (envelopes.some((envelope) => presentationKeyFor(envelope) !== presentationKey)) {
     return undefined
   }
   return {

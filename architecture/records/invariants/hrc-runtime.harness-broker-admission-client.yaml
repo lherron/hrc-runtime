@@ -24,19 +24,24 @@ predicate: >
   HRC run row. Ordinary queue-class envelopes arriving during that turn remain
   in one durable HRC-held batch with no broker submission or wrkq presentation
   receipt; the terminal turn event, backed by the periodic sweep, freezes and
-  flushes at most MAX_PRESENTED_PER_ATTEMPT envelopes as one input after a
-  second idle-seat observation. A competing turn keeps the batch held. Terminal
-  members are removed before prompt composition. An HRC-held member has no broker
-  submission and therefore no broker TTL; only its wrkq sender expiry or
-  withdrawal can terminal it, and flush revalidation honors that ledger state.
+  flushes after a second idle-seat observation. Every boundary or idle input
+  contains only envelopes sharing the oldest actionable envelope's exact
+  presentation key: room, sender identity, reply addressee, and fan-out group,
+  up to MAX_PRESENTED_PER_ATTEMPT. Other keys remain held or pending for later
+  turns, and every multi-envelope input has one auto-reply candidate. A competing
+  turn keeps the batch held. Terminal members are removed before prompt
+  composition. An HRC-held member has no broker submission and therefore no
+  broker TTL; only its wrkq sender expiry or withdrawal can terminal it, and
+  flush revalidation honors that ledger state.
   Once a flush has acquired a broker submission and written per-envelope
   receipts, a broker queue/submission expiry is logged and fails every receipted
   member of that shared input as undeliverable so the sender sees a terminal
   outcome. Each hold/preempt request remains an immediate isolated admission
   decision and is never batched.
-authority: Lance principal ruling 2026-09-01 / Daedalus approval wrkq:T-07843 rev 7
+authority: Lance principal rulings 2026-09-01 and 2026-09-02 / Daedalus approval wrkq:T-07843 rev 7
 source:
   - wrkq:T-07843
+  - wrkq:T-07914
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
   - packages/hrcchat-cli/src/commands/turn.ts
@@ -49,15 +54,16 @@ required_tests:
   - preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts
   - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
   - T-07891 observed-seat busy detection, no-TTL durable held-batch, terminal-member revalidation, shared-input receipt, broker-expiry failure, boundary-race, and preempt-isolation gates
+  - T-07914 one-counterparty idle and boundary selection, same-sender fan-out coalescing, and distinct-sender serialization gates
 last_verified:
   date: 2026-09-02
-  evidence: T-07891 re-verified the four admission classes while moving queue-class collaboration mail to durable no-broker-TTL HRC-held boundary batches; broker seat observation remains the sole busy authority, terminal members are filtered before presentation, receipted broker expiry becomes sender-visible failure, and hold/preempt stays isolated.
+  evidence: T-07914 re-verified the four admission classes while partitioning idle and boundary collaboration inputs by the oldest exact presentation key; multi-envelope inputs retain one auto-reply candidate, other counterparties remain pending or HRC-held, and hold/preempt stays isolated.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
   - cross-seat scheduling moves into the broker or per-seat mechanism moves into HRC
   - preempt authority or active-turn policy semantics change
   - HRC reads harness internals instead of broker disposition manifest and decision surfaces
-  - collaboration busy-state authority, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
+  - collaboration busy-state authority, one-counterparty presentation partitioning, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
 supersedes: []
 superseded_by: []

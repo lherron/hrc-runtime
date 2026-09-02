@@ -5,6 +5,7 @@ import type {
   HrcMailEnvelopeReminder,
 } from 'hrc-store-sqlite'
 
+import { presentationKeyFor } from '../auto-reply-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
@@ -59,6 +60,17 @@ export function holdQueueForBusyTarget(
     },
     MAX_PRESENTED_PER_ATTEMPT
   )
+  const persistedIds = server.db.mailDrives.presentationEnvelopeIds(update.attempt.driveAttemptId)
+  const byId = new Map(queue.map((item) => [item.envelope.id, item.envelope]))
+  const oldest = byId.get(persistedIds[0] ?? '')
+  const presentationKey = oldest === undefined ? undefined : presentationKeyFor(oldest)
+  const selectedCount =
+    presentationKey === undefined
+      ? Math.min(persistedIds.length, 1)
+      : persistedIds.filter((envelopeId) => {
+          const envelope = byId.get(envelopeId)
+          return envelope !== undefined && presentationKeyFor(envelope) === presentationKey
+        }).length
   writeServerLog('INFO', 'wrkq.kicker.queue_batch_held', {
     targetSessionRef,
     wakeReason,
@@ -68,7 +80,9 @@ export function holdQueueForBusyTarget(
     heldBehindTurnId: update.attempt.heldBehindTurnId,
     observedTurnId: seat.turnId,
     addedEnvelopeIds: update.addedEnvelopeIds,
-    envelopeIds: server.db.mailDrives.presentationEnvelopeIds(update.attempt.driveAttemptId),
+    envelopeIds: persistedIds,
+    presentationKey,
+    leftHeldCount: persistedIds.length - selectedCount,
   })
   return true
 }

@@ -796,8 +796,17 @@ export class HrcMailDriveRepository {
     return row === null ? undefined : mapAttempt(row)
   }
 
-  /** Freeze a held batch and give it the ordinary per-scope drive slot. */
-  activateHeldAttempt(driveAttemptId: string): HrcMailDriveClaimResult {
+  /**
+   * Freeze selected members of a held batch and give them the ordinary slot.
+   *
+   * Members outside `selectedEnvelopeIds` move atomically to a successor held
+   * attempt, so they retain durable HRC ownership without becoming receipts of
+   * the broker input being activated.
+   */
+  activateHeldAttempt(
+    driveAttemptId: string,
+    selectedEnvelopeIds?: readonly string[]
+  ): HrcMailDriveClaimResult {
     return this.db
       .transaction(() => {
         const attempt = this.requireAttempt(driveAttemptId)
@@ -812,6 +821,84 @@ export class HrcMailDriveRepository {
           .run(attempt.targetSessionRef, now)
         const active = this.getActiveAttempt(attempt.targetSessionRef)
         if (active !== undefined) return { outcome: 'active', attempt: active }
+
+        const heldEnvelopeIds = this.presentationEnvelopeIds(driveAttemptId)
+        const selected = selectedEnvelopeIds ?? heldEnvelopeIds
+        const selectedSet = new Set(selected)
+        if (selected.length === 0 || selectedSet.size !== selected.length) {
+          throw new Error(`held mail drive ${driveAttemptId} requires a non-empty unique selection`)
+        }
+        if (selected.some((envelopeId) => !heldEnvelopeIds.includes(envelopeId))) {
+          throw new Error(
+            `held mail drive ${driveAttemptId} selection contains an unknown envelope`
+          )
+        }
+        const remainingEnvelopeIds = heldEnvelopeIds.filter(
+          (envelopeId) => !selectedSet.has(envelopeId)
+        )
+        if (remainingEnvelopeIds.length > 0) {
+          const successorAttemptId = `queued-${randomUUID()}`
+          const successorRunId = `run-${successorAttemptId.slice('queued-'.length)}`
+          this.db
+            .query(
+              `INSERT INTO hrcmail_drive_attempts (
+                 drive_attempt_id, target_session_ref, run_id, wake_reason, state,
+                 prompt, presented_count, materialization_intent_json,
+                 host_session_id, generation, runtime_id, held_behind_turn_id,
+                 claimed_at, updated_at
+               ) VALUES (?, ?, ?, ?, 'held', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+              successorAttemptId,
+              attempt.targetSessionRef,
+              successorRunId,
+              attempt.wakeReason,
+              claimPlaceholderPrompt(remainingEnvelopeIds.length),
+              remainingEnvelopeIds.length,
+              attempt.materializationIntent === undefined
+                ? null
+                : JSON.stringify(attempt.materializationIntent),
+              attempt.hostSessionId ?? null,
+              attempt.generation ?? null,
+              attempt.runtimeId ?? null,
+              attempt.heldBehindTurnId ?? null,
+              attempt.claimedAt,
+              now
+            )
+          for (const envelopeId of remainingEnvelopeIds) {
+            const presentation = this.db
+              .query<{ presented_at: string }, [string, string]>(
+                `SELECT presented_at
+                   FROM hrcmail_drive_presentations
+                  WHERE drive_attempt_id = ? AND envelope_id = ?`
+              )
+              .get(driveAttemptId, envelopeId)
+            if (presentation === null) {
+              throw new Error(`held mail drive ${driveAttemptId} lost envelope ${envelopeId}`)
+            }
+            this.db
+              .query(
+                `INSERT INTO hrcmail_drive_presentations (
+                   drive_attempt_id, envelope_id, presented_at
+                 ) VALUES (?, ?, ?)`
+              )
+              .run(successorAttemptId, envelopeId, presentation.presented_at)
+            this.db
+              .query(
+                `DELETE FROM hrcmail_drive_presentations
+                  WHERE drive_attempt_id = ? AND envelope_id = ?`
+              )
+              .run(driveAttemptId, envelopeId)
+          }
+          this.db
+            .query(
+              `UPDATE hrcmail_drive_attempts
+                  SET presented_count = ?, prompt = ?, updated_at = ?
+                WHERE drive_attempt_id = ? AND state = 'held'`
+            )
+            .run(selected.length, claimPlaceholderPrompt(selected.length), now, driveAttemptId)
+        }
+
         const claimed = this.db
           .query(
             `UPDATE hrcmail_drive_slots

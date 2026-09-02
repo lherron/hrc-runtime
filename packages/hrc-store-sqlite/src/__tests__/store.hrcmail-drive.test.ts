@@ -200,6 +200,46 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.getHeldAttempt(target)).toBeUndefined()
   })
 
+  it('atomically activates selected held members and leaves the rest held', () => {
+    const held = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: target,
+        wakeReason: 'turn_completion',
+        envelopeIds: ['EN-00043', 'EN-00044', 'EN-00045'],
+        heldBehindTurnId: 'turn-before-split',
+        hostSessionId: 'hsid-mail-drive',
+        generation: 1,
+        runtimeId: 'rt-mail-drive',
+      },
+      20
+    ).attempt
+
+    const activated = db.mailDrives.activateHeldAttempt(held.driveAttemptId, [
+      'EN-00043',
+      'EN-00045',
+    ])
+    expect(activated.outcome).toBe('acquired')
+    expect(db.mailDrives.presentationEnvelopeIds(held.driveAttemptId)).toEqual([
+      'EN-00043',
+      'EN-00045',
+    ])
+    expect(db.mailDrives.getActiveAttempt(target)).toMatchObject({
+      driveAttemptId: held.driveAttemptId,
+      state: 'claimed',
+      presentedCount: 2,
+    })
+
+    const successor = db.mailDrives.getHeldAttempt(target)
+    expect(successor).toMatchObject({
+      state: 'held',
+      presentedCount: 1,
+      heldBehindTurnId: 'turn-before-split',
+    })
+    expect(db.mailDrives.presentationEnvelopeIds(successor?.driveAttemptId ?? '')).toEqual([
+      'EN-00044',
+    ])
+  })
+
   it('subtracts terminal members locally and terminalizes an emptied held batch', () => {
     const held = db.mailDrives.holdQueuedAttempt(
       {

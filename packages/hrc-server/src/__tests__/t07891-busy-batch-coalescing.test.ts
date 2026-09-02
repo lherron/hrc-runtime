@@ -222,7 +222,7 @@ function heldAttempt(db: HrcDatabase) {
 }
 
 describe('T-07891 HRC-held busy batches', () => {
-  it('coalesces three arrivals behind a driven turn into one boundary input and three receipts', async () => {
+  it('coalesces one same-counterparty fan-out group into one boundary input and three receipts', async () => {
     await startServer()
     await seedObservedSeat({ state: 'idle' })
     const calls = installDispatchCapture()
@@ -230,7 +230,11 @@ describe('T-07891 HRC-held busy batches', () => {
     await drain()
     await waitUntil(() => calls().length === 1, 'foreground dispatch')
 
-    const queued = [say('queued one'), say('queued two'), say('queued three')]
+    const queued = [
+      say('queued one', { groupId: 'EN-fanout' }),
+      say('queued two', { groupId: 'EN-fanout' }),
+      say('queued three', { groupId: 'EN-fanout' }),
+    ]
     await drain()
     const db = serverInternals(server as HrcServer).db
     await waitUntil(() => heldAttempt(db)?.presentedCount === 3, 'three-member held batch')
@@ -279,6 +283,90 @@ describe('T-07891 HRC-held busy batches', () => {
     expect(calls()).toHaveLength(2)
   })
 
+  it('serializes three held counterparties across three boundary turns', async () => {
+    await startServer()
+    await seedObservedSeat({ state: 'idle' })
+    const calls = installDispatchCapture()
+    const driving = say('start the foreground turn')
+    await drain()
+    await waitUntil(() => calls().length === 1, 'foreground dispatch')
+
+    const queued = [
+      say('queued probe a', { fromPrincipalRef: 'agent:probe-a', fromScopeRef: undefined }),
+      say('queued probe b', { fromPrincipalRef: 'agent:probe-b', fromScopeRef: undefined }),
+      say('queued probe c', { fromPrincipalRef: 'agent:probe-c', fromScopeRef: undefined }),
+    ]
+    await drain()
+    const db = serverInternals(server as HrcServer).db
+    await waitUntil(() => heldAttempt(db)?.presentedCount === 3, 'three-counterparty held batch')
+
+    const drivingRunId = ledger.envelopes.get(driving.id)?.presentedTo[0]?.runId
+    if (drivingRunId === undefined) throw new Error('foreground receipt has no run')
+    for (let index = 0; index < queued.length; index += 1) {
+      seat = { state: 'idle' }
+      const priorRunId = index === 0 ? drivingRunId : calls()[index]?.runId
+      if (priorRunId === undefined) throw new Error(`boundary ${index} has no prior run`)
+      await completeRun(server as HrcServer, priorRunId)
+      await waitUntil(() => calls().length === index + 2, `boundary dispatch ${index + 1}`)
+
+      const boundary = calls()[index + 1]
+      const selected = queued[index]
+      if (boundary === undefined || selected === undefined) throw new Error('missing boundary')
+      expect(boundary.prompt).toContain(selected.body)
+      for (const other of queued.filter((_, candidateIndex) => candidateIndex !== index)) {
+        expect(boundary.prompt).not.toContain(other.body)
+      }
+      expect(db.mailDrives.getAttemptByRunId(boundary.runId)?.autoReplyCandidate).toMatchObject({
+        sourceRef: selected.id,
+        sourceEnvelopeIds: [selected.id],
+      })
+      expect(ledger.envelopes.get(selected.id)?.presentedTo).toHaveLength(1)
+    }
+
+    expect(calls()).toHaveLength(4)
+    expect(heldAttempt(db)).toBeUndefined()
+  })
+
+  it('presents only the oldest counterparty key on the first idle attempt', async () => {
+    await startServer()
+    await seedObservedSeat({ state: 'idle' })
+    const calls = installDispatchCapture()
+    const oldestGroupId = 'EN-idle-probe-a'
+    const oldest = say('idle probe a', {
+      fromPrincipalRef: 'agent:probe-a',
+      fromScopeRef: undefined,
+      groupId: oldestGroupId,
+      obligation: 'fyi',
+    })
+    const sameKey = say('idle probe a follow-up', {
+      fromPrincipalRef: 'agent:probe-a',
+      fromScopeRef: undefined,
+      groupId: oldestGroupId,
+    })
+    const deferred = [
+      say('idle probe b', { fromPrincipalRef: 'agent:probe-b', fromScopeRef: undefined }),
+      say('idle probe c', { fromPrincipalRef: 'agent:probe-c', fromScopeRef: undefined }),
+    ]
+
+    await drain()
+    expect(calls()).toHaveLength(1)
+    expect(calls()[0]?.prompt).toContain(oldest.body)
+    expect(calls()[0]?.prompt).toContain(sameKey.body)
+    for (const envelope of deferred) {
+      expect(calls()[0]?.prompt).not.toContain(envelope.body)
+      expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
+    }
+    expect(ledger.envelopes.get(oldest.id)?.presentedTo).toHaveLength(1)
+    expect(ledger.envelopes.get(sameKey.id)?.presentedTo).toHaveLength(1)
+    expect(
+      serverInternals(server as HrcServer).db.mailDrives.getAttemptByRunId(calls()[0]?.runId ?? '')
+        ?.autoReplyCandidate
+    ).toMatchObject({
+      sourceRef: oldestGroupId,
+      sourceEnvelopeIds: [oldest.id, sameKey.id],
+    })
+  })
+
   it('recognizes a human-typed pane turn without any HRC run row and flushes two at the sweep boundary', async () => {
     await startServer()
     await seedObservedSeat({ state: 'turn-active', turnId: 'turn-human', policy: 'open' })
@@ -286,7 +374,10 @@ describe('T-07891 HRC-held busy batches', () => {
     const db = serverInternals(server as HrcServer).db
     expect(db.runs.listRuns({})).toHaveLength(0)
 
-    const queued = [say('human-busy one'), say('human-busy two')]
+    const queued = [
+      say('human-busy one', { groupId: 'EN-human-fanout' }),
+      say('human-busy two', { groupId: 'EN-human-fanout' }),
+    ]
     await drain()
     expect(calls()).toHaveLength(0)
     expect(heldAttempt(db)).toMatchObject({

@@ -14,7 +14,7 @@ import type {
   HrcMailDriveWakeReason,
 } from 'hrc-store-sqlite'
 
-import { autoReplyCandidateFor } from './auto-reply-handlers.js'
+import { autoReplyCandidateFor, presentationKeyFor } from './auto-reply-handlers.js'
 import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import {
@@ -495,6 +495,17 @@ function isolatedDeliveryBatch(actionable: readonly ActionableEnvelope[]): {
   return { selected: [hold], deferredCount: actionable.length - 1 }
 }
 
+/** Select the oldest envelope's exact auto-reply counterparty group. */
+function presentationBatch(actionable: readonly ActionableEnvelope[]): ActionableEnvelope[] {
+  const first = actionable[0]
+  if (first === undefined) return []
+  const presentationKey = presentationKeyFor(first.envelope)
+  if (presentationKey === undefined) return [first]
+  return actionable
+    .filter((item) => presentationKeyFor(item.envelope) === presentationKey)
+    .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+}
+
 /**
  * Ask wrkq what stands against one target, and in what form.
  *
@@ -566,7 +577,31 @@ async function readActionableEnvelopes(
       runtimeId: reminder.runtimeId,
     })
   }
-  return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
+  return actionable
+}
+
+/**
+ * The single prompt-composition seam for every kicker presentation.
+ *
+ * A multi-envelope input without one auto-reply candidate would make the
+ * runtime's final text unattributable. Fail before broker submission instead
+ * of silently reintroducing cross-counterparty batching.
+ */
+function composePresentation(
+  actionable: readonly ActionableEnvelope[],
+  presentables: readonly PresentableEnvelope[]
+): {
+  prompt: string
+  autoReplyCandidate: ReturnType<typeof autoReplyCandidateFor>
+} {
+  const autoReplyCandidate = autoReplyCandidateFor(actionable.map((item) => item.envelope))
+  if (actionable.length > 1 && autoReplyCandidate === undefined) {
+    throw new Error('multi-envelope kicker presentation has no auto-reply candidate')
+  }
+  return {
+    prompt: formatEnvelopePresentations(presentables),
+    autoReplyCandidate,
+  }
 }
 
 /**
@@ -817,7 +852,7 @@ async function presentHoldIntoBusyTarget(
       ...senderGenerationFor(server, item.envelope),
     })
   }
-  const prompt = formatEnvelopePresentations(presentables)
+  const { prompt, autoReplyCandidate } = composePresentation(envelopes, presentables)
 
   const firstEnvelope = envelopes[0]?.envelope
   const origin = {
@@ -886,10 +921,7 @@ async function presentHoldIntoBusyTarget(
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(runtimeId === undefined ? {} : { runtimeId }),
-    ...(() => {
-      const candidate = autoReplyCandidateFor(envelopes.map((item) => item.envelope))
-      return candidate === undefined ? {} : { autoReplyCandidate: candidate }
-    })(),
+    ...(autoReplyCandidate === undefined ? {} : { autoReplyCandidate }),
   })
   for (const item of envelopes) {
     await server.wrkqLedger.present({
@@ -1376,6 +1408,8 @@ async function driveMailTargetOnce(
         observedSeatState: seat.state,
       })
       return
+    } else if (!selectedIsHold) {
+      actionable = presentationBatch(actionable)
     }
 
     // A non-summoning envelope (a legacy `fyi`) is presented into a live
@@ -1548,12 +1582,9 @@ async function driveMailTargetOnce(
       .map((id) => byId.get(id))
       .filter((item): item is ActionableEnvelope => item !== undefined)
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
-    const prompt = formatEnvelopePresentations(presentables)
+    const { prompt, autoReplyCandidate } = composePresentation(ordered, presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
-    server.db.mailDrives.recordAutoReplyCandidate(
-      attempt.driveAttemptId,
-      autoReplyCandidateFor(ordered.map((item) => item.envelope))
-    )
+    server.db.mailDrives.recordAutoReplyCandidate(attempt.driveAttemptId, autoReplyCandidate)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
 
     const response = await server.dispatchTurnForSession(

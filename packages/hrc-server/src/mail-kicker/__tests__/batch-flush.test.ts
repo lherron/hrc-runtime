@@ -66,12 +66,13 @@ async function seedSession(): Promise<HrcSessionRecord> {
   return session
 }
 
-function say(body: string) {
+function say(body: string, groupId = 'EN-batch-flush-fanout') {
   return ledger.say({
     toScopeRef: SCOPE,
     fromScopeRef: 'mable@hcs:fixall',
     roomKey: 'T-07891',
     body,
+    groupId,
   })
 }
 
