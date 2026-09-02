@@ -2216,6 +2216,19 @@ async function withdrawAckedQueuedInjection(
   server: HrcServerInstanceForHandlers,
   event: WrkqMonitorEvent
 ): Promise<void> {
+  if (event.payload !== undefined) {
+    try {
+      const payload: unknown = JSON.parse(event.payload)
+      // A legacy fyi/notify is terminalized by its OWN presentation. Its held
+      // input still owes the addressee one delivery, so that automatic ack is
+      // not a reader disposal and must never revoke the input.
+      if (isRecord(payload) && payload['reason'] === 'fyi_presented') return
+    } catch {
+      // An unreadable additive payload must not change the pre-existing ack
+      // behavior. The envelope/receipt and broker ledger remain authoritative.
+    }
+  }
+
   const envelopeId = event.resourceId
   if (envelopeId === undefined) return
 

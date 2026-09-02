@@ -248,6 +248,41 @@ describe('T-07890 queued injection withdrawal', () => {
     })
   })
 
+  it('leaves a queued fyi for boundary presentation when its own presentation auto-acks it', async () => {
+    const envelope = ledger.say({
+      toScopeRef: SCOPE,
+      roomKey: 'T-07890',
+      obligation: 'fyi',
+    })
+    const attempt = db.mailDrives.insertQueuedAttempt({
+      targetSessionRef: TARGET,
+      runId: 'run-t07890-fyi',
+      wakeReason: 'insert',
+      prompt: 'queued fyi',
+      envelopeIds: [envelope.id],
+      queuedBehindRunId: 'run-t07890-foreground',
+      hostSessionId: 'hsid-t07890',
+      generation: 1,
+      runtimeId: RUNTIME_ID,
+    })
+    await ledger.present({
+      envelope: envelope.id,
+      driveAttemptId: attempt.driveAttemptId,
+      runId: attempt.runId,
+      runtimeId: RUNTIME_ID,
+      inputId: INPUT_ID,
+      deliveryOutcome: 'queued_to_live_harness',
+    })
+    recordQueueEnqueued()
+    db.wrkqLedgerCursors.advance(1)
+    ledger.ack(envelope.id, 'fyi_presented')
+
+    await runTail()
+
+    expect(withdrawCalls).toEqual([])
+    expect(db.mailDrives.getAttempt(attempt.driveAttemptId)?.state).toBe('claimed')
+  })
+
   it('still wakes on envelope.created from the existing persisted cursor', async () => {
     db.wrkqLedgerCursors.advance(0)
     ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07890', obligation: 'reply_required' })

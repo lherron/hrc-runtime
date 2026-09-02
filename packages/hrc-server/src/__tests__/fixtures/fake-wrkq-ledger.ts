@@ -153,7 +153,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   }
 
   /** The reply that discharges an obligation. wrkq derives this from a say. */
-  ack(envelopeId: string): void {
+  ack(envelopeId: string, reason = 'reply'): void {
     const envelope = this.envelopes.get(envelopeId)
     if (envelope === undefined) return
     const previousState = envelope.state
@@ -167,7 +167,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       resourceId: envelope.id,
       payload: JSON.stringify({
         previous_state: previousState,
-        reason: 'reply',
+        reason,
         room_uuid: envelope.roomUuid,
         state: 'acked',
       }),
