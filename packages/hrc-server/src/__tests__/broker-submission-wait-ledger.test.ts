@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import { waitForCompilerPrimingTerminal } from '../broker-headless-handlers.js'
 import { waitForSubmissionTerminal } from '../turn-dispatch-handlers.js'
 import {
   Q_INVOCATION_ID,
@@ -49,6 +50,57 @@ function wait(submissionId: string) {
 }
 
 describe('broker submission wait follows the disposition ledger', () => {
+  it('holds a cold caller invoke until compiler priming reaches terminal on the event projection', async () => {
+    const planHash = 'plan-compiler-priming'
+    const profileHash = 'profile-compiler-priming'
+    const submissionId = 'input-compiler-priming'
+    const turnId = 'turn-compiler-priming'
+    fixture.db.compiledRuntimePlans.insert({
+      planHash,
+      compileId: 'compile-compiler-priming',
+      schemaVersion: 'agent-runtime-plan/v1',
+      compilerName: 'agent-spaces',
+      compilerVersion: 'test',
+      planProjectionJson: JSON.stringify({
+        executionProfiles: [
+          {
+            profileHash,
+            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
+        ],
+      }),
+      createdAt: new Date().toISOString(),
+    })
+    append(20, 'submission.executed', { submissionId, turnId })
+
+    const subscribers = new Set<(notification: { record: { invocationId: string } }) => void>()
+    const waitPromise = waitForCompilerPrimingTerminal(
+      { db: fixture.db, rawBrokerSubscribers: subscribers } as never,
+      {
+        runtimeId: Q_RUNTIME_ID,
+        activeInvocationId: Q_INVOCATION_ID,
+        planHash,
+        selectedProfileHash: profileHash,
+      } as never,
+      new AbortController().signal
+    )
+    let settled = false
+    void waitPromise.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(subscribers.size).toBe(1)
+
+    append(21, 'turn.completed', { turnId, status: 'completed' })
+    for (const subscriber of subscribers) {
+      subscriber({ record: { invocationId: Q_INVOCATION_ID } })
+    }
+
+    await waitPromise
+    expect(subscribers.size).toBe(0)
+  })
+
   it('executed follows the identified turn to terminal on a multi-request manifest', async () => {
     append(20, 'turn.manifest', {
       turnId: 'turn-shared',

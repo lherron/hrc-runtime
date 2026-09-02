@@ -73,6 +73,124 @@ type DispatchTurnResponseBase = Omit<
 
 export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
+function parseBrokerEventPayload(record: { brokerEventJson: string }): Record<string, unknown> {
+  try {
+    const payload = JSON.parse(record.brokerEventJson) as unknown
+    return payload !== null && typeof payload === 'object'
+      ? (payload as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function compilerPrimingSubmissionId(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): string | undefined {
+  if (runtime.planHash === undefined || runtime.selectedProfileHash === undefined) return undefined
+  const record = server.db.compiledRuntimePlans.getByPlanHash(runtime.planHash)
+  if (record === null) return undefined
+  try {
+    const plan = JSON.parse(record.planProjectionJson) as {
+      executionProfiles?: Array<{
+        profileHash?: unknown
+        harnessInvocation?: {
+          startRequest?: { initialInput?: { inputId?: unknown } }
+        }
+      }>
+    }
+    const selected = plan.executionProfiles?.find(
+      (profile) => profile.profileHash === runtime.selectedProfileHash
+    )
+    const inputId = selected?.harnessInvocation?.startRequest?.initialInput?.inputId
+    return typeof inputId === 'string' && inputId.length > 0 ? inputId : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A promptless cold Codex boot still runs the compiler-owned agent priming
+ * input. The caller prompt is a separate guarded invoke, so it must wait for
+ * that priming submission's identified turn to become terminal. This consumes
+ * only the broker ledger/subscriber projection: no local busy guess, polling,
+ * timer, or reply row participates.
+ */
+export async function waitForCompilerPrimingTerminal(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  signal: AbortSignal
+): Promise<void> {
+  const submissionId = compilerPrimingSubmissionId(server, runtime)
+  const invocationId = runtime.activeInvocationId
+  if (submissionId === undefined || invocationId === undefined) return
+
+  const evaluate = (): boolean => {
+    const records = server.db.brokerInvocationEvents.listByInvocationId(invocationId)
+    let turnId: string | undefined
+    for (const record of records) {
+      const payload = parseBrokerEventPayload(record)
+      if (payload['submissionId'] !== submissionId) continue
+      if (
+        record.type === 'submission.rejected' ||
+        record.type === 'submission.expired' ||
+        record.type === 'submission.cancelled'
+      ) {
+        return true
+      }
+      if (record.type === 'submission.executed' && typeof payload['turnId'] === 'string') {
+        turnId = payload['turnId']
+      }
+    }
+    if (turnId === undefined) return false
+    return records.some((record) => {
+      if (
+        record.type !== 'turn.completed' &&
+        record.type !== 'turn.failed' &&
+        record.type !== 'turn.interrupted'
+      ) {
+        return false
+      }
+      return parseBrokerEventPayload(record)['turnId'] === turnId
+    })
+  }
+
+  if (evaluate()) return
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      server.rawBrokerSubscribers.delete(subscriber)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const finish = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(
+        new HrcRuntimeUnavailableError('compiler priming wait aborted', {
+          runtimeId: runtime.runtimeId,
+          invocationId,
+          submissionId,
+        })
+      )
+    }
+    const subscriber = (notification: { record: { invocationId: string } }) => {
+      if (notification.record.invocationId === invocationId && evaluate()) finish()
+    }
+    server.rawBrokerSubscribers.add(subscriber)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    else if (evaluate()) finish()
+  })
+}
+
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
   sourceRunId: string
@@ -779,6 +897,7 @@ export async function executeHeadlessBrokerStartTurn(
   if (options.waitForCompletion === false) {
     void bootOperation
       .then(async (runtime) => {
+        await waitForCompilerPrimingTerminal(this, runtime, this.runtimeStartPresentationSignal)
         await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
       })
       .catch(() => undefined)
@@ -794,6 +913,7 @@ export async function executeHeadlessBrokerStartTurn(
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
+  await waitForCompilerPrimingTerminal(this, runtime, this.runtimeStartPresentationSignal)
   return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, {
     ...options,
     waitForCompletion: false,
