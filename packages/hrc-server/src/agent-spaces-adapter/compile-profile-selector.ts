@@ -111,7 +111,7 @@ function isNonInteractivePiBrokerProfile(
   )
 }
 
-function isInteractiveTmuxBrokerProfile(
+export function isInteractiveTmuxBrokerProfile(
   profile: RuntimeExecutionProfile
 ): profile is BrokerExecutionProfile {
   return (

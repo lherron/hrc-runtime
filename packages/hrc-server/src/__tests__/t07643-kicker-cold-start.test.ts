@@ -113,6 +113,11 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     // backlog; widening the tail's start would replay the whole log.
     expect(db.wrkqLedgerCursors.get()).toBeGreaterThan(0)
     expect(db.mailDrives.listAttempts(TARGET)[0]?.wakeReason).toBe('recovery')
+    // The default cold target is headless Codex. It still receives the summons
+    // through its broker input contract (and therefore has an input id); the
+    // cold-birth hint is ignored outside a launch-primed interactive route.
+    expect(deterministic.launchPromptOnColdBirth()).toEqual([true])
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBeDefined()
   })
 
   it('runs exactly once, and not at all on a restart that already has a cursor', async () => {

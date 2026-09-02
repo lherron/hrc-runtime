@@ -13,6 +13,7 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import { buildDirectInteractiveAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
 import { waitForCompilerPrimingTerminal } from './broker-headless-handlers.js'
 import {
@@ -600,11 +601,13 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
     joinInFlightRuntimeStart?: boolean | undefined
+    launchPromptOnColdBirth?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
   const { initialPrompt: _initialPrompt, ...turnIntent } = intent
+  let promptRodeLaunch = false
   // T-07202: persisted semantic DMs can enter this interactive cold-start
   // branch concurrently. T-06313 protected only the headless broker branch;
   // this branch published its boot but never joined an existing one, so each
@@ -648,6 +651,14 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
+    ...(flagOptions.launchPromptOnColdBirth
+      ? {
+          coldBirthPrompt: prompt,
+          onColdBirthPromptRoute: (rodeLaunch: boolean) => {
+            promptRodeLaunch = rodeLaunch
+          },
+        }
+      : {}),
     ...dispatchRunPersistence(flagOptions),
     onAccepted: (runtime) => {
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
@@ -695,6 +706,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   if (flagOptions.waitForCompletion === false) {
     void bootOperation
       .then(async (runtime) => {
+        if (promptRodeLaunch) return
         await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
           waitForCompletion: false,
           responseFormat: flagOptions.responseFormat,
@@ -714,6 +726,17 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
+  if (promptRodeLaunch) {
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponseBase)
+  }
   return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
     waitForCompletion: false,
     responseFormat: flagOptions.responseFormat,
@@ -1159,6 +1182,8 @@ export async function startInteractiveTmuxBrokerRuntime(
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    coldBirthPrompt?: string | undefined
+    onColdBirthPromptRoute?: ((rodeLaunch: boolean) => void) | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
   const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
@@ -1192,6 +1217,13 @@ export async function startInteractiveTmuxBrokerRuntime(
           agentHarnessCommand: resolveBrokerBinary('agent-harness-tmux'),
         })
       : undefined
+  // Only compiler-selected interactive tmux profiles own launch-argv priming.
+  // Direct agent-harness uses broker initialInput, so it keeps a promptless
+  // boot and the caller prompt takes the ordinary admission door afterwards.
+  const compileIntent =
+    flagOptions.coldBirthPrompt !== undefined && directPlan === undefined
+      ? { ...effectiveTurnIntent, initialPrompt: flagOptions.coldBirthPrompt }
+      : effectiveTurnIntent
   if (directPlan !== undefined && hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] === undefined) {
     hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] = join(homedir(), '.pi', 'agent', 'auth.json')
   }
@@ -1202,7 +1234,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       directPlan === undefined
         ? await compileBrokerRuntimePlan(
             {
-              intent: effectiveTurnIntent,
+              intent: compileIntent,
               hostSessionId: session.hostSessionId,
               generation: session.generation,
               dispatchEnv: hrcDispatchEnv,
@@ -1302,7 +1334,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       preparedAuthority: preparedActuatorSplit.authority,
     })
 
-    const route = decideInteractiveTmuxExecutionRoute(effectiveTurnIntent, compiled.profile, {
+    const route = decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
       brokerFlagEnabled: true,
       allowedBrokerDriver: flagOptions.allowedBrokerDriver,
     })
@@ -1319,6 +1351,11 @@ export async function startInteractiveTmuxBrokerRuntime(
         }
       )
     }
+    const coldBirthPromptRodeLaunch =
+      flagOptions.coldBirthPrompt !== undefined &&
+      directPlan === undefined &&
+      isInteractiveTmuxBrokerProfile(compiled.profile)
+    flagOptions.onColdBirthPromptRoute?.(coldBirthPromptRodeLaunch)
 
     const durableInteractiveRoute =
       directPlan !== undefined

@@ -1383,6 +1383,12 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
   /** T-07397 surface-ownership proof; see DispatchTurnRequest. */
   establishedBrokerInvocationId?: string | undefined
+  /**
+   * A mail summons that is itself birthing an interactive launch-primed seat
+   * rides that seat's launch turn. Ignored by reuse, headless, SDK, and
+   * non-launch-primed routes (T-07920).
+   */
+  launchPromptOnColdBirth?: boolean | undefined
 }
 
 export async function dispatchTurnForSession(
@@ -1717,6 +1723,7 @@ async function dispatchAdmittedTurnForSession(
               ? false
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
+          launchPromptOnColdBirth: options.launchPromptOnColdBirth,
           responseFormat: options.responseFormat,
           ...dispatchRunPersistence(options),
         }),

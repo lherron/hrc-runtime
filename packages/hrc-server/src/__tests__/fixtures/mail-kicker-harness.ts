@@ -35,6 +35,7 @@ type ServerDispatch = (
     runId: string
     submissionDoor?: string | undefined
     turnPolicy?: string | undefined
+    launchPromptOnColdBirth?: boolean | undefined
   }
 ) => Promise<Response>
 
@@ -152,6 +153,7 @@ export type DeterministicStart = {
   inputIds: () => string[]
   submissionDoors: () => Array<string | undefined>
   turnPolicies: () => Array<string | undefined>
+  launchPromptOnColdBirth: () => Array<boolean | undefined>
   rotateRuntime: () => void
 }
 
@@ -168,6 +170,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
   const inputIds: string[] = []
   const submissionDoors: Array<string | undefined> = []
   const turnPolicies: Array<string | undefined> = []
+  const launchPromptOnColdBirth: Array<boolean | undefined> = []
   const runtimesBySession = new Map<string, string>()
   serverInternals(serverInstance).dispatchTurnForSession = async (
     session: HrcSessionRecord,
@@ -177,6 +180,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
       runId: string
       submissionDoor?: string | undefined
       turnPolicy?: string | undefined
+      launchPromptOnColdBirth?: boolean | undefined
     }
   ): Promise<Response> => {
     calls += 1
@@ -187,6 +191,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     inputIds.push(inputId)
     submissionDoors.push(options.submissionDoor)
     turnPolicies.push(options.turnPolicy)
+    launchPromptOnColdBirth.push(options.launchPromptOnColdBirth)
     const existing = db.runs.getByRunId(runId)
     if (existing !== null) {
       return Response.json({
@@ -291,6 +296,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     inputIds: () => inputIds,
     submissionDoors: () => submissionDoors,
     turnPolicies: () => turnPolicies,
+    launchPromptOnColdBirth: () => launchPromptOnColdBirth,
     rotateRuntime: () => {
       const db = serverInternals(serverInstance).db
       const now = timestamp()

@@ -370,4 +370,134 @@ describe('T-07903 fresh-seat priming attribution', () => {
     ])
     expect(ledger.envelopes.get(sourceId)?.state).toBe('acked')
   })
+
+  it('binds an input-less launch turn to its mail drive and discharges from the candidate', async () => {
+    const db = fixture.db
+    const runtime = db.runtimes.getByRuntimeId(TMUX_RUNTIME_ID) as HrcRuntimeSnapshot
+    db.brokerInvocations.update(TMUX_INVOCATION_ID, {
+      runId: RUN_ID,
+      capabilitiesJson: JSON.stringify({
+        turns: 'multi',
+        bracketMintingMode: 'harness-evidence',
+      }),
+      updatedAt: ts(0),
+    })
+    db.runtimes.updateRunId(TMUX_RUNTIME_ID, RUN_ID, ts(0))
+    db.runs.insert({
+      runId: RUN_ID,
+      hostSessionId: TMUX_HOST_SESSION_ID,
+      runtimeId: TMUX_RUNTIME_ID,
+      scopeRef: TMUX_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'tmux',
+      status: 'accepted',
+      acceptedAt: ts(0),
+      updatedAt: ts(0),
+      invocationId: TMUX_INVOCATION_ID,
+      operationId: runtime.activeOperationId,
+      // No dispatchedInputId: the summons is part of launch material.
+    })
+
+    const ledger = new FakeWrkqLedger()
+    const source = ledger.say({
+      toScopeRef: LEDGER_TARGET,
+      fromScopeRef: COUNTERPARTY,
+      fromPrincipalRef: 'agent:chief',
+      roomKey: ROOM,
+      body: 'the launch-carried summons',
+    })
+    const candidate = autoReplyCandidateFor([source])
+    if (candidate === undefined) throw new Error('launch summons was not auto-reply eligible')
+    db.mailDrives.claim(
+      TARGET,
+      'insert',
+      { envelopeIds: [source.id] },
+      { driveAttemptId: DRIVE_ATTEMPT_ID, runId: RUN_ID }
+    )
+    db.mailDrives.presentForAttempt(DRIVE_ATTEMPT_ID, [source.id])
+    db.mailDrives.recordAutoReplyCandidate(DRIVE_ATTEMPT_ID, candidate)
+    await ledger.present({
+      envelope: source.id,
+      memberRef: LEDGER_TARGET,
+      node: 'max3',
+      runtimeId: TMUX_RUNTIME_ID,
+      hostSessionId: TMUX_HOST_SESSION_ID,
+      generation: 1,
+      runId: RUN_ID,
+      driveAttemptId: DRIVE_ATTEMPT_ID,
+    })
+
+    const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
+    const observer = {
+      db,
+      mailKickerLapsedRuntimes: new Set<string>(),
+      requestMailKickerWake: () => {
+        db.mailDrives.completeStartedAttempt(RUN_ID, 'turn.completed')
+      },
+    } as unknown as HrcServerInstanceForHandlers
+    const applyAndObserve = (event: InvocationEventEnvelope) => {
+      const projected = mapper.apply(event)
+      for (const lifecycle of projected.lifecycleEvents) {
+        observeMailDriveLifecycleEvent.call(observer, lifecycle)
+      }
+      return projected
+    }
+
+    const started = applyAndObserve(
+      brokerEnvelope(
+        10,
+        'turn.started',
+        { turnId: PRIMING_TURN_ID, source: 'hook-observed' },
+        { turnId: PRIMING_TURN_ID }
+      )
+    )
+    expect(started.lifecycleEvents[0]?.runId).toBe(RUN_ID)
+    appendHrcEvent(db, 'turn.message', {
+      ts: ts(11),
+      hostSessionId: TMUX_HOST_SESSION_ID,
+      scopeRef: TMUX_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      runId: RUN_ID,
+      runtimeId: TMUX_RUNTIME_ID,
+      transport: 'tmux',
+      payload: {
+        message: { role: 'assistant', content: 'Handled the launch-carried brief.' },
+      },
+    })
+    const terminal = applyAndObserve(
+      brokerEnvelope(
+        12,
+        'turn.completed',
+        { turnId: PRIMING_TURN_ID, status: 'completed' },
+        { turnId: PRIMING_TURN_ID }
+      )
+    )
+    expect(terminal.lifecycleEvents[0]?.runId).toBe(RUN_ID)
+    expect(db.runs.getByRunId(RUN_ID)?.status).toBe('completed')
+
+    const intent = db.mailDrives.getAutoReplyIntent(DRIVE_ATTEMPT_ID)
+    if (intent === undefined) throw new Error('launch turn did not mint an auto-reply intent')
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    expect(ledger.roomSayRequests).toEqual([
+      expect.objectContaining({
+        ref: ROOM,
+        body: 'Handled the launch-carried brief.',
+        to: [COUNTERPARTY],
+        dischargeEnvelopeIds: [source.id],
+        meta: {
+          auto: 'turn_final',
+          discharge: 'candidate',
+          dischargeEnvelopeIds: [source.id],
+        },
+      }),
+    ])
+    expect(ledger.envelopes.get(source.id)?.presentedTo[0]?.inputId).toBeUndefined()
+    expect(
+      db.brokerInvocationEvents
+        .listByInvocationId(TMUX_INVOCATION_ID)
+        .filter((event) => event.type.startsWith('submission.') || event.type.startsWith('input.'))
+    ).toHaveLength(0)
+  })
 })

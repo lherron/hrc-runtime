@@ -1594,6 +1594,11 @@ async function driveMailTargetOnce(
             : { scopeRef: ordered[0].envelope.from.scopeRef }),
           ...(ordered[0] === undefined ? {} : { envelopeId: ordered[0].envelope.id }),
         },
+        // A summons that finds no broker seat is the first user turn of a
+        // launch-primed interactive birth. The interactive route verifies the
+        // selected profile before putting it on launch; every other route
+        // ignores this hint and keeps promptless boot + broker admission.
+        launchPromptOnColdBirth: seat.state === 'absent',
         // An idle seat has nothing to preempt; even a stored hold starts by enqueue.
       }
     )

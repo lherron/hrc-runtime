@@ -133,11 +133,15 @@ function homeScopeHere(instance: HrcServer): void {
  */
 function installGatedBrokerStart(instance: HrcServer): {
   starts: () => number
+  coldBirthPrompts: () => string[]
+  brokerInputs: () => string[]
   release: () => void
   accepted: Promise<void>
 } {
   const db = peek(instance).db
   let starts = 0
+  const coldBirthPrompts: string[] = []
+  const brokerInputs: string[] = []
   let releaseGate!: () => void
   const gate = new Promise<void>((resolve) => {
     releaseGate = resolve
@@ -169,13 +173,21 @@ function installGatedBrokerStart(instance: HrcServer): {
     session: HrcSessionRecord,
     _intent: HrcRuntimeIntent,
     runId: string,
-    options: { onAccepted?: (runtime: HrcRuntimeSnapshot) => void }
+    options: {
+      onAccepted?: (runtime: HrcRuntimeSnapshot) => void
+      coldBirthPrompt?: string
+      onColdBirthPromptRoute?: (rodeLaunch: boolean) => void
+    }
   ): Promise<HrcRuntimeSnapshot> => {
     starts += 1
     const call = starts
     const now = timestamp()
     const runtimeId = `rt-t07693-${call}`
     const invocationId = `inv-t07693-${call}`
+    if (options.coldBirthPrompt !== undefined) {
+      coldBirthPrompts.push(options.coldBirthPrompt)
+    }
+    options.onColdBirthPromptRoute?.(options.coldBirthPrompt !== undefined)
     db.runtimes.insert({
       runtimeId,
       runtimeKind: 'harness',
@@ -243,6 +255,24 @@ function installGatedBrokerStart(instance: HrcServer): {
   }
   peek(instance).publishPresentation = async () => undefined
   peek(instance).waitForInteractiveBrokerRunCompletion = async () => undefined
+  peek(instance).executeInteractiveBrokerInputTurn = async (
+    _session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    prompt: string,
+    runId: string
+  ) => {
+    brokerInputs.push(prompt)
+    return Response.json({
+      runId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+      inputId: `input-${runId}`,
+    })
+  }
   // The seeded runtime has no real tmux server behind it, and the liveness
   // reconcile runs BEFORE the fence under test. Left real, it answers "broker
   // process is gone" and the dispatch dies there — passing the assertion
@@ -251,6 +281,8 @@ function installGatedBrokerStart(instance: HrcServer): {
 
   return {
     starts: () => starts,
+    coldBirthPrompts: () => coldBirthPrompts,
+    brokerInputs: () => brokerInputs,
     release: () => {
       released = true
       releaseGate()
@@ -307,6 +339,10 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     expect(db.mailDrives.listAttempts(TARGET).map((attempt) => attempt.state)).not.toContain(
       'failed'
     )
+    expect(broker.coldBirthPrompts()).toHaveLength(1)
+    expect(broker.coldBirthPrompts()[0]).toContain('the one envelope')
+    expect(broker.brokerInputs()).toHaveLength(0)
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBeUndefined()
   })
 
   /**
@@ -443,5 +479,7 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       joinedRuntimes: ['rt-t07693-1', 'rt-t07693-1'],
     })
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+    expect(broker.coldBirthPrompts()).toHaveLength(0)
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBeDefined()
   })
 })

@@ -753,6 +753,21 @@ export class BrokerEventMapper {
         this.bracketMintingMode(invocation) === 'harness-evidence' &&
         this.turnStartedInputId(envelope, openTurnStartedSeq) === undefined
       ) {
+        // T-07920: a summons that births a launch-primed seat deliberately has
+        // no broker input. The invocation's initial run is the mail drive and
+        // the first observed bracket is its launch turn. This stays narrower
+        // than the historical fallback: an older promptless birth followed by
+        // a queued summons has dispatchedInputId set, so T-07915 still leaves
+        // that foreign priming turn unowned.
+        const fallbackRun =
+          fallbackRunId === undefined ? null : this.db.runs.getByRunId(fallbackRunId)
+        if (
+          fallbackRunId !== undefined &&
+          fallbackRun?.dispatchedInputId === undefined &&
+          this.db.mailDrives.getAttemptByRunId(fallbackRunId) !== undefined
+        ) {
+          return fallbackRunId
+        }
         return undefined
       }
       const bracketInput = this.findPriorInputAccepted(envelope.invocationId, openTurnStartedSeq)
