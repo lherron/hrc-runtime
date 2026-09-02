@@ -1153,6 +1153,58 @@ export class HrcMailDriveRepository {
   }
 
   /**
+   * Durably classify the target's latest unstarted attempt as foreign-home.
+   *
+   * `withdrawn` is the existing terminal shape for work this daemon must no
+   * longer drive. Using it here keeps a foreign-home verdict out of
+   * `listRefusedBirthTargets()` across process restarts without adding a second
+   * failure taxonomy: a plain `failed`/null-host row means "retry the birth",
+   * while a withdrawn row means "this node has no work left to do".
+   *
+   * The latest row may still be `claimed` (a foreign-home preflight found an
+   * old slot owner) or may already be the `failed`/null-host refusal that made
+   * the target an unborn candidate. No other terminal or session-bound attempt
+   * is rewritten.
+   */
+  markForeignHomeResolution(
+    targetSessionRef: string,
+    reason: string,
+    driveAttemptId?: string
+  ): HrcMailDriveAttempt | undefined {
+    const target = normalizeTarget(targetSessionRef)
+    return this.db
+      .transaction(() => {
+        const row = this.db
+          .query<DriveAttemptRow, [string, string | null, string | null]>(
+            `SELECT ${DRIVE_ATTEMPT_COLUMNS}
+               FROM hrcmail_drive_attempts
+              WHERE target_session_ref = ?
+                AND (? IS NULL OR drive_attempt_id = ?)
+                AND (state = 'claimed' OR (state = 'failed' AND host_session_id IS NULL))
+              ORDER BY claimed_at DESC, drive_attempt_id DESC
+              LIMIT 1`
+          )
+          .get(target, driveAttemptId ?? null, driveAttemptId ?? null)
+        if (row === null) return undefined
+        const attempt = mapAttempt(row)
+
+        const now = new Date().toISOString()
+        this.db
+          .query(
+            `UPDATE hrcmail_drive_attempts
+                SET state = 'withdrawn', last_error = ?,
+                    completed_at = COALESCE(completed_at, ?), updated_at = ?
+              WHERE drive_attempt_id = ?
+                AND (state = 'claimed' OR (state = 'failed' AND host_session_id IS NULL))`
+          )
+          .run(reason, now, now, attempt.driveAttemptId)
+        this.releaseSlot(target, attempt.driveAttemptId, now)
+        return this.requireAttempt(attempt.driveAttemptId)
+      })
+      .immediate() as HrcMailDriveAttempt | undefined
+  }
+
+  /**
    * Close a started attempt and report which envelopes it presented.
    *
    * The returned ids are the rev 5.1 D4/D5 trigger: this attempt's OWN turn

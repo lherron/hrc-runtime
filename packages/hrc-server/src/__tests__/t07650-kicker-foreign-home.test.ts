@@ -270,7 +270,7 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
 
     const attempts = serverDb().mailDrives.listAttempts(TARGET)
     expect(attempts).toHaveLength(1)
-    expect(attempts[0]?.state).toBe('failed')
+    expect(attempts[0]?.state).toBe('withdrawn')
     expect(attempts[0]?.lastError).toContain(HOME_NODE)
     expect(serverDb().mailDrives.listInFlightTargets()).not.toContain(TARGET)
   })

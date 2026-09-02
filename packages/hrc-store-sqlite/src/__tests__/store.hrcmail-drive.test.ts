@@ -371,6 +371,32 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
   })
 
+  it('durably excludes a foreign-home refusal from the unborn candidate set', () => {
+    db.mailDrives.claim(target, 'insert', actionable('EN-00010'), {
+      driveAttemptId: 'drive-foreign-home',
+      runId: 'run-foreign-home',
+    })
+    db.mailDrives.failWithoutStart('drive-foreign-home', 'routed elsewhere')
+    expect(db.mailDrives.listRefusedBirthTargets()).toEqual([target])
+
+    expect(
+      db.mailDrives.markForeignHomeResolution(
+        target,
+        'scope is homed on max3',
+        'drive-foreign-home'
+      )
+    ).toMatchObject({ driveAttemptId: 'drive-foreign-home', state: 'withdrawn' })
+    expect(db.mailDrives.listRefusedBirthTargets()).toEqual([])
+
+    db.close()
+    db = openHrcDatabase(dbPath)
+    expect(db.mailDrives.listRefusedBirthTargets()).toEqual([])
+    expect(db.mailDrives.getAttempt('drive-foreign-home')).toMatchObject({
+      state: 'withdrawn',
+      lastError: 'scope is homed on max3',
+    })
+  })
+
   it('reports only attempts still in flight as sweep targets', () => {
     expect(db.mailDrives.listInFlightTargets()).toEqual([])
 

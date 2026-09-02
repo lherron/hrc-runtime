@@ -17,6 +17,7 @@ import type {
 import { autoReplyCandidateFor, presentationKeyFor } from './auto-reply-handlers.js'
 import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
+import type { RegistryConsultResult } from './federation/registry-client.js'
 import {
   type ObservedBrokerSeat,
   prepareHeldBatchForBoundary,
@@ -1144,14 +1145,13 @@ function skipForeignHomedTarget(
   foreign: ForeignHome,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const attempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
-  const failedAttemptId =
-    attempt?.state === 'claimed'
-      ? server.db.mailDrives.failWithoutStart(
-          attempt.driveAttemptId,
-          `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`
-        ).driveAttemptId
-      : undefined
+  const activeAttempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
+  const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+    targetSessionRef,
+    `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`,
+    activeAttempt?.state === 'claimed' ? activeAttempt.driveAttemptId : undefined
+  )?.driveAttemptId
+  server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
 
   // Announcement is deduped on its OWN map, not on the resolver's memo. The
   // memo is shared with the shadow teardown, and whichever mechanism happened
@@ -1159,7 +1159,7 @@ function skipForeignHomedTarget(
   const announcement = foreign.homeNodeId
   const alreadyAnnounced = server.mailKickerForeignHomeAnnounced.get(scopeRef) === announcement
   server.mailKickerForeignHomeAnnounced.set(scopeRef, announcement)
-  if (alreadyAnnounced && failedAttemptId === undefined) return
+  if (alreadyAnnounced && resolvedAttemptId === undefined) return
 
   writeServerLog('INFO', 'wrkq.kicker.foreign_home_skipped', {
     targetSessionRef,
@@ -1167,7 +1167,7 @@ function skipForeignHomedTarget(
     homeNodeId: foreign.homeNodeId,
     source: foreign.source,
     wakeReason,
-    ...(failedAttemptId === undefined ? {} : { failedAttemptId }),
+    ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
   })
 }
 
@@ -1237,13 +1237,12 @@ function deferBirthForTarget(
   deferral: BirthDeferral,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const failedAttemptId =
-    server.db.mailDrives.getAttempt(attempt.driveAttemptId)?.state === 'claimed'
-      ? server.db.mailDrives.failWithoutStart(
-          attempt.driveAttemptId,
-          `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`
-        ).driveAttemptId
-      : undefined
+  const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+    targetSessionRef,
+    `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`,
+    attempt.driveAttemptId
+  )?.driveAttemptId
+  server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
 
   const announcement = `${deferral.homeNodeId}@${deferral.designationEpoch}`
   const alreadyAnnounced = server.mailKickerBirthDeferredAnnounced.get(scopeRef) === announcement
@@ -1260,9 +1259,11 @@ function deferBirthForTarget(
     designationEpoch: deferral.designationEpoch,
     reason: deferral.reason,
     wakeReason,
-    ...(failedAttemptId === undefined ? {} : { failedAttemptId }),
+    ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
   })
 }
+
+type DriveMailTargetOutcome = { outcome: 'birth-refused'; driveAttemptId: string } | undefined
 
 async function driveMailTargetOnce(
   server: HrcServerInstanceForHandlers,
@@ -1270,7 +1271,7 @@ async function driveMailTargetOnce(
   wakeReason: HrcMailDriveWakeReason,
   /** Bounded re-entry for the claim race; see the `finished` branch below. */
   redriveDepth = 0
-): Promise<void> {
+): Promise<DriveMailTargetOutcome> {
   // Placement first, before the drive slot, the ledger read, or the gate. A
   // scope homed on another node cannot be driven from here by any wake reason,
   // so claiming an attempt for it only manufactures the failure (T-07650).
@@ -1447,8 +1448,7 @@ async function driveMailTargetOnce(
             })
             return
           }
-          await driveMailTargetOnce(server, targetSessionRef, wakeReason, redriveDepth + 1)
-          return
+          return driveMailTargetOnce(server, targetSessionRef, wakeReason, redriveDepth + 1)
         }
         if (observation !== 'dispatch') {
           await declineForInFlightAttempt(
@@ -1502,6 +1502,8 @@ async function driveMailTargetOnce(
     ...(session === undefined ? {} : { activeRunId: activeRunIdFor(server, session) }),
   })
 
+  let birthAttempted = false
+  let birthEstablished = false
   try {
     // T-07206: session intent is reusable authority because fresh broker starts
     // commit it only after controller.start succeeds; rejected candidates never
@@ -1530,6 +1532,7 @@ async function driveMailTargetOnce(
       // This is the only message-traffic provisioning path. ensureTargetSession
       // enters the normal summon/placement gate before it mints anything, so a
       // scope this node does not home is refused here rather than pre-filtered.
+      birthAttempted = true
       session = await server.ensureTargetSession(
         targetSessionRef,
         materializationIntent,
@@ -1539,6 +1542,7 @@ async function driveMailTargetOnce(
         // A rejected cold birth must leave no never-materialized session authority.
         { persistIntent: false }
       )
+      birthEstablished = true
     }
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: session.hostSessionId,
@@ -1686,6 +1690,15 @@ async function driveMailTargetOnce(
       attemptState,
       error: message,
     })
+    const failed = server.db.mailDrives.getAttempt(attempt.driveAttemptId)
+    if (
+      birthAttempted &&
+      !birthEstablished &&
+      failed?.state === 'failed' &&
+      failed.hostSessionId === undefined
+    ) {
+      return { outcome: 'birth-refused', driveAttemptId: failed.driveAttemptId }
+    }
   }
 }
 
@@ -1719,7 +1732,10 @@ export function drainMailKickerTarget(
       const reason = this.mailKickerPendingTargets.get(targetSessionRef)
       if (reason === undefined) return
       this.mailKickerPendingTargets.delete(targetSessionRef)
-      await driveMailTargetOnce(this, targetSessionRef, reason)
+      const result = await driveMailTargetOnce(this, targetSessionRef, reason)
+      if (reason === 'periodic' && result?.outcome === 'birth-refused') {
+        await chargeBirthSweepRefusal(this, targetSessionRef, result.driveAttemptId)
+      }
     }
   })().finally(() => {
     this.mailKickerTargetOperations.delete(targetSessionRef)
@@ -1800,7 +1816,6 @@ export function runMailKickerSweep(this: HrcServerInstanceForHandlers): Promise<
         break
       }
     }
-    chargeBirthSweepRetries(this, unborn, targets)
     for (const targetSessionRef of targets) {
       this.mailKickerPendingTargets.set(targetSessionRef, 'periodic')
     }
@@ -1932,55 +1947,71 @@ function refusedBirthTargets(server: HrcServerInstanceForHandlers): string[] {
 }
 
 /**
- * Charge one retry against every unborn candidate the sweep is about to drive,
- * and give up on the fifth (rev 5.1 D7).
+ * Charge one retry after a periodic drive ACTUALLY attempted a birth and the
+ * summon path refused it, and give up on the fifth (rev 5.1 D7).
  *
- * Charged on the ENQUEUE and not on the outcome, deliberately. A birth is
- * asynchronous and its failure modes are many; keying the bound on "we tried"
- * needs no outcome plumbing, and the success case clears itself — a born scope
- * leaves the candidate set, which prunes its entry. Candidates the ledger
- * reported no pending mail for are not charged: they cost nothing but a slot in
- * a batched read, and holding them off for sixteen minutes would delay the
- * scope's real birth when its mail does arrive.
+ * Candidacy is not evidence of a refusal. In particular, a target that this
+ * node resolves as foreign-home is pruned without spending anybody else's D7
+ * budget. The drive returns this outcome only when `ensureTargetSession` was
+ * entered, did not establish a session, and left a failed/null-host attempt.
  *
  * Under rev 4 the bound FLATTENED at five and retried forever at sixteen-minute
  * intervals. rev 5.1 ends it instead: the fifth refusal fails every pending
  * envelope for that target `undeliverable` and tells the sender, which is a
  * decision someone can act on rather than a spin nobody is watching.
  */
-function chargeBirthSweepRetries(
+async function chargeBirthSweepRefusal(
   server: HrcServerInstanceForHandlers,
-  unborn: readonly string[],
-  driving: ReadonlySet<string>
-): void {
+  targetSessionRef: string,
+  driveAttemptId: string
+): Promise<void> {
   const now = Date.now()
-  for (const targetSessionRef of unborn) {
-    if (!driving.has(targetSessionRef)) continue
-    const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
-    if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {
-      server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
-      void failUndeliverableMail(server, targetSessionRef, attempts).catch((error: unknown) => {
-        writeServerLog('WARN', 'wrkq.kicker.undeliverable_failed', {
-          targetSessionRef,
-          error: errorText(error),
+  const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
+  if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {
+    try {
+      const terminal = await failUndeliverableMail(
+        server,
+        targetSessionRef,
+        driveAttemptId,
+        attempts
+      )
+      if (terminal) {
+        server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
+      } else {
+        server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
+          attempts: BIRTH_SWEEP_MAX_REFUSALS - 1,
+          nextAtMs: now + BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
         })
+      }
+    } catch (error) {
+      server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
+        attempts: BIRTH_SWEEP_MAX_REFUSALS - 1,
+        nextAtMs: now + BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
       })
-      continue
+      writeServerLog('WARN', 'wrkq.kicker.undeliverable_failed', {
+        targetSessionRef,
+        error: errorText(error),
+      })
     }
-    server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
-      attempts,
-      nextAtMs: now + BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
-    })
-    writeServerLog('INFO', 'wrkq.kicker.unborn_birth_retry', {
-      targetSessionRef,
-      attempt: attempts,
-      nextAttemptInMs: BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
-    })
+    return
   }
+  server.mailKickerBirthSweepBackoff.set(targetSessionRef, {
+    attempts,
+    nextAtMs: now + BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
+  })
+  writeServerLog('INFO', 'wrkq.kicker.unborn_birth_retry', {
+    targetSessionRef,
+    attempt: attempts,
+    nextAttemptInMs: BIRTH_SWEEP_BACKOFF_BASE_MS * 2 ** (attempts - 1),
+  })
 }
 
 /**
  * rev 5.1 D7 — this node cannot seat the addressee, and has stopped trying.
+ *
+ * The registry is re-consulted here even though the drive has already run. D7
+ * is destructive authority, so a stale candidate or a binding committed during
+ * the failed birth must not let this node terminate another home's mail.
  *
  * Only a `pending` envelope is failed: `undeliverable` means the body was never
  * pushed at all, and wrkqd enforces that on its side too. Anything already
@@ -1989,8 +2020,49 @@ function chargeBirthSweepRetries(
 async function failUndeliverableMail(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
+  driveAttemptId: string,
   refusals: number
-): Promise<void> {
+): Promise<boolean> {
+  const scopeRef = kickerScopeRefFor(targetSessionRef)
+  const registry = server.federationRegistryClient
+  if (registry !== undefined) {
+    if (scopeRef === undefined) {
+      writeServerLog('WARN', 'wrkq.kicker.undeliverable_home_unresolved', {
+        targetSessionRef,
+        reason: 'target session ref has no parseable scope',
+      })
+      return false
+    }
+    let authority: RegistryConsultResult
+    try {
+      authority = await registry.consult(scopeRef)
+    } catch (error) {
+      writeServerLog('WARN', 'wrkq.kicker.undeliverable_home_consult_failed', {
+        targetSessionRef,
+        scopeRef,
+        error: errorText(error),
+      })
+      return false
+    }
+    if (authority.outcome === 'bound' && authority.binding.homeNodeId !== server.federationNodeId) {
+      const homeNodeId = authority.binding.homeNodeId
+      server.foreignHomeMemo.set(scopeRef, { homeNodeId, source: 'registry' })
+      const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+        targetSessionRef,
+        `${scopeRef} is homed on ${homeNodeId}; this node has no authority to fail its mail`,
+        driveAttemptId
+      )?.driveAttemptId
+      writeServerLog('INFO', 'wrkq.kicker.undeliverable_skipped_foreign_home', {
+        targetSessionRef,
+        scopeRef,
+        homeNodeId,
+        refusals,
+        ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
+      })
+      return true
+    }
+  }
+
   const view = await server.wrkqLedger.pendingView({ scopes: [targetSessionRef] })
   for (const envelope of view.items) {
     if (envelope.state !== 'pending') continue
@@ -2007,6 +2079,7 @@ async function failUndeliverableMail(
       callSite: 'birth_refusals_exhausted',
     })
   }
+  return true
 }
 
 /**
