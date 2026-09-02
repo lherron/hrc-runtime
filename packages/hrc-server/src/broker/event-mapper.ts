@@ -84,6 +84,7 @@ import {
 } from '../first-turn-watch'
 import { appendHrcEvent } from '../hrc-event-helper'
 import { runtimeActivityPatch } from '../runtime-activity'
+import { writeServerLog } from '../server-log'
 import {
   type BrokerEventMapperDeps,
   type BrokerProjectionResult,
@@ -157,9 +158,20 @@ function requestsCaptureStateRefresh(envelope: InvocationEventEnvelope): boolean
   )
 }
 
+const CAPTURE_WARNING_LOG_INTERVAL_MS = 60_000
+
+type CaptureWarningLogState = {
+  invocationId: string
+  lastLoggedAt: number
+  count: number
+}
+
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
+  private readonly rateLimitNow: () => number
+  private readonly serverLog: NonNullable<BrokerEventMapperDeps['serverLog']>
+  private readonly captureWarningLogState = new Map<string, CaptureWarningLogState>()
   private readonly nextBufferChunkSeqByRunId = new Map<string, number>()
   /**
    * T-07235 late-start rows appended during THIS synchronous `apply`, drained
@@ -172,6 +184,8 @@ export class BrokerEventMapper {
   constructor(deps: BrokerEventMapperDeps) {
     this.db = deps.db
     this.now = deps.now ?? (() => new Date().toISOString())
+    this.rateLimitNow = deps.rateLimitNow ?? (() => performance.now())
+    this.serverLog = deps.serverLog ?? writeServerLog
   }
 
   /**
@@ -183,7 +197,9 @@ export class BrokerEventMapper {
     const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
     const run = this.db.sqlite.transaction(() => this.project(envelope))
     try {
-      return run()
+      const result = run()
+      if (!result.idempotent) this.logBlockedUnknownCaptureWarning(envelope)
+      return result
     } catch (error) {
       this.nextBufferChunkSeqByRunId.clear()
       for (const [runId, nextChunkSeq] of chunkSeqSnapshot) {
@@ -267,7 +283,83 @@ export class BrokerEventMapper {
       transport: lifecycleTransportFromRuntime(runtime.transport),
       payload: { operatorPrincipal, request, response },
     })
+    this.serverLog('WARN', 'broker.capture_released', {
+      runtimeId,
+      scopeRef: runtime.scopeRef,
+      invocationId: String(request.invocationId),
+      operatorPrincipal,
+      rawRecordId: response.rawRecordId,
+      disposition: response.disposition,
+      resumedRecords: response.resumedRecords,
+    })
     return [...(stateEvent ? [stateEvent] : []), releasedEvent]
+  }
+
+  private logBlockedUnknownCaptureWarning(envelope: InvocationEventEnvelope): void {
+    if (
+      envelope.type !== 'capture.warning' ||
+      envelope.payload.kind !== 'blocked_unknown' ||
+      !isRecord(envelope.payload.raw)
+    ) {
+      return
+    }
+
+    const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+    if (!invocation) return
+    const runtime = this.db.runtimes.getByRuntimeId(invocation.runtimeId)
+    if (!runtime) return
+
+    const raw = envelope.payload.raw
+    const nativeType =
+      typeof raw['nativeType'] === 'string'
+        ? raw['nativeType']
+        : (envelope.provenance?.nativeType ?? 'unknown')
+    const family = typeof raw['family'] === 'string' ? raw['family'] : 'unknown'
+    const rawRecordId =
+      typeof raw['rawRecordId'] === 'string'
+        ? raw['rawRecordId']
+        : (envelope.provenance?.rawRecordId ?? 'unknown')
+    const invocationId = String(envelope.invocationId)
+    const key = JSON.stringify([runtime.runtimeId, nativeType, family])
+    const loggedAt = this.rateLimitNow()
+    const previous = this.captureWarningLogState.get(key)
+    const nextCount = previous?.invocationId === invocationId ? previous.count + 1 : 1
+    if (
+      previous?.invocationId === invocationId &&
+      loggedAt - previous.lastLoggedAt < CAPTURE_WARNING_LOG_INTERVAL_MS
+    ) {
+      previous.count = nextCount
+      return
+    }
+
+    this.captureWarningLogState.set(key, {
+      invocationId,
+      lastLoggedAt: loggedAt,
+      count: nextCount,
+    })
+    const capture = runtime.runtimeStateJson?.['capture']
+    const captureDetails =
+      isRecord(capture) && typeof capture['state'] === 'string'
+        ? {
+            state: capture['state'],
+            ...(typeof capture['deferredCount'] === 'number'
+              ? { deferredCount: capture['deferredCount'] }
+              : {}),
+          }
+        : undefined
+    this.serverLog('WARN', 'broker.capture_blocked_unknown', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      invocationId,
+      driver: envelope.driver?.kind ?? invocation.brokerDriver,
+      harness: runtime.harness,
+      family,
+      nativeType,
+      rawRecordId,
+      message: envelope.payload.message,
+      ...(captureDetails !== undefined ? { capture: captureDetails } : {}),
+      count: nextCount,
+    })
   }
 
   private project(envelope: InvocationEventEnvelope): BrokerProjectionResult {

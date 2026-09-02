@@ -7,6 +7,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import { validateEventEnvelope } from 'spaces-harness-broker-protocol'
 
+import { BrokerEventMapper } from '../broker/event-mapper'
 import { INVOCATION_ID, RUNTIME_ID, envelope } from './broker-event-mapper-fixtures'
 import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.fixture'
 
@@ -111,5 +112,116 @@ describe('broker observability projection', () => {
         runtimeId: RUNTIME_ID,
       })
     ).toHaveLength(2)
+  })
+
+  test('warns immediately for blocked unknown capture and rate-limits repeats by source key', () => {
+    const calls: Array<{
+      level: string
+      event: string
+      details: Record<string, unknown> | undefined
+    }> = []
+    let rateLimitNow = 0
+    const mapper = new BrokerEventMapper({
+      db: harness.fixture.db,
+      now: () => '2026-05-27T12:01:40.000Z',
+      rateLimitNow: () => rateLimitNow,
+      serverLog: (level, event, details) => calls.push({ level, event, details }),
+    })
+    mapper.projectCaptureState(RUNTIME_ID, { state: 'open', deferredCount: 0 })
+
+    const warning = (seq: number, family = 'input-admission') =>
+      ({
+        ...envelope('capture.warning', seq, {
+          kind: 'blocked_unknown',
+          message: 'unknown load-bearing provider record',
+          raw: {
+            rawRecordId: `raw-${seq}`,
+            nativeType: 'queue.future_op',
+            family,
+          },
+        }),
+        driver: { kind: 'codex-app-server' },
+      }) satisfies InvocationEventEnvelope
+
+    mapper.apply(warning(1))
+    rateLimitNow = 30_000
+    mapper.apply(warning(2))
+    rateLimitNow = 59_999
+    mapper.apply(warning(3))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toEqual({
+      level: 'WARN',
+      event: 'broker.capture_blocked_unknown',
+      details: {
+        runtimeId: RUNTIME_ID,
+        scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01696',
+        invocationId: INVOCATION_ID,
+        driver: 'codex-app-server',
+        harness: 'codex-cli',
+        family: 'input-admission',
+        nativeType: 'queue.future_op',
+        rawRecordId: 'raw-1',
+        message: 'unknown load-bearing provider record',
+        capture: { state: 'open', deferredCount: 0 },
+        count: 1,
+      },
+    })
+
+    rateLimitNow = 60_000
+    mapper.apply(warning(4))
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.details).toMatchObject({ count: 4, rawRecordId: 'raw-4' })
+
+    mapper.apply(warning(5, 'turn-bracket'))
+    expect(calls).toHaveLength(3)
+    expect(calls[2]?.details).toMatchObject({ family: 'turn-bracket', count: 1 })
+  })
+
+  test('warns with operator disposition when capture is released', () => {
+    const calls: Array<{
+      level: string
+      event: string
+      details: Record<string, unknown> | undefined
+    }> = []
+    const mapper = new BrokerEventMapper({
+      db: harness.fixture.db,
+      now: () => '2026-05-27T12:01:40.000Z',
+      serverLog: (level, event, details) => calls.push({ level, event, details }),
+    })
+
+    mapper.projectCaptureRelease(
+      RUNTIME_ID,
+      'user:lance',
+      {
+        invocationId: INVOCATION_ID,
+        rawRecordId: 'raw-blocked',
+        disposition: 'ignored-known',
+      },
+      {
+        released: true,
+        invocationId: INVOCATION_ID,
+        rawRecordId: 'raw-blocked',
+        disposition: 'ignored-known',
+        releasedSeq: 7,
+        resumedRecords: 2,
+        capture: { state: 'open', deferredCount: 0 },
+      }
+    )
+
+    expect(calls).toEqual([
+      {
+        level: 'WARN',
+        event: 'broker.capture_released',
+        details: {
+          runtimeId: RUNTIME_ID,
+          scopeRef: 'agent:smokey:project:hrc-runtime:task:T-01696',
+          invocationId: INVOCATION_ID,
+          operatorPrincipal: 'user:lance',
+          rawRecordId: 'raw-blocked',
+          disposition: 'ignored-known',
+          resumedRecords: 2,
+        },
+      },
+    ])
   })
 })

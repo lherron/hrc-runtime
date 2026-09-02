@@ -88,6 +88,10 @@ export const TERMINAL_TURN_EVENT_TYPE_SQL = TERMINAL_TURN_EVENT_TYPES.map(
 export type BrokerEventMapperDeps = {
   db: HrcDatabase
   now?: () => string
+  /** Monotonic clock used only for capture-warning log aggregation. */
+  rateLimitNow?: () => number
+  /** Injectable seam for asserting operator-visible server log records. */
+  serverLog?: (level: 'WARN', event: string, details?: Record<string, unknown> | undefined) => void
 }
 
 export type BrokerProjectionResult = {
