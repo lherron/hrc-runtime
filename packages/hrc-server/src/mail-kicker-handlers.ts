@@ -11,12 +11,23 @@ import type {
   HrcMailDriveAttempt,
   HrcMailDriveAttemptState,
   HrcMailDriveWakeReason,
-  HrcMailEnvelopeReminder,
 } from 'hrc-store-sqlite'
 
 import { autoReplyCandidateFor } from './auto-reply-handlers.js'
 import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
+import {
+  type ObservedBrokerSeat,
+  prepareHeldBatchForBoundary,
+  replayHeldBatchReceipts,
+  seatCanDispatch,
+} from './mail-kicker/batch-flush.js'
+import {
+  type HeldBatchActionableEnvelope,
+  MAX_PRESENTED_PER_ATTEMPT,
+  dropAckedHeldMember,
+  holdQueueForBusyTarget,
+} from './mail-kicker/held-batch.js'
 import { formatSessionRef } from './messages.js'
 import { parseSessionRef } from './server-parsers.js'
 import { preemptAuthorized } from './turn-dispatch-handlers.js'
@@ -99,8 +110,6 @@ const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
   'turn.reaped',
 ])
 
-/** One presentation carries a room's worth of obligations, not an inbox dump. */
-const MAX_PRESENTED_PER_ATTEMPT = 20
 /**
  * How long a reminder is held after the turn that left the obligation
  * undisposed (rev 5.1 D4).
@@ -211,13 +220,6 @@ function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | unde
   return undefined
 }
 
-type ObservedBrokerSeat =
-  | { state: 'absent' }
-  | { state: 'unavailable'; runtimeId: string }
-  | { state: 'idle'; runtimeId: string }
-  | { state: 'turn-active'; runtimeId: string; turnId: string }
-  | { state: 'starting' | 'stopping' | 'terminal'; runtimeId: string }
-
 /**
  * Read the seat's own observed turn state, never an HRC run-row inference.
  *
@@ -247,10 +249,6 @@ async function observeBrokerSeat(
   return seat.state === 'turn-active'
     ? { state: 'turn-active', runtimeId: runtime.runtimeId, turnId: String(seat.turnId) }
     : { state: seat.state, runtimeId: runtime.runtimeId }
-}
-
-function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
-  return seat.state === 'idle' || seat.state === 'absent'
 }
 
 /**
@@ -460,12 +458,7 @@ function observeAttempt(
  * The form is decided from the ledger row plus HRC's own reminder record, in
  * one place, so no delivery path gets to choose a shape for itself.
  */
-type ActionableEnvelope = {
-  envelope: WrkqEnvelope
-  form: EnvelopePresentationForm
-  /** The armed reminder this delivery discharges, for the D5 binding. */
-  reminder?: HrcMailEnvelopeReminder | undefined
-}
+type ActionableEnvelope = HeldBatchActionableEnvelope
 
 /**
  * A stored hold is an interruption request and therefore owns one admission
@@ -922,215 +915,6 @@ async function presentHoldIntoBusyTarget(
   return true
 }
 
-/** Keep ordinary queue mail entirely on the HRC side until the next boundary. */
-function holdQueueForBusyTarget(
-  server: HrcServerInstanceForHandlers,
-  targetSessionRef: string,
-  session: HrcSessionRecord,
-  seat: Extract<ObservedBrokerSeat, { state: 'turn-active' }>,
-  actionable: readonly ActionableEnvelope[],
-  wakeReason: HrcMailDriveWakeReason
-): boolean {
-  const queue = actionable.filter((item) => item.envelope.delivery === 'queue')
-  if (queue.length === 0) return false
-  const update = server.db.mailDrives.holdQueuedAttempt(
-    {
-      targetSessionRef,
-      wakeReason,
-      envelopeIds: queue.map((item) => item.envelope.id),
-      heldBehindTurnId: seat.turnId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: seat.runtimeId,
-      materializationIntent:
-        session.lastAppliedIntentJson ??
-        buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined),
-    },
-    MAX_PRESENTED_PER_ATTEMPT
-  )
-  writeServerLog('INFO', 'wrkq.kicker.queue_batch_held', {
-    targetSessionRef,
-    wakeReason,
-    driveAttemptId: update.attempt.driveAttemptId,
-    runId: update.attempt.runId,
-    runtimeId: seat.runtimeId,
-    heldBehindTurnId: update.attempt.heldBehindTurnId,
-    observedTurnId: seat.turnId,
-    addedEnvelopeIds: update.addedEnvelopeIds,
-    envelopeIds: server.db.mailDrives.presentationEnvelopeIds(update.attempt.driveAttemptId),
-  })
-  return true
-}
-
-/**
- * Freeze-time authority check for a batch whose members had no ledger receipt.
- *
- * An ack, withdrawal, or expiry can win while HRC is holding the member. The
- * boundary must read wrkq again and remove that local member before composing
- * or recording anything; a terminal envelope is never passed to `present`.
- */
-async function revalidateHeldBatch(
-  server: HrcServerInstanceForHandlers,
-  attempt: HrcMailDriveAttempt
-): Promise<ActionableEnvelope[]> {
-  const surviving: ActionableEnvelope[] = []
-  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
-    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
-    if (!envelope.terminal && envelope.state === 'pending') {
-      surviving.push({
-        envelope,
-        form: envelope.presentedTo.length === 0 ? 'full' : 'defer-retry',
-      })
-      continue
-    }
-    const reason = envelope.terminal
-      ? `terminal_while_held:${envelope.state}`
-      : `no_longer_actionable:${envelope.state}`
-    const dropped = server.db.mailDrives.dropHeldEnvelope(envelopeId, reason)
-    if (dropped === undefined) continue
-    writeServerLog('INFO', 'wrkq.kicker.held_member_dropped', {
-      targetSessionRef: attempt.targetSessionRef,
-      driveAttemptId: attempt.driveAttemptId,
-      envelopeId,
-      envelopeState: envelope.state,
-      reason,
-      remainingEnvelopeIds: dropped.remainingEnvelopeIds,
-      brokerWithdrawCalled: false,
-    })
-  }
-  return surviving
-}
-
-/**
- * Recover a crash during the per-envelope receipt commit for one batch input.
- *
- * The broker input already exists and is identified by the stable run row;
- * this fills only missing wrkq receipts with the same driveAttemptId/inputId.
- * A member that went terminal after dispatch is never resurrected merely to
- * complete local bookkeeping.
- */
-async function replayHeldBatchReceipts(
-  server: HrcServerInstanceForHandlers,
-  attempt: HrcMailDriveAttempt
-): Promise<void> {
-  if (attempt.heldBehindTurnId === undefined || attempt.state === 'held') return
-  const run = server.db.runs.getByRunId(attempt.runId)
-  const inputId = run?.dispatchedInputId
-  if (
-    run === null ||
-    inputId === undefined ||
-    attempt.hostSessionId === undefined ||
-    attempt.generation === undefined ||
-    attempt.runtimeId === undefined
-  ) {
-    return
-  }
-
-  const replayed: string[] = []
-  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
-    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
-    if (
-      envelope.terminal ||
-      envelope.presentedTo.some((receipt) => receipt.driveAttemptId === attempt.driveAttemptId)
-    ) {
-      continue
-    }
-    await server.wrkqLedger.present({
-      envelope: envelopeId,
-      node: server.federationNodeId,
-      hostSessionId: attempt.hostSessionId,
-      generation: String(attempt.generation),
-      runId: attempt.runId,
-      runtimeId: attempt.runtimeId,
-      inputId,
-      driveAttemptId: attempt.driveAttemptId,
-    })
-    replayed.push(envelopeId)
-  }
-  if (replayed.length > 0) {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_receipts_replayed', {
-      targetSessionRef: attempt.targetSessionRef,
-      driveAttemptId: attempt.driveAttemptId,
-      runId: attempt.runId,
-      inputId,
-      envelopeIds: replayed,
-    })
-  }
-}
-
-/**
- * Freeze and activate the oldest HRC-held batch at an observed boundary.
- *
- * The second seat probe is intentional: terminal events and sweeps are only
- * opportunities to flush. If another turn wins that interval, HRC leaves the
- * attempt held for the next terminal event instead of queueing behind it.
- */
-async function prepareHeldBatchForBoundary(
-  server: HrcServerInstanceForHandlers,
-  targetSessionRef: string,
-  session: HrcSessionRecord,
-  held: HrcMailDriveAttempt,
-  actionable: readonly ActionableEnvelope[],
-  wakeReason: HrcMailDriveWakeReason
-): Promise<{ attempt: HrcMailDriveAttempt; actionable: ActionableEnvelope[] } | undefined> {
-  if (held.runtimeId === undefined) {
-    server.db.mailDrives.failWithoutStart(
-      held.driveAttemptId,
-      'HRC-held queue batch has no broker runtime identity'
-    )
-    writeServerLog('WARN', 'wrkq.kicker.queue_batch_invalid', {
-      targetSessionRef,
-      driveAttemptId: held.driveAttemptId,
-      reason: 'missing_runtime_id',
-    })
-    return undefined
-  }
-
-  const appended = server.db.mailDrives.holdQueuedAttempt(
-    {
-      targetSessionRef,
-      wakeReason,
-      envelopeIds: actionable
-        .filter((item) => item.envelope.delivery === 'queue')
-        .map((item) => item.envelope.id),
-      heldBehindTurnId: held.heldBehindTurnId ?? 'unknown',
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: held.runtimeId,
-      materializationIntent: held.materializationIntent,
-    },
-    MAX_PRESENTED_PER_ATTEMPT
-  )
-  const surviving = await revalidateHeldBatch(server, appended.attempt)
-  if (surviving.length === 0) return undefined
-
-  const boundarySeat = await observeBrokerSeat(server, session)
-  if (!seatCanDispatch(boundarySeat)) {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_foreign_turn_won', {
-      targetSessionRef,
-      driveAttemptId: held.driveAttemptId,
-      wakeReason,
-      observedSeatState: boundarySeat.state,
-      ...(boundarySeat.state === 'turn-active' ? { observedTurnId: boundarySeat.turnId } : {}),
-      envelopeIds: surviving.map((item) => item.envelope.id),
-    })
-    return undefined
-  }
-
-  const activated = server.db.mailDrives.activateHeldAttempt(held.driveAttemptId)
-  if (activated.outcome !== 'acquired') {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
-      targetSessionRef,
-      driveAttemptId: held.driveAttemptId,
-      wakeReason,
-      activeDriveAttemptId:
-        activated.outcome === 'active' ? activated.attempt.driveAttemptId : undefined,
-    })
-    return undefined
-  }
-  return { attempt: activated.attempt, actionable: surviving }
-}
-
 /**
  * The scope's drive slot is held by a kicker attempt that has not finished yet
  * (T-07644).
@@ -1558,7 +1342,8 @@ async function driveMailTargetOnce(
         session,
         held,
         actionable,
-        wakeReason
+        wakeReason,
+        (currentSession) => observeBrokerSeat(server, currentSession)
       )
       if (prepared === undefined) return
       attempt = prepared.attempt
@@ -2508,20 +2293,7 @@ async function withdrawAckedQueuedInjection(
   // ordinary queue member is HRC-held. An in-turn reader ack is therefore a
   // pure local subtraction; calling submission.withdraw would invent work the
   // broker never received.
-  const heldDrop = server.db.mailDrives.dropHeldEnvelope(
-    envelopeId,
-    QUEUED_INJECTION_WITHDRAW_REASON
-  )
-  if (heldDrop !== undefined) {
-    writeServerLog('INFO', 'wrkq.kicker.held_member_acked', {
-      envelopeId,
-      driveAttemptId: heldDrop.attempt.driveAttemptId,
-      reason: QUEUED_INJECTION_WITHDRAW_REASON,
-      remainingEnvelopeIds: heldDrop.remainingEnvelopeIds,
-      brokerWithdrawCalled: false,
-    })
-    return
-  }
+  if (dropAckedHeldMember(server, envelopeId, QUEUED_INJECTION_WITHDRAW_REASON)) return
 
   const attempt = server.db.mailDrives.getClaimedAttemptForEnvelope(envelopeId)
   if (attempt === undefined) return
