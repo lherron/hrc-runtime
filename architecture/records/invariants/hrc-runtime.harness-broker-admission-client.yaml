@@ -26,8 +26,14 @@ predicate: >
   receipt; the terminal turn event, backed by the periodic sweep, freezes and
   flushes at most MAX_PRESENTED_PER_ATTEMPT envelopes as one input after a
   second idle-seat observation. A competing turn keeps the batch held. Terminal
-  members are removed before prompt composition, while each hold/preempt request
-  remains an immediate isolated admission decision and is never batched.
+  members are removed before prompt composition. An HRC-held member has no broker
+  submission and therefore no broker TTL; only its wrkq sender expiry or
+  withdrawal can terminal it, and flush revalidation honors that ledger state.
+  Once a flush has acquired a broker submission and written per-envelope
+  receipts, a broker queue/submission expiry is logged and fails every receipted
+  member of that shared input as undeliverable so the sender sees a terminal
+  outcome. Each hold/preempt request remains an immediate isolated admission
+  decision and is never batched.
 authority: Lance principal ruling 2026-09-01 / Daedalus approval wrkq:T-07843 rev 7
 source:
   - wrkq:T-07843
@@ -42,10 +48,10 @@ required_tests:
   - obligation-bearing enqueue invoke and preempt calls correlate disposition to their originating turn terminal
   - preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts
   - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
-  - T-07891 observed-seat busy detection, durable held-batch, terminal-member revalidation, shared-input receipt, boundary-race, and preempt-isolation gates
+  - T-07891 observed-seat busy detection, no-TTL durable held-batch, terminal-member revalidation, shared-input receipt, broker-expiry failure, boundary-race, and preempt-isolation gates
 last_verified:
   date: 2026-09-02
-  evidence: T-07891 re-verified the four admission classes while moving queue-class collaboration mail to durable HRC-held boundary batches; broker seat observation remains the sole busy authority, terminal members are filtered before presentation, and hold/preempt stays isolated.
+  evidence: T-07891 re-verified the four admission classes while moving queue-class collaboration mail to durable no-broker-TTL HRC-held boundary batches; broker seat observation remains the sole busy authority, terminal members are filtered before presentation, receipted broker expiry becomes sender-visible failure, and hold/preempt stays isolated.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn

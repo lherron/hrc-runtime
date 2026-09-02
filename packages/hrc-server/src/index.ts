@@ -1417,6 +1417,7 @@ class HrcServerInstance implements HrcServer {
       ...(tcpPort !== undefined ? { tcpPort } : {}),
       onLifecycleEvent: (event) => this.notifyEvent(event),
       onBrokerEvent: (record) => {
+        this.observeMailDriveBrokerEvent(record)
         if (!record.brokerEnvelopeJson) return
         try {
           const notification = {

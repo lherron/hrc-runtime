@@ -38,6 +38,7 @@ type Dispatch = {
   prompt: string
   runId: string
   inputId: string
+  ttlMs?: number | undefined
   submissionDoor?: string | undefined
   envelopeId?: string | undefined
 }
@@ -152,6 +153,7 @@ function installDispatchCapture(): () => Dispatch[] {
       runId?: string | undefined
       submissionDoor?: string | undefined
       submissionOrigin?: { envelopeId?: string | undefined } | undefined
+      ttlMs?: number | undefined
     }
   ): Promise<Response> => {
     const runId = options.runId ?? `run-preempt-${calls.length + 1}`
@@ -160,6 +162,7 @@ function installDispatchCapture(): () => Dispatch[] {
       prompt,
       runId,
       inputId,
+      ttlMs: options.ttlMs,
       submissionDoor: options.submissionDoor,
       envelopeId: options.submissionOrigin?.envelopeId,
     })
@@ -301,6 +304,41 @@ describe('T-07891 HRC-held busy batches', () => {
       calls()[0]?.inputId,
       calls()[0]?.inputId,
     ])
+  })
+
+  it('keeps an unreceipted HRC-held member past 30 minutes and gives it a broker TTL only at flush', async () => {
+    await startServer()
+    await seedObservedSeat({
+      state: 'turn-active',
+      turnId: 'turn-hour-long',
+      policy: 'open',
+    })
+    const calls = installDispatchCapture()
+    const queued = say('survives a turn longer than the broker TTL')
+    await drain()
+
+    const db = serverInternals(server as HrcServer).db
+    const held = heldAttempt(db)
+    if (held === undefined) throw new Error('missing held attempt')
+    const moreThanThirtyMinutesAgo = new Date(Date.now() - 31 * 60_000).toISOString()
+    db.sqlite
+      .query(
+        `UPDATE hrcmail_drive_attempts
+         SET claimed_at = ?, updated_at = ?
+         WHERE drive_attempt_id = ?`
+      )
+      .run(moreThanThirtyMinutesAgo, moreThanThirtyMinutesAgo, held.driveAttemptId)
+
+    expect(calls()).toEqual([])
+    expect(queued.presentedTo).toEqual([])
+    expect(db.mailDrives.getHeldAttempt(TARGET)?.claimedAt).toBe(moreThanThirtyMinutesAgo)
+
+    seat = { state: 'idle' }
+    await drain('turn_completion')
+    await waitUntil(() => calls().length === 1, 'post-30-minute boundary dispatch')
+
+    expect(calls()[0]).toMatchObject({ ttlMs: 30 * 60_000 })
+    expect(ledger.envelopes.get(queued.id)?.presentedTo).toHaveLength(1)
   })
 
   it('drops acked, withdrawn, and expired members before flush and never presents them', async () => {

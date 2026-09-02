@@ -1,6 +1,7 @@
 import { HrcDomainError, RUNTIME_STATUS_LEVEL_BY_STATUS } from 'hrc-core'
 import type {
   DispatchTurnResponse,
+  HrcBrokerInvocationEventRecord,
   HrcLifecycleEvent,
   HrcRunRecord,
   HrcSessionRecord,
@@ -28,6 +29,7 @@ import {
   dropAckedHeldMember,
   holdQueueForBusyTarget,
 } from './mail-kicker/held-batch.js'
+import { handleQueuedInjectionExpiry } from './mail-kicker/queued-injection-expiry.js'
 import { formatSessionRef } from './messages.js'
 import { parseSessionRef } from './server-parsers.js'
 import { preemptAuthorized } from './turn-dispatch-handlers.js'
@@ -2543,6 +2545,20 @@ export function observeMailDriveLifecycleEvent(
   this.requestMailKickerWake(formatSessionRef(event.scopeRef, event.laneRef), 'turn_completion')
 }
 
+export function observeMailDriveBrokerEvent(
+  this: HrcServerInstanceForHandlers,
+  record: HrcBrokerInvocationEventRecord
+): void {
+  void handleQueuedInjectionExpiry(this, record).catch((error: unknown) => {
+    writeServerLog('WARN', 'wrkq.kicker.queued_injection_expiry_observer_failed', {
+      invocationId: record.invocationId,
+      runtimeId: record.runtimeId,
+      brokerEventType: record.type,
+      error: errorText(error),
+    })
+  })
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -2554,6 +2570,7 @@ export const mailKickerHandlersMethods = {
   runWrkqLedgerTail,
   startMailKicker,
   observeMailDriveLifecycleEvent,
+  observeMailDriveBrokerEvent,
 }
 
 export type MailKickerHandlersMethods = typeof mailKickerHandlersMethods
