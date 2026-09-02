@@ -643,7 +643,7 @@ export class BrokerEventMapper {
     // input.queued specifically refers to the QUEUED input.
     const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
     if (envelopeInputId !== undefined) {
-      const run = this.db.runs.getByDispatchedInputId(envelopeInputId)
+      const run = this.runForInputIdentity(envelopeInputId)
       if (run?.runId) return run.runId
       return fallbackRunId
     }
@@ -652,7 +652,7 @@ export class BrokerEventMapper {
     if (openTurnStartedSeq !== undefined) {
       const bracketInput = this.findPriorInputAccepted(envelope.invocationId, openTurnStartedSeq)
       if (bracketInput) {
-        const run = this.db.runs.getByDispatchedInputId(bracketInput.inputId)
+        const run = this.runForInputIdentity(bracketInput.inputId)
         if (run?.runId) return run.runId
       }
       const fencedInput = this.findPriorFencedInputAccepted(
@@ -699,7 +699,7 @@ export class BrokerEventMapper {
     runtime: HrcRuntimeSnapshot
   ): string | undefined {
     // (1) candidate run for the prior input.accepted.
-    const candidate = this.db.runs.getByDispatchedInputId(priorInput.inputId)
+    const candidate = this.runForInputIdentity(priorInput.inputId)
     if (!candidate?.runId) return undefined
     // candidate must live on this runtime/invocation.
     if (candidate.runtimeId !== runtime.runtimeId) return undefined
@@ -722,6 +722,12 @@ export class BrokerEventMapper {
     if (this.hasOtherActiveNonterminalRun(runtime.runtimeId, candidate.runId)) return undefined
 
     return candidate.runId
+  }
+
+  private runForInputIdentity(inputId: string) {
+    return (
+      this.db.runs.getByDispatchedInputId(inputId) ?? this.db.runs.getByBrokerSubmissionId(inputId)
+    )
   }
 
   private static readonly NONTERMINAL_RUN_STATUSES = new Set(['accepted', 'started', 'running'])

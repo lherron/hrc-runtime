@@ -833,6 +833,7 @@ export async function executeInteractiveBrokerInputTurn(
   if (result.ok) {
     this.db.runs.update(runId, {
       brokerSubmissionId: result.response.submissionId,
+      dispatchedInputId: result.response.submissionId,
       updatedAt: timestamp(),
     })
   }
