@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { RUNTIME_STATUS_LEVEL_BY_STATUS } from 'hrc-core'
 
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -23,6 +25,37 @@ type EnvelopeFailInput = {
 export type EnvelopeFailOutcome =
   | { outcome: 'failed'; envelope: WrkqEnvelope }
   | { outcome: 'suppressed_live_target'; runtimeId: string; runtimeStatus: string }
+
+const serverInstanceIds = new WeakMap<object, string>()
+
+/**
+ * Process-local identity for a terminal RPC attempt.
+ *
+ * Several HRC servers can exist on one host (the canonical daemon, hrc-dev,
+ * isolated dev environments, and test-created instances). A pid identifies
+ * the process, argv/role explains how it was entered, and the stable UUID
+ * distinguishes two HrcServer instances constructed inside the same process.
+ */
+function terminalActorIdentity(server: HrcServerInstanceForHandlers): {
+  processId: number
+  processArgv0: string
+  processRole: string
+  serverInstanceId: string
+} {
+  let serverInstanceId = serverInstanceIds.get(server)
+  if (serverInstanceId === undefined) {
+    serverInstanceId = randomUUID()
+    serverInstanceIds.set(server, serverInstanceId)
+  }
+  const entry = process.argv[1]?.split('/').at(-1) ?? 'unknown-entry'
+  const command = process.argv.slice(2, 4).join(' ')
+  return {
+    processId: process.pid,
+    processArgv0: process.argv0,
+    processRole: command === '' ? entry : `${entry}:${command}`,
+    serverInstanceId,
+  }
+}
 
 /** A local runtime row is live until monitor truth classifies it runtime-dead. */
 function liveRuntimeForTarget(
@@ -59,10 +92,12 @@ export async function failEnvelopeWithAudit(
   server: HrcServerInstanceForHandlers,
   input: EnvelopeFailInput
 ): Promise<EnvelopeFailOutcome> {
+  const actor = terminalActorIdentity(server)
   if (input.reason === 'undeliverable') {
     const live = liveRuntimeForTarget(server, input.targetSessionRef)
     if (live !== undefined) {
       writeServerLog('WARN', 'wrkq.kicker.envelope_terminal_suppressed', {
+        ...actor,
         operation: 'fail',
         callSite: input.callSite,
         targetSessionRef: input.targetSessionRef,
@@ -81,6 +116,7 @@ export async function failEnvelopeWithAudit(
   }
 
   writeServerLog('INFO', 'wrkq.kicker.envelope_terminal_call', {
+    ...actor,
     operation: 'fail',
     callSite: input.callSite,
     targetSessionRef: input.targetSessionRef,
@@ -96,6 +132,7 @@ export async function failEnvelopeWithAudit(
     ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
   })
   writeServerLog('INFO', 'wrkq.kicker.envelope_failed', {
+    ...actor,
     callSite: input.callSite,
     targetSessionRef: input.targetSessionRef,
     ...(input.driveAttemptId === undefined ? {} : { driveAttemptId: input.driveAttemptId }),

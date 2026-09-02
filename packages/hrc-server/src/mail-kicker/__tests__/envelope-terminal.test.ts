@@ -118,5 +118,22 @@ describe('T-07917 envelope terminal boundary', () => {
     expect(captured.lines[before]).toContain('"callSite":"birth_refusals_exhausted"')
     expect(captured.lines[before]).toContain(`"targetSessionRef":"${TARGET}"`)
     expect(captured.lines[before]).toContain('"phase":"before_rpc"')
+    const jsonStart = captured.lines[before]?.indexOf('{') ?? -1
+    expect(jsonStart).toBeGreaterThanOrEqual(0)
+    const audit = JSON.parse(captured.lines[before]?.slice(jsonStart) ?? '{}') as Record<
+      string,
+      unknown
+    >
+    expect(audit).toMatchObject({
+      processId: process.pid,
+      processArgv0: process.argv0,
+      operation: 'fail',
+      callSite: 'birth_refusals_exhausted',
+      envelope: envelope.id,
+    })
+    expect(typeof audit.processRole).toBe('string')
+    expect((audit.processRole as string).length).toBeGreaterThan(0)
+    expect(typeof audit.serverInstanceId).toBe('string')
+    expect((audit.serverInstanceId as string).length).toBeGreaterThan(0)
   })
 })
