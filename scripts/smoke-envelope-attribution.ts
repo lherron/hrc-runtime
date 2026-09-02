@@ -58,7 +58,7 @@ type Envelope = {
   meta: Record<string, unknown>
   presentedTo: Presentation[]
 }
-type RoomLog = { items: Envelope[] }
+type RoomLog = Envelope[] | { items: Envelope[] }
 
 type ProcessResult = {
   exitCode: number
@@ -249,12 +249,16 @@ async function roomLog(principal = 'agent:probe-a'): Promise<RoomLog> {
   return await commandJson<RoomLog>(['wrkc', 'log', ROOM, '--as', principal, '--json'], true)
 }
 
+function roomItems(log: RoomLog): Envelope[] {
+  return Array.isArray(log) ? log : log.items
+}
+
 async function waitForSourceId(say: PendingSay): Promise<string> {
   let id: string | undefined
   await waitUntil(
     `source envelope for ${say.token}`,
     async () => {
-      id = (await roomLog(say.principal)).items.find(
+      id = roomItems(await roomLog(say.principal)).find(
         (item) => item.from.principalRef === say.principal && item.body === say.body
       )?.id
       return id !== undefined
@@ -394,15 +398,15 @@ async function collectVariant(
 ): Promise<VariantSummary> {
   await Bun.sleep(1_000)
   const rows = brokerRows(startSeq)
-  const log = await roomLog()
+  const log = roomItems(await roomLog())
   const sourceById = new Map<string, Envelope>()
   for (const say of says) {
     if (say.sourceId === undefined) throw new Error(`${name}/${say.label}: missing source id`)
-    const source = log.items.find((item) => item.id === say.sourceId)
+    const source = log.find((item) => item.id === say.sourceId)
     if (source === undefined) throw new Error(`${name}/${say.label}: source not in room log`)
     sourceById.set(source.id, source)
   }
-  const replies = log.items.filter(
+  const replies = log.filter(
     (item) => item.meta.auto === 'turn_final' && dischargeIds(item).some((id) => sourceById.has(id))
   )
   const grades: EnvelopeGrade[] = []
@@ -552,21 +556,33 @@ async function writeEnvironmentEvidence(): Promise<void> {
 async function terminateProbe(): Promise<void> {
   if (cleanupStarted) return
   cleanupStarted = true
-  for (const child of childProcesses) child.kill()
-  if (runtimeId === undefined) return
-  const result = await spawnCommand([
-    'hrc',
-    'runtime',
-    'terminate',
-    runtimeId,
-    '--drop-continuation',
-    '--reason',
-    'T-07907 attribution smoke cleanup',
-    '--source',
-    basename(import.meta.path),
-  ])
-  if (result.exitCode !== 0) {
-    console.error(`cleanup failed for ${runtimeId}: ${result.stderr || result.stdout}`)
+  const children = [...childProcesses]
+  for (const child of children) child.kill()
+  await Promise.allSettled(children.map(async (child) => await child.exited))
+  const terminated = new Set<string>()
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const ids = [runtimeId, currentRuntime()?.runtime_id].filter(
+      (id): id is string => id !== undefined && !terminated.has(id)
+    )
+    if (ids.length === 0) break
+    for (const id of ids) {
+      const result = await spawnCommand([
+        'hrc',
+        'runtime',
+        'terminate',
+        id,
+        '--drop-continuation',
+        '--reason',
+        'T-07907 attribution smoke cleanup',
+        '--source',
+        basename(import.meta.path),
+      ])
+      terminated.add(id)
+      if (result.exitCode !== 0) {
+        console.error(`cleanup failed for ${id}: ${result.stderr || result.stdout}`)
+      }
+    }
+    await Bun.sleep(1_000)
   }
 }
 
