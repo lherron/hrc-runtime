@@ -849,8 +849,34 @@ export async function executeHeadlessBrokerStartTurn(
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {
+      const acceptedAt = timestamp()
+      const acceptedRun = this.db.runs.getByRunId(runId)
+      if (acceptedRun === null) {
+        this.db.runs.insert({
+          runId,
+          hostSessionId: session.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          transport: 'headless',
+          status: 'accepted',
+          acceptedAt,
+          updatedAt: acceptedAt,
+          invocationId: runtime.activeInvocationId,
+          operationId: runtime.activeOperationId,
+          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+          ...dispatchOriginRunFields(options),
+        })
+      } else if (acceptedRun.status === 'accepted') {
+        this.db.runs.update(runId, {
+          runtimeId: runtime.runtimeId,
+          invocationId: runtime.activeInvocationId,
+          operationId: runtime.activeOperationId,
+          updatedAt: acceptedAt,
+        })
+      }
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
-        const acceptedAt = timestamp()
         const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
           ts: acceptedAt,
           hostSessionId: session.hostSessionId,

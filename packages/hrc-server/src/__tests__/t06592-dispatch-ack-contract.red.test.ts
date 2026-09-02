@@ -170,21 +170,6 @@ describe('T-06592 durable dispatch acknowledgment', () => {
           createdAt: now,
           updatedAt: now,
         })
-        db.runs.insert({
-          runId,
-          hostSessionId: session.hostSessionId,
-          runtimeId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
-          transport: 'headless',
-          status: 'accepted',
-          acceptedAt: now,
-          updatedAt: now,
-          operationId: 'op-t06592-cold',
-          invocationId,
-          dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-        })
         db.brokerInvocations.insert({
           invocationId,
           operationId: 'op-t06592-cold',
@@ -227,6 +212,9 @@ describe('T-06592 durable dispatch acknowledgment', () => {
       replayed: false,
       runtimeId: 'rt-t06592-cold',
       startIdentity: { kind: 'broker', invocationId: 'inv-t06592-cold' },
+      observation: {
+        broker: { selector: { invocationId: 'inv-t06592-cold' } },
+      },
     })
     expect(replayResponse.status).toBe(202)
     expect(replay).toMatchObject({
