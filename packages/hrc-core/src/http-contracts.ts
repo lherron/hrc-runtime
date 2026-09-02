@@ -445,6 +445,7 @@ export type DispatchTurnResponse = {
 
 // -- Four-door broker admission surface (T-07867) ---------------------------
 
+/** A stable session ref or an exact hostSessionId resolved by the caller. */
 export type HrcSubmissionTarget = string
 
 export type HrcSubmissionOrigin = {
@@ -461,21 +462,28 @@ type HrcSubmissionRequestBase = {
   freshContext?: boolean | undefined
 }
 
+type HrcSessionBoundSubmissionRequest = HrcSubmissionRequestBase & {
+  /** Runtime intent applied at this dispatch boundary, identical to /v1/turns. */
+  runtimeIntent?: HrcRuntimeIntent | undefined
+  /** T-07397 surface-ownership proof, identical to /v1/turns. */
+  establishedBrokerInvocationId?: string | undefined
+}
+
 /** Steer is a free-rider: wait, turnPolicy, obligation and reply are unrepresentable. */
 export type SteerSubmissionRequest = HrcSubmissionRequestBase
 
-export type EnqueueSubmissionRequest = HrcSubmissionRequestBase & {
+export type EnqueueSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   ttlMs?: number | undefined
   turnPolicy?: 'open' | 'guarded' | undefined
   wait?: boolean | undefined
 }
 
-export type InvokeSubmissionRequest = HrcSubmissionRequestBase & {
+export type InvokeSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   turnPolicy?: 'open' | 'guarded' | undefined
   wait?: boolean | undefined
 }
 
-export type PreemptSubmissionRequest = HrcSubmissionRequestBase & {
+export type PreemptSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   ttlMs?: number | undefined
   turnPolicy?: 'open' | 'guarded' | undefined
   wait?: boolean | undefined
@@ -494,13 +502,34 @@ export type HrcSubmissionTurnTerminal = {
   finalMessage?: string | undefined
 }
 
-export type HrcSubmissionResponse = {
+type HrcSubmissionResponseBase = {
   submissionId: string
-  admission: 'admitted' | 'rejected'
   reason?: string | undefined
   disposition?: HrcSubmissionDisposition | undefined
   terminal?: HrcSubmissionTurnTerminal | undefined
 }
+
+type HrcSubmissionCursorlessDisposition = Extract<
+  HrcSubmissionDisposition,
+  { type: 'rejected' | 'expired' | 'cancelled' }
+>
+
+export type HrcSubmissionResponse = HrcSubmissionResponseBase &
+  (
+    | ({ admission: 'admitted' } & Pick<
+        DispatchTurnResponse,
+        | 'runId'
+        | 'runtimeId'
+        | 'hostSessionId'
+        | 'generation'
+        | 'transport'
+        | 'status'
+        | 'startIdentity'
+        | 'observation'
+      >)
+    | { admission: 'admitted'; disposition: HrcSubmissionCursorlessDisposition }
+    | { admission: 'rejected' }
+  )
 
 export type OperatorAttachDescriptor = {
   transport: 'tmux'

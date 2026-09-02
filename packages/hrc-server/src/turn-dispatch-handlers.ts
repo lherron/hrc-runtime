@@ -121,6 +121,21 @@ type SubmissionDoorRequest =
   | InvokeSubmissionRequest
   | PreemptSubmissionRequest
 
+function resolveSubmissionTarget(
+  server: HrcServerInstanceForHandlers,
+  target: string,
+  allowHostSessionId: boolean
+): HrcSessionRecord | null {
+  if (allowHostSessionId) {
+    const exact = server.db.sessions.getByHostSessionId(target)
+    if (exact !== null) {
+      const continuity = requireContinuity(server.db, exact)
+      return requireSession(server.db, continuity.activeHostSessionId)
+    }
+  }
+  return findTargetSession(server.db, target)
+}
+
 function runOriginFromSubmission(origin: SubmissionDoorRequest['origin']) {
   const kind = origin.principalRef.startsWith('agent:')
     ? ('agent' as const)
@@ -379,12 +394,18 @@ export async function handleSubmission(
         : door === 'invoke'
           ? parseSubmissionRequest(raw, 'invoke')
           : parseSubmissionRequest(raw, 'preempt')
-  let session = findTargetSession(this.db, body.target)
+  let session = resolveSubmissionTarget(this, body.target, door !== 'steer')
   if (session === null) {
     throw new HrcRuntimeUnavailableError('submission target is unavailable', {
       target: body.target,
       door,
     })
+  }
+  if (door !== 'steer') {
+    const staleRotation = await this.maybeAutoRotateStaleSession(session, {
+      trigger: `submission-${door}`,
+    })
+    session = staleRotation.session
   }
   if (
     door === 'preempt' &&
@@ -405,15 +426,26 @@ export async function handleSubmission(
     })
     session = requireSession(this.db, rotation.hostSessionId)
   }
-  const intent = session.lastAppliedIntentJson
+  const runId = `run-${randomUUID()}`
+  const sessionBoundBody =
+    door === 'steer'
+      ? undefined
+      : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
+  const intent =
+    door === 'steer'
+      ? session.lastAppliedIntentJson
+      : normalizeDispatchIntent(
+          sessionBoundBody?.runtimeIntent ?? session.lastAppliedIntentJson,
+          session,
+          runId
+        )
   if (intent === undefined) {
     throw new HrcRuntimeUnavailableError('submission target has no runtime intent', {
       target: body.target,
       door,
     })
   }
-  const runId = `run-${randomUUID()}`
-  const response = await this.dispatchTurnForSession(session, intent, body.body, {
+  const publicResponse = await dispatchPublicSubmission(this, session, intent, body.body, {
     runId,
     // The door response is not complete until the broker has minted its
     // submission identity. This may include provisioning a cold seat, but it
@@ -428,47 +460,20 @@ export async function handleSubmission(
     ...('turnPolicy' in body && body.turnPolicy !== undefined
       ? { turnPolicy: body.turnPolicy }
       : {}),
+    ...(sessionBoundBody?.establishedBrokerInvocationId !== undefined
+      ? { establishedBrokerInvocationId: sessionBoundBody.establishedBrokerInvocationId }
+      : {}),
+    requireSubmissionIdentity: true,
   })
-  const dispatched = (await response.json()) as DispatchTurnResponse
-  if (dispatched.submissionId === undefined || dispatched.admission === undefined) {
-    throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
-      target: body.target,
-      door,
-      runId,
-    })
-  }
-  const result: HrcSubmissionResponse = {
-    submissionId: dispatched.submissionId,
-    admission: dispatched.admission,
-    ...(dispatched.reason !== undefined ? { reason: dispatched.reason } : {}),
-  }
-  if (dispatched.admission === 'rejected') {
-    return json({
-      ...result,
-      disposition: {
-        type: 'rejected',
-        reason: dispatched.reason ?? 'rejected',
-      },
-    } satisfies HrcSubmissionResponse)
-  }
   const wait = 'wait' in body && body.wait === true
-  if (!wait) return json(result)
-  const run = this.db.runs.getByRunId(runId)
-  if (run?.invocationId === undefined) {
-    throw new HrcRuntimeUnavailableError('admitted submission has no broker invocation', {
-      runId,
-      submissionId: dispatched.submissionId,
-    })
-  }
-  return json({
-    ...result,
-    ...(await waitForSubmissionTerminal(this, {
-      invocationId: run.invocationId,
-      runId,
-      submissionId: dispatched.submissionId,
-      signal: request.signal,
-    })),
-  } satisfies HrcSubmissionResponse)
+  return await waitForPublicDispatchStage(
+    this,
+    publicResponse,
+    wait ? 'terminal' : 'accepted',
+    false,
+    request.signal,
+    true
+  )
 }
 
 function publicDispatchBody(
@@ -504,6 +509,39 @@ function publicDispatchBody(
         }
       : {}),
   } as DispatchTurnResponse
+}
+
+async function dispatchPublicSubmission(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent,
+  prompt: string,
+  options: DispatchTurnForSessionOptions & { requireSubmissionIdentity?: boolean | undefined }
+): Promise<DispatchTurnResponse> {
+  const { requireSubmissionIdentity = false, ...dispatchOptions } = options
+  const response = await server.dispatchTurnForSession(session, intent, prompt, dispatchOptions)
+  const dispatched = (await response.json()) as DispatchTurnResponse
+  if (
+    requireSubmissionIdentity &&
+    (dispatched.submissionId === undefined || dispatched.admission === undefined)
+  ) {
+    throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
+      hostSessionId: session.hostSessionId,
+      runId: dispatchOptions.runId,
+      door: dispatchOptions.submissionDoor,
+    })
+  }
+  const run =
+    dispatchOptions.runId !== undefined
+      ? server.db.runs.getByRunId(dispatchOptions.runId)
+      : undefined
+  const outcome = run ? terminalOutcome(run.status) : undefined
+  return publicDispatchBody(dispatched, outcome === undefined ? 'accepted' : 'terminal', {
+    replayed: false,
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+    ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+  })
 }
 
 function replayDispatchBody(
@@ -569,10 +607,16 @@ async function waitForPublicDispatchStage(
   server: HrcServerInstanceForHandlers,
   base: DispatchTurnResponse,
   requested: PublicDispatchWaitStage,
-  replayed: boolean
+  replayed: boolean,
+  signal: AbortSignal = new AbortController().signal,
+  requireSubmissionIdentity = false
 ): Promise<Response> {
   if (requested === 'accepted' || base.stage === 'terminal') {
-    return json({ ...base, replayed }, base.stage === 'accepted' ? 202 : 200)
+    const dispatch = { ...base, replayed }
+    return json(
+      projectSubmissionResponse(dispatch, {}, requireSubmissionIdentity),
+      base.stage === 'accepted' && base.admission !== 'rejected' ? 202 : 200
+    )
   }
 
   const invocationId = base.observation?.broker?.selector.invocationId
@@ -582,24 +626,68 @@ async function waitForPublicDispatchStage(
       requested,
     })
   }
-  await waitForSubmissionTerminal(server, {
+  const projection = await waitForSubmissionTerminal(server, {
     invocationId,
     runId: base.runId,
     submissionId: base.submissionId,
-    signal: new AbortController().signal,
+    signal,
     waitForTurnTerminal: requested === 'terminal',
   })
   const run = server.db.runs.getByRunId(base.runId)
   const outcome = run === null ? undefined : terminalOutcome(run.status)
-  return json(
-    publicDispatchBody(base, requested, {
-      replayed,
-      ...(outcome !== undefined ? { outcome } : {}),
-      ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
-      ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
-    }),
-    200
-  )
+  const dispatch = publicDispatchBody(base, requested, {
+    replayed,
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+    ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+  })
+  return json(projectSubmissionResponse(dispatch, projection, requireSubmissionIdentity), 200)
+}
+
+export function projectSubmissionResponse(
+  dispatch: DispatchTurnResponse,
+  projection: Pick<HrcSubmissionResponse, 'disposition' | 'terminal'> = {},
+  requireSubmissionIdentity = false
+): DispatchTurnResponse | HrcSubmissionResponse {
+  if (dispatch.submissionId === undefined || dispatch.admission === undefined) {
+    if (requireSubmissionIdentity) {
+      throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
+        runId: dispatch.runId,
+      })
+    }
+    return dispatch
+  }
+  const disposition = projection.disposition
+  if (dispatch.admission === 'rejected') {
+    return {
+      submissionId: dispatch.submissionId,
+      admission: 'rejected',
+      ...(dispatch.reason !== undefined ? { reason: dispatch.reason } : {}),
+      disposition: disposition ?? {
+        type: 'rejected',
+        reason: dispatch.reason ?? 'rejected',
+      },
+    } satisfies HrcSubmissionResponse
+  }
+  if (
+    disposition?.type === 'rejected' ||
+    disposition?.type === 'expired' ||
+    disposition?.type === 'cancelled'
+  ) {
+    return {
+      submissionId: dispatch.submissionId,
+      admission: 'admitted',
+      ...(dispatch.reason !== undefined ? { reason: dispatch.reason } : {}),
+      disposition,
+    } satisfies HrcSubmissionResponse
+  }
+  return {
+    ...dispatch,
+    submissionId: dispatch.submissionId,
+    admission: 'admitted',
+    ...(dispatch.reason !== undefined ? { reason: dispatch.reason } : {}),
+    ...projection,
+  }
 }
 
 export async function handleEnsureRuntime(
@@ -792,7 +880,7 @@ export async function handleDispatchTurn(
   }
 
   const dispatch = async (): Promise<DispatchTurnResponse> => {
-    const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
+    return await dispatchPublicSubmission(this, session, intent, body.prompt, {
       runId,
       // Accepted requests detach at the durable acceptance boundary. Later
       // stages first obtain broker submission identity, then wait on its ledger.
@@ -815,15 +903,6 @@ export async function handleDispatchTurn(
       ...(body.repair !== undefined
         ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
         : {}),
-    })
-    const legacy = (await response.json()) as DispatchTurnResponse
-    const run = this.db.runs.getByRunId(runId)
-    const outcome = run ? terminalOutcome(run.status) : undefined
-    return publicDispatchBody(legacy, outcome === undefined ? 'accepted' : 'terminal', {
-      replayed: false,
-      ...(outcome !== undefined ? { outcome } : {}),
-      ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
-      ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
     })
   }
 

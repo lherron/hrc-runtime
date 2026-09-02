@@ -34,8 +34,8 @@ required_tests:
   - preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts
   - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
 last_verified:
-  date: 2026-09-01
-  evidence: Daedalus round-5 source-grounded architecture approval of T-07843 rev 7; implementation gates pending.
+  date: 2026-09-02
+  evidence: T-07880 re-verified after adding session-binding request fields and observation response fields to invoke enqueue and preempt. These are transport plumbing already carried by the /v1/turns invoke alias; they do not add remove select or re-parameterize an admission class turn policy wait mode or disposition. The six required invariant tests remain green.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn

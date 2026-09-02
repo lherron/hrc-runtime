@@ -649,7 +649,9 @@ export function parseSubmissionRequest(
     'responseFormat',
     'freshContext',
     ...(door === 'enqueue' || door === 'preempt' ? ['ttlMs'] : []),
-    ...(door === 'steer' ? [] : ['turnPolicy', 'wait']),
+    ...(door === 'steer'
+      ? []
+      : ['turnPolicy', 'wait', 'runtimeIntent', 'establishedBrokerInvocationId']),
   ]
   rejectUnknownFields(input, allowed)
 
@@ -687,6 +689,11 @@ export function parseSubmissionRequest(
     { field: 'turnPolicy' }
   )
   const wait = readOptionalBooleanField(input, 'wait')
+  const runtimeIntent = input['runtimeIntent']
+  const establishedBrokerInvocationId = readOptionalNonEmptyStringField(
+    input,
+    'establishedBrokerInvocationId'
+  )
   const ttlMs =
     door === 'enqueue' || door === 'preempt'
       ? parseOptionalSubmissionTtlMs(input['ttlMs'])
@@ -696,6 +703,10 @@ export function parseSubmissionRequest(
     ...(ttlMs !== undefined ? { ttlMs } : {}),
     ...(turnPolicy !== undefined ? { turnPolicy } : {}),
     ...(wait !== undefined ? { wait } : {}),
+    ...(runtimeIntent && isRecord(runtimeIntent)
+      ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
+      : {}),
+    ...(establishedBrokerInvocationId !== undefined ? { establishedBrokerInvocationId } : {}),
   }
 }
 
