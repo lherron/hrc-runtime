@@ -13,6 +13,7 @@ import type {
   DispatchTurnResponse,
   DispatchTurnTerminalOutcome,
   EnqueueSubmissionRequest,
+  HrcBrokerInvocationEventRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -135,6 +136,70 @@ function parseBrokerPayload(record: { brokerEventJson: string }): Record<string,
     return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
   } catch {
     return {}
+  }
+}
+
+export type StoredAdmissionRequest = {
+  submissionId: string
+  principalRef: string
+  envelopeId?: string | undefined
+}
+
+/**
+ * Join broker manifest submission ids back to their durable admission origins.
+ *
+ * Both preempt authority and auto-reply discharge depend on this exact join.
+ * Keeping it here preserves the source-text invariant around §5 while avoiding
+ * two subtly different interpretations of the same stored broker events.
+ */
+export function storedAdmissionRequestsForSubmissionIds(
+  records: ReadonlyArray<Pick<HrcBrokerInvocationEventRecord, 'type' | 'brokerEventJson'>>,
+  submissionIds: ReadonlySet<string>
+): StoredAdmissionRequest[] {
+  const requests: StoredAdmissionRequest[] = []
+  for (const record of records) {
+    if (record.type !== 'admission.requested') continue
+    const payload = parseBrokerPayload(record)
+    const submissionId = payload['submissionId']
+    const origin = payload['origin']
+    if (
+      typeof submissionId !== 'string' ||
+      !submissionIds.has(submissionId) ||
+      origin === null ||
+      typeof origin !== 'object'
+    ) {
+      continue
+    }
+    const principalRef = (origin as Record<string, unknown>)['principalRef']
+    const envelopeId = (origin as Record<string, unknown>)['envelopeId']
+    if (typeof principalRef !== 'string') continue
+    requests.push({
+      submissionId,
+      principalRef,
+      ...(typeof envelopeId === 'string' ? { envelopeId } : {}),
+    })
+  }
+  return requests
+}
+
+/** Exact envelope origins dispositioned into one stored turn. */
+export function storedManifestEnvelopeIdsForTurn(
+  records: ReadonlyArray<Pick<HrcBrokerInvocationEventRecord, 'type' | 'brokerEventJson'>>,
+  turnId: string
+): { eventsPresent: boolean; envelopeIds: string[] } {
+  const submissionIds = new Set<string>()
+  for (const record of records) {
+    if (record.type !== 'submission.executed' && record.type !== 'submission.absorbed') continue
+    const payload = parseBrokerPayload(record)
+    if (payload['turnId'] === turnId && typeof payload['submissionId'] === 'string') {
+      submissionIds.add(payload['submissionId'])
+    }
+  }
+  if (submissionIds.size === 0) return { eventsPresent: false, envelopeIds: [] }
+  const requests = storedAdmissionRequestsForSubmissionIds(records, submissionIds)
+  return {
+    eventsPresent: requests.length > 0,
+    envelopeIds: [...new Set(requests.flatMap((request) => request.envelopeId ?? []))],
   }
 }
 
@@ -264,7 +329,7 @@ function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefine
     : undefined
 }
 
-async function preemptAuthorized(
+export async function preemptAuthorized(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   request: PreemptSubmissionRequest
@@ -290,21 +355,14 @@ async function preemptAuthorized(
     .turnManifest(runtime.runtimeId, probe.response.seat.turnId)
   if (!manifest.ok) return false
   const manifestIds = new Set(manifest.response.submissionIds)
-  return server.db.brokerInvocationEvents
-    .listByInvocationId(runtime.activeInvocationId)
-    .filter((record) => record.type === 'admission.requested')
-    .some((record) => {
-      const payload = parseBrokerPayload(record)
-      const origin = payload['origin']
-      return (
-        typeof payload['submissionId'] === 'string' &&
-        manifestIds.has(payload['submissionId']) &&
-        origin !== null &&
-        typeof origin === 'object' &&
-        (origin as Record<string, unknown>)['principalRef'] === request.origin.principalRef &&
-        (origin as Record<string, unknown>)['envelopeId'] === request.origin.envelopeId
-      )
-    })
+  return storedAdmissionRequestsForSubmissionIds(
+    server.db.brokerInvocationEvents.listByInvocationId(runtime.activeInvocationId),
+    manifestIds
+  ).some(
+    (origin) =>
+      origin.principalRef === request.origin.principalRef &&
+      origin.envelopeId === request.origin.envelopeId
+  )
 }
 
 export async function handleSubmission(

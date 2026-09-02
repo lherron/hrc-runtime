@@ -186,6 +186,18 @@ describe('HrcMailDriveRepository', () => {
     db.close()
     db = openHrcDatabase(dbPath)
     expect(db.mailDrives.listPendingAutoReplyIntents()).toHaveLength(1)
+    db.mailDrives.recordAutoReplyDischargeOutcome('drive-auto-reply', {
+      source: 'manifest',
+      envelopeIds: ['EN-00021'],
+      refusedEnvelopeId: 'EN-00022',
+      refusalCode: 'WRKQ_VALIDATION',
+    })
+    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply')?.dischargeOutcome).toEqual({
+      source: 'manifest',
+      envelopeIds: ['EN-00021'],
+      refusedEnvelopeId: 'EN-00022',
+      refusalCode: 'WRKQ_VALIDATION',
+    })
   })
 
   it('never creates auto-reply intent for an unsuccessful drive completion', () => {

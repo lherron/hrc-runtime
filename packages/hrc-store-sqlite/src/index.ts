@@ -151,6 +151,7 @@ export type {
 export type {
   CompleteHrcMailDriveResult,
   HrcMailAutoReplyCandidate,
+  HrcMailAutoReplyDischargeOutcome,
   HrcMailAutoReplyIntent,
   HrcMailAutoReplyIntentState,
   HrcMailDriveActionable,

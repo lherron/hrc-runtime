@@ -65,6 +65,14 @@ export type HrcMailAutoReplyIntentState =
   | 'already-discharged'
   | 'empty-response'
 
+export type HrcMailAutoReplyDischargeOutcome = {
+  source: 'manifest' | 'candidate'
+  envelopeIds: string[]
+  refusedEnvelopeId?: string | undefined
+  refusalCode?: string | undefined
+  refusalReason?: string | undefined
+}
+
 export type HrcMailAutoReplyIntent = {
   driveAttemptId: string
   sourceRef: string
@@ -77,6 +85,8 @@ export type HrcMailAutoReplyIntent = {
   attemptCount: number
   sayAttemptCount: number
   verificationPending: boolean
+  /** Last exact-set derivation/refusal, durable across reconciler restarts. */
+  dischargeOutcome?: HrcMailAutoReplyDischargeOutcome | undefined
   lastAttemptAt?: string | undefined
   lastError?: string | undefined
   createdAt: string
@@ -229,6 +239,7 @@ type AutoReplyIntentRow = {
   attempt_count: number
   say_attempt_count: number
   verification_pending: number
+  discharge_outcome_json: string | null
   last_attempt_at: string | null
   last_error: string | null
   created_at: string
@@ -255,7 +266,7 @@ const AUTO_REPLY_INTENT_COLUMNS = `
   drive_attempt_id, source_ref, source_envelope_ids_json, room_key,
   counterparty_ref, run_id, target_session_ref, state, attempt_count,
   say_attempt_count, verification_pending, last_attempt_at, last_error,
-  created_at, updated_at, terminal_at
+  discharge_outcome_json, created_at, updated_at, terminal_at
 `
 
 function parseEnvelopeIds(json: string): string[] {
@@ -296,6 +307,13 @@ function mapAutoReplyIntent(row: AutoReplyIntentRow): HrcMailAutoReplyIntent {
     attemptCount: row.attempt_count,
     sayAttemptCount: row.say_attempt_count,
     verificationPending: row.verification_pending === 1,
+    ...(row.discharge_outcome_json === null
+      ? {}
+      : {
+          dischargeOutcome: JSON.parse(
+            row.discharge_outcome_json
+          ) as HrcMailAutoReplyDischargeOutcome,
+        }),
     ...(row.last_attempt_at === null ? {} : { lastAttemptAt: row.last_attempt_at }),
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
     createdAt: row.created_at,
@@ -910,6 +928,21 @@ export class HrcMailDriveRepository {
           WHERE drive_attempt_id = ? AND state = 'pending'`
       )
       .run(error, now, driveAttemptId)
+    return this.requireAutoReplyIntent(driveAttemptId)
+  }
+
+  recordAutoReplyDischargeOutcome(
+    driveAttemptId: string,
+    outcome: HrcMailAutoReplyDischargeOutcome
+  ): HrcMailAutoReplyIntent {
+    const now = new Date().toISOString()
+    this.db
+      .query(
+        `UPDATE hrcmail_auto_reply_intents
+            SET discharge_outcome_json = ?, updated_at = ?
+          WHERE drive_attempt_id = ? AND state = 'pending'`
+      )
+      .run(JSON.stringify(outcome), now, driveAttemptId)
     return this.requireAutoReplyIntent(driveAttemptId)
   }
 

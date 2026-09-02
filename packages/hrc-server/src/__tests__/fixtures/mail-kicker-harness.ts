@@ -31,7 +31,11 @@ type ServerDispatch = (
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   prompt: string,
-  options: { runId: string }
+  options: {
+    runId: string
+    submissionDoor?: string | undefined
+    turnPolicy?: string | undefined
+  }
 ) => Promise<Response>
 
 /**
@@ -146,6 +150,8 @@ export type DeterministicStart = {
   calls: () => number
   prompts: () => string[]
   inputIds: () => string[]
+  submissionDoors: () => Array<string | undefined>
+  turnPolicies: () => Array<string | undefined>
   rotateRuntime: () => void
 }
 
@@ -160,12 +166,18 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
   let runtimeGeneration = 0
   const prompts: string[] = []
   const inputIds: string[] = []
+  const submissionDoors: Array<string | undefined> = []
+  const turnPolicies: Array<string | undefined> = []
   const runtimesBySession = new Map<string, string>()
   serverInternals(serverInstance).dispatchTurnForSession = async (
     session: HrcSessionRecord,
     _intent: HrcRuntimeIntent,
     prompt: string,
-    options: { runId: string }
+    options: {
+      runId: string
+      submissionDoor?: string | undefined
+      turnPolicy?: string | undefined
+    }
   ): Promise<Response> => {
     calls += 1
     prompts.push(prompt)
@@ -173,6 +185,8 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     const runId = options.runId
     const inputId = `input-${runId}`
     inputIds.push(inputId)
+    submissionDoors.push(options.submissionDoor)
+    turnPolicies.push(options.turnPolicy)
     const existing = db.runs.getByRunId(runId)
     if (existing !== null) {
       return Response.json({
@@ -275,6 +289,8 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     calls: () => calls,
     prompts: () => prompts,
     inputIds: () => inputIds,
+    submissionDoors: () => submissionDoors,
+    turnPolicies: () => turnPolicies,
     rotateRuntime: () => {
       const db = serverInternals(serverInstance).db
       const now = timestamp()

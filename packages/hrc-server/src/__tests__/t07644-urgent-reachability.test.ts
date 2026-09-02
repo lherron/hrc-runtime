@@ -79,7 +79,14 @@ async function startServer(options: Record<string, unknown> = {}): Promise<HrcSe
   return server
 }
 
-type Dispatch = { phase: 'enqueue' | 'drive'; prompt: string; runId?: string | undefined }
+type Dispatch = {
+  phase: 'enqueue' | 'drive'
+  prompt: string
+  runId?: string | undefined
+  submissionDoor?: string | undefined
+  turnPolicy?: string | undefined
+  envelopeId?: string | undefined
+}
 
 /**
  * A dispatch that answers both halves of shape 1.
@@ -103,13 +110,22 @@ function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Disp
       runId?: string | undefined
       submissionDoor?: string | undefined
       ttlMs?: number | undefined
+      turnPolicy?: string | undefined
+      submissionOrigin?: { envelopeId?: string | undefined } | undefined
     }
   ): Promise<Response> => {
     // A slot-less mid-turn delivery carries no runId; the ordinary drive
     // carries the attempt's. Both select enqueue explicitly with a TTL.
     const phase = options.runId === undefined ? 'enqueue' : 'drive'
-    calls.push({ phase, prompt, runId: options.runId })
-    expect(options.submissionDoor).toBe('enqueue')
+    calls.push({
+      phase,
+      prompt,
+      runId: options.runId,
+      submissionDoor: options.submissionDoor,
+      turnPolicy: options.turnPolicy,
+      envelopeId: options.submissionOrigin?.envelopeId,
+    })
+    if (phase === 'drive') expect(options.submissionDoor).toBe('enqueue')
     expect(options.ttlMs).toBeGreaterThan(0)
     if (phase === 'enqueue') {
       if (enqueueOutcome === 'throw') throw new Error('broker refused the input')
@@ -155,6 +171,7 @@ function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Disp
     db.runtimes.insert({
       runtimeId,
       runtimeKind: 'harness',
+      controllerKind: 'harness-broker',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -167,6 +184,7 @@ function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Disp
       supportsInflightInput: false,
       adopted: false,
       activeRunId: runId,
+      activeInvocationId: 'inv-kicker-live',
       createdAt: now,
       updatedAt: now,
     })
@@ -218,6 +236,49 @@ async function summonIntoKickerTurn(calls: () => Dispatch[]): Promise<void> {
     () => db.mailDrives.getActiveAttempt(TARGET)?.state === 'started',
     'drive attempt in flight'
   )
+}
+
+function installLiveManifest(envelopeId: string, principalRef = 'agent:mable'): void {
+  const instance = server as HrcServer
+  const db = serverInternals(instance).db
+  const runtime = db.sqlite
+    .query<{ runtime_id: string }, []>(
+      "SELECT runtime_id FROM runtimes WHERE active_invocation_id = 'inv-kicker-live' LIMIT 1"
+    )
+    .get()
+  if (runtime === null) throw new Error('live kicker runtime missing')
+  db.brokerInvocationEvents.appendEvent({
+    invocationId: 'inv-kicker-live',
+    seq: db.brokerInvocationEvents.maxBrokerSeq('inv-kicker-live') + 1,
+    time: timestamp(),
+    type: 'admission.requested',
+    runtimeId: runtime.runtime_id,
+    payload: {
+      submissionId: `sub-${envelopeId}`,
+      class: 'queue',
+      origin: { principalRef, envelopeId },
+      turnPolicy: 'guarded',
+    },
+  })
+  ;(instance as any).getHarnessBrokerController = () => ({
+    seatProbe: async () => ({
+      ok: true,
+      response: {
+        invocationId: 'inv-kicker-live',
+        seat: { state: 'turn-active', turnId: 'turn-kicker-live' },
+        brokerHeldDepth: 0,
+      },
+    }),
+    turnManifest: async () => ({
+      ok: true,
+      response: {
+        invocationId: 'inv-kicker-live',
+        turnId: 'turn-kicker-live',
+        policy: 'guarded',
+        submissionIds: [`sub-${envelopeId}`],
+      },
+    }),
+  })
 }
 
 async function withServerLog<T>(run: (lines: string[]) => Promise<T>): Promise<string[]> {
@@ -530,6 +591,84 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).not.toContain('queuedDelivery')
+  })
+
+  it('routes an authorized busy hold through preempt with guarded policy and ttl', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+
+    const held = say({ body: 'interrupt now', delivery: 'hold' })
+    installLiveManifest(held.id)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => calls().length === 2, 'authorized hold dispatched')
+
+    expect(calls()[1]).toMatchObject({
+      phase: 'enqueue',
+      submissionDoor: 'preempt',
+      turnPolicy: 'guarded',
+      envelopeId: held.id,
+    })
+    expect(ledger.envelopes.get(held.id)?.presentedTo).toHaveLength(1)
+  })
+
+  it('degrades an unauthorized busy hold to enqueue and records hold_refused_authority', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+
+    const held = say({ body: 'not the driving envelope', delivery: 'hold' })
+    installLiveManifest('EN-not-this-hold')
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(
+      () => (ledger.envelopes.get(held.id)?.presentedTo.length ?? 0) === 1,
+      'refused hold receipt'
+    )
+
+    expect(calls()[1]).toMatchObject({ submissionDoor: 'enqueue', envelopeId: held.id })
+    expect(ledger.envelopes.get(held.id)?.presentedTo[0]?.deliveryOutcome).toBe(
+      'hold_refused_authority'
+    )
+  })
+
+  it('allows the real operator principal to preempt without a manifest match', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+
+    const held = say({
+      body: 'operator interruption',
+      delivery: 'hold',
+      fromPrincipalRef: 'human:lance',
+      fromScopeRef: undefined,
+    })
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => calls().length === 2, 'operator hold dispatched')
+
+    expect(calls()[1]).toMatchObject({
+      submissionDoor: 'preempt',
+      turnPolicy: 'guarded',
+      envelopeId: held.id,
+    })
+  })
+
+  it('never batches a hold with ordinary mail', async () => {
+    await startServer()
+    const calls = installShapeOneDispatch('accept')
+    await summonIntoKickerTurn(calls)
+
+    const queued = say({ body: 'ordinary sibling' })
+    const held = say({ body: 'isolated hold', delivery: 'hold' })
+    installLiveManifest(held.id)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => calls().length === 3, 'isolated hold and follow-up queue dispatched')
+
+    expect(calls()[1]?.envelopeId).toBe(held.id)
+    expect(calls()[1]?.prompt).toContain('isolated hold')
+    expect(calls()[1]?.prompt).not.toContain('ordinary sibling')
+    expect(calls()[2]?.envelopeId).toBe(queued.id)
+    expect(calls()[2]?.prompt).toContain('ordinary sibling')
+    expect(calls()[2]?.submissionDoor).toBe('enqueue')
   })
 })
 

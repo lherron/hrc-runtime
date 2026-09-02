@@ -99,6 +99,30 @@ async function pendingIntent(
   return { intent, sourceId: source.id }
 }
 
+function seedBrokerRun(
+  intent: HrcMailAutoReplyIntent,
+  invocationId: string,
+  submissionId: string
+): void {
+  const suffix = intent.runId.replace('run-auto-', '')
+  const now = new Date().toISOString()
+  db.runs.insert({
+    runId: intent.runId,
+    hostSessionId: `hsid-auto-${suffix}`,
+    scopeRef: 'agent:cody:project:hrc-runtime:task:T-07820',
+    laneRef: 'main',
+    generation: 1,
+    transport: 'headless',
+    status: 'completed',
+    acceptedAt: now,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    invocationId,
+    brokerSubmissionId: submissionId,
+  })
+}
+
 describe('T-07820 auto-reply eligibility', () => {
   it('admits one pending envelope or one fan-out group from one sender only', () => {
     const first = ledger.say({
@@ -150,11 +174,141 @@ describe('T-07820 auto-reply reconciliation', () => {
         body: 'Canonical final answer',
         to: [COUNTERPARTY],
         idempotencyKey: `auto-reply:${intent.driveAttemptId}`,
-        meta: { auto: 'turn_final' },
+        dischargeEnvelopeIds: [expect.stringMatching(/^EN-/)],
+        meta: {
+          auto: 'turn_final',
+          discharge: 'candidate',
+          dischargeEnvelopeIds: [expect.stringMatching(/^EN-/)],
+        },
         principalRef: 'agent:cody',
         scopeRef: LEDGER_TARGET,
       },
     ])
+  })
+
+  it('discharges only the manifest-carried envelope in a multi-request turn', async () => {
+    const { intent, sourceId } = await pendingIntent()
+    const sibling = ledger.say({
+      toScopeRef: LEDGER_TARGET,
+      fromScopeRef: COUNTERPARTY,
+      fromPrincipalRef: 'agent:chief',
+      roomKey: ROOM,
+      body: 'owed outside this manifest',
+    })
+    await ledger.present({
+      envelope: sibling.id,
+      driveAttemptId: 'drive-sibling',
+      runtimeId: 'rt-auto-manifest',
+      runId: 'run-sibling',
+    })
+    seedBrokerRun(intent, 'inv-auto-manifest', 'sub-source')
+    const append = (seq: number, type: string, payload: Record<string, unknown>) => {
+      const time = new Date(Date.UTC(2026, 8, 2, 5, 0, seq)).toISOString()
+      db.brokerInvocationEvents.appendEvent({
+        invocationId: 'inv-auto-manifest',
+        seq,
+        time,
+        type,
+        runtimeId: 'rt-auto-manifest',
+        runId: intent.runId,
+        payload,
+      })
+    }
+    append(1, 'admission.requested', {
+      submissionId: 'sub-source',
+      class: 'queue',
+      origin: { principalRef: 'agent:chief', envelopeId: sourceId },
+      turnPolicy: 'open',
+    })
+    append(2, 'submission.executed', {
+      submissionId: 'sub-source',
+      turnId: 'turn-manifest',
+    })
+
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    expect(ledger.roomSayRequests[0]).toMatchObject({
+      dischargeEnvelopeIds: [sourceId],
+      meta: { discharge: 'manifest', dischargeEnvelopeIds: [sourceId] },
+    })
+    expect(ledger.envelopes.get(sourceId)?.state).toBe('acked')
+    expect(ledger.envelopes.get(sibling.id)?.state).toBe('presented')
+  })
+
+  it('drops a typed discharge offender, retries the reduced exact set once, and never goes wide', async () => {
+    const { intent, sourceId } = await pendingIntent()
+    const sibling = ledger.say({
+      toScopeRef: LEDGER_TARGET,
+      fromScopeRef: COUNTERPARTY,
+      fromPrincipalRef: 'agent:chief',
+      roomKey: ROOM,
+      body: 'raced manual disposition',
+    })
+    await ledger.present({
+      envelope: sibling.id,
+      driveAttemptId: 'drive-race',
+      runtimeId: 'rt-auto-refusal',
+      runId: 'run-race',
+    })
+    seedBrokerRun(intent, 'inv-auto-refusal', 'sub-source')
+    const rows = [
+      {
+        type: 'admission.requested',
+        payload: {
+          submissionId: 'sub-source',
+          origin: { principalRef: 'agent:chief', envelopeId: sourceId },
+        },
+      },
+      {
+        type: 'admission.requested',
+        payload: {
+          submissionId: 'sub-sibling',
+          origin: { principalRef: 'agent:chief', envelopeId: sibling.id },
+        },
+      },
+      {
+        type: 'submission.executed',
+        payload: { submissionId: 'sub-source', turnId: 'turn-refusal' },
+      },
+      {
+        type: 'submission.absorbed',
+        payload: { submissionId: 'sub-sibling', turnId: 'turn-refusal' },
+      },
+    ]
+    rows.forEach((row, index) => {
+      db.brokerInvocationEvents.appendEvent({
+        invocationId: 'inv-auto-refusal',
+        seq: index + 1,
+        time: new Date(Date.UTC(2026, 8, 2, 6, 0, index)).toISOString(),
+        type: row.type,
+        runtimeId: 'rt-auto-refusal',
+        runId: intent.runId,
+        payload: row.payload,
+      })
+    })
+    const realSay = ledger.roomSay.bind(ledger)
+    let calls = 0
+    ledger.roomSay = async (params) => {
+      calls += 1
+      if (calls === 1) ledger.ack(sibling.id)
+      return await realSay(params)
+    }
+
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    expect(ledger.roomSayRequests.map((request) => request.dischargeEnvelopeIds)).toEqual([
+      [sourceId, sibling.id],
+      [sourceId],
+    ])
+    expect(
+      ledger.roomSayRequests.every((request) => request.dischargeEnvelopeIds !== undefined)
+    ).toBe(true)
+    expect(db.mailDrives.getAutoReplyIntent(intent.driveAttemptId)?.dischargeOutcome).toMatchObject(
+      {
+        source: 'manifest',
+        envelopeIds: [sourceId],
+        refusedEnvelopeId: sibling.id,
+        refusalCode: 'WRKQ_VALIDATION',
+      }
+    )
   })
 
   it('separates multiple semantic turn messages in the canonical response body', async () => {
@@ -269,7 +423,7 @@ describe('T-07820 auto-reply reconciliation', () => {
     await ledger.roomSay({
       ref: ROOM,
       body: 'wrong principal',
-      to: [COUNTERPARTY],
+      to: ['observer@hcs:T-07789'],
       idempotencyKey: key,
       principalRef: 'agent:other',
       scopeRef: 'other@hrc-runtime:T-07820',
@@ -277,7 +431,7 @@ describe('T-07820 auto-reply reconciliation', () => {
     await ledger.roomSay({
       ref: ROOM,
       body: 'wrong key',
-      to: [COUNTERPARTY],
+      to: ['observer@hcs:T-07789'],
       idempotencyKey: `${key}:other`,
       principalRef: 'agent:cody',
       scopeRef: TARGET,

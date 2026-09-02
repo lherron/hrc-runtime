@@ -233,6 +233,45 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     )
   })
 
+  it('delivers a hold to an idle seat by enqueue and round-trips delivery plus expiresAt', async () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    const envelope = say({ body: 'idle hold', delivery: 'hold', expiresAt })
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => deterministic.calls() === 1, 'idle hold dispatched')
+
+    expect(deterministic.submissionDoors()).toEqual(['enqueue'])
+    expect(deterministic.turnPolicies()).toEqual([undefined])
+    expect(deterministic.prompts()[0]).toContain('reply required · hold]')
+    expect(ledger.envelopes.get(envelope.id)).toMatchObject({ delivery: 'hold', expiresAt })
+  })
+
+  it('never presents expired or withdrawn ledger rows', async () => {
+    const expired = say({ body: 'expired body', delivery: 'hold' })
+    const withdrawn = say({ body: 'withdrawn body' })
+    const live = say({ body: 'live body' })
+    const expiredRow = ledger.envelopes.get(expired.id)
+    const withdrawnRow = ledger.envelopes.get(withdrawn.id)
+    if (expiredRow === undefined || withdrawnRow === undefined) throw new Error('missing rows')
+    expiredRow.state = 'expired'
+    expiredRow.terminal = true
+    withdrawnRow.state = 'withdrawn'
+    withdrawnRow.terminal = true
+
+    await startServer()
+    const deterministic = installDeterministicStart(server as HrcServer)
+    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    await waitUntil(() => deterministic.calls() === 1, 'live row dispatched')
+
+    expect(deterministic.prompts()[0]).toContain('live body')
+    expect(deterministic.prompts()[0]).not.toContain('expired body')
+    expect(deterministic.prompts()[0]).not.toContain('withdrawn body')
+    expect(ledger.envelopes.get(live.id)?.presentedTo).toHaveLength(1)
+    expect(ledger.envelopes.get(expired.id)?.presentedTo).toEqual([])
+    expect(ledger.envelopes.get(withdrawn.id)?.presentedTo).toEqual([])
+  })
+
   it('cues history per RUNTIME: cold on arrival, silent when warm, cold again after a /quit', async () => {
     await startServer()
     // A session that already exists and already has a runtime, so the cue

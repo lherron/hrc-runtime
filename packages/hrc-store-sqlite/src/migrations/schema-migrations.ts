@@ -2175,6 +2175,16 @@ const hrcmailAutoReplyMigration: HrcMigration = {
   },
 }
 
+/** T-07874 — make exact-discharge derivation/refusal visible after restart. */
+const hrcmailAutoReplyDischargeOutcomeMigration: HrcMigration = {
+  id: '0050_hrcmail_auto_reply_discharge_outcome',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE hrcmail_auto_reply_intents ADD COLUMN discharge_outcome_json TEXT;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2220,4 +2230,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailQueuedAttemptMigration,
   hrcmailEnvelopeLifetimeMigration,
   hrcmailAutoReplyMigration,
+  hrcmailAutoReplyDischargeOutcomeMigration,
 ]

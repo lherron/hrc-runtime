@@ -4,6 +4,7 @@ import type {
   HrcLifecycleEvent,
   HrcRunRecord,
   HrcSessionRecord,
+  PreemptSubmissionRequest,
 } from 'hrc-core'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type {
@@ -18,6 +19,7 @@ import type { ForeignHome } from './federation/home-authority.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
 import { formatSessionRef } from './messages.js'
 import { parseSessionRef } from './server-parsers.js'
+import { preemptAuthorized } from './turn-dispatch-handlers.js'
 
 import { isRunActive, isRuntimeUnavailableStatus } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -437,6 +439,20 @@ type ActionableEnvelope = {
 }
 
 /**
+ * A stored hold is an interruption request and therefore owns one admission
+ * decision. It can never inherit another envelope's origin by being batched,
+ * nor lend its hold intent to ordinary queue mail.
+ */
+function isolatedDeliveryBatch(actionable: readonly ActionableEnvelope[]): {
+  selected: ActionableEnvelope[]
+  deferredCount: number
+} {
+  const hold = actionable.find((item) => item.envelope.delivery === 'hold')
+  if (hold === undefined) return { selected: [...actionable], deferredCount: 0 }
+  return { selected: [hold], deferredCount: actionable.length - 1 }
+}
+
+/**
  * Ask wrkq what stands against one target, and in what form.
  *
  * `pendingView` is the wake set and the stop-hook predicate in one read, and its
@@ -569,6 +585,7 @@ async function recordPresentations(
     })
     presentables.push({
       envelope: result.envelope,
+      delivery: result.envelope.delivery,
       // A pointer form carries no body and therefore no history cue: the cue
       // exists to orient a cold reader at first contact, and every pointer
       // goes to a reader who has already had one.
@@ -762,6 +779,7 @@ async function presentIntoBusyTarget(
   for (const item of envelopes) {
     presentables.push({
       envelope: item.envelope,
+      delivery: item.envelope.delivery,
       historyHint: false,
       messageCount: 0,
       form: item.form,
@@ -771,19 +789,39 @@ async function presentIntoBusyTarget(
   }
   const prompt = formatEnvelopePresentations(presentables)
 
+  const firstEnvelope = envelopes[0]?.envelope
+  const origin = {
+    principalRef: firstEnvelope?.from.principalRef ?? 'system:hrc-kicker',
+    ...(firstEnvelope?.from.scopeRef === undefined
+      ? {}
+      : { scopeRef: firstEnvelope.from.scopeRef }),
+    ...(firstEnvelope === undefined ? {} : { envelopeId: firstEnvelope.id }),
+  }
+  let submissionDoor: 'enqueue' | 'preempt' = 'enqueue'
+  let holdRefusedAuthority = false
+  if (firstEnvelope?.delivery === 'hold') {
+    const request: PreemptSubmissionRequest = {
+      target: targetSessionRef,
+      body: prompt,
+      origin,
+      ttlMs: KICKER_SUBMISSION_TTL_MS,
+      turnPolicy: 'guarded',
+    }
+    if (await preemptAuthorized(server, session, request)) {
+      submissionDoor = 'preempt'
+    } else {
+      holdRefusedAuthority = true
+    }
+  }
+
   let body: DispatchTurnResponse & { inputId?: string | undefined }
   try {
     const response = await server.dispatchTurnForSession(session, intent, prompt, {
       waitForCompletion: false,
-      submissionDoor: 'enqueue',
+      submissionDoor,
       ttlMs: KICKER_SUBMISSION_TTL_MS,
-      submissionOrigin: {
-        principalRef: envelopes[0]?.envelope.from.principalRef ?? 'system:hrc-kicker',
-        ...(envelopes[0]?.envelope.from.scopeRef === undefined
-          ? {}
-          : { scopeRef: envelopes[0].envelope.from.scopeRef }),
-        ...(envelopes[0] === undefined ? {} : { envelopeId: envelopes[0].envelope.id }),
-      },
+      ...(submissionDoor === 'preempt' ? { turnPolicy: 'guarded' as const } : {}),
+      submissionOrigin: origin,
     })
     body = (await response.json()) as DispatchTurnResponse & { inputId?: string | undefined }
     if (body.status !== 'started') {
@@ -833,9 +871,11 @@ async function presentIntoBusyTarget(
       // The outcome CLASS goes on the RECEIPT, not only on the log line
       // (C-16526, re-ruled on T-07644 C-16658): a log rotates and is grepped
       // from one node; the receipt travels with the envelope.
-      deliveryOutcome:
-        item.form === 'full'
-          ? (body.delivery?.code ?? 'queued_to_live_harness')
+      deliveryOutcome: holdRefusedAuthority
+        ? 'hold_refused_authority'
+        : item.form === 'full'
+          ? (body.delivery?.code ??
+            (submissionDoor === 'preempt' ? 'preempted_live_harness' : 'queued_to_live_harness'))
           : `${item.form}_queued_to_live_harness`,
       runId: body.runId,
       ...(inputId === undefined ? {} : { inputId }),
@@ -860,6 +900,8 @@ async function presentIntoBusyTarget(
     queuedBehindRunId,
     envelopes: envelopes.map((item) => item.envelope.id),
     forms: envelopes.map((item) => item.form),
+    submissionDoor,
+    ...(holdRefusedAuthority ? { deliveryOutcome: 'hold_refused_authority' } : {}),
   })
   return true
 }
@@ -1218,6 +1260,14 @@ async function driveMailTargetOnce(
     )
     return
   }
+  const batch = isolatedDeliveryBatch(actionable)
+  actionable = batch.selected
+  if (batch.deferredCount > 0) {
+    // The current target operation will observe this on its next drain-loop
+    // iteration. No timer or polling is introduced; this preserves the same
+    // wake while giving each hold its own admission decision.
+    server.requestMailKickerWake(targetSessionRef, wakeReason)
+  }
 
   if (inFlight !== undefined) {
     await declineForInFlightAttempt(
@@ -1444,7 +1494,7 @@ async function driveMailTargetOnce(
             : { scopeRef: ordered[0].envelope.from.scopeRef }),
           ...(ordered[0] === undefined ? {} : { envelopeId: ordered[0].envelope.id }),
         },
-        // The broker owns admission; kicker presentation always uses enqueue.
+        // An idle seat has nothing to preempt; even a stored hold starts by enqueue.
       }
     )
     const body = (await response.json()) as DispatchTurnResponse & {

@@ -48,7 +48,17 @@ export function obligationOwesReply(obligation: WrkqEnvelopeObligation): boolean
   return obligation === 'reply_required'
 }
 
-export type WrkqEnvelopeState = 'pending' | 'presented' | 'acked' | 'deferred' | 'failed'
+export type WrkqEnvelopeState =
+  | 'pending'
+  | 'presented'
+  | 'acked'
+  | 'deferred'
+  | 'failed'
+  | 'expired'
+  | 'withdrawn'
+
+/** Sender-requested delivery intent. wrkq stores it; HRC interprets `hold`. */
+export type WrkqEnvelopeDelivery = 'queue' | 'hold'
 
 /**
  * Why an obligation ended without a reply (rev 5.1 §2).
@@ -101,6 +111,9 @@ export type WrkqEnvelope = {
   /** Exact token that addresses the sender; present on the installed surface. */
   replyTo?: string | undefined
   obligation: WrkqEnvelopeObligation
+  delivery: WrkqEnvelopeDelivery
+  /** Server-normalized deadline. Expiry is materialized by wrkq, never by HRC. */
+  expiresAt?: string | undefined
   body: string
   taskId?: string | undefined
   state: WrkqEnvelopeState
@@ -160,6 +173,8 @@ export type WrkqRoomSayParams = {
   to?: string[] | undefined
   fyi?: boolean | undefined
   idempotencyKey?: string | undefined
+  /** Exact reply-required rows this say may discharge. Omission selects wrkq's legacy wide rule. */
+  dischargeEnvelopeIds?: string[] | undefined
   meta?: Record<string, unknown> | undefined
   principalRef?: string | undefined
   scopeRef?: string | undefined

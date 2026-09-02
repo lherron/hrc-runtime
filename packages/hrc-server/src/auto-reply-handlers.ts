@@ -9,7 +9,9 @@ import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { parseSessionRef } from './server-parsers.js'
+import { storedManifestEnvelopeIdsForTurn } from './turn-dispatch-handlers.js'
 import { envelopeReplyAddressee } from './wrkq/envelope-presentation.js'
+import { WrkqLedgerRequestError } from './wrkq/ledger-client.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 import type { WrkqEnvelope } from './wrkq/ledger-types.js'
 
@@ -79,6 +81,71 @@ function agentSayIdentity(targetSessionRef: string): {
 function pendingAgeMs(intent: HrcMailAutoReplyIntent): number {
   const created = Date.parse(intent.createdAt)
   return Number.isNaN(created) ? 0 : Math.max(Date.now() - created, 0)
+}
+
+type ExactDischarge = {
+  source: 'manifest' | 'candidate'
+  envelopeIds: string[]
+}
+
+function brokerPayload(record: { brokerEventJson: string }): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(record.brokerEventJson) as unknown
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function exactDischargeForIntent(
+  deps: AutoReplyReconcileDeps,
+  intent: HrcMailAutoReplyIntent
+): ExactDischarge {
+  const run = deps.db.runs.getByRunId(intent.runId)
+  const records =
+    run?.invocationId === undefined
+      ? []
+      : deps.db.brokerInvocationEvents.listByInvocationId(run.invocationId)
+  const disposition = records.find((record) => {
+    if (record.type !== 'submission.executed' && record.type !== 'submission.absorbed') {
+      return false
+    }
+    const payload = brokerPayload(record)
+    return (
+      (record.runId !== undefined && record.runId === intent.runId) ||
+      (run?.brokerSubmissionId !== undefined && payload['submissionId'] === run.brokerSubmissionId)
+    )
+  })
+  const turnId = disposition === undefined ? undefined : brokerPayload(disposition)['turnId']
+  if (typeof turnId === 'string') {
+    const manifest = storedManifestEnvelopeIdsForTurn(records, turnId)
+    if (manifest.eventsPresent) {
+      return { source: 'manifest', envelopeIds: manifest.envelopeIds }
+    }
+  }
+  return { source: 'candidate', envelopeIds: [...intent.sourceEnvelopeIds] }
+}
+
+function dischargeRefusal(
+  error: unknown
+): { envelopeId: string; code: string; reason?: string | undefined } | undefined {
+  if (
+    !(error instanceof WrkqLedgerRequestError) ||
+    error.message !== 'invalid discharge envelope'
+  ) {
+    return undefined
+  }
+  const data = error.data
+  if (data === null || typeof data !== 'object') return undefined
+  const record = data as Record<string, unknown>
+  if (record['code'] !== 'WRKQ_VALIDATION' || typeof record['envelope'] !== 'string') {
+    return undefined
+  }
+  return {
+    envelopeId: record['envelope'],
+    code: record['code'],
+    ...(typeof record['reason'] === 'string' ? { reason: record['reason'] } : {}),
+  }
 }
 
 function completeIntent(
@@ -199,28 +266,119 @@ export async function reconcileAutoReplyIntent(
     return completeIntent(deps, intent, 'already-discharged')
   }
 
-  deps.db.mailDrives.markAutoReplySayStarted(intent.driveAttemptId)
+  const derived = exactDischargeForIntent(deps, intent)
+  const refusedPreviously = intent.dischargeOutcome?.refusedEnvelopeId
+  const candidateIds = derived.envelopeIds.filter((id) => id !== refusedPreviously)
+  const known = new Map(sources.map((source) => [source.id, source]))
   try {
-    await deps.wrkqLedger.roomSay({
+    for (const envelopeId of candidateIds) {
+      if (!known.has(envelopeId)) {
+        known.set(envelopeId, await deps.wrkqLedger.envelopeShow({ envelope: envelopeId }))
+      }
+    }
+  } catch (error) {
+    const message = `manifest discharge read failed: ${errorText(error)}`
+    deps.db.mailDrives.recordAutoReplyError(intent.driveAttemptId, message)
+    return 'pending'
+  }
+  const dischargeEnvelopeIds = candidateIds.filter((id) => {
+    const envelope = known.get(id)
+    return envelope?.obligation === 'reply_required' && envelope.presentedTo.length > 0
+  })
+  if (dischargeEnvelopeIds.length === 0) {
+    const message = `exact discharge set is empty (${derived.source})`
+    deps.db.mailDrives.recordAutoReplyDischargeOutcome(intent.driveAttemptId, {
+      source: derived.source,
+      envelopeIds: [],
+      ...(refusedPreviously === undefined ? {} : { refusedEnvelopeId: refusedPreviously }),
+    })
+    deps.db.mailDrives.recordAutoReplyError(intent.driveAttemptId, message)
+    return 'pending'
+  }
+
+  const say = async (ids: string[]) => {
+    deps.db.mailDrives.markAutoReplySayStarted(intent.driveAttemptId)
+    return await deps.wrkqLedger.roomSay({
       ref: intent.roomKey,
       body: projection.body,
       to: [intent.counterpartyRef],
       idempotencyKey: key,
-      meta: { auto: 'turn_final' },
+      dischargeEnvelopeIds: ids,
+      meta: {
+        auto: 'turn_final',
+        discharge: derived.source,
+        dischargeEnvelopeIds: ids,
+      },
       principalRef: identity.principalRef,
       scopeRef: identity.scopeRef,
     })
+  }
+
+  deps.db.mailDrives.recordAutoReplyDischargeOutcome(intent.driveAttemptId, {
+    source: derived.source,
+    envelopeIds: dischargeEnvelopeIds,
+    ...(refusedPreviously === undefined ? {} : { refusedEnvelopeId: refusedPreviously }),
+  })
+  try {
+    await say(dischargeEnvelopeIds)
     return completeIntent(deps, intent, 'minted', {
       idempotencyKey: key,
       truncated: projection.truncated,
       confirmation: 'say-success',
+      discharge: derived.source,
+      dischargeEnvelopeIds,
     })
   } catch (sayError) {
+    let ambiguousError: unknown = sayError
+    const refusal = dischargeRefusal(sayError)
+    if (refusal !== undefined) {
+      deps.db.mailDrives.clearAutoReplyVerification(intent.driveAttemptId)
+      const reduced = dischargeEnvelopeIds.filter((id) => id !== refusal.envelopeId)
+      deps.db.mailDrives.recordAutoReplyDischargeOutcome(intent.driveAttemptId, {
+        source: derived.source,
+        envelopeIds: reduced,
+        refusedEnvelopeId: refusal.envelopeId,
+        refusalCode: refusal.code,
+        ...(refusal.reason === undefined ? {} : { refusalReason: refusal.reason }),
+      })
+      const message = `exact discharge refused ${refusal.envelopeId}: ${refusal.reason ?? refusal.code}`
+      deps.db.mailDrives.recordAutoReplyError(intent.driveAttemptId, message)
+      if (reduced.length === 0) return 'pending'
+      try {
+        await say(reduced)
+        return completeIntent(deps, intent, 'minted', {
+          idempotencyKey: key,
+          truncated: projection.truncated,
+          confirmation: 'reduced-set-retry',
+          discharge: derived.source,
+          dischargeEnvelopeIds: reduced,
+          refusedEnvelopeId: refusal.envelopeId,
+        })
+      } catch (retryError) {
+        const retryRefusal = dischargeRefusal(retryError)
+        if (retryRefusal !== undefined) {
+          deps.db.mailDrives.clearAutoReplyVerification(intent.driveAttemptId)
+          deps.db.mailDrives.recordAutoReplyDischargeOutcome(intent.driveAttemptId, {
+            source: derived.source,
+            envelopeIds: reduced.filter((id) => id !== retryRefusal.envelopeId),
+            refusedEnvelopeId: retryRefusal.envelopeId,
+            refusalCode: retryRefusal.code,
+            ...(retryRefusal.reason === undefined ? {} : { refusalReason: retryRefusal.reason }),
+          })
+          deps.db.mailDrives.recordAutoReplyError(
+            intent.driveAttemptId,
+            `reduced exact discharge refused ${retryRefusal.envelopeId}: ${retryRefusal.reason ?? retryRefusal.code}`
+          )
+          return 'pending'
+        }
+        ambiguousError = retryError
+      }
+    }
     // Every error is ambiguous by contract, including wrkq's deliberately
     // untyped duplicate refusal. Only the ledger read below can classify it.
     const verified = await verifyMintByRead(deps, intent, identity.principalRef, key)
     if (verified.outcome === 'failed') {
-      const message = `say ambiguous (${errorText(sayError)}); verification read failed (${verified.error})`
+      const message = `say ambiguous (${errorText(ambiguousError)}); verification read failed (${verified.error})`
       deps.db.mailDrives.recordAutoReplyError(intent.driveAttemptId, message)
       writeServerLog('WARN', 'wrkq.auto_reply.verify_read_failed', {
         driveAttemptId: intent.driveAttemptId,
@@ -242,7 +400,7 @@ export async function reconcileAutoReplyIntent(
     }
 
     deps.db.mailDrives.clearAutoReplyVerification(intent.driveAttemptId)
-    const message = `say ambiguous (${errorText(sayError)}); verification read confirmed no matching envelope`
+    const message = `say ambiguous (${errorText(ambiguousError)}); verification read confirmed no matching envelope`
     deps.db.mailDrives.recordAutoReplyError(intent.driveAttemptId, message)
     writeServerLog('WARN', 'wrkq.auto_reply.retry_scheduled', {
       driveAttemptId: intent.driveAttemptId,

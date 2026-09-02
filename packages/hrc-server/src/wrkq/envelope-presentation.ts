@@ -1,5 +1,9 @@
 import { newestPresentationReceipt, obligationOwesReply } from './ledger-types.js'
-import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from './ledger-types.js'
+import type {
+  WrkqEnvelope,
+  WrkqEnvelopeDelivery,
+  WrkqEnvelopeFailureReason,
+} from './ledger-types.js'
 
 /**
  * The rev 5.1 §4 injection formats (T-07612 rev 5.1, T-07702).
@@ -56,6 +60,8 @@ export type EnvelopePresentationForm = 'full' | 'reminder' | 'defer-retry'
 
 export type PresentableEnvelope = {
   envelope: WrkqEnvelope
+  /** Copied from the ledger row so presentation routing and rendering share one intent. */
+  delivery: WrkqEnvelopeDelivery
   /** wrkq's cue decision, keyed to the RUNTIME rather than the generation. */
   historyHint: boolean
   messageCount: number
@@ -193,6 +199,7 @@ function formatHeader(presentable: PresentableEnvelope, now: Date): string {
     formatRoomToken(presentable),
     `${formatSender(presentable)} → you`,
     ...(obligation === undefined ? [] : [obligation]),
+    ...(presentable.delivery === 'hold' ? ['hold'] : []),
     ...(why === undefined ? [] : [why]),
   ]
   return `[${clauses.join(' · ')}]`

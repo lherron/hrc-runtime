@@ -27,6 +27,7 @@ function envelope(overrides: Partial<WrkqEnvelope> = {}): WrkqEnvelope {
     from: { principalRef: 'agent:cody', scopeRef: 'cody@hrc-runtime:T-07604' },
     to: { principalRef: 'agent:clod', scopeRef: 'clod@hrc-runtime:T-07604' },
     obligation: 'reply_required',
+    delivery: 'queue',
     body: 'the body',
     state: 'presented',
     terminal: false,
@@ -40,6 +41,7 @@ function envelope(overrides: Partial<WrkqEnvelope> = {}): WrkqEnvelope {
 function presentable(overrides: Partial<PresentableEnvelope> = {}): PresentableEnvelope {
   return {
     envelope: envelope(),
+    delivery: 'queue',
     historyHint: false,
     messageCount: 1,
     ...overrides,
@@ -135,6 +137,13 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     expect(rendered).toContain('· reply required]')
     expect(rendered).not.toContain('reply: wrkc say')
     expect(rendered).toContain('defer: wrkc defer EN-00042')
+  })
+
+  it('marks a stored hold in the recipient header without changing the body grammar', () => {
+    const held = envelope({ delivery: 'hold' })
+    expect(
+      formatEnvelopePresentation(presentable({ envelope: held, delivery: held.delivery }), NOW)
+    ).toContain('[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · hold]')
   })
 
   // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,

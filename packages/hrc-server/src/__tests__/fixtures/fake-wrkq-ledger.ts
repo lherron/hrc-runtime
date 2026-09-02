@@ -50,12 +50,33 @@ import type {
 
 let nextEnvelopeSeq = 0
 
+function comparableScopeRef(scopeRef: string | undefined): string | undefined {
+  if (scopeRef === undefined) return undefined
+  const withoutLane = scopeRef.split('/lane:').at(0) ?? scopeRef
+  const canonical = /^agent:([^:]+):project:([^:]+):(primary|task:[^:/]+|node:[^:/]+)$/.exec(
+    withoutLane
+  )
+  if (canonical === null) return withoutLane
+  const agent = canonical[1]
+  const project = canonical[2]
+  const scope = canonical[3]
+  if (agent === undefined || project === undefined || scope === undefined) return withoutLane
+  const handleScope = scope.startsWith('task:')
+    ? scope.slice('task:'.length)
+    : scope.startsWith('node:')
+      ? scope.slice('node:'.length)
+      : scope
+  return `${agent}@${project}:${handleScope}`
+}
+
 export type SeedEnvelope = {
   toScopeRef: string
   fromScopeRef?: string
   fromPrincipalRef?: string
   body?: string
   obligation?: WrkqEnvelopeObligation
+  delivery?: WrkqEnvelope['delivery']
+  expiresAt?: string
   roomKey?: string
   roomKind?: WrkqEnvelope['roomKind']
   materializationIntent?: string
@@ -98,6 +119,8 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
       },
       to: { principalRef: 'agent:kicker-proof', scopeRef: seed.toScopeRef },
       obligation: seed.obligation ?? 'reply_required',
+      delivery: seed.delivery ?? 'queue',
+      ...(seed.expiresAt === undefined ? {} : { expiresAt: seed.expiresAt }),
       body: seed.body ?? 'prove the durable kicker',
       state: 'pending',
       terminal: false,
@@ -168,7 +191,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   private matchesScope(envelope: WrkqEnvelope, scopes: readonly string[]): boolean {
     const to = envelope.to?.scopeRef
     if (to === undefined) return false
-    return scopes.some((scope) => scope.split('/lane:')[0] === to.split('/lane:')[0])
+    return scopes.some((scope) => comparableScopeRef(scope) === comparableScopeRef(to))
   }
 
   async pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView> {
@@ -431,6 +454,7 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
             },
       ...(toToken === undefined ? {} : { replyTo: params.scopeRef ?? params.principalRef }),
       obligation: toToken === undefined ? 'none' : params.fyi === true ? 'fyi' : 'reply_required',
+      delivery: 'queue',
       body: params.body.trim(),
       state: toToken === undefined ? 'acked' : 'pending',
       terminal: toToken === undefined,
@@ -443,13 +467,45 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
     this.envelopes.set(id, envelope)
 
     const acked: string[] = []
+    const explicit = params.dischargeEnvelopeIds
+    if (explicit !== undefined) {
+      if (explicit.length === 0) {
+        throw new WrkqLedgerRequestError('invalid discharge envelope', 'wrkq.room.say', -32602, {
+          code: 'WRKQ_VALIDATION',
+          envelope: '',
+          reason: 'explicit set must not be empty',
+        })
+      }
+      for (const envelopeId of explicit) {
+        const candidate = this.envelopes.get(envelopeId)
+        const reason =
+          candidate === undefined
+            ? 'not found'
+            : candidate.roomKey !== roomKey
+              ? 'foreign room'
+              : candidate.obligation !== 'reply_required' || candidate.state !== 'presented'
+                ? 'must be presented reply_required'
+                : comparableScopeRef(candidate.to?.scopeRef) !== comparableScopeRef(params.scopeRef)
+                  ? 'addressed to another scope'
+                  : undefined
+        if (reason !== undefined) {
+          this.envelopes.delete(id)
+          throw new WrkqLedgerRequestError('invalid discharge envelope', 'wrkq.room.say', -32602, {
+            code: 'WRKQ_VALIDATION',
+            envelope: envelopeId,
+            reason,
+          })
+        }
+      }
+    }
     for (const candidate of this.envelopes.values()) {
       if (
         candidate.id !== id &&
         candidate.roomKey === roomKey &&
         candidate.state === 'presented' &&
-        candidate.to?.scopeRef === params.scopeRef &&
-        (candidate.from.scopeRef === toToken || candidate.from.principalRef === toPrincipal)
+        comparableScopeRef(candidate.to?.scopeRef) === comparableScopeRef(params.scopeRef) &&
+        (candidate.from.scopeRef === toToken || candidate.from.principalRef === toPrincipal) &&
+        (explicit === undefined || explicit.includes(candidate.id))
       ) {
         candidate.state = 'acked'
         candidate.terminal = true
