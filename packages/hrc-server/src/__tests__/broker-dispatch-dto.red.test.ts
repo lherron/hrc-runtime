@@ -186,7 +186,7 @@ function seedBrokerRuntime(
 }
 
 /**
- * Stub getHarnessBrokerController().dispatchInput() on the server to return
+ * Stub getHarnessBrokerController().invoke() on the server to return
  * a successful broker input response. This bypasses the real broker IPC (which
  * requires a live leased-tmux subprocess) while exercising the full handler
  * path: DB row creation, cursor capture, response serialisation.

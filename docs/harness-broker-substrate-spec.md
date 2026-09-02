@@ -636,7 +636,7 @@ Headless dispatch needs the same lazy recovery shape as interactive dispatch.
 Target behavior:
 
 ```ts
-const result = await controller.dispatchInput(runtimeId, input)
+const result = await submitThroughBrokerDoor(controller, door, input)
 
 if (result.ok) return result
 
@@ -645,7 +645,7 @@ if (result.error.code === 'broker_runtime_not_active' &&
     hasLeasedBrokerSubstrate(runtime)) {
   const reattach = await reattachDurableBrokerForDispatch(runtime)
   if (reattach.ok) {
-    return controller.dispatchInput(runtimeId, input)
+    return submitThroughBrokerDoor(controller, door, input)
   }
 }
 

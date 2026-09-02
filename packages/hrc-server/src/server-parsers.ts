@@ -19,6 +19,7 @@ export {
   parseBrokerInspectRequest,
   parseClearContextRequest,
   parseDispatchTurnRequest,
+  parseSubmissionRequest,
   parseDropContinuationRequest,
   parseEnsureRuntimeRequest,
   parseInFlightInputRequest,

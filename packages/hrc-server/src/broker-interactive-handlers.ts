@@ -2,12 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import {
-  HRC_QUEUED_TO_LIVE_HARNESS_WARNING,
-  HrcErrorCode,
-  HrcRuntimeUnavailableError,
-  HrcUnprocessableEntityError,
-} from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRuntimeIntent,
@@ -27,12 +22,12 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
+import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   actuatorSplitRuntimeAuthority,
   assertActuatorSplitAdmission,
@@ -57,10 +52,8 @@ import { resolveBrokerBinary } from './broker-interactive-handlers/substrate-all
 import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
-  assertBrokerRuntimeReusableAdmission,
   assertRuntimeNotBusy,
   classifyBrokerInputFailure,
-  isBrokerRuntimeQueueCapable,
   isRunActive,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
@@ -342,7 +335,6 @@ export async function handleHeadlessBrokerDispatchTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
@@ -428,7 +420,6 @@ export async function handleHeadlessBrokerDispatchTurn(
       reusableRuntime.controllerKind === 'harness-broker' &&
       reusableRuntime.activeInvocationId !== undefined
     ) {
-      assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime, options)
       await this.publishPresentation(reusableRuntime, {
         operatorAttachPending: false,
       })
@@ -538,7 +529,6 @@ export async function handleHeadlessBrokerDispatchTurn(
           runtimeId: recovered.runtimeId,
         })
         assertActuatorSplitRuntimeReuse(dispatchIntent, recovered)
-        assertBrokerRuntimeReusableAdmission(this.db, recovered, options)
         ownership.resolve(recovered)
         releaseOwnership()
         return await this.executeHeadlessBrokerInputTurn(
@@ -608,8 +598,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
-  const turnIntent: HrcRuntimeIntent =
-    prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  const { initialPrompt: _initialPrompt, ...turnIntent } = intent
   // T-07202: persisted semantic DMs can enter this interactive cold-start
   // branch concurrently. T-06313 protected only the headless broker branch;
   // this branch published its boot but never joined an existing one, so each
@@ -690,8 +679,16 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   void bootOperation.catch((error) => {
     if (!acceptedSettled) rejectAccepted(error)
   })
-
-  if (!shouldBlockForBrokerTurnCompletion(flagOptions.waitForCompletion)) {
+  if (flagOptions.waitForCompletion === false) {
+    void bootOperation
+      .then(async (runtime) => {
+        await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+          waitForCompletion: false,
+          responseFormat: flagOptions.responseFormat,
+          ...dispatchRunPersistence(flagOptions),
+        })
+      })
+      .catch(() => undefined)
     const runtime = await accepted
     return json({
       runId,
@@ -703,21 +700,12 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       supportsInFlightInput: true,
     } satisfies DispatchTurnResponseBase)
   }
-
   const runtime = await bootOperation
-  // T-01770 Phase C: block the synchronous caller on the first broker turn
-  // (the start delivers the initial prompt under diagnosticRunId). Async
-  // reply-bridge callers pass waitForCompletion:false to get status:'started'.
-  await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
-  return json({
-    runId,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    transport: 'tmux',
-    status: 'completed',
-    supportsInFlightInput: true,
-  } satisfies DispatchTurnResponseBase)
+  return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+    waitForCompletion: false,
+    responseFormat: flagOptions.responseFormat,
+    ...dispatchRunPersistence(flagOptions),
+  })
 }
 
 export async function executeInteractiveBrokerInputTurn(
@@ -728,7 +716,6 @@ export async function executeInteractiveBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
@@ -752,30 +739,6 @@ export async function executeInteractiveBrokerInputTurn(
     route: 'interactive-broker',
   })
 
-  const activeRun =
-    runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
-  const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
-  if (options.whenBusy === 'reject' && queuedMode) {
-    assertRuntimeNotBusy(this.db, runtime)
-  }
-  // T-07203 (spec r7): steer-class dispatches run the shared two-phase flow —
-  // capability gate, reject-probe, write-ahead ledger, honest disposition map.
-  // The interactive route reports presented_to_live_harness, never admission.
-  // T-07214: the best-effort class shares the flow; a 'floor' result falls
-  // through to the ordinary dispatch below (broker queue + honest warning).
-  if (options.whenBusy === 'steer' || options.whenBusy === 'steer_else_queue') {
-    const steered = await this.executeSteerClassDispatch(session, runtime, prompt, {
-      route: 'interactive',
-      responseFormat: options.responseFormat,
-      bestEffort: options.whenBusy === 'steer_else_queue',
-      ...(options.dispatchIdempotencyKey !== undefined
-        ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
-        : {}),
-    })
-    if (steered !== 'floor') return steered
-  }
-  const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
-  const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
   const now = timestamp()
 
   this.db.runs.insert({
@@ -791,7 +754,6 @@ export async function executeInteractiveBrokerInputTurn(
     updatedAt: now,
     invocationId,
     operationId: runtime.activeOperationId,
-    dispatchedInputId: inputId,
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
     ...dispatchOriginRunFields(options),
   })
@@ -799,14 +761,7 @@ export async function executeInteractiveBrokerInputTurn(
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
 
-  // T-07235 — a prompt dispatched to an ALREADY-LIVE generation (a DM to a
-  // runtime that was started promptless). armFirstTurnWatch itself no-ops once
-  // the generation has produced a turn; the queued guard is the other half:
-  // a prompt sitting behind an active turn is not yet before the harness, so
-  // its turn.started is legitimately deferred and must not start a clock. No
-  // coverage is lost — a fresh wedged runtime is armed by the START path, and
-  // a runtime with an active turn has by definition already produced one.
-  if (!queuedMode) {
+  if (options.submissionDoor !== 'enqueue') {
     armFirstTurnWatch(this.db, {
       runtimeId: runtime.runtimeId,
       generation: session.generation,
@@ -821,41 +776,22 @@ export async function executeInteractiveBrokerInputTurn(
     })
   }
 
-  if (!queuedMode) {
-    this.db.runtimes.update(runtime.runtimeId, {
-      activeRunId: runId,
-      status: 'busy',
-      statusChangedAt: now,
-      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
-        source: 'turn',
-        occurredAt: now,
-        updatedAt: now,
-      }),
-    })
-    this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
-  }
-
-  const input: InvocationInput = {
-    inputId,
-    kind: 'user',
-    content: [{ type: 'text', text: prompt }],
-    ...(toBrokerResponseFormat(options.responseFormat) !== undefined
-      ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
-      : {}),
-    metadata: {
-      runId,
-      ...(options.repairCorrelation !== undefined
-        ? { repairCorrelationJson: JSON.stringify(options.repairCorrelation) }
-        : {}),
-    },
-  }
-
   const dispatchToBroker = () =>
-    this.getHarnessBrokerController().dispatchInput({
-      runtimeId: runtime.runtimeId,
-      input,
-      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
-    })
+    submitThroughBrokerDoor(
+      this.getHarnessBrokerController(),
+      options.submissionDoor ?? 'enqueue',
+      {
+        runtimeId: runtime.runtimeId,
+        body: prompt,
+        origin: submissionOrigin(session.scopeRef, options),
+        ...(toBrokerResponseFormat(options.responseFormat) !== undefined
+          ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
+          : {}),
+        ...(options.freshContext !== undefined ? { freshContext: options.freshContext } : {}),
+        ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}),
+        ...(options.turnPolicy !== undefined ? { turnPolicy: options.turnPolicy } : {}),
+      }
+    )
 
   // T-01996: wait for the post-restart serving-controller warmup so the first
   // dispatch sees the broker already bound instead of racing a cold controller.
@@ -894,15 +830,41 @@ export async function executeInteractiveBrokerInputTurn(
     }
   }
 
-  if (!result.ok || !result.response.accepted) {
+  if (result.ok) {
+    this.db.runs.update(runId, {
+      brokerSubmissionId: result.response.submissionId,
+      updatedAt: timestamp(),
+    })
+  }
+
+  if (result.ok && result.response.admission === 'rejected') {
     const completedAt = timestamp()
-    const errorMessage = result.ok
-      ? (result.response.reason ?? 'broker rejected invocation input')
-      : result.error.message
-    const brokerErrorCode = result.ok ? undefined : result.error.code
-    const brokerInputTimeout = brokerErrorCode === 'broker_input_timeout'
+    this.db.runs.markCompleted(runId, {
+      status: 'failed',
+      completedAt,
+      updatedAt: completedAt,
+      errorMessage: result.response.reason ?? 'broker rejected submission',
+    })
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+      submissionId: result.response.submissionId,
+      admission: result.response.admission,
+      ...(result.response.reason !== undefined ? { reason: result.response.reason } : {}),
+    } satisfies DispatchTurnResponseBase)
+  }
+
+  if (!result.ok) {
+    const completedAt = timestamp()
+    const errorMessage = result.error.message
+    const brokerErrorCode = result.error.code
+    const brokerInputTimeout = brokerErrorCode.endsWith('_timeout')
     if (
-      !result.ok &&
       result.error.code === 'broker_runtime_not_active' &&
       runtime.transport === 'tmux' &&
       !adoptionPathRejected &&
@@ -919,7 +881,7 @@ export async function executeInteractiveBrokerInputTurn(
       } satisfies DispatchTurnResponseBase)
     }
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
-    const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
+    const brokerBindingMissing = result.error.code === 'broker_runtime_not_active'
     // T-04297: the lazy reattach above may have just STALED this runtime (lease
     // substrate gone, attach/replay failure, lease identity mismatch). Re-read
     // the row and treat an unavailable status as terminal — writing 'ready'
@@ -951,7 +913,7 @@ export async function executeInteractiveBrokerInputTurn(
       errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
       errorMessage,
     })
-    if (brokerInputTimeout || !queuedMode) {
+    if (brokerInputTimeout) {
       this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
     }
     this.db.runtimes.update(runtime.runtimeId, {
@@ -973,7 +935,7 @@ export async function executeInteractiveBrokerInputTurn(
               terminalInvocation: {
                 invocationId,
                 reason: errorMessage,
-                ...(brokerInputTimeout ? { code: 'broker_input_timeout', inputId } : {}),
+                ...(brokerInputTimeout ? { code: brokerErrorCode } : {}),
               },
             },
           }
@@ -1008,7 +970,8 @@ export async function executeInteractiveBrokerInputTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
-      ...(queuedMode ? { warnings: [HRC_QUEUED_TO_LIVE_HARNESS_WARNING] } : {}),
+      submissionId: result.response.submissionId,
+      admission: result.response.admission,
     } satisfies DispatchTurnResponseBase)
   }
 
@@ -1021,7 +984,8 @@ export async function executeInteractiveBrokerInputTurn(
     transport: 'tmux',
     status: 'completed',
     supportsInFlightInput: true,
-    ...(queuedMode ? { warnings: [HRC_QUEUED_TO_LIVE_HARNESS_WARNING] } : {}),
+    submissionId: result.response.submissionId,
+    admission: result.response.admission,
   } satisfies DispatchTurnResponseBase)
 }
 

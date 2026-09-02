@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import { appendHrcEvent } from '../hrc-event-helper'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 
@@ -24,19 +23,19 @@ beforeEach(async () => {
   server = await createHrcServer(
     fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
   )
-  ;(server as any).getHarnessBrokerController = () => ({
-    dispatchInput: async () => {
+  ;(server as any).getHarnessBrokerController = () => {
+    const submit = async () => {
       dispatchCalls += 1
       return {
         ok: true,
         response: {
-          inputId: `input-${dispatchCalls}`,
-          accepted: true,
-          disposition: 'started',
+          submissionId: `sub-${dispatchCalls}`,
+          admission: 'admitted',
         },
       }
-    },
-  })
+    }
+    return { steer: submit, enqueue: submit, invoke: submit, preempt: submit }
+  }
 })
 
 afterEach(async () => {
@@ -405,20 +404,20 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     server = await createHrcServer(
       fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
     )
-    ;(server as any).getHarnessBrokerController = () => ({
-      dispatchInput: async () => ({
+    ;(server as any).getHarnessBrokerController = () => {
+      const submit = async () => ({
         ok: true,
         response: {
-          inputId: 'input-t06971-retry',
-          accepted: true,
-          disposition: 'started',
+          submissionId: 'sub-t06971-retry',
+          admission: 'admitted',
         },
-      }),
-    })
+      })
+      return { steer: submit, enqueue: submit, invoke: submit, preempt: submit }
+    }
 
     const retryResponse = await postTurn(body)
     const retry = (await retryResponse.json()) as any
-    expect(retryResponse.status).toBe(200)
+    expect(retryResponse.status).toBe(202)
     expect(retry).toMatchObject({
       runId: acceptedRunId,
       replayed: true,
@@ -476,87 +475,5 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     })
     expect(replay.runtimeId).toBeUndefined()
     expect(replay.startIdentity).toBeUndefined()
-  })
-
-  it('wait-to-start advances only on persisted turn.started evidence', async () => {
-    const { hostSessionId, generation } = await seedReusableBroker()
-    const key = 'idem-t06592-wait-start'
-    const accepted = (await (await postTurn(dispatchBody(hostSessionId, key))).json()) as any
-
-    let settled = false
-    const waiting = postTurn(dispatchBody(hostSessionId, key, 'turn_started')).then(
-      async (response) => {
-        settled = true
-        return { response, body: (await response.json()) as any }
-      }
-    )
-    await Bun.sleep(30)
-    expect(settled).toBe(false)
-
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = new Date().toISOString()
-      db.runs.update(accepted.runId, { status: 'started', startedAt: now, updatedAt: now })
-      const event = appendHrcEvent(db, 'turn.started', {
-        ts: now,
-        hostSessionId,
-        scopeRef: SCOPE_REF,
-        laneRef: 'main',
-        generation,
-        runtimeId: RUNTIME_ID,
-        runId: accepted.runId,
-        transport: 'headless',
-        payload: { source: 't06592-test' },
-      })
-      server?.notifyEvent(event)
-    } finally {
-      db.close()
-    }
-
-    const started = await waiting
-    expect(started.response.status).toBe(200)
-    expect(started.body).toMatchObject({
-      stage: 'turn_started',
-      status: 'started',
-      replayed: true,
-      runId: accepted.runId,
-    })
-    expect(dispatchCalls).toBe(1)
-  })
-
-  it('wait-to-start returns the same run terminal failure when the harness dies first', async () => {
-    const { hostSessionId } = await seedReusableBroker()
-    const key = 'idem-t06592-dead-before-start'
-    const accepted = (await (await postTurn(dispatchBody(hostSessionId, key))).json()) as any
-
-    const waiting = postTurn(dispatchBody(hostSessionId, key, 'turn_started')).then(
-      async (response) => ({ response, body: (await response.json()) as any })
-    )
-    await Bun.sleep(30)
-
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const now = new Date().toISOString()
-      db.runs.markCompleted(accepted.runId, {
-        status: 'failed',
-        completedAt: now,
-        updatedAt: now,
-        errorMessage: 'broker_tmux_harness_not_live',
-      })
-    } finally {
-      db.close()
-    }
-
-    const failed = await waiting
-    expect(failed.response.status).toBe(200)
-    expect(failed.body).toMatchObject({
-      stage: 'terminal',
-      status: 'failed',
-      outcome: 'failed',
-      replayed: true,
-      runId: accepted.runId,
-      error: { message: 'broker_tmux_harness_not_live' },
-    })
-    expect(dispatchCalls).toBe(1)
   })
 })

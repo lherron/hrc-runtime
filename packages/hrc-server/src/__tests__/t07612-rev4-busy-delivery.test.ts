@@ -13,7 +13,7 @@ import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-
 /**
  * T-07612 rev 4 — one delivery class. A busy target is not a reason to wait.
  *
- * Replaces the T-07616 `--urgent` suite: there is no urgent flag any more, and
+ * Replaces the T-07616 urgent-delivery suite: there is no alias any more, and
  * every envelope reaching a seat mid-turn is handed to the broker with its
  * ordinary queue policy, the way the `hrcchat dm` default always was. Split
  * out of `server-hrcmail-kicker.test.ts`, which is at the repo's
@@ -103,8 +103,8 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
   /**
    * These patch `dispatchTurnForSession` rather than driving a real broker:
    * what is under test is the KICKER's gating and receipt semantics. That the
-   * route hands the broker `whenBusy:'queue'` when `whenBusy` is undefined is
-   * the broker routes' own contract, covered by their suites.
+   * route hands the broker the explicit enqueue door with a TTL is the broker
+   * routes' own contract, covered by their suites.
    */
   async function makeBusyTarget(): Promise<{ hostSessionId: string; generation: number }> {
     const resolved = await fixture.resolveSession(SCOPE)
@@ -144,7 +144,12 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
     return resolved
   }
 
-  type Dispatch = { prompt: string; whenBusy: string | undefined; runId: string | undefined }
+  type Dispatch = {
+    prompt: string
+    submissionDoor: string | undefined
+    ttlMs: number | undefined
+    runId: string | undefined
+  }
 
   function captureDispatch(outcome: 'accept' | 'throw'): { calls: () => Dispatch[] } {
     const calls: Dispatch[] = []
@@ -152,9 +157,18 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
       session: HrcSessionRecord,
       _intent: HrcRuntimeIntent,
       prompt: string,
-      options: { runId?: string | undefined; whenBusy?: string | undefined }
+      options: {
+        runId?: string | undefined
+        submissionDoor?: string | undefined
+        ttlMs?: number | undefined
+      }
     ): Promise<Response> => {
-      calls.push({ prompt, whenBusy: options.whenBusy, runId: options.runId })
+      calls.push({
+        prompt,
+        submissionDoor: options.submissionDoor,
+        ttlMs: options.ttlMs,
+        runId: options.runId,
+      })
       if (outcome === 'throw') throw new Error('broker refused the input')
       const runId = options.runId ?? 'run-queued'
       // A run row, as the real route writes one: without it the kicker reads
@@ -204,9 +218,8 @@ describe('T-07612 rev 4 — a busy target receives mail in-flight', () => {
 
     const call = dispatch.calls()[0]
     expect(call?.prompt ?? '').toContain('the mid-turn body')
-    // No `reject`, no `steer`: the route's own queue policy is what reaches the
-    // broker, applied only if the harness reports a turn active.
-    expect(call?.whenBusy).toBeUndefined()
+    expect(call?.submissionDoor).toBe('enqueue')
+    expect(call?.ttlMs).toBeGreaterThan(0)
     // The receipt joins the accepted input, and names its slot-less owner.
     const receipt = ledger.envelopes.get(envelope.id)?.presentedTo[0]
     expect(receipt?.inputId).toBe('input-run-queued')

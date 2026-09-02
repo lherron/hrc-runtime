@@ -703,6 +703,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "EnqueueSubmissionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnqueueSubmissionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "EnsureAppSessionDryRunPlan",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -2695,6 +2703,46 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSubmissionDisposition",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionDisposition|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionOrigin",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionOrigin|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionTarget",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionTarget|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionTurnTerminal",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionTurnTerminal|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSubscriberAdmissionEntry",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -2891,6 +2939,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|InterruptAppSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InvokeSubmissionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InvokeSubmissionRequest|type",
       "count": 1
     },
     {
@@ -3291,6 +3347,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|PraesidiumReleaseManifest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PreemptSubmissionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PreemptSubmissionRequest|type",
       "count": 1
     },
     {
@@ -3795,6 +3859,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|StatusSummaryResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SteerSubmissionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SteerSubmissionRequest|type",
       "count": 1
     },
     {

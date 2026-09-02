@@ -334,6 +334,10 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
       disposition: 'started',
     }
   }
+  async invoke() {
+    this.calls.push('invoke')
+    return { submissionId: 'sub-startup-reattach', admission: 'admitted' as const }
+  }
   async interrupt(): Promise<InvocationInterruptResponse> {
     this.calls.push('interrupt')
     return { accepted: true, effect: 'turn_interrupted' }
@@ -498,9 +502,10 @@ describe('Phase 4 reattach: live broker socket reattaches BEFORE the sweep', () 
     expect(outcome.replayedThroughSeq).toBe(4)
 
     // (d) controller.active was rebuilt — a follow-up dispatch reaches the broker.
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'after reattach' }] },
+      body: 'after reattach',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(true)
   })
@@ -647,9 +652,10 @@ describe('Phase 4 reattach: fenced / transport-close during replay => not attach
     expect(client.closed).toBe(true)
 
     // A follow-up dispatch must NOT reach the broker (active not rebuilt).
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'after fence' }] },
+      body: 'after fence',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')

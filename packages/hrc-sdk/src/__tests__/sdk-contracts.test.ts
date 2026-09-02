@@ -302,4 +302,35 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
       fromSeq: 42,
     })
   })
+
+  it('freezes the four submission DTOs as four class-named SDK methods', async () => {
+    const observed: Array<{ path: string; body: Record<string, unknown> }> = []
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        const url = new URL(req.url)
+        observed.push({ path: url.pathname, body: (await req.json()) as Record<string, unknown> })
+        return Response.json({ submissionId: `sub-${observed.length}`, admission: 'admitted' })
+      },
+    })
+    const client = new HrcClient(stubSocketPath)
+    const common = {
+      target: 'agent:cody:project:hrc-runtime:task:T-07867/lane:main',
+      body: 'ship it',
+      origin: { principalRef: 'agent:cody' },
+    }
+    await client.steer(common)
+    await client.enqueue({ ...common, ttlMs: 5_000, turnPolicy: 'guarded', wait: true })
+    await client.invoke({ ...common, turnPolicy: 'guarded', wait: true })
+    await client.preempt({ ...common, ttlMs: 5_000, turnPolicy: 'guarded', wait: true })
+
+    expect(observed.map((entry) => entry.path)).toEqual([
+      '/v1/submissions/steer',
+      '/v1/submissions/enqueue',
+      '/v1/submissions/invoke',
+      '/v1/submissions/preempt',
+    ])
+    expect(Object.keys(observed[0]?.body ?? {}).sort()).toEqual(['body', 'origin', 'target'].sort())
+    expect(observed.slice(1).every((entry) => entry.body.turnPolicy === 'guarded')).toBe(true)
+  })
 })

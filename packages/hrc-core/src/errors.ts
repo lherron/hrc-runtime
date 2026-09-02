@@ -1,5 +1,6 @@
 export const HrcErrorCode = {
   MALFORMED_REQUEST: 'malformed_request',
+  UNKNOWN_FIELD: 'unknown_field',
   /** External-participant registration request failed its wire-contract validation. */
   MALFORMED_REGISTRATION: 'malformed',
   INVALID_SELECTOR: 'invalid_selector',
@@ -21,12 +22,7 @@ export const HrcErrorCode = {
   MISSING_RUNTIME_INTENT: 'missing_runtime_intent',
   PROVIDER_MISMATCH: 'provider_mismatch',
   INFLIGHT_UNSUPPORTED: 'inflight_unsupported',
-  UNSUPPORTED_WHEN_BUSY: 'unsupported_when_busy',
-  /**
-   * T-07155 urgent (`whenBusy: 'steer'`) delivery outcomes. Each is terminal at
-   * RPC return and none falls back to the ordinary deferred queue: a supervisor
-   * must never believe an order landed when it did not.
-   */
+  /** Legacy urgent-delivery outcomes retained for stored-record decoding. */
   /** The live broker process cannot execute the steer policy (old process, or an unsteerable driver). */
   URGENT_DELIVERY_UNSUPPORTED: 'urgent_delivery_unsupported',
   /** The active turn ended between the busy check and the steer; the sender retries deliberately. */
@@ -133,6 +129,7 @@ export type HrcHttpError = {
 
 const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MALFORMED_REQUEST]: 400,
+  [HrcErrorCode.UNKNOWN_FIELD]: 422,
   [HrcErrorCode.MALFORMED_REGISTRATION]: 400,
   [HrcErrorCode.INVALID_SELECTOR]: 400,
   [HrcErrorCode.INVALID_FENCE]: 400,
@@ -149,7 +146,6 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MISSING_RUNTIME_INTENT]: 422,
   [HrcErrorCode.PROVIDER_MISMATCH]: 422,
   [HrcErrorCode.INFLIGHT_UNSUPPORTED]: 422,
-  [HrcErrorCode.UNSUPPORTED_WHEN_BUSY]: 422,
   [HrcErrorCode.URGENT_DELIVERY_UNSUPPORTED]: 422,
   [HrcErrorCode.URGENT_DELIVERY_RACE_LOST]: 409,
   [HrcErrorCode.URGENT_DELIVERY_AMBIGUOUS]: 503,
@@ -293,10 +289,10 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
   constructor(
     code: Extract<
       HrcErrorCode,
+      | 'unknown_field'
       | 'missing_runtime_intent'
       | 'provider_mismatch'
       | 'inflight_unsupported'
-      | 'unsupported_when_busy'
       | 'urgent_delivery_unsupported'
       | 'broker_descriptor_absent'
       | 'ask_client_unsupported'

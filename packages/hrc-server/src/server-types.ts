@@ -16,7 +16,11 @@ import type {
 } from 'hrc-core'
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
 import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
-import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
+import type {
+  InvocationEventEnvelope,
+  SubmissionOrigin,
+  TurnPolicy,
+} from 'spaces-harness-broker-protocol'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
@@ -78,6 +82,12 @@ export type AttachBeforeInvocationStartOption = {
 }
 
 export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempotencyKey'> & {
+  /** Admission syscall selected by the caller; never inferred from seat state. */
+  submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
+  submissionOrigin?: SubmissionOrigin | undefined
+  ttlMs?: number | undefined
+  turnPolicy?: TurnPolicy | undefined
+  freshContext?: boolean | undefined
   /**
    * Per-request override for the `first_turn_missing` watchdog window
    * (T-07235), in milliseconds. Rides the shared dispatch-persistence options
@@ -108,6 +118,11 @@ export function dispatchRunPersistence(
 ): DispatchRunPersistenceOptions {
   return {
     dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    submissionDoor: options.submissionDoor,
+    submissionOrigin: options.submissionOrigin,
+    ttlMs: options.ttlMs,
+    turnPolicy: options.turnPolicy,
+    freshContext: options.freshContext,
     firstTurnTimeoutMs: options.firstTurnTimeoutMs,
     origin: options.origin,
   }

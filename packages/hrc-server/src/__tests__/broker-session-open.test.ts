@@ -58,7 +58,7 @@ function seedReusableBrokerRuntime(
   generation: number,
   options: {
     activeRunId?: string | undefined
-    capabilitiesJson?: { input?: { queue?: boolean } } | undefined
+    capabilitiesJson?: { admission?: { classes?: string[] } } | undefined
     durable?: boolean | undefined
     status?: string | undefined
   } = {}
@@ -143,7 +143,11 @@ function seedReusableBrokerRuntime(
       brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'codex-app-server',
       invocationState: activeRunId !== undefined ? 'turn_active' : 'ready',
-      capabilitiesJson: JSON.stringify(options.capabilitiesJson ?? { input: { queue: true } }),
+      capabilitiesJson: JSON.stringify(
+        options.capabilitiesJson ?? {
+          admission: { classes: ['steer', 'queue', 'exclusive', 'preempt'] },
+        }
+      ),
       specHash: 'sha256:broker-session-open-spec',
       startRequestHash: 'sha256:broker-session-open-start',
       selectedProfileHash: 'sha256:broker-session-open-profile',
@@ -169,15 +173,31 @@ function runtimeSideEffects(hostSessionId: string) {
   }
 }
 
-function installDispatchInputFailFast() {
+function installSubmissionFailFast() {
   const calls: unknown[] = []
   ;(server as any).getHarnessBrokerController = () => ({
-    dispatchInput: async (request: unknown) => {
+    enqueue: async (request: unknown) => {
       calls.push(request)
-      return { ok: true, response: { accepted: true } }
+      return { ok: true, response: { submissionId: 'unexpected', admission: 'admitted' } }
     },
   })
   return calls
+}
+
+function installSeatProbe(state: 'idle' | 'turn-active' = 'idle') {
+  ;(server as any).getHarnessBrokerController = () => ({
+    seatProbe: async () => ({
+      ok: true,
+      response: {
+        invocationId: INVOCATION_ID,
+        seat:
+          state === 'idle'
+            ? { state: 'idle' }
+            : { state: 'turn-active', turnId: 'turn-active', policy: 'open' },
+        brokerHeldDepth: 0,
+      },
+    }),
+  })
 }
 
 function installPresentationPublishSpy() {
@@ -293,7 +313,7 @@ describe('POST /v1/broker-sessions/open', () => {
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
       activeRunId: ACTIVE_RUN_ID,
     })
-    const dispatchInputCalls = installDispatchInputFailFast()
+    const submissionCalls = installSubmissionFailFast()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
@@ -320,16 +340,16 @@ describe('POST /v1/broker-sessions/open', () => {
       generation: resolved.generation,
     })
     expect(runtimeSideEffects(resolved.hostSessionId)).toEqual(before)
-    expect(dispatchInputCalls).toHaveLength(0)
+    expect(submissionCalls).toHaveLength(0)
   })
 
-  it('still rejects busy broker session reuse when the invocation is not queue-capable', async () => {
+  it('opens a busy broker session without admitting work when queue is not advertised', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
       activeRunId: ACTIVE_RUN_ID,
-      capabilitiesJson: { input: { queue: false } },
+      capabilitiesJson: { admission: { classes: ['steer', 'exclusive'] } },
     })
-    const dispatchInputCalls = installDispatchInputFailFast()
+    const submissionCalls = installSubmissionFailFast()
     const presentationRuntimeIds = installPresentationPublishSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
@@ -338,27 +358,20 @@ describe('POST /v1/broker-sessions/open', () => {
       runtimeIntent: headlessBrokerIntent(),
     })
 
+    expect(res.status).toBe(200)
     const body = await res.json()
-    expect({
-      status: res.status,
-      errorCode: body.error?.code,
-      sideEffects: runtimeSideEffects(resolved.hostSessionId),
-      dispatchInputCalls: dispatchInputCalls.length,
-    }).toEqual({
-      status: 409,
-      errorCode: 'runtime_busy',
-      sideEffects: before,
-      dispatchInputCalls: 0,
-    })
-    expect(presentationRuntimeIds).toEqual([])
+    expect(body.supportsInputQueue).toBe(false)
+    expect(runtimeSideEffects(resolved.hostSessionId)).toEqual(before)
+    expect(submissionCalls).toHaveLength(0)
+    expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
   })
 
-  it('still rejects corrupt awaiting_input broker session reuse before queue capability is considered', async () => {
+  it('session-open itself does not infer admission from a corrupt local busy projection', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
       status: 'awaiting_input',
     })
-    const dispatchInputCalls = installDispatchInputFailFast()
+    const submissionCalls = installSubmissionFailFast()
     const presentationRuntimeIds = installPresentationPublishSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
@@ -367,19 +380,10 @@ describe('POST /v1/broker-sessions/open', () => {
       runtimeIntent: headlessBrokerIntent(),
     })
 
-    const body = await res.json()
-    expect({
-      status: res.status,
-      errorCode: body.error?.code,
-      sideEffects: runtimeSideEffects(resolved.hostSessionId),
-      dispatchInputCalls: dispatchInputCalls.length,
-    }).toEqual({
-      status: 409,
-      errorCode: 'runtime_busy',
-      sideEffects: before,
-      dispatchInputCalls: 0,
-    })
-    expect(presentationRuntimeIds).toEqual([])
+    expect(res.status).toBe(200)
+    expect(runtimeSideEffects(resolved.hostSessionId)).toEqual(before)
+    expect(submissionCalls).toHaveLength(0)
+    expect(presentationRuntimeIds).toEqual([RUNTIME_ID])
   })
 
   it('starts a new broker invocation with profile priming allowed and no HRC run', async () => {
@@ -409,6 +413,7 @@ describe('POST /v1/broker-sessions/open', () => {
         options?.allowCompilerInitialInputWithoutIdentity
       return seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
     }
+    installSeatProbe('idle')
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
       hostSessionId: resolved.hostSessionId,
@@ -444,19 +449,10 @@ describe('POST /v1/broker-sessions/open', () => {
     }
   })
 
-  it('treats queue-capable runless startup input as session-open ready', async () => {
+  it('uses seat.probe idle as session-open readiness without polling local run state', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const seeded = seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
-
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      db.brokerInvocations.update(INVOCATION_ID, {
-        invocationState: 'turn_active',
-        updatedAt: new Date().toISOString(),
-      })
-    } finally {
-      db.close()
-    }
+    installSeatProbe('idle')
 
     const runtime = await (server as any).waitForBrokerSessionOpenReady(
       seeded.runtimeId,

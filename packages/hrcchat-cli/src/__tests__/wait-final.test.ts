@@ -3,7 +3,6 @@ import { CliUsageError } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
   HrcMessageAddress,
-  HrcMessageFilter,
   HrcMessageRecord,
   ListMessagesResponse,
   SemanticTurnHandoffRequest,
@@ -13,7 +12,7 @@ import type {
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { type TurnOptions, cmdTurn } from '../commands/turn.js'
-import { type WaitFinalResult, buildDmWaitResult } from '../wait-final.js'
+import { buildDmWaitResult } from '../wait-final.js'
 
 // -- Env scaffolding ----------------------------------------------------------
 
@@ -258,189 +257,56 @@ async function runTurn(
 }
 
 describe('hrcchat turn --wait final', () => {
-  it('returns a durable federated reply without waiting for local lifecycle events', async () => {
-    const request = makeRecord({
-      execution: {
-        state: 'started',
-        runId: 'run-test',
-        runtimeId: 'rt-test',
-        hostSessionId: 'hsid-test',
-        generation: 1,
-      },
-      metadataJson: { federationSemanticTurnOrigin: true },
-    })
-    const reply = makeReply({
-      execution: {
-        state: 'completed',
-        runId: 'run-test',
-        runtimeId: 'rt-test',
-        hostSessionId: 'hsid-test',
-        generation: 1,
-      },
-    })
+  it('returns the disposition-correlated terminal without lifecycle or reply reads', async () => {
+    let messageReads = 0
     const client = {
-      async semanticTurnHandoff(): Promise<SemanticTurnHandoffResponse> {
-        return makeHandoff()
-      },
-      async listMessages(filter?: HrcMessageFilter): Promise<ListMessagesResponse> {
+      async enqueue() {
         return {
-          messages: filter?.messageId === request.messageId ? [request] : [reply],
+          submissionId: 'sub-wait',
+          admission: 'admitted' as const,
+          disposition: { type: 'executed' as const, turnId: 'turn-wait' },
+          terminal: { turnId: 'turn-wait', status: 'completed' as const, finalMessage: 'done' },
         }
       },
-      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
-        await new Promise<void>((resolve) => {
-          options?.signal?.addEventListener('abort', () => resolve(), { once: true })
-        })
+      async listMessages() {
+        messageReads += 1
+        return { messages: [] }
       },
     } as HrcClient
-
     const { stdout } = await runTurn(client, { wait: 'final', timeout: '100ms' }, [
       'clod@hrc-runtime:primary',
-      'do the remote thing',
-    ])
-
-    expect(JSON.parse(stdout.trim())).toMatchObject({
-      status: 'responded',
-      response: { messageId: 'msg-reply', text: 'chat-follow validation done' },
-    })
-  })
-
-  it('emits one responded JSON object with the durable reply, no stderr', async () => {
-    const client = createTurnWaitClient({
-      events: [lifecycle('turn_end')],
-      reply: makeReply(),
-    })
-    const { stdout, stderr } = await runTurn(client, { wait: 'final', timeout: '45m' }, [
-      'clod@hrc-runtime:primary',
       'do the thing',
     ])
-    expect(stderr).toBe('')
-    const lines = stdout.trimEnd().split('\n')
-    expect(lines.length).toBe(1)
-    const parsed = JSON.parse(lines[0] ?? '{}') as WaitFinalResult
-    expect(parsed.status).toBe('responded')
-    expect(parsed.sentMessageId).toBe('msg-request')
-    expect(parsed.target).toBe('clod@hrc-runtime')
-    expect(parsed.correlation).toEqual({ mode: 'reply_to', afterSeq: 100 })
-    expect(parsed.response?.text).toBe('chat-follow validation done')
+    expect(JSON.parse(stdout.trim())).toMatchObject({
+      submissionId: 'sub-wait',
+      disposition: { type: 'executed', turnId: 'turn-wait' },
+      terminal: { status: 'completed', finalMessage: 'done' },
+    })
+    expect(messageReads).toBe(0)
   })
 
-  it('ignores same-thread decoy responses unless they exactly match the handoff identity', async () => {
-    const validReply = makeReply({
-      messageId: 'msg-terminal',
-      body: 'terminal turn response',
-      execution: {
-        state: 'completed',
-        runId: 'run-test',
-        hostSessionId: 'hsid-test',
-        generation: 1,
+  it('returns typed rejected and expired dispositions without starting a reply wait', async () => {
+    const responses = [
+      {
+        submissionId: 'sub-rejected',
+        admission: 'rejected' as const,
+        disposition: { type: 'rejected' as const, reason: 'guarded' },
       },
-    })
-    const operatorDecoy = makeReply({
-      messageId: 'msg-operator-decoy',
-      from: { kind: 'entity', entity: 'human' },
-      to: SESSION,
-      body: 'operator mid-flight reply that must not complete the turn wait',
-      execution: {
-        state: 'completed',
-        runId: 'run-other',
-        hostSessionId: 'hsid-test',
-        generation: 1,
+      {
+        submissionId: 'sub-expired',
+        admission: 'admitted' as const,
+        disposition: { type: 'expired' as const },
       },
-    })
-    const wrongRunDecoy = makeReply({
-      messageId: 'msg-wrong-run-decoy',
-      body: 'same-thread response from a different run',
-      execution: {
-        state: 'completed',
-        runId: 'run-other',
-        hostSessionId: 'hsid-test',
-        generation: 1,
-      },
-    })
-    const observedFilters: HrcMessageFilter[] = []
+    ]
     const client = {
-      async semanticTurnHandoff(): Promise<SemanticTurnHandoffResponse> {
-        return makeHandoff()
-      },
-      async listMessages(filter?: HrcMessageFilter): Promise<ListMessagesResponse> {
-        if (filter) observedFilters.push(filter)
-        // T-05588 regression guard: a loose same-thread lookup sees decoys before
-        // the real terminal turn response. Only exact handoff correlation returns
-        // the valid response.
-        const hasExactHandoffFilter =
-          filter?.from !== undefined &&
-          filter.to !== undefined &&
-          (filter as HrcMessageFilter & { replyToMessageId?: string }).replyToMessageId ===
-            'msg-request' &&
-          (filter as HrcMessageFilter & { runId?: string }).runId === 'run-test' &&
-          filter.hostSessionId === 'hsid-test' &&
-          filter.generation === 1
-        return {
-          messages: hasExactHandoffFilter
-            ? [validReply]
-            : [operatorDecoy, wrongRunDecoy, validReply],
-        }
-      },
-      async *watch(): AsyncIterable<HrcLifecycleEvent> {
-        yield lifecycle('turn_end')
+      async enqueue() {
+        return responses.shift()
       },
     } as HrcClient
-
-    const { stdout } = await runTurn(client, { wait: 'final', timeout: '45m' }, [
-      'clod@hrc-runtime:primary',
-      'do the thing',
-    ])
-
-    const parsed = JSON.parse(stdout.trim()) as WaitFinalResult
-    expect(parsed.status).toBe('responded')
-    expect(parsed.response).toEqual({
-      messageId: 'msg-terminal',
-      from: 'clod@hrc-runtime',
-      text: 'terminal turn response',
-    })
-    expect(observedFilters).toContainEqual(
-      expect.objectContaining({
-        phases: ['response'],
-        from: SESSION,
-        to: { kind: 'entity', entity: 'human' },
-        hostSessionId: 'hsid-test',
-        generation: 1,
-        limit: 1,
-      })
-    )
-    const exactFilter = observedFilters.find(
-      (filter) =>
-        (filter as HrcMessageFilter & { replyToMessageId?: string }).replyToMessageId ===
-        'msg-request'
-    ) as (HrcMessageFilter & { replyToMessageId?: string; runId?: string }) | undefined
-    expect(exactFilter?.runId).toBe('run-test')
-  })
-
-  it('reports error with a cursor when the runtime dies before completion', async () => {
-    const client = createTurnWaitClient({ events: [lifecycle('runtime_exited')] })
-    const { stdout, exitCode } = await runTurn(client, { wait: 'final' }, [
-      'clod@hrc-runtime:primary',
-      'x',
-    ])
-    const parsed = JSON.parse(stdout.trim()) as WaitFinalResult
-    expect(parsed.status).toBe('error')
-    expect(parsed.errorCode).toBe('runtime_dead')
-    expect(parsed.lastSeq).toBe(100)
-    expect(exitCode).toBe(4)
-  })
-
-  it('reports timeout with a cursor when the budget elapses', async () => {
-    const client = createTurnWaitClient({ events: [], blockUntilAbort: true })
-    const { stdout, stderr, exitCode } = await runTurn(client, { wait: 'final', timeout: '1s' }, [
-      'clod@hrc-runtime:primary',
-      'x',
-    ])
-    expect(stderr).toBe('')
-    const parsed = JSON.parse(stdout.trim()) as WaitFinalResult
-    expect(parsed.status).toBe('timeout')
-    expect(parsed.lastSeq).toBe(100)
-    expect(exitCode).toBe(1)
+    const rejected = await runTurn(client, { wait: 'final' }, ['clod@hrc-runtime:primary', 'one'])
+    const expired = await runTurn(client, { wait: 'final' }, ['clod@hrc-runtime:primary', 'two'])
+    expect(JSON.parse(rejected.stdout).disposition.type).toBe('rejected')
+    expect(JSON.parse(expired.stdout).disposition.type).toBe('expired')
   })
 
   it('rejects --wait combined with --follow (streaming) as mutually exclusive', async () => {

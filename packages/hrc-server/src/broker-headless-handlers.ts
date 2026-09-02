@@ -3,12 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import {
-  HRC_QUEUED_BEHIND_BUSY_TURN_WARNING,
-  HrcErrorCode,
-  HrcRuntimeUnavailableError,
-  HrcUnprocessableEntityError,
-} from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRunRecord,
@@ -27,7 +22,6 @@ import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { formatDmAddress } from './messages.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   actuatorSplitRuntimeAuthority,
   assertActuatorSplitAdmission,
@@ -41,12 +35,11 @@ import {
 } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
+import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
-  assertRuntimeNotBusy,
   classifyBrokerInputFailure,
-  isBrokerRuntimeQueueCapable,
   isRunActive,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
@@ -210,7 +203,6 @@ export async function dispatchQueuedHeadlessTurnInput(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
@@ -715,6 +707,12 @@ export async function executeHeadlessBrokerStartTurn(
       }
     | undefined
 ): Promise<Response> {
+  // Publish the runtime-producing promise before yielding so crossing dispatches
+  // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
+  // A cold-durable recovery may already own the map across its awaited
+  // reattach/cleanup work. In that case keep its promise as the stable join
+  // point and settle it from the fresh boot instead of replacing it here.
+  const { initialPrompt: _initialPrompt, ...promptlessIntent } = intent
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
   let rejectAccepted!: (error: unknown) => void
   let acceptedSettled = false
@@ -725,12 +723,7 @@ export async function executeHeadlessBrokerStartTurn(
     }
     rejectAccepted = reject
   })
-  // Publish the runtime-producing promise before yielding so crossing dispatches
-  // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
-  // A cold-durable recovery may already own the map across its awaited
-  // reattach/cleanup work. In that case keep its promise as the stable join
-  // point and settle it from the fresh boot instead of replacing it here.
-  const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
+  const bootOperation = this.startHeadlessBrokerRuntime(session, promptlessIntent, '', runId, {
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {
@@ -762,8 +755,6 @@ export async function executeHeadlessBrokerStartTurn(
       // publishPresentation computes `operatorAttachable` itself and records it
       // either way, and the in-daemon spawn it fronts re-checks the predicate.
       void this.publishPresentation(runtime, { signal: this.runtimeStartPresentationSignal })
-      // Test doubles and older controller adapters may not implement the
-      // acceptance callback. Full boot is a conservative fallback boundary.
       if (!acceptedSettled) resolveAccepted(runtime)
       return runtime
     })
@@ -782,6 +773,11 @@ export async function executeHeadlessBrokerStartTurn(
     if (!acceptedSettled) rejectAccepted(error)
   })
   if (options.waitForCompletion === false) {
+    void bootOperation
+      .then(async (runtime) => {
+        await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
+      })
+      .catch(() => undefined)
     const runtime = await accepted
     return json({
       runId,
@@ -794,16 +790,10 @@ export async function executeHeadlessBrokerStartTurn(
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
-  await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
-  return json({
-    runId,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    transport: 'headless',
-    status: 'completed',
-    supportsInFlightInput: false,
-  } satisfies DispatchTurnResponseBase)
+  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, {
+    ...options,
+    waitForCompletion: false,
+  })
 }
 
 export async function executeHeadlessBrokerInputTurn(
@@ -814,7 +804,6 @@ export async function executeHeadlessBrokerInputTurn(
   runId: string,
   options: DispatchRunPersistenceOptions & {
     waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
@@ -838,42 +827,7 @@ export async function executeHeadlessBrokerInputTurn(
     route: 'broker',
   })
 
-  // Queued-mode detection: a runtime is "busy" iff it has an active run still
-  // in a non-terminal state. In that case the active run keeps the runtime
-  // and invocation pointers (HRC must NOT clobber them with this new runId);
-  // the broker queues the new input (whenBusy:'queue') and the event-mapper
-  // flips invocation.runId + runtime.activeRunId onto this run on the
-  // drained input.accepted envelope.
-  const activeRun =
-    runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
-  const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
-  if (options.whenBusy === 'reject' && queuedMode) {
-    assertRuntimeNotBusy(this.db, runtime)
-  }
   const preacceptedRun = this.db.runs.getByRunId(runId)
-  // T-07203 (spec r7): steer-class dispatches run the shared two-phase flow
-  // regardless of HRC's busy guess — the broker's live state decides. A
-  // preaccepted run is the one exception: it is a legacy durably-queued input
-  // whose deferred delivery already happened; it drains as a normal dispatch.
-  // T-07214: the best-effort class shares the flow; a 'floor' result falls
-  // through to the ordinary dispatch below (the route's deferred floor).
-  if (
-    (options.whenBusy === 'steer' || options.whenBusy === 'steer_else_queue') &&
-    !preacceptedRun
-  ) {
-    const steered = await this.executeSteerClassDispatch(session, runtime, prompt, {
-      route: 'headless',
-      responseFormat: options.responseFormat,
-      bestEffort: options.whenBusy === 'steer_else_queue',
-      ...(options.dispatchIdempotencyKey !== undefined
-        ? { dispatchIdempotencyKey: options.dispatchIdempotencyKey }
-        : {}),
-    })
-    if (steered !== 'floor') return steered
-  }
-  const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
-  const inputId = (preacceptedRun?.dispatchedInputId ??
-    `input-${randomUUID()}`) as InvocationInput['inputId']
   const now = timestamp()
   if (preacceptedRun) {
     if (preacceptedRun.status !== 'accepted') {
@@ -888,7 +842,6 @@ export async function executeHeadlessBrokerInputTurn(
       runtimeId: runtime.runtimeId,
       invocationId,
       operationId: runtime.activeOperationId,
-      dispatchedInputId: inputId,
       updatedAt: now,
     })
   } else {
@@ -907,24 +860,12 @@ export async function executeHeadlessBrokerInputTurn(
       operationId: runtime.activeOperationId,
       dispatchIdempotencyKey: options.dispatchIdempotencyKey,
       ...dispatchOriginRunFields(options),
-      // Persist HRC's inputId on the run row so the broker event-mapper can
-      // correlate a drained input.accepted envelope back to this run and flip
-      // invocation.runId before turn.* events project. Set on every dispatch
-      // (immediate and queued) for uniform reasoning; a no-op flip is harmless.
-      dispatchedInputId: inputId,
     })
   }
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
-  // T-07235 — a prompt dispatched to an ALREADY-LIVE generation (a DM to a
-  // runtime that was started promptless). armFirstTurnWatch itself no-ops once
-  // the generation has produced a turn; the queued guard is the other half:
-  // a prompt sitting behind an active turn is not yet before the harness, so
-  // its turn.started is legitimately deferred and must not start a clock. No
-  // coverage is lost — a fresh wedged runtime is armed by the START path, and
-  // a runtime with an active turn has by definition already produced one.
-  if (!queuedMode) {
+  if (options.submissionDoor !== 'enqueue') {
     armFirstTurnWatch(this.db, {
       runtimeId: runtime.runtimeId,
       generation: session.generation,
@@ -937,19 +878,6 @@ export async function executeHeadlessBrokerInputTurn(
       timeoutMsOverride: options.firstTurnTimeoutMs,
       primingDispatchedAt: now,
     })
-  }
-  if (!queuedMode) {
-    this.db.runtimes.update(runtime.runtimeId, {
-      activeRunId: runId,
-      status: 'busy',
-      statusChangedAt: now,
-      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
-        source: 'turn',
-        occurredAt: now,
-        updatedAt: now,
-      }),
-    })
-    this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
   }
   const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
     ts: now,
@@ -964,33 +892,22 @@ export async function executeHeadlessBrokerInputTurn(
   })
   this.notifyEvent(userPromptEvent)
 
-  const input: InvocationInput = {
-    inputId,
-    kind: 'user',
-    content: [{ type: 'text', text: prompt }],
-    ...(toBrokerResponseFormat(options.responseFormat) !== undefined
-      ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
-      : {}),
-    metadata: {
-      runId,
-      ...(options.repairCorrelation !== undefined
-        ? { repairCorrelationJson: JSON.stringify(options.repairCorrelation) }
-        : {}),
-    },
-  }
-
   const dispatchToBroker = () =>
-    this.getHarnessBrokerController().dispatchInput({
-      runtimeId: runtime.runtimeId,
-      input,
-      // Always send whenBusy:'queue' when the active invocation supports
-      // FIFO queueing: the broker applies it only when its invocation state
-      // is turn_active; if the invocation became 'ready' in between, the
-      // broker applies the input immediately and ignores policy (per
-      // harness-broker invocation-manager). The event-mapper flip on
-      // input.accepted is the unconditional safety net in either case.
-      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
-    })
+    submitThroughBrokerDoor(
+      this.getHarnessBrokerController(),
+      options.submissionDoor ?? 'enqueue',
+      {
+        runtimeId: runtime.runtimeId,
+        body: prompt,
+        origin: submissionOrigin(session.scopeRef, options),
+        ...(toBrokerResponseFormat(options.responseFormat) !== undefined
+          ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
+          : {}),
+        ...(options.freshContext !== undefined ? { freshContext: options.freshContext } : {}),
+        ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}),
+        ...(options.turnPolicy !== undefined ? { turnPolicy: options.turnPolicy } : {}),
+      }
+    )
 
   // T-01996: wait for the post-restart serving-controller warmup so the first
   // dispatch sees the broker already bound instead of racing a cold controller.
@@ -1031,15 +948,42 @@ export async function executeHeadlessBrokerInputTurn(
     result = await dispatchToBroker()
   }
 
-  if (!result.ok || !result.response.accepted) {
+  if (result.ok) {
+    this.db.runs.update(runId, {
+      brokerSubmissionId: result.response.submissionId,
+      updatedAt: timestamp(),
+    })
+  }
+
+  if (result.ok && result.response.admission === 'rejected') {
     const completedAt = timestamp()
-    const errorMessage = result.ok
-      ? (result.response.reason ?? 'broker rejected invocation input')
-      : result.error.message
-    const brokerErrorCode = result.ok ? undefined : result.error.code
-    const brokerInputTimeout = brokerErrorCode === 'broker_input_timeout'
+    this.db.runs.markCompleted(runId, {
+      status: 'failed',
+      completedAt,
+      updatedAt: completedAt,
+      errorMessage: result.response.reason ?? 'broker rejected submission',
+    })
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      status: 'started',
+      supportsInFlightInput: false,
+      submissionId: result.response.submissionId,
+      admission: result.response.admission,
+      ...(result.response.reason !== undefined ? { reason: result.response.reason } : {}),
+    } satisfies DispatchTurnResponseBase)
+  }
+
+  if (!result.ok) {
+    const completedAt = timestamp()
+    const errorMessage = result.error.message
+    const brokerErrorCode = result.error.code
+    const brokerInputTimeout = brokerErrorCode.endsWith('_timeout')
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
-    const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
+    const brokerBindingMissing = result.error.code === 'broker_runtime_not_active'
     // T-04297: the lazy reattach above may have just STALED this runtime (lease
     // substrate gone after a host reboot, attach/replay failure, lease identity
     // mismatch). Re-read the row and treat an unavailable status as terminal —
@@ -1093,7 +1037,7 @@ export async function executeHeadlessBrokerInputTurn(
               terminalInvocation: {
                 invocationId,
                 reason: errorMessage,
-                ...(brokerInputTimeout ? { code: 'broker_input_timeout', inputId } : {}),
+                ...(brokerInputTimeout ? { code: brokerErrorCode } : {}),
               },
             },
           }
@@ -1125,7 +1069,8 @@ export async function executeHeadlessBrokerInputTurn(
       transport: 'headless',
       status: 'started',
       supportsInFlightInput: false,
-      ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
+      submissionId: result.response.submissionId,
+      admission: result.response.admission,
     } satisfies DispatchTurnResponseBase)
   }
 
@@ -1138,7 +1083,8 @@ export async function executeHeadlessBrokerInputTurn(
     transport: 'headless',
     status: 'completed',
     supportsInFlightInput: false,
-    ...(queuedMode ? { warnings: [HRC_QUEUED_BEHIND_BUSY_TURN_WARNING] } : {}),
+    submissionId: result.response.submissionId,
+    admission: result.response.admission,
   } satisfies DispatchTurnResponseBase)
 }
 

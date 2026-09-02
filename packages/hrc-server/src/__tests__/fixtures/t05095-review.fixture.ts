@@ -86,20 +86,25 @@ export function createT05095Helpers(
 
   function installDispatchInputSpy(): { calls: Array<Record<string, unknown>> } {
     const state = { calls: [] as Array<Record<string, unknown>> }
-    ;(getServer() as unknown as Record<string, unknown>).getHarnessBrokerController = () => ({
-      dispatchInput: async (request: Record<string, unknown>) => {
+    ;(getServer() as unknown as Record<string, unknown>).getHarnessBrokerController = () => {
+      const submit = async (request: Record<string, unknown>) => {
         state.calls.push(request)
         return {
           ok: true,
           response: {
-            inputId: `input-t05095-${state.calls.length}`,
-            accepted: true,
-            disposition: 'queued',
+            submissionId: `sub-t05095-${state.calls.length}`,
+            admission: 'admitted',
           },
         }
-      },
-      waitForAttachedStartReady: async () => Promise.reject(new Error('not applicable')),
-    })
+      }
+      return {
+        steer: submit,
+        enqueue: submit,
+        invoke: submit,
+        preempt: submit,
+        waitForAttachedStartReady: async () => Promise.reject(new Error('not applicable')),
+      }
+    }
     return state
   }
 

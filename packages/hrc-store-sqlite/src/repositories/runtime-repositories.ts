@@ -694,6 +694,7 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'operationId', column: 'operation_id' },
   { key: 'invocationId', column: 'invocation_id' },
   { key: 'dispatchedInputId', column: 'dispatched_input_id' },
+  { key: 'brokerSubmissionId', column: 'broker_submission_id' },
   { key: 'brokerInputFencedAt', column: 'broker_input_fenced_at' },
   { key: 'brokerInputFenceReason', column: 'broker_input_fence_reason' },
   { key: 'dispatchIdempotencyKey', column: 'dispatch_idempotency_key' },
@@ -732,6 +733,7 @@ export class RunRepository {
           operation_id,
           invocation_id,
           dispatched_input_id,
+          broker_submission_id,
           broker_input_fenced_at,
           broker_input_fence_reason,
           dispatch_idempotency_key,
@@ -743,7 +745,7 @@ export class RunRepository {
           origin_actor,
           origin_kind,
           origin_causation_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -762,6 +764,7 @@ export class RunRepository {
       record.operationId ?? null,
       record.invocationId ?? null,
       record.dispatchedInputId ?? null,
+      record.brokerSubmissionId ?? null,
       record.brokerInputFencedAt ?? null,
       record.brokerInputFenceReason ?? null,
       record.dispatchIdempotencyKey ?? null,
@@ -828,6 +831,16 @@ export class RunRepository {
         `SELECT ${RUN_COLUMNS} FROM runs WHERE dispatched_input_id = ? LIMIT 1`
       )
       .get(inputId)
+
+    return row ? mapRunRow(row) : null
+  }
+
+  getByBrokerSubmissionId(submissionId: string): HrcRunRecord | null {
+    const row = this.db
+      .query<RunRow, [string]>(
+        `SELECT ${RUN_COLUMNS} FROM runs WHERE broker_submission_id = ? LIMIT 1`
+      )
+      .get(submissionId)
 
     return row ? mapRunRow(row) : null
   }

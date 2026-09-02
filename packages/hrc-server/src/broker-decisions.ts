@@ -904,7 +904,8 @@ export function toLatestRuntimeAdmissionView(
  * Minimal view of the session's latest runtime needed to decide whether a
  * headless-preferred turn should be delivered into a live interactive broker
  * runtime instead of spawning a competing headless run. `hasLiveSurface` mirrors
- * the (tmuxJson || surfaceJson) liveness check; `idle` is activeRunId === undefined.
+ * the (tmuxJson || surfaceJson) liveness check. Admission state is deliberately
+ * absent; the selected broker door owns that decision.
  */
 export type LiveInteractiveRuntimeReuseView = {
   controllerKind: HrcRuntimeControllerKind | undefined
@@ -912,7 +913,6 @@ export type LiveInteractiveRuntimeReuseView = {
   provider: HrcProvider
   status: string
   hasLiveSurface: boolean
-  idle: boolean
 } | null
 
 export function toLiveInteractiveRuntimeReuseView(
@@ -927,7 +927,6 @@ export function toLiveInteractiveRuntimeReuseView(
     provider: runtime.provider,
     status: runtime.status,
     hasLiveSurface: runtime.tmuxJson !== undefined || runtime.surfaceJson !== undefined,
-    idle: runtime.activeRunId === undefined,
   }
 }
 
@@ -940,12 +939,12 @@ export function toLiveInteractiveRuntimeReuseView(
  * broker-reuse, not an interactive reprovision of a genuinely-headless target.
  *
  * NOT gated on idle: an active interactive TUI must still receive the turn. A
- * busy interactive broker queues the input (whenBusy:'queue') and drains it on
+ * busy interactive broker queues the input and drains it on
  * the next turn.completed — forking a parallel headless run, or rejecting
  * RUNTIME_BUSY, both leave the human-visible TUI silently without the message.
  * The broker-reuse call site queues vs. rejects based on the active invocation's
- * composed queue capability (isBrokerRuntimeQueueCapable); the interactive tmux
- * drivers advertise input.queue:true so a busy TUI queues rather than rejects.
+ * explicit queue capability; the interactive tmux drivers advertise queue
+ * admission so a busy TUI is held by the broker rather than rejected.
  * Pure; the SDK branch keeps its own equivalent guard.
  */
 export function shouldDeferHeadlessToInteractiveBrokerReuse(

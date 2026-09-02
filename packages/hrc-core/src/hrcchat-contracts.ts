@@ -269,14 +269,6 @@ export type DispatchTurnBySelectorRequest = {
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  /**
-   * `steer` (T-07155) requests URGENT delivery: preempt the target's active turn
-   * rather than queueing behind it. Rejected together with `wait` — a steer joins
-   * the running turn and produces no reply of its own, so there is nothing to
-   * wait for and waiting would silently reproduce the invisible lag this exists
-   * to remove.
-   */
-  whenBusy?: 'reject' | 'steer' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   fences?: HrcFence | undefined
 }
@@ -438,24 +430,6 @@ export type SemanticDmRequest = {
   replyToMessageId?: string | undefined
   runtimeIntent?: HrcDmRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
-  /**
-   * `steer` (T-07155) requests STRICT urgent delivery: preempt the target's
-   * active turn or fail typed — never downgraded, and (T-07214) refused typed
-   * as URGENT_DELIVERY_UNROUTABLE for remote-homed targets, where admission
-   * cannot be proven over store-and-forward federation.
-   *
-   * `steer_else_queue` (T-07214) is the BEST-EFFORT default delivery class the
-   * CLI sends for a bare `hrcchat dm`: attempt a steer when the target is busy
-   * and steer-capable; in every other configuration deliver exactly the
-   * route's ordinary floor (queue with an honest warning, or the legacy busy
-   * rejection). Only provably NON-actuated steer failures fall to the floor;
-   * AMBIGUOUS stays a typed failure so no possibly-actuated order is ever
-   * delivered twice. Accepted on /v1/messages/dm only.
-   *
-   * Both steer classes are rejected together with `wait` — a steered order
-   * joins the running turn and produces no reply of its own.
-   */
-  whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   wait?:
     | {

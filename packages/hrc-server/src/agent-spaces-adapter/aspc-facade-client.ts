@@ -15,8 +15,6 @@ import type {
   BrokerLifecyclePolicyOverlay,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
-  InvocationInputRequest,
-  InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
   InvocationRuntimeContext,
@@ -29,6 +27,15 @@ import type {
   JsonRpcNotification,
   PermissionDecision,
   PermissionRequestParams,
+  SeatProbeRequest,
+  SeatProbeResponse,
+  SubmissionEnqueueRequest,
+  SubmissionInvokeRequest,
+  SubmissionPreemptRequest,
+  SubmissionResponse,
+  SubmissionSteerRequest,
+  TurnManifestRequest,
+  TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 
 import { optional } from './optional.js'
@@ -158,8 +165,28 @@ export class AspcFacadeBrokerClient {
     }
   }
 
-  input(req: InvocationInputRequest): Promise<InvocationInputResponse> {
-    return this.#transport.request('invocation.input', req)
+  steer(req: SubmissionSteerRequest): Promise<SubmissionResponse> {
+    return this.#transport.request('submission.steer', req)
+  }
+
+  enqueue(req: SubmissionEnqueueRequest): Promise<SubmissionResponse> {
+    return this.#transport.request('submission.enqueue', req)
+  }
+
+  invoke(req: SubmissionInvokeRequest): Promise<SubmissionResponse> {
+    return this.#transport.request('submission.invoke', req)
+  }
+
+  preempt(req: SubmissionPreemptRequest): Promise<SubmissionResponse> {
+    return this.#transport.request('submission.preempt', req)
+  }
+
+  turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse> {
+    return this.#transport.request('turn.manifest', req)
+  }
+
+  seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse> {
+    return this.#transport.request('seat.probe', req)
   }
 
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse> {
@@ -256,7 +283,12 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
     dispatchEnvOrOptions?: Record<string, string> | AspcFacadeDispatchOptions,
     runtime?: InvocationRuntimeContext
   ): Promise<InvocationStartResult>
-  input(req: InvocationInputRequest): Promise<InvocationInputResponse>
+  steer(req: SubmissionSteerRequest): Promise<SubmissionResponse>
+  enqueue(req: SubmissionEnqueueRequest): Promise<SubmissionResponse>
+  invoke(req: SubmissionInvokeRequest): Promise<SubmissionResponse>
+  preempt(req: SubmissionPreemptRequest): Promise<SubmissionResponse>
+  turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse>
+  seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse>
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse>
   stop(req: InvocationStopRequest): Promise<InvocationStopResponse>
   status(req: InvocationStatusRequest): Promise<InvocationStatusResponse>
@@ -270,7 +302,12 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
     health: (req) => client.health(req),
     startInvocationFromRequest: (request, dispatchEnvOrOptions, runtime) =>
       client.startInvocationFromRequest(request, dispatchEnvOrOptions, runtime),
-    input: (req) => client.input(req),
+    steer: (req) => client.steer(req),
+    enqueue: (req) => client.enqueue(req),
+    invoke: (req) => client.invoke(req),
+    preempt: (req) => client.preempt(req),
+    turnManifest: (req) => client.turnManifest(req),
+    seatProbe: (req) => client.seatProbe(req),
     interrupt: (req) => client.interrupt(req),
     stop: (req) => client.stop(req),
     status: (req) => client.status(req),

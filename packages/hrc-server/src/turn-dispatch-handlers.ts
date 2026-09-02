@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   HrcConflictError,
@@ -13,14 +12,20 @@ import {
 import type {
   DispatchTurnResponse,
   DispatchTurnTerminalOutcome,
+  EnqueueSubmissionRequest,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcSubmissionDisposition,
+  HrcSubmissionResponse,
   HrcTurnResponseFormat,
+  InvokeSubmissionRequest,
   OpenBrokerSessionResponse,
+  PreemptSubmissionRequest,
   PrepareAttachedRunResponse,
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
+  SteerSubmissionRequest,
 } from 'hrc-core'
 import {
   assertActuatorSplitRouteAdmission,
@@ -44,14 +49,13 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
+import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
-  assertBrokerRuntimeReusableAdmission,
-  assertRuntimeNotBusy,
+  brokerRuntimeSupportsAdmissionClass,
   isBrokerRuntimeInputDispatchable,
-  isBrokerRuntimeQueueCapable,
   isTerminalBrokerInvocationState,
   requireContinuity,
   requireKnownRuntime,
@@ -76,6 +80,7 @@ import {
   parsePrepareAttachedRunRequest,
   parseResumeAttachedRunRequest,
   parseStartRuntimeRequest,
+  parseSubmissionRequest,
 } from './server-parsers.js'
 import type {
   AttachBeforeInvocationStartOption,
@@ -95,6 +100,7 @@ import {
   reattachDurableBrokerForDispatch,
 } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+import { findTargetSession } from './target-view.js'
 
 type PublicDispatchWaitStage = 'accepted' | 'turn_started' | 'terminal'
 
@@ -106,6 +112,140 @@ const idempotentDispatches = new WeakMap<
   HrcServerInstanceForHandlers,
   Map<string, InFlightIdempotentDispatch>
 >()
+
+type SubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
+type SubmissionDoorRequest =
+  | SteerSubmissionRequest
+  | EnqueueSubmissionRequest
+  | InvokeSubmissionRequest
+  | PreemptSubmissionRequest
+
+function runOriginFromSubmission(origin: SubmissionDoorRequest['origin']) {
+  const kind = origin.principalRef.startsWith('agent:')
+    ? ('agent' as const)
+    : origin.principalRef.startsWith('human:') || origin.principalRef === 'lance'
+      ? ('human' as const)
+      : ('system' as const)
+  return { actor: origin.principalRef, kind }
+}
+
+function parseBrokerPayload(record: { brokerEventJson: string }): Record<string, unknown> {
+  try {
+    const value = JSON.parse(record.brokerEventJson) as unknown
+    return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function submissionDisposition(
+  record: { type: string; brokerEventJson: string },
+  submissionId: string
+): HrcSubmissionDisposition | undefined {
+  const payload = parseBrokerPayload(record)
+  if (payload['submissionId'] !== submissionId) return undefined
+  const turnId = payload['turnId']
+  switch (record.type) {
+    case 'submission.executed':
+      return typeof turnId === 'string' ? { type: 'executed', turnId } : undefined
+    case 'submission.absorbed':
+      return typeof turnId === 'string' ? { type: 'absorbed', turnId } : undefined
+    case 'submission.rejected':
+      return {
+        type: 'rejected',
+        reason: typeof payload['reason'] === 'string' ? payload['reason'] : 'rejected',
+      }
+    case 'submission.expired':
+      return { type: 'expired' }
+    case 'submission.cancelled':
+      return { type: 'cancelled' }
+    default:
+      return undefined
+  }
+}
+
+function terminalStatus(record: { type: string; brokerEventJson: string }, turnId: string) {
+  const payload = parseBrokerPayload(record)
+  if (payload['turnId'] !== turnId) return undefined
+  switch (record.type) {
+    case 'turn.completed':
+      return 'completed' as const
+    case 'turn.failed':
+      return 'failed' as const
+    case 'turn.interrupted':
+      return 'interrupted' as const
+    default:
+      return undefined
+  }
+}
+
+export async function waitForSubmissionTerminal(
+  server: HrcServerInstanceForHandlers,
+  input: {
+    invocationId: string
+    runId: string
+    submissionId: string
+    signal: AbortSignal
+    waitForTurnTerminal?: boolean | undefined
+  }
+): Promise<Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>> {
+  const evaluate = (
+    records: ReadonlyArray<{ type: string; brokerEventJson: string }>
+  ): Pick<HrcSubmissionResponse, 'disposition' | 'terminal'> | undefined => {
+    const disposition = records
+      .map((record) => submissionDisposition(record, input.submissionId))
+      .find((candidate) => candidate !== undefined)
+    if (disposition === undefined) return undefined
+    if (disposition.type !== 'executed' || input.waitForTurnTerminal === false) {
+      return { disposition }
+    }
+    const status = records
+      .map((record) => terminalStatus(record, disposition.turnId))
+      .find((candidate) => candidate !== undefined)
+    if (status === undefined) return undefined
+    const finalMessage = projectSemanticTurnResponse(server.db, input.runId).body
+    return {
+      disposition,
+      terminal: {
+        turnId: disposition.turnId,
+        status,
+        ...(finalMessage.length > 0 ? { finalMessage } : {}),
+      },
+    }
+  }
+
+  return await new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (value: Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>) => {
+      if (settled) return
+      settled = true
+      server.rawBrokerSubscribers.delete(subscriber)
+      input.signal.removeEventListener('abort', onAbort)
+      resolve(value)
+    }
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      server.rawBrokerSubscribers.delete(subscriber)
+      reject(new HrcRuntimeUnavailableError('submission wait aborted', { input }))
+    }
+    const subscriber = (notification: {
+      record: { invocationId: string; type: string; brokerEventJson: string }
+    }) => {
+      if (notification.record.invocationId !== input.invocationId) return
+      const value = evaluate(
+        server.db.brokerInvocationEvents.listByInvocationId(input.invocationId)
+      )
+      if (value !== undefined) finish(value)
+    }
+    server.rawBrokerSubscribers.add(subscriber)
+    input.signal.addEventListener('abort', onAbort, { once: true })
+    const existing = evaluate(
+      server.db.brokerInvocationEvents.listByInvocationId(input.invocationId)
+    )
+    if (existing !== undefined) finish(existing)
+  })
+}
 
 function resolvePublicWaitStage(input: {
   waitFor?: PublicDispatchWaitStage | undefined
@@ -122,6 +262,155 @@ function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefine
     status === 'zombie'
     ? status
     : undefined
+}
+
+async function preemptAuthorized(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  request: PreemptSubmissionRequest
+): Promise<boolean> {
+  if (request.origin.principalRef === 'lance' || request.origin.principalRef === 'human:lance') {
+    return true
+  }
+  if (request.origin.envelopeId === undefined) return false
+  const runtime = server.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (candidate) =>
+        candidate.controllerKind === 'harness-broker' &&
+        candidate.activeInvocationId !== undefined &&
+        !isRuntimeUnavailableStatus(candidate.status)
+    )
+    .at(-1)
+  if (runtime === undefined || runtime.activeInvocationId === undefined) return false
+  const probe = await server.getHarnessBrokerController().seatProbe(runtime.runtimeId)
+  if (!probe.ok || probe.response.seat.state !== 'turn-active') return false
+  const manifest = await server
+    .getHarnessBrokerController()
+    .turnManifest(runtime.runtimeId, probe.response.seat.turnId)
+  if (!manifest.ok) return false
+  const manifestIds = new Set(manifest.response.submissionIds)
+  return server.db.brokerInvocationEvents
+    .listByInvocationId(runtime.activeInvocationId)
+    .filter((record) => record.type === 'admission.requested')
+    .some((record) => {
+      const payload = parseBrokerPayload(record)
+      const origin = payload['origin']
+      return (
+        typeof payload['submissionId'] === 'string' &&
+        manifestIds.has(payload['submissionId']) &&
+        origin !== null &&
+        typeof origin === 'object' &&
+        (origin as Record<string, unknown>)['principalRef'] === request.origin.principalRef &&
+        (origin as Record<string, unknown>)['envelopeId'] === request.origin.envelopeId
+      )
+    })
+}
+
+export async function handleSubmission(
+  this: HrcServerInstanceForHandlers,
+  request: Request,
+  door: SubmissionDoor
+): Promise<Response> {
+  const raw = await parseJsonBody(request)
+  const body: SubmissionDoorRequest =
+    door === 'steer'
+      ? parseSubmissionRequest(raw, 'steer')
+      : door === 'enqueue'
+        ? parseSubmissionRequest(raw, 'enqueue')
+        : door === 'invoke'
+          ? parseSubmissionRequest(raw, 'invoke')
+          : parseSubmissionRequest(raw, 'preempt')
+  let session = findTargetSession(this.db, body.target)
+  if (session === null) {
+    throw new HrcRuntimeUnavailableError('submission target is unavailable', {
+      target: body.target,
+      door,
+    })
+  }
+  if (
+    door === 'preempt' &&
+    !(await preemptAuthorized(this, session, body as PreemptSubmissionRequest))
+  ) {
+    return json({
+      submissionId: `hrc-rejected-${randomUUID()}`,
+      admission: 'rejected',
+      reason: 'authority-denied',
+      disposition: { type: 'rejected', reason: 'authority-denied' },
+    } satisfies HrcSubmissionResponse)
+  }
+  if (body.freshContext === true) {
+    const rotation = await this.rotateSessionContext(session, {
+      relaunch: false,
+      dropContinuation: true,
+      reason: `submission-${door}-fresh-context`,
+    })
+    session = requireSession(this.db, rotation.hostSessionId)
+  }
+  const intent = session.lastAppliedIntentJson
+  if (intent === undefined) {
+    throw new HrcRuntimeUnavailableError('submission target has no runtime intent', {
+      target: body.target,
+      door,
+    })
+  }
+  const runId = `run-${randomUUID()}`
+  const response = await this.dispatchTurnForSession(session, intent, body.body, {
+    runId,
+    // The door response is not complete until the broker has minted its
+    // submission identity. This may include provisioning a cold seat, but it
+    // never waits for turn execution; disposition waiting remains below.
+    waitForCompletion: true,
+    submissionDoor: door,
+    submissionOrigin: body.origin,
+    origin: runOriginFromSubmission(body.origin),
+    responseFormat: body.responseFormat,
+    freshContext: body.freshContext,
+    ...('ttlMs' in body && body.ttlMs !== undefined ? { ttlMs: body.ttlMs } : {}),
+    ...('turnPolicy' in body && body.turnPolicy !== undefined
+      ? { turnPolicy: body.turnPolicy }
+      : {}),
+  })
+  const dispatched = (await response.json()) as DispatchTurnResponse
+  if (dispatched.submissionId === undefined || dispatched.admission === undefined) {
+    throw new HrcRuntimeUnavailableError('broker submission returned no admission identity', {
+      target: body.target,
+      door,
+      runId,
+    })
+  }
+  const result: HrcSubmissionResponse = {
+    submissionId: dispatched.submissionId,
+    admission: dispatched.admission,
+    ...(dispatched.reason !== undefined ? { reason: dispatched.reason } : {}),
+  }
+  if (dispatched.admission === 'rejected') {
+    return json({
+      ...result,
+      disposition: {
+        type: 'rejected',
+        reason: dispatched.reason ?? 'rejected',
+      },
+    } satisfies HrcSubmissionResponse)
+  }
+  const wait = 'wait' in body && body.wait === true
+  if (!wait) return json(result)
+  const run = this.db.runs.getByRunId(runId)
+  if (run?.invocationId === undefined) {
+    throw new HrcRuntimeUnavailableError('admitted submission has no broker invocation', {
+      runId,
+      submissionId: dispatched.submissionId,
+    })
+  }
+  return json({
+    ...result,
+    ...(await waitForSubmissionTerminal(this, {
+      invocationId: run.invocationId,
+      runId,
+      submissionId: dispatched.submissionId,
+      signal: request.signal,
+    })),
+  } satisfies HrcSubmissionResponse)
 }
 
 function publicDispatchBody(
@@ -228,33 +517,31 @@ async function waitForPublicDispatchStage(
     return json({ ...base, replayed }, base.stage === 'accepted' ? 202 : 200)
   }
 
-  for (;;) {
-    const run = server.db.runs.getByRunId(base.runId)
-    if (run === null) {
-      throw new HrcRuntimeUnavailableError('accepted dispatch run disappeared', {
-        runId: base.runId,
-        route: 'dispatch-stage-wait',
-      })
-    }
-    const started =
-      server.db.hrcEvents.listByRun(base.runId, { eventKind: 'turn.started' }).length > 0
-    if (requested === 'turn_started' && started) {
-      return json(publicDispatchBody(base, 'turn_started', { replayed }), 200)
-    }
-    const outcome = terminalOutcome(run.status)
-    if (outcome !== undefined) {
-      return json(
-        publicDispatchBody(base, 'terminal', {
-          replayed,
-          outcome,
-          ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
-          ...(run.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
-        }),
-        200
-      )
-    }
-    await delay(25)
+  const invocationId = base.observation?.broker?.selector.invocationId
+  if (base.submissionId === undefined || invocationId === undefined) {
+    throw new HrcRuntimeUnavailableError('dispatch wait requires broker submission identity', {
+      runId: base.runId,
+      requested,
+    })
   }
+  await waitForSubmissionTerminal(server, {
+    invocationId,
+    runId: base.runId,
+    submissionId: base.submissionId,
+    signal: new AbortController().signal,
+    waitForTurnTerminal: requested === 'terminal',
+  })
+  const run = server.db.runs.getByRunId(base.runId)
+  const outcome = run === null ? undefined : terminalOutcome(run.status)
+  return json(
+    publicDispatchBody(base, requested, {
+      replayed,
+      ...(outcome !== undefined ? { outcome } : {}),
+      ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+      ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+    }),
+    200
+  )
 }
 
 export async function handleEnsureRuntime(
@@ -381,7 +668,7 @@ export async function handleOpenBrokerSession(
         afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
       },
     },
-    supportsInputQueue: isBrokerRuntimeQueueCapable(this.db, runtime),
+    supportsInputQueue: brokerRuntimeSupportsAdmissionClass(this.db, runtime, 'queue'),
   } satisfies OpenBrokerSessionResponse)
 }
 
@@ -449,10 +736,11 @@ export async function handleDispatchTurn(
   const dispatch = async (): Promise<DispatchTurnResponse> => {
     const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
       runId,
-      // Public dispatch acknowledgement is always detached at the route layer.
-      // Evidence-backed waits happen below against the durable run projection.
-      waitForCompletion: false,
-      whenBusy: body.whenBusy,
+      // Accepted requests detach at the durable acceptance boundary. Later
+      // stages first obtain broker submission identity, then wait on its ledger.
+      waitForCompletion: waitFor !== 'accepted',
+      submissionDoor: 'invoke',
+      turnPolicy: 'guarded',
       responseFormat: body.responseFormat,
       ...(body.establishedBrokerInvocationId !== undefined
         ? { establishedBrokerInvocationId: body.establishedBrokerInvocationId }
@@ -507,7 +795,6 @@ export async function openHeadlessBrokerSessionForSession(
   )
   if (reusableRuntime) {
     assertActuatorSplitRuntimeReuse(intent, reusableRuntime)
-    assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime)
     return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
 
@@ -534,7 +821,6 @@ export async function openHeadlessBrokerSessionForSession(
           : null
       if (recovered && recovered.activeInvocationId !== undefined) {
         assertActuatorSplitRuntimeReuse(intent, recovered)
-        assertBrokerRuntimeReusableAdmission(this.db, recovered)
         return await finalizeHeadlessBrokerSessionOpen(this, recovered)
       }
       shouldCleanUp = reattachResult.state !== 'rejected-outside-runtime-root'
@@ -613,57 +899,47 @@ export async function waitForBrokerSessionOpenReady(
   runtimeId: string,
   invocationId: string
 ): Promise<HrcRuntimeSnapshot> {
-  const deadline = Date.now() + 10 * 60 * 1000
-  while (Date.now() < deadline) {
-    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-    const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
-    if (!runtime) {
-      throw new HrcRuntimeUnavailableError('broker session open runtime disappeared', {
-        runtimeId,
-        invocationId,
-        route: 'broker-session-open',
-      })
-    }
-    if (!invocation) {
-      throw new HrcRuntimeUnavailableError('broker session open invocation disappeared', {
-        runtimeId,
-        invocationId,
-        route: 'broker-session-open',
-      })
-    }
-    if (isTerminalBrokerInvocationState(invocation.invocationState)) {
-      throw new HrcRuntimeUnavailableError('broker session open invocation failed', {
-        runtimeId,
-        invocationId,
-        invocationState: invocation.invocationState,
-        route: 'broker-session-open',
-      })
-    }
-    if (isRuntimeUnavailableStatus(runtime.status) || runtime.status === 'failed') {
-      throw new HrcRuntimeUnavailableError('broker session open runtime unavailable', {
-        runtimeId,
-        invocationId,
-        status: runtime.status,
-        route: 'broker-session-open',
-      })
-    }
-    const invocationCanAcceptFollowup =
-      invocation.invocationState === 'ready' || isBrokerRuntimeQueueCapable(this.db, runtime)
-    if (
-      runtime.status === 'ready' &&
-      runtime.activeRunId === undefined &&
-      invocationCanAcceptFollowup
-    ) {
-      return runtime
-    }
-    await delay(100)
+  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+  const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+  if (!runtime) {
+    throw new HrcRuntimeUnavailableError('broker session open runtime disappeared', {
+      runtimeId,
+      invocationId,
+      route: 'broker-session-open',
+    })
   }
-
-  throw new HrcRuntimeUnavailableError('broker session open timed out waiting for readiness', {
-    runtimeId,
-    invocationId,
-    route: 'broker-session-open',
-  })
+  if (!invocation) {
+    throw new HrcRuntimeUnavailableError('broker session open invocation disappeared', {
+      runtimeId,
+      invocationId,
+      route: 'broker-session-open',
+    })
+  }
+  if (
+    isTerminalBrokerInvocationState(invocation.invocationState) ||
+    isRuntimeUnavailableStatus(runtime.status) ||
+    runtime.status === 'failed'
+  ) {
+    throw new HrcRuntimeUnavailableError('broker session open invocation unavailable', {
+      runtimeId,
+      invocationId,
+      invocationState: invocation.invocationState,
+      runtimeStatus: runtime.status,
+      route: 'broker-session-open',
+    })
+  }
+  const probe = await this.getHarnessBrokerController().seatProbe(runtimeId)
+  if (!probe.ok || probe.response.seat.state !== 'idle') {
+    throw new HrcRuntimeUnavailableError('broker session open seat is not idle', {
+      runtimeId,
+      invocationId,
+      seat: probe.ok ? probe.response.seat : undefined,
+      brokerHeldDepth: probe.ok ? probe.response.brokerHeldDepth : undefined,
+      brokerError: probe.ok ? undefined : probe.error,
+      route: 'broker-session-open',
+    })
+  }
+  return runtime
 }
 
 function normalizeBrokerSessionOpenIntent(
@@ -958,7 +1234,6 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
   runId?: string | undefined
   ensureInteractiveRuntime?: boolean | undefined
   waitForCompletion?: boolean | undefined
-  whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined
   joinInFlightRuntimeStart?: boolean | undefined
   attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   repairCorrelation?: JsonRepairRunCorrelation | undefined
@@ -1074,7 +1349,6 @@ async function dispatchAdmittedTurnForSession(
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
-          whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
           coalescedMembers: options.coalescedMembers,
@@ -1114,6 +1388,12 @@ async function dispatchAdmittedTurnForSession(
     // Prefer a live idle interactive runtime over SDK when one is available (spec §11.3.3:
     // headless for CLI/headless-capable targets, SDK only as fallback)
     const liveInteractiveRuntime = latestRuntime
+    const interactiveSeat =
+      !callerSurfaceReuseRefusal &&
+      liveInteractiveRuntime?.controllerKind === 'harness-broker' &&
+      liveInteractiveRuntime.activeInvocationId !== undefined
+        ? await this.getHarnessBrokerController().seatProbe(liveInteractiveRuntime.runtimeId)
+        : undefined
     const interactiveAvailableAndIdle =
       !callerSurfaceReuseRefusal &&
       liveInteractiveRuntime &&
@@ -1123,7 +1403,8 @@ async function dispatchAdmittedTurnForSession(
       // T-05358: never reuse an interactive runtime whose broker invocation is
       // transitioning (starting/stopping) — row status alone admits `stopping`.
       isBrokerRuntimeInputDispatchable(this.db, liveInteractiveRuntime) &&
-      liveInteractiveRuntime.activeRunId === undefined
+      interactiveSeat?.ok === true &&
+      interactiveSeat.response.seat.state === 'idle'
     if (!interactiveAvailableAndIdle) {
       assertJsonSchemaResponseFormatSupported(options.responseFormat, {
         route: 'sdk',
@@ -1182,7 +1463,6 @@ async function dispatchAdmittedTurnForSession(
       return await withObservation(
         await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
-          whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
           ...dispatchRunPersistence(options),
@@ -1248,9 +1528,6 @@ async function dispatchAdmittedTurnForSession(
         route: 'interactive-broker',
       })
     }
-    if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
-      assertRuntimeNotBusy(this.db, latestRuntime)
-    }
     assertActuatorSplitRuntimeReuse(intent, latestRuntime)
     await this.publishPresentation(latestRuntime, {
       operatorAttachPending: options.attachBeforeInvocationStart !== undefined,
@@ -1262,9 +1539,6 @@ async function dispatchAdmittedTurnForSession(
           admission.allowedBrokerDriver === 'pi-tui-tmux'
             ? false
             : options.waitForCompletion,
-        // T-07203: the caller's whenBusy must survive to the interactive
-        // executor — dropping it here was the silent-downgrade hole.
-        whenBusy: options.whenBusy,
         repairCorrelation: options.repairCorrelation,
         responseFormat: options.responseFormat,
         ...dispatchRunPersistence(options),
@@ -1414,6 +1688,7 @@ export const turnDispatchHandlersMethods = {
   handleStartRuntime,
   handleOpenBrokerSession,
   handleDispatchTurn,
+  handleSubmission,
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
   dispatchTurnForSession,

@@ -62,9 +62,7 @@ describe('HrcErrorCode completeness (T-00949)', () => {
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBeDefined()
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBeDefined()
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBeDefined()
-    // T-05097: public /v1/turns whenBusy validation is semantic 422,
-    // not malformed-request-with-a-patched-status.
-    expect((HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY).toBeDefined()
+    expect(HrcErrorCode.UNKNOWN_FIELD).toBeDefined()
   })
 
   test('defines 503 runtime_unavailable', () => {
@@ -96,9 +94,7 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBe('missing_runtime_intent')
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBe('provider_mismatch')
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBe('inflight_unsupported')
-    expect((HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY).toBe(
-      'unsupported_when_busy'
-    )
+    expect(HrcErrorCode.UNKNOWN_FIELD).toBe('unknown_field')
     expect(HrcErrorCode.RUNTIME_UNAVAILABLE).toBe('runtime_unavailable')
     expect(HrcErrorCode.INTERNAL_ERROR).toBe('internal_error')
   })
@@ -132,7 +128,7 @@ describe('httpStatusForErrorCode (T-00949)', () => {
     expect(httpStatusForErrorCode(HrcErrorCode.MISSING_RUNTIME_INTENT)).toBe(422)
     expect(httpStatusForErrorCode(HrcErrorCode.PROVIDER_MISMATCH)).toBe(422)
     expect(httpStatusForErrorCode(HrcErrorCode.INFLIGHT_UNSUPPORTED)).toBe(422)
-    expect(httpStatusForErrorCode('unsupported_when_busy' as HrcErrorCode)).toBe(422)
+    expect(httpStatusForErrorCode(HrcErrorCode.UNKNOWN_FIELD)).toBe(422)
   })
 
   test('503 for runtime_unavailable', () => {
@@ -317,7 +313,7 @@ describe('HrcUnprocessableEntityError (n-31 / T-00985)', () => {
       'missing_runtime_intent',
       'provider_mismatch',
       'inflight_unsupported',
-      'unsupported_when_busy',
+      'unknown_field',
     ] as const
     for (const code of codes) {
       const err = new HrcUnprocessableEntityError(code as never, `${code} invalid`)

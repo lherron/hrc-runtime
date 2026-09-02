@@ -4,8 +4,6 @@ import { CliUsageError, parseDuration } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
   HrcMessageAddress,
-  HrcMessageFilter,
-  HrcMessageRecord,
   HrcTurnResponseFormat,
   SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffResponse,
@@ -15,7 +13,7 @@ import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from '
 import type { HrcClient } from 'hrc-sdk'
 
 import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
-import { formatAddress, type resolveScope, resolveSenderAddress } from '../normalize.js'
+import { type resolveScope, resolveSenderAddress } from '../normalize.js'
 import { printJson, printJsonLine } from '../print.js'
 import {
   type RenderFrameFormatInput,
@@ -28,13 +26,6 @@ import { type StackedAggregator, createStackedAggregator } from '../stacked-aggr
 import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result } from '../stacked-types.js'
-import {
-  type WaitFinalResult,
-  buildDmFinalResponseResult,
-  findCorrelatedDmFinalResponse,
-  findMessageById,
-  isFederatedSemanticTurnOrigin,
-} from '../wait-final.js'
 
 export type TurnOptions = {
   /** Explicit sender principal ("human" or an agent handle); wins over the envelope. */
@@ -59,7 +50,9 @@ export type TurnOptions = {
   wait?: string | undefined
   /** T-07155 — preempt the target's active turn instead of queueing behind it. */
   steer?: boolean | undefined
-  urgent?: boolean | undefined
+  preempt?: boolean | undefined
+  /** Admission lifetime for enqueue/preempt. */
+  ttl?: string | undefined
   /** Wait budget for `--wait final`. Default 45m. */
   timeout?: string | undefined
   /** Suppress all progress output while `--wait` blocks (default in wait mode). */
@@ -67,8 +60,6 @@ export type TurnOptions = {
 }
 
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
-const TURN_FINAL_REPLY_GRACE_MS = 1_000
-const TURN_FINAL_REPLY_POLL_MS = 50
 
 function isPendingSemanticTurnHandoff(
   response: SemanticTurnHandoffResponse
@@ -255,18 +246,14 @@ function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyIn
 }
 
 function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
-  // T-07155: same mutex as dm — a steered order joins the active turn and has no
-  // reply of its own, so --wait would block for the full budget and report
-  // nothing.
-  // --urgent is the deprecated alias for --steer (T-07203 rename).
-  const steer = opts.steer === true || opts.urgent === true
-  if (opts.urgent === true) {
-    process.stderr.write('hrcchat: notice: --urgent is deprecated; use --steer\n')
+  if (opts.steer === true && opts.wait !== undefined) {
+    throw new CliUsageError('--steer cannot be combined with --wait; steer has no turn of its own')
   }
-  if (steer && opts.wait !== undefined) {
-    throw new CliUsageError(
-      'urgent_wait_conflict: --steer cannot be combined with --wait; a steered order joins the active turn and has no reply of its own'
-    )
+  if (opts.steer === true && opts.preempt === true) {
+    throw new CliUsageError('--steer and --preempt select different submission doors')
+  }
+  if (opts.steer === true && opts.ttl !== undefined) {
+    throw new CliUsageError('--ttl is available only for enqueue and preempt')
   }
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'final') {
@@ -344,7 +331,7 @@ export async function cmdTurn(
   const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
 
   // ── Final-only Codex wait mode (mutex with all streaming options) ──
-  const { waitMode, waitTimeoutMs, stackedWindowMs } = resolveTurnOutputOptions(opts)
+  const { waitMode, stackedWindowMs } = resolveTurnOutputOptions(opts)
 
   // ── Resolve scope ──
   const target = resolveLaunchTarget(targetInput)
@@ -405,7 +392,47 @@ export async function cmdTurn(
   const from = sender.address
   const to = { kind: 'session' as const, sessionRef }
 
-  const steer = opts.steer === true || opts.urgent === true
+  const principalRef =
+    from.kind === 'session'
+      ? (from.sessionRef.split('/lane:')[0] ?? from.sessionRef)
+      : from.entity === 'human'
+        ? 'human:lance'
+        : `system:${from.entity}`
+  const ttlMs = opts.ttl === undefined ? undefined : parseDuration(opts.ttl)
+  if (ttlMs !== undefined && ttlMs <= 0) {
+    throw new CliUsageError(`invalid duration: ${opts.ttl} (must be > 0)`)
+  }
+  const submissionRequest = {
+    target: sessionRef,
+    body,
+    origin: { principalRef, ...(from.kind === 'session' ? { scopeRef: principalRef } : {}) },
+    ...(opts.new === true ? { freshContext: true } : {}),
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
+  }
+  if (opts.steer === true) {
+    printJsonLine(await client.steer(submissionRequest))
+    return
+  }
+  if (opts.preempt === true) {
+    printJsonLine(
+      await client.preempt({
+        ...submissionRequest,
+        ...(ttlMs !== undefined ? { ttlMs } : {}),
+        ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+      })
+    )
+    return
+  }
+  if (waitMode === 'final' || ttlMs !== undefined) {
+    printJsonLine(
+      await client.enqueue({
+        ...submissionRequest,
+        ...(ttlMs !== undefined ? { ttlMs } : {}),
+        ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
+      })
+    )
+    return
+  }
   const handoff = await client.semanticTurnHandoff({
     from,
     to,
@@ -416,7 +443,6 @@ export async function cmdTurn(
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
-    ...(steer ? { whenBusy: 'steer' as const } : {}),
   })
   if (isPendingSemanticTurnHandoff(handoff)) {
     printJsonLine(handoff)
@@ -428,33 +454,6 @@ export async function cmdTurn(
     writeDeliveryOutcome(handoff.delivery)
   }
   const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
-
-  // ── Final-only Codex wait mode ──
-  // Watch quietly until the turn reaches a terminal state, then emit exactly
-  // one compact JSON object. No frames are rendered while blocking. The
-  // streaming path below is left entirely untouched (AC7).
-  if (waitMode === 'final' && waitTimeoutMs !== undefined) {
-    const originRequest = await findMessageById(client, handoff.messageId)
-    if (originRequest !== undefined && isFederatedSemanticTurnOrigin(originRequest)) {
-      await runTurnFederatedFinalWait({
-        client,
-        request: originRequest,
-        expectedResponder,
-        expectedRecipient: from,
-        timeoutMs: waitTimeoutMs,
-      })
-      return
-    }
-    await runTurnFinalWait({
-      client,
-      handoff,
-      expectedResponder,
-      expectedRecipient: from,
-      projectId: resolved.parsed.projectId ?? '',
-      timeoutMs: waitTimeoutMs,
-    })
-    return
-  }
 
   // ── Resolve sink format ──
   // --pretty forces terminal/tree format regardless of TTY detection, so
@@ -619,221 +618,6 @@ export async function cmdTurn(
   // exit 0 — success (implicit return)
 }
 
-async function runTurnFederatedFinalWait(args: {
-  client: HrcClient
-  request: HrcMessageRecord
-  expectedResponder: HrcMessageAddress
-  expectedRecipient: HrcMessageAddress
-  timeoutMs: number
-}): Promise<void> {
-  const { client, request, expectedResponder, expectedRecipient, timeoutMs } = args
-  const startedAt = Date.now()
-  const deadlineMs = startedAt + timeoutMs
-  const abortController = new AbortController()
-  let timedOut = false
-  let interrupted = false
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true
-    abortController.abort()
-  }, timeoutMs)
-  const sigintHandler = () => {
-    interrupted = true
-    abortController.abort()
-  }
-  process.on('SIGINT', sigintHandler)
-
-  try {
-    const reply = await findCorrelatedDmFinalResponse({
-      client,
-      request,
-      deadlineMs,
-      pollMs: TURN_FINAL_REPLY_POLL_MS,
-      expectedResponder,
-      expectedRecipient,
-      signal: abortController.signal,
-    })
-    const elapsedMs = Date.now() - startedAt
-    const target = expectedResponder
-    if (reply !== undefined) {
-      printJsonLine(buildDmFinalResponseResult({ request, reply, target, elapsedMs }))
-      return
-    }
-    if (interrupted) {
-      printJsonLine({
-        status: 'cancelled',
-        sentMessageId: request.messageId,
-        target: formatAddress(target),
-        elapsedMs,
-        lastSeq: request.messageSeq,
-      })
-      process.exitCode = TURN_EXIT_SIGINT
-      return
-    }
-    if (timedOut || Date.now() >= deadlineMs) {
-      printJsonLine({
-        status: 'timeout',
-        sentMessageId: request.messageId,
-        target: formatAddress(target),
-        elapsedMs,
-        lastSeq: request.messageSeq,
-      })
-      process.exitCode = TURN_EXIT_STALL
-      return
-    }
-    printJsonLine({
-      status: 'error',
-      sentMessageId: request.messageId,
-      target: formatAddress(target),
-      elapsedMs,
-      lastSeq: request.messageSeq,
-      errorCode: 'final_response_unavailable',
-    })
-    process.exitCode = TURN_EXIT_RUNTIME_DEAD
-  } finally {
-    clearTimeout(timeoutTimer)
-    process.removeListener('SIGINT', sigintHandler)
-  }
-}
-
-/**
- * Final-only Codex wait for a dispatched turn. Blocks QUIETLY on the lifecycle
- * watch stream (no frames rendered), then emits exactly one compact JSON object
- * describing the terminal outcome. Non-zero process exit codes are set silently
- * (no stderr) so scripts can branch on `$?` without breaking the quiet contract;
- * the `status` field is the primary machine-actionable signal.
- *
- * This is a separate path from the streaming watch loop in cmdTurn — the two do
- * not share state, so `--follow`/`--stacked` semantics are entirely unaffected.
- */
-async function runTurnFinalWait(args: {
-  client: HrcClient
-  handoff: SemanticTurnHandoffStartedResponse
-  expectedResponder: HrcMessageAddress
-  expectedRecipient: HrcMessageAddress
-  projectId: string
-  timeoutMs: number
-}): Promise<void> {
-  const { client, handoff, expectedResponder, expectedRecipient, timeoutMs } = args
-  const target = formatAddress({ kind: 'session', sessionRef: handoff.sessionRef })
-  const sentMessageId = handoff.messageId
-  const afterSeq = handoff.fromSeq
-  const startedAt = Date.now()
-
-  // Quiet the per-event projection logger so nothing interleaves on stderr
-  // before the terminal JSON object.
-  if (process.env['LOG_LEVEL'] === undefined) {
-    process.env['LOG_LEVEL'] = 'warn'
-  }
-
-  const abortController = new AbortController()
-  let timedOut = false
-  let interrupted = false
-  let outcome: 'completed' | 'runtimeDead' | 'error' | undefined
-
-  const sigintHandler = () => {
-    interrupted = true
-    abortController.abort()
-  }
-  process.on('SIGINT', sigintHandler)
-
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true
-    abortController.abort()
-  }, timeoutMs)
-
-  try {
-    for await (const event of client.watch({
-      scopeRef: handoff.scopeRef,
-      laneRef: handoff.laneRef,
-      runId: handoff.runId,
-      generation: handoff.generation,
-      fromSeq: handoff.fromSeq,
-      follow: true,
-      signal: abortController.signal,
-    })) {
-      if (isWatchLoopTurnTerminal(event)) {
-        outcome = 'completed'
-        abortController.abort()
-        break
-      }
-      if (isRuntimeDead(event)) {
-        outcome = 'runtimeDead'
-        abortController.abort()
-        break
-      }
-      if (
-        event.eventKind === 'permission_request' ||
-        event.eventKind === 'run_failed' ||
-        event.eventKind === 'turn.error'
-      ) {
-        outcome = 'error'
-      }
-    }
-  } catch (err) {
-    // An abort (timeout, SIGINT, or intentional terminal close) surfaces as an
-    // AbortError here; fall through to classify by the flags set above. Any
-    // other error is a real failure and must propagate.
-    if (!abortController.signal.aborted) {
-      throw err
-    }
-  } finally {
-    clearTimeout(timeoutTimer)
-    process.removeListener('SIGINT', sigintHandler)
-  }
-
-  const elapsedMs = Date.now() - startedAt
-  let result: WaitFinalResult
-
-  if (outcome === 'completed') {
-    const reply = await findDurableReply(client, {
-      handoff,
-      expectedResponder,
-      expectedRecipient,
-      graceMs: TURN_FINAL_REPLY_GRACE_MS,
-    })
-    result = {
-      status: 'responded',
-      sentMessageId,
-      target,
-      elapsedMs,
-      correlation: { mode: 'reply_to', afterSeq },
-      ...(reply
-        ? {
-            response: {
-              messageId: reply.messageId,
-              from: formatAddress(reply.from),
-              text: reply.body,
-            },
-          }
-        : {}),
-    }
-  } else if (interrupted) {
-    result = { status: 'cancelled', sentMessageId, target, elapsedMs, lastSeq: afterSeq }
-  } else if (timedOut) {
-    result = { status: 'timeout', sentMessageId, target, elapsedMs, lastSeq: afterSeq }
-  } else {
-    result = {
-      status: 'error',
-      sentMessageId,
-      target,
-      elapsedMs,
-      lastSeq: afterSeq,
-      errorCode: outcome === 'runtimeDead' ? 'runtime_dead' : 'turn_error',
-    }
-  }
-
-  printJsonLine(result)
-
-  // Silent exit-code mapping (no stderr) — mirrors the streaming path's codes.
-  if (result.status === 'timeout') {
-    process.exitCode = TURN_EXIT_STALL
-  } else if (result.status === 'cancelled') {
-    process.exitCode = TURN_EXIT_SIGINT
-  } else if (result.status === 'error') {
-    process.exitCode = TURN_EXIT_RUNTIME_DEAD
-  }
-}
-
 /**
  * Watch-loop terminal predicate: which events end the turn for the watch loop
  * (both the stacked and non-stacked paths). Deliberately BROADER than the
@@ -874,147 +658,13 @@ function deriveStackedPhase(
 }
 
 async function enrichFinalEvent(
-  client: HrcClient,
-  handoff: SemanticTurnHandoffStartedResponse,
+  _client: HrcClient,
+  _handoff: SemanticTurnHandoffStartedResponse,
   event: HrcLifecycleEvent,
-  correlation: {
+  _correlation: {
     expectedResponder: HrcMessageAddress
     expectedRecipient: HrcMessageAddress
   }
 ): Promise<HrcLifecycleEvent> {
-  const payload = isRecord(event.payload) ? event.payload : {}
-  const payloadBody = typeof payload['body'] === 'string' ? payload['body'] : undefined
-  const payloadReplyId =
-    typeof payload['replyMessageId'] === 'string' ? payload['replyMessageId'] : undefined
-  if (payloadBody !== undefined && payloadReplyId !== undefined) {
-    return event
-  }
-
-  const reply = await findDurableReply(client, {
-    handoff,
-    expectedResponder: correlation.expectedResponder,
-    expectedRecipient: correlation.expectedRecipient,
-    graceMs: TURN_FINAL_REPLY_GRACE_MS,
-  })
-  if (reply === undefined) {
-    return event
-  }
-
-  return {
-    ...event,
-    payload: {
-      ...payload,
-      body: payloadBody ?? reply.body,
-      replyMessageId: payloadReplyId ?? reply.messageId,
-    },
-  }
-}
-
-async function findDurableReply(
-  client: HrcClient,
-  correlation: {
-    handoff: SemanticTurnHandoffStartedResponse
-    expectedResponder: HrcMessageAddress
-    expectedRecipient: HrcMessageAddress
-    graceMs?: number | undefined
-  }
-): Promise<HrcMessageRecord | undefined> {
-  const maybeClient = client as HrcClient & {
-    listMessages?: HrcClient['listMessages'] | undefined
-  }
-  if (typeof maybeClient.listMessages !== 'function') {
-    return undefined
-  }
-
-  const { handoff, expectedResponder, expectedRecipient } = correlation
-  const filter: HrcMessageFilter = {
-    from: expectedResponder,
-    to: expectedRecipient,
-    replyToMessageId: handoff.messageId,
-    runId: handoff.runId,
-    hostSessionId: handoff.hostSessionId,
-    generation: handoff.generation,
-    kinds: ['dm'],
-    phases: ['response'],
-    limit: 1,
-    order: 'desc',
-  }
-  const deadline = Date.now() + (correlation.graceMs ?? 0)
-
-  while (Date.now() <= deadline) {
-    try {
-      const result = await maybeClient.listMessages({
-        ...filter,
-      })
-      const strictReply = result.messages.find((message) =>
-        matchesDurableReply(message, {
-          handoff,
-          expectedResponder,
-          expectedRecipient,
-        })
-      )
-      if (strictReply !== undefined) {
-        return strictReply
-      }
-      if (result.messages.length === 1) {
-        const legacyReply = result.messages.find((message) =>
-          matchesDurableReply(message, {
-            handoff,
-            expectedResponder,
-            expectedRecipient,
-            allowMissingExecutionIdentity: true,
-          })
-        )
-        if (legacyReply !== undefined) {
-          return legacyReply
-        }
-      }
-    } catch {
-      return undefined
-    }
-
-    await sleep(Math.min(TURN_FINAL_REPLY_POLL_MS, Math.max(0, deadline - Date.now())))
-  }
-  return undefined
-}
-
-function matchesDurableReply(
-  message: HrcMessageRecord,
-  correlation: {
-    handoff: SemanticTurnHandoffStartedResponse
-    expectedResponder: HrcMessageAddress
-    expectedRecipient: HrcMessageAddress
-    allowMissingExecutionIdentity?: boolean | undefined
-  }
-): boolean {
-  const { handoff, expectedResponder, expectedRecipient, allowMissingExecutionIdentity } =
-    correlation
-  const executionMatches =
-    message.execution.runId === handoff.runId &&
-    message.execution.hostSessionId === handoff.hostSessionId &&
-    message.execution.generation === handoff.generation
-  const legacyMissingExecutionIdentity =
-    allowMissingExecutionIdentity === true &&
-    message.execution.runId === undefined &&
-    message.execution.hostSessionId === undefined &&
-    message.execution.generation === undefined
-  return (
-    message.phase === 'response' &&
-    addressesEqual(message.from, expectedResponder) &&
-    addressesEqual(message.to, expectedRecipient) &&
-    message.replyToMessageId === handoff.messageId &&
-    (executionMatches || legacyMissingExecutionIdentity)
-  )
-}
-
-function addressesEqual(left: HrcMessageAddress, right: HrcMessageAddress): boolean {
-  if (left.kind !== right.kind) return false
-  if (left.kind === 'entity' && right.kind === 'entity') return left.entity === right.entity
-  if (left.kind === 'session' && right.kind === 'session')
-    return left.sessionRef === right.sessionRef
-  return false
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return event
 }

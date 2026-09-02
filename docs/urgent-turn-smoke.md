@@ -1,175 +1,51 @@
-# Urgent-turn smoke: queued vs steering DM delivery
+# Broker admission door smoke
 
-Executable validation runbook for `hrcchat dm` delivery semantics against a
-BUSY target. Validates both delivery classes on both broker routes
-(T-07155 / T-07191 / T-07203, spec r7 daedalus-approved):
-
-| | Best-effort steer (DEFAULT, bare `hrcchat dm`) | Deferred (`--queue`, or implied by `--wait`) | Strict steer (`--steer`; `--urgent` deprecated alias) |
-|---|---|---|---|
-| **Headless broker** (codex-class) | steer when steer-capable; else the deferred floor | defers until turn end; warning `queued_behind_busy_turn` | `admitted_into_active_turn` (admission proof) or typed failure |
-| **Interactive broker** (claude-class) | steer when steer-capable; else the deferred floor | queued to live harness; warning `queued_to_live_harness` (may surface mid-turn) | `presented_to_live_harness` (pane-write proof ONLY) or typed failure |
-| **Busy legacy headless** (no broker endpoint) | existing typed busy rejection (identical to a bare DM before T-07214) | same typed rejection | typed `urgent_delivery_unsupported` |
-
-Default-class rules (T-07214, spec r5 daedalus-approved): the bare-dm class is
-`steer_else_queue` — it adds a steer attempt ON TOP of exactly the old floor
-and invents no delivery path. It falls to the floor ONLY on provably
-NON-actuated outcomes (capability gate, allowlisted refusals, double-race);
-AMBIGUOUS stays a typed 503 so no possibly-actuated order is ever delivered
-twice (`queued_fallback` audit rows record attempt-to-floor transitions).
-Federation: strict `--steer` to a REMOTE-homed scope refuses typed
-(`urgent_delivery_unroutable`) — admission cannot be proven over
-store-and-forward; the default class rides the envelope tolerantly and is
-honoured at the destination only for peers holding `allowUrgentDelivery`
-(default-deny), flooring honestly otherwise (including downlevel peers).
-
-Contract under test: every class reports an HONEST outcome — one of the three
-success shapes below, each claiming exactly what its actuator proves — or
-fails typed. It is NEVER silently downgraded to deferred delivery, and no
-possibly-actuated order is ever reported as never-landed.
-
-## The three success shapes
-
-| Outcome | Proof level | Route |
-|---|---|---|
-| `admitted_into_active_turn` | broker admitted the input into the running turn (turn-identity carried by the codex app-server) | headless |
-| `presented_to_live_harness` | the text was WRITTEN INTO THE PANE while the named run was active — the harness decides when it takes effect; **not admission proof** | interactive |
-| `started_fresh_turn` | the target was idle by the time the broker acted; the order started (and is tracked as) its own turn | both |
+Validate the four explicit HRC submission classes against an installed release.
+Admission class is selected by the endpoint or CLI flag, never by a policy field.
 
 ## Preconditions
 
-1. Current binaries installed (`just install`), daemon restarted on the commit
-   under test (`hrc server restart --wait --reason ...`; never `--force` past a
-   busy runtime without cause).
-2. Two disposable task-scoped targets, one per route:
-   headless/codex-class (e.g. `daedalus@<project>:T-XXXXX`) and
-   interactive/claude-class (e.g. `clod@<project>:T-XXXXX`).
-3. **Warm each scope first** — send one trivial DM and wait for its turn to
-   complete before any busy-window test. Crossing DMs to a COLD scope used to
-   mint duplicate runtimes (T-06313/T-07202); even with single-flight, a warm
-   scope makes the busy window deterministic. Verify exactly one live runtime:
-   `hrc runtime list --json | jq '[.[] | select(.hostSessionId=="<hsid>")] | length'` → 1
+1. Install the certified commit and activate it through the campaign coordinator.
+2. Warm one real `claude-code-tmux` seat and one real `codex-app-server` seat.
+3. Record each runtime and invocation id, then read the whole invocation ledger;
+   do not grade from a capture or an agent self-report.
 
-## The busy-window recipe (per target)
+## CLI matrix
 
-1. **Kickoff** — make the target busy for ~4 minutes:
-
-   ```
-   hrcchat dm <target> - <<'EOF'
-   Busy-turn smoke: count from 1 to 25, running `sleep 10` in your shell
-   between each number, printing each number. If any message reaches you WHILE
-   counting, acknowledge it immediately, state the number you had reached,
-   then continue to 25. Do not finish early.
-   EOF
-   ```
-
-2. **Wait for busy** (handle-form selector; scope-ref form is rejected):
-
-   ```
-   hrc monitor wait '<agent>@<project>:<task>' --until busy --timeout 90s
-   ```
-
-3. **Steer test** — while counting is in flight:
-
-   ```
-   hrcchat dm <target> --steer - <<< 'STEER CHECK: acknowledge now, mid-count, with the number reached.'
-   ```
-
-4. **Queued fence** — immediately after, while still busy (`--queue` is
-   REQUIRED here since T-07214: a bare dm best-effort-steers by default):
-
-   ```
-   hrcchat dm <target> --queue - <<< 'Fence: this one should queue.'
-   ```
-
-## Expected results — steer
-
-Headless target:
-
-```
-hrcchat: steer [admitted_into_active_turn]: admitted into the target's active turn (run run-…); no separate reply will follow
-```
-
-Interactive target:
-
-```
-hrcchat: steer [presented_to_live_harness]: written into the target's live session mid-turn (run run-…); the harness decides when it takes effect — this is not admission proof
-```
-
-Both exit 0 with NO `queued_*` warning. If the busy window closed first:
-
-```
-hrcchat: steer [started_fresh_turn]: target was idle; the order started its own turn
-```
-
-Typed failures (each legitimate only under its trigger; queueing is NEVER one):
-
-| Typed failure | HTTP | Trigger |
+| Command | Door | Expected disposition |
 |---|---|---|
-| `urgent_delivery_unsupported` | 422 | ALLOWLISTED pre-actuation refusals only: live broker does not advertise `busyPolicies:["steer"]` (rotate the runtime), no broker endpoint on the runtime, `steer_not_supported` / `UnsupportedCapability` / `broker_runtime_not_active` |
-| `urgent_delivery_race_lost` | 409 | the active turn ended around the request (including a turn that began and ended entirely inside the probe window); non-actuated — resend if still relevant |
-| `urgent_delivery_ambiguous` | 503 | broker input timeout, or ANY failure not provably pre-actuation (e.g. a pane paste whose Enter failed) — whether the order was presented is unknown; do NOT blind-retry: the ledger replays the recorded outcome |
+| `hrc turn <target> 'idle enqueue'` | enqueue | `executed{turnId}` and its own terminal |
+| `hrc turn <target> 'boundary enqueue'` while busy | enqueue | `queue.enqueued`, then `executed{turnId}` at the boundary |
+| `hrc turn <target> --steer 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; typed rejection when guarded |
+| `hrc turn <target> --wait final 'guarded work'` | enqueue + guarded | waits for this submission's `executed{turnId}` and that turn's terminal |
+| `hrc turn <target> --preempt 'operator takeover'` | preempt | interrupted active terminal, then the preempting submission's own turn |
 
-Durable readback (all must hold):
+`--steer` and `--wait` are mutually exclusive. `--ttl <duration>` is accepted
+only by enqueue and preempt. A non-operator preempt must return
+`authority-denied` and produce no `interrupt.*` record.
 
-- Message record: `hrcchat show '#<seq>' --json` →
-  `execution.state == "completed"` with `execution.runId == <the run cited by
-  the outcome>` (admitted/presented), or `state == "started"` with the fresh
-  run (started_fresh_turn).
-- No new NON-TERMINAL run row for an admitted/presented steer (one terminal
-  `cancelled` provisional row tagged `superseded_by_steer` is the expected
-  audit artifact; it must appear in no response).
-- Server log: `steer_class.headless_steer_admitted_into_active_turn` /
-  `steer_class.interactive_steer_presented_to_live_harness` /
-  `steer_class.started_fresh_turn` (plus `semantic_dm.busy_headless_steered`
-  on the headless DM busy branch).
-- `steer_contributions` row sealed (`admitted` / `presented` /
-  `started_fresh`; never left `attempting`).
-- Behavioral: the target acknowledges mid-count with the number reached
-  (headless: guaranteed by admission; interactive: expected at the next
-  tool-call boundary, but presentation-only — absence of a mid-count ack is
-  not by itself a failure of the `presented` contract).
+## Ledger proof
 
-## Expected results — queued fence
+For a blocking enqueue, the whole-runtime ledger must contain this ordered
+subsequence with one stable submission id and one identified turn id:
 
-Headless:
-
-```
-hrcchat: warning [queued_behind_busy_turn]: target is busy; delivery deferred until the active turn completes
+```text
+admission.requested(queue)
+admission.admitted
+queue.enqueued
+submission.executed{turnId}
+turn.completed{turnId}
 ```
 
-Interactive:
+Rejected, expired, and cancelled submissions end at their typed disposition and
+do not wait for a message or reply row. The canonical final text comes from the
+identified turn projection.
 
-```
-hrcchat: warning [queued_to_live_harness]: target is busy; input queued to the live harness and may surface mid-turn or after the active turn completes
-```
+For a kicker presentation, send an addressed `wrkc say` while the seat is busy.
+The ledger must show `admission.requested(queue)` with `origin.envelopeId` and a
+positive TTL, followed by boundary presentation. It must contain no steer or
+preempt admission for that delivery.
 
-Durable readback: message state `accepted` with its OWN minted runId (the
-deferred path is unchanged by steer work); after the turn drains, headless
-delivery metadata shows real deferral (`queueAgeMs` ≈ remaining turn duration;
-live reference: 292322ms). Interactive mid-turn surfacing is opportunistic
-(tool-call boundaries only) — anyone needing preemption uses `--steer`.
-
-## Anti-patterns this doc exists to catch
-
-- **Exit-0-with-warning on a steer send** — the T-07191 bug class (live repro
-  trailed its target's turn by 6m14s while reporting success).
-- **Claiming admission from a pane write** — the r1 rejection: interactive
-  steers are `presented`, never `admitted`.
-- **Reporting an actuated order as refused** — the r2/r6 rejections: `started`
-  is a success shape; only allowlisted pre-actuation refusals may say
-  `unsupported`.
-- **Grading from agent self-reports** — duplicate runtimes (T-07202) produced
-  contradictory narratives from "the same" scope. Grade only from message
-  records, run rows, steer_contributions, and server logs.
-- **Testing against a cold scope** — see Preconditions #3.
-- **Piping lifecycle commands through filters** — typed refusals launder to
-  exit 0. Run them bare.
-
-## Provenance
-
-Headless route validated live 2026-08-11 (pre-rename): steer acked mid-count
-at 2 by a busy daedalus scope, admitted into `run-529ade62`; fence deferred
-292s. Interactive semantics landed with T-07203 (spec r7; six-rejection
-daedalus verification loop). Re-run both columns of the matrix after any
-change to broker input policy handling, the steer executors, or the drivers'
-applySteerNow implementations.
+Run the timing-dependent set—busy enqueue, guarded wait, and preempt—twice on
+the same certified source commit. Across every scenario require zero
+`capture.warning` records.

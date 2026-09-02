@@ -16,7 +16,6 @@
 import type {
   HrcLifecycleEvent,
   HrcMessageAddress,
-  HrcMessageFilter,
   HrcMessageRecord,
   WaitMessageResponse,
 } from 'hrc-core'
@@ -140,59 +139,6 @@ export async function findMessageById(
   return result.messages.find((message) => message.messageId === messageId)
 }
 
-export async function findCorrelatedDmFinalResponse(args: {
-  client: HrcClient
-  request: HrcMessageRecord
-  deadlineMs: number
-  pollMs?: number | undefined
-  expectedResponder?: HrcMessageAddress | undefined
-  expectedRecipient?: HrcMessageAddress | undefined
-  signal?: AbortSignal | undefined
-}): Promise<HrcMessageRecord | undefined> {
-  const maybeClient = args.client as HrcClient & {
-    listMessages?: HrcClient['listMessages'] | undefined
-  }
-  if (typeof maybeClient.listMessages !== 'function') {
-    return undefined
-  }
-
-  const filter: HrcMessageFilter = {
-    thread: { rootMessageId: args.request.rootMessageId },
-    replyToMessageId: args.request.messageId,
-    ...(args.expectedResponder === undefined ? {} : { from: args.expectedResponder }),
-    ...(args.expectedRecipient === undefined ? {} : { to: args.expectedRecipient }),
-    kinds: ['dm'],
-    phases: ['response'],
-    afterSeq: args.request.messageSeq,
-    order: 'desc',
-  }
-  const pollMs = args.pollMs ?? 50
-
-  while (true) {
-    if (args.signal?.aborted) {
-      return undefined
-    }
-    const result = await maybeClient.listMessages(filter)
-    const reply = result.messages.find(
-      (message) =>
-        message.phase === 'response' &&
-        message.replyToMessageId === args.request.messageId &&
-        (args.expectedResponder === undefined ||
-          addressesEqual(message.from, args.expectedResponder)) &&
-        (args.expectedRecipient === undefined || addressesEqual(message.to, args.expectedRecipient))
-    )
-    if (reply !== undefined) {
-      return reply
-    }
-
-    const remainingMs = args.deadlineMs - Date.now()
-    if (remainingMs <= 0) {
-      return undefined
-    }
-    await sleep(Math.min(pollMs, remainingMs), args.signal)
-  }
-}
-
 /**
  * Build the final-only result for `hrcchat dm --wait response`.
  *
@@ -260,28 +206,4 @@ export function buildDmWaitResult(args: {
     elapsedMs,
     lastSeq: afterSeq,
   }
-}
-
-function addressesEqual(left: HrcMessageAddress, right: HrcMessageAddress): boolean {
-  if (left.kind !== right.kind) return false
-  if (left.kind === 'entity' && right.kind === 'entity') return left.entity === right.entity
-  if (left.kind === 'session' && right.kind === 'session') {
-    return left.sessionRef === right.sessionRef
-  }
-  return false
-}
-
-function sleep(ms: number, signal?: AbortSignal | undefined): Promise<void> {
-  if (signal?.aborted) return Promise.resolve()
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        resolve()
-      },
-      { once: true }
-    )
-  })
 }

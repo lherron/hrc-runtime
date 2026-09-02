@@ -36,6 +36,9 @@ import type {
   InvocationStopResponse,
   PermissionDecision,
   PermissionRequestParams,
+  SeatProbeResponse,
+  SubmissionResponse,
+  TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 import { resolveAspToolchainBinary } from '../asp-toolchain'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
@@ -87,13 +90,15 @@ import type {
   BrokerClientLike,
   BrokerControllerAttachInput,
   BrokerControllerAttachResult,
-  BrokerControllerDispatchInput,
-  BrokerControllerDispatchResult,
+  BrokerControllerEnqueueInput,
+  BrokerControllerInvokeInput,
   BrokerControllerLogger,
+  BrokerControllerPreemptInput,
   BrokerControllerReconcileResult,
   BrokerControllerRpcResult,
   BrokerControllerStartInput,
   BrokerControllerStartResult,
+  BrokerControllerSteerInput,
   BrokerPermissionChannel,
   BrokerTmuxAllocation,
   BrokerTmuxAllocator,
@@ -249,13 +254,15 @@ export type {
   BrokerClientLike,
   BrokerControllerAttachInput,
   BrokerControllerAttachResult,
-  BrokerControllerDispatchInput,
-  BrokerControllerDispatchResult,
+  BrokerControllerEnqueueInput,
+  BrokerControllerInvokeInput,
   BrokerControllerLogger,
+  BrokerControllerPreemptInput,
   BrokerControllerReconcileResult,
   BrokerControllerRpcResult,
   BrokerControllerStartInput,
   BrokerControllerStartResult,
+  BrokerControllerSteerInput,
   BrokerDispatchOptions,
   BrokerPermissionChannel,
   BrokerTmuxAllocation,
@@ -664,21 +671,117 @@ export class HarnessBrokerController {
     }
   }
 
-  async dispatchInput(
-    input: BrokerControllerDispatchInput
-  ): Promise<BrokerControllerDispatchResult> {
+  async steer(
+    input: BrokerControllerSteerInput
+  ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
     return this.withActive(
       input.runtimeId,
       {
-        failureCode: 'broker_input_failed',
-        timeoutCode: 'broker_input_timeout',
+        failureCode: 'broker_steer_failed',
+        timeoutCode: 'broker_steer_timeout',
         retireOnTimeout: true,
       },
       (active) =>
-        active.client.input({
+        active.client.steer({
           invocationId: active.invocationId as InvocationId,
-          input: input.input,
-          ...(input.policy ? { policy: input.policy } : {}),
+          origin: input.origin,
+          body: input.body,
+          ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
+          ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
+        })
+    )
+  }
+
+  async enqueue(
+    input: BrokerControllerEnqueueInput
+  ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
+    return this.withActive(
+      input.runtimeId,
+      {
+        failureCode: 'broker_enqueue_failed',
+        timeoutCode: 'broker_enqueue_timeout',
+        retireOnTimeout: true,
+      },
+      (active) =>
+        active.client.enqueue({
+          invocationId: active.invocationId as InvocationId,
+          origin: input.origin,
+          body: input.body,
+          ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
+          ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
+          ...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
+          ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
+        })
+    )
+  }
+
+  async invoke(
+    input: BrokerControllerInvokeInput
+  ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
+    return this.withActive(
+      input.runtimeId,
+      {
+        failureCode: 'broker_invoke_failed',
+        timeoutCode: 'broker_invoke_timeout',
+        retireOnTimeout: true,
+      },
+      (active) =>
+        active.client.invoke({
+          invocationId: active.invocationId as InvocationId,
+          origin: input.origin,
+          body: input.body,
+          ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
+          ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
+          ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
+        })
+    )
+  }
+
+  async preempt(
+    input: BrokerControllerPreemptInput
+  ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
+    return this.withActive(
+      input.runtimeId,
+      {
+        failureCode: 'broker_preempt_failed',
+        timeoutCode: 'broker_preempt_timeout',
+        retireOnTimeout: true,
+      },
+      (active) =>
+        active.client.preempt({
+          invocationId: active.invocationId as InvocationId,
+          origin: input.origin,
+          body: input.body,
+          ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
+          ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
+          ...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
+          ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
+        })
+    )
+  }
+
+  async turnManifest(
+    runtimeId: string,
+    turnId: string
+  ): Promise<BrokerControllerRpcResult<TurnManifestResponse>> {
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_turn_manifest_failed', timeoutCode: 'broker_turn_manifest_timeout' },
+      (active) =>
+        active.client.turnManifest({
+          invocationId: active.invocationId as InvocationId,
+          turnId: turnId as never,
+        })
+    )
+  }
+
+  async seatProbe(runtimeId: string): Promise<BrokerControllerRpcResult<SeatProbeResponse>> {
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_seat_probe_failed', timeoutCode: 'broker_seat_probe_timeout' },
+      (active) =>
+        active.client.seatProbe({
+          invocationId: active.invocationId as InvocationId,
         })
     )
   }

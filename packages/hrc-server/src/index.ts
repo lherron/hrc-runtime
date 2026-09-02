@@ -284,10 +284,6 @@ import {
   warmDurableBrokerBindings,
 } from './startup-reconcile.js'
 import { toStartRuntimeResponse, toStatusSessionView } from './status-views.js'
-import {
-  type SteerClassDispatchMethods,
-  steerClassDispatchMethods,
-} from './steer-class-dispatch.js'
 import { createSubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
@@ -764,7 +760,6 @@ interface HrcServerInstance
     BrokerInteractiveHandlersMethods,
     BrokerHeadlessHandlersMethods,
     PresentationPublishMethods,
-    SteerClassDispatchMethods,
     SdkTurnHandlersMethods,
     SessionIndexHandlersMethods,
     BridgeSurfaceHandlersMethods,
@@ -958,6 +953,14 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/runs/resume-attached')]: (request) =>
       this.handleResumeAttachedRun(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
+    [exactRouteKey('POST', '/v1/submissions/steer')]: (request) =>
+      this.handleSubmission(request, 'steer'),
+    [exactRouteKey('POST', '/v1/submissions/enqueue')]: (request) =>
+      this.handleSubmission(request, 'enqueue'),
+    [exactRouteKey('POST', '/v1/submissions/invoke')]: (request) =>
+      this.handleSubmission(request, 'invoke'),
+    [exactRouteKey('POST', '/v1/submissions/preempt')]: (request) =>
+      this.handleSubmission(request, 'preempt'),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
     [exactRouteKey('POST', '/v1/in-flight-input')]: (request) => this.handleInFlightInput(request),
@@ -2798,7 +2801,6 @@ Object.assign(
   brokerInteractiveHandlersMethods,
   brokerHeadlessHandlersMethods,
   presentationPublishMethods,
-  steerClassDispatchMethods,
   sdkTurnHandlersMethods,
   sessionIndexHandlersMethods,
   bridgeSurfaceHandlersMethods,

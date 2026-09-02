@@ -190,6 +190,7 @@ class MockClient implements DurableBrokerClientLike {
   closeHandler: CloseHandler | undefined
   closed = false
   inputCalls = 0
+  invokeCalls = 0
   readonly ackCalls: InvocationAckEventsRequest[] = []
   readonly liveStream = new PushStream<InvocationEventEnvelope>()
   attachResponse!: BrokerAttachResponse
@@ -240,6 +241,10 @@ class MockClient implements DurableBrokerClientLike {
       accepted: true,
       disposition: 'started',
     }
+  }
+  async invoke() {
+    this.invokeCalls += 1
+    return { submissionId: 'sub-live-reattach', admission: 'admitted' as const }
   }
   async interrupt(): Promise<InvocationInterruptResponse> {
     return { accepted: true, effect: 'turn_interrupted' }
@@ -469,12 +474,13 @@ describe('T-01801 GAP B — a fenced controller releases silently (no crash-term
       })
     )
 
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'replacement still owns input' }] },
+      body: 'replacement still owns input',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(true)
-    expect(replacementClient.inputCalls).toBe(1)
+    expect(replacementClient.invokeCalls).toBe(1)
     expect(readRuntime().status).not.toBe('crashed')
   })
 

@@ -7,8 +7,7 @@
  *
  * `queued_to_live_harness` (interactive, T-07203): the input was queued to a
  * live harness that may surface queued input mid-turn at its own tool-call
- * boundaries — or after the turn. The timing is the harness's choice;
- * senders needing preemption semantics must use `whenBusy: 'steer'`.
+ * boundaries — or after the turn. The timing is the harness's choice.
  */
 export type HrcDeliveryWarning =
   | {
@@ -36,7 +35,7 @@ export const HRC_QUEUED_TO_LIVE_HARNESS_WARNING: HrcDeliveryWarning = {
 }
 
 /**
- * Sender-visible outcome of an urgent (`whenBusy: 'steer'`) delivery.
+ * Sender-visible outcome of a legacy urgent delivery.
  *
  * `admitted_into_active_turn` means the input was ADMITTED into the turn that
  * was already running. It is NOT proof that the model replanned before an
@@ -119,7 +118,7 @@ export type HrcSteerContributionState =
   // the recorded activeRunId IS that fresh run. Replay reconstructs a started
   // dispatch instead of re-actuating.
   | 'started_fresh'
-  // T-07214: a best-effort (steer_else_queue) attempt failed provably
+  // A best-effort attempt failed provably
   // NON-actuated and the delivery fell to the route's ordinary floor. Keyless,
   // audit-only: records the attempt-to-floor transition; never replayed.
   | 'queued_fallback'

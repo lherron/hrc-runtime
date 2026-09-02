@@ -650,7 +650,7 @@ const eventRepositoryQueryIndexesMigration: HrcMigration = {
 }
 
 /**
- * T-07155 — the durable ledger for urgent (`whenBusy: 'steer'`) delivery.
+ * T-07155 — the durable ledger for legacy urgent delivery.
  *
  * A steered order is admitted into a turn that already exists, so it gets no run
  * row of its own (a run would park in `accepted` forever). But "no durable
@@ -794,6 +794,27 @@ const brokerCommittedProjectionCursorMigration: HrcMigration = {
   },
 }
 
+/** T-07867 — authoritative broker admission submission correlation for runs. */
+const runBrokerSubmissionIdMigration: HrcMigration = {
+  id: '0052_runs_broker_submission_id',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!columns.has('broker_submission_id')) {
+      db.exec('ALTER TABLE runs ADD COLUMN broker_submission_id TEXT')
+    }
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_broker_submission_id
+        ON runs(broker_submission_id)
+        WHERE broker_submission_id IS NOT NULL;
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -812,4 +833,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runtimePresentationRecordMigration,
   pruneCandidateIndexesMigration,
   brokerCommittedProjectionCursorMigration,
+  runBrokerSubmissionIdMigration,
 ]

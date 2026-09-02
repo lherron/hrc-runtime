@@ -109,6 +109,8 @@ const MAX_PRESENTED_PER_ATTEMPT = 20
  * interrupted to be told they have not replied yet.
  */
 const REMINDER_HOLD_MS = 60_000
+/** Broker-held kicker presentations expire before the runtime zombie horizon. */
+const KICKER_SUBMISSION_TTL_MS = 30 * 60_000
 /**
  * Bounded page for the wake tail. The limit bounds RAW ledger rows scanned, not
  * matches, so a busy ledger costs more ticks rather than one unbounded read.
@@ -773,6 +775,15 @@ async function presentIntoBusyTarget(
   try {
     const response = await server.dispatchTurnForSession(session, intent, prompt, {
       waitForCompletion: false,
+      submissionDoor: 'enqueue',
+      ttlMs: KICKER_SUBMISSION_TTL_MS,
+      submissionOrigin: {
+        principalRef: envelopes[0]?.envelope.from.principalRef ?? 'system:hrc-kicker',
+        ...(envelopes[0]?.envelope.from.scopeRef === undefined
+          ? {}
+          : { scopeRef: envelopes[0].envelope.from.scopeRef }),
+        ...(envelopes[0] === undefined ? {} : { envelopeId: envelopes[0].envelope.id }),
+      },
     })
     body = (await response.json()) as DispatchTurnResponse & { inputId?: string | undefined }
     if (body.status !== 'started') {
@@ -860,7 +871,7 @@ async function presentIntoBusyTarget(
  * The SLOT is declined — claiming a second one for a scope already mid-drive
  * would double-drive it — but the MAIL does not wait (T-07612 rev 4): it is
  * queued into the live turn by `presentIntoBusyTarget`, slot-less. Before rev 4
- * only `--urgent` took that path, and before T-07644 even that was unreachable
+ * only the retired urgent path took that route, and before T-07644 it was unreachable
  * here — a bare `return` sat above it.
  *
  * And it LOGS, unconditionally. The instrumented fall-through below already
@@ -1424,9 +1435,16 @@ async function driveMailTargetOnce(
       {
         runId: attempt.runId,
         waitForCompletion: false,
-        // T-07612 rev 4: no `whenBusy: 'reject'`. The seat was idle by HRC's
-        // record when this drive began; if the broker finds a turn live anyway
-        // it queues (its own policy), never refuses.
+        submissionDoor: 'enqueue',
+        ttlMs: KICKER_SUBMISSION_TTL_MS,
+        submissionOrigin: {
+          principalRef: ordered[0]?.envelope.from.principalRef ?? 'system:hrc-kicker',
+          ...(ordered[0]?.envelope.from.scopeRef === undefined
+            ? {}
+            : { scopeRef: ordered[0].envelope.from.scopeRef }),
+          ...(ordered[0] === undefined ? {} : { envelopeId: ordered[0].envelope.id }),
+        },
+        // The broker owns admission; kicker presentation always uses enqueue.
       }
     )
     const body = (await response.json()) as DispatchTurnResponse & {
@@ -1943,6 +1961,9 @@ async function deliverFailureNotices(
   try {
     const response = await server.dispatchTurnForSession(session, intent, prompt, {
       waitForCompletion: false,
+      submissionDoor: 'enqueue',
+      ttlMs: KICKER_SUBMISSION_TTL_MS,
+      submissionOrigin: { principalRef: 'system:hrc-kicker', scopeRef: session.scopeRef },
     })
     const body = (await response.json()) as DispatchTurnResponse
     if (body.status !== 'started') {

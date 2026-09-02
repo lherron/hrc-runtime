@@ -12,6 +12,7 @@ import type {
 import {
   type BrokerExecutionProfile,
   type CompiledRuntimePlan,
+  DEFAULT_CODEX_BROKER_INPUT_POLICY,
   type RuntimeIdentityAllocation,
   createCanonicalHasher,
   hashNeutralStartRequest,
@@ -268,8 +269,7 @@ async function buildDirectAgentHarnessPlanVariant(
           }
         : { mode: 'deny' as const, audit: true as const },
       inputPolicy: {
-        readyInput: 'start-turn' as const,
-        busy: { whenBusy: 'queue' as const, maxDepth: 32 },
+        ...DEFAULT_CODEX_BROKER_INPUT_POLICY,
         supportedKinds: interactive ? (['user'] as const) : (['user', 'steer'] as const),
         attachmentPolicy: { localImages: false, fileRefs: false },
       },

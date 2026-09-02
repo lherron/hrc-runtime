@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { CliUsageError, attachJsonOption, exitWithError } from 'cli-kit'
-import { Command, CommanderError, Option } from 'commander'
+import { Command, CommanderError } from 'commander'
 import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
 import { HrcClient, discoverSocket, loadDotEnvLocal } from 'hrc-sdk'
 
@@ -53,8 +53,8 @@ program
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--cross-scope-reply', 'allow --reply-to to thread across conversation scopes')
   .option('--steer', 'STRICT steer: deliver into the active turn or fail typed')
-  .option('--queue', 'DEFERRED delivery: queue behind the active turn')
-  .addOption(new Option('--urgent', 'deprecated alias for --steer').hideHelp())
+  .option('--preempt', 'interrupt the active turn and start this submission (operator only)')
+  .option('--ttl <duration>', 'admission lifetime for enqueue or preempt')
   .option('--file <path>', 'read prompt from file')
   .option(
     '--response-format-json-schema <schema>',

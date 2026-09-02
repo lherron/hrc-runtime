@@ -626,6 +626,18 @@ export class BrokerEventMapper {
     runtime: HrcRuntimeSnapshot
   ): string | undefined {
     const fallbackRunId = invocation.runId
+    const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
+    if (submissionId !== undefined) {
+      const run = this.db.runs.getByBrokerSubmissionId(submissionId)
+      if (run?.runId !== undefined) return run.runId
+    }
+
+    const turnId = this.extractTurnId(envelope)
+    if (turnId !== undefined) {
+      const run = this.findRunByDispositionTurnId(String(envelope.invocationId), turnId)
+      if (run !== undefined) return run
+    }
+
     // Prefer envelope.inputId when the broker sets it: input.accepted /
     // input.queued / input.rejected always carry it (contract), and
     // input.queued specifically refers to the QUEUED input.
@@ -743,6 +755,39 @@ export class BrokerEventMapper {
       return typeof v === 'string' ? v : undefined
     }
     return undefined
+  }
+
+  private extractSubmissionIdFromPayload(payload: unknown): string | undefined {
+    if (payload && typeof payload === 'object' && 'submissionId' in payload) {
+      const value = (payload as { submissionId?: unknown }).submissionId
+      return typeof value === 'string' ? value : undefined
+    }
+    return undefined
+  }
+
+  private extractTurnId(envelope: InvocationEventEnvelope): string | undefined {
+    if (typeof envelope.turnId === 'string') return envelope.turnId
+    if (envelope.payload && typeof envelope.payload === 'object' && 'turnId' in envelope.payload) {
+      const value = (envelope.payload as { turnId?: unknown }).turnId
+      return typeof value === 'string' ? value : undefined
+    }
+    return undefined
+  }
+
+  private findRunByDispositionTurnId(invocationId: string, turnId: string): string | undefined {
+    const row = this.db.sqlite
+      .query<{ submissionId: string | null }, [string, string]>(
+        `SELECT json_extract(broker_event_json, '$.submissionId') AS submissionId
+           FROM broker_invocation_events
+          WHERE invocation_id = ?
+            AND type IN ('submission.executed', 'submission.absorbed')
+            AND json_extract(broker_event_json, '$.turnId') = ?
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, turnId)
+    if (row?.submissionId === null || row?.submissionId === undefined) return undefined
+    return this.db.runs.getByBrokerSubmissionId(row.submissionId)?.runId
   }
 
   private findPriorInputAccepted(
@@ -867,6 +912,11 @@ export class BrokerEventMapper {
       case 'input.accepted':
       case 'input.rejected':
       case 'input.queued':
+      case 'submission.executed':
+      case 'submission.absorbed':
+      case 'submission.rejected':
+      case 'submission.expired':
+      case 'submission.cancelled':
       case 'turn.started':
       case 'turn.completed':
       case 'turn.failed':
@@ -1098,6 +1148,33 @@ export class BrokerEventMapper {
       case 'input.queued': {
         if (runId !== undefined) {
           db.runs.update(runId, { updatedAt: now })
+        }
+        break
+      }
+      case 'submission.executed':
+      case 'submission.absorbed': {
+        if (runId !== undefined) {
+          db.runs.update(runId, { updatedAt: now })
+          if (envelope.type === 'submission.executed') {
+            db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+          }
+        }
+        break
+      }
+      case 'submission.rejected':
+      case 'submission.expired':
+      case 'submission.cancelled': {
+        if (runId !== undefined) {
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            const payload = envelope.payload as { reason?: string | undefined }
+            db.runs.markCompleted(runId, {
+              status: envelope.type === 'submission.cancelled' ? 'cancelled' : 'failed',
+              completedAt: envelope.time ?? now,
+              updatedAt: now,
+              ...(payload.reason !== undefined ? { errorMessage: payload.reason } : {}),
+            })
+          }
         }
         break
       }

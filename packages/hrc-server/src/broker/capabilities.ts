@@ -21,6 +21,30 @@ export type CapabilityCheck = {
   detail: Record<string, unknown>
 }
 
+export type BrokerAdmissionClass = 'steer' | 'queue' | 'exclusive' | 'preempt'
+
+/**
+ * Reads the frozen broker hello capability projection without reaching into a
+ * harness or deriving admission support from runtime/run state.
+ */
+export function brokerCapabilitiesSupportAdmissionClass(
+  capabilitiesJson: string | undefined,
+  submissionClass: BrokerAdmissionClass
+): boolean {
+  if (!capabilitiesJson) return false
+  try {
+    const capabilities = JSON.parse(capabilitiesJson) as {
+      admission?: { classes?: unknown }
+    }
+    return (
+      Array.isArray(capabilities.admission?.classes) &&
+      capabilities.admission.classes.includes(submissionClass)
+    )
+  } catch {
+    return false
+  }
+}
+
 export function preflightBrokerLifecyclePolicy(
   profile: BrokerExecutionProfile,
   lifecyclePolicy: BrokerLifecyclePolicyOverlay | undefined

@@ -8,7 +8,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { BrokerTransportError } from 'spaces-harness-broker-client'
-import type { InvocationStatusRequest, InvocationStopRequest } from 'spaces-harness-broker-protocol'
+import type {
+  InvocationStatusRequest,
+  InvocationStopRequest,
+  SubmissionInvokeRequest,
+} from 'spaces-harness-broker-protocol'
 
 import { HarnessBrokerController } from '../broker/controller'
 
@@ -258,11 +262,11 @@ describe('HarnessBrokerController', () => {
     // T-05176 red: reused broker input delivery must be bounded at the generic
     // active RPC boundary. The local watchdog keeps the current unbounded code
     // from hanging this test; green is the controller returning broker_input_timeout.
-    class HangingInputBrokerClient extends FakeBrokerClient {
+    class HangingInvokeBrokerClient extends FakeBrokerClient {
       closeCalls = 0
 
-      override async input(): Promise<never> {
-        this.callOrder.push('input')
+      override async invoke(_req: SubmissionInvokeRequest): Promise<never> {
+        this.callOrder.push('invoke')
         return new Promise<never>(() => {})
       }
 
@@ -271,7 +275,7 @@ describe('HarnessBrokerController', () => {
         await super.close()
       }
     }
-    const fake = new HangingInputBrokerClient()
+    const fake = new HangingInvokeBrokerClient()
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
@@ -285,9 +289,10 @@ describe('HarnessBrokerController', () => {
 
     const startedAt = Date.now()
     const result = await resolveWithin(
-      controller.dispatchInput({
+      controller.invoke({
         runtimeId: 'runtime_w2',
-        input: { kind: 'user', content: [{ type: 'text', text: 'wedged reuse input' }] },
+        body: 'wedged reuse input',
+        origin: { principalRef: 'agent:test' },
       }),
       200
     )
@@ -296,7 +301,7 @@ describe('HarnessBrokerController', () => {
     if (result === 'test_watchdog_timeout') return
     expect(Date.now() - startedAt).toBeLessThan(200)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.code).toBe('broker_input_timeout')
+    if (!result.ok) expect(result.error.code).toBe('broker_invoke_timeout')
     expect(fake.closeCalls).toBe(1)
 
     const again = await controller.status('runtime_w2')
@@ -343,9 +348,10 @@ describe('HarnessBrokerController', () => {
     expect(status.ok).toBe(false)
     if (!status.ok) expect(status.error.code).toBe('broker_status_timeout')
 
-    const inputAfterStatusTimeout = await controller.dispatchInput({
+    const inputAfterStatusTimeout = await controller.invoke({
       runtimeId: 'runtime_w2',
-      input: { kind: 'user', content: [{ type: 'text', text: 'still active after status' }] },
+      body: 'still active after status',
+      origin: { principalRef: 'agent:test' },
     })
     expect(inputAfterStatusTimeout.ok).toBe(true)
 
@@ -358,9 +364,10 @@ describe('HarnessBrokerController', () => {
     expect(interrupt.ok).toBe(false)
     if (!interrupt.ok) expect(interrupt.error.code).toBe('broker_interrupt_timeout')
 
-    const inputAfterInterruptTimeout = await controller.dispatchInput({
+    const inputAfterInterruptTimeout = await controller.invoke({
       runtimeId: 'runtime_w2',
-      input: { kind: 'user', content: [{ type: 'text', text: 'still active after interrupt' }] },
+      body: 'still active after interrupt',
+      origin: { principalRef: 'agent:test' },
     })
     expect(inputAfterInterruptTimeout.ok).toBe(true)
 
@@ -373,9 +380,10 @@ describe('HarnessBrokerController', () => {
     expect(stop.ok).toBe(false)
     if (!stop.ok) expect(stop.error.code).toBe('broker_stop_timeout')
 
-    const inputAfterStopTimeout = await controller.dispatchInput({
+    const inputAfterStopTimeout = await controller.invoke({
       runtimeId: 'runtime_w2',
-      input: { kind: 'user', content: [{ type: 'text', text: 'still active after stop' }] },
+      body: 'still active after stop',
+      origin: { principalRef: 'agent:test' },
     })
     expect(inputAfterStopTimeout.ok).toBe(true)
   })

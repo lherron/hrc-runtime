@@ -38,7 +38,7 @@ function mapRow(row: SteerContributionRow): HrcSteerContributionRecord {
 }
 
 /**
- * T-07155 — the durable ledger for urgent (`whenBusy: 'steer'`) delivery.
+ * T-07155 — the durable ledger for legacy urgent delivery.
  *
  * Write-ahead then seal. The record is inserted `attempting` BEFORE the broker
  * RPC and updated to a terminal state after, so a retry that reuses the caller's

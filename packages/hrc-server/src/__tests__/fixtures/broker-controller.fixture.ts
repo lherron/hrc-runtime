@@ -22,8 +22,6 @@ import type {
   InvocationCaptureReleaseRequest,
   InvocationCaptureReleaseResponse,
   InvocationEventEnvelope,
-  InvocationInputRequest,
-  InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
   InvocationRuntimeContext,
@@ -37,6 +35,15 @@ import type {
   InvocationStopResponse,
   PermissionDecision,
   PermissionRequestParams,
+  SeatProbeRequest,
+  SeatProbeResponse,
+  SubmissionEnqueueRequest,
+  SubmissionInvokeRequest,
+  SubmissionPreemptRequest,
+  SubmissionResponse,
+  SubmissionSteerRequest,
+  TurnManifestRequest,
+  TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 import type {
   BrokerExecutionProfile,
@@ -217,9 +224,39 @@ export class FakeBrokerClient implements BrokerClientLike {
     }
   }
 
-  async input(_req: InvocationInputRequest): Promise<InvocationInputResponse> {
-    this.callOrder.push('input')
-    return { inputId: 'input_later', accepted: true, disposition: 'started' }
+  async steer(_req: SubmissionSteerRequest): Promise<SubmissionResponse> {
+    this.callOrder.push('steer')
+    return { submissionId: 'submission_steer', admission: 'admitted' }
+  }
+
+  async enqueue(_req: SubmissionEnqueueRequest): Promise<SubmissionResponse> {
+    this.callOrder.push('enqueue')
+    return { submissionId: 'submission_enqueue', admission: 'admitted' }
+  }
+
+  async invoke(_req: SubmissionInvokeRequest): Promise<SubmissionResponse> {
+    this.callOrder.push('invoke')
+    return { submissionId: 'submission_invoke', admission: 'admitted' }
+  }
+
+  async preempt(_req: SubmissionPreemptRequest): Promise<SubmissionResponse> {
+    this.callOrder.push('preempt')
+    return { submissionId: 'submission_preempt', admission: 'admitted' }
+  }
+
+  async turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse> {
+    this.callOrder.push('turnManifest')
+    return {
+      invocationId: req.invocationId,
+      turnId: req.turnId,
+      policy: 'open',
+      submissionIds: [],
+    }
+  }
+
+  async seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse> {
+    this.callOrder.push('seatProbe')
+    return { invocationId: req.invocationId, seat: { state: 'idle' }, brokerHeldDepth: 0 }
   }
 
   async interrupt(_req: InvocationInterruptRequest): Promise<InvocationInterruptResponse> {

@@ -72,6 +72,7 @@ import type {
   DispatchTurnResponse,
   DropContinuationRequest,
   DropContinuationResponse,
+  EnqueueSubmissionRequest,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   EnsureTargetRequest,
@@ -84,6 +85,7 @@ import type {
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   HrcEventTailOptions,
+  HrcSubmissionResponse,
   HrcSubscriberAdmissionSnapshot,
   HrcSubscriberReceiptAckRequest,
   HrcSubscriberReceiptAckResponse,
@@ -93,6 +95,7 @@ import type {
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvocationEventEnvelope,
+  InvokeSubmissionRequest,
   KillBrokerTmuxLeasesResponse,
   LatestEventBySessionFilter,
   LaunchCommandScopedRunRequest,
@@ -104,6 +107,7 @@ import type {
   ListRegistrationGcCandidatesResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
+  PreemptSubmissionRequest,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
   PruneRuntimesRequest,
@@ -142,6 +146,7 @@ import type {
   StartRuntimeResponse,
   StatusResponse,
   StatusSummaryResponse,
+  SteerSubmissionRequest,
   SurfaceListFilter,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
@@ -481,6 +486,22 @@ export class HrcClient {
       ...request,
       idempotencyKey: request.idempotencyKey ?? `hrc-sdk-${randomUUID()}`,
     })
+  }
+
+  async steer(request: SteerSubmissionRequest): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/steer', request)
+  }
+
+  async enqueue(request: EnqueueSubmissionRequest): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/enqueue', request)
+  }
+
+  async invoke(request: InvokeSubmissionRequest): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/invoke', request)
+  }
+
+  async preempt(request: PreemptSubmissionRequest): Promise<HrcSubmissionResponse> {
+    return this.postJson<HrcSubmissionResponse>('/v1/submissions/preempt', request)
   }
 
   async getTurnAdmission(): Promise<HrcTurnAdmissionState> {

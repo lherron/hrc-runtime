@@ -354,13 +354,6 @@ export type DispatchTurnRequest = {
   /** Preferred acknowledgement boundary. Supersedes waitForCompletion when set. */
   waitFor?: 'accepted' | 'turn_started' | 'terminal' | undefined
   waitForCompletion?: boolean | undefined
-  /**
-   * `steer` (T-07155) preempts a BUSY target: the prompt is admitted into the
-   * active turn instead of queueing behind it. Offered only when the live broker
-   * advertises the policy; otherwise the dispatch fails typed rather than
-   * silently degrading into ordinary deferred delivery.
-   */
-  whenBusy?: 'reject' | 'steer' | undefined
   repair?:
     | {
         kind: 'json_validation' | 'json_repair'
@@ -407,6 +400,10 @@ export type DispatchTurnRequest = {
 export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'
 
 export type DispatchTurnResponse = {
+  /** Present for broker-backed dispatches; /v1/turns is the invoke-door alias. */
+  submissionId?: string | undefined
+  admission?: 'admitted' | 'rejected' | undefined
+  reason?: string | undefined
   runId: string
   hostSessionId: string
   generation: number
@@ -444,6 +441,65 @@ export type DispatchTurnResponse = {
       afterSeq: number
     }
   }
+}
+
+// -- Four-door broker admission surface (T-07867) ---------------------------
+
+export type HrcSubmissionTarget = string
+
+export type HrcSubmissionOrigin = {
+  principalRef: string
+  scopeRef?: string | undefined
+  envelopeId?: string | undefined
+}
+
+type HrcSubmissionRequestBase = {
+  target: HrcSubmissionTarget
+  body: string
+  origin: HrcSubmissionOrigin
+  responseFormat?: HrcTurnResponseFormat | undefined
+  freshContext?: boolean | undefined
+}
+
+/** Steer is a free-rider: wait, turnPolicy, obligation and reply are unrepresentable. */
+export type SteerSubmissionRequest = HrcSubmissionRequestBase
+
+export type EnqueueSubmissionRequest = HrcSubmissionRequestBase & {
+  ttlMs?: number | undefined
+  turnPolicy?: 'open' | 'guarded' | undefined
+  wait?: boolean | undefined
+}
+
+export type InvokeSubmissionRequest = HrcSubmissionRequestBase & {
+  turnPolicy?: 'open' | 'guarded' | undefined
+  wait?: boolean | undefined
+}
+
+export type PreemptSubmissionRequest = HrcSubmissionRequestBase & {
+  ttlMs?: number | undefined
+  turnPolicy?: 'open' | 'guarded' | undefined
+  wait?: boolean | undefined
+}
+
+export type HrcSubmissionDisposition =
+  | { type: 'executed'; turnId: string }
+  | { type: 'absorbed'; turnId: string }
+  | { type: 'rejected'; reason: string }
+  | { type: 'expired' }
+  | { type: 'cancelled' }
+
+export type HrcSubmissionTurnTerminal = {
+  turnId: string
+  status: 'completed' | 'failed' | 'interrupted' | 'cancelled'
+  finalMessage?: string | undefined
+}
+
+export type HrcSubmissionResponse = {
+  submissionId: string
+  admission: 'admitted' | 'rejected'
+  reason?: string | undefined
+  disposition?: HrcSubmissionDisposition | undefined
+  terminal?: HrcSubmissionTurnTerminal | undefined
 }
 
 export type OperatorAttachDescriptor = {

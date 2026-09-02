@@ -5,6 +5,7 @@ import type {
   ClearContextRequest,
   DispatchTurnRequest,
   DropContinuationRequest,
+  EnqueueSubmissionRequest,
   EnsureRuntimeRequest,
   ExactStartRuntimeRequest,
   HrcDispatchOrigin,
@@ -13,10 +14,13 @@ import type {
   HrcRuntimeIntent,
   HrcTurnResponseFormat,
   InspectRuntimeRequest,
+  InvokeSubmissionRequest,
   OpenBrokerSessionRequest,
+  PreemptSubmissionRequest,
   PrepareAttachedRunRequest,
   ResumeAttachedRunRequest,
   StartRuntimeRequest,
+  SteerSubmissionRequest,
   TerminateRuntimeRequest,
 } from 'hrc-core'
 
@@ -548,6 +552,23 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
+  rejectUnknownFields(input, [
+    'hostSessionId',
+    'idempotencyKey',
+    'prompt',
+    'responseFormat',
+    'attachments',
+    'fences',
+    'runtimeIntent',
+    'waitFor',
+    'waitForCompletion',
+    'repair',
+    'establishedBrokerInvocationId',
+    'allowStaleGeneration',
+    'firstTurnTimeoutMs',
+    'origin',
+  ])
+
   const hostSessionId = input['hostSessionId']
   const prompt = input['prompt']
   if (typeof hostSessionId !== 'string' || hostSessionId.trim().length === 0) {
@@ -573,7 +594,6 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     'waitFor must be "accepted", "turn_started", or "terminal"',
     { field: 'waitFor' }
   )
-  const whenBusy = parseOptionalDispatchTurnWhenBusy(input['whenBusy'])
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   // T-07397 surface-ownership proof; validated as a non-empty string so an empty
   // value can never masquerade as "I established this invocation".
@@ -597,13 +617,112 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
     ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
     ...(waitFor !== undefined ? { waitFor } : {}),
-    ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(establishedBrokerInvocationId !== undefined ? { establishedBrokerInvocationId } : {}),
     ...(repair !== undefined ? { repair } : {}),
     ...(firstTurnTimeoutMs !== undefined ? { firstTurnTimeoutMs } : {}),
     ...(origin !== undefined ? { origin } : {}),
   }
+}
+
+type ParsedSubmissionRequest =
+  | SteerSubmissionRequest
+  | EnqueueSubmissionRequest
+  | InvokeSubmissionRequest
+  | PreemptSubmissionRequest
+
+export function parseSubmissionRequest(input: unknown, door: 'steer'): SteerSubmissionRequest
+export function parseSubmissionRequest(input: unknown, door: 'enqueue'): EnqueueSubmissionRequest
+export function parseSubmissionRequest(input: unknown, door: 'invoke'): InvokeSubmissionRequest
+export function parseSubmissionRequest(input: unknown, door: 'preempt'): PreemptSubmissionRequest
+export function parseSubmissionRequest(
+  input: unknown,
+  door: 'steer' | 'enqueue' | 'invoke' | 'preempt'
+): ParsedSubmissionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const allowed = [
+    'target',
+    'body',
+    'origin',
+    'responseFormat',
+    'freshContext',
+    ...(door === 'enqueue' || door === 'preempt' ? ['ttlMs'] : []),
+    ...(door === 'steer' ? [] : ['turnPolicy', 'wait']),
+  ]
+  rejectUnknownFields(input, allowed)
+
+  const target = requireTrimmedStringField(input, 'target')
+  const body = requireTrimmedStringField(input, 'body')
+  const originInput = input['origin']
+  if (!isRecord(originInput)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'origin is required', {
+      field: 'origin',
+    })
+  }
+  rejectUnknownFields(originInput, ['principalRef', 'scopeRef', 'envelopeId'], 'origin')
+  const principalRef = requireTrimmedStringField(originInput, 'principalRef')
+  const scopeRef = readOptionalNonEmptyStringField(originInput, 'scopeRef')
+  const envelopeId = readOptionalNonEmptyStringField(originInput, 'envelopeId')
+  const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
+  const freshContext = readOptionalBooleanField(input, 'freshContext')
+  const common = {
+    target,
+    body,
+    origin: {
+      principalRef,
+      ...(scopeRef !== undefined ? { scopeRef } : {}),
+      ...(envelopeId !== undefined ? { envelopeId } : {}),
+    },
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
+    ...(freshContext !== undefined ? { freshContext } : {}),
+  }
+  if (door === 'steer') return common
+
+  const turnPolicy = requireOptionalOneOf(
+    input['turnPolicy'],
+    ['open', 'guarded'],
+    'turnPolicy must be "open" or "guarded"',
+    { field: 'turnPolicy' }
+  )
+  const wait = readOptionalBooleanField(input, 'wait')
+  const ttlMs =
+    door === 'enqueue' || door === 'preempt'
+      ? parseOptionalSubmissionTtlMs(input['ttlMs'])
+      : undefined
+  return {
+    ...common,
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(turnPolicy !== undefined ? { turnPolicy } : {}),
+    ...(wait !== undefined ? { wait } : {}),
+  }
+}
+
+function parseOptionalSubmissionTtlMs(input: unknown): number | undefined {
+  if (input === undefined) return undefined
+  if (!Number.isInteger(input) || typeof input !== 'number' || input < 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'ttlMs must be a non-negative integer',
+      { field: 'ttlMs' }
+    )
+  }
+  return input
+}
+
+function rejectUnknownFields(
+  input: Record<string, unknown>,
+  allowed: readonly string[],
+  prefix?: string
+): void {
+  const allowedSet = new Set(allowed)
+  const unknown = Object.keys(input).find((key) => !allowedSet.has(key))
+  if (unknown === undefined) return
+  const field = prefix === undefined ? unknown : `${prefix}.${unknown}`
+  throw new HrcUnprocessableEntityError(HrcErrorCode.UNKNOWN_FIELD, `unknown field "${field}"`, {
+    field,
+  })
 }
 
 /**
@@ -777,23 +896,6 @@ function firstNonJsonCompatiblePath(value: unknown, path: string): string | unde
     default:
       return path
   }
-}
-
-function parseOptionalDispatchTurnWhenBusy(
-  input: unknown
-): DispatchTurnRequest['whenBusy'] | undefined {
-  if (input === undefined) {
-    return undefined
-  }
-  if (input === 'reject' || input === 'steer') {
-    return input
-  }
-
-  throw new HrcUnprocessableEntityError(
-    HrcErrorCode.UNSUPPORTED_WHEN_BUSY,
-    'whenBusy must be "reject" or "steer"',
-    { field: 'whenBusy', value: input }
-  )
 }
 
 function parseOptionalDispatchTurnRepair(

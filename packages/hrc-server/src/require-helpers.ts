@@ -18,6 +18,10 @@ import type {
 } from 'hrc-core'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import { isAskUserTool, isCorruptAwaitingRuntime } from './ask-bracket.js'
+import {
+  type BrokerAdmissionClass,
+  brokerCapabilitiesSupportAdmissionClass,
+} from './broker/capabilities.js'
 import { isRecord } from './server-parsers.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import type { TmuxPaneState } from './tmux.js'
@@ -268,70 +272,15 @@ export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapsho
   }
 }
 
-export function assertBrokerRuntimeReusableAdmission(
+export function brokerRuntimeSupportsAdmissionClass(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  options: { whenBusy?: 'reject' | 'steer' | 'steer_else_queue' | undefined } = {}
-): void {
-  if (isCorruptAwaitingRuntime(runtime)) {
-    assertRuntimeNotBusy(db, runtime)
-    return
-  }
-
-  if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(db, runtime)) {
-    assertRuntimeNotBusy(db, runtime)
-  }
-}
-
-// Reads the composed input.queue capability off the runtime's active broker
-// invocation. True iff the broker reported (post-start) that this invocation
-// accepts FIFO queueing — driverCaps.input.queue && driverCaps.input.user &&
-// spec.interaction.inputQueue === 'fifo'. Returns false defensively on any
-// error (missing invocation, malformed capabilities_json) so callers fall
-// back to the existing reject-if-busy behavior.
-/**
- * T-07155 — can the LIVE broker process serving this runtime execute
- * `whenBusy: 'steer'`?
- *
- * Read from the invocation's composed capabilities, which HRC refreshes from the
- * broker on every attach/reattach. That matters: a headless runtime owns a
- * long-lived `harness-broker run` process that survives HRC restarts (HRC
- * reattaches rather than replacing it), so an installed upgrade does NOT change
- * the code loaded in an existing broker. Negotiating against the process that
- * would have to execute the policy is the only honest signal; assuming
- * publication reached it would silently drop supervisor orders.
- *
- * Absent field ⇒ pre-T-07155 broker ⇒ unsupported. Defensively false on any
- * parse failure, so the caller fails closed rather than attempting a steer that
- * cannot happen.
- */
-export function isBrokerRuntimeSteerCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
+  submissionClass: BrokerAdmissionClass
+): boolean {
   if (runtime.controllerKind !== 'harness-broker') return false
   if (runtime.activeInvocationId === undefined) return false
   const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-  if (!inv?.capabilitiesJson) return false
-  try {
-    const caps = JSON.parse(inv.capabilitiesJson) as {
-      input?: { busyPolicies?: unknown }
-    }
-    const policies = caps.input?.busyPolicies
-    return Array.isArray(policies) && policies.includes('steer')
-  } catch {
-    return false
-  }
-}
-
-export function isBrokerRuntimeQueueCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
-  if (runtime.controllerKind !== 'harness-broker') return false
-  if (runtime.activeInvocationId === undefined) return false
-  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
-  if (!inv?.capabilitiesJson) return false
-  try {
-    const caps = JSON.parse(inv.capabilitiesJson) as { input?: { queue?: boolean } }
-    return caps.input?.queue === true
-  } catch {
-    return false
-  }
+  return brokerCapabilitiesSupportAdmissionClass(inv?.capabilitiesJson, submissionClass)
 }
 
 export function isTerminalBrokerInvocationState(state: string | undefined): boolean {

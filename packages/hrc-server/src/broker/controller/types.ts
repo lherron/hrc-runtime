@@ -23,7 +23,6 @@ import type {
   BrokerLifecyclePolicyOverlay,
   BrokerListInvocationsRequest,
   BrokerListInvocationsResponse,
-  InputPolicy,
   InvocationAckEventsRequest,
   InvocationAckEventsResponse,
   InvocationCaptureReleaseRequest,
@@ -32,8 +31,6 @@ import type {
   InvocationEventEnvelope,
   InvocationEventsSinceRequest,
   InvocationEventsSinceResponse,
-  InvocationInput,
-  InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
   InvocationPermissionRespondRequest,
@@ -47,6 +44,15 @@ import type {
   InvocationStopResponse,
   PermissionDecision,
   PermissionRequestParams,
+  SeatProbeRequest,
+  SeatProbeResponse,
+  SubmissionEnqueueRequest,
+  SubmissionInvokeRequest,
+  SubmissionPreemptRequest,
+  SubmissionResponse,
+  SubmissionSteerRequest,
+  TurnManifestRequest,
+  TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 import type {
   BrokerExecutionProfile,
@@ -88,7 +94,12 @@ export type BrokerClientLike = {
     response: InvocationStartResponse
     events: AsyncIterable<InvocationEventEnvelope>
   }>
-  input(req: Parameters<BrokerClient['input']>[0]): Promise<InvocationInputResponse>
+  steer(req: SubmissionSteerRequest): Promise<SubmissionResponse>
+  enqueue(req: SubmissionEnqueueRequest): Promise<SubmissionResponse>
+  invoke(req: SubmissionInvokeRequest): Promise<SubmissionResponse>
+  preempt(req: SubmissionPreemptRequest): Promise<SubmissionResponse>
+  turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse>
+  seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse>
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse>
   stop(req: Parameters<BrokerClient['stop']>[0]): Promise<InvocationStopResponse>
   status(req: Parameters<BrokerClient['status']>[0]): Promise<InvocationStatusResponse>
@@ -494,15 +505,17 @@ export type BrokerControllerStartResult =
       error: BrokerControllerError
     }
 
-export type BrokerControllerDispatchInput = {
+type BrokerControllerSubmissionInput<T extends { invocationId: unknown }> = Omit<
+  T,
+  'invocationId'
+> & {
   runtimeId: string
-  input: InvocationInput
-  policy?: InputPolicy | undefined
 }
 
-export type BrokerControllerDispatchResult =
-  | { ok: true; response: InvocationInputResponse }
-  | { ok: false; error: BrokerControllerError }
+export type BrokerControllerSteerInput = BrokerControllerSubmissionInput<SubmissionSteerRequest>
+export type BrokerControllerEnqueueInput = BrokerControllerSubmissionInput<SubmissionEnqueueRequest>
+export type BrokerControllerInvokeInput = BrokerControllerSubmissionInput<SubmissionInvokeRequest>
+export type BrokerControllerPreemptInput = BrokerControllerSubmissionInput<SubmissionPreemptRequest>
 
 export type BrokerControllerAttachInput = {
   runtimeId: string

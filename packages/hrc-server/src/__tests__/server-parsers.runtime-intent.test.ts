@@ -150,7 +150,7 @@ describe('server-parsers runtime intent harness resolution', () => {
     expect(parsed.waitForCompletion).toBe(false)
   })
 
-  it('parseDispatchTurnRequest rejects unsupported whenBusy with a 422-native domain error', () => {
+  it('parseDispatchTurnRequest rejects removed fields as typed unknown_field', () => {
     let thrown: unknown
     try {
       parseDispatchTurnRequest({
@@ -162,18 +162,13 @@ describe('server-parsers runtime intent harness resolution', () => {
       thrown = error
     }
 
-    // T-05097: this branch must throw a real 422 error class/code, not
-    // HrcBadRequestError with status patched after construction.
     expect(thrown).toBeInstanceOf(HrcUnprocessableEntityError)
     expect(thrown).toMatchObject({
       name: 'HrcUnprocessableEntityError',
       status: 422,
-      code: (HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY,
-      // T-07155 widened the accepted set to reject|steer. 'queue' stays
-      // rejected: the raw broker queue policy is not part of HRC's public
-      // dispatch surface.
-      message: 'whenBusy must be "reject" or "steer"',
-      detail: { field: 'whenBusy', value: 'queue' },
+      code: HrcErrorCode.UNKNOWN_FIELD,
+      message: 'unknown field "whenBusy"',
+      detail: { field: 'whenBusy' },
     })
   })
 

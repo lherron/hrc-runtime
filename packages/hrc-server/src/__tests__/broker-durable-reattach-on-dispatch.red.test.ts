@@ -272,6 +272,10 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
       disposition: 'started',
     }
   }
+  async invoke() {
+    this.calls.push('invoke')
+    return { submissionId: 'sub-durable-reattach', admission: 'admitted' as const }
+  }
   async interrupt(): Promise<InvocationInterruptResponse> {
     return { accepted: true, effect: 'turn_interrupted' }
   }
@@ -377,9 +381,10 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
     seedDurableBrokerRuntime()
     const controller = makeRequestServingController()
 
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'first input after restart' }] },
+      body: 'first input after restart',
+      origin: { principalRef: 'agent:test' },
     })
 
     expect(dispatch.ok).toBe(false)
@@ -414,12 +419,13 @@ describe('T-01801 input-after-reattach: request-serving controller re-attaches o
     expect(client.calls).toContain('attach')
 
     // The SAME controller the handler dispatches through now reaches the broker.
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'after reattach' }] },
+      body: 'after reattach',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(true)
-    expect(client.calls).toContain('input')
+    expect(client.calls).toContain('invoke')
   })
 
   it('no-ops to false for a non-durable runtime so the caller falls back to legacy reassociation', async () => {
@@ -498,9 +504,10 @@ describe('T-07192 concurrent lazy reattach ownership', () => {
       interactiveRetry,
       sessionOpenRetry,
     ])
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'winner stays bound' }] },
+      body: 'winner stays bound',
+      origin: { principalRef: 'agent:test' },
     })
 
     expect({
@@ -509,7 +516,7 @@ describe('T-07192 concurrent lazy reattach ownership', () => {
       states: [interactiveResult.state, sessionOpenResult.state],
       inFlightOperationCount: inFlightOperations.size,
       dispatchOk: dispatch.ok,
-      winnerInputCalls: clients[0]?.calls.filter((call) => call === 'input').length,
+      winnerInputCalls: clients[0]?.calls.filter((call) => call === 'invoke').length,
     }).toEqual({
       attachCallsWhileBothRequestsAreInFlight: 1,
       clients: 1,

@@ -197,6 +197,12 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     return { inputId: inputId('input_live'), accepted: true, disposition: 'started' }
   }
 
+  async invoke(req: unknown) {
+    this.calls.push('invoke')
+    this.inputCalls.push(req)
+    return { submissionId: 'sub-replay-ack', admission: 'admitted' as const }
+  }
+
   async interrupt(): Promise<InvocationInterruptResponse> {
     this.calls.push('interrupt')
     return { accepted: true, effect: 'turn_interrupted' }
@@ -546,9 +552,10 @@ describe('T-01811 replay-append conflict fails closed', () => {
     expect(client.calls).not.toContain('ackEvents')
 
     // brokerAttached false => a follow-up dispatch must NOT reach the broker.
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'after conflict' }] },
+      body: 'after conflict',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
@@ -685,9 +692,10 @@ describe('T-01811 retention-floor gap is unsafe (conservative stale)', () => {
         .filter((event) => event.eventKind === 'runtime.stale')
     ).toHaveLength(1)
 
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'after gap' }] },
+      body: 'after gap',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
@@ -782,9 +790,10 @@ describe('T-05299 post-reattach same-client control proof', () => {
     expect(control?.brokerAttached).toBe(false)
     expect(control?.lastAttachError?.code).toBe('broker_control_probe_timeout')
 
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'must fast-fail' }] },
+      body: 'must fast-fail',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
@@ -805,12 +814,13 @@ describe('T-05299 post-reattach same-client control proof', () => {
     expect(client.calls.indexOf('health')).toBeGreaterThan(client.calls.indexOf('eventsSince'))
     expect(client.calls.indexOf('status')).toBeGreaterThan(client.calls.indexOf('health'))
 
-    const dispatch = await controller.dispatchInput({
+    const dispatch = await controller.invoke({
       runtimeId: RUNTIME_ID,
-      input: { kind: 'user', content: [{ type: 'text', text: 'proven control path' }] },
+      body: 'proven control path',
+      origin: { principalRef: 'agent:test' },
     })
     expect(dispatch.ok).toBe(true)
-    expect(client.calls).toContain('input')
+    expect(client.calls).toContain('invoke')
   })
 
   it('rejects a broker that reports shutting_down without publishing an active binding', async () => {

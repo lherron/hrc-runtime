@@ -16,22 +16,22 @@ import {
 } from './fixtures/mail-kicker-harness.js'
 
 /**
- * T-07644 — `--urgent` was unreachable for a seat the KICKER summoned.
+ * T-07644 — broker-held enqueue remains reachable for a seat the kicker summoned.
  *
- * There are two disjoint busy shapes and the steer was dead in only one:
+ * There are two disjoint busy shapes and delivery was dead in only one:
  *
  *  - SHAPE 1, a seat busy on an in-flight kicker drive attempt. `observeAttempt`
  *    returns `'waiting'` and the old code returned there, bare and unlogged —
- *    above the steer, which sits inside `if (attempt === undefined)`. Unreachable,
+ *    above the delivery, which sits inside `if (attempt === undefined)`. Unreachable,
  *    not merely skipped. This is the defect.
- *  - SHAPE 2, a seat busy on its OWN dispatch with no kicker attempt. The steer
- *    branch runs and `--urgent` has always worked. Covered by t07616.
+ *  - SHAPE 2, a seat busy on its OWN dispatch with no kicker attempt. The
+ *    enqueue branch has always worked. Covered by t07616.
  *
  * Which makes the obvious test for this feature a FALSE PASS: a seat you happen
  * to notice is busy is usually shape 2, where the steer fires and the defect
  * ships anyway. So every case here builds shape 1 the way production does — the
- * kicker summons the seat with ordinary mail, and only then does the urgent
- * envelope arrive — and asserts POSITIVELY that the steer was reached. The old
+ * kicker summons the seat with ordinary mail, and only then does the next
+ * envelope arrive — and asserts POSITIVELY that enqueue was reached. The old
  * failure was a silent return, so "no error appeared" passes trivially and
  * proves nothing.
  */
@@ -79,7 +79,7 @@ async function startServer(options: Record<string, unknown> = {}): Promise<HrcSe
   return server
 }
 
-type Dispatch = { whenBusy: string; prompt: string; runId?: string | undefined }
+type Dispatch = { phase: 'enqueue' | 'drive'; prompt: string; runId?: string | undefined }
 
 /**
  * A dispatch that answers both halves of shape 1.
@@ -87,10 +87,10 @@ type Dispatch = { whenBusy: string; prompt: string; runId?: string | undefined }
  * The DRIVE call mints a real runtime, a durably active run and the
  * `turn.started` the attempt records its start from — that is what makes
  * `observeAttempt` report `'waiting'`, which is the whole precondition. The
- * STEER call is distinguished by `whenBusy`, so "the steer was reached" is
+ * ENQUEUE call is distinguished by the absent drive run id, so delivery is
  * observable rather than inferred from a body appearing somewhere.
  */
-function installShapeOneDispatch(steerOutcome: 'accept' | 'throw'): () => Dispatch[] {
+function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Dispatch[] {
   const instance = server as HrcServer
   const calls: Dispatch[] = []
   let driveRunId: string | undefined
@@ -99,15 +99,20 @@ function installShapeOneDispatch(steerOutcome: 'accept' | 'throw'): () => Dispat
     session: HrcSessionRecord,
     _intent: HrcRuntimeIntent,
     prompt: string,
-    options: { runId?: string | undefined; whenBusy?: string | undefined }
+    options: {
+      runId?: string | undefined
+      submissionDoor?: string | undefined
+      ttlMs?: number | undefined
+    }
   ): Promise<Response> => {
-    // rev 4: a slot-less mid-turn delivery carries no runId; the ordinary
-    // drive carries the attempt's. Neither carries `whenBusy` any more.
-    const whenBusy = options.runId === undefined ? 'queued' : 'drive'
-    calls.push({ whenBusy, prompt, runId: options.runId })
-    expect(options.whenBusy).toBeUndefined()
-    if (whenBusy === 'queued') {
-      if (steerOutcome === 'throw') throw new Error('broker refused the input')
+    // A slot-less mid-turn delivery carries no runId; the ordinary drive
+    // carries the attempt's. Both select enqueue explicitly with a TTL.
+    const phase = options.runId === undefined ? 'enqueue' : 'drive'
+    calls.push({ phase, prompt, runId: options.runId })
+    expect(options.submissionDoor).toBe('enqueue')
+    expect(options.ttlMs).toBeGreaterThan(0)
+    if (phase === 'enqueue') {
+      if (enqueueOutcome === 'throw') throw new Error('broker refused the input')
       // The route writes an `accepted` run row for a queued input; its
       // turn.started arrives only if the harness runs it as its own turn.
       const db = serverInternals(instance).db
@@ -261,7 +266,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     // POSITIVE: the delivery path was entered. Not "no error appeared" -- the
     // old failure was a bare return, which no absence assertion can distinguish
     // from a working system.
-    const queued = calls().filter((call) => call.whenBusy === 'queued')
+    const queued = calls().filter((call) => call.phase === 'enqueue')
     expect(queued).toHaveLength(1)
     expect(queued[0]?.prompt ?? '').toContain('the mid-turn body')
 
@@ -480,7 +485,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(ledger.envelopes.get(mail.id)?.presentedTo[0]?.driveAttemptId).toBe(
       attempt.driveAttemptId
     )
-    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+    expect(calls().filter((call) => call.phase === 'enqueue')).toHaveLength(1)
     expect(lines.some((line) => line.includes('wrkq.kicker.queued_receipt_replayed'))).toBe(true)
     expect(ledger.envelopes.get(mail.id)?.state).toBe('presented')
   })
@@ -493,12 +498,12 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     say()
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
     await waitUntil(
-      () => calls().filter((call) => call.whenBusy === 'queued').length === 1,
+      () => calls().filter((call) => call.phase === 'enqueue').length === 1,
       'first delivery'
     )
     ;(server as any).requestMailKickerWake(TARGET, 'periodic')
     await Bun.sleep(80)
-    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+    expect(calls().filter((call) => call.phase === 'enqueue')).toHaveLength(1)
   })
 
   it('records nothing when the broker refuses the input, and still says so', async () => {
@@ -515,7 +520,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
       )
     })
 
-    expect(calls().filter((call) => call.whenBusy === 'queued')).toHaveLength(1)
+    expect(calls().filter((call) => call.phase === 'enqueue')).toHaveLength(1)
     expect(ledger.envelopes.get(mail.id)?.presentedTo).toEqual([])
     expect(ledger.envelopes.get(mail.id)?.state).toBe('pending')
     expect(lines.filter((line) => line.includes('wrkq.kicker.busy_delivery_failed'))).toHaveLength(
@@ -622,7 +627,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
       )
     })
 
-    const queued = calls().filter((call) => call.whenBusy === 'queued')
+    const queued = calls().filter((call) => call.phase === 'enqueue')
     expect(queued).toHaveLength(1)
     expect(queued[0]?.prompt ?? '').toContain('mail through the claim race')
 
@@ -649,7 +654,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
     // one and drives. Dropping the wake here would strand the envelope until
     // some unrelated later traffic happened to wake the scope again.
     await waitUntil(
-      () => calls().filter((call) => call.whenBusy === 'drive').length === 1,
+      () => calls().filter((call) => call.phase === 'drive').length === 1,
       'wake re-driven after the finished attempt'
     )
     const db = serverInternals(server as HrcServer).db
