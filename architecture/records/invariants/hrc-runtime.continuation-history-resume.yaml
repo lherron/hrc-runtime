@@ -1,0 +1,43 @@
+id: hrc-runtime.continuation-history-resume
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: provider continuation retention, automatic reuse, explicit resume, and historical repair
+predicate: >
+  A non-empty provider continuation key recorded on an HRC session or runtime is
+  durable history: clear, drop, and end operations retain it while recording
+  ordinary fresh-start intent separately as persisted session state. Ordinary
+  run, start, and dispatch recreation suppress automatic continuation reuse
+  while that state is disabled; a later committed continuation.updated enables
+  reuse for its newly recorded key. Explicit hrc resume is status- and
+  clear/drop/terminate-barrier-neutral: it selects the newest recorded key for
+  the normalized target, or the key on a valid pinned session, and fails only
+  when no such key exists or a live-runtime conflict prevents safe reuse. Under
+  the scope-and-lane mint lock, its successor boundary returns a session carrying
+  exactly the selected key with reuse enabled or fails without mutation; a
+  keyless inactive current successor may be bound atomically, a same-key inactive
+  successor may be reused idempotently, and a live or different-key successor
+  conflicts. The read-only session resolve surface exposes retained continuation
+  history independently of automatic-reuse state. Startup repair restores only
+  NULL historical session and runtime keys from each owner's latest non-empty
+  durable broker continuation.updated event, never overwrites a current key,
+  preserves ordinary fresh-start disposition, is idempotent, and completes
+  before request service begins.
+authority: Lance HCS T-07894 / Daedalus approval wrkq:T-07899 revision 2, 2026-09-02
+source:
+  - wrkq:T-07899
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
+  - packages/hrc-server/src/session-resume-continuation.ts
+  - packages/hrc-server/src/target-message-handlers.ts
+  - packages/hrc-server/src/broker/event-mapper.ts
+required_tests:
+  - just architecture-records
+  - T-07899 key-retention, automatic-reuse suppression, and resolve-exposure gates
+  - T-07899 barrier-neutral selection and locked exact-key successor gates
+  - T-07899 startup-repair ordering and idempotency gates
+  - T-07899 installed max3 continuation-recall and historical-seat smoke
+last_verified: 2026-09-02 design approval; implementation gates pending
+reopen_when: Continuation retention, automatic reuse authority, explicit-resume selection or successor fencing, resolve exposure, broker-ledger repair authority, or repair ordering changes.
+supersedes: []
+superseded_by: []
