@@ -2325,6 +2325,144 @@ const hrcmailQueuedAttemptWithdrawalMigration: HrcMigration = {
   },
 }
 
+/** T-07891 — queue-class busy mail is held and coalesced by HRC until a turn boundary. */
+const hrcmailHeldQueueBatchMigration: HrcMigration = {
+  id: '0052_hrcmail_held_queue_batch',
+  apply(db) {
+    const schema = db
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'table' AND name = 'hrcmail_drive_attempts'`
+      )
+      .get()?.sql
+    if (schema?.includes("'held'") === true && schema.includes('held_behind_turn_id')) return
+
+    db.exec(`
+      CREATE TEMP TABLE hrcmail_drive_attempts_0052 AS
+        SELECT * FROM hrcmail_drive_attempts;
+      CREATE TEMP TABLE hrcmail_drive_slots_0052 AS
+        SELECT * FROM hrcmail_drive_slots;
+      CREATE TEMP TABLE hrcmail_drive_presentations_0052 AS
+        SELECT * FROM hrcmail_drive_presentations;
+      CREATE TEMP TABLE hrcmail_auto_reply_intents_0052 AS
+        SELECT * FROM hrcmail_auto_reply_intents;
+
+      DROP TABLE hrcmail_auto_reply_intents;
+      DROP TABLE hrcmail_drive_presentations;
+      DROP TABLE hrcmail_drive_slots;
+      DROP TABLE hrcmail_drive_attempts;
+
+      CREATE TABLE hrcmail_drive_attempts (
+        drive_attempt_id TEXT PRIMARY KEY,
+        target_session_ref TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        wake_reason TEXT NOT NULL CHECK (
+          wake_reason IN ('insert', 'turn_completion', 'periodic', 'recovery')
+        ),
+        state TEXT NOT NULL CHECK (
+          state IN ('held', 'claimed', 'started', 'completed', 'failed', 'no_op', 'withdrawn')
+        ),
+        prompt TEXT NOT NULL,
+        presented_count INTEGER NOT NULL DEFAULT 0 CHECK (presented_count >= 0),
+        materialization_intent_json TEXT,
+        host_session_id TEXT,
+        generation INTEGER CHECK (generation IS NULL OR generation >= 1),
+        runtime_id TEXT,
+        start_hrc_seq INTEGER,
+        terminal_event_kind TEXT,
+        last_error TEXT,
+        claimed_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL,
+        queued_behind_run_id TEXT,
+        auto_reply_source_ref TEXT,
+        auto_reply_source_envelope_ids_json TEXT,
+        auto_reply_room_key TEXT,
+        auto_reply_counterparty_ref TEXT,
+        held_behind_turn_id TEXT
+      );
+
+      INSERT INTO hrcmail_drive_attempts (
+        drive_attempt_id, target_session_ref, run_id, wake_reason, state, prompt,
+        presented_count, materialization_intent_json, host_session_id, generation,
+        runtime_id, start_hrc_seq, terminal_event_kind, last_error, claimed_at,
+        started_at, completed_at, updated_at, queued_behind_run_id,
+        auto_reply_source_ref, auto_reply_source_envelope_ids_json,
+        auto_reply_room_key, auto_reply_counterparty_ref, held_behind_turn_id
+      )
+      SELECT
+        drive_attempt_id, target_session_ref, run_id, wake_reason, state, prompt,
+        presented_count, materialization_intent_json, host_session_id, generation,
+        runtime_id, start_hrc_seq, terminal_event_kind, last_error, claimed_at,
+        started_at, completed_at, updated_at, queued_behind_run_id,
+        auto_reply_source_ref, auto_reply_source_envelope_ids_json,
+        auto_reply_room_key, auto_reply_counterparty_ref, NULL
+      FROM hrcmail_drive_attempts_0052;
+
+      CREATE INDEX idx_hrcmail_drive_attempts_target_claimed
+        ON hrcmail_drive_attempts(target_session_ref, claimed_at);
+
+      CREATE TABLE hrcmail_drive_slots (
+        target_session_ref TEXT PRIMARY KEY,
+        active_drive_attempt_id TEXT UNIQUE,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (active_drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id)
+      );
+      INSERT INTO hrcmail_drive_slots
+        SELECT * FROM hrcmail_drive_slots_0052;
+
+      CREATE TABLE hrcmail_drive_presentations (
+        drive_attempt_id TEXT NOT NULL,
+        envelope_id TEXT NOT NULL,
+        presented_at TEXT NOT NULL,
+        PRIMARY KEY (drive_attempt_id, envelope_id),
+        FOREIGN KEY (drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id) ON DELETE CASCADE
+      );
+      INSERT INTO hrcmail_drive_presentations
+        SELECT * FROM hrcmail_drive_presentations_0052;
+      CREATE INDEX idx_hrcmail_drive_presentations_envelope
+        ON hrcmail_drive_presentations(envelope_id, drive_attempt_id);
+
+      CREATE TABLE hrcmail_auto_reply_intents (
+        drive_attempt_id TEXT PRIMARY KEY,
+        source_ref TEXT NOT NULL,
+        source_envelope_ids_json TEXT NOT NULL,
+        room_key TEXT NOT NULL,
+        counterparty_ref TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+          state IN ('pending', 'minted', 'already-discharged', 'empty-response')
+        ),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        say_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (say_attempt_count >= 0),
+        verification_pending INTEGER NOT NULL DEFAULT 0
+          CHECK (verification_pending IN (0, 1)),
+        last_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        terminal_at TEXT,
+        discharge_outcome_json TEXT,
+        FOREIGN KEY (drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id) ON DELETE CASCADE
+      );
+      INSERT INTO hrcmail_auto_reply_intents
+        SELECT * FROM hrcmail_auto_reply_intents_0052;
+      CREATE INDEX idx_hrcmail_auto_reply_pending
+        ON hrcmail_auto_reply_intents(state, created_at, drive_attempt_id);
+
+      DROP TABLE hrcmail_drive_attempts_0052;
+      DROP TABLE hrcmail_drive_slots_0052;
+      DROP TABLE hrcmail_drive_presentations_0052;
+      DROP TABLE hrcmail_auto_reply_intents_0052;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2372,4 +2510,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailAutoReplyMigration,
   hrcmailAutoReplyDischargeOutcomeMigration,
   hrcmailQueuedAttemptWithdrawalMigration,
+  hrcmailHeldQueueBatchMigration,
 ]

@@ -203,25 +203,54 @@ function isQueuedAttempt(attempt: HrcMailDriveAttempt): boolean {
   return attempt.driveAttemptId.startsWith('queued-')
 }
 
-/** The session's active run id only if its row is durably in flight. */
-function durablyActiveRunIdFor(
-  server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord
-): string | undefined {
-  for (const runtime of server.db.runtimes.listByHostSessionId(session.hostSessionId)) {
-    if (runtime.activeRunId === undefined) continue
-    const run = server.db.runs.getByRunId(runtime.activeRunId)
-    if (run !== null && isDurablyActiveRun(run)) return run.runId
-  }
-  return undefined
-}
-
 function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
     if (event !== undefined && MAIL_DRIVE_TERMINAL_EVENTS.has(event.eventKind)) return event
   }
   return undefined
+}
+
+type ObservedBrokerSeat =
+  | { state: 'absent' }
+  | { state: 'unavailable'; runtimeId: string }
+  | { state: 'idle'; runtimeId: string }
+  | { state: 'turn-active'; runtimeId: string; turnId: string }
+  | { state: 'starting' | 'stopping' | 'terminal'; runtimeId: string }
+
+/**
+ * Read the seat's own observed turn state, never an HRC run-row inference.
+ *
+ * Human-typed pane turns mint no HRC run row (the failed first cut of T-07890),
+ * while the broker observes both those turns and HRC-driven turns. The broker
+ * seat probe is therefore the one busy/idle authority. Hook-observed terminal
+ * turn events wake the boundary flush; the periodic sweep is its backstop.
+ */
+async function observeBrokerSeat(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord
+): Promise<ObservedBrokerSeat> {
+  const runtime = server.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (candidate) =>
+        candidate.generation === session.generation &&
+        candidate.controllerKind === 'harness-broker' &&
+        candidate.activeInvocationId !== undefined &&
+        !isRuntimeUnavailableStatus(candidate.status)
+    )
+    .at(-1)
+  if (runtime === undefined) return { state: 'absent' }
+  const probe = await server.getHarnessBrokerController().seatProbe(runtime.runtimeId)
+  if (!probe.ok) return { state: 'unavailable', runtimeId: runtime.runtimeId }
+  const seat = probe.response.seat
+  return seat.state === 'turn-active'
+    ? { state: 'turn-active', runtimeId: runtime.runtimeId, turnId: String(seat.turnId) }
+    : { state: seat.state, runtimeId: runtime.runtimeId }
+}
+
+function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
+  return seat.state === 'idle' || seat.state === 'absent'
 }
 
 /**
@@ -647,36 +676,22 @@ function senderGenerationFor(
 }
 
 /**
- * T-07612 rev 4 — present into a seat that is on a live turn.
+ * Present one isolated HOLD into an observed active turn.
  *
- * The slot exists so two kicker drives never double-drive one scope, and the
- * attempt holding it releases only when its run ends. Under rev 4 nothing
- * waits for that: mail arriving while a kicker-driven turn is in flight is
- * handed to the broker with its ordinary queue policy, exactly as a typed
- * message would be, and the harness surfaces it mid-turn. No probe, no proof
- * of preemption, no typed busy failure — the steer class (T-07203) is not on
- * this path (rev 4 §5).
- *
- * A drive attempt of its own (`queued-` id) that holds NO slot, owned by the
- * queued input's run (§6 bounded redelivery needs an owner): if the harness
- * starts that input as its own turn, `completeStartedAttempt` advances the
- * round when it ends undisposed. If the harness merged it into the turn it was
- * queued behind (no `turn.started` of its own) this attempt advances NOTHING —
- * HRC cannot tell a merge from a slow start and does not guess (daedalus, rev
- * 4 ruling 3); the redelivery floor expires and the next ordinary drive into
- * the then-idle seat owns the round. Rendered without the history cue: only a
- * RECORDING `present` yields it, and the receipt is written after the broker
- * accepts.
+ * T-07891 moved ordinary queue mail out of this path: HRC durably coalesces it
+ * until a terminal turn event establishes the next boundary. A stored hold is
+ * still an interruption request, is never batched, and takes this immediate
+ * guarded-preempt path (or its isolated authority-refused enqueue fallback).
  */
-async function presentIntoBusyTarget(
+async function presentHoldIntoBusyTarget(
   server: HrcServerInstanceForHandlers,
   targetSessionRef: string,
   session: HrcSessionRecord,
-  queuedBehindRunId: string,
+  activeTurnId: string,
   actionable: readonly ActionableEnvelope[],
   wakeReason: HrcMailDriveWakeReason
 ): Promise<boolean> {
-  const activeRunId = queuedBehindRunId
+  const activeRunId = activeTurnId
   // The duplicate guard covers exactly the dispatch→commit window and nothing
   // more. An ordinary drive writes its LOCAL receipt before it dispatches and
   // commits the LEDGER receipt only after the broker accepts (T-07672); a wake
@@ -693,6 +708,7 @@ async function presentIntoBusyTarget(
   // the broker accepted, so the replay claims nothing that did not happen.
   const uncommitted = new Set<string>()
   for (const unfinished of server.db.mailDrives.listUnfinishedAttempts(targetSessionRef)) {
+    if (unfinished.state === 'held') continue
     if (!isQueuedAttempt(unfinished)) {
       // An ordinary drive commits its own receipts right after its dispatch;
       // its window is the few ms in between, and it is not replayed here.
@@ -852,7 +868,7 @@ async function presentIntoBusyTarget(
     wakeReason,
     prompt,
     envelopeIds: envelopes.map((item) => item.envelope.id),
-    queuedBehindRunId,
+    queuedBehindRunId: activeTurnId,
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(runtimeId === undefined ? {} : { runtimeId }),
@@ -897,7 +913,7 @@ async function presentIntoBusyTarget(
     activeRunId,
     runId: body.runId,
     ...(inputId === undefined ? {} : { inputId }),
-    queuedBehindRunId,
+    queuedBehindTurnId: activeTurnId,
     envelopes: envelopes.map((item) => item.envelope.id),
     forms: envelopes.map((item) => item.form),
     submissionDoor,
@@ -906,15 +922,224 @@ async function presentIntoBusyTarget(
   return true
 }
 
+/** Keep ordinary queue mail entirely on the HRC side until the next boundary. */
+function holdQueueForBusyTarget(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  session: HrcSessionRecord,
+  seat: Extract<ObservedBrokerSeat, { state: 'turn-active' }>,
+  actionable: readonly ActionableEnvelope[],
+  wakeReason: HrcMailDriveWakeReason
+): boolean {
+  const queue = actionable.filter((item) => item.envelope.delivery === 'queue')
+  if (queue.length === 0) return false
+  const update = server.db.mailDrives.holdQueuedAttempt(
+    {
+      targetSessionRef,
+      wakeReason,
+      envelopeIds: queue.map((item) => item.envelope.id),
+      heldBehindTurnId: seat.turnId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: seat.runtimeId,
+      materializationIntent:
+        session.lastAppliedIntentJson ??
+        buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined),
+    },
+    MAX_PRESENTED_PER_ATTEMPT
+  )
+  writeServerLog('INFO', 'wrkq.kicker.queue_batch_held', {
+    targetSessionRef,
+    wakeReason,
+    driveAttemptId: update.attempt.driveAttemptId,
+    runId: update.attempt.runId,
+    runtimeId: seat.runtimeId,
+    heldBehindTurnId: update.attempt.heldBehindTurnId,
+    observedTurnId: seat.turnId,
+    addedEnvelopeIds: update.addedEnvelopeIds,
+    envelopeIds: server.db.mailDrives.presentationEnvelopeIds(update.attempt.driveAttemptId),
+  })
+  return true
+}
+
+/**
+ * Freeze-time authority check for a batch whose members had no ledger receipt.
+ *
+ * An ack, withdrawal, or expiry can win while HRC is holding the member. The
+ * boundary must read wrkq again and remove that local member before composing
+ * or recording anything; a terminal envelope is never passed to `present`.
+ */
+async function revalidateHeldBatch(
+  server: HrcServerInstanceForHandlers,
+  attempt: HrcMailDriveAttempt
+): Promise<ActionableEnvelope[]> {
+  const surviving: ActionableEnvelope[] = []
+  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
+    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+    if (!envelope.terminal && envelope.state === 'pending') {
+      surviving.push({
+        envelope,
+        form: envelope.presentedTo.length === 0 ? 'full' : 'defer-retry',
+      })
+      continue
+    }
+    const reason = envelope.terminal
+      ? `terminal_while_held:${envelope.state}`
+      : `no_longer_actionable:${envelope.state}`
+    const dropped = server.db.mailDrives.dropHeldEnvelope(envelopeId, reason)
+    if (dropped === undefined) continue
+    writeServerLog('INFO', 'wrkq.kicker.held_member_dropped', {
+      targetSessionRef: attempt.targetSessionRef,
+      driveAttemptId: attempt.driveAttemptId,
+      envelopeId,
+      envelopeState: envelope.state,
+      reason,
+      remainingEnvelopeIds: dropped.remainingEnvelopeIds,
+      brokerWithdrawCalled: false,
+    })
+  }
+  return surviving
+}
+
+/**
+ * Recover a crash during the per-envelope receipt commit for one batch input.
+ *
+ * The broker input already exists and is identified by the stable run row;
+ * this fills only missing wrkq receipts with the same driveAttemptId/inputId.
+ * A member that went terminal after dispatch is never resurrected merely to
+ * complete local bookkeeping.
+ */
+async function replayHeldBatchReceipts(
+  server: HrcServerInstanceForHandlers,
+  attempt: HrcMailDriveAttempt
+): Promise<void> {
+  if (attempt.heldBehindTurnId === undefined || attempt.state === 'held') return
+  const run = server.db.runs.getByRunId(attempt.runId)
+  const inputId = run?.dispatchedInputId
+  if (
+    run === null ||
+    inputId === undefined ||
+    attempt.hostSessionId === undefined ||
+    attempt.generation === undefined ||
+    attempt.runtimeId === undefined
+  ) {
+    return
+  }
+
+  const replayed: string[] = []
+  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
+    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+    if (
+      envelope.terminal ||
+      envelope.presentedTo.some((receipt) => receipt.driveAttemptId === attempt.driveAttemptId)
+    ) {
+      continue
+    }
+    await server.wrkqLedger.present({
+      envelope: envelopeId,
+      node: server.federationNodeId,
+      hostSessionId: attempt.hostSessionId,
+      generation: String(attempt.generation),
+      runId: attempt.runId,
+      runtimeId: attempt.runtimeId,
+      inputId,
+      driveAttemptId: attempt.driveAttemptId,
+    })
+    replayed.push(envelopeId)
+  }
+  if (replayed.length > 0) {
+    writeServerLog('INFO', 'wrkq.kicker.queue_batch_receipts_replayed', {
+      targetSessionRef: attempt.targetSessionRef,
+      driveAttemptId: attempt.driveAttemptId,
+      runId: attempt.runId,
+      inputId,
+      envelopeIds: replayed,
+    })
+  }
+}
+
+/**
+ * Freeze and activate the oldest HRC-held batch at an observed boundary.
+ *
+ * The second seat probe is intentional: terminal events and sweeps are only
+ * opportunities to flush. If another turn wins that interval, HRC leaves the
+ * attempt held for the next terminal event instead of queueing behind it.
+ */
+async function prepareHeldBatchForBoundary(
+  server: HrcServerInstanceForHandlers,
+  targetSessionRef: string,
+  session: HrcSessionRecord,
+  held: HrcMailDriveAttempt,
+  actionable: readonly ActionableEnvelope[],
+  wakeReason: HrcMailDriveWakeReason
+): Promise<{ attempt: HrcMailDriveAttempt; actionable: ActionableEnvelope[] } | undefined> {
+  if (held.runtimeId === undefined) {
+    server.db.mailDrives.failWithoutStart(
+      held.driveAttemptId,
+      'HRC-held queue batch has no broker runtime identity'
+    )
+    writeServerLog('WARN', 'wrkq.kicker.queue_batch_invalid', {
+      targetSessionRef,
+      driveAttemptId: held.driveAttemptId,
+      reason: 'missing_runtime_id',
+    })
+    return undefined
+  }
+
+  const appended = server.db.mailDrives.holdQueuedAttempt(
+    {
+      targetSessionRef,
+      wakeReason,
+      envelopeIds: actionable
+        .filter((item) => item.envelope.delivery === 'queue')
+        .map((item) => item.envelope.id),
+      heldBehindTurnId: held.heldBehindTurnId ?? 'unknown',
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: held.runtimeId,
+      materializationIntent: held.materializationIntent,
+    },
+    MAX_PRESENTED_PER_ATTEMPT
+  )
+  const surviving = await revalidateHeldBatch(server, appended.attempt)
+  if (surviving.length === 0) return undefined
+
+  const boundarySeat = await observeBrokerSeat(server, session)
+  if (!seatCanDispatch(boundarySeat)) {
+    writeServerLog('INFO', 'wrkq.kicker.queue_batch_foreign_turn_won', {
+      targetSessionRef,
+      driveAttemptId: held.driveAttemptId,
+      wakeReason,
+      observedSeatState: boundarySeat.state,
+      ...(boundarySeat.state === 'turn-active' ? { observedTurnId: boundarySeat.turnId } : {}),
+      envelopeIds: surviving.map((item) => item.envelope.id),
+    })
+    return undefined
+  }
+
+  const activated = server.db.mailDrives.activateHeldAttempt(held.driveAttemptId)
+  if (activated.outcome !== 'acquired') {
+    writeServerLog('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
+      targetSessionRef,
+      driveAttemptId: held.driveAttemptId,
+      wakeReason,
+      activeDriveAttemptId:
+        activated.outcome === 'active' ? activated.attempt.driveAttemptId : undefined,
+    })
+    return undefined
+  }
+  return { attempt: activated.attempt, actionable: surviving }
+}
+
 /**
  * The scope's drive slot is held by a kicker attempt that has not finished yet
  * (T-07644).
  *
  * The SLOT is declined — claiming a second one for a scope already mid-drive
- * would double-drive it — but the MAIL does not wait (T-07612 rev 4): it is
- * queued into the live turn by `presentIntoBusyTarget`, slot-less. Before rev 4
- * only the retired urgent path took that route, and before T-07644 it was unreachable
- * here — a bare `return` sat above it.
+ * would double-drive it. Since T-07891, queue-class MAIL joins one durable
+ * HRC-held batch and waits for the broker-observed terminal boundary; it does
+ * not enter the live harness. A hold/preempt stays an isolated immediate
+ * admission decision and never joins that batch.
  *
  * And it LOGS, unconditionally. The instrumented fall-through below already
  * carries the reason — a silent decline is indistinguishable from a dead kicker
@@ -937,23 +1162,26 @@ async function declineForInFlightAttempt(
   session: HrcSessionRecord | undefined,
   actionable: readonly ActionableEnvelope[],
   wakeReason: HrcMailDriveWakeReason,
+  seat: ObservedBrokerSeat,
   route: { via: InFlightDeclineRoute; observation: AttemptObservation }
 ): Promise<void> {
-  // No session means the drive that owns the slot has not reached one yet;
-  // there is no live turn to steer into, so the decline is all there is.
-  const queued =
-    session === undefined
+  // The run row explains why the scope slot is occupied; it never decides
+  // whether the seat is busy. Only the broker-observed turn state may do that.
+  const delivered =
+    session === undefined || seat.state !== 'turn-active'
       ? false
-      : await presentIntoBusyTarget(
-          server,
-          targetSessionRef,
-          session,
-          attempt.runId,
-          actionable,
-          wakeReason
-        )
+      : actionable[0]?.envelope.delivery === 'hold'
+        ? await presentHoldIntoBusyTarget(
+            server,
+            targetSessionRef,
+            session,
+            seat.turnId,
+            actionable,
+            wakeReason
+          )
+        : holdQueueForBusyTarget(server, targetSessionRef, session, seat, actionable, wakeReason)
   writeServerLog('INFO', 'wrkq.kicker.drive_in_flight', {
-    ...(queued ? { queuedDelivery: true } : {}),
+    ...(delivered ? { heldOrPreemptedDelivery: true } : {}),
     targetSessionRef,
     wakeReason,
     driveAttemptId: attempt.driveAttemptId,
@@ -968,6 +1196,8 @@ async function declineForInFlightAttempt(
     // how many. A wedged attempt is reconstructed from the log alone only if
     // the line names the mail that is stuck behind it.
     envelopeIds: actionable.map((item) => item.envelope.id),
+    observedSeatState: seat.state,
+    ...(seat.state === 'turn-active' ? { observedTurnId: seat.turnId } : {}),
   })
 }
 
@@ -1231,14 +1461,16 @@ async function driveMailTargetOnce(
   // session, and both are read below. See `declineForInFlightAttempt`.
   let inFlight: HrcMailDriveAttempt | undefined
   if (attempt !== undefined) {
+    await replayHeldBatchReceipts(server, attempt)
     const observation = observeAttempt(server, attempt)
     if (observation === 'waiting') inFlight = attempt
     if (observation === 'finished') attempt = undefined
   }
-  // T-07612 rev 4: mid-turn attempts hold no slot, so nothing above finds
-  // them. Every wake observes them too — that is how their rounds end.
+  // Broker-submitted slot-less attempts hold no slot, so nothing above finds
+  // them. HRC-held batches are intentionally excluded: no input exists yet and
+  // only a boundary flush or local terminal-member drop may advance them.
   for (const queued of server.db.mailDrives.listUnfinishedAttempts(targetSessionRef)) {
-    if (isQueuedAttempt(queued)) observeAttempt(server, queued)
+    if (isQueuedAttempt(queued) && queued.state !== 'held') observeAttempt(server, queued)
   }
 
   let session = findTargetSession(server.db, targetSessionRef) ?? undefined
@@ -1269,6 +1501,11 @@ async function driveMailTargetOnce(
     server.requestMailKickerWake(targetSessionRef, wakeReason)
   }
 
+  const seat =
+    session === undefined
+      ? ({ state: 'absent' } as const)
+      : await observeBrokerSeat(server, session)
+
   if (inFlight !== undefined) {
     await declineForInFlightAttempt(
       server,
@@ -1277,104 +1514,139 @@ async function driveMailTargetOnce(
       session,
       actionable,
       wakeReason,
+      seat,
       { via: 'active-attempt', observation: 'waiting' }
     )
     return
   }
 
   if (attempt === undefined) {
-    // T-07612 rev 4: a busy target is NOT a reason to wait, and not a reason
-    // to claim the slot either. A seat on a durably live turn gets the mail
-    // as a slot-less attempt owned by the queued input's own run — the same
-    // path an in-flight kicker turn takes — so a queued input the harness
-    // merges into the live turn (never starting one of its own) can never
-    // wedge the scope slot. The slot-claiming drive below is for an IDLE seat.
-    if (session !== undefined) {
-      const busyRunId = durablyActiveRunIdFor(server, session)
-      if (busyRunId !== undefined) {
-        await presentIntoBusyTarget(
+    const held = server.db.mailDrives.getHeldAttempt(targetSessionRef)
+
+    // A hold is an isolated interruption decision even when ordinary queue mail
+    // is already waiting for a boundary. It never joins or flushes that batch.
+    const selectedIsHold = actionable[0]?.envelope.delivery === 'hold'
+    if (session !== undefined && seat.state === 'turn-active') {
+      if (selectedIsHold) {
+        await presentHoldIntoBusyTarget(
           server,
           targetSessionRef,
           session,
-          busyRunId,
+          seat.turnId,
           actionable,
           wakeReason
         )
+      } else {
+        holdQueueForBusyTarget(server, targetSessionRef, session, seat, actionable, wakeReason)
+      }
+      return
+    }
+
+    if (held !== undefined && !selectedIsHold) {
+      if (session === undefined || !seatCanDispatch(seat)) {
+        writeServerLog('INFO', 'wrkq.kicker.queue_batch_boundary_wait', {
+          targetSessionRef,
+          driveAttemptId: held.driveAttemptId,
+          wakeReason,
+          observedSeatState: seat.state,
+        })
         return
       }
+      const prepared = await prepareHeldBatchForBoundary(
+        server,
+        targetSessionRef,
+        session,
+        held,
+        actionable,
+        wakeReason
+      )
+      if (prepared === undefined) return
+      attempt = prepared.attempt
+      actionable = prepared.actionable
+    } else if (session !== undefined && !seatCanDispatch(seat)) {
+      writeServerLog('INFO', 'wrkq.kicker.seat_not_dispatchable', {
+        targetSessionRef,
+        wakeReason,
+        observedSeatState: seat.state,
+      })
+      return
     }
+
     // A non-summoning envelope (a legacy `fyi`) is presented into a live
     // generation if there is one, and otherwise waits. It is never the reason a
     // session is born, so a wake set holding nothing else stops here rather
     // than at the summon gate. `notify` DOES summon (T-07746) and so never
     // reaches this return.
     if (session === undefined && !actionable.some((item) => summonsATurn(item.envelope))) return
-    const directives = actionableDirectives(actionable)
-    const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
-      envelopeIds: actionable.map((item) => item.envelope.id),
-      ...(() => {
-        const intent = buildKickRuntimeIntent(
-          parseSessionRef(targetSessionRef).scopeRef,
-          directives
-        )
-        return intent === undefined ? {} : { materializationIntent: intent }
-      })(),
-    })
-    if (claim.outcome === 'clear') return
-    attempt = claim.attempt
-    if (claim.outcome === 'active') {
-      // The CLAIM race (T-07644 C-16642): `getActiveAttempt` saw no attempt at
-      // the top of this function, and the claim CAS then found the slot already
-      // held — two wakes racing for one scope. This tests the identical
-      // condition as the top branch, so it must answer identically. It used to
-      // be a bare `return` that subsumed BOTH live observations: `waiting`, the
-      // very state this task exists to instrument, and `finished`, which the
-      // top of this function deliberately treats as re-drivable.
-      const observation = observeAttempt(server, attempt)
-      if (observation === 'finished') {
-        // `observeAttempt` has just completed it and released the slot, so the
-        // wake is still live work rather than something to drop. Re-enter, the
-        // way the top branch re-drives a finished attempt.
-        //
-        // Bounded at one: the second pass sees a released slot by construction,
-        // and retrying a state that did not change is a spin, not a fix.
-        if (redriveDepth > 0) {
-          writeServerLog('WARN', 'wrkq.kicker.claim_redrive_exhausted', {
+    if (attempt === undefined) {
+      const directives = actionableDirectives(actionable)
+      const claim = server.db.mailDrives.claim(targetSessionRef, wakeReason, {
+        envelopeIds: actionable.map((item) => item.envelope.id),
+        ...(() => {
+          const intent = buildKickRuntimeIntent(
+            parseSessionRef(targetSessionRef).scopeRef,
+            directives
+          )
+          return intent === undefined ? {} : { materializationIntent: intent }
+        })(),
+      })
+      if (claim.outcome === 'clear') return
+      attempt = claim.attempt
+      if (claim.outcome === 'active') {
+        // The CLAIM race (T-07644 C-16642): `getActiveAttempt` saw no attempt at
+        // the top of this function, and the claim CAS then found the slot already
+        // held — two wakes racing for one scope. This tests the identical
+        // condition as the top branch, so it must answer identically. It used to
+        // be a bare `return` that subsumed BOTH live observations: `waiting`, the
+        // very state this task exists to instrument, and `finished`, which the
+        // top of this function deliberately treats as re-drivable.
+        const observation = observeAttempt(server, attempt)
+        if (observation === 'finished') {
+          // `observeAttempt` has just completed it and released the slot, so the
+          // wake is still live work rather than something to drop. Re-enter, the
+          // way the top branch re-drives a finished attempt.
+          //
+          // Bounded at one: the second pass sees a released slot by construction,
+          // and retrying a state that did not change is a spin, not a fix.
+          if (redriveDepth > 0) {
+            writeServerLog('WARN', 'wrkq.kicker.claim_redrive_exhausted', {
+              targetSessionRef,
+              wakeReason,
+              driveAttemptId: attempt.driveAttemptId,
+            })
+            return
+          }
+          await driveMailTargetOnce(server, targetSessionRef, wakeReason, redriveDepth + 1)
+          return
+        }
+        if (observation !== 'dispatch') {
+          await declineForInFlightAttempt(
+            server,
             targetSessionRef,
+            attempt,
+            session,
+            actionable,
             wakeReason,
+            seat,
+            { via: 'claim', observation }
+          )
+          return
+        }
+      } else {
+        try {
+          await server.options.hrcMailKickerAfterClaim?.(attempt)
+        } catch (error) {
+          const message = errorText(error)
+          const attemptState = failDriveAfterThrow(server, attempt, message)
+          writeServerLog('WARN', 'wrkq.kicker.after_claim_failed', {
+            targetSessionRef,
             driveAttemptId: attempt.driveAttemptId,
+            runId: attempt.runId,
+            attemptState,
+            error: message,
           })
           return
         }
-        await driveMailTargetOnce(server, targetSessionRef, wakeReason, redriveDepth + 1)
-        return
-      }
-      if (observation !== 'dispatch') {
-        await declineForInFlightAttempt(
-          server,
-          targetSessionRef,
-          attempt,
-          session,
-          actionable,
-          wakeReason,
-          { via: 'claim', observation }
-        )
-        return
-      }
-    } else {
-      try {
-        await server.options.hrcMailKickerAfterClaim?.(attempt)
-      } catch (error) {
-        const message = errorText(error)
-        const attemptState = failDriveAfterThrow(server, attempt, message)
-        writeServerLog('WARN', 'wrkq.kicker.after_claim_failed', {
-          targetSessionRef,
-          driveAttemptId: attempt.driveAttemptId,
-          runId: attempt.runId,
-          attemptState,
-          error: message,
-        })
-        return
       }
     }
   }
@@ -2231,6 +2503,25 @@ async function withdrawAckedQueuedInjection(
 
   const envelopeId = event.resourceId
   if (envelopeId === undefined) return
+
+  // T-07891: no broker submission and no ledger receipt exist while an
+  // ordinary queue member is HRC-held. An in-turn reader ack is therefore a
+  // pure local subtraction; calling submission.withdraw would invent work the
+  // broker never received.
+  const heldDrop = server.db.mailDrives.dropHeldEnvelope(
+    envelopeId,
+    QUEUED_INJECTION_WITHDRAW_REASON
+  )
+  if (heldDrop !== undefined) {
+    writeServerLog('INFO', 'wrkq.kicker.held_member_acked', {
+      envelopeId,
+      driveAttemptId: heldDrop.attempt.driveAttemptId,
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+      remainingEnvelopeIds: heldDrop.remainingEnvelopeIds,
+      brokerWithdrawCalled: false,
+    })
+    return
+  }
 
   const attempt = server.db.mailDrives.getClaimedAttemptForEnvelope(envelopeId)
   if (attempt === undefined) return

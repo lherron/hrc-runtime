@@ -102,6 +102,25 @@ function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Disp
   const calls: Dispatch[] = []
   let driveRunId: string | undefined
   let queuedRuns = 0
+  ;(instance as any).getHarnessBrokerController = () => ({
+    seatProbe: async () => ({
+      ok: true as const,
+      response: {
+        invocationId: 'inv-kicker-live',
+        seat: { state: 'turn-active' as const, turnId: 'turn-kicker-live', policy: 'open' },
+        brokerHeldDepth: 0,
+      },
+    }),
+    turnManifest: async () => ({
+      ok: true as const,
+      response: {
+        invocationId: 'inv-kicker-live',
+        turnId: 'turn-kicker-live',
+        policy: 'open' as const,
+        submissionIds: [],
+      },
+    }),
+  })
   serverInternals(instance).dispatchTurnForSession = async (
     session: HrcSessionRecord,
     _intent: HrcRuntimeIntent,
@@ -311,7 +330,10 @@ function remindersFor(db: HrcDatabase, envelopeId: string) {
 }
 
 describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attempt', () => {
-  it('queues a plain envelope into the turn the kicker itself started', async () => {
+  // T-07891 replaces the six queue-path scenarios below with boundary-batch
+  // coverage in t07891-busy-batch-coalescing. Keep their historical fixtures
+  // readable here while the independent hold/preempt cases continue to run.
+  it.skip('queues a plain envelope into the turn the kicker itself started', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -357,7 +379,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(0)
   })
 
-  it("owns its disposition by the queued input's OWN turn, not the holder's (rev 4 flaw 1, kept by rev 5.1 D5)", async () => {
+  it.skip("owns its disposition by the queued input's OWN turn, not the holder's (rev 4 flaw 1, kept by rev 5.1 D5)", async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -411,7 +433,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(ledger.failRequests).toEqual([])
   })
 
-  it('decides nothing when the queued input never starts a turn, and never holds the slot', async () => {
+  it.skip('decides nothing when the queued input never starts a turn, and never holds the slot', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -506,7 +528,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(ledger.envelopes.get(mail.id)?.failureReason).toBe('runtime_terminated')
   })
 
-  it('replays a ledger receipt lost between the local insert and the commit (ruling 5)', async () => {
+  it.skip('replays a ledger receipt lost between the local insert and the commit (ruling 5)', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -552,7 +574,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(ledger.envelopes.get(mail.id)?.state).toBe('presented')
   })
 
-  it('hands the same envelope to the seat at most once per floor window', async () => {
+  it.skip('hands the same envelope to the seat at most once per floor window', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await summonIntoKickerTurn(calls)
@@ -568,7 +590,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(calls().filter((call) => call.phase === 'enqueue')).toHaveLength(1)
   })
 
-  it('records nothing when the broker refuses the input, and still says so', async () => {
+  it.skip('records nothing when the broker refuses the input, and still says so', async () => {
     await startServer()
     const calls = installShapeOneDispatch('throw')
     await summonIntoKickerTurn(calls)
@@ -667,14 +689,16 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     const held = say({ body: 'isolated hold', delivery: 'hold' })
     installLiveManifest(held.id)
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    await waitUntil(() => calls().length === 3, 'isolated hold and follow-up queue dispatched')
+    await waitUntil(() => calls().length === 2, 'isolated hold dispatched')
 
     expect(calls()[1]?.envelopeId).toBe(held.id)
     expect(calls()[1]?.prompt).toContain('isolated hold')
     expect(calls()[1]?.prompt).not.toContain('ordinary sibling')
-    expect(calls()[2]?.envelopeId).toBe(queued.id)
-    expect(calls()[2]?.prompt).toContain('ordinary sibling')
-    expect(calls()[2]?.submissionDoor).toBe('enqueue')
+    await (server as any).drainMailKickerTarget(TARGET)
+    const db = serverInternals(server as HrcServer).db
+    const batch = db.mailDrives.getHeldAttempt(TARGET)
+    expect(db.mailDrives.presentationEnvelopeIds(batch?.driveAttemptId ?? '')).toEqual([queued.id])
+    expect(ledger.envelopes.get(queued.id)?.presentedTo).toEqual([])
   })
 })
 
@@ -758,7 +782,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
     }
   }
 
-  it('queues an envelope discovered through the claim race into the live turn', async () => {
+  it('does not infer a busy seat from the claim-race run row', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
     await holdTheSlotViaClaim('started')
@@ -772,20 +796,16 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
       )
     })
 
-    const queued = calls().filter((call) => call.phase === 'enqueue')
-    expect(queued).toHaveLength(1)
-    expect(queued[0]?.prompt ?? '').toContain('mail through the claim race')
-
-    const receipts = ledger.envelopes.get(mail.id)?.presentedTo ?? []
-    expect(receipts).toHaveLength(1)
-    expect(receipts[0]?.deliveryOutcome).toBe('queued_to_live_harness')
+    expect(calls().filter((call) => call.phase === 'enqueue')).toHaveLength(0)
+    expect(ledger.envelopes.get(mail.id)?.presentedTo).toEqual([])
 
     // The discriminators are what make the two routes tellable apart in a log.
     const inFlight = lines.filter((line) => line.includes('wrkq.kicker.drive_in_flight'))
     expect(inFlight).toHaveLength(1)
     expect(inFlight[0]).toContain('"via":"claim"')
     expect(inFlight[0]).toContain('"observation":"waiting"')
-    expect(inFlight[0]).toContain('"queuedDelivery":true')
+    expect(inFlight[0]).toContain('"observedSeatState":"absent"')
+    expect(inFlight[0]).not.toContain('heldOrPreemptedDelivery')
   })
 
   it('re-drives a finished attempt found by the claim, instead of dropping the wake', async () => {

@@ -157,6 +157,42 @@ describe('T-07890 queued injection withdrawal', () => {
     ).toBe(true)
   })
 
+  it('drops an acked HRC-held member locally without calling broker withdrawal', async () => {
+    const envelope = ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07891' })
+    const held = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: TARGET,
+        wakeReason: 'insert',
+        envelopeIds: [envelope.id],
+        heldBehindTurnId: 'turn-human-typed',
+        hostSessionId: 'hsid-t07890',
+        generation: 1,
+        runtimeId: RUNTIME_ID,
+      },
+      20
+    ).attempt
+    db.wrkqLedgerCursors.advance(1)
+    ledger.ack(envelope.id)
+
+    const captured = await captureServerLog(async () => runTail())
+
+    expect(withdrawCalls).toEqual([])
+    expect(wakes).toEqual([])
+    expect(db.mailDrives.getAttempt(held.driveAttemptId)).toMatchObject({
+      state: 'withdrawn',
+      presentedCount: 0,
+      lastError: REASON,
+    })
+    expect(
+      captured.lines.some(
+        (line) =>
+          line.includes('wrkq.kicker.held_member_acked') &&
+          line.includes(envelope.id) &&
+          line.includes('"brokerWithdrawCalled":false')
+      )
+    ).toBe(true)
+  })
+
   it('does not withdraw after input.accepted is durable for that runtime and input', async () => {
     const { attempt } = await seedQueuedAttempt()
     db.brokerInvocationEvents.appendEvent({

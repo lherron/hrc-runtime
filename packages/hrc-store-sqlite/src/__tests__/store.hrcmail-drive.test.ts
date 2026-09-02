@@ -123,6 +123,109 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.listAttempts(target)).toHaveLength(1)
   })
 
+  it('coalesces one durable held queue batch without taking the scope slot', () => {
+    const first = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: target,
+        wakeReason: 'insert',
+        envelopeIds: ['EN-00031'],
+        heldBehindTurnId: 'turn-human',
+        hostSessionId: 'hsid-mail-drive',
+        generation: 1,
+        runtimeId: 'rt-mail-drive',
+      },
+      3
+    )
+    const appended = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: target,
+        wakeReason: 'insert',
+        envelopeIds: ['EN-00031', 'EN-00032', 'EN-00033', 'EN-00034'],
+        heldBehindTurnId: 'turn-human',
+        hostSessionId: 'hsid-mail-drive',
+        generation: 1,
+        runtimeId: 'rt-mail-drive',
+      },
+      3
+    )
+
+    expect(first.attempt.driveAttemptId).toBe(appended.attempt.driveAttemptId)
+    expect(appended.addedEnvelopeIds).toEqual(['EN-00032', 'EN-00033'])
+    expect(appended.attempt).toMatchObject({
+      state: 'held',
+      presentedCount: 3,
+      heldBehindTurnId: 'turn-human',
+      hostSessionId: 'hsid-mail-drive',
+      generation: 1,
+      runtimeId: 'rt-mail-drive',
+    })
+    expect(db.mailDrives.presentationEnvelopeIds(appended.attempt.driveAttemptId)).toEqual([
+      'EN-00031',
+      'EN-00032',
+      'EN-00033',
+    ])
+    expect(db.mailDrives.getActiveAttempt(target)).toBeUndefined()
+    expect(db.mailDrives.listInFlightTargets()).toEqual([target])
+  })
+
+  it('recovers a held batch after restart, then freezes it into the ordinary slot', () => {
+    const held = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: target,
+        wakeReason: 'insert',
+        envelopeIds: ['EN-00041', 'EN-00042'],
+        heldBehindTurnId: 'turn-before-kill',
+        hostSessionId: 'hsid-mail-drive',
+        generation: 1,
+        runtimeId: 'rt-mail-drive',
+      },
+      20
+    ).attempt
+    db.close()
+
+    db = openHrcDatabase(dbPath)
+    expect(db.mailDrives.getHeldAttempt(target)).toMatchObject({
+      driveAttemptId: held.driveAttemptId,
+      runId: held.runId,
+      state: 'held',
+    })
+    const activated = db.mailDrives.activateHeldAttempt(held.driveAttemptId)
+    expect(activated.outcome).toBe('acquired')
+    expect('attempt' in activated ? activated.attempt : undefined).toMatchObject({
+      driveAttemptId: held.driveAttemptId,
+      runId: held.runId,
+      state: 'claimed',
+    })
+    expect(db.mailDrives.getActiveAttempt(target)?.driveAttemptId).toBe(held.driveAttemptId)
+    expect(db.mailDrives.getHeldAttempt(target)).toBeUndefined()
+  })
+
+  it('subtracts terminal members locally and terminalizes an emptied held batch', () => {
+    const held = db.mailDrives.holdQueuedAttempt(
+      {
+        targetSessionRef: target,
+        wakeReason: 'insert',
+        envelopeIds: ['EN-00051', 'EN-00052'],
+        heldBehindTurnId: 'turn-live',
+        hostSessionId: 'hsid-mail-drive',
+        generation: 1,
+        runtimeId: 'rt-mail-drive',
+      },
+      20
+    ).attempt
+
+    expect(db.mailDrives.dropHeldEnvelope('EN-00051', 'acked_while_held')).toMatchObject({
+      remainingEnvelopeIds: ['EN-00052'],
+      attempt: { driveAttemptId: held.driveAttemptId, state: 'held', presentedCount: 1 },
+    })
+    expect(db.mailDrives.dropHeldEnvelope('EN-00052', 'expired_while_held')).toMatchObject({
+      remainingEnvelopeIds: [],
+      attempt: { driveAttemptId: held.driveAttemptId, state: 'withdrawn', presentedCount: 0 },
+    })
+    expect(db.mailDrives.getHeldAttempt(target)).toBeUndefined()
+    expect(db.mailDrives.listInFlightTargets()).toEqual([])
+  })
+
   it('records one presentation receipt per envelope no matter how often the attempt replays', () => {
     db.mailDrives.claim(target, 'insert', actionable('EN-00001', 'EN-00002'), {
       driveAttemptId: 'drive-replay',

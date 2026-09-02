@@ -93,7 +93,8 @@ type ServerPeek = {
   db: HrcDatabase
   federationNodeId: string
   runWrkqLedgerTail: () => Promise<void>
-  runMailKickerSweep: () => Promise<void>
+  requestMailKickerWake: (targetSessionRef: string, reason: 'periodic') => void
+  drainMailKickerTarget: (targetSessionRef: string) => Promise<void>
   mailKickerTargetOperations: Map<string, Promise<void>>
   dispatchTurnForSession: (
     session: HrcSessionRecord,
@@ -106,6 +107,7 @@ type ServerPeek = {
   waitForInteractiveBrokerRunCompletion: unknown
   reconcileTmuxRuntimeLiveness: unknown
   executeInteractiveBrokerInputTurn: unknown
+  getHarnessBrokerController: unknown
 }
 
 function peek(instance: HrcServer): ServerPeek {
@@ -144,6 +146,24 @@ function installGatedBrokerStart(instance: HrcServer): {
   const accepted = new Promise<void>((resolve) => {
     markAccepted = resolve
   })
+  let released = false
+
+  peek(instance).getHarnessBrokerController = () => ({
+    seatProbe: async () => ({
+      ok: true as const,
+      response: {
+        invocationId: 'inv-t07693-1',
+        seat: released
+          ? { state: 'idle' as const }
+          : {
+              state: 'turn-active' as const,
+              turnId: 'run-t07693-operator',
+              policy: 'open' as const,
+            },
+        brokerHeldDepth: 0,
+      },
+    }),
+  })
 
   peek(instance).startInteractiveTmuxBrokerRuntime = async (
     session: HrcSessionRecord,
@@ -174,6 +194,7 @@ function installGatedBrokerStart(instance: HrcServer): {
       activeOperationId: `op-t07693-${call}`,
       activeInvocationId: invocationId,
       activeRunId: runId,
+      tmuxJson: { brokerDriver: 'claude-code-tmux' },
       createdAt: now,
       updatedAt: now,
     })
@@ -213,7 +234,12 @@ function installGatedBrokerStart(instance: HrcServer): {
     options.onAccepted?.(runtime)
     markAccepted()
     await gate
-    return runtime
+    const readyAt = timestamp()
+    db.brokerInvocations.update(invocationId, {
+      invocationState: 'ready',
+      updatedAt: readyAt,
+    })
+    return db.runtimes.updateStatus(runtimeId, 'ready', readyAt) ?? runtime
   }
   peek(instance).publishPresentation = async () => undefined
   peek(instance).waitForInteractiveBrokerRunCompletion = async () => undefined
@@ -223,7 +249,14 @@ function installGatedBrokerStart(instance: HrcServer): {
   // without ever reaching the code this test exists to exercise.
   peek(instance).reconcileTmuxRuntimeLiveness = async (runtime: HrcRuntimeSnapshot) => runtime
 
-  return { starts: () => starts, release: () => releaseGate(), accepted }
+  return {
+    starts: () => starts,
+    release: () => {
+      released = true
+      releaseGate()
+    },
+    accepted,
+  }
 }
 
 async function startServer(): Promise<HrcServer> {
@@ -280,9 +313,10 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
    * THE FENCE. A wake that lands while the seat's broker is still being born
    * must join that birth. The second wake here comes from the OTHER side —
    * an operator/DM cold dispatch already in flight when the wrkc envelope
-   * arrives — which is the shape that survives the trigger fix: the kicker
-   * finds the seat durably busy and dispatches through `presentIntoBusyTarget`,
-   * the call site that carries no `joinInFlightRuntimeStart`.
+   * arrives — which is the shape that survives the trigger fix. Since T-07891,
+   * the kicker observes the broker's active turn and holds the envelope in HRC
+   * until the turn boundary; the boundary dispatch must still join the one
+   * runtime born by the first wake.
    */
   it('joins an in-flight birth instead of minting a second runtime', async () => {
     await startServer()
@@ -312,6 +346,25 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       runId: string
     ) => {
       joins.push(runtime.runtimeId)
+      const inputId = `input-${runId}`
+      const now = timestamp()
+      if (db.runs.getByRunId(runId) === null) {
+        db.runs.insert({
+          runId,
+          hostSessionId: session.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          transport: 'tmux',
+          status: 'started',
+          acceptedAt: now,
+          startedAt: now,
+          updatedAt: now,
+          dispatchedInputId: inputId,
+        })
+        db.runtimes.updateRunId(runtime.runtimeId, runId, now)
+      }
       return Response.json({
         runId,
         hostSessionId: resolved.hostSessionId,
@@ -320,7 +373,7 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
         transport: 'tmux',
         status: 'started',
         supportsInFlightInput: true,
-        inputId: `input-${runId}`,
+        inputId,
       })
     }
 
@@ -336,7 +389,7 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
 
     // WAKE 2 — the wrkc envelope, into a seat that is now durably busy with a
     // birth still in flight.
-    ledger.say({
+    const envelope = ledger.say({
       toScopeRef: SCOPE,
       fromScopeRef: SENDER,
       roomKey: 'T-07693',
@@ -344,27 +397,44 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     })
     await peek(instance).runWrkqLedgerTail()
 
-    // Release only AFTER the second wake is in: the fence awaits the birth, so
-    // awaiting the whole wake before release would deadlock the very join it
-    // proves. The target operation is the direct evidence that wake 2 reached
-    // the seat and is waiting on the registered birth. The durable run is not
-    // inserted until that birth resolves.
+    // Release only AFTER the second wake is in. While the broker reports the
+    // operator turn active, the envelope remains HRC-held: no second broker
+    // input and no presentation receipt exist yet.
     await waitUntil(
       () => peek(instance).mailKickerTargetOperations.has(TARGET),
       'the envelope wake joined the in-flight seat birth'
     )
+    await waitUntil(
+      () => db.mailDrives.getHeldAttempt(TARGET) !== null,
+      'the envelope wake was held behind the active broker turn'
+    )
+    expect(joins).toHaveLength(0)
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(0)
+
     broker.release()
-    await waitUntil(() => joins.length === 2, 'both guarded submissions reached the seat')
     await operatorTurn
+    // The cold operator prompt rode the birth itself, so it does not traverse
+    // the existing-runtime input seam recorded by `joins`.
+    expect(joins).toHaveLength(0)
+
+    const boundaryAt = timestamp()
+    db.runs.updateStatus('run-t07693-operator', 'completed', boundaryAt)
+    db.runtimes.updateRunId('rt-t07693-1', undefined, boundaryAt)
+
+    // A periodic boundary wake is the sweep backstop's delivery edge. It
+    // flushes the local batch only after the seat probe turns idle, into the
+    // already-born runtime.
+    peek(instance).requestMailKickerWake(TARGET, 'periodic')
+    await peek(instance).drainMailKickerTarget(TARGET)
+    expect(joins).toEqual(['rt-t07693-1', 'rt-t07693-1'])
 
     const runtimes = db.runtimes.listByHostSessionId(resolved.hostSessionId)
     expect({
       brokerStarts: broker.starts(),
       runtimeCount: runtimes.length,
       sessionCount: db.sessions.listByScopeRef(SCOPE, 'main').length,
-      // The point of the fence: both the caller turn and second wake were
-      // delivered into the runtime the FIRST one is still birthing, not into a
-      // seat of their own.
+      // The point of the fence: both submissions join the runtime the first
+      // wake birthed instead of provisioning a seat of their own.
       joinedRuntimes: joins,
     }).toEqual({
       brokerStarts: 1,
@@ -372,5 +442,6 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       sessionCount: 1,
       joinedRuntimes: ['rt-t07693-1', 'rt-t07693-1'],
     })
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
 })

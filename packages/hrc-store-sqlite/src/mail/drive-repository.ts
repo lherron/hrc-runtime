@@ -19,6 +19,7 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 export type HrcMailDriveWakeReason = 'insert' | 'turn_completion' | 'periodic' | 'recovery'
 
 export type HrcMailDriveAttemptState =
+  | 'held'
   | 'claimed'
   | 'started'
   | 'completed'
@@ -43,6 +44,8 @@ export type HrcMailDriveAttempt = {
   lastError?: string | undefined
   /** The live run this attempt's input was queued behind (T-07612 rev 4, mid-turn attempts). */
   queuedBehindRunId?: string | undefined
+  /** The broker-observed turn boundary an HRC-held queue batch is waiting for. */
+  heldBehindTurnId?: string | undefined
   autoReplyCandidate?: HrcMailAutoReplyCandidate | undefined
   claimedAt: string
   startedAt?: string | undefined
@@ -111,6 +114,27 @@ export type HrcMailQueuedAttemptInput = {
   generation: number
   runtimeId?: string | undefined
   autoReplyCandidate?: HrcMailAutoReplyCandidate | undefined
+}
+
+export type HrcMailHeldAttemptInput = {
+  targetSessionRef: string
+  wakeReason: HrcMailDriveWakeReason
+  envelopeIds: readonly string[]
+  heldBehindTurnId: string
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+  materializationIntent?: HrcRuntimeIntent | undefined
+}
+
+export type HrcMailHeldAttemptUpdate = {
+  attempt: HrcMailDriveAttempt
+  addedEnvelopeIds: string[]
+}
+
+export type HrcMailHeldEnvelopeDrop = {
+  attempt: HrcMailDriveAttempt
+  remainingEnvelopeIds: string[]
 }
 
 export type HrcMailDriveSlot = {
@@ -227,6 +251,7 @@ type DriveAttemptRow = {
   completed_at: string | null
   updated_at: string
   queued_behind_run_id: string | null
+  held_behind_turn_id: string | null
   auto_reply_source_ref: string | null
   auto_reply_source_envelope_ids_json: string | null
   auto_reply_room_key: string | null
@@ -264,6 +289,7 @@ const DRIVE_ATTEMPT_COLUMNS = `
   presented_count, materialization_intent_json, host_session_id, generation,
   runtime_id, start_hrc_seq, terminal_event_kind, last_error, claimed_at,
   started_at, completed_at, updated_at, queued_behind_run_id,
+  held_behind_turn_id,
   auto_reply_source_ref, auto_reply_source_envelope_ids_json,
   auto_reply_room_key, auto_reply_counterparty_ref
 `
@@ -347,6 +373,7 @@ function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
     ...(row.terminal_event_kind === null ? {} : { terminalEventKind: row.terminal_event_kind }),
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
     ...(row.queued_behind_run_id === null ? {} : { queuedBehindRunId: row.queued_behind_run_id }),
+    ...(row.held_behind_turn_id === null ? {} : { heldBehindTurnId: row.held_behind_turn_id }),
     ...(() => {
       const candidate = mapAutoReplyCandidate(row)
       return candidate === undefined ? {} : { autoReplyCandidate: candidate }
@@ -472,7 +499,7 @@ export class HrcMailDriveRepository {
       .query<{ target_session_ref: string }, []>(
         `SELECT DISTINCT target_session_ref
            FROM hrcmail_drive_attempts
-          WHERE state IN ('claimed', 'started')
+          WHERE state IN ('held', 'claimed', 'started')
           ORDER BY target_session_ref ASC`
       )
       .all()
@@ -679,13 +706,207 @@ export class HrcMailDriveRepository {
       .immediate() as HrcMailDriveAttempt
   }
 
+  /**
+   * Hold ordinary queue mail on the HRC side while a broker-observed turn is active.
+   *
+   * One target has at most one open held batch. Membership is durable before any
+   * broker submission exists, and append is capped transactionally so concurrent
+   * wakes cannot grow one boundary presentation beyond its contract limit.
+   */
+  holdQueuedAttempt(
+    input: HrcMailHeldAttemptInput,
+    maxEnvelopeCount: number
+  ): HrcMailHeldAttemptUpdate {
+    const target = normalizeTarget(input.targetSessionRef)
+    return this.db
+      .transaction(() => {
+        const now = new Date().toISOString()
+        let attempt = this.getHeldAttempt(target)
+        if (attempt === undefined) {
+          const driveAttemptId = `queued-${randomUUID()}`
+          const runId = `run-${driveAttemptId.slice('queued-'.length)}`
+          this.db
+            .query(
+              `INSERT INTO hrcmail_drive_attempts (
+                 drive_attempt_id, target_session_ref, run_id, wake_reason, state,
+                 prompt, presented_count, materialization_intent_json,
+                 host_session_id, generation, runtime_id, held_behind_turn_id,
+                 claimed_at, updated_at
+               ) VALUES (?, ?, ?, ?, 'held', ?, 0, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+              driveAttemptId,
+              target,
+              runId,
+              input.wakeReason,
+              claimPlaceholderPrompt(input.envelopeIds.length),
+              input.materializationIntent === undefined
+                ? null
+                : JSON.stringify(input.materializationIntent),
+              input.hostSessionId,
+              input.generation,
+              input.runtimeId,
+              input.heldBehindTurnId,
+              now,
+              now
+            )
+          attempt = this.requireAttempt(driveAttemptId)
+        }
+
+        const existing = new Set(this.presentationEnvelopeIds(attempt.driveAttemptId))
+        const remaining = Math.max(0, maxEnvelopeCount - existing.size)
+        const addedEnvelopeIds = input.envelopeIds
+          .filter((envelopeId) => !existing.has(envelopeId))
+          .slice(0, remaining)
+        for (const envelopeId of addedEnvelopeIds) {
+          this.db
+            .query(
+              `INSERT OR IGNORE INTO hrcmail_drive_presentations (
+                 drive_attempt_id, envelope_id, presented_at
+               ) VALUES (?, ?, ?)`
+            )
+            .run(attempt.driveAttemptId, envelopeId, now)
+        }
+        const count = existing.size + addedEnvelopeIds.length
+        this.db
+          .query(
+            `UPDATE hrcmail_drive_attempts
+                SET presented_count = ?, prompt = ?, updated_at = ?
+              WHERE drive_attempt_id = ? AND state = 'held'`
+          )
+          .run(count, claimPlaceholderPrompt(count), now, attempt.driveAttemptId)
+        return {
+          attempt: this.requireAttempt(attempt.driveAttemptId),
+          addedEnvelopeIds,
+        }
+      })
+      .immediate() as HrcMailHeldAttemptUpdate
+  }
+
+  getHeldAttempt(targetSessionRef: string): HrcMailDriveAttempt | undefined {
+    const row = this.db
+      .query<DriveAttemptRow, [string]>(
+        `SELECT ${DRIVE_ATTEMPT_COLUMNS}
+           FROM hrcmail_drive_attempts
+          WHERE target_session_ref = ? AND state = 'held'
+          ORDER BY claimed_at ASC, drive_attempt_id ASC
+          LIMIT 1`
+      )
+      .get(normalizeTarget(targetSessionRef))
+    return row === null ? undefined : mapAttempt(row)
+  }
+
+  /** Freeze a held batch and give it the ordinary per-scope drive slot. */
+  activateHeldAttempt(driveAttemptId: string): HrcMailDriveClaimResult {
+    return this.db
+      .transaction(() => {
+        const attempt = this.requireAttempt(driveAttemptId)
+        if (attempt.state !== 'held') return { outcome: 'active', attempt }
+        const now = new Date().toISOString()
+        this.db
+          .query(
+            `INSERT OR IGNORE INTO hrcmail_drive_slots (
+               target_session_ref, active_drive_attempt_id, updated_at
+             ) VALUES (?, NULL, ?)`
+          )
+          .run(attempt.targetSessionRef, now)
+        const active = this.getActiveAttempt(attempt.targetSessionRef)
+        if (active !== undefined) return { outcome: 'active', attempt: active }
+        const claimed = this.db
+          .query(
+            `UPDATE hrcmail_drive_slots
+                SET active_drive_attempt_id = ?, updated_at = ?
+              WHERE target_session_ref = ? AND active_drive_attempt_id IS NULL`
+          )
+          .run(driveAttemptId, now, attempt.targetSessionRef)
+        if (claimed.changes !== 1) {
+          const raced = this.getActiveAttempt(attempt.targetSessionRef)
+          if (raced !== undefined) return { outcome: 'active', attempt: raced }
+          throw new Error(`failed to activate held mail drive ${driveAttemptId}`)
+        }
+        this.db
+          .query(
+            `UPDATE hrcmail_drive_attempts
+                SET state = 'claimed', updated_at = ?
+              WHERE drive_attempt_id = ? AND state = 'held'`
+          )
+          .run(now, driveAttemptId)
+        return { outcome: 'acquired', attempt: this.requireAttempt(driveAttemptId) }
+      })
+      .immediate() as HrcMailDriveClaimResult
+  }
+
+  getHeldAttemptForEnvelope(envelopeId: string): HrcMailDriveAttempt | undefined {
+    const row = this.db
+      .query<DriveAttemptRow, [string]>(
+        `SELECT ${DRIVE_ATTEMPT_COLUMNS}
+           FROM hrcmail_drive_attempts
+          WHERE drive_attempt_id = (
+            SELECT attempt.drive_attempt_id
+              FROM hrcmail_drive_attempts AS attempt
+              JOIN hrcmail_drive_presentations AS presentation
+                ON presentation.drive_attempt_id = attempt.drive_attempt_id
+             WHERE presentation.envelope_id = ? AND attempt.state = 'held'
+             ORDER BY attempt.claimed_at DESC, attempt.drive_attempt_id DESC
+             LIMIT 1
+          )`
+      )
+      .get(envelopeId)
+    return row === null ? undefined : mapAttempt(row)
+  }
+
+  /** Remove one never-submitted member without touching wrkq or the broker. */
+  dropHeldEnvelope(envelopeId: string, reason: string): HrcMailHeldEnvelopeDrop | undefined {
+    return this.db
+      .transaction(() => {
+        const attempt = this.getHeldAttemptForEnvelope(envelopeId)
+        if (attempt === undefined) return undefined
+        const now = new Date().toISOString()
+        this.db
+          .query(
+            `DELETE FROM hrcmail_drive_presentations
+              WHERE drive_attempt_id = ? AND envelope_id = ?`
+          )
+          .run(attempt.driveAttemptId, envelopeId)
+        const remainingEnvelopeIds = this.presentationEnvelopeIds(attempt.driveAttemptId)
+        if (remainingEnvelopeIds.length === 0) {
+          this.db
+            .query(
+              `UPDATE hrcmail_drive_attempts
+                  SET state = 'withdrawn', presented_count = 0, last_error = ?,
+                      completed_at = ?, updated_at = ?
+                WHERE drive_attempt_id = ? AND state = 'held'`
+            )
+            .run(reason, now, now, attempt.driveAttemptId)
+        } else {
+          this.db
+            .query(
+              `UPDATE hrcmail_drive_attempts
+                  SET presented_count = ?, prompt = ?, updated_at = ?
+                WHERE drive_attempt_id = ? AND state = 'held'`
+            )
+            .run(
+              remainingEnvelopeIds.length,
+              claimPlaceholderPrompt(remainingEnvelopeIds.length),
+              now,
+              attempt.driveAttemptId
+            )
+        }
+        return {
+          attempt: this.requireAttempt(attempt.driveAttemptId),
+          remainingEnvelopeIds,
+        }
+      })
+      .immediate() as HrcMailHeldEnvelopeDrop | undefined
+  }
+
   /** Every attempt for a target that has not reached a terminal state, slot-holding or not. */
   listUnfinishedAttempts(targetSessionRef: string): HrcMailDriveAttempt[] {
     return this.db
       .query<DriveAttemptRow, [string]>(
         `SELECT ${DRIVE_ATTEMPT_COLUMNS}
          FROM hrcmail_drive_attempts
-         WHERE target_session_ref = ? AND state IN ('claimed', 'started')
+         WHERE target_session_ref = ? AND state IN ('held', 'claimed', 'started')
          ORDER BY claimed_at ASC`
       )
       .all(normalizeTarget(targetSessionRef))
@@ -1067,7 +1288,7 @@ export class HrcMailDriveRepository {
           .query(
             `UPDATE hrcmail_drive_attempts
              SET state = ?, last_error = ?, completed_at = ?, updated_at = ?
-             WHERE drive_attempt_id = ? AND state IN ('claimed', 'started')`
+             WHERE drive_attempt_id = ? AND state IN ('held', 'claimed', 'started')`
           )
           .run(state, error ?? null, now, now, driveAttemptId)
         this.releaseSlot(attempt.targetSessionRef, driveAttemptId, now)

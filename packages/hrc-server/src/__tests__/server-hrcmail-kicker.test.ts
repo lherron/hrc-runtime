@@ -243,7 +243,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     expect(deterministic.submissionDoors()).toEqual(['enqueue'])
     expect(deterministic.turnPolicies()).toEqual([undefined])
-    expect(deterministic.prompts()[0]).toContain('reply required · hold]')
+    expect(deterministic.prompts()[0]).toContain('reply required · preempt]')
     expect(ledger.envelopes.get(envelope.id)).toMatchObject({ delivery: 'hold', expiresAt })
   })
 
@@ -568,7 +568,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'seated scope swept')
   })
 
-  it('delivers a fyi into a busy seat at once instead of waiting for turn completion', async () => {
+  it('does not infer a busy seat for fyi delivery from an HRC run row', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -611,14 +611,15 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       body: 'do not wait for the active turn to finish',
     })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    // T-07612 rev 4: one delivery class. The busy seat gets the fyi in-flight,
-    // slot-less, and the receipt acks it on the broker's accept.
-    await waitUntil(() => queued.calls() === 1, 'busy-seat delivery')
+    // T-07891: this fixture has no broker controller/turn observation. Its HRC
+    // run row therefore cannot classify the seat as busy; this is an ordinary
+    // slot-owning drive, and the fyi auto-acks on commit as before.
+    await waitUntil(() => queued.calls() === 1, 'ordinary fyi delivery')
     await waitUntil(() => ledger.envelopes.get(envelope.id)?.state === 'acked', 'fyi commit')
-    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
+    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeDefined()
     expect(
       ledger.presentRequests.filter((request) => request.envelope === envelope.id)
-    ).toHaveLength(1)
+    ).toHaveLength(2)
   })
 
   // rev 5.1 D2, replacing rev 4's redelivery floor entirely. The floor existed
@@ -702,7 +703,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('failed')
   })
 
-  it('delivers into a busy target at once, naming the turn it queued behind', async () => {
+  it('never treats a run row alone as observed busy-seat state', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -745,16 +746,12 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       ;(server as any).requestMailKickerWake(TARGET, 'insert')
       await (server as any).drainMailKickerTarget(TARGET)
     })
-    // T-07612 rev 4: no `target_busy` decline exists. The mail is queued into
-    // the live harness at once and the line says which turn it queued behind.
+    // T-07891: status/activeRunId are not busy authority. With no broker seat
+    // observation this follows the ordinary slot-owning drive path.
     expect(queued.calls()).toBe(1)
-    expect(captured.lines.filter((line) => line.includes('wrkq.kicker.target_busy'))).toHaveLength(
-      0
-    )
-    const line = captured.lines.filter((l) => l.includes('wrkq.kicker.queued_into_busy_target'))
-    expect(line).toHaveLength(1)
-    expect(line[0]).toContain('"queuedBehindRunId":"run-busy-visible"')
-    expect(line[0]).toContain(held.id)
+    expect(captured.lines.some((line) => line.includes('wrkq.kicker.drive_claimed'))).toBe(true)
+    expect(captured.lines.some((line) => line.includes('queue_batch_held'))).toBe(false)
+    expect(captured.lines.some((line) => line.includes('queued_into_busy_target'))).toBe(false)
     expect(ledger.envelopes.get(held.id)?.presentedTo).toHaveLength(1)
   })
 
