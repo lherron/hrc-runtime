@@ -60,6 +60,8 @@ import type {
   HarnessRecoveryCompletedPayload,
   HarnessRecoveryFailedPayload,
   HarnessStartedPayload,
+  InvocationCaptureReleaseRequest,
+  InvocationCaptureReleaseResponse,
   InvocationEventEnvelope,
   InvocationExitedPayload,
   InvocationFailedPayload,
@@ -240,6 +242,32 @@ export class BrokerEventMapper {
       })
     })
     return run()
+  }
+
+  /** Record an operator disposition and apply the broker-returned capture view. */
+  projectCaptureRelease(
+    runtimeId: string,
+    operatorPrincipal: string,
+    request: InvocationCaptureReleaseRequest,
+    response: InvocationCaptureReleaseResponse
+  ): HrcLifecycleEvent[] {
+    const stateEvent = this.projectCaptureState(runtimeId, response.capture)
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (!runtime) {
+      throw new Error(`runtime not found for capture release: ${runtimeId}`)
+    }
+    const releasedEvent = appendHrcEvent(this.db, 'runtime.capture_released', {
+      ts: this.now(),
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      runtimeId,
+      ...(runtime.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+      transport: lifecycleTransportFromRuntime(runtime.transport),
+      payload: { operatorPrincipal, request, response },
+    })
+    return [...(stateEvent ? [stateEvent] : []), releasedEvent]
   }
 
   private project(envelope: InvocationEventEnvelope): BrokerProjectionResult {

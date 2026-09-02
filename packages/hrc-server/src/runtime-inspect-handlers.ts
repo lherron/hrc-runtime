@@ -1,10 +1,14 @@
-import { HrcErrorCode, HrcNotFoundError } from 'hrc-core'
+import { HrcBadRequestError, HrcDomainError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
   BrokerInspectResponse,
   FinalSummaryRecoveryResult,
   InspectRuntimeResponse,
 } from 'hrc-core'
-import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
+import type {
+  CaptureStateView,
+  EvidenceAuthorityMatrix,
+  InvocationCaptureReleaseRequest,
+} from 'spaces-harness-broker-protocol'
 
 import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
@@ -12,6 +16,7 @@ import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { requireSession } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
+  isRecord,
   parseBrokerInspectRequest,
   parseInspectRuntimeRequest,
   parseJsonBody,
@@ -107,6 +112,157 @@ export async function handleInspectRuntime(
     evidenceAuthority?: EvidenceAuthorityMatrix | undefined
   }
   return json(response)
+}
+
+function requireNonEmptyString(
+  value: unknown,
+  field: string,
+  detail: Record<string, unknown> = {}
+): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} is required`, detail)
+  }
+  return value
+}
+
+function parseCaptureRuntimeRequest(value: unknown): { runtimeId: string } {
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  return { runtimeId: requireNonEmptyString(value['runtimeId'], 'runtimeId') }
+}
+
+function parseCaptureReleaseRequest(value: unknown): {
+  runtimeId: string
+  operatorPrincipal: string
+  release: Omit<InvocationCaptureReleaseRequest, 'invocationId'>
+} {
+  if (!isRecord(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const runtimeId = requireNonEmptyString(value['runtimeId'], 'runtimeId')
+  const operatorPrincipal = requireNonEmptyString(value['operatorPrincipal'], 'operatorPrincipal')
+  if (operatorPrincipal !== 'human' && !operatorPrincipal.startsWith('human:')) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'capture release requires an operator principal',
+      { operatorPrincipal }
+    )
+  }
+  const rawRecordId = requireNonEmptyString(value['rawRecordId'], 'rawRecordId')
+  const disposition = value['disposition']
+  if (disposition !== 'ignored-known' && disposition !== 'normalized-as') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'disposition must be ignored-known or normalized-as'
+    )
+  }
+  const note = value['note']
+  if (note !== undefined && typeof note !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'note must be a string')
+  }
+
+  let normalizedAs: InvocationCaptureReleaseRequest['normalizedAs']
+  if (disposition === 'normalized-as') {
+    const candidate = value['normalizedAs']
+    if (!isRecord(candidate) || !Object.hasOwn(candidate, 'payload')) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'normalizedAs with type and payload is required for normalized-as'
+      )
+    }
+    normalizedAs = {
+      type: requireNonEmptyString(candidate['type'], 'normalizedAs.type') as never,
+      payload: candidate['payload'],
+      ...(typeof candidate['turnId'] === 'string' ? { turnId: candidate['turnId'] as never } : {}),
+      ...(typeof candidate['itemId'] === 'string' ? { itemId: candidate['itemId'] } : {}),
+    }
+  } else if (value['normalizedAs'] !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'normalizedAs is only valid with disposition normalized-as'
+    )
+  }
+
+  return {
+    runtimeId,
+    operatorPrincipal,
+    release: {
+      rawRecordId,
+      disposition,
+      ...(normalizedAs !== undefined ? { normalizedAs } : {}),
+      ...(note !== undefined ? { note } : {}),
+    },
+  }
+}
+
+function throwCaptureControlError(error: {
+  code: string
+  message: string
+  detail: Record<string, unknown>
+}): never {
+  const reason = error.detail['reason']
+  if (typeof reason === 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, reason, error.detail)
+  }
+  throw new HrcDomainError(HrcErrorCode.RUNTIME_UNAVAILABLE, error.message, {
+    code: error.code,
+    ...error.detail,
+  })
+}
+
+export async function handleBrokerCaptureStatus(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const { runtimeId } = parseCaptureRuntimeRequest(await parseJsonBody(request))
+  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime "${runtimeId}"`, {
+      runtimeId,
+    })
+  }
+  const controller = this.harnessBrokerController
+  if (!controller) {
+    throw new HrcDomainError(
+      HrcErrorCode.RUNTIME_UNAVAILABLE,
+      `broker controller unavailable for runtime ${runtimeId}`,
+      { runtimeId }
+    )
+  }
+  const result = await controller.captureStatus(runtimeId)
+  if (!result.ok) throwCaptureControlError(result.error)
+  return json({ runtimeId, capture: result.response })
+}
+
+export async function handleBrokerCaptureRelease(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parseCaptureReleaseRequest(await parseJsonBody(request))
+  const runtime = this.db.runtimes.getByRuntimeId(body.runtimeId)
+  if (!runtime) {
+    throw new HrcNotFoundError(
+      HrcErrorCode.UNKNOWN_RUNTIME,
+      `unknown runtime "${body.runtimeId}"`,
+      { runtimeId: body.runtimeId }
+    )
+  }
+  const controller = this.harnessBrokerController
+  if (!controller) {
+    throw new HrcDomainError(
+      HrcErrorCode.RUNTIME_UNAVAILABLE,
+      `broker controller unavailable for runtime ${body.runtimeId}`,
+      { runtimeId: body.runtimeId }
+    )
+  }
+  const result = await controller.captureRelease(
+    body.runtimeId,
+    body.release,
+    body.operatorPrincipal
+  )
+  if (!result.ok) throwCaptureControlError(result.error)
+  return json(result.response)
 }
 
 /**
@@ -221,6 +377,8 @@ export async function handleBrokerInspect(
 export const runtimeInspectHandlersMethods = {
   handleInspectRuntime,
   handleBrokerInspect,
+  handleBrokerCaptureStatus,
+  handleBrokerCaptureRelease,
 }
 
 export type RuntimeInspectHandlersMethods = typeof runtimeInspectHandlersMethods

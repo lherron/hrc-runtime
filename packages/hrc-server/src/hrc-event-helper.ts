@@ -45,6 +45,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   // exists — so a consumer needs no readiness race and no effectful read.
   'runtime.presentation': 'runtime',
   'runtime.capture_state_changed': 'runtime',
+  'runtime.capture_released': 'runtime',
   // T-07235 provision-liveness watchdog. `first_turn_missing` is the single
   // reason-coded terminal fact; the other two are linked informational rows.
   first_turn_missing: 'runtime',

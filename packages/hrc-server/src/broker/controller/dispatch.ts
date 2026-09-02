@@ -84,7 +84,8 @@ import type {
 
 export type DispatchContext = {
   db: HrcDatabase
-  mapper: Pick<BrokerEventMapper, 'apply'> & Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
+  mapper: Pick<BrokerEventMapper, 'apply'> &
+    Partial<Pick<BrokerEventMapper, 'projectCaptureState' | 'projectCaptureRelease'>>
   brokerClientFactory: BrokerClientFactory
   brokerUnixClientFactory: BrokerUnixClientFactory
   resolveBrokerCommand: () => string

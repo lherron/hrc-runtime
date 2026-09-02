@@ -122,7 +122,7 @@ describe('HarnessBrokerController', () => {
 
     expect(result.ok).toBe(true)
     expect(waitOrder).toEqual(['runtime_attach_first:tui'])
-    expect(fake.callOrder).toEqual(['permission', 'hello', 'start'])
+    expect(fake.callOrder).toEqual(['permission', 'hello', 'start', 'snapshot'])
     expect(fake.startCalls[0]?.runtime).toEqual({ terminalSurface: lease })
   })
 

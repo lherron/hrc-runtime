@@ -26,6 +26,8 @@ import type {
   InputPolicy,
   InvocationAckEventsRequest,
   InvocationAckEventsResponse,
+  InvocationCaptureReleaseRequest,
+  InvocationCaptureReleaseResponse,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
   InvocationEventsSinceRequest,
@@ -99,6 +101,7 @@ export type BrokerClientLike = {
    */
   listInvocations?(req?: BrokerListInvocationsRequest): Promise<BrokerListInvocationsResponse>
   snapshot?(req: InvocationSnapshotRequest): Promise<InvocationSnapshot>
+  captureRelease?(req: InvocationCaptureReleaseRequest): Promise<InvocationCaptureReleaseResponse>
   dispose(req: InvocationDisposeRequest): Promise<void>
   onPermissionRequest(
     handler: (request: PermissionRequestParams) => Promise<PermissionDecision>
@@ -288,7 +291,7 @@ export type AttachedStartReadyWaiter = {
 export type HarnessBrokerControllerDeps = {
   db: HrcDatabase
   mapper?: Pick<BrokerEventMapper, 'apply'> &
-    Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
+    Partial<Pick<BrokerEventMapper, 'projectCaptureState' | 'projectCaptureRelease'>>
   brokerClientFactory?: BrokerClientFactory
   brokerUnixClientFactory?: BrokerUnixClientFactory
   permissionChannel?: BrokerPermissionChannel | undefined

@@ -68,10 +68,12 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
   })
 
-  it('hrc capture --help exits nonzero with the runtime capture pointer', async () => {
+  it('hrc capture --help exposes broker capture control', async () => {
     const result = await runCli(['capture', '--help'])
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr).toContain('hrc runtime capture')
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('status')
+    expect(result.stdout).toContain('release')
   })
 
   it('hrc attach --help exits 0 with Usage', async () => {

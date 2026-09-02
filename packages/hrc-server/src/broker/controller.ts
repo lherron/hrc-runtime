@@ -22,6 +22,9 @@ import { BrokerClient } from 'spaces-harness-broker-client'
 import type {
   BrokerHealthResponse,
   BrokerListInvocationsRequest,
+  CaptureStateView,
+  InvocationCaptureReleaseRequest,
+  InvocationCaptureReleaseResponse,
   InvocationEventEnvelope,
   InvocationId,
   InvocationInspectionSummary,
@@ -328,7 +331,7 @@ export class HarnessBrokerController {
 
   private readonly db: HrcDatabase
   private readonly mapper: Pick<BrokerEventMapper, 'apply'> &
-    Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
+    Partial<Pick<BrokerEventMapper, 'projectCaptureState' | 'projectCaptureRelease'>>
   private readonly brokerClientFactory: BrokerClientFactory
   private readonly brokerUnixClientFactory: BrokerUnixClientFactory
   private readonly permissionChannel: BrokerPermissionChannel | undefined
@@ -866,6 +869,57 @@ export class HarnessBrokerController {
           ...(probeLiveness ? { probeLiveness: true } : {}),
         })
         return { health, invocation }
+      }
+    )
+  }
+
+  async captureStatus(
+    runtimeId: string
+  ): Promise<BrokerControllerRpcResult<CaptureStateView | undefined>> {
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_capture_status_failed', timeoutCode: 'broker_capture_status_timeout' },
+      async (active) => {
+        if (typeof active.client.snapshot !== 'function') {
+          throw new BrokerControllerError(
+            'broker_capture_status_unsupported',
+            `broker client for runtime ${runtimeId} does not support capture status`
+          )
+        }
+        const snapshot = await active.client.snapshot({
+          invocationId: active.invocationId as InvocationId,
+        })
+        this.mapper.projectCaptureState?.(runtimeId, snapshot.capture)
+        return snapshot.capture
+      }
+    )
+  }
+
+  async captureRelease(
+    runtimeId: string,
+    request: Omit<InvocationCaptureReleaseRequest, 'invocationId'>,
+    operatorPrincipal: string
+  ): Promise<BrokerControllerRpcResult<InvocationCaptureReleaseResponse>> {
+    return this.withActive(
+      runtimeId,
+      {
+        failureCode: 'broker_capture_release_failed',
+        timeoutCode: 'broker_capture_release_timeout',
+      },
+      async (active) => {
+        if (typeof active.client.captureRelease !== 'function') {
+          throw new BrokerControllerError(
+            'broker_capture_release_unsupported',
+            `broker client for runtime ${runtimeId} does not support capture release`
+          )
+        }
+        const brokerRequest: InvocationCaptureReleaseRequest = {
+          invocationId: active.invocationId as InvocationId,
+          ...request,
+        }
+        const response = await active.client.captureRelease(brokerRequest)
+        this.mapper.projectCaptureRelease?.(runtimeId, operatorPrincipal, brokerRequest, response)
+        return response
       }
     )
   }

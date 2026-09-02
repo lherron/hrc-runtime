@@ -19,6 +19,8 @@ import type {
   BrokerListInvocationsRequest,
   BrokerListInvocationsResponse,
   InvocationCapabilities,
+  InvocationCaptureReleaseRequest,
+  InvocationCaptureReleaseResponse,
   InvocationEventEnvelope,
   InvocationInputRequest,
   InvocationInputResponse,
@@ -105,7 +107,9 @@ export class FakeBrokerClient implements BrokerClientLike {
   readonly statusCalls: InvocationStatusRequest[] = []
   readonly listInvocationsCalls: BrokerListInvocationsRequest[] = []
   readonly snapshotCalls: InvocationSnapshotRequest[] = []
+  readonly captureReleaseCalls: InvocationCaptureReleaseRequest[] = []
   emitCloseOnClose = false
+  captureReleaseError?: Error
   permissionHandler?: (request: PermissionRequestParams) => Promise<PermissionDecision>
   private closeHandler?: (error: Error) => void
 
@@ -155,6 +159,16 @@ export class FakeBrokerClient implements BrokerClientLike {
     pendingPermissionRequests: [],
     currentSeq: 0,
     retentionFloorSeq: 0,
+  }
+
+  captureReleaseResponse: InvocationCaptureReleaseResponse = {
+    released: true,
+    invocationId: 'invocation_w2' as InvocationCaptureReleaseResponse['invocationId'],
+    rawRecordId: 'raw-blocked',
+    disposition: 'ignored-known',
+    releasedSeq: 7,
+    resumedRecords: 2,
+    capture: { state: 'open', deferredCount: 0 },
   }
 
   healthResponse: BrokerHealthResponse = {
@@ -238,6 +252,15 @@ export class FakeBrokerClient implements BrokerClientLike {
     this.callOrder.push('snapshot')
     this.snapshotCalls.push(req)
     return this.snapshotResponse
+  }
+
+  async captureRelease(
+    req: InvocationCaptureReleaseRequest
+  ): Promise<InvocationCaptureReleaseResponse> {
+    this.callOrder.push('captureRelease')
+    this.captureReleaseCalls.push(req)
+    if (this.captureReleaseError) throw this.captureReleaseError
+    return this.captureReleaseResponse
   }
 
   async dispose(): Promise<void> {

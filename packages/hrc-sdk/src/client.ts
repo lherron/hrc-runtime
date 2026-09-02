@@ -46,6 +46,9 @@ import type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BridgeListFilter,
+  BrokerCaptureReleaseRequest,
+  BrokerCaptureReleaseResponse,
+  BrokerCaptureStatusResponse,
   BrokerForensicsOptions,
   BrokerForensicsResponse,
   BrokerInspectRequest,
@@ -594,6 +597,18 @@ export class HrcClient {
       sourceRef: options.sourceRef,
     })
     return this.getJson<BrokerForensicsResponse>(path)
+  }
+
+  async brokerCaptureStatus(runtimeId: string): Promise<BrokerCaptureStatusResponse> {
+    return this.postJson<BrokerCaptureStatusResponse>('/v1/runtimes/capture/status', {
+      runtimeId,
+    })
+  }
+
+  async brokerCaptureRelease(
+    request: BrokerCaptureReleaseRequest
+  ): Promise<BrokerCaptureReleaseResponse> {
+    return this.postJson<BrokerCaptureReleaseResponse>('/v1/runtimes/capture/release', request)
   }
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {

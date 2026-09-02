@@ -4,6 +4,23 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
+import type {
+  CaptureStateView,
+  InvocationCaptureReleaseRequest,
+  InvocationCaptureReleaseResponse,
+} from 'spaces-harness-broker-protocol'
+
+export type BrokerCaptureStatusResponse = {
+  runtimeId: string
+  capture?: CaptureStateView | undefined
+}
+
+export type BrokerCaptureReleaseRequest = Omit<InvocationCaptureReleaseRequest, 'invocationId'> & {
+  runtimeId: string
+  operatorPrincipal: string
+}
+
+export type BrokerCaptureReleaseResponse = InvocationCaptureReleaseResponse
 
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {

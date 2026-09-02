@@ -274,6 +274,7 @@ describe('HarnessBrokerController', () => {
         now: () => NOW,
       })
       await controller.start({ ...makeStartInput(), brokerClient: fake })
+      fake.snapshotCalls.length = 0
 
       // RED: controller.snapshot does not exist yet
       const result = await (controller as any).snapshot('runtime_w2')

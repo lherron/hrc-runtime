@@ -130,6 +130,11 @@ export function getHarnessBrokerController(
         if (event) this.notifyEvent(event)
         return event
       },
+      projectCaptureRelease: (runtimeId, operatorPrincipal, request, response) => {
+        const events = mapper.projectCaptureRelease(runtimeId, operatorPrincipal, request, response)
+        for (const event of events) this.notifyEvent(event)
+        return events
+      },
     },
     notifyRawBrokerEvent: (event) => {
       for (const subscriber of this.rawBrokerSubscribers) {

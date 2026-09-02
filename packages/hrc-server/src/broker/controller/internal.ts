@@ -186,6 +186,23 @@ export function toControllerError(code: string, error: unknown): BrokerControlle
   if (error instanceof BrokerControllerError) {
     return error
   }
+  if (
+    error instanceof Error &&
+    error.name === 'BrokerRpcError' &&
+    typeof (error as { code?: unknown }).code === 'number'
+  ) {
+    const brokerError = error as unknown as { code: number; data?: unknown }
+    const data = brokerError.data
+    return new BrokerControllerError(code, error.message, {
+      name: error.name,
+      brokerRpcCode: brokerError.code,
+      ...(typeof data === 'object' && data !== null && !Array.isArray(data)
+        ? (data as Record<string, unknown>)
+        : data !== undefined
+          ? { brokerData: data }
+          : {}),
+    })
+  }
   if (error instanceof Error) {
     return new BrokerControllerError(code, error.message, { name: error.name })
   }

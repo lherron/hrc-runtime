@@ -20,9 +20,18 @@ function visibleChildren(parent: Command): string[] {
 describe('consolidated hrc command graph', () => {
   const program = buildProgram()
 
-  test('exposes exactly seven top-level noun groups', () => {
+  test('exposes exactly eight top-level noun groups', () => {
     const visibleTop = visibleChildren(program)
-    const nounGroups = ['server', 'session', 'monitor', 'admin', 'runtime', 'federation', 'target']
+    const nounGroups = [
+      'server',
+      'session',
+      'monitor',
+      'admin',
+      'capture',
+      'runtime',
+      'federation',
+      'target',
+    ]
 
     expect(visibleTop.filter((name) => nounGroups.includes(name))).toEqual(nounGroups)
     expect(visibleTop).not.toContain('broker')
@@ -33,6 +42,7 @@ describe('consolidated hrc command graph', () => {
     expect(visibleChildren(child(program, 'runtime'))).toEqual([
       'list',
       'inspect',
+      'status',
       // T-07235: read-only first_turn_missing bundle retrieval. Lives in the
       // runtime namespace per the T-07011 consolidation rather than adding a
       // top-level noun.
@@ -61,6 +71,7 @@ describe('consolidated hrc command graph', () => {
       'transcript',
       'stats',
     ])
+    expect(visibleChildren(child(program, 'capture'))).toEqual(['status', 'release'])
   })
 
   test('admin --help owns the complete maintenance cellar', () => {
@@ -89,7 +100,6 @@ describe('consolidated hrc command graph', () => {
     for (const removed of [
       'broker',
       'launch',
-      'capture',
       'inflight',
       'surface',
       'bridge',

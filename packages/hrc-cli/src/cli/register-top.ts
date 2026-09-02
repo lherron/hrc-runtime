@@ -486,7 +486,6 @@ The output always names the resolved kind and the concrete ID(s).
     })
 
   registerMovedCommandShim(program, 'inflight', 'hrc runtime send')
-  registerMovedCommandShim(program, 'capture', 'hrc runtime capture')
 
   program
     .command('attach')

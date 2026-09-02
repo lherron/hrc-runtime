@@ -941,6 +941,10 @@ class HrcServerInstance implements HrcServer {
       this.handleInspectRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/broker/inspect')]: (request) =>
       this.handleBrokerInspect(request),
+    [exactRouteKey('POST', '/v1/runtimes/capture/status')]: (request) =>
+      this.handleBrokerCaptureStatus(request),
+    [exactRouteKey('POST', '/v1/runtimes/capture/release')]: (request) =>
+      this.handleBrokerCaptureRelease(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/runtimes/prune')]: (request) => this.handlePruneRuntimes(request),
     [exactRouteKey('POST', '/v1/server/tmux/kill-broker-leases')]: () =>

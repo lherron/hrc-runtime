@@ -5,6 +5,7 @@ import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/
 import { cmdEventsDrain } from '../events-drain.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
+import { cmdCaptureRelease, cmdCaptureStatus } from './handlers-capture.js'
 import {
   cmdCapture,
   cmdInflightSend,
@@ -262,6 +263,38 @@ export function registerRuntimeCommands(program: Command): void {
   registerAdminEvents(admin)
   registerAdminRegistrations(admin)
 
+  const capture = program.command('capture').description('inspect or release broker capture state')
+
+  capture
+    .command('status')
+    .description('read the broker-authoritative capture state')
+    .argument('<target>', 'runtime ID, scope ref, or target handle')
+    .option('--json', 'output capture status as JSON')
+    .action(async (target, _opts, cmd: Command) => {
+      await cmdCaptureStatus(
+        toLegacyArgv([target], cmd.opts(), { strings: [], booleans: ['json'] })
+      )
+    })
+
+  capture
+    .command('release')
+    .description('release the raw record currently blocking broker capture (operator-only)')
+    .argument('<target>', 'runtime ID, scope ref, or target handle')
+    .requiredOption('--raw-record <id>', 'blocked raw record ID')
+    .requiredOption('--disposition <value>', 'ignored-known or normalized-as')
+    .option('--event-type <type>', 'operator-authored normalized event type')
+    .option('--event-payload <json>', 'operator-authored normalized event payload JSON')
+    .option('--turn-id <id>', 'turn ID for the operator-authored normalized event')
+    .option('--note <text>', 'operator note recorded with the disposition')
+    .action(async (target, _opts, cmd: Command) => {
+      await cmdCaptureRelease(
+        toLegacyArgv([target], cmd.opts(), {
+          strings: ['raw-record', 'disposition', 'event-type', 'event-payload', 'turn-id', 'note'],
+          booleans: [],
+        })
+      )
+    })
+
   const runtime = program.command('runtime').description('list, inspect, and control runtimes')
 
   runtime
@@ -454,6 +487,7 @@ export function registerRuntimeCommands(program: Command): void {
   registerMovedCommandShim(program, 'launch', 'hrc ls launches')
 
   annotateCommand(runtime, { audience: 'human' })
+  annotateCommand(capture, { audience: 'human' })
   annotateChild(runtime, 'list', {
     audience: 'agent',
     agentUsage: {
