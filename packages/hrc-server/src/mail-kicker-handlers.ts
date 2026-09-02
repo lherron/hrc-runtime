@@ -2239,6 +2239,10 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
         eventTypes: ['envelope.created', 'envelope.failed'],
         limit: LEDGER_TAIL_PAGE_LIMIT,
       })
+      // Resolved lazily and once per page: a fyi wakes only a target this node
+      // is currently seating, and the tail must not pay a runtimes query on
+      // every empty tick.
+      let seated: Set<string> | undefined
       for (const event of page.items) {
         if (event.eventType === 'envelope.failed') {
           await queueFailureNotice(this, event).catch((error: unknown) => {
@@ -2249,7 +2253,8 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
           })
           continue
         }
-        const target = wakeTargetForEvent(event)
+        seated ??= new Set(this.db.runtimes.listLiveSessionRefs())
+        const target = wakeTargetForEvent(event, seated)
         if (target === undefined) continue
         this.requestMailKickerWake(target, 'insert')
       }
@@ -2294,12 +2299,21 @@ async function resolveTailStartCursor(server: HrcServerInstanceForHandlers): Pro
 /**
  * The target an `envelope.created` wakes, or undefined for one that never kicks.
  *
- * `reply_required` and `notify` both wake (T-07746). A legacy `fyi` does not:
- * it rides into a live generation or waits for the addressee's next attend, so
- * it is not a wake. A scope-less addressee (a human principal) is never kicked
- * either — ACP presents those.
+ * `reply_required` and `notify` both wake (T-07746), seated or not: they summon.
+ * A `fyi` never summons — an unseated addressee is not born for it — but it IS
+ * injected into a seated addressee (the `wrkc say --fyi` contract), and before
+ * this branch the only path to that injection was the thirty-tick sweep, so a
+ * fyi to an idle seat landed up to thirty seconds after it was sent (observed
+ * at 29s on mable@hcs:primary, 2026-09-02 12:03Z). The drain path already
+ * refuses to birth on a fyi-only wake set, so waking a seated target here costs
+ * nothing new; the seated check exists only so the tail does not wake the
+ * drain for scopes nothing can be presented into. A scope-less addressee (a
+ * human principal) is never kicked either — ACP presents those.
  */
-function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
+function wakeTargetForEvent(
+  event: WrkqMonitorEvent,
+  seatedSessionRefs: ReadonlySet<string>
+): string | undefined {
   if (event.eventType !== 'envelope.created' || event.payload === undefined) return undefined
   let parsed: unknown
   try {
@@ -2309,10 +2323,12 @@ function wakeTargetForEvent(event: WrkqMonitorEvent): string | undefined {
   }
   if (!isRecord(parsed)) return undefined
   const payload = parsed as WrkqEnvelopeCreatedPayload
-  if (!obligationSummons(payload.obligation)) return undefined
   const scopeRef = payload.to_scope_ref
   if (typeof scopeRef !== 'string') return undefined
-  return targetSessionRefForLedgerScope(scopeRef)
+  const target = targetSessionRefForLedgerScope(scopeRef)
+  if (target === undefined) return undefined
+  if (obligationSummons(payload.obligation)) return target
+  return seatedSessionRefs.has(target) ? target : undefined
 }
 
 export function startMailKicker(this: HrcServerInstanceForHandlers): void {

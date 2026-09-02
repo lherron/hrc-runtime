@@ -386,7 +386,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await (server as any).runWrkqLedgerTail()
     say({ obligation: 'fyi', body: 'for your information only' })
 
-    // A fyi is not a wake at all: the tail skips it, so nothing is provisioned.
+    // A fyi to an UNSEATED scope is not a wake: the tail skips it, so nothing
+    // is provisioned. (A seated addressee is woken — see the next test.)
     await (server as any).runWrkqLedgerTail()
     // And a SWEEP that finds only a fyi for an unseated scope must not birth
     // one either — §5 says a fyi never summons, full stop.
