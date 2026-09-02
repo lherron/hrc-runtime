@@ -230,6 +230,18 @@ async function waitForSeat(status: 'busy' | 'ready', timeoutMs = 180_000): Promi
   )
 }
 
+async function establishReadySeat(row: RuntimeRow, description: string): Promise<void> {
+  runtimeId = row.runtime_id
+  if (
+    row.controller_kind !== 'harness-broker' ||
+    row.harness !== 'claude-code' ||
+    row.transport !== 'tmux'
+  ) {
+    throw new Error(`unexpected ${description}: ${JSON.stringify(row)}`)
+  }
+  if (row.status !== 'ready') await waitForSeat('ready')
+}
+
 async function waitForUserToken(token: string, sinceSeq: number, timeoutMs = 180_000) {
   let match: BrokerRow | undefined
   await waitUntil(
@@ -590,15 +602,7 @@ async function main(): Promise<void> {
   await writeEnvironmentEvidence()
   const existing = currentRuntime()
   if (existing !== undefined) {
-    runtimeId = existing.runtime_id
-    if (
-      existing.status !== 'ready' ||
-      existing.controller_kind !== 'harness-broker' ||
-      existing.harness !== 'claude-code' ||
-      existing.transport !== 'tmux'
-    ) {
-      throw new Error(`unexpected existing seat: ${JSON.stringify(existing)}`)
-    }
+    await establishReadySeat(existing, 'existing seat')
     console.log(`using prewarmed ready seat: ${runtimeId}`)
   } else {
     console.log(`warming ${target} with no envelope in flight`)
@@ -618,15 +622,7 @@ async function main(): Promise<void> {
     }
     const row = currentRuntime()
     if (row === undefined) throw new Error('warm turn completed without a live runtime')
-    runtimeId = row.runtime_id
-    if (
-      row.status !== 'ready' ||
-      row.controller_kind !== 'harness-broker' ||
-      row.harness !== 'claude-code' ||
-      row.transport !== 'tmux'
-    ) {
-      throw new Error(`unexpected warm seat: ${JSON.stringify(row)}`)
-    }
+    await establishReadySeat(row, 'warm seat')
     console.log(`warm seat ready: ${runtimeId}`)
   }
 
