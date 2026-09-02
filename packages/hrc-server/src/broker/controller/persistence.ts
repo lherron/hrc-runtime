@@ -242,6 +242,9 @@ export function buildRuntimeStateJson(
   tmuxAllocation?: BrokerTmuxAllocation | undefined
 ): Record<string, unknown> {
   const identity = input.identity
+  const evidenceAuthority = hello.drivers.find(
+    (driver) => driver.kind === input.profile.brokerDriver
+  )?.evidenceAuthority
   // T-01812 Phase 3 — durable broker identity persisted BEYOND pane ids: the
   // Unix endpoint + redacted attach-token ref, generation, broker command/pid,
   // and both named windows. The raw attach token is NEVER persisted.
@@ -301,6 +304,7 @@ export function buildRuntimeStateJson(
       // reattach (which rebuilds `active` without a fresh hello) can rehydrate
       // them as a fallback until the next hello replaces them.
       ...(hello.capabilities.inspection ? { inspection: hello.capabilities.inspection } : {}),
+      ...(evidenceAuthority !== undefined ? { evidenceAuthority } : {}),
       ...durable,
     },
     ...(tmuxAllocation?.brokerIpcSocketPath

@@ -15,6 +15,7 @@ import type {
   InvocationEventEnvelope,
   InvocationId,
   InvocationRuntimeContext,
+  InvocationSnapshot,
   InvocationStatusResponse,
   PermissionDecision,
   PermissionRequestParams,
@@ -83,7 +84,7 @@ import type {
 
 export type DispatchContext = {
   db: HrcDatabase
-  mapper: Pick<BrokerEventMapper, 'apply'>
+  mapper: Pick<BrokerEventMapper, 'apply'> & Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
   brokerClientFactory: BrokerClientFactory
   brokerUnixClientFactory: BrokerUnixClientFactory
   resolveBrokerCommand: () => string
@@ -669,6 +670,22 @@ export async function startController(
     }
 
     const now = ctx.now()
+    let initialSnapshot: InvocationSnapshot | undefined
+    if (typeof client.snapshot === 'function') {
+      try {
+        initialSnapshot = await client.snapshot({
+          invocationId: startResult.invocationId as InvocationId,
+        })
+      } catch (error) {
+        // Capture is descriptive and absent on a legacy broker. A failed
+        // optional snapshot must not reject an otherwise-admitted invocation.
+        ctx.logger.warn?.('broker initial capture snapshot unavailable', {
+          runtimeId: String(identity.runtimeId),
+          invocationId: startResult.invocationId,
+          error: brokerControlProbeErrorDetail(error),
+        })
+      }
+    }
     const invocation = ctx.db.brokerInvocations.update(startResult.invocationId, {
       invocationState: startResult.response.state,
       capabilitiesJson: JSON.stringify(startResult.response.capabilities),
@@ -716,6 +733,8 @@ export async function startController(
       // inspection RPCs can gate on what THIS broker advertises.
       inspection: hello.capabilities.inspection,
     })
+
+    ctx.mapper.projectCaptureState?.(String(identity.runtimeId), initialSnapshot?.capture)
 
     ctx.consumeEvents(String(identity.runtimeId), startResult.events)
     if (runtime && invocation) {
@@ -972,6 +991,8 @@ export async function attachAndReplay(
         },
       },
     })
+
+    ctx.mapper.projectCaptureState?.(runtime.runtimeId, snapshot.capture)
 
     ctx.setActive({
       runtimeId: runtime.runtimeId,

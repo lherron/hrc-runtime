@@ -13,13 +13,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createHrcServer } from 'hrc-server'
-import type { HrcServer } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createGitFixture } from '../../../../test-support/git-fixture.js'
 import { createHrcTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from '../../../hrc-server/src/__tests__/fixtures/hrc-test-fixture'
+import { createHrcServer } from '../../../hrc-server/src/index'
+import type { HrcServer } from '../../../hrc-server/src/index'
 import { main } from '../cli'
 
 type CliResult = {
@@ -206,6 +206,7 @@ function appendEvent(
     runId?: string
     invocationId?: string
     time?: string
+    provenance?: Record<string, unknown>
   }
 ): void {
   const db = openHrcDatabase(fixture.dbPath)
@@ -219,6 +220,7 @@ function appendEvent(
     time,
     type: input.type,
     ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.provenance ? { provenance: input.provenance } : {}),
     payload: input.payload,
   }
 
@@ -418,6 +420,40 @@ afterEach(async () => {
 })
 
 describe('hrc monitor events', () => {
+  it('emits provenance in NDJSON and displays its identity fields only when requested', async () => {
+    const provenance = {
+      rawRecordId: 'raw-forensics-13',
+      sourceKind: 'provider-jsonl',
+      sourceEpoch: 'epoch-forensics',
+      sourceCursor: { line: 13 },
+      nativeType: 'queue.future_op',
+      normalizer: { name: 'claude-code-jsonl', version: '0.1.0' },
+    }
+    appendEvent(fixture, {
+      seq: 13,
+      type: 'capture.warning',
+      payload: { kind: 'blocked_unknown', message: 'unknown queue op', raw: {} },
+      provenance,
+    })
+
+    const ndjson = await runCli(
+      ['monitor', 'events', RUNTIME_ID, '--seq', '13..13', '--ndjson'],
+      cliEnv(fixture)
+    )
+    const table = await runCli(
+      ['monitor', 'events', RUNTIME_ID, '--seq', '13..13', '--provenance'],
+      cliEnv(fixture)
+    )
+    const defaultTable = await runCli(
+      ['monitor', 'events', RUNTIME_ID, '--seq', '13..13'],
+      cliEnv(fixture)
+    )
+
+    expect(parseNdjson(ndjson.stdout)[0]?.['provenance']).toEqual(provenance)
+    expect(table.stdout).toContain('provenance=provider-jsonl/queue.future_op/raw-forensics-13')
+    expect(defaultTable.stdout).not.toContain('provenance=')
+  })
+
   it('applies CSV type and inclusive seq-range filters and emits only matching NDJSON rows', async () => {
     const result = await runCli(
       [

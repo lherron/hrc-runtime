@@ -103,6 +103,8 @@ export type BrokerProjectionResult = {
    * semantic turn). Empty on idempotent re-apply or for provenance-only events.
    */
   lifecycleEvents: HrcLifecycleEvent[]
+  /** The accepted envelope signals that the broker snapshot capture view changed. */
+  captureStateRefresh?: boolean | undefined
 }
 
 /**

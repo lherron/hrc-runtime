@@ -54,6 +54,7 @@ import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
 import type {
   AssistantMessageCompletedPayload,
   AssistantMessageDeltaPayload,
+  CaptureStateView,
   ContinuationUpdate,
   HarnessExitedPayload,
   HarnessRecoveryCompletedPayload,
@@ -79,6 +80,7 @@ import {
   noteFirstTurnStarted,
   noteTurnStartedOnTerminalRun,
 } from '../first-turn-watch'
+import { appendHrcEvent } from '../hrc-event-helper'
 import { runtimeActivityPatch } from '../runtime-activity'
 import {
   type BrokerEventMapperDeps,
@@ -144,6 +146,15 @@ function shouldPersistBrokerEvent(envelope: InvocationEventEnvelope): boolean {
   return process.env['HRC_PERSIST_RAW_DELTAS'] === '1' || !RAW_DELTA_EVENT_TYPES.has(envelope.type)
 }
 
+function requestsCaptureStateRefresh(envelope: InvocationEventEnvelope): boolean {
+  if (envelope.type === 'capture.released') return true
+  return (
+    envelope.type === 'capture.warning' &&
+    isRecord(envelope.payload) &&
+    envelope.payload['kind'] === 'blocked_unknown'
+  )
+}
+
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
   private readonly now: () => string
@@ -178,6 +189,57 @@ export class BrokerEventMapper {
       }
       throw error
     }
+  }
+
+  /**
+   * Persist the broker-authoritative snapshot view without translating it.
+   * The envelope path only reports that a refresh is needed; this method is the
+   * single projection point for the resulting CaptureStateView.
+   */
+  projectCaptureState(
+    runtimeId: string,
+    capture: CaptureStateView | undefined
+  ): HrcLifecycleEvent | undefined {
+    if (capture === undefined) return undefined
+    const run = this.db.sqlite.transaction(() => {
+      const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+      if (!runtime) {
+        throw new Error(`runtime not found for capture state: ${runtimeId}`)
+      }
+      const previous = runtime.runtimeStateJson?.['capture'] as CaptureStateView | undefined
+      if (JSON.stringify(previous) === JSON.stringify(capture)) return undefined
+
+      const now = this.now()
+      this.db.runtimes.update(runtimeId, {
+        runtimeStateJson: {
+          ...(runtime.runtimeStateJson ?? {}),
+          capture,
+        },
+        updatedAt: now,
+      })
+
+      const previousState = previous?.state
+      const stateFlipped =
+        previousState !== capture.state &&
+        (previousState !== undefined || capture.state === 'blocked')
+      if (!stateFlipped) return undefined
+
+      return appendHrcEvent(this.db, 'runtime.capture_state_changed', {
+        ts: now,
+        hostSessionId: runtime.hostSessionId,
+        scopeRef: runtime.scopeRef,
+        laneRef: runtime.laneRef,
+        generation: runtime.generation,
+        runtimeId,
+        ...(runtime.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+        transport: lifecycleTransportFromRuntime(runtime.transport),
+        payload: {
+          previousCapture: previous ?? null,
+          capture,
+        },
+      })
+    })
+    return run()
   }
 
   private project(envelope: InvocationEventEnvelope): BrokerProjectionResult {
@@ -407,6 +469,7 @@ export class BrokerEventMapper {
         ...derived,
         ...this.pendingLateStartEvents,
       ],
+      ...(requestsCaptureStateRefresh(persistedEnvelope) ? { captureStateRefresh: true } : {}),
     }
   }
 

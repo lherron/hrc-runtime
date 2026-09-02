@@ -327,7 +327,8 @@ export class HarnessBrokerController {
   }
 
   private readonly db: HrcDatabase
-  private readonly mapper: Pick<BrokerEventMapper, 'apply'>
+  private readonly mapper: Pick<BrokerEventMapper, 'apply'> &
+    Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
   private readonly brokerClientFactory: BrokerClientFactory
   private readonly brokerUnixClientFactory: BrokerUnixClientFactory
   private readonly permissionChannel: BrokerPermissionChannel | undefined
@@ -1308,6 +1309,9 @@ export class HarnessBrokerController {
         if (!options.externalParticipant) {
           await this.ackCommittedProjection(runtimeId, String(envelope.invocationId))
         }
+        if (result.captureStateRefresh === true) {
+          await this.refreshCaptureState(runtimeId, String(envelope.invocationId))
+        }
         this.afterMappedEvent(runtimeId, envelope, result, options)
         return
       } catch (error) {
@@ -1344,6 +1348,33 @@ export class HarnessBrokerController {
       this.brokerDbBusyRetryBaseDelayMs * 2 ** Math.max(0, attempt - 1)
     )
     return Math.max(0, Math.min(exponentialDelayMs, this.brokerDbBusyRetryWindowMs - elapsedMs))
+  }
+
+  private async refreshCaptureState(runtimeId: string, invocationId: string): Promise<void> {
+    if (this.mapper.projectCaptureState === undefined) return
+    const active = this.active.get(runtimeId)
+    if (
+      !active ||
+      active.invocationId !== invocationId ||
+      typeof active.client.snapshot !== 'function'
+    ) {
+      return
+    }
+    try {
+      const snapshot = await active.client.snapshot({
+        invocationId: invocationId as InvocationId,
+      })
+      this.mapper.projectCaptureState(runtimeId, snapshot.capture)
+    } catch (error) {
+      // The broker event remains committed and acknowledged. Capture status is
+      // descriptive; leave the last authoritative view in place and retry on
+      // the next signal/status RPC rather than condemning the running seat.
+      this.logger.warn?.('broker capture snapshot refresh failed', {
+        runtimeId,
+        invocationId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private scheduleBrokerEventGapBackfill(

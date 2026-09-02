@@ -1,6 +1,7 @@
 import { HrcDomainError, HrcErrorCode, splitSessionRef } from 'hrc-core'
 import type { BrokerForensicsEvent, BrokerForensicsResponse, HrcSelector } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
+import type { EventProvenance } from 'spaces-harness-broker-protocol'
 
 import { hasFlag, parseFlag, splitCsv } from './cli/argv.js'
 import { createClient, fatal } from './cli/shared.js'
@@ -16,6 +17,10 @@ type RuntimeSelection = {
   latest: boolean
   previous?: number | undefined
   sourceRef?: string | undefined
+}
+
+type BrokerForensicsEventWithProvenance = BrokerForensicsEvent & {
+  provenance?: EventProvenance | undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -214,6 +219,7 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
   const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const jsonOutput = hasFlag(args, '--json')
   const ndjsonOutput = hasFlag(args, '--ndjson')
+  const showProvenance = hasFlag(args, '--provenance')
   if (jsonOutput && ndjsonOutput) fatal('--json and --ndjson are mutually exclusive')
 
   const typeRaw = parseFlag(args, '--type')
@@ -225,7 +231,10 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
     previous: parsePrevious(args),
     sourceRef: parseFlag(args, '--source-ref'),
   })
-  const events = filterEvents(result.events, { types, range })
+  const events = filterEvents(result.events, {
+    types,
+    range,
+  }) as BrokerForensicsEventWithProvenance[]
 
   if (ndjsonOutput) {
     for (const event of events) process.stdout.write(`${JSON.stringify(event)}\n`)
@@ -236,7 +245,12 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
     return
   }
   for (const event of events) {
-    process.stdout.write(`${event.seq} ${event.time} ${event.type} | ${payloadText(event)}\n`)
+    const provenance = showProvenance
+      ? ` | provenance=${event.provenance?.sourceKind ?? '-'}/${event.provenance?.nativeType ?? '-'}/${event.provenance?.rawRecordId ?? '-'}`
+      : ''
+    process.stdout.write(
+      `${event.seq} ${event.time} ${event.type} | ${payloadText(event)}${provenance}\n`
+    )
   }
 }
 

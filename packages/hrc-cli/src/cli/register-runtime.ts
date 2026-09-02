@@ -19,6 +19,7 @@ import {
   cmdRuntimeInspect,
   cmdRuntimeList,
   cmdRuntimePrune,
+  cmdRuntimeStatus,
   cmdRuntimeSweep,
 } from './handlers-runtime.js'
 import { registerMovedCommandShim, throwMovedCommand } from './moved-command.js'
@@ -48,6 +49,7 @@ function registerBrokerReads(monitor: Command): void {
     .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
     .option('--json', 'output as a JSON array')
     .option('--ndjson', 'output one complete event per NDJSON line')
+    .option('--provenance', 'show sourceKind/nativeType/rawRecordId in table output')
     .addHelpText(
       'after',
       '\nThis reads the durable broker invocation ledger. Monitor conditions NEVER evaluate that ledger; hrcSeq replay/fences belong to monitor show/watch/wait and use a different cursor grammar.\n'
@@ -56,7 +58,7 @@ function registerBrokerReads(monitor: Command): void {
       await cmdBrokerEvents(
         toLegacyArgv(target ? [target] : [], cmd.opts(), {
           strings: ['type', 'seq', 'source-ref', 'previous'],
-          booleans: ['latest', 'json', 'ndjson'],
+          booleans: ['latest', 'json', 'ndjson', 'provenance'],
         })
       )
     })
@@ -310,6 +312,20 @@ export function registerRuntimeCommands(program: Command): void {
         toLegacyArgv([runtimeId], cmd.opts(), {
           strings: [],
           booleans: ['probe', 'json'],
+        })
+      )
+    })
+
+  runtime
+    .command('status')
+    .description('show runtime lifecycle and broker capture status')
+    .argument('<target>', 'runtime ID, scope ref, or target handle')
+    .option('--json', 'output runtime and capture status as JSON')
+    .action(async (target, _opts, cmd: Command) => {
+      await cmdRuntimeStatus(
+        toLegacyArgv([target], cmd.opts(), {
+          strings: [],
+          booleans: ['json'],
         })
       )
     })

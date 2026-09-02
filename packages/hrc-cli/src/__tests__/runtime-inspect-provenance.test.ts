@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import type { BrokerInspectResponse, InspectRuntimeResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
+import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
 
-import { cmdRuntimeInspect } from '../cli/handlers-runtime.js'
+import { cmdRuntimeInspect, cmdRuntimeStatus } from '../cli/handlers-runtime.js'
 
 const RUNTIME_ID = 'rt-11111111-1111-4111-8111-111111111111'
 
@@ -61,6 +62,69 @@ beforeEach(() => {
 })
 
 describe('runtime inspect authority provenance', () => {
+  test('renders capture state and broker-declared evidence authority', async () => {
+    const capture: CaptureStateView = {
+      state: 'blocked',
+      blockedOn: {
+        rawRecordId: 'raw-cli',
+        nativeType: 'queue.future_op',
+        family: 'input-admission',
+        message: 'unknown input admission record',
+        sinceIso: '2026-09-01T12:34:56.000Z',
+      },
+      deferredCount: 3,
+    }
+    const evidenceAuthority: EvidenceAuthorityMatrix = {
+      'invocation-lifecycle': 'broker',
+      'harness-lifecycle': 'hook',
+      continuation: 'native',
+      'input-admission': 'broker',
+      'submission-disposition': 'native',
+      'turn-bracket': 'native',
+      'turn-supervision': 'broker',
+      conversation: 'native',
+      tool: 'native',
+      usage: 'native',
+      permission: 'broker',
+      diagnostic: 'hook',
+      'terminal-surface': 'hook',
+      'provider-artifact': 'native',
+    }
+    const view = { ...hrcView, capture, evidenceAuthority } as InspectRuntimeResponse & {
+      capture: CaptureStateView
+      evidenceAuthority: EvidenceAuthorityMatrix
+    }
+    spyOn(HrcClient.prototype, 'inspectRuntime').mockResolvedValue(view)
+    spyOn(HrcClient.prototype, 'brokerInspect').mockResolvedValue({
+      runtimeId: RUNTIME_ID,
+      source: 'hrc-derived',
+      transport: 'tmux',
+      harness: 'codex',
+      status: 'ready',
+      lastActivityAt: null,
+    })
+
+    const inspectOutput = captureStdout()
+    try {
+      await cmdRuntimeInspect([RUNTIME_ID])
+      expect(inspectOutput.read()).toContain(
+        'capture       blocked since 2026-09-01T12:34:56.000Z on raw-cli (input-admission/queue.future_op): unknown input admission record (deferredCount=3)'
+      )
+      expect(inspectOutput.read()).toContain('input-admission=broker')
+      expect(inspectOutput.read()).toContain('conversation=native')
+    } finally {
+      inspectOutput.restore()
+    }
+
+    const statusOutput = captureStdout()
+    try {
+      await cmdRuntimeStatus([RUNTIME_ID])
+      expect(statusOutput.read()).toContain('capture: blocked since 2026-09-01T12:34:56.000Z')
+    } finally {
+      statusOutput.restore()
+    }
+  })
+
   test('keeps HRC and broker JSON as distinct nested authority objects', async () => {
     const brokerView: BrokerInspectResponse = {
       runtimeId: RUNTIME_ID,

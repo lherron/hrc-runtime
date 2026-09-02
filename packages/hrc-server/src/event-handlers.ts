@@ -761,12 +761,24 @@ export async function handleSubscriberReceiptAck(
   return json(this.subscriberAdmissions.acknowledge(input))
 }
 
-function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensicsEvent {
+type BrokerForensicsEventWithProvenance = BrokerForensicsEvent & {
+  provenance?: InvocationEventEnvelope['provenance'] | undefined
+}
+
+function parseForensicsRow(
+  row: HrcBrokerInvocationEventRecord
+): BrokerForensicsEventWithProvenance {
   let turnId: string | undefined
+  let provenance: InvocationEventEnvelope['provenance']
   if (row.brokerEnvelopeJson) {
     try {
       const envelope = JSON.parse(row.brokerEnvelopeJson) as Record<string, unknown>
       if (typeof envelope['turnId'] === 'string') turnId = envelope['turnId']
+      if (envelope['provenance'] !== undefined) {
+        // The protocol validator and BrokerEventMapper are the sole envelope
+        // interpreters. This query projection carries the accepted value through.
+        provenance = envelope['provenance'] as InvocationEventEnvelope['provenance']
+      }
     } catch {
       // The payload row remains useful even if optional envelope metadata is damaged.
     }
@@ -782,6 +794,7 @@ function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensics
     time: row.time,
     type: row.type,
     ...(turnId !== undefined ? { turnId } : {}),
+    ...(provenance !== undefined ? { provenance } : {}),
   }
 
   try {

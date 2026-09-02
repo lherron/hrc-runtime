@@ -4,6 +4,7 @@ import type {
   FinalSummaryRecoveryResult,
   InspectRuntimeResponse,
 } from 'hrc-core'
+import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
 
 import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
@@ -52,12 +53,17 @@ export async function handleInspectRuntime(
   // §10.9). Undefined for non-broker / unparseable runtimes so those rows do
   // not grow the new fields.
   const brokerHosting = projectBrokerHostingState(runtime)
+  const capture = runtime.runtimeStateJson?.['capture'] as CaptureStateView | undefined
+  const brokerState = runtime.runtimeStateJson?.['broker'] as Record<string, unknown> | undefined
+  const evidenceAuthority = brokerState?.['evidenceAuthority'] as
+    | EvidenceAuthorityMatrix
+    | undefined
   const sessionCreatedAtMs = Date.parse(session.createdAt)
   const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
     ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
     : 0
 
-  return json({
+  const response = {
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
     scopeRef: runtime.scopeRef,
@@ -88,13 +94,19 @@ export async function handleInspectRuntime(
       this.staleGenerationEnabled &&
       this.staleGenerationThresholdSec > 0 &&
       continuationAgeSec > this.staleGenerationThresholdSec,
+    ...(capture !== undefined ? { capture } : {}),
+    ...(evidenceAuthority !== undefined ? { evidenceAuthority } : {}),
     ...(authority ? { authority } : {}),
     ...(control ? { control } : {}),
     ...(runtime.transport === 'tmux' || canOperatorAttach(runtime)
       ? { tmux: toStatusTmuxView(runtime.tmuxJson) }
       : {}),
     ...(brokerHosting ? brokerHosting : {}),
-  } satisfies InspectRuntimeResponse)
+  } satisfies InspectRuntimeResponse & {
+    capture?: CaptureStateView | undefined
+    evidenceAuthority?: EvidenceAuthorityMatrix | undefined
+  }
+  return json(response)
 }
 
 /**

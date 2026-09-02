@@ -17,6 +17,7 @@ import type {
 } from 'hrc-core'
 import { parseSelector } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
+import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
 
 import { printJson } from '../print.js'
 import {
@@ -148,7 +149,41 @@ export async function cmdRuntimeInspect(args: string[]): Promise<void> {
   printBrokerInspect(broker)
 }
 
-export function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
+export async function cmdRuntimeStatus(args: string[]): Promise<void> {
+  const runtimeArg = requireArg(args, 0, '<target>')
+  const jsonOutput = hasFlag(args, '--json')
+  const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
+  const runtime = (await client.inspectRuntime({ runtimeId })) as InspectRuntimeResponse & {
+    capture?: CaptureStateView | undefined
+  }
+  if (jsonOutput) {
+    printJson({
+      runtimeId: runtime.runtimeId,
+      status: runtime.status,
+      ...(runtime.capture !== undefined ? { capture: runtime.capture } : {}),
+    })
+    return
+  }
+  process.stdout.write(
+    `runtime ${runtime.runtimeId}: ${runtime.status}\ncapture: ${formatCaptureState(runtime.capture)}\n`
+  )
+}
+
+export function formatCaptureState(capture: CaptureStateView | undefined): string {
+  if (capture === undefined) return '(unavailable)'
+  if (capture.state === 'open') return `open (deferredCount=${capture.deferredCount})`
+  const blocked = capture.blockedOn
+  if (blocked === undefined) return `blocked (deferredCount=${capture.deferredCount})`
+  return `blocked since ${blocked.sinceIso} on ${blocked.rawRecordId} (${blocked.family}/${blocked.nativeType}): ${blocked.message} (deferredCount=${capture.deferredCount})`
+}
+
+export function printRuntimeInspect(
+  runtime: InspectRuntimeResponse & {
+    capture?: CaptureStateView | undefined
+    evidenceAuthority?: EvidenceAuthorityMatrix | undefined
+  }
+): void {
   const continuation = runtime.continuation
     ? `${runtime.continuation.provider}:${runtime.continuation.key ?? '(none)'}${
         runtime.continuationStale ? ' (stale)' : ''
@@ -172,6 +207,16 @@ export function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
     `  childPid      ${runtime.childPid ?? '(none)'}`,
     `  continuation  ${continuation}`,
   ]
+  if (runtime.capture !== undefined) {
+    lines.push(`  capture       ${formatCaptureState(runtime.capture)}`)
+  }
+  if (runtime.evidenceAuthority !== undefined) {
+    lines.push(
+      `  evidence      ${Object.entries(runtime.evidenceAuthority)
+        .map(([family, authority]) => `${family}=${authority}`)
+        .join(', ')}`
+    )
+  }
   if (runtime.authority) {
     const policy = runtime.authority.actuatorSplit
     lines.push(

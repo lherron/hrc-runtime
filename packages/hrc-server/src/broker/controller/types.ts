@@ -287,7 +287,8 @@ export type AttachedStartReadyWaiter = {
 
 export type HarnessBrokerControllerDeps = {
   db: HrcDatabase
-  mapper?: Pick<BrokerEventMapper, 'apply'>
+  mapper?: Pick<BrokerEventMapper, 'apply'> &
+    Partial<Pick<BrokerEventMapper, 'projectCaptureState'>>
   brokerClientFactory?: BrokerClientFactory
   brokerUnixClientFactory?: BrokerUnixClientFactory
   permissionChannel?: BrokerPermissionChannel | undefined

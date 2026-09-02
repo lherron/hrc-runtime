@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import type { InspectRuntimeResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
@@ -113,6 +114,58 @@ async function inspectRuntimeJson(runtimeId: string): Promise<InspectRuntimeResp
 }
 
 describe('POST /v1/runtimes/inspect', () => {
+  it('returns broker capture and evidence authority projections verbatim', async () => {
+    const capture: CaptureStateView = {
+      state: 'blocked',
+      blockedOn: {
+        rawRecordId: 'raw-inspect',
+        nativeType: 'queue.future_op',
+        family: 'input-admission',
+        message: 'unknown input-admission record',
+        sinceIso: '2026-09-01T12:00:00.000Z',
+      },
+      deferredCount: 4,
+    }
+    const evidenceAuthority: EvidenceAuthorityMatrix = {
+      'invocation-lifecycle': 'broker',
+      'harness-lifecycle': 'hook',
+      continuation: 'native',
+      'input-admission': 'broker',
+      'submission-disposition': 'native',
+      'turn-bracket': 'native',
+      'turn-supervision': 'broker',
+      conversation: 'native',
+      tool: 'native',
+      usage: 'native',
+      permission: 'broker',
+      diagnostic: 'hook',
+      'terminal-surface': 'hook',
+      'provider-artifact': 'native',
+    }
+    fixture.seedSession('hsid-inspect-observability', 'inspect-observability')
+    seedRuntime({
+      runtimeId: 'rt-inspect-observability',
+      hostSessionId: 'hsid-inspect-observability',
+      scopeRef: 'inspect-observability',
+      transport: 'headless',
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        capture,
+        broker: { evidenceAuthority },
+      },
+    })
+
+    const body = (await inspectRuntimeJson(
+      'rt-inspect-observability'
+    )) as InspectRuntimeResponse & {
+      capture?: CaptureStateView
+      evidenceAuthority?: EvidenceAuthorityMatrix
+    }
+
+    expect(body.capture).toEqual(capture)
+    expect(body.evidenceAuthority).toEqual(evidenceAuthority)
+  })
+
   it('returns tmux runtime process fields when present', async () => {
     fixture.seedSession('hsid-inspect-tmux', 'inspect-tmux')
     seedRuntime({
