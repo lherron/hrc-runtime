@@ -20,7 +20,7 @@ import { basename, join, resolve } from 'node:path'
 const DEFAULT_TARGET = 'clod@hrc-runtime:T-07907'
 const DEFAULT_ARTIFACT_DIR = '/Users/lherron/praesidium/var/wrkq-artifacts/T-07907'
 const DB_PATH = '/Users/lherron/praesidium/var/state/hrc/state.sqlite'
-const SERVER_LOG = '/Users/lherron/praesidium/var/logs/hrc-server.log'
+const SERVER_LOG = '/Users/lherron/praesidium/var/logs/hrc-server.err.log'
 const ROOM = 'T-07907'
 const SAY_TIMEOUT = '8m'
 const POLL_MS = 500
@@ -101,6 +101,13 @@ type VariantSummary = {
   grades: EnvelopeGrade[]
   warningCount: number
   passed: boolean
+}
+
+type FlushSelection = {
+  line: string
+  presentationKey: string
+  selectedEnvelopeIds: string[]
+  leftHeldCount: number
 }
 
 const target = process.argv[2] ?? DEFAULT_TARGET
@@ -290,26 +297,41 @@ async function waitForSourceId(say: PendingSay): Promise<string> {
   return id as string
 }
 
-function startSay(label: string, principal: string, token: string): PendingSay {
+function startSay(
+  label: string,
+  principal: string,
+  token: string,
+  options: { wait?: boolean } = {}
+): PendingSay {
   const body = `Run \`sleep 45\` with Bash, then end your turn with exactly this line and nothing else: ${token}`
-  const result = spawnCommand(
-    [
-      'wrkc',
-      'say',
-      ROOM,
-      '--to',
-      target,
-      '--as',
-      principal,
-      '--wait',
-      '--timeout',
-      SAY_TIMEOUT,
-      '--json',
-      '-',
-    ],
-    { stdin: `${body}\n`, probeIdentity: true }
-  )
+  const command = ['wrkc', 'say', ROOM, '--to', target, '--as', principal]
+  if (options.wait !== false) command.push('--wait', '--timeout', SAY_TIMEOUT)
+  command.push('--json', '-')
+  const result = spawnCommand(command, {
+    stdin: `${body}\n`,
+    probeIdentity: true,
+  })
   return { label, principal, token, body, result }
+}
+
+async function waitForAutoReply(say: PendingSay): Promise<ProcessResult> {
+  if (say.sourceId === undefined) throw new Error(`${say.label}: missing source id`)
+  let reply: Envelope | undefined
+  await waitUntil(
+    `auto reply discharging ${say.sourceId}`,
+    async () => {
+      reply = roomItems(await roomLog(say.principal)).find(
+        (item) =>
+          item.meta.auto === 'turn_final' &&
+          item.to?.principalRef === say.principal &&
+          dischargeIds(item).length === 1 &&
+          dischargeIds(item)[0] === say.sourceId
+      )
+      return reply !== undefined
+    },
+    300_000
+  )
+  return { exitCode: 0, stdout: JSON.stringify([reply]), stderr: '' }
 }
 
 async function startHolder(label: string, seconds: number, sinceSeq: number) {
@@ -373,14 +395,71 @@ async function runVariantB(name: string): Promise<VariantSummary> {
 async function runVariantC(name: string): Promise<VariantSummary> {
   const startSeq = maxSeq()
   const logOffset = (await stat(SERVER_LOG)).size
-  console.log(`${name}: starting fan-out control holder`)
+  console.log(`${name}: starting independent same-principal control holder`)
   const holder = await startHolder(name, 45, startSeq)
   const principal = 'agent:probe-fanout'
-  const says = ['A', 'B', 'C'].map((label) => startSay(label, principal, tokenFor(name, label)))
+  const says = ['A', 'B', 'C'].map((label) =>
+    startSay(label, principal, tokenFor(name, label), { wait: false })
+  )
   await Promise.all(says.map(waitForSourceId))
-  await holder.result
-  const waitResults = await Promise.all(says.map((say) => say.result))
-  return await collectVariant(name, startSeq, logOffset, says, waitResults)
+  const sendResults = await Promise.all(says.map((say) => say.result))
+  for (const [index, result] of sendResults.entries()) {
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `${name}/${says[index]?.label ?? index} send failed: ${result.stderr || result.stdout}`
+      )
+    }
+  }
+  const holderResult = await holder.result
+  if (holderResult.exitCode !== 0) {
+    throw new Error(`${name} holder failed: ${holderResult.stderr || holderResult.stdout}`)
+  }
+  const waitResults = await Promise.all(says.map(waitForAutoReply))
+  const summary = await collectVariant(name, startSeq, logOffset, says, waitResults)
+  const flushes = await queueBatchFlushes(
+    logOffset,
+    new Set(says.map((say) => say.sourceId as string))
+  )
+  const turnIds = new Set(summary.grades.map((grade) => grade.turnId))
+  const replyIds = new Set(summary.grades.map((grade) => grade.replyId))
+  const expectedCounts = [2, 1, 0]
+  const expectedSources = new Set(says.map((say) => say.sourceId as string))
+  const selectedSources = flushes.flatMap((flush) => flush.selectedEnvelopeIds)
+  const failures = [
+    ...(turnIds.size === 3 ? [] : [`expected 3 turns, got ${turnIds.size}`]),
+    ...(replyIds.size === 3 && summary.grades.every((grade) => grade.replyKind === 'auto')
+      ? []
+      : ['expected 3 distinct auto replies']),
+    ...(summary.grades.every(
+      (grade) =>
+        grade.dischargeEnvelopeIds.length === 1 &&
+        grade.dischargeEnvelopeIds[0] === grade.envelopeId
+    )
+      ? []
+      : ['expected each auto reply to discharge exactly its source envelope']),
+    ...(flushes.length === 3 &&
+    flushes.every((flush, index) => flush.leftHeldCount === expectedCounts[index])
+      ? []
+      : [
+          `expected flush leftHeldCount 2→1→0, got ${flushes
+            .map((flush) => flush.leftHeldCount)
+            .join('→')}`,
+        ]),
+    ...(new Set(flushes.map((flush) => flush.presentationKey)).size === 3
+      ? []
+      : ['expected one distinct presentation key per flush']),
+    ...(selectedSources.length === 3 &&
+    selectedSources.every((sourceId) => expectedSources.has(sourceId)) &&
+    flushes.every((flush) => flush.selectedEnvelopeIds.length === 1)
+      ? []
+      : [`unexpected flush selections: ${JSON.stringify(selectedSources)}`]),
+  ]
+  if (failures.length > 0) {
+    throw new Error(`${name}: ${failures.join('; ')}`)
+  }
+  console.log(`${name}: queue_batch_flush_selected`)
+  for (const flush of flushes) console.log(flush.line)
+  return summary
 }
 
 function turnForEnvelope(rows: BrokerRow[], envelope: Envelope) {
@@ -440,6 +519,44 @@ function dischargeIds(envelope: Envelope): string[] {
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
 }
 
+async function queueBatchFlushes(
+  logOffset: number,
+  sourceIds: Set<string>
+): Promise<FlushSelection[]> {
+  const rawLog = await readFile(SERVER_LOG)
+  const marker = 'wrkq.kicker.queue_batch_flush_selected '
+  return rawLog
+    .subarray(logOffset)
+    .toString('utf8')
+    .split('\n')
+    .flatMap((line): FlushSelection[] => {
+      const markerIndex = line.indexOf(marker)
+      if (markerIndex === -1) return []
+      try {
+        const event = JSON.parse(line.slice(markerIndex + marker.length)) as Record<string, unknown>
+        const selectedEnvelopeIds = Array.isArray(event.selectedEnvelopeIds)
+          ? event.selectedEnvelopeIds.filter((id): id is string => typeof id === 'string')
+          : []
+        if (
+          !String(event.targetSessionRef ?? '').startsWith(targetScope) ||
+          !selectedEnvelopeIds.some((id) => sourceIds.has(id))
+        ) {
+          return []
+        }
+        return [
+          {
+            line,
+            presentationKey: String(event.presentationKey ?? ''),
+            selectedEnvelopeIds,
+            leftHeldCount: Number(event.leftHeldCount),
+          },
+        ]
+      } catch {
+        return []
+      }
+    })
+}
+
 async function collectVariant(
   name: string,
   startSeq: number,
@@ -460,15 +577,6 @@ async function collectVariant(
     const reply = replyFromWait(waitResults[index] as ProcessResult)
     if (say.sourceId !== undefined && reply !== undefined) {
       replyBySource.set(say.sourceId, await showEnvelope(reply.id, say.principal))
-    }
-  }
-  const sameCounterparty = new Set(says.map((say) => say.principal)).size === 1
-  const groupedReply = sameCounterparty ? replyBySource.values().next().value : undefined
-  if (groupedReply !== undefined) {
-    for (const source of sourceById.values()) {
-      if (source.state === 'acked' && source.reason === 'reply') {
-        replyBySource.set(source.id, groupedReply)
-      }
     }
   }
   const grades: EnvelopeGrade[] = []
@@ -510,9 +618,9 @@ async function collectVariant(
     const otherTokens = says
       .filter((candidate) => candidate !== say)
       .map((candidate) => candidate.token)
-    const receivedText = sameCounterparty ? (reply?.body ?? '') : wait.stdout
+    const receivedText = wait.stdout
     const clause5 =
-      (sameCounterparty || wait.exitCode === 0) &&
+      wait.exitCode === 0 &&
       receivedText.includes(say.token) &&
       otherTokens.every((token) => !receivedText.includes(token))
     const clauses = {
@@ -523,9 +631,7 @@ async function collectVariant(
       '5': clause5,
     }
     for (const [clause, passed] of Object.entries(clauses)) {
-      if (passed === false && !(name.startsWith('C') && clause === '5')) {
-        failures.push(`invariant ${clause} failed`)
-      }
+      if (passed === false) failures.push(`invariant ${clause} failed`)
     }
     grades.push({
       label: say.label,
@@ -575,7 +681,7 @@ async function collectVariant(
     .split('\n')
     .filter(
       (line) =>
-        line.includes(target) &&
+        line.includes(targetScope) &&
         (line.includes('wrkq.kicker.') || line.includes('wrkq.auto_reply.'))
     )
     .join('\n')
