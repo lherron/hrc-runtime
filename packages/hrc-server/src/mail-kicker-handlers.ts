@@ -380,7 +380,7 @@ function isRuntimeTerminal(status: string): boolean {
   return level === 'runtime-dead'
 }
 
-function observeAttempt(
+export function observeAttempt(
   server: HrcServerInstanceForHandlers,
   attempt: HrcMailDriveAttempt
 ): AttemptObservation {
@@ -410,21 +410,40 @@ function observeAttempt(
   }
 
   const run = server.db.runs.getByRunId(current.runId)
+  const runtime =
+    current.runtimeId === undefined
+      ? undefined
+      : (server.db.runtimes.getByRuntimeId(current.runtimeId) ?? undefined)
+  // T-07908: the runtime row is independent terminal evidence. A broker crash
+  // can sever both runtime.activeRunId and invocation.runId before the drive's
+  // run receives a terminal event or row update. In that shape the accepted run
+  // is not durable liveness: the runtime that owned it is already dead. Finish
+  // the attempt before consulting the run row so the scope slot cannot remain
+  // wedged behind the dead dispatch.
+  if (runtime !== undefined && isRuntimeTerminal(runtime.status)) {
+    const completed = server.db.mailDrives.completeStartedAttempt(
+      current.runId,
+      `runtime.${runtime.status}`
+    )
+    if (completed !== undefined) {
+      disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
+      server.requestAutoReplyReconcile()
+    }
+    writeServerLog('INFO', 'wrkq.kicker.terminal_runtime_attempt_reaped', {
+      targetSessionRef: current.targetSessionRef,
+      driveAttemptId: current.driveAttemptId,
+      runId: current.runId,
+      runtimeId: runtime.runtimeId,
+      runtimeStatus: runtime.status,
+    })
+    return 'finished'
+  }
   // T-07612 rev 4: a mid-turn (`queued-`) attempt holds no slot and is never
   // replayed. If its run is gone, or its runtime died before the input ever
   // started a turn, nothing will complete it: close it WITHOUT rounds — the
   // envelope was not shown at a boundary — and let the floor re-drive.
   if (started === undefined && isQueuedAttempt(current)) {
-    const runtime =
-      current.runtimeId === undefined
-        ? undefined
-        : (server.db.runtimes.getByRuntimeId(current.runtimeId) ?? undefined)
-    const reason =
-      run === null
-        ? 'queued input has no run row'
-        : runtime?.status === 'terminated'
-          ? 'runtime terminated before the queued input started a turn'
-          : undefined
+    const reason = run === null ? 'queued input has no run row' : undefined
     if (reason !== undefined) {
       server.db.mailDrives.failWithoutStart(current.driveAttemptId, reason)
       writeServerLog('INFO', 'wrkq.kicker.queued_attempt_reaped', {

@@ -399,20 +399,42 @@ export function markBrokerCrashTerminal(
         ? ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
         : ctx.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)
 
+    // T-07908: the broker may close after dispatch has bound the run to its
+    // kicker attempt but before either runtime.activeRunId or invocation.runId
+    // is durable. The attempt is therefore an ownership link in its own right.
+    // Gather every live run this runtime owns and terminalize all of them before
+    // stamping the runtime crashed.
+    const driveRunIds = ctx.db.mailDrives
+      .listAttempts()
+      .filter(
+        (attempt) =>
+          attempt.runtimeId === runtimeId &&
+          (attempt.state === 'claimed' || attempt.state === 'started')
+      )
+      .map((attempt) => attempt.runId)
+    const ownedRunIds = new Set<string>([
+      ...(invocation?.runId === undefined ? [] : [invocation.runId]),
+      ...(runtime?.activeRunId === undefined ? [] : [runtime.activeRunId]),
+      ...driveRunIds,
+    ])
+    for (const runId of ownedRunIds) {
+      const run = ctx.db.runs.getByRunId(runId)
+      if (run === null || !isActiveBrokerRun(run)) continue
+      ctx.db.runs.markCompleted(runId, {
+        status: 'failed',
+        completedAt: now,
+        updatedAt: now,
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage: error.message,
+      })
+    }
+    const terminalRunId = invocation?.runId ?? runtime?.activeRunId ?? driveRunIds.at(-1)
+
     if (invocation) {
       ctx.db.brokerInvocations.update(invocation.invocationId, {
         invocationState: 'failed',
         updatedAt: now,
       })
-      if (invocation.runId !== undefined) {
-        ctx.db.runs.markCompleted(invocation.runId, {
-          status: 'failed',
-          completedAt: now,
-          updatedAt: now,
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-          errorMessage: error.message,
-        })
-      }
       ctx.db.runtimeOperations.update(invocation.operationId, {
         status: 'failed',
         completedAt: now,
@@ -440,7 +462,7 @@ export function markBrokerCrashTerminal(
         scopeRef: runtime.scopeRef,
         laneRef: runtime.laneRef,
         generation: runtime.generation,
-        ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
+        ...(terminalRunId !== undefined ? { runId: terminalRunId } : {}),
         runtimeId,
         source: 'broker',
         eventKind: 'broker.process.closed',
@@ -461,7 +483,7 @@ export function markBrokerCrashTerminal(
         laneRef: runtime.laneRef,
         generation: runtime.generation,
         runtimeId,
-        ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
+        ...(terminalRunId !== undefined ? { runId: terminalRunId } : {}),
         ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
           ? { transport: runtime.transport }
           : {}),
