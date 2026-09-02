@@ -126,23 +126,28 @@ function seedReusableBrokerRuntime(
 function installBrokerDispatchStub(): { dispatchInputs: Array<Record<string, unknown>> } {
   const state = { dispatchInputs: [] as Array<Record<string, unknown>> }
   ;(server as any).getHarnessBrokerController = () => ({
-    dispatchInput: async (request: {
-      runtimeId: string
-      input: { inputId: string; metadata?: { runId?: string } }
-    }) => {
+    invoke: async (request: { runtimeId: string }) => {
       state.dispatchInputs.push(request as unknown as Record<string, unknown>)
-      const runId = request.input.metadata?.runId
-      if (!runId) throw new Error('test dispatch input missing runId metadata')
+      const db = openHrcDatabase(fixture.dbPath)
+      let runId: string | undefined
+      try {
+        runId = db.runs
+          .listRuns({ runtimeId: request.runtimeId, status: ['accepted'] })
+          .at(0)?.runId
+      } finally {
+        db.close()
+      }
+      if (!runId) throw new Error('test invoke missing an accepted run')
+      const submissionId = `submission-${runId}`
 
-      appendBrokerTurn(request.runtimeId, runId, request.input.inputId)
+      appendBrokerTurn(request.runtimeId, runId, submissionId)
       markRunCompletedAndRuntimeReady(request.runtimeId, runId)
 
       return {
         ok: true,
         response: {
-          inputId: request.input.inputId,
-          accepted: true,
-          disposition: 'started',
+          submissionId,
+          admission: 'admitted',
         },
       }
     },

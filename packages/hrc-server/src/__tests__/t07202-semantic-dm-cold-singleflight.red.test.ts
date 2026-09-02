@@ -181,8 +181,12 @@ describe('T-07202 semantic-DM cold-provision single-flight', () => {
         startsWhileAllRequestsWereInFlight: 1,
         runtimeCount: 1,
         distinctResponseRuntimeIds: 1,
-        initialPrompts: [expect.stringContaining('crossing DM 1')],
+        // A cold managed-interactive start now preaccepts the run and submits
+        // every prompt through the same broker door, so the first prompt has a
+        // submission identity and observation cursor just like later turns.
+        initialPrompts: [''],
         reusedPrompts: [
+          { prompt: expect.stringContaining('crossing DM 1'), runtimeId: runtimes[0]!.runtimeId },
           { prompt: expect.stringContaining('crossing DM 2'), runtimeId: runtimes[0]!.runtimeId },
           { prompt: expect.stringContaining('crossing DM 3'), runtimeId: runtimes[0]!.runtimeId },
         ],
