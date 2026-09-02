@@ -742,6 +742,19 @@ export class BrokerEventMapper {
 
     const openTurnStartedSeq = this.findOpenTurnStartedSeqForAttribution(envelope)
     if (openTurnStartedSeq !== undefined) {
+      // Harness-evidence drivers identify the submitted turn on the observed
+      // turn.started itself. An input-id-less bracket is therefore affirmative
+      // evidence of a foreign prompt (not permission to borrow the nearest
+      // prior input.accepted). This matters during cold-seat priming: the
+      // summons may already be accepted while the harness is still answering
+      // its argv priming prompt. Delivery-acknowledged/asserted drivers retain
+      // the historical nearest-input fallback below.
+      if (
+        this.bracketMintingMode(invocation) === 'harness-evidence' &&
+        this.turnStartedInputId(envelope, openTurnStartedSeq) === undefined
+      ) {
+        return undefined
+      }
       const bracketInput = this.findPriorInputAccepted(envelope.invocationId, openTurnStartedSeq)
       if (bracketInput) {
         const run = this.runForInputIdentity(bracketInput.inputId)
@@ -769,6 +782,48 @@ export class BrokerEventMapper {
     const fencedInput = this.findPriorFencedInputAccepted(envelope.invocationId, envelope.seq)
     if (fencedInput) return fencedInput.runId
     return fallbackRunId
+  }
+
+  private bracketMintingMode(invocation: HrcBrokerInvocationRecord): string | undefined {
+    try {
+      const capabilities = JSON.parse(invocation.capabilitiesJson) as unknown
+      if (capabilities === null || typeof capabilities !== 'object') return undefined
+      const value = (capabilities as Record<string, unknown>)['bracketMintingMode']
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private turnStartedInputId(
+    envelope: InvocationEventEnvelope,
+    turnStartedSeq: number
+  ): string | undefined {
+    if (envelope.type === 'turn.started' && envelope.seq === turnStartedSeq) {
+      return envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
+    }
+    const started = this.db.brokerInvocationEvents.getByInvocationAndSeq(
+      envelope.invocationId,
+      turnStartedSeq
+    )
+    if (started === null) return undefined
+    let storedPayload: unknown
+    try {
+      storedPayload = JSON.parse(started.brokerEventJson) as unknown
+    } catch {
+      storedPayload = undefined
+    }
+    const payloadInputId = this.extractInputIdFromPayload(storedPayload)
+    if (payloadInputId !== undefined) return payloadInputId
+    if (started.brokerEnvelopeJson === undefined) return undefined
+    try {
+      const parsed = JSON.parse(started.brokerEnvelopeJson) as unknown
+      if (parsed === null || typeof parsed !== 'object') return undefined
+      const inputId = (parsed as Record<string, unknown>)['inputId']
+      return typeof inputId === 'string' ? inputId : undefined
+    } catch {
+      return undefined
+    }
   }
 
   /**
