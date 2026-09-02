@@ -34,6 +34,8 @@ import type {
   SubmissionPreemptRequest,
   SubmissionResponse,
   SubmissionSteerRequest,
+  SubmissionWithdrawRequest,
+  SubmissionWithdrawResponse,
   TurnManifestRequest,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
@@ -181,6 +183,10 @@ export class AspcFacadeBrokerClient {
     return this.#transport.request('submission.preempt', req)
   }
 
+  withdraw(req: SubmissionWithdrawRequest): Promise<SubmissionWithdrawResponse> {
+    return this.#transport.request('submission.withdraw', req)
+  }
+
   turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse> {
     return this.#transport.request('turn.manifest', req)
   }
@@ -287,6 +293,7 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
   enqueue(req: SubmissionEnqueueRequest): Promise<SubmissionResponse>
   invoke(req: SubmissionInvokeRequest): Promise<SubmissionResponse>
   preempt(req: SubmissionPreemptRequest): Promise<SubmissionResponse>
+  withdraw(req: SubmissionWithdrawRequest): Promise<SubmissionWithdrawResponse>
   turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse>
   seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse>
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse>
@@ -306,6 +313,7 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
     enqueue: (req) => client.enqueue(req),
     invoke: (req) => client.invoke(req),
     preempt: (req) => client.preempt(req),
+    withdraw: (req) => client.withdraw(req),
     turnManifest: (req) => client.turnManifest(req),
     seatProbe: (req) => client.seatProbe(req),
     interrupt: (req) => client.interrupt(req),

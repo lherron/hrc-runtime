@@ -51,6 +51,8 @@ import type {
   SubmissionPreemptRequest,
   SubmissionResponse,
   SubmissionSteerRequest,
+  SubmissionWithdrawRequest,
+  SubmissionWithdrawResponse,
   TurnManifestRequest,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
@@ -98,6 +100,8 @@ export type BrokerClientLike = {
   enqueue(req: SubmissionEnqueueRequest): Promise<SubmissionResponse>
   invoke(req: SubmissionInvokeRequest): Promise<SubmissionResponse>
   preempt(req: SubmissionPreemptRequest): Promise<SubmissionResponse>
+  /** Added in broker protocol T-07888; optional only for legacy scripted doubles. */
+  withdraw?(req: SubmissionWithdrawRequest): Promise<SubmissionWithdrawResponse>
   turnManifest(req: TurnManifestRequest): Promise<TurnManifestResponse>
   seatProbe(req: SeatProbeRequest): Promise<SeatProbeResponse>
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse>
@@ -516,6 +520,7 @@ export type BrokerControllerSteerInput = BrokerControllerSubmissionInput<Submiss
 export type BrokerControllerEnqueueInput = BrokerControllerSubmissionInput<SubmissionEnqueueRequest>
 export type BrokerControllerInvokeInput = BrokerControllerSubmissionInput<SubmissionInvokeRequest>
 export type BrokerControllerPreemptInput = BrokerControllerSubmissionInput<SubmissionPreemptRequest>
+export type BrokerControllerWithdrawInput = SubmissionWithdrawRequest & { runtimeId: string }
 
 export type BrokerControllerAttachInput = {
   runtimeId: string

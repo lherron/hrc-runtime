@@ -38,6 +38,7 @@ import type {
   PermissionRequestParams,
   SeatProbeResponse,
   SubmissionResponse,
+  SubmissionWithdrawResponse,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
 import { resolveAspToolchainBinary } from '../asp-toolchain'
@@ -99,6 +100,7 @@ import type {
   BrokerControllerStartInput,
   BrokerControllerStartResult,
   BrokerControllerSteerInput,
+  BrokerControllerWithdrawInput,
   BrokerPermissionChannel,
   BrokerTmuxAllocation,
   BrokerTmuxAllocator,
@@ -757,6 +759,30 @@ export class HarnessBrokerController {
           ...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
+    )
+  }
+
+  async withdraw(
+    input: BrokerControllerWithdrawInput
+  ): Promise<BrokerControllerRpcResult<SubmissionWithdrawResponse>> {
+    return this.withActive(
+      input.runtimeId,
+      {
+        failureCode: 'broker_withdraw_failed',
+        timeoutCode: 'broker_withdraw_timeout',
+        retireOnTimeout: false,
+      },
+      (active) => {
+        if (active.client.withdraw === undefined) {
+          throw new Error('active broker client does not support submission.withdraw')
+        }
+        return active.client.withdraw({
+          ...('submissionId' in input
+            ? { submissionId: input.submissionId }
+            : { envelopeId: input.envelopeId }),
+          reason: input.reason,
+        })
+      }
     )
   }
 

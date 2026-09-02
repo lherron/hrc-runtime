@@ -1010,10 +1010,12 @@ export class BrokerEventMapper {
       case 'input.accepted':
       case 'input.rejected':
       case 'input.queued':
+      case 'queue.withdrawn':
       case 'submission.executed':
       case 'submission.absorbed':
       case 'submission.rejected':
       case 'submission.expired':
+      case 'submission.withdrawn':
       case 'submission.cancelled':
       case 'turn.started':
       case 'turn.completed':
@@ -1247,6 +1249,14 @@ export class BrokerEventMapper {
         if (runId !== undefined) {
           db.runs.update(runId, { updatedAt: now })
         }
+        break
+      }
+      case 'queue.withdrawn':
+      case 'submission.withdrawn': {
+        // T-07890: terminal admission evidence, not a turn terminal. Keep the
+        // exact broker type in the durable invocation ledger for `hrc monitor
+        // events`; the kicker closes its local queued attempt from the wrkq ack.
+        if (runId !== undefined) db.runs.update(runId, { updatedAt: now })
         break
       }
       case 'submission.executed':

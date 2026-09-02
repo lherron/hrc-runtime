@@ -156,8 +156,22 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   ack(envelopeId: string): void {
     const envelope = this.envelopes.get(envelopeId)
     if (envelope === undefined) return
+    const previousState = envelope.state
     envelope.state = 'acked'
     envelope.terminal = true
+    envelope.updatedAt = new Date().toISOString()
+    this.eventSeq += 1
+    this.events.push({
+      id: this.eventSeq,
+      eventType: 'envelope.acked',
+      resourceId: envelope.id,
+      payload: JSON.stringify({
+        previous_state: previousState,
+        reason: 'reply',
+        room_uuid: envelope.roomUuid,
+        state: 'acked',
+      }),
+    })
   }
 
   /**

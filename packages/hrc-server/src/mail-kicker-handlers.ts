@@ -2202,7 +2202,7 @@ async function runMailKickerColdStartCatchup(server: HrcServerInstanceForHandler
 }
 
 /**
- * Follow wrkq's event ledger for `envelope.created`, from a PERSISTED cursor.
+ * Follow wrkq's event ledger for envelope lifecycle changes, from a PERSISTED cursor.
  *
  * Always explicit: a read with no cursor replays the whole log (T-07620). The
  * first tail on a virgin store resolves "now" from row identity via `lastN`
@@ -2210,6 +2210,73 @@ async function runMailKickerColdStartCatchup(server: HrcServerInstanceForHandler
  * one-time cold-start catch-up, because starting at "now" is exactly what makes
  * an already-pending envelope unreachable (T-07643).
  */
+const QUEUED_INJECTION_WITHDRAW_REASON = 'envelope_acked_before_injection'
+
+async function withdrawAckedQueuedInjection(
+  server: HrcServerInstanceForHandlers,
+  event: WrkqMonitorEvent
+): Promise<void> {
+  const envelopeId = event.resourceId
+  if (envelopeId === undefined) return
+
+  const attempt = server.db.mailDrives.getUnfinishedQueuedAttemptForEnvelope(envelopeId)
+  if (attempt === undefined) return
+
+  // The wrkq receipt is the durable join to the broker input. Do not infer an
+  // input from the queued run: old receipts can legitimately lack inputId, and
+  // the broker's envelope selector exists precisely for that mixed history.
+  const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+  const receipt = envelope.presentedTo
+    .filter((candidate) => candidate.driveAttemptId === attempt.driveAttemptId)
+    .at(-1)
+  const inputId = receipt?.inputId
+  const runtimeId = receipt?.runtimeId ?? attempt.runtimeId
+  if (inputId === undefined || runtimeId === undefined) return
+
+  // Once input.accepted is durable, the harness owns the input. The accepted
+  // race is deliberately left to the normal one-turn lifecycle.
+  if (server.db.brokerInvocationEvents.hasInputAccepted(runtimeId, inputId)) return
+
+  const withdrawal = await server.getHarnessBrokerController().withdraw({
+    runtimeId,
+    envelopeId,
+    reason: QUEUED_INJECTION_WITHDRAW_REASON,
+  })
+  if (!withdrawal.ok) {
+    writeServerLog('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
+      envelopeId,
+      runtimeId,
+      inputId,
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+      error: withdrawal.error.message,
+    })
+    return
+  }
+
+  if (withdrawal.response.outcome === 'withdrawn') {
+    server.db.mailDrives.markQueuedAttemptWithdrawn(
+      attempt.driveAttemptId,
+      QUEUED_INJECTION_WITHDRAW_REASON
+    )
+    writeServerLog('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
+      envelopeId,
+      runtimeId,
+      inputId,
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+    })
+    return
+  }
+
+  writeServerLog('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
+    envelopeId,
+    runtimeId,
+    inputId,
+    reason: QUEUED_INJECTION_WITHDRAW_REASON,
+    outcome: withdrawal.response.outcome,
+    ...('state' in withdrawal.response ? { state: withdrawal.response.state } : {}),
+  })
+}
+
 export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Promise<void> {
   if (!this.hrcMailKickerEnabled || this.stopping) return
   if (this.wrkqLedgerTailInFlight !== undefined) return this.wrkqLedgerTailInFlight
@@ -2232,11 +2299,10 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
       }
       const page = await this.wrkqLedger.eventsView({
         cursor,
-        // `envelope.failed` rides the SAME cursor as `envelope.created` (§5).
-        // It is not a wake — nothing is owed to the addressee any more — it is
-        // how the SENDER learns, and it reaches senders on other nodes for
-        // free because every node tails the one ledger.
-        eventTypes: ['envelope.created', 'envelope.failed'],
+        // Failure notices and queued-injection withdrawal ride the SAME cursor
+        // as creation. Widening this filter must never move the virgin-store
+        // start point above: tail_started and cold catch-up remain unchanged.
+        eventTypes: ['envelope.created', 'envelope.failed', 'envelope.acked'],
         limit: LEDGER_TAIL_PAGE_LIMIT,
       })
       // Resolved lazily and once per page: a fyi wakes only a target this node
@@ -2244,6 +2310,10 @@ export async function runWrkqLedgerTail(this: HrcServerInstanceForHandlers): Pro
       // every empty tick.
       let seated: Set<string> | undefined
       for (const event of page.items) {
+        if (event.eventType === 'envelope.acked') {
+          await withdrawAckedQueuedInjection(this, event)
+          continue
+        }
         if (event.eventType === 'envelope.failed') {
           await queueFailureNotice(this, event).catch((error: unknown) => {
             writeServerLog('WARN', 'wrkq.kicker.failure_notice_queue_failed', {

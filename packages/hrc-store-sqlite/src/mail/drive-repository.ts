@@ -18,7 +18,13 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 
 export type HrcMailDriveWakeReason = 'insert' | 'turn_completion' | 'periodic' | 'recovery'
 
-export type HrcMailDriveAttemptState = 'claimed' | 'started' | 'completed' | 'failed' | 'no_op'
+export type HrcMailDriveAttemptState =
+  | 'claimed'
+  | 'started'
+  | 'completed'
+  | 'failed'
+  | 'no_op'
+  | 'withdrawn'
 
 export type HrcMailDriveAttempt = {
   driveAttemptId: string
@@ -686,6 +692,28 @@ export class HrcMailDriveRepository {
       .map(mapAttempt)
   }
 
+  /** The still-live slot-less attempt whose local receipt carried this envelope. */
+  getUnfinishedQueuedAttemptForEnvelope(envelopeId: string): HrcMailDriveAttempt | undefined {
+    const row = this.db
+      .query<DriveAttemptRow, [string]>(
+        `SELECT ${DRIVE_ATTEMPT_COLUMNS}
+           FROM hrcmail_drive_attempts
+          WHERE drive_attempt_id = (
+            SELECT attempt.drive_attempt_id
+              FROM hrcmail_drive_attempts AS attempt
+              JOIN hrcmail_drive_presentations AS presentation
+                ON presentation.drive_attempt_id = attempt.drive_attempt_id
+             WHERE presentation.envelope_id = ?
+               AND attempt.queued_behind_run_id IS NOT NULL
+               AND attempt.state IN ('claimed', 'started')
+             ORDER BY attempt.claimed_at DESC, attempt.drive_attempt_id DESC
+             LIMIT 1
+          )`
+      )
+      .get(envelopeId)
+    return row === null ? undefined : mapAttempt(row)
+  }
+
   /**
    * Install the composed section 7 injection text on a claimed attempt.
    *
@@ -794,6 +822,14 @@ export class HrcMailDriveRepository {
 
   completeNoOp(driveAttemptId: string): HrcMailDriveAttempt {
     return this.finishUnstarted(driveAttemptId, 'no_op', undefined)
+  }
+
+  markQueuedAttemptWithdrawn(driveAttemptId: string, reason: string): HrcMailDriveAttempt {
+    const attempt = this.requireAttempt(driveAttemptId)
+    if (attempt.queuedBehindRunId === undefined) {
+      throw new Error(`mail drive attempt ${driveAttemptId} is not queued`)
+    }
+    return this.finishUnstarted(driveAttemptId, 'withdrawn', reason)
   }
 
   failWithoutStart(driveAttemptId: string, error: string): HrcMailDriveAttempt {
@@ -1004,7 +1040,7 @@ export class HrcMailDriveRepository {
   /** End an attempt that never proved a turn: no D4 arming, no D5 strike-out. */
   private finishUnstarted(
     driveAttemptId: string,
-    state: 'failed' | 'no_op',
+    state: 'failed' | 'no_op' | 'withdrawn',
     error: string | undefined
   ): HrcMailDriveAttempt {
     return this.db
@@ -1013,7 +1049,8 @@ export class HrcMailDriveRepository {
         if (
           attempt.state === 'completed' ||
           attempt.state === 'failed' ||
-          attempt.state === 'no_op'
+          attempt.state === 'no_op' ||
+          attempt.state === 'withdrawn'
         ) {
           return attempt
         }
