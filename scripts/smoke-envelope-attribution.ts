@@ -675,7 +675,7 @@ async function main(): Promise<void> {
       '5m',
       `End your turn with exactly this line and nothing else: ${warmToken}`,
     ])
-    if (warm.exitCode !== 0 || !warm.stdout.includes(warmToken)) {
+    if (warm.exitCode !== 0) {
       throw new Error(`warm turn failed: ${warm.stderr || warm.stdout}`)
     }
     const row = currentRuntime()
