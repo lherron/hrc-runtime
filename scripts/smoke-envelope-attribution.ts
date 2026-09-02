@@ -4,7 +4,8 @@
  * Usage:
  *   bun scripts/smoke-envelope-attribution.ts \
  *     clod@hrc-runtime:T-07907 \
- *     /Users/lherron/praesidium/var/wrkq-artifacts/T-07907
+ *     /Users/lherron/praesidium/var/wrkq-artifacts/T-07907 \
+ *     [--start-at=A1|A2|B1|B2|C1]
  *
  * The script intentionally talks only through installed `hrc`/`wrkc` binaries
  * and grades from wrkq envelope rows plus HRC's persisted broker ledger. It
@@ -55,6 +56,7 @@ type Envelope = {
   to?: Party
   body: string
   state: string
+  reason?: string
   meta: Record<string, unknown>
   presentedTo: Presentation[]
 }
@@ -83,10 +85,11 @@ type EnvelopeGrade = {
   turnId: string
   runId: string
   replyId: string
+  replyKind: 'auto' | 'manual' | ''
   addressee: string
   dischargeEnvelopeIds: string[]
   waitExitCode: number
-  clauses: Record<'1' | '2' | '3' | '4' | '5', boolean>
+  clauses: Record<'1' | '2' | '3' | '4' | '5', boolean | null>
   failures: string[]
 }
 
@@ -102,6 +105,8 @@ type VariantSummary = {
 
 const target = process.argv[2] ?? DEFAULT_TARGET
 const artifactRoot = resolve(process.argv[3] ?? DEFAULT_ARTIFACT_DIR)
+const startAt =
+  process.argv.find((argument) => argument.startsWith('--start-at='))?.split('=')[1] ?? 'A1'
 const targetScope = scopeRefForHandle(target)
 const db = new Database(DB_PATH, { readonly: true, strict: true })
 const childProcesses = new Set<ReturnType<typeof Bun.spawn>>()
@@ -261,6 +266,10 @@ async function roomLog(principal = 'agent:probe-a'): Promise<RoomLog> {
   return await commandJson<RoomLog>(['wrkc', 'log', ROOM, '--as', principal, '--json'], true)
 }
 
+async function showEnvelope(id: string, principal: string): Promise<Envelope> {
+  return await commandJson<Envelope>(['wrkc', 'show', id, '--as', principal, '--json'], true)
+}
+
 function roomItems(log: RoomLog): Envelope[] {
   return Array.isArray(log) ? log : log.items
 }
@@ -374,11 +383,28 @@ async function runVariantC(name: string): Promise<VariantSummary> {
   return await collectVariant(name, startSeq, logOffset, says, waitResults)
 }
 
-function turnForEnvelope(rows: BrokerRow[], envelopeId: string) {
+function turnForEnvelope(rows: BrokerRow[], envelope: Envelope) {
+  const presentedRuns = new Set(envelope.presentedTo.map((presentation) => presentation.runId))
+  const bodyUser = rows.find(
+    (row) =>
+      row.type === 'user.message' &&
+      row.run_id !== null &&
+      presentedRuns.has(row.run_id) &&
+      String(payload(row).content ?? '').includes(envelope.body)
+  )
+  if (bodyUser !== undefined) {
+    const turnId = payload(bodyUser).turnId
+    return {
+      submissionId: '',
+      turnId: typeof turnId === 'string' ? turnId : '',
+      runId: bodyUser.run_id ?? '',
+      userContent: String(payload(bodyUser).content ?? ''),
+    }
+  }
   const admission = rows.find(
     (row) =>
       row.type === 'admission.requested' &&
-      (payload(row).origin as Record<string, unknown> | undefined)?.envelopeId === envelopeId
+      (payload(row).origin as Record<string, unknown> | undefined)?.envelopeId === envelope.id
   )
   const submissionId = admission === undefined ? undefined : payload(admission).submissionId
   const disposition = rows.find(
@@ -396,6 +422,19 @@ function turnForEnvelope(rows: BrokerRow[], envelopeId: string) {
   }
 }
 
+function replyFromWait(result: ProcessResult): Envelope | undefined {
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    return parsed.find(
+      (item): item is Envelope =>
+        item !== null && typeof item === 'object' && typeof (item as Envelope).id === 'string'
+    )
+  } catch {
+    return undefined
+  }
+}
+
 function dischargeIds(envelope: Envelope): string[] {
   const ids = envelope.meta.dischargeEnvelopeIds
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
@@ -410,42 +449,52 @@ async function collectVariant(
 ): Promise<VariantSummary> {
   await Bun.sleep(1_000)
   const rows = brokerRows(startSeq)
-  const log = roomItems(await roomLog())
   const sourceById = new Map<string, Envelope>()
   for (const say of says) {
     if (say.sourceId === undefined) throw new Error(`${name}/${say.label}: missing source id`)
-    const source = log.find((item) => item.id === say.sourceId)
-    if (source === undefined) throw new Error(`${name}/${say.label}: source not in room log`)
+    const source = await showEnvelope(say.sourceId, say.principal)
     sourceById.set(source.id, source)
   }
-  const replies = log.filter(
-    (item) => item.meta.auto === 'turn_final' && dischargeIds(item).some((id) => sourceById.has(id))
-  )
+  const replyBySource = new Map<string, Envelope>()
+  for (const [index, say] of says.entries()) {
+    const reply = replyFromWait(waitResults[index] as ProcessResult)
+    if (say.sourceId !== undefined && reply !== undefined) {
+      replyBySource.set(say.sourceId, await showEnvelope(reply.id, say.principal))
+    }
+  }
   const grades: EnvelopeGrade[] = []
 
   for (const [index, say] of says.entries()) {
     const sourceId = say.sourceId as string
     const source = sourceById.get(sourceId) as Envelope
-    const reply = replies.find((item) => dischargeIds(item).includes(sourceId))
-    const turn = turnForEnvelope(rows, sourceId)
+    const reply = replyBySource.get(sourceId)
+    const turn = turnForEnvelope(rows, source)
     const failures: string[] = []
     const ids = reply === undefined ? [] : dischargeIds(reply)
-    const turnSources = says.filter((candidate) => turn.userContent.includes(candidate.token))
+    const isAuto = reply?.meta.auto === 'turn_final'
+    const turnSources = says.filter((candidate) => turn.userContent.includes(candidate.body))
     const clause1 =
       reply !== undefined &&
-      ids.length > 0 &&
-      ids.every((id) => {
-        const discharged = sourceById.get(id)
-        return discharged !== undefined && turn.userContent.includes(discharged.body)
-      })
+      (isAuto
+        ? ids.length > 0 &&
+          ids.every((id) => {
+            const discharged = sourceById.get(id)
+            return discharged !== undefined && turn.userContent.includes(discharged.body)
+          })
+        : turn.userContent.includes(source.body))
     const clause2 =
       reply !== undefined &&
-      turnSources.every(
-        (candidate) => candidate.sourceId !== undefined && ids.includes(candidate.sourceId)
-      )
-    const clause3 = reply?.to?.principalRef === source.from.principalRef
-    const presentedRun = source.presentedTo.at(-1)?.runId ?? ''
-    const clause4 = presentedRun !== '' && presentedRun === turn.runId
+      (isAuto
+        ? turnSources.every(
+            (candidate) => candidate.sourceId !== undefined && ids.includes(candidate.sourceId)
+          )
+        : turnSources.every(
+            (candidate) => candidate.sourceId !== undefined && replyBySource.has(candidate.sourceId)
+          ))
+    const clause3 = isAuto ? reply.to?.principalRef === source.from.principalRef : null
+    const clause4 =
+      turn.runId !== '' &&
+      source.presentedTo.some((presentation) => presentation.runId === turn.runId)
     const wait = waitResults[index] as ProcessResult
     const otherTokens = says
       .filter((candidate) => candidate !== say)
@@ -462,7 +511,7 @@ async function collectVariant(
       '5': clause5,
     }
     for (const [clause, passed] of Object.entries(clauses)) {
-      if (!passed) failures.push(`invariant ${clause} failed`)
+      if (passed === false) failures.push(`invariant ${clause} failed`)
     }
     grades.push({
       label: say.label,
@@ -472,6 +521,7 @@ async function collectVariant(
       turnId: turn.turnId,
       runId: turn.runId,
       replyId: reply?.id ?? '',
+      replyKind: reply === undefined ? '' : isAuto ? 'auto' : 'manual',
       addressee: reply?.to?.principalRef ?? '',
       dischargeEnvelopeIds: ids,
       waitExitCode: wait.exitCode,
@@ -489,6 +539,10 @@ async function collectVariant(
       ? `coalesced (${says.length} envelopes in one turn)`
       : `per-turn (${turnIds.size} turns for ${says.length} envelopes)`
   const invocationIds = [...new Set(rows.map((row) => row.invocation_id))]
+  const shownEnvelopes = new Map<string, Envelope>()
+  for (const envelope of [...sourceById.values(), ...replyBySource.values()]) {
+    shownEnvelopes.set(envelope.id, envelope)
+  }
   const summary: VariantSummary = {
     variant: name,
     runtimeId: runtimeId as string,
@@ -518,7 +572,11 @@ async function collectVariant(
     ),
     writeFile(
       join(artifactDir, 'envelopes.json'),
-      `${JSON.stringify([...sourceById.values(), ...replies], null, 2)}\n`
+      `${JSON.stringify([...shownEnvelopes.values()], null, 2)}\n`
+    ),
+    writeFile(
+      join(artifactDir, 'wrkc-show.json'),
+      `${JSON.stringify([...shownEnvelopes.values()], null, 2)}\n`
     ),
     writeFile(join(artifactDir, 'server.log'), `${relevantServerLog}\n`),
     writeFile(join(artifactDir, 'wait-results.json'), `${JSON.stringify(waitResults, null, 2)}\n`),
@@ -536,13 +594,13 @@ function printSummary(summary: VariantSummary): void {
   console.log('envelope\tturn/run\treply\taddressee\ttoken\tI1-I5')
   for (const grade of summary.grades) {
     const verdicts = Object.values(grade.clauses)
-      .map((pass) => (pass ? 'P' : 'F'))
+      .map((pass) => (pass === null ? 'N' : pass ? 'P' : 'F'))
       .join('')
     console.log(
       [
         grade.envelopeId,
         `${grade.turnId}/${grade.runId}`,
-        grade.replyId,
+        `${grade.replyId}${grade.replyKind === '' ? '' : ` (${grade.replyKind})`}`,
         grade.addressee,
         grade.token,
         verdicts,
@@ -626,12 +684,17 @@ async function main(): Promise<void> {
     console.log(`warm seat ready: ${runtimeId}`)
   }
 
+  const variants = [
+    ['A1', runVariantA],
+    ['A2', runVariantA],
+    ['B1', runVariantB],
+    ['B2', runVariantB],
+    ['C1', runVariantC],
+  ] as const
+  const startIndex = variants.findIndex(([name]) => name === startAt)
+  if (startIndex === -1) throw new Error(`unknown --start-at value: ${startAt}`)
   const summaries: VariantSummary[] = []
-  summaries.push(await runVariantA('A1'))
-  summaries.push(await runVariantA('A2'))
-  summaries.push(await runVariantB('B1'))
-  summaries.push(await runVariantB('B2'))
-  summaries.push(await runVariantC('C1'))
+  for (const [name, run] of variants.slice(startIndex)) summaries.push(await run(name))
   await writeFile(
     join(artifactRoot, 'summary.json'),
     `${JSON.stringify({ target, targetScope, runtimeId, summaries }, null, 2)}\n`
