@@ -739,24 +739,41 @@ export async function executeInteractiveBrokerInputTurn(
     route: 'interactive-broker',
   })
 
+  const preacceptedRun = this.db.runs.getByRunId(runId)
   const now = timestamp()
-
-  this.db.runs.insert({
-    runId,
-    hostSessionId: session.hostSessionId,
-    runtimeId: runtime.runtimeId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    transport: 'tmux',
-    status: 'accepted',
-    acceptedAt: now,
-    updatedAt: now,
-    invocationId,
-    operationId: runtime.activeOperationId,
-    dispatchIdempotencyKey: options.dispatchIdempotencyKey,
-    ...dispatchOriginRunFields(options),
-  })
+  if (preacceptedRun) {
+    if (preacceptedRun.status !== 'accepted') {
+      throw new HrcRuntimeUnavailableError('preaccepted broker input is not dispatchable', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        status: preacceptedRun.status,
+        route: 'interactive-broker',
+      })
+    }
+    this.db.runs.update(runId, {
+      runtimeId: runtime.runtimeId,
+      invocationId,
+      operationId: runtime.activeOperationId,
+      updatedAt: now,
+    })
+  } else {
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+      invocationId,
+      operationId: runtime.activeOperationId,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+      ...dispatchOriginRunFields(options),
+    })
+  }
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }

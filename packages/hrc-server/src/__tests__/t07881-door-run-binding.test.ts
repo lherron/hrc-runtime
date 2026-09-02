@@ -136,6 +136,48 @@ describe('T-07881 door-dispatched run persistence', () => {
       dispatchedInputId: SUBMISSION_ID,
     })
   })
+
+  it('dispatches a cold interactive door run that controller startup already preaccepted', async () => {
+    fixture = await makeTmuxSeededFixture()
+    fixture.db.runtimes.update(TMUX_RUNTIME_ID, {
+      activeInvocationId: TMUX_INVOCATION_ID,
+      updatedAt: ts(0),
+    })
+    const runtime = fixture.db.runtimes.getByRuntimeId(TMUX_RUNTIME_ID)
+    const session = fixture.db.sessions.getByHostSessionId(TMUX_HOST_SESSION_ID)
+    expect(runtime).not.toBeNull()
+    expect(session).not.toBeNull()
+
+    fixture.db.runs.insert({
+      runId: RUN_ID,
+      hostSessionId: TMUX_HOST_SESSION_ID,
+      runtimeId: TMUX_RUNTIME_ID,
+      scopeRef: TMUX_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'tmux',
+      status: 'accepted',
+      acceptedAt: ts(0),
+      updatedAt: ts(0),
+    })
+
+    await executeInteractiveBrokerInputTurn.call(
+      successfulDoorServer(fixture.db),
+      session!,
+      runtime!,
+      'cold door input after controller acceptance',
+      RUN_ID,
+      { waitForCompletion: false, submissionDoor: 'invoke' }
+    )
+
+    expect(fixture.db.runs.getByRunId(RUN_ID)).toMatchObject({
+      status: 'accepted',
+      runtimeId: TMUX_RUNTIME_ID,
+      invocationId: TMUX_INVOCATION_ID,
+      brokerSubmissionId: SUBMISSION_ID,
+      dispatchedInputId: SUBMISSION_ID,
+    })
+  })
 })
 
 describe('T-07881 hook-observed mail turn binding', () => {
