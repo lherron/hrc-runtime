@@ -87,8 +87,28 @@ export type BrokerRuntimeHostingState = {
 export type BrokerLeaseProbe = {
   tmuxSocketPath: string
   sessionName: string
-  brokerWindow: TmuxWindowIdentity
+  brokerWindow?: TmuxWindowIdentity | undefined
+  brokerWindowName?: string | undefined
   tuiWindow?: TmuxWindowIdentity
+  tuiWindowName?: string | undefined
+}
+
+export type BrokerLeaseIdentityMismatch = {
+  field:
+    | 'hostingState'
+    | 'tmuxSocketPath'
+    | 'sessionName'
+    | 'brokerWindow'
+    | 'brokerWindowName'
+    | 'tuiWindow'
+    | 'tuiWindowName'
+  recorded: string | TmuxWindowIdentity | null
+  observed: string | TmuxWindowIdentity | null
+}
+
+export type BrokerLeaseIdentityComparison = {
+  matches: boolean
+  mismatches: BrokerLeaseIdentityMismatch[]
 }
 
 export type RuntimeTelemetryQueryIdentity = {
@@ -563,33 +583,79 @@ function identityMatches(a: TmuxWindowIdentity, b: TmuxWindowIdentity | undefine
  *  - the runtime has a leased-tmux substrate, AND
  *  - the probe's tmux socket + session name match the substrate, AND
  *  - the probe's brokerWindow identity matches the substrate's brokerWindow
- *    (required for EVERY leased substrate), AND
+ *    (required for EVERY leased substrate), AND, when supplied, the observed
+ *    broker window still has the canonical name, AND
  *  - when presentation.kind === 'tmux-tui', the probe ALSO carries a tuiWindow
- *    whose identity matches presentation.tuiWindow. For presentation.none, the
- *    tuiWindow is neither required nor consulted.
+ *    whose identity matches presentation.tuiWindow and, when supplied, the
+ *    observed TUI window still has the canonical name. For presentation.none,
+ *    the tuiWindow and name are neither required nor consulted.
+ *
+ * The structured mismatch list lets destructive callers distinguish identity
+ * drift from positive evidence that the persisted lease is orphaned.
  */
+export function compareBrokerLeaseIdentity(
+  runtime: HrcRuntimeSnapshot,
+  probe: BrokerLeaseProbe
+): BrokerLeaseIdentityComparison {
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (!hosting || hosting.substrate.kind !== 'leased-tmux') {
+    return {
+      matches: false,
+      mismatches: [{ field: 'hostingState', recorded: null, observed: null }],
+    }
+  }
+  const substrate = hosting.substrate
+  const mismatches: BrokerLeaseIdentityMismatch[] = []
+  if (probe.tmuxSocketPath !== substrate.tmuxSocketPath) {
+    mismatches.push({
+      field: 'tmuxSocketPath',
+      recorded: substrate.tmuxSocketPath,
+      observed: probe.tmuxSocketPath,
+    })
+  }
+  if (probe.sessionName !== substrate.sessionName) {
+    mismatches.push({
+      field: 'sessionName',
+      recorded: substrate.sessionName,
+      observed: probe.sessionName,
+    })
+  }
+  if (!identityMatches(substrate.brokerWindow, probe.brokerWindow)) {
+    mismatches.push({
+      field: 'brokerWindow',
+      recorded: substrate.brokerWindow,
+      observed: probe.brokerWindow ?? null,
+    })
+  }
+  if (probe.brokerWindowName !== undefined && probe.brokerWindowName !== 'broker') {
+    mismatches.push({
+      field: 'brokerWindowName',
+      recorded: 'broker',
+      observed: probe.brokerWindowName,
+    })
+  }
+  if (hosting.presentation.kind === 'tmux-tui') {
+    if (!identityMatches(hosting.presentation.tuiWindow, probe.tuiWindow)) {
+      mismatches.push({
+        field: 'tuiWindow',
+        recorded: hosting.presentation.tuiWindow,
+        observed: probe.tuiWindow ?? null,
+      })
+    }
+    if (probe.tuiWindowName !== undefined && probe.tuiWindowName !== 'tui') {
+      mismatches.push({
+        field: 'tuiWindowName',
+        recorded: 'tui',
+        observed: probe.tuiWindowName,
+      })
+    }
+  }
+  return { matches: mismatches.length === 0, mismatches }
+}
+
 export function brokerLeaseIdentityMatches(
   runtime: HrcRuntimeSnapshot,
   probe: BrokerLeaseProbe
 ): boolean {
-  const hosting = parseBrokerRuntimeHostingState(runtime)
-  if (!hosting || hosting.substrate.kind !== 'leased-tmux') {
-    return false
-  }
-  const substrate = hosting.substrate
-  if (
-    probe.tmuxSocketPath !== substrate.tmuxSocketPath ||
-    probe.sessionName !== substrate.sessionName
-  ) {
-    return false
-  }
-  if (!identityMatches(substrate.brokerWindow, probe.brokerWindow)) {
-    return false
-  }
-  if (hosting.presentation.kind === 'tmux-tui') {
-    if (!identityMatches(hosting.presentation.tuiWindow, probe.tuiWindow)) {
-      return false
-    }
-  }
-  return true
+  return compareBrokerLeaseIdentity(runtime, probe).matches
 }

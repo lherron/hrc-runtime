@@ -37,7 +37,7 @@
 
 import { describe, expect, it } from 'bun:test'
 
-import { brokerLeaseIdentityMatches } from '../broker/runtime-hosting'
+import { brokerLeaseIdentityMatches, compareBrokerLeaseIdentity } from '../broker/runtime-hosting'
 import type { BrokerLeaseProbe } from '../broker/runtime-hosting'
 
 // ── minimal runtime fixture builder ──────────────────────────────────────────
@@ -126,6 +126,45 @@ describe('brokerLeaseIdentityMatches (G4)', () => {
       // tuiWindow absent — required for tmux-tui
     }
     expect(brokerLeaseIdentityMatches(normalizedInteractiveRuntime, probeNoTui)).toBe(false)
+    expect(compareBrokerLeaseIdentity(normalizedInteractiveRuntime, probeNoTui).mismatches).toEqual(
+      [
+        {
+          field: 'tuiWindow',
+          recorded: { sessionId: '$9', windowId: '@23', paneId: '%32' },
+          observed: null,
+        },
+      ]
+    )
+  })
+
+  it('reports a renamed broker window separately from stable tmux ids', () => {
+    const renamedProbe: BrokerLeaseProbe = {
+      ...interactiveProbe,
+      brokerWindowName: 'worker',
+    }
+
+    expect(brokerLeaseIdentityMatches(normalizedInteractiveRuntime, renamedProbe)).toBe(false)
+    expect(
+      compareBrokerLeaseIdentity(normalizedInteractiveRuntime, renamedProbe).mismatches
+    ).toEqual([{ field: 'brokerWindowName', recorded: 'broker', observed: 'worker' }])
+  })
+
+  it('reports broker pane-id drift while retaining the matching socket and session evidence', () => {
+    const driftedProbe: BrokerLeaseProbe = {
+      ...interactiveProbe,
+      brokerWindow: { sessionId: '$9', windowId: '@22', paneId: '%99' },
+    }
+
+    expect(brokerLeaseIdentityMatches(normalizedInteractiveRuntime, driftedProbe)).toBe(false)
+    expect(
+      compareBrokerLeaseIdentity(normalizedInteractiveRuntime, driftedProbe).mismatches
+    ).toEqual([
+      {
+        field: 'brokerWindow',
+        recorded: { sessionId: '$9', windowId: '@22', paneId: '%31' },
+        observed: { sessionId: '$9', windowId: '@22', paneId: '%99' },
+      },
+    ])
   })
 
   it('G4: returns false when presentation=tmux-tui and tuiWindow.windowId mismatches', () => {

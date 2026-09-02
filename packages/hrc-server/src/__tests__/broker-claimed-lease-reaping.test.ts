@@ -43,18 +43,36 @@ async function createDurableLease(runtimeId: string, options: { interactive?: bo
   await mkdir(root, { recursive: true })
   const socketPath = join(root, `${runtimeId}.sock`)
   const sessionName = `hrc-cx-${runtimeId}`
+  const endpointSocketPath = join(fixture.runtimeRoot, 'bipc', runtimeId, 'b.sock')
+  const brokerCommand = `exec '${process.execPath}' -e 'setInterval(() => {}, 60000)' harness-broker --runtime-id '${runtimeId}' --socket '${endpointSocketPath}'`
   sockets.push(socketPath)
   expect(
     await Bun.spawn(
-      ['tmux', '-S', socketPath, 'new-session', '-d', '-s', sessionName, '-n', 'broker'],
+      [
+        'tmux',
+        '-S',
+        socketPath,
+        'new-session',
+        '-d',
+        '-s',
+        sessionName,
+        '-n',
+        'broker',
+        brokerCommand,
+      ],
       { stdout: 'ignore', stderr: 'ignore' }
     ).exited
   ).toBe(0)
-  const brokerWindow = await createTmuxManager({ socketPath }).inspectWindow({
+  const manager = createTmuxManager({ socketPath })
+  const brokerWindow = await manager.inspectWindow({
     sessionName,
     windowName: 'broker',
   })
   if (!brokerWindow) throw new Error('expected broker window')
+  const brokerProcess = await manager.inspectPaneProcess(brokerWindow.paneId)
+  if (!brokerProcess || brokerProcess.dead || brokerProcess.pid <= 0) {
+    throw new Error('expected live broker process')
+  }
   if (options.interactive) {
     expect(
       await Bun.spawn(
@@ -70,7 +88,15 @@ async function createDurableLease(runtimeId: string, options: { interactive?: bo
       })
     : null
   if (options.interactive && !tuiWindow) throw new Error('expected tui window')
-  return { socketPath, sessionName, brokerWindow, tuiWindow }
+  return {
+    socketPath,
+    sessionName,
+    endpointSocketPath,
+    brokerCommand,
+    brokerProcess,
+    brokerWindow,
+    tuiWindow,
+  }
 }
 
 function seedRuntime(
@@ -117,6 +143,8 @@ function seedRuntime(
       schemaVersion: 'runtime-state/v1',
       ...(options.lifecycleOwner === undefined ? {} : { lifecycleOwner: options.lifecycleOwner }),
       broker: {
+        brokerCommand: lease.brokerCommand,
+        brokerPid: lease.brokerProcess.pid,
         endpoint: {
           kind: 'unix-jsonrpc-ndjson',
           socketPath: join(endpointDir, 'b.sock'),
@@ -199,15 +227,127 @@ describe('claimed broker lease classification', () => {
     ).not.toBeNull()
   })
 
-  it('reaps a mismatched durable identity and stales the claiming runtime', async () => {
+  it('preserves broker pane-id drift when the observed pane still runs this runtime broker', async () => {
     const lease = await createDurableLease('mismatch')
     seedRuntime('mismatch', lease, { paneId: '%not-the-live-pane' })
 
     const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
 
+    expect(result.preservedClaimed).toBe(1)
+    expect(result.reapedClaimedOrphans).toBe(0)
+    expect(result.staledClaimedRuntimes).toBe(0)
+    expect(db.runtimes.getByRuntimeId('mismatch')?.status).toBe('ready')
+  })
+
+  it('preserves a missing TUI window when the broker pane is still live', async () => {
+    const lease = await createDurableLease('missing-tui', { interactive: true })
+    seedRuntime('missing-tui', lease, { interactive: true })
+    expect(
+      await Bun.spawn(
+        ['tmux', '-S', lease.socketPath, 'kill-window', '-t', `=${lease.sessionName}:tui`],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+
+    const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
+
+    expect(result.preservedClaimed).toBe(1)
+    expect(result.reapedClaimedOrphans).toBe(0)
+    expect(db.runtimes.getByRuntimeId('missing-tui')?.status).toBe('ready')
+  })
+
+  it('preserves a renamed broker window when its recorded pane still runs the broker', async () => {
+    const lease = await createDurableLease('renamed')
+    seedRuntime('renamed', lease)
+    expect(
+      await Bun.spawn(
+        [
+          'tmux',
+          '-S',
+          lease.socketPath,
+          'rename-window',
+          '-t',
+          `=${lease.sessionName}:broker`,
+          'worker',
+        ],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+
+    const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
+
+    expect(result.preservedClaimed).toBe(1)
+    expect(result.reapedClaimedOrphans).toBe(0)
+    expect(db.runtimes.getByRuntimeId('renamed')?.status).toBe('ready')
+  })
+
+  it('reaps when the live lease socket contains a different session identity', async () => {
+    const lease = await createDurableLease('wrong-session')
+    seedRuntime('wrong-session', lease)
+    expect(
+      await Bun.spawn(
+        [
+          'tmux',
+          '-S',
+          lease.socketPath,
+          'rename-session',
+          '-t',
+          `=${lease.sessionName}`,
+          'hrc-cx-someone-else',
+        ],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+
+    const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
+
     expect(result.reapedClaimedOrphans).toBe(1)
+    expect(result.killedLiveLeaseServers).toBe(1)
     expect(result.staledClaimedRuntimes).toBe(1)
-    expect(db.runtimes.getByRuntimeId('mismatch')?.status).toBe('stale')
+    expect(db.runtimes.getByRuntimeId('wrong-session')?.status).toBe('stale')
+  })
+
+  it('reaps when the claimed broker pane is positively observed dead', async () => {
+    const lease = await createDurableLease('dead-pane')
+    seedRuntime('dead-pane', lease)
+    expect(
+      await Bun.spawn(
+        [
+          'tmux',
+          '-S',
+          lease.socketPath,
+          'set-window-option',
+          '-t',
+          `=${lease.sessionName}:broker`,
+          'remain-on-exit',
+          'on',
+        ],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+    expect(
+      await Bun.spawn(
+        [
+          'tmux',
+          '-S',
+          lease.socketPath,
+          'respawn-pane',
+          '-k',
+          '-t',
+          lease.brokerWindow.paneId,
+          'exit 0',
+        ],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+    await Bun.sleep(50)
+
+    const result = await sweepOrphanedBrokerTmuxLeases(db, fixture.runtimeRoot, sweepOptions())
+
+    expect(result.reapedClaimedOrphans).toBe(1)
+    expect(result.killedLiveLeaseServers).toBe(1)
+    expect(result.staledClaimedRuntimes).toBe(1)
+    expect(db.runtimes.getByRuntimeId('dead-pane')?.status).toBe('stale')
   })
 
   it('preserves an external-owner claim without probing identity or reaping its substrate', async () => {

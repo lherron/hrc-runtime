@@ -50,6 +50,9 @@ type NamedWindowOps = TmuxManager & {
     sessionName: string
     windowName: string
   }): Promise<{ sessionId: string; windowId: string; paneId: string; windowName: string } | null>
+  inspectPane(
+    paneId: string
+  ): Promise<{ sessionId: string; windowId: string; paneId: string; windowName: string } | null>
   inspectPaneProcess(
     paneId: string
   ): Promise<{ command: string; pid: number; dead: boolean } | null>
@@ -136,6 +139,33 @@ describe('T-01812 Phase 3 — broker + TUI as two named windows under one socket
     // The two named windows must resolve to different panes — proof the manager
     // is no longer locked to a single 'main' window.
     expect(inspectedBroker?.paneId).not.toBe(inspectedTui?.paneId)
+  })
+
+  it('resolves a pane current identity after its window is renamed', async () => {
+    const { manager, socketPath } = newManager()
+    await manager.initialize()
+    const sessionName = 'hrc-claude-code-tmux-runtime_rename'
+    const broker = await manager.createWindowWithCommand({
+      sessionName,
+      windowName: 'broker',
+      command: 'exec sleep 315',
+    })
+
+    expect(
+      await Bun.spawn(
+        ['tmux', '-S', socketPath, 'rename-window', '-t', `=${sessionName}:broker`, 'worker'],
+        { stdout: 'ignore', stderr: 'ignore' }
+      ).exited
+    ).toBe(0)
+
+    expect(await manager.inspectWindow({ sessionName, windowName: 'broker' })).toBeNull()
+    expect(await manager.inspectPane(broker.paneId)).toMatchObject({
+      sessionName,
+      windowName: 'worker',
+      sessionId: broker.sessionId,
+      windowId: broker.windowId,
+      paneId: broker.paneId,
+    })
   })
 
   it('launches the broker window EXEC-FORM so the pane root is the command, not a shell (RED)', async () => {

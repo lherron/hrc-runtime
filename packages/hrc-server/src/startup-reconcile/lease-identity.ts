@@ -11,9 +11,10 @@ import {
   rejectedBrokerAdoptionPaths,
 } from '../broker/adoption-root.js'
 import {
-  brokerLeaseIdentityMatches,
+  compareBrokerLeaseIdentity,
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting.js'
+import type { BrokerLeaseIdentityComparison } from '../broker/runtime-hosting.js'
 import { extractBrokerEndpoint } from '../broker/runtime-state.js'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
@@ -429,16 +430,28 @@ export async function sweepOrphanedBrokerTmuxLeases(
         }
         const matchingClaims: HrcRuntimeSnapshot[] = []
         const orphanReasons = new Map<string, string>()
+        const claimEvidence = new Map<string, Record<string, unknown>>()
         for (const claim of claims) {
-          const identityMatches =
+          const observation =
             classified.kind === 'live-orphan'
-              ? await runtimeClaimMatchesObservedLease(claim, socketPath, runtimeRoot)
-              : false
+              ? await observeRuntimeClaimedLease(
+                  claim,
+                  socketPath,
+                  runtimeRoot,
+                  classified.sessions
+                )
+              : {
+                  disposition: 'orphan' as const,
+                  reason: 'broker_claimed_lease_substrate_gone',
+                  evidence: { socketPath, observedSessions: [] },
+                }
+          claimEvidence.set(claim.runtimeId, observation.evidence)
+          const identityAccepted = observation.disposition !== 'orphan'
           const withinTerminalTtl =
             isRuntimeUnavailableStatus(claim.status) &&
             runtimeTerminalAgeMs(claim, now) < passiveTtlMs
           if (
-            identityMatches &&
+            identityAccepted &&
             (!isRuntimeUnavailableStatus(claim.status) || withinTerminalTtl) &&
             !isBrokerRecoveryExhausted(claim, now)
           ) {
@@ -448,8 +461,8 @@ export async function sweepOrphanedBrokerTmuxLeases(
               claim.runtimeId,
               classified.kind === 'dead'
                 ? 'broker_claimed_lease_substrate_gone'
-                : !identityMatches
-                  ? 'broker_claimed_lease_identity_mismatch'
+                : observation.disposition === 'orphan'
+                  ? observation.reason
                   : isBrokerRecoveryExhausted(claim, now)
                     ? 'broker_claimed_lease_ipc_recovery_exhausted'
                     : 'broker_claimed_lease_orphaned'
@@ -502,6 +515,7 @@ export async function sweepOrphanedBrokerTmuxLeases(
           runtimeIds: claims.map((runtime) => runtime.runtimeId),
           reason: reasons[0] ?? 'broker_claimed_lease_orphaned',
           reasons,
+          claimEvidence: Object.fromEntries(claimEvidence),
         })
       }
 
@@ -541,48 +555,194 @@ export async function sweepOrphanedBrokerTmuxLeases(
   return result
 }
 
-async function runtimeClaimMatchesObservedLease(
+type RuntimeClaimedLeaseObservation = {
+  disposition: 'match' | 'preserve' | 'orphan'
+  reason: string
+  evidence: Record<string, unknown>
+}
+
+async function observeRuntimeClaimedLease(
   runtime: HrcRuntimeSnapshot,
   socketPath: string,
-  runtimeRoot: string
-): Promise<boolean> {
+  runtimeRoot: string,
+  observedSessions: string[]
+): Promise<RuntimeClaimedLeaseObservation> {
   const hosting = parseBrokerRuntimeHostingState(runtime)
   if (hosting?.substrate.kind === 'leased-tmux') {
+    const substrate = hosting.substrate
     const manager = createTmuxManager({ socketPath })
+    if (socketPath !== substrate.tmuxSocketPath) {
+      const comparison = compareBrokerLeaseIdentity(runtime, {
+        tmuxSocketPath: socketPath,
+        sessionName: substrate.sessionName,
+      })
+      return logClaimedLeaseIdentityObservation(runtime, socketPath, 'orphan', {
+        reason: 'broker_claimed_lease_socket_path_mismatch',
+        comparison,
+        observedSessions,
+      })
+    }
+    if (!observedSessions.includes(substrate.sessionName)) {
+      const comparison = compareBrokerLeaseIdentity(runtime, {
+        tmuxSocketPath: socketPath,
+        sessionName: observedSessions[0] ?? '',
+      })
+      return logClaimedLeaseIdentityObservation(runtime, socketPath, 'orphan', {
+        reason: 'broker_claimed_lease_session_name_mismatch',
+        comparison,
+        observedSessions,
+      })
+    }
     const brokerWindow = await manager.inspectWindow({
-      sessionName: hosting.substrate.sessionName,
+      sessionName: substrate.sessionName,
       windowName: 'broker',
     })
-    if (!brokerWindow) {
-      return false
-    }
+    const observedBrokerPane =
+      brokerWindow ?? (await manager.inspectPane(substrate.brokerWindow.paneId))
     const tuiWindow =
       hosting.presentation.kind === 'tmux-tui'
         ? await manager.inspectWindow({
-            sessionName: hosting.substrate.sessionName,
+            sessionName: substrate.sessionName,
             windowName: 'tui',
           })
         : null
-    return brokerLeaseIdentityMatches(runtime, {
-      tmuxSocketPath: brokerWindow.socketPath,
-      sessionName: brokerWindow.sessionName,
-      brokerWindow: {
-        sessionId: brokerWindow.sessionId,
-        windowId: brokerWindow.windowId,
-        paneId: brokerWindow.paneId,
-      },
-      ...(tuiWindow
+    const observedTuiPane =
+      hosting.presentation.kind === 'tmux-tui' && !tuiWindow
+        ? await manager.inspectPane(hosting.presentation.tuiWindow.paneId)
+        : tuiWindow
+    const comparison = compareBrokerLeaseIdentity(runtime, {
+      tmuxSocketPath: socketPath,
+      sessionName: substrate.sessionName,
+      ...(observedBrokerPane
         ? {
+            brokerWindowName: observedBrokerPane.windowName,
+            brokerWindow: {
+              sessionId: observedBrokerPane.sessionId,
+              windowId: observedBrokerPane.windowId,
+              paneId: observedBrokerPane.paneId,
+            },
+          }
+        : {}),
+      ...(observedTuiPane
+        ? {
+            tuiWindowName: observedTuiPane.windowName,
             tuiWindow: {
-              sessionId: tuiWindow.sessionId,
-              windowId: tuiWindow.windowId,
-              paneId: tuiWindow.paneId,
+              sessionId: observedTuiPane.sessionId,
+              windowId: observedTuiPane.windowId,
+              paneId: observedTuiPane.paneId,
             },
           }
         : {}),
     })
+    const paneProcess = await manager.inspectPaneProcess(
+      observedBrokerPane?.paneId ?? substrate.brokerWindow.paneId
+    )
+    const processCommand =
+      paneProcess && paneProcess.pid > 0 && !paneProcess.dead
+        ? await inspectProcessCommand(paneProcess.pid)
+        : undefined
+    const processIdentifiesBroker =
+      paneProcess !== null &&
+      !paneProcess.dead &&
+      processCommandIdentifiesRuntimeBroker(runtime, paneProcess.pid, processCommand)
+    const evidence = {
+      comparison,
+      observedSessions,
+      observedBrokerWindow: observedBrokerPane,
+      observedTuiWindow: observedTuiPane,
+      observedBrokerProcess: paneProcess,
+      processIdentifiesBroker,
+    }
+
+    if (paneProcess?.dead) {
+      return logClaimedLeaseIdentityObservation(runtime, socketPath, 'orphan', {
+        reason: 'broker_claimed_lease_broker_pane_dead',
+        ...evidence,
+      })
+    }
+    if (comparison.matches) {
+      return { disposition: 'match', reason: 'exact_identity_match', evidence }
+    }
+
+    // A strict identity miss is not ownership evidence. Tmux can transiently
+    // fail a named-window lookup, the operator can rename/delete only the TUI
+    // window, and pane ids can change across respawn. When the claimed session
+    // still exists and no dead broker pane was observed, preserve the lease.
+    // A process argv tied to this runtime is corroborating positive liveness;
+    // failure to collect it remains inconclusive and therefore fail-safe.
+    return logClaimedLeaseIdentityObservation(runtime, socketPath, 'preserve', {
+      reason: processIdentifiesBroker
+        ? 'broker_claimed_lease_live_broker_identity_drift'
+        : 'broker_claimed_lease_identity_probe_inconclusive',
+      ...evidence,
+    })
   }
-  return await reassociateBrokerTmuxLease(runtime, runtimeRoot)
+  const reassociated = await reassociateBrokerTmuxLease(runtime, runtimeRoot)
+  if (reassociated) {
+    return {
+      disposition: 'match',
+      reason: 'legacy_lease_reassociated',
+      evidence: { socketPath, observedSessions },
+    }
+  }
+  return logClaimedLeaseIdentityObservation(runtime, socketPath, 'preserve', {
+    reason: 'broker_claimed_lease_legacy_probe_inconclusive',
+    observedSessions,
+  })
+}
+
+function logClaimedLeaseIdentityObservation(
+  runtime: HrcRuntimeSnapshot,
+  socketPath: string,
+  disposition: 'preserve' | 'orphan',
+  input: {
+    reason: string
+    comparison?: BrokerLeaseIdentityComparison | undefined
+    [key: string]: unknown
+  }
+): RuntimeClaimedLeaseObservation {
+  const evidence = { ...input }
+  const event =
+    input.comparison && !input.comparison.matches
+      ? 'broker.claimed_lease_identity_mismatch_observed'
+      : 'broker.claimed_lease_orphan_evidence'
+  writeServerLog('WARN', event, {
+    runtimeId: runtime.runtimeId,
+    socketPath,
+    disposition,
+    ...evidence,
+  })
+  return { disposition, reason: input.reason, evidence }
+}
+
+async function inspectProcessCommand(pid: number): Promise<string | undefined> {
+  const process = Bun.spawn(['ps', '-p', String(pid), '-o', 'command='], {
+    stdout: 'pipe',
+    stderr: 'ignore',
+  })
+  const [stdout, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    process.exited,
+  ])
+  if (exitCode !== 0) return undefined
+  const command = stdout.trim()
+  return command.length > 0 ? command : undefined
+}
+
+function processCommandIdentifiesRuntimeBroker(
+  runtime: HrcRuntimeSnapshot,
+  observedPid: number,
+  command: string | undefined
+): boolean {
+  const broker = getRuntimeStateBrokerRecord(runtime)
+  if (broker?.['brokerPid'] === observedPid) return true
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.endpoint.kind !== 'unix-jsonrpc-ndjson' || !command) return false
+  return (
+    command.includes('harness-broker') &&
+    command.includes(`--runtime-id ${runtime.runtimeId}`) &&
+    command.includes(`--socket ${hosting.endpoint.socketPath}`)
+  )
 }
 
 function runtimeTerminalAgeMs(runtime: HrcRuntimeSnapshot, now: number): number {

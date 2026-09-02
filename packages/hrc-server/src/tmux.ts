@@ -406,6 +406,40 @@ export class TmuxManager {
     }
   }
 
+  /** Resolve a pane's current session/window identity even after a window rename. */
+  async inspectPane(paneId: string): Promise<TmuxPaneState | null> {
+    try {
+      const result = await this.exec([
+        'display-message',
+        '-p',
+        '-t',
+        paneId,
+        '-F',
+        '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}\t#{window_name}',
+      ])
+      const output = result.stdout.trim()
+      if (!output) return null
+      const [sessionId, windowId, observedPaneId, sessionName, windowName] = output.split('\t')
+      if (!sessionId || !windowId || !observedPaneId || !sessionName || !windowName) {
+        throw new Error(`unexpected tmux pane identity: ${output}`)
+      }
+      return {
+        socketPath: this.socketPath,
+        sessionName,
+        windowName,
+        sessionId,
+        windowId,
+        paneId: observedPaneId,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return null
+      }
+      throw error
+    }
+  }
+
   /**
    * Resolve the running process identity of a specific pane (pane_current_command
    * + pane_pid + pane_dead). Used to prove a broker window's pane root is the
