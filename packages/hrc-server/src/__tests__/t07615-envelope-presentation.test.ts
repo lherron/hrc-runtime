@@ -143,7 +143,7 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     const held = envelope({ delivery: 'hold' })
     expect(
       formatEnvelopePresentation(presentable({ envelope: held, delivery: held.delivery }), NOW)
-    ).toContain('[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · hold]')
+    ).toContain('[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · preempt]')
   })
 
   // T-07698: an R- room is a pair channel, not a topic. Its key renders bare,

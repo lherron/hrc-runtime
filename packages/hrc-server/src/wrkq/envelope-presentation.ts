@@ -199,7 +199,9 @@ function formatHeader(presentable: PresentableEnvelope, now: Date): string {
     formatRoomToken(presentable),
     `${formatSender(presentable)} → you`,
     ...(obligation === undefined ? [] : [obligation]),
-    ...(presentable.delivery === 'hold' ? ['hold'] : []),
+    // The ledger stores the intent as delivery `hold`; the verb the reader
+    // recognizes is `wrkc say --preempt` (renamed 2026-09-02, no alias).
+    ...(presentable.delivery === 'hold' ? ['preempt'] : []),
     ...(why === undefined ? [] : [why]),
   ]
   return `[${clauses.join(' · ')}]`
