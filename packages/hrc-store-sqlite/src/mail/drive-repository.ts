@@ -692,8 +692,17 @@ export class HrcMailDriveRepository {
       .map(mapAttempt)
   }
 
-  /** The still-live slot-less attempt whose local receipt carried this envelope. */
-  getUnfinishedQueuedAttemptForEnvelope(envelopeId: string): HrcMailDriveAttempt | undefined {
+  /**
+   * The newest unstarted attempt whose local receipt carried this envelope.
+   *
+   * Most busy-seat deliveries are represented by a slot-less `queued-`
+   * attempt. A human-typed interactive turn has no HRC run row, however, so
+   * the kicker can discover that it queued only from the broker's
+   * `queue.enqueued` evidence after dispatch; that path still owns an ordinary
+   * claimed attempt. The caller must prove the broker queue state before
+   * withdrawing this more general shape.
+   */
+  getClaimedAttemptForEnvelope(envelopeId: string): HrcMailDriveAttempt | undefined {
     const row = this.db
       .query<DriveAttemptRow, [string]>(
         `SELECT ${DRIVE_ATTEMPT_COLUMNS}
@@ -704,8 +713,7 @@ export class HrcMailDriveRepository {
               JOIN hrcmail_drive_presentations AS presentation
                 ON presentation.drive_attempt_id = attempt.drive_attempt_id
              WHERE presentation.envelope_id = ?
-               AND attempt.queued_behind_run_id IS NOT NULL
-               AND attempt.state IN ('claimed', 'started')
+               AND attempt.state = 'claimed'
              ORDER BY attempt.claimed_at DESC, attempt.drive_attempt_id DESC
              LIMIT 1
           )`
@@ -824,10 +832,10 @@ export class HrcMailDriveRepository {
     return this.finishUnstarted(driveAttemptId, 'no_op', undefined)
   }
 
-  markQueuedAttemptWithdrawn(driveAttemptId: string, reason: string): HrcMailDriveAttempt {
+  markClaimedAttemptWithdrawn(driveAttemptId: string, reason: string): HrcMailDriveAttempt {
     const attempt = this.requireAttempt(driveAttemptId)
-    if (attempt.queuedBehindRunId === undefined) {
-      throw new Error(`mail drive attempt ${driveAttemptId} is not queued`)
+    if (attempt.state !== 'claimed') {
+      throw new Error(`mail drive attempt ${driveAttemptId} is not withdrawable`)
     }
     return this.finishUnstarted(driveAttemptId, 'withdrawn', reason)
   }

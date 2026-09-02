@@ -872,6 +872,21 @@ export class BrokerInvocationEventRepository {
     )
   }
 
+  hasQueueEnqueued(runtimeId: string, inputId: string): boolean {
+    return (
+      this.db
+        .query<{ found: number }, [string, string]>(
+          `SELECT 1 AS found
+             FROM broker_invocation_events
+            WHERE runtime_id = ?
+              AND type = 'queue.enqueued'
+              AND json_extract(broker_event_json, '$.submissionId') = ?
+            LIMIT 1`
+        )
+        .get(runtimeId, inputId) !== null
+    )
+  }
+
   maxBrokerSeq(invocationId: string): number {
     const row = this.db
       .query<{ max_seq: number | null }, [string]>(

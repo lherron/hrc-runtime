@@ -88,6 +88,17 @@ describe('T-07890 queued injection withdrawal', () => {
     await runWrkqLedgerTail.call(server as never)
   }
 
+  function recordQueueEnqueued(seq = 1): void {
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-t07890',
+      seq,
+      time: new Date().toISOString(),
+      type: 'queue.enqueued',
+      runtimeId: RUNTIME_ID,
+      payload: { submissionId: INPUT_ID, class: 'queue', position: 0 },
+    })
+  }
+
   async function seedQueuedAttempt(): Promise<{
     envelopeId: string
     attempt: HrcMailDriveAttempt
@@ -118,6 +129,7 @@ describe('T-07890 queued injection withdrawal', () => {
       inputId: INPUT_ID,
       deliveryOutcome: 'queued_to_live_harness',
     })
+    recordQueueEnqueued()
     // Event 1 is envelope.created. The ack is the first unread row.
     db.wrkqLedgerCursors.advance(1)
     ledger.ack(envelope.id)
@@ -149,7 +161,7 @@ describe('T-07890 queued injection withdrawal', () => {
     const { attempt } = await seedQueuedAttempt()
     db.brokerInvocationEvents.appendEvent({
       invocationId: 'inv-t07890',
-      seq: 1,
+      seq: 2,
       time: new Date().toISOString(),
       type: 'input.accepted',
       runtimeId: RUNTIME_ID,
@@ -203,6 +215,37 @@ describe('T-07890 queued injection withdrawal', () => {
 
     expect(withdrawCalls).toEqual([])
     expect(db.mailDrives.getAttempt(claim.attempt.driveAttemptId)?.state).toBe('claimed')
+  })
+
+  it('withdraws an ordinary claimed attempt when the broker proves it queued', async () => {
+    const envelope = ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07890' })
+    const claim = db.mailDrives.claim(
+      TARGET,
+      'insert',
+      { envelopeIds: [envelope.id] },
+      { driveAttemptId: 'drive-t07890-interactive', runId: 'run-t07890-interactive' }
+    )
+    if (claim.outcome !== 'acquired') throw new Error('failed to seed interactive drive')
+    db.mailDrives.presentForAttempt(claim.attempt.driveAttemptId, [envelope.id])
+    await ledger.present({
+      envelope: envelope.id,
+      driveAttemptId: claim.attempt.driveAttemptId,
+      runtimeId: RUNTIME_ID,
+      inputId: INPUT_ID,
+    })
+    recordQueueEnqueued()
+    db.wrkqLedgerCursors.advance(1)
+    ledger.ack(envelope.id)
+
+    await runTail()
+
+    expect(withdrawCalls).toEqual([
+      { runtimeId: RUNTIME_ID, envelopeId: envelope.id, reason: REASON },
+    ])
+    expect(db.mailDrives.getAttempt(claim.attempt.driveAttemptId)).toMatchObject({
+      state: 'withdrawn',
+      lastError: REASON,
+    })
   })
 
   it('still wakes on envelope.created from the existing persisted cursor', async () => {

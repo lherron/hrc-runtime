@@ -2219,7 +2219,7 @@ async function withdrawAckedQueuedInjection(
   const envelopeId = event.resourceId
   if (envelopeId === undefined) return
 
-  const attempt = server.db.mailDrives.getUnfinishedQueuedAttemptForEnvelope(envelopeId)
+  const attempt = server.db.mailDrives.getClaimedAttemptForEnvelope(envelopeId)
   if (attempt === undefined) return
 
   // The wrkq receipt is the durable join to the broker input. Do not infer an
@@ -2236,6 +2236,13 @@ async function withdrawAckedQueuedInjection(
   // Once input.accepted is durable, the harness owns the input. The accepted
   // race is deliberately left to the normal one-turn lifecycle.
   if (server.db.brokerInvocationEvents.hasInputAccepted(runtimeId, inputId)) return
+
+  // A typed interactive turn is visible to the broker but does not mint an
+  // HRC run row. In that shape the kicker initially owns an ordinary claimed
+  // attempt even though the broker queued its input. Require the broker's own
+  // queue evidence here: it admits that real shape without ever withdrawing
+  // an idle-path presentation.
+  if (!server.db.brokerInvocationEvents.hasQueueEnqueued(runtimeId, inputId)) return
 
   const withdrawal = await server.getHarnessBrokerController().withdraw({
     runtimeId,
@@ -2254,7 +2261,7 @@ async function withdrawAckedQueuedInjection(
   }
 
   if (withdrawal.response.outcome === 'withdrawn') {
-    server.db.mailDrives.markQueuedAttemptWithdrawn(
+    server.db.mailDrives.markClaimedAttemptWithdrawn(
       attempt.driveAttemptId,
       QUEUED_INJECTION_WITHDRAW_REASON
     )
