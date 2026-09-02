@@ -724,6 +724,10 @@ export async function executeHeadlessBrokerStartTurn(
     rejectAccepted = reject
   })
   const bootOperation = this.startHeadlessBrokerRuntime(session, promptlessIntent, '', runId, {
+    // A promptless Codex seat still receives the compiler-owned agent priming
+    // turn. It has no HRC run/input identity because the caller's prompt is
+    // submitted separately through the invoke door after boot.
+    allowCompilerInitialInputWithoutIdentity: true,
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {

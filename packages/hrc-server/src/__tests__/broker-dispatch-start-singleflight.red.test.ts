@@ -203,32 +203,42 @@ describe('headless broker dispatch start single-flight', () => {
     expect(session).toBeDefined()
 
     const now = new Date().toISOString()
-    ;(server as any).startHeadlessBrokerRuntime = async () => ({
-      runtimeId: 'rt-t06313-viewer-timeout',
-      hostSessionId: resolved.hostSessionId,
-      scopeRef: SCOPE_REF,
-      laneRef: 'main',
-      generation: resolved.generation,
-      transport: 'headless',
-      harness: 'codex-cli',
-      provider: 'openai',
-      status: 'ready',
-      supportsInflightInput: false,
-      adopted: false,
-      controllerKind: 'harness-broker',
-      runtimeStateJson: {
-        broker: {
-          endpoint: { kind: 'stdio-jsonrpc-ndjson' },
-          substrate: { kind: 'daemon-child' },
-          presentation: {
-            kind: 'tmux-tui',
-            tuiWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+    let compilerPrimingAllowed = false
+    ;(server as any).startHeadlessBrokerRuntime = async (
+      _session: unknown,
+      _intent: unknown,
+      _prompt: unknown,
+      _runId: unknown,
+      options: { allowCompilerInitialInputWithoutIdentity?: boolean }
+    ) => {
+      compilerPrimingAllowed = options.allowCompilerInitialInputWithoutIdentity === true
+      return {
+        runtimeId: 'rt-t06313-viewer-timeout',
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: SCOPE_REF,
+        laneRef: 'main',
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        runtimeStateJson: {
+          broker: {
+            endpoint: { kind: 'stdio-jsonrpc-ndjson' },
+            substrate: { kind: 'daemon-child' },
+            presentation: {
+              kind: 'tmux-tui',
+              tuiWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+            },
           },
         },
-      },
-      createdAt: now,
-      updatedAt: now,
-    })
+        createdAt: now,
+        updatedAt: now,
+      }
+    }
     let presentationStarted = false
     ;(server as any).publishPresentation = async () => {
       presentationStarted = true
@@ -250,6 +260,7 @@ describe('headless broker dispatch start single-flight', () => {
 
     expect(response.status).toBe(200)
     expect(presentationStarted).toBe(true)
+    expect(compilerPrimingAllowed).toBe(true)
   })
 
   it('converges crossing dispatches for one empty host session onto one broker start', async () => {
@@ -473,6 +484,7 @@ describe('headless broker dispatch start single-flight', () => {
 
     const cleanupCalls: Array<{ runtimeId: string; dropContinuation?: boolean }> = []
     const starts: Array<{ continuation: unknown; prompt: string; runId: string }> = []
+    const invokedPrompts: string[] = []
     ;(server as any).terminateRuntime = async (
       runtime: { runtimeId: string },
       options: { dropContinuation?: boolean }
@@ -508,6 +520,14 @@ describe('headless broker dispatch start single-flight', () => {
       }
     }
     ;(server as any).publishPresentation = async () => undefined
+    ;(server as any).executeHeadlessBrokerInputTurn = async (
+      _session: unknown,
+      _runtime: unknown,
+      prompt: string
+    ) => {
+      invokedPrompts.push(prompt)
+      return Response.json({ ok: true })
+    }
 
     const response = await (server as any).handleHeadlessBrokerDispatchTurn(
       session,
@@ -517,6 +537,7 @@ describe('headless broker dispatch start single-flight', () => {
       { waitForCompletion: false }
     )
     const body = (await response.json()) as { runtimeId: string }
+    await Bun.sleep(0)
 
     expect(cleanupCalls).toEqual([
       { runtimeId: 'rt-t07031-failed-durable', dropContinuation: false },
@@ -524,10 +545,11 @@ describe('headless broker dispatch start single-flight', () => {
     expect(starts).toEqual([
       {
         continuation: { provider: 'openai', kind: 'thread', key: 'thread-t07031-stored' },
-        prompt: 'fresh turn after exhausted retries',
+        prompt: '',
         runId: 'run-t07031-fresh',
       },
     ])
+    expect(invokedPrompts).toEqual(['fresh turn after exhausted retries'])
     expect(body.runtimeId).toBe('rt-t07031-fresh')
     expect((server as any).runtimeStartOperations.size).toBe(0)
   })
