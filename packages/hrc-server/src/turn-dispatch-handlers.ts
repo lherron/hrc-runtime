@@ -136,12 +136,20 @@ function resolveSubmissionTarget(
   return findTargetSession(server.db, target)
 }
 
+const OPERATOR_PRINCIPALS = new Set(['agent:lance', 'lance', 'human:lance'])
+
+export function isOperatorPrincipal(principalRef: string): boolean {
+  return OPERATOR_PRINCIPALS.has(principalRef)
+}
+
 function runOriginFromSubmission(origin: SubmissionDoorRequest['origin']) {
-  const kind = origin.principalRef.startsWith('agent:')
-    ? ('agent' as const)
-    : origin.principalRef.startsWith('human:') || origin.principalRef === 'lance'
-      ? ('human' as const)
-      : ('system' as const)
+  const kind = isOperatorPrincipal(origin.principalRef)
+    ? ('human' as const)
+    : origin.principalRef.startsWith('agent:')
+      ? ('agent' as const)
+      : origin.principalRef.startsWith('human:')
+        ? ('human' as const)
+        : ('system' as const)
   return { actor: origin.principalRef, kind }
 }
 
@@ -349,9 +357,7 @@ export async function preemptAuthorized(
   session: HrcSessionRecord,
   request: PreemptSubmissionRequest
 ): Promise<boolean> {
-  if (request.origin.principalRef === 'lance' || request.origin.principalRef === 'human:lance') {
-    return true
-  }
+  if (isOperatorPrincipal(request.origin.principalRef)) return true
   if (request.origin.envelopeId === undefined) return false
   const runtime = server.db.runtimes
     .listByHostSessionId(session.hostSessionId)

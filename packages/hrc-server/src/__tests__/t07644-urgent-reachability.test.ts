@@ -645,7 +645,7 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     const held = say({
       body: 'operator interruption',
       delivery: 'hold',
-      fromPrincipalRef: 'human:lance',
+      fromPrincipalRef: 'agent:lance',
       fromScopeRef: undefined,
     })
     ;(server as any).requestMailKickerWake(TARGET, 'insert')

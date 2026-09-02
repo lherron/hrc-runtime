@@ -6,6 +6,7 @@ import { describe, expect, it } from 'bun:test'
 import { HrcErrorCode, HrcUnprocessableEntityError } from 'hrc-core'
 
 import { parseSubmissionRequest } from '../parsers/runtime.js'
+import { isOperatorPrincipal } from '../turn-dispatch-handlers.js'
 
 const serverSrc = join(import.meta.dir, '..')
 const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
@@ -82,6 +83,17 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
     expect(handlers).toContain('.seatProbe(')
     expect(handlers).toContain('.turnManifest(')
     expect(handlers).not.toContain("door = 'preempt'")
+  })
+
+  it('uses the wrkq operator principal for both run attribution and the preempt bypass', () => {
+    expect(isOperatorPrincipal('agent:lance')).toBe(true)
+    expect(isOperatorPrincipal('lance')).toBe(true)
+    expect(isOperatorPrincipal('human:lance')).toBe(true)
+    expect(isOperatorPrincipal('agent:cody')).toBe(false)
+
+    const handlers = readServer('turn-dispatch-handlers.ts')
+    expect(handlers).toContain('const kind = isOperatorPrincipal(origin.principalRef)')
+    expect(handlers).toContain('if (isOperatorPrincipal(request.origin.principalRef)) return true')
   })
 
   it('HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads', () => {
