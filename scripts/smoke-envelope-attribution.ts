@@ -219,7 +219,7 @@ async function waitUntil(
   throw new Error(`timed out waiting for ${description}`)
 }
 
-async function waitForSeat(status: 'busy' | 'idle', timeoutMs = 180_000): Promise<void> {
+async function waitForSeat(status: 'busy' | 'ready', timeoutMs = 180_000): Promise<void> {
   await waitUntil(
     `seat ${status}`,
     () => {
@@ -574,38 +574,45 @@ async function main(): Promise<void> {
   await writeEnvironmentEvidence()
   const existing = currentRuntime()
   if (existing !== undefined) {
-    throw new Error(
-      `refusing to reuse live target runtime ${existing.runtime_id} (${existing.status})`
-    )
+    runtimeId = existing.runtime_id
+    if (
+      existing.status !== 'ready' ||
+      existing.controller_kind !== 'harness-broker' ||
+      existing.harness !== 'claude-code' ||
+      existing.transport !== 'tmux'
+    ) {
+      throw new Error(`unexpected existing seat: ${JSON.stringify(existing)}`)
+    }
+    console.log(`using prewarmed ready seat: ${runtimeId}`)
+  } else {
+    console.log(`warming ${target} with no envelope in flight`)
+    const warmToken = `WARM-SEAT-${randomUUID().slice(0, 8)}`
+    const warm = await spawnCommand([
+      'hrc',
+      'turn',
+      target,
+      '--wait',
+      'final',
+      '--timeout',
+      '5m',
+      `End your turn with exactly this line and nothing else: ${warmToken}`,
+    ])
+    if (warm.exitCode !== 0 || !warm.stdout.includes(warmToken)) {
+      throw new Error(`warm turn failed: ${warm.stderr || warm.stdout}`)
+    }
+    const row = currentRuntime()
+    if (row === undefined) throw new Error('warm turn completed without a live runtime')
+    runtimeId = row.runtime_id
+    if (
+      row.status !== 'ready' ||
+      row.controller_kind !== 'harness-broker' ||
+      row.harness !== 'claude-code' ||
+      row.transport !== 'tmux'
+    ) {
+      throw new Error(`unexpected warm seat: ${JSON.stringify(row)}`)
+    }
+    console.log(`warm seat ready: ${runtimeId}`)
   }
-
-  console.log(`warming ${target} with no envelope in flight`)
-  const warmToken = `WARM-SEAT-${randomUUID().slice(0, 8)}`
-  const warm = await spawnCommand([
-    'hrc',
-    'turn',
-    target,
-    '--wait',
-    'final',
-    '--timeout',
-    '5m',
-    `End your turn with exactly this line and nothing else: ${warmToken}`,
-  ])
-  if (warm.exitCode !== 0 || !warm.stdout.includes(warmToken)) {
-    throw new Error(`warm turn failed: ${warm.stderr || warm.stdout}`)
-  }
-  const row = currentRuntime()
-  if (row === undefined) throw new Error('warm turn completed without a live runtime')
-  runtimeId = row.runtime_id
-  if (
-    row.status !== 'idle' ||
-    row.controller_kind !== 'harness-broker' ||
-    row.harness !== 'claude-code' ||
-    row.transport !== 'tmux'
-  ) {
-    throw new Error(`unexpected warm seat: ${JSON.stringify(row)}`)
-  }
-  console.log(`warm seat idle: ${runtimeId}`)
 
   const summaries: VariantSummary[] = []
   summaries.push(await runVariantA('A1'))
