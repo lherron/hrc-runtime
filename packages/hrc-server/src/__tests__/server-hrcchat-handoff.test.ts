@@ -189,10 +189,14 @@ describe('hrcchat minimal server routes', () => {
     }
 
     const dispatchedInputs: any[] = []
+    const brokerSubmissionId = 'submission-handoff-live-broker'
     ;(ctx.server as any).getHarnessBrokerController = () => ({
-      dispatchInput: async (request: any) => {
+      enqueue: async (request: any) => {
         dispatchedInputs.push(request)
-        return { ok: true, response: { accepted: true } }
+        return {
+          ok: true,
+          response: { submissionId: brokerSubmissionId, admission: 'admitted' },
+        }
       },
     })
 
@@ -222,15 +226,8 @@ describe('hrcchat minimal server routes', () => {
     const handoff = (await handoffRes.json()) as SemanticTurnHandoffStartedResponse
     expect(handoff.runtimeId).toBe(runtimeId)
     expect(dispatchedInputs).toHaveLength(1)
-    expect(dispatchedInputs[0]).toMatchObject({
-      runtimeId,
-      input: {
-        kind: 'user',
-        metadata: { runId: handoff.runId },
-      },
-    })
-    expect(dispatchedInputs[0].input.inputId).toStartWith('input-')
-    expect(dispatchedInputs[0].input.content[0].text).toContain('must go through broker input')
+    expect(dispatchedInputs[0].runtimeId).toBe(runtimeId)
+    expect(dispatchedInputs[0].body).toContain('must go through broker input')
 
     const verifyDb = openHrcDatabase(ctx.fixture.dbPath)
     try {
@@ -239,8 +236,8 @@ describe('hrcchat minimal server routes', () => {
       const request = verifyDb.messages.getById(handoff.messageId)
       expect(run?.runtimeId).toBe(runtimeId)
       expect(run?.invocationId).toBe(invocationId)
-      expect(run?.dispatchedInputId).toBe(dispatchedInputs[0].input.inputId)
-      expect(invocation?.runId).toBe(handoff.runId)
+      expect(run?.dispatchedInputId).toBe(brokerSubmissionId)
+      expect(invocation?.invocationId).toBe(invocationId)
       expect(request?.execution).toMatchObject({
         state: 'started',
         mode: 'interactive',
@@ -439,7 +436,10 @@ describe('hrcchat minimal server routes', () => {
       db.close()
     }
     ;(ctx.server as any).getHarnessBrokerController = () => ({
-      dispatchInput: async () => ({ ok: true, response: { accepted: true } }),
+      enqueue: async () => ({
+        ok: true,
+        response: { submissionId: 'submission-handoff-live-broker-reply', admission: 'admitted' },
+      }),
     })
 
     const handoffRes = await ctx.fixture.postJson('/v1/messages/turn-handoff', {

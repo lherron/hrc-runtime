@@ -59,7 +59,10 @@ describe('hrcchat minimal server routes', () => {
       db.close()
     }
     ;(ctx.server as any).getHarnessBrokerController = () => ({
-      dispatchInput: async () => ({ ok: true, response: { accepted: true } }),
+      enqueue: async () => ({
+        ok: true,
+        response: { submissionId: 'submission-handoff-durable-recovery', admission: 'admitted' },
+      }),
     })
 
     const handoffRes = await ctx.fixture.postJson('/v1/messages/turn-handoff', {
@@ -471,10 +474,14 @@ describe('hrcchat minimal server routes', () => {
     }
 
     const dispatchedInputs: any[] = []
+    const brokerSubmissionId = 'submission-literal-live-broker'
     ;(ctx.server as any).getHarnessBrokerController = () => ({
-      dispatchInput: async (request: any) => {
+      enqueue: async (request: any) => {
         dispatchedInputs.push(request)
-        return { ok: true, response: { accepted: true } }
+        return {
+          ok: true,
+          response: { submissionId: brokerSubmissionId, admission: 'admitted' },
+        }
       },
     })
 
@@ -500,22 +507,15 @@ describe('hrcchat minimal server routes', () => {
     expect(dispatchedInputs).toHaveLength(1)
     expect(dispatchedInputs[0]).toMatchObject({
       runtimeId,
-      input: {
-        kind: 'user',
-        metadata: { runId: enterBody.runId },
-      },
+      body: 'What is 2+2?',
     })
-    expect(dispatchedInputs[0].input.inputId).toStartWith('input-')
-    expect(dispatchedInputs[0].input.content[0].text).toBe('What is 2+2?')
 
     const verifyDb = openHrcDatabase(ctx.fixture.dbPath)
     try {
       const run = verifyDb.runs.getByRunId(enterBody.runId)
-      const invocation = verifyDb.brokerInvocations.getByInvocationId(invocationId)
       expect(run?.runtimeId).toBe(runtimeId)
       expect(run?.invocationId).toBe(invocationId)
-      expect(run?.dispatchedInputId).toBe(dispatchedInputs[0].input.inputId)
-      expect(invocation?.runId).toBe(enterBody.runId)
+      expect(run?.dispatchedInputId).toBe(brokerSubmissionId)
 
       const literalEvents = verifyDb.hrcEvents.listByScope(scopeRef, {
         eventKind: 'target.literal-input',

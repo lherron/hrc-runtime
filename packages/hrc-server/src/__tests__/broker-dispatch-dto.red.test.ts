@@ -37,7 +37,7 @@
  *   - supportsInFlightInput: false in broker-headless-handlers.ts (all 4 sites)
  *
  * Stub pattern (established in server-sdk-dispatch.test.ts):
- *   (server as any).getHarnessBrokerController = () => ({ dispatchInput: async () => ... })
+ *   (server as any).getHarnessBrokerController = () => ({ invoke: async () => ... })
  *   This replaces broker IPC with a no-spawn stub while exercising the real DB
  *   row path and response serialisation.
  *
@@ -187,7 +187,7 @@ function seedBrokerRuntime(
 
 /**
  * Stub getHarnessBrokerController().invoke() on the server to return
- * a successful broker input response. This bypasses the real broker IPC (which
+ * a successful broker admission response. This bypasses the real broker IPC (which
  * requires a live leased-tmux subprocess) while exercising the full handler
  * path: DB row creation, cursor capture, response serialisation.
  *
@@ -195,12 +195,11 @@ function seedBrokerRuntime(
  */
 function stubBrokerDispatchInput(): void {
   ;(server as any).getHarnessBrokerController = () => ({
-    dispatchInput: async (_input: unknown) => ({
+    invoke: async (_input: unknown) => ({
       ok: true,
       response: {
-        inputId: `input-stub-${Date.now()}`,
-        accepted: true,
-        disposition: 'started',
+        submissionId: `submission-stub-${Date.now()}`,
+        admission: 'admitted',
       },
     }),
     waitForAttachedStartReady: async () => Promise.reject(new Error('not applicable')),
@@ -250,7 +249,7 @@ describe('T-05078/13 dispatch DTO shape — broker transport', () => {
     const runtimeId = 'rt-dto-shape-test-01'
     seedBrokerRuntime(hostSessionId, SCOPE_REF, generation, runtimeId)
 
-    // Stub broker controller so dispatchInput succeeds without a live broker.
+    // Stub broker controller so invoke succeeds without a live broker.
     stubBrokerDispatchInput()
 
     // Dispatch with waitForCompletion:false (the path that should return observation).
@@ -393,7 +392,7 @@ describe('T-05078/3 dispatch DTO cursor atomicity — pre-side-effect capture', 
     stubBrokerDispatchInput()
 
     // Fresh invocation: no broker events exist yet → maxBrokerSeq = 0.
-    // The broker.afterSeq cursor must be captured BEFORE the stub's dispatchInput
+    // The broker.afterSeq cursor must be captured BEFORE the stub's invoke
     // runs (which in production would stream broker events into broker_invocation_events).
     const priorMaxBrokerSeq = readMaxBrokerSeqForInvocation(INVOCATION_ID)
     expect(priorMaxBrokerSeq).toBe(0) // Sanity: fresh invocation

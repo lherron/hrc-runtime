@@ -298,7 +298,7 @@ describe('runtime lifecycle start/attach', () => {
 
   // T-01757 (Wave C, A2): the out-of-process asp-broker child cannot spawn in
   // bun unit tests, so broker-START tests stub getHarnessBrokerController().start()
-  // (the established .dispatchInput stub pattern). The route decision + the real
+  // plus its guarded submission doors. The route decision + the real
   // plan compile still run BEFORE the stub, so coverage stays on what we care
   // about (headless routing, compiled interactionMode, persistence,
   // artifact-absence, idempotent reuse); only the spawn is replaced. The stub
@@ -311,14 +311,16 @@ describe('runtime lifecycle start/attach', () => {
     options: { continuationKey?: string; gate?: Promise<unknown> } = {}
   ): {
     calls: any[]
-    inputCalls: any[]
+    enqueueCalls: any[]
+    invokeCalls: any[]
     runtimeIds: string[]
     startCalled: Promise<void>
     runtimePersisted: Promise<void>
     inputDispatched: Promise<void>
   } {
     const calls: any[] = []
-    const inputCalls: any[] = []
+    const enqueueCalls: any[] = []
+    const invokeCalls: any[] = []
     const runtimeIds: string[] = []
     const startCalled = createSignal()
     const runtimePersisted = createSignal()
@@ -387,13 +389,15 @@ describe('runtime lifecycle start/attach', () => {
           db.close()
         }
       },
-      dispatchInput: async (input: any) => {
-        inputCalls.push(input)
+      enqueue: async (input: any) => {
+        enqueueCalls.push(input)
         const db = openHrcDatabase(dbPath)
         try {
-          const runId = input.input.metadata?.runId
-          if (typeof runId !== 'string') {
-            throw new Error('broker-input stub: input metadata has no runId')
+          const runId = db.runs
+            .listRuns({ runtimeId: input.runtimeId, status: ['accepted'] })
+            .at(0)?.runId
+          if (!runId) {
+            throw new Error('broker-enqueue stub: runtime has no accepted run')
           }
           const completedAt = new Date().toISOString()
           db.runs.markCompleted(runId, {
@@ -402,7 +406,41 @@ describe('runtime lifecycle start/attach', () => {
             updatedAt: completedAt,
           })
           inputDispatched.resolve()
-          return { ok: true, response: { accepted: true } }
+          return {
+            ok: true,
+            response: {
+              submissionId: `submission-${runId}`,
+              admission: 'admitted',
+            },
+          }
+        } finally {
+          db.close()
+        }
+      },
+      invoke: async (input: any) => {
+        invokeCalls.push(input)
+        const db = openHrcDatabase(dbPath)
+        try {
+          const runId = db.runs
+            .listRuns({ runtimeId: input.runtimeId, status: ['accepted'] })
+            .at(0)?.runId
+          if (!runId) {
+            throw new Error('broker-invoke stub: runtime has no accepted run')
+          }
+          const completedAt = new Date().toISOString()
+          db.runs.markCompleted(runId, {
+            status: 'completed',
+            completedAt,
+            updatedAt: completedAt,
+          })
+          inputDispatched.resolve()
+          return {
+            ok: true,
+            response: {
+              submissionId: `submission-${runId}`,
+              admission: 'admitted',
+            },
+          }
         } finally {
           db.close()
         }
@@ -410,7 +448,8 @@ describe('runtime lifecycle start/attach', () => {
     })
     return {
       calls,
-      inputCalls,
+      enqueueCalls,
+      invokeCalls,
       runtimeIds,
       startCalled: startCalled.promise,
       runtimePersisted: runtimePersisted.promise,
@@ -555,10 +594,8 @@ describe('runtime lifecycle start/attach', () => {
 
     expect(secondData.runtimeId).toBe(firstData.runtimeId)
     expect(stub.calls).toHaveLength(1)
-    expect(stub.inputCalls).toHaveLength(1)
-    expect(stub.inputCalls[0].input.content).toEqual([
-      { type: 'text', text: 'wake the existing session' },
-    ])
+    expect(stub.enqueueCalls).toHaveLength(1)
+    expect(stub.enqueueCalls[0].body).toBe('wake the existing session')
   })
 
   it('keeps a fresh-session prompt in the broker start after the waiting client exits', async () => {
@@ -589,15 +626,16 @@ describe('runtime lifecycle start/attach', () => {
       await request.catch(() => undefined)
 
       expect(stub.calls).toHaveLength(1)
-      expect(stub.calls[0].startRequest.initialInput?.content).toEqual([
-        { type: 'text', text: 'fresh prompt must survive caller timeout' },
-      ])
+      expect(stub.calls[0].startRequest.initialInput).toBeUndefined()
     } finally {
       releaseGate()
     }
 
     await stub.runtimePersisted
     expect(stub.runtimeIds).toHaveLength(1)
+    await stub.inputDispatched
+    expect(stub.invokeCalls).toHaveLength(1)
+    expect(stub.invokeCalls[0].body).toBe('fresh prompt must survive caller timeout')
   })
 
   it(
@@ -653,10 +691,8 @@ describe('runtime lifecycle start/attach', () => {
       // second broker invocation is not queueing and can split the session.
       expect(stub.calls).toHaveLength(1)
       await stub.inputDispatched
-      expect(stub.inputCalls).toHaveLength(1)
-      expect(stub.inputCalls[0].input.content).toEqual([
-        { type: 'text', text: 'queued prompt must survive boot timeout' },
-      ])
+      expect(stub.invokeCalls).toHaveLength(1)
+      expect(stub.invokeCalls[0].body).toBe('queued prompt must survive boot timeout')
     },
     INTEGRATION_TIMEOUT_MS
   )

@@ -94,6 +94,7 @@ type ServerPeek = {
   federationNodeId: string
   runWrkqLedgerTail: () => Promise<void>
   runMailKickerSweep: () => Promise<void>
+  mailKickerTargetOperations: Map<string, Promise<void>>
   dispatchTurnForSession: (
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
@@ -284,12 +285,6 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
    * the call site that carries no `joinInFlightRuntimeStart`.
    */
   it('joins an in-flight birth instead of minting a second runtime', async () => {
-    ledger.say({
-      toScopeRef: SCOPE,
-      fromScopeRef: SENDER,
-      roomKey: 'T-07693',
-      body: 'arrives mid-birth',
-    })
     await startServer()
     const instance = server as HrcServer
     homeScopeHere(instance)
@@ -306,7 +301,9 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     if (session === null) throw new Error('fixture failed to resolve its session')
 
     // Delivery INTO a runtime is real broker IPC; what this test asserts is
-    // WHICH runtime the second wake was handed, so record that and stop there.
+    // WHICH runtime each guarded submission was handed, so record that and
+    // stop there. T-07880 sends the cold caller prompt through this same door
+    // after boot, followed here by the envelope wake.
     const joins: string[] = []
     peek(instance).executeInteractiveBrokerInputTurn = async (
       _session: HrcSessionRecord,
@@ -339,12 +336,25 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
 
     // WAKE 2 — the wrkc envelope, into a seat that is now durably busy with a
     // birth still in flight.
+    ledger.say({
+      toScopeRef: SCOPE,
+      fromScopeRef: SENDER,
+      roomKey: 'T-07693',
+      body: 'arrives mid-birth',
+    })
     await peek(instance).runWrkqLedgerTail()
 
     // Release only AFTER the second wake is in: the fence awaits the birth, so
-    // holding the gate past this point would deadlock the very join it proves.
+    // awaiting the whole wake before release would deadlock the very join it
+    // proves. The target operation is the direct evidence that wake 2 reached
+    // the seat and is waiting on the registered birth. The durable run is not
+    // inserted until that birth resolves.
+    await waitUntil(
+      () => peek(instance).mailKickerTargetOperations.has(TARGET),
+      'the envelope wake joined the in-flight seat birth'
+    )
     broker.release()
-    await waitUntil(() => joins.length === 1, 'the envelope wake reached the seat')
+    await waitUntil(() => joins.length === 2, 'both guarded submissions reached the seat')
     await operatorTurn
 
     const runtimes = db.runtimes.listByHostSessionId(resolved.hostSessionId)
@@ -352,14 +362,15 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       brokerStarts: broker.starts(),
       runtimeCount: runtimes.length,
       sessionCount: db.sessions.listByScopeRef(SCOPE, 'main').length,
-      // The point of the fence: the second wake was delivered into the runtime
-      // the FIRST one is still birthing, not into a seat of its own.
+      // The point of the fence: both the caller turn and second wake were
+      // delivered into the runtime the FIRST one is still birthing, not into a
+      // seat of their own.
       joinedRuntimes: joins,
     }).toEqual({
       brokerStarts: 1,
       runtimeCount: 1,
       sessionCount: 1,
-      joinedRuntimes: ['rt-t07693-1'],
+      joinedRuntimes: ['rt-t07693-1', 'rt-t07693-1'],
     })
   })
 })

@@ -370,6 +370,97 @@ describe('headless broker dispatch start single-flight', () => {
     }
   })
 
+  it('holds a turn joining lifecycle boot until compiler priming is terminal', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    const db = openHrcDatabase(fixture.dbPath)
+    const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
+    db.close()
+    expect(session).toBeDefined()
+
+    const planHash = 'plan-t07880-joining-priming'
+    const profileHash = 'profile-t07880-joining-priming'
+    const invocationId = 'inv-t07880-joining-priming'
+    const submissionId = 'input-t07880-compiler-priming'
+    const turnId = 'turn-t07880-compiler-priming'
+    const runtime = {
+      runtimeId: 'rt-t07880-joining-priming',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      activeOperationId: 'op-t07880-joining-priming',
+      activeInvocationId: invocationId,
+      planHash,
+      selectedProfileHash: profileHash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    ;(server as any).db.compiledRuntimePlans.insert({
+      planHash,
+      compileId: 'compile-t07880-joining-priming',
+      schemaVersion: 'agent-runtime-plan/v1',
+      compilerName: 'agent-spaces',
+      compilerVersion: 'test',
+      planProjectionJson: JSON.stringify({
+        executionProfiles: [
+          {
+            profileHash,
+            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
+        ],
+      }),
+      createdAt: new Date().toISOString(),
+    })
+    ;(server as any).runtimeStartOperations.set(resolved.hostSessionId, Promise.resolve(runtime))
+
+    let queuedDispatchCalls = 0
+    ;(server as any).dispatchQueuedHeadlessTurnInput = async () => {
+      queuedDispatchCalls += 1
+      return Response.json({ ok: true })
+    }
+
+    const dispatch = (server as any).handleHeadlessBrokerDispatchTurn(
+      session,
+      headlessBrokerIntent(),
+      'caller turn joining lifecycle boot',
+      'run-t07880-joining-priming',
+      { waitForCompletion: false }
+    ) as Promise<Response>
+    await Bun.sleep(0)
+    expect(queuedDispatchCalls).toBe(0)
+
+    const append = (seq: number, type: string, payload: Record<string, unknown>) => {
+      const time = new Date(Date.UTC(2026, 8, 2, 8, 0, seq)).toISOString()
+      ;(server as any).db.brokerInvocationEvents.appendEvent({
+        invocationId,
+        seq,
+        time,
+        type,
+        runtimeId: runtime.runtimeId,
+        runId: 'run-t07880-joining-priming',
+        payload,
+        envelopeJson: JSON.stringify({ invocationId, seq, time, type, payload }),
+      })
+      for (const subscriber of (server as any).rawBrokerSubscribers) {
+        subscriber({ record: { invocationId } })
+      }
+    }
+    append(1, 'submission.executed', { submissionId, turnId })
+    await Bun.sleep(0)
+    expect(queuedDispatchCalls).toBe(0)
+
+    append(2, 'turn.completed', { turnId, status: 'completed' })
+    await dispatch
+    expect(queuedDispatchCalls).toBe(1)
+  })
+
   it('holds single-flight ownership while a cold durable runtime is reattached or replaced', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const db = openHrcDatabase(fixture.dbPath)

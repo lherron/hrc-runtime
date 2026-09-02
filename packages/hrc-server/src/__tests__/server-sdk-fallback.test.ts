@@ -25,7 +25,7 @@ describe('SDK fallback transport selection', () => {
     await fixture.cleanup()
   })
 
-  it('does not fall back to SDK when the latest tmux runtime is busy', async () => {
+  it('rejects the removed intent alias before considering SDK fallback for a busy runtime', async () => {
     const scope = 'sdk-fallback-busy-tmux'
     const hsid = await resolveSession(scope)
     fixture.seedTmuxRuntime(hsid, scope, 'rt-busy-tmux', {
@@ -57,10 +57,13 @@ describe('SDK fallback transport selection', () => {
 
     const data = (await res.json()) as any
     expect(res.status).toBe(422)
-    expect(data.error?.code).toBe('missing_runtime_intent')
+    expect(data.error).toMatchObject({
+      code: 'unknown_field',
+      detail: { field: 'intent' },
+    })
   })
 
-  it('does not fall back to SDK when the latest tmux runtime is starting', async () => {
+  it('rejects the removed intent alias before considering SDK fallback for a starting runtime', async () => {
     const scope = 'sdk-fallback-starting-tmux'
     const hsid = await resolveSession(scope)
     fixture.seedTmuxRuntime(hsid, scope, 'rt-starting-tmux', {
@@ -93,6 +96,9 @@ describe('SDK fallback transport selection', () => {
 
     const data = (await res.json()) as any
     expect(res.status).toBe(422)
-    expect(data.error?.code).toBe('missing_runtime_intent')
+    expect(data.error).toMatchObject({
+      code: 'unknown_field',
+      detail: { field: 'intent' },
+    })
   })
 })

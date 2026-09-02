@@ -14,6 +14,7 @@ import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { buildDirectInteractiveAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
+import { waitForCompilerPrimingTerminal } from './broker-headless-handlers.js'
 import {
   BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
   rejectedBrokerAdoptionPaths,
@@ -366,6 +367,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     }
     const bootedRuntime = await bootOperation
     assertActuatorSplitRuntimeReuse(dispatchIntent, bootedRuntime)
+    await waitForCompilerPrimingTerminal(this, bootedRuntime, this.runtimeStartPresentationSignal)
     if (highRiskActuatorSplit) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',

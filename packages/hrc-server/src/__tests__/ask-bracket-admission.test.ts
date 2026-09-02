@@ -10,8 +10,8 @@
  *  5. isPendingAskUserQuestionRun — TRUE for an open `request_user_input` bracket.
  *  6. isPendingAskUserQuestionRun — TRUE for an open `AskUserQuestion` bracket; FALSE
  *     once a matching tool_result closes it; FALSE after turn.completed clears all.
- *  7. isBrokerRuntimeQueueCapable — FALSE for {turns:'single'} caps; TRUE after
- *     updating the invocation to {input:{queue:true}}.
+ *  7. brokerRuntimeSupportsAdmissionClass('queue') — FALSE for {turns:'single'}
+ *     caps; TRUE after the invocation advertises admission.classes=['queue'].
  *
  * Run with: TMPDIR=/tmp bun test packages/hrc-server/src/__tests__/ask-bracket-admission.test.ts
  */
@@ -22,7 +22,7 @@ import type { HrcLifecycleEvent } from 'hrc-core'
 
 import {
   assertRuntimeNotBusy,
-  isBrokerRuntimeQueueCapable,
+  brokerRuntimeSupportsAdmissionClass,
   isPendingAskUserQuestionRun,
 } from '../require-helpers'
 import {
@@ -197,11 +197,11 @@ describe('isPendingAskUserQuestionRun', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. isBrokerRuntimeQueueCapable — queue flag true/false
+// 7. brokerRuntimeSupportsAdmissionClass — advertised class true/false
 // ---------------------------------------------------------------------------
 
-describe('isBrokerRuntimeQueueCapable', () => {
-  it('returns false when capabilities lack input.queue (seeded {turns:"single"})', () => {
+describe('brokerRuntimeSupportsAdmissionClass', () => {
+  it('returns false when capabilities do not advertise queue (seeded {turns:"single"})', () => {
     // The seeded fixture has capabilitiesJson = JSON.stringify({ turns: 'single' }).
     // The runtime needs activeInvocationId pointing at the broker invocation.
     fixture.db.runtimes.update(RUNTIME_ID, {
@@ -210,20 +210,20 @@ describe('isBrokerRuntimeQueueCapable', () => {
     })
     const runtime = getRuntime()
 
-    expect(isBrokerRuntimeQueueCapable(fixture.db, runtime)).toBe(false)
+    expect(brokerRuntimeSupportsAdmissionClass(fixture.db, runtime, 'queue')).toBe(false)
   })
 
-  it('returns true after updating the invocation capabilitiesJson to {input:{queue:true}}', () => {
+  it("returns true after the invocation advertises admission.classes=['queue']", () => {
     fixture.db.runtimes.update(RUNTIME_ID, {
       activeInvocationId: String(INVOCATION_ID),
       updatedAt: ts(11),
     })
     fixture.db.brokerInvocations.update(INVOCATION_ID, {
-      capabilitiesJson: JSON.stringify({ input: { queue: true } }),
+      capabilitiesJson: JSON.stringify({ admission: { classes: ['queue'] } }),
       updatedAt: ts(11),
     })
     const runtime = getRuntime()
 
-    expect(isBrokerRuntimeQueueCapable(fixture.db, runtime)).toBe(true)
+    expect(brokerRuntimeSupportsAdmissionClass(fixture.db, runtime, 'queue')).toBe(true)
   })
 })
