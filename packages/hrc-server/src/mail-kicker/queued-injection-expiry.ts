@@ -2,6 +2,8 @@ import type { HrcBrokerInvocationEventRecord } from 'hrc-core'
 
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
+import { targetSessionRefForLedgerScope } from '../wrkq/ledger-scope.js'
+import { failEnvelopeWithAudit } from './envelope-terminal.js'
 
 const EXPIRY_EVENT_TYPES = new Set(['queue.expired', 'submission.expired'])
 const inFlightByServer = new WeakMap<object, Map<string, Promise<void>>>()
@@ -64,6 +66,19 @@ async function failReceiptedExpiredSubmission(
         candidate.inputId === submissionId
     )
     if (receipt === undefined) continue
+    const targetSessionRef =
+      envelope.to?.scopeRef === undefined
+        ? undefined
+        : targetSessionRefForLedgerScope(envelope.to.scopeRef)
+    if (targetSessionRef === undefined) {
+      writeServerLog('WARN', 'wrkq.kicker.queued_injection_expiry_target_invalid', {
+        envelopeId,
+        runtimeId: record.runtimeId,
+        inputId: submissionId,
+        targetScopeRef: envelope.to?.scopeRef,
+      })
+      continue
+    }
 
     writeServerLog('WARN', 'wrkq.kicker.queued_injection_expired', {
       envelopeId,
@@ -71,12 +86,15 @@ async function failReceiptedExpiredSubmission(
       inputId: submissionId,
     })
     try {
-      await server.wrkqLedger.fail({
+      const terminal = await failEnvelopeWithAudit(server, {
         envelope: envelopeId,
         reason: 'undeliverable',
         runtime: record.runtimeId,
+        targetSessionRef,
+        driveAttemptId,
+        callSite: 'queued_injection_expiry',
       })
-      failedCount += 1
+      if (terminal.outcome === 'failed') failedCount += 1
     } catch (error) {
       writeServerLog('WARN', 'wrkq.kicker.queued_injection_expiry_fail_failed', {
         envelopeId,

@@ -432,6 +432,92 @@ describe('T-07891 HRC-held busy batches', () => {
     expect(ledger.envelopes.get(queued.id)?.presentedTo).toHaveLength(1)
   })
 
+  it('keeps scope-less mail held past five minutes across wakes, sweep, cold catch-up, and a failure notice', async () => {
+    await startServer()
+    await seedObservedSeat({
+      state: 'turn-active',
+      turnId: 'turn-t07917-six-minutes',
+      policy: 'open',
+    })
+    const calls = installDispatchCapture()
+    const queued = say('T-07917 held body survives every maintenance path', {
+      fromPrincipalRef: 'agent:lance',
+      fromScopeRef: undefined,
+    })
+    await drain()
+
+    const active = server as HrcServer
+    const internals = serverInternals(active)
+    const held = heldAttempt(internals.db)
+    if (held === undefined) throw new Error('missing held attempt')
+    const sixMinutesAgo = new Date(Date.now() - 6 * 60_000).toISOString()
+    internals.db.sqlite
+      .query(
+        `UPDATE hrcmail_drive_attempts
+         SET claimed_at = ?, updated_at = ?
+         WHERE drive_attempt_id = ?`
+      )
+      .run(sixMinutesAgo, sixMinutesAgo, held.driveAttemptId)
+
+    const expectStillHeld = (expectedDispatches = 0) => {
+      expect(ledger.envelopes.get(queued.id)).toMatchObject({
+        state: 'pending',
+        terminal: false,
+        presentedTo: [],
+      })
+      expect(ledger.failRequests.filter((request) => request.envelope === queued.id)).toEqual([])
+      expect(heldAttempt(internals.db)).toMatchObject({
+        driveAttemptId: held.driveAttemptId,
+        state: 'held',
+        presentedCount: 1,
+      })
+      expect(calls()).toHaveLength(expectedDispatches)
+    }
+
+    // Every ordinary wake class must retain the same HRC-owned, unreceipted
+    // batch while the broker still observes the foreground turn.
+    await drain('insert')
+    await drain('turn_completion')
+    await drain('periodic')
+    expectStillHeld()
+
+    // The periodic full sweep performs both D3/D7 maintenance and the seated
+    // target read. Six simulated minutes of age is not terminal evidence.
+    await (active as any).runMailKickerSweep()
+    expectStillHeld()
+
+    // Replay the one-time cold-start catch-up against the already-persisted
+    // store. It may rediscover the target, but cannot reinterpret held mail as
+    // an unborn scope.
+    ;(active as any).mailKickerColdStartCatchupPending = true
+    await (active as any).runWrkqLedgerTail()
+    await (active as any).drainMailKickerTarget(TARGET)
+    expectStillHeld()
+
+    // A sender-side failure notice is another wake for this same busy seat.
+    // It must not terminal or present the unrelated held obligation.
+    const failedOutbound = ledger.say({
+      toScopeRef: 'agent:unreachable:project:hrc-runtime:task:T-07917',
+      fromScopeRef: SCOPE,
+      roomKey: 'T-07917-failure-notice',
+      body: 'seed an unrelated sender failure notice',
+    })
+    internals.db.wrkqLedgerCursors.advance(ledger.events.length)
+    await ledger.fail({ envelope: failedOutbound.id, reason: 'undeliverable' })
+    await (active as any).runWrkqLedgerTail()
+    await (active as any).drainMailKickerTarget(TARGET)
+    expectStillHeld(1)
+
+    // The first observed boundary presents the original envelope exactly once;
+    // a reader disposal then ends it normally rather than as undeliverable.
+    seat = { state: 'idle' }
+    await drain('turn_completion')
+    await waitUntil(() => calls().length === 2, 'post-six-minute boundary dispatch')
+    expect(ledger.envelopes.get(queued.id)?.presentedTo).toHaveLength(1)
+    ledger.ack(queued.id)
+    expect(ledger.envelopes.get(queued.id)?.state).toBe('acked')
+  })
+
   it('drops acked, withdrawn, and expired members before flush and never presents them', async () => {
     await startServer()
     await seedObservedSeat({ state: 'turn-active', turnId: 'turn-human', policy: 'open' })

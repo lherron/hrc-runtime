@@ -23,6 +23,7 @@ import {
   replayHeldBatchReceipts,
   seatCanDispatch,
 } from './mail-kicker/batch-flush.js'
+import { failEnvelopeWithAudit } from './mail-kicker/envelope-terminal.js'
 import {
   type HeldBatchActionableEnvelope,
   MAX_PRESENTED_PER_ATTEMPT,
@@ -310,6 +311,7 @@ function disposeAttemptObligations(
             runtime,
             targetSessionRef,
             driveAttemptId,
+            callSite: 'dispose_attempt_obligations',
           })
           continue
         }
@@ -357,21 +359,10 @@ async function failEnvelope(
     runtime?: string | undefined
     targetSessionRef: string
     driveAttemptId?: string | undefined
+    callSite: 'birth_refusals_exhausted' | 'dispose_attempt_obligations' | 'lapsed_obligations'
   }
 ): Promise<void> {
-  const failed = await server.wrkqLedger.fail({
-    envelope: input.envelope,
-    reason: input.reason,
-    ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
-  })
-  writeServerLog('INFO', 'wrkq.kicker.envelope_failed', {
-    targetSessionRef: input.targetSessionRef,
-    ...(input.driveAttemptId === undefined ? {} : { driveAttemptId: input.driveAttemptId }),
-    envelope: input.envelope,
-    reason: input.reason,
-    ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
-    state: failed.state,
-  })
+  await failEnvelopeWithAudit(server, input)
 }
 
 /** Is this runtime, by its own status column, no longer live? */
@@ -2004,7 +1995,12 @@ async function failUndeliverableMail(
       envelope: envelope.id,
       refusals,
     })
-    await failEnvelope(server, { envelope: envelope.id, reason: 'undeliverable', targetSessionRef })
+    await failEnvelope(server, {
+      envelope: envelope.id,
+      reason: 'undeliverable',
+      targetSessionRef,
+      callSite: 'birth_refusals_exhausted',
+    })
   }
 }
 
@@ -2048,6 +2044,7 @@ async function failLapsedObligations(
         reason: 'runtime_terminated',
         runtime,
         targetSessionRef,
+        callSite: 'lapsed_obligations',
       })
     } catch (error) {
       writeServerLog('WARN', 'wrkq.kicker.lapse_failed', {
