@@ -50,6 +50,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { AttachBeforeInvocationStartOption, AttachDescriptorResponse } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { automaticContinuationForRuntime } from './session-continuation-reuse.js'
 import {
   findPersistedLifecycleTerminalReason,
   findUserInitiatedContinuationClearReason,
@@ -332,7 +333,7 @@ export async function startRuntimeForSession(
           reusableBrokerRuntime &&
           reusableBrokerRuntime.controllerKind === 'harness-broker' &&
           !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
-          (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
+          automaticContinuationForRuntime(this.db, session, reusableBrokerRuntime)?.key
         ) {
           assertActuatorSplitRuntimeReuse(startIntent, reusableBrokerRuntime)
           await this.publishPresentation(reusableBrokerRuntime, presentationOptions)
@@ -389,7 +390,10 @@ export async function startRuntimeForSession(
         startIntent.harness.provider,
         startIntent.harness.id
       )
-      if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
+      if (
+        reusableRuntime &&
+        automaticContinuationForRuntime(this.db, session, reusableRuntime)?.key
+      ) {
         assertActuatorSplitRuntimeReuse(startIntent, reusableRuntime)
         this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
         return reusableRuntime

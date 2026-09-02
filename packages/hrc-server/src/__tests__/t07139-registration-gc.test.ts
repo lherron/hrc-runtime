@@ -185,7 +185,11 @@ describe('T-07139 operator-invoked registration retirement', () => {
       NOW
     )
     expect(projectRegistrationGcCandidates(server, NOW).candidates).toEqual([])
-    db.sessions.updateContinuation(runtime.hostSessionId, undefined, NOW)
+    // Restore the fixture's original keyless precondition without exposing a
+    // production repository path that can erase recorded continuation history.
+    db.sqlite
+      .query('UPDATE sessions SET continuation_json = NULL WHERE host_session_id = ?')
+      .run(runtime.hostSessionId)
     db.runtimes.update(runtimeId, { status: 'detached', updatedAt: NOW })
     expect(projectRegistrationGcCandidates(server, NOW).candidates).toEqual([])
   })

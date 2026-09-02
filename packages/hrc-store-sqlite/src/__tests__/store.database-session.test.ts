@@ -17,6 +17,7 @@ describe('openHrcDatabase', () => {
     try {
       expect(db).toBeDefined()
       expect(db.migrations.applied.length).toBeGreaterThan(0)
+      expect(db.migrations.applied).toContain('0053_continuation_reuse_state')
       // All repositories must be present
       expect(db.continuities).toBeDefined()
       expect(db.sessions).toBeDefined()
@@ -294,6 +295,44 @@ describe('SessionRepository', () => {
       const updated = db.sessions.updateContinuation('hsid-json-2', continuation, ts())
       expect(updated).not.toBeNull()
       expect(updated!.continuation).toEqual(continuation)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('retains continuation while disabling and re-enabling automatic reuse', () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const now = ts()
+      db.sessions.insert({
+        hostSessionId: 'hsid-reuse-state',
+        scopeRef: testScopeRef('scope-reuse-state'),
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.sessions.updateContinuation(
+        'hsid-reuse-state',
+        { provider: 'anthropic', key: 'retained-key' },
+        ts()
+      )
+
+      db.sessions.setContinuationReuseDisabled('hsid-reuse-state', true, ts())
+      expect(db.sessions.getByHostSessionId('hsid-reuse-state')?.continuation).toEqual({
+        provider: 'anthropic',
+        key: 'retained-key',
+      })
+      expect(db.sessions.isContinuationReuseDisabled('hsid-reuse-state')).toBe(true)
+
+      db.sessions.updateContinuation(
+        'hsid-reuse-state',
+        { provider: 'anthropic', key: 'new-key' },
+        ts()
+      )
+      expect(db.sessions.isContinuationReuseDisabled('hsid-reuse-state')).toBe(false)
     } finally {
       db.close()
     }

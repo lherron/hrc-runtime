@@ -60,6 +60,7 @@ import {
   dispatchRunPersistence,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
   assertRuntimeSupportsResponseFormat,
@@ -602,7 +603,9 @@ export async function startHeadlessBrokerRuntime(
               hostSessionId: session.hostSessionId,
               generation: session.generation,
               dispatchEnv: hrcDispatchEnv,
-              continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+              continuation: toRuntimeContinuationRef(
+                automaticContinuationForSession(this.db, session)
+              ),
               allowCompilerInitialInputWithoutIdentity:
                 options.allowCompilerInitialInputWithoutIdentity,
               responseFormat: options.responseFormat,

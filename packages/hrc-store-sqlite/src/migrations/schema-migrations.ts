@@ -2463,6 +2463,22 @@ const hrcmailHeldQueueBatchMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07899 — retain provider continuation history while keeping ordinary
+ * run/start fresh after an explicit clear/drop. The key stays in
+ * continuation_json; this bit controls only automatic reuse.
+ */
+const continuationReuseStateMigration: HrcMigration = {
+  id: '0053_continuation_reuse_state',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE sessions
+        ADD COLUMN continuation_reuse_disabled INTEGER NOT NULL DEFAULT 0
+          CHECK (continuation_reuse_disabled IN (0, 1));
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2511,4 +2527,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailAutoReplyDischargeOutcomeMigration,
   hrcmailQueuedAttemptWithdrawalMigration,
   hrcmailHeldQueueBatchMigration,
+  continuationReuseStateMigration,
 ]

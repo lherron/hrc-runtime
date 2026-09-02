@@ -52,7 +52,7 @@ export const HrcErrorCode = {
   MISSING_SESSION_SPEC: 'missing_session_spec',
   /** A `--reply-to` anchor lives in a different conversation scope than the target. */
   REPLY_TO_SCOPE_MISMATCH: 'reply_to_scope_mismatch',
-  /** `hrc resume` found no latest non-invalidated continuation candidate to resume. */
+  /** `hrc resume` found no recorded continuation candidate to resume. */
   NO_RESUMABLE_CONTINUATION: 'no_resumable_continuation',
   /** `hrc resume` selected a prior whose runtime is still live — attach/terminate first. */
   RESUME_RUNTIME_LIVE: 'resume_runtime_live',

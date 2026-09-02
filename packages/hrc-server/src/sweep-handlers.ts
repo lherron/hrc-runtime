@@ -271,7 +271,7 @@ export function transitionRuntimeForAging(
 
     const session = requireSession(this.db, runtime.hostSessionId)
     if (droppedContinuation) {
-      this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+      this.db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, now)
     }
     return markRuntimeStale(this.db, session, runtime, {
       runtimeId: runtime.runtimeId,

@@ -36,12 +36,21 @@ function seedContinuation(hostSessionId: string, key: string): void {
 function readSession(hostSessionId: string): {
   generation: number
   continuation_json: string | null
+  continuation_reuse_disabled: number
 } {
   const db = new Database(fixture.dbPath)
   try {
     const row = db
-      .query<{ generation: number; continuation_json: string | null }, [string]>(
-        'SELECT generation, continuation_json FROM sessions WHERE host_session_id = ?'
+      .query<
+        {
+          generation: number
+          continuation_json: string | null
+          continuation_reuse_disabled: number
+        },
+        [string]
+      >(
+        `SELECT generation, continuation_json, continuation_reuse_disabled
+           FROM sessions WHERE host_session_id = ?`
       )
       .get(hostSessionId)
     if (!row) {
@@ -93,7 +102,10 @@ describe('POST /v1/sessions/drop-continuation', () => {
       dropped: true,
       previousContinuationKey: 'cont-before-drop',
     })
-    expect(readSession('hsid-drop-continuation').continuation_json).toBeNull()
+    expect(readSession('hsid-drop-continuation')).toMatchObject({
+      continuation_json: JSON.stringify({ provider: 'anthropic', key: 'cont-before-drop' }),
+      continuation_reuse_disabled: 1,
+    })
 
     const events = listContinuationDroppedEvents('hsid-drop-continuation')
     expect(events).toHaveLength(1)
@@ -127,7 +139,8 @@ describe('POST /v1/sessions/drop-continuation', () => {
 
     const after = readSession('hsid-drop-generation')
     expect(after.generation).toBe(before.generation)
-    expect(after.continuation_json).toBeNull()
+    expect(after.continuation_json).toBe(before.continuation_json)
+    expect(after.continuation_reuse_disabled).toBe(1)
   })
 
   it('copies the optional reason into the continuation_dropped event payload', async () => {

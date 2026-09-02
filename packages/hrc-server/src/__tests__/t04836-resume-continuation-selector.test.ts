@@ -1,10 +1,9 @@
 /**
- * T-04836 Part A — focused unit coverage for the `hrc resume` selection policy
- * (`selectResumeContinuationCandidate` / `detectResumeInvalidationBarrier`).
+ * T-07899 — focused unit coverage for the `hrc resume` selection policy.
  *
  * These are NOT the frozen Phase-R bar; they pin the server-side selector
  * invariants the spec calls out: status-neutral latest-continuation selection,
- * stale-rotation skip, explicit-barrier blocking, and no-continuation failure.
+ * clear/drop/end barrier neutrality, and no-continuation failure.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -15,8 +14,13 @@ import type { HrcContinuationRef, HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import {
+  automaticContinuationForRuntime,
+  automaticContinuationForSession,
+} from '../session-continuation-reuse'
+import {
   LEGACY_CONTINUATION_CLEAR_BACKFILL_SOURCE,
   backfillLegacyContinuationClearBarriers,
+  repairContinuationHistory,
   selectResumeContinuationCandidate,
 } from '../session-resume-continuation'
 
@@ -167,18 +171,18 @@ describe('selectResumeContinuationCandidate', () => {
     expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
   })
 
-  it('blocks resume past an explicit clear-context-with-drop barrier', () => {
+  it('resumes past an explicit clear-context-with-drop audit event', () => {
     insertSession('hs-1', 1, { status: 'archived', continuation })
     insertSession('hs-2', 2, { priorHostSessionId: 'hs-1' })
     appendContextCleared('hs-1', 1, { dropContinuation: true, reason: 'clear-context' })
 
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
-    expect(result.outcome).toBe('barrier')
-    expect(result.outcome === 'barrier' && result.barrier.kind).toBe('context_cleared')
+    expect(result.outcome).toBe('ok')
+    expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
   })
 
-  it('blocks resume when an in-place continuation_dropped barrier exists', () => {
-    insertSession('hs-1', 1, { status: 'active' }) // continuation already dropped in place
+  it('resumes when an in-place continuation_dropped audit event exists', () => {
+    insertSession('hs-1', 1, { status: 'active', continuation })
     db.hrcEvents.append({
       ts: tsAt(1),
       hostSessionId: 'hs-1',
@@ -192,12 +196,12 @@ describe('selectResumeContinuationCandidate', () => {
     })
 
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
-    expect(result.outcome).toBe('barrier')
-    expect(result.outcome === 'barrier' && result.barrier.kind).toBe('continuation_dropped')
+    expect(result.outcome).toBe('ok')
+    expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
   })
 
-  it('blocks resume past a broker continuation.cleared (/quit) barrier', () => {
-    insertSession('hs-1', 1, { status: 'active' })
+  it('resumes past a broker continuation.cleared (/quit) audit event', () => {
+    insertSession('hs-1', 1, { status: 'active', continuation })
     const rawEventSeq = appendLegacyBrokerContinuationCleared('hs-1', 1)
 
     expect(backfillLegacyContinuationClearBarriers(db)).toBe(1)
@@ -219,8 +223,8 @@ describe('selectResumeContinuationCandidate', () => {
     db.sqlite.query('DELETE FROM events').run()
 
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
-    expect(result.outcome).toBe('barrier')
-    expect(result.outcome === 'barrier' && result.barrier.kind).toBe('broker_continuation_cleared')
+    expect(result.outcome).toBe('ok')
+    expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
   })
 
   it('reports none when there is no captured continuation', () => {
@@ -234,5 +238,93 @@ describe('selectResumeContinuationCandidate', () => {
       sessionRef: 'agent:nobody:project:hrc-runtime:task:primary/lane:main',
     })
     expect(result.outcome).toBe('none')
+  })
+})
+
+describe('continuation history retention', () => {
+  it('suppresses only automatic reuse and re-enables it on a later update', () => {
+    const session = insertSession('hs-auto', 1, {
+      continuation: { provider: 'anthropic', key: 'key-before-drop' },
+    })
+    const runtime = db.runtimes.insert({
+      runtimeId: 'rt-auto',
+      hostSessionId: session.hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'headless',
+      harness: 'agent-sdk',
+      provider: 'anthropic',
+      status: 'terminated',
+      continuation: session.continuation,
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: tsAt(1),
+      updatedAt: tsAt(1),
+    })
+
+    expect(automaticContinuationForSession(db, session)?.key).toBe('key-before-drop')
+    expect(automaticContinuationForRuntime(db, session, runtime)?.key).toBe('key-before-drop')
+
+    db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, tsAt(2))
+    const retained = db.sessions.getByHostSessionId(session.hostSessionId)!
+    expect(retained.continuation?.key).toBe('key-before-drop')
+    expect(automaticContinuationForSession(db, retained)).toBeUndefined()
+    expect(automaticContinuationForRuntime(db, retained, runtime)).toBeUndefined()
+
+    db.sessions.updateContinuation(
+      session.hostSessionId,
+      { provider: 'anthropic', key: 'key-after-fresh-start' },
+      tsAt(3)
+    )
+    const updated = db.sessions.getByHostSessionId(session.hostSessionId)!
+    expect(db.sessions.isContinuationReuseDisabled(session.hostSessionId)).toBe(false)
+    expect(automaticContinuationForSession(db, updated)?.key).toBe('key-after-fresh-start')
+  })
+
+  it('repairs NULL session/runtime keys from the latest event time and is idempotent', () => {
+    const session = insertSession('hs-repair', 1)
+    db.runtimes.insert({
+      runtimeId: 'rt-repair',
+      hostSessionId: session.hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: 1,
+      transport: 'headless',
+      harness: 'agent-sdk',
+      provider: 'anthropic',
+      status: 'terminated',
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: tsAt(1),
+      updatedAt: tsAt(1),
+    })
+    // Insert the newer provider event first so row id and event time disagree.
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-repair-new',
+      seq: 1,
+      time: tsAt(8),
+      type: 'continuation.updated',
+      runtimeId: 'rt-repair',
+      payload: { provider: 'anthropic', kind: 'session', key: 'latest-by-time' },
+    })
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-repair-old',
+      seq: 1,
+      time: tsAt(4),
+      type: 'continuation.updated',
+      runtimeId: 'rt-repair',
+      payload: { provider: 'anthropic', kind: 'session', key: 'later-row-id' },
+    })
+
+    expect(repairContinuationHistory(db)).toEqual({ sessions: 1, runtimes: 1 })
+    expect(db.sessions.getByHostSessionId(session.hostSessionId)?.continuation).toEqual({
+      provider: 'anthropic',
+      kind: 'session',
+      key: 'latest-by-time',
+    })
+    expect(db.runtimes.getByRuntimeId('rt-repair')?.continuation?.key).toBe('latest-by-time')
+    expect(db.sessions.isContinuationReuseDisabled(session.hostSessionId)).toBe(true)
+    expect(repairContinuationHistory(db)).toEqual({ sessions: 0, runtimes: 0 })
   })
 })

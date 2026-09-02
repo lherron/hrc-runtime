@@ -40,6 +40,7 @@ import {
 } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { timestamp } from './server-util.js'
+import { automaticContinuationForSession } from './session-continuation-reuse.js'
 import { simplifyTmuxJson, toTmuxJson } from './status-views.js'
 import { getTmuxSessionName } from './tmux-socket.js'
 import type { TmuxPaneState } from './tmux.js'
@@ -113,7 +114,7 @@ export function createHeadlessRuntimeForSession(
     provider: intent.harness.provider,
     status: 'ready',
     statusChangedAt: now,
-    continuation: session.continuation,
+    continuation: automaticContinuationForSession(this.db, session),
     supportsInflightInput: false,
     adopted: false,
     ...runtimeActivityPatch(this.db, runtimeId, {

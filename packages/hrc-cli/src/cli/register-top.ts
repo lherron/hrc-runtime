@@ -241,9 +241,9 @@ export function registerTopLevelCommands(program: Command): void {
 Semantics:
   resume force-resumes the most recent stored continuation for a target,
   REGARDLESS of HRC status (archived / dormant / broken / removed-orphaned).
-  Unlike \`hrc run\`, it requires a captured continuation: if none exists, or the
-  latest continuation was explicitly invalidated (\`/quit\`, drop-continuation,
-  clear-context, terminate-with-drop), it fails clearly and does NOT start fresh.
+  Unlike \`hrc run\`, it requires a captured continuation: if none has ever been
+  recorded, it fails clearly and does NOT start fresh. Clear/drop/terminate audit
+  events never erase or invalidate a recorded continuation for explicit resume.
   For attach-only behavior use \`hrc attach <scope>\`; for start/reuse/attach use
   \`hrc run <scope>\`.
 `

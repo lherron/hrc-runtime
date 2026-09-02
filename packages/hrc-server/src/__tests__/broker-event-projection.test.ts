@@ -276,7 +276,7 @@ describe('projection mapping (ordered sequence)', () => {
     expect(nextChunkSeqQueries).toBe(1)
   })
 
-  it('continuation.cleared drops BOTH runtime AND session continuation', () => {
+  it('continuation.cleared retains both keys and disables automatic reuse', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
 
@@ -287,12 +287,14 @@ describe('projection mapping (ordered sequence)', () => {
     expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeDefined()
     expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeDefined()
 
-    // A user-initiated SessionEnd (Claude /quit) clears it on both sides so the
-    // next launch resolution (`runtime.continuation ?? session.continuation`)
-    // finds nothing and starts fresh.
+    // A user-initiated SessionEnd (Claude /quit) preserves durable history but
+    // makes ordinary launch resolution start fresh.
     mapper.apply(envelope('continuation.cleared', 9, { reason: 'prompt_input_exit' }))
-    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeUndefined()
-    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeUndefined()
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation?.key).toBe(CONTINUATION_KEY)
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation?.key).toBe(
+      CONTINUATION_KEY
+    )
+    expect(db.sessions.isContinuationReuseDisabled(HOST_SESSION_ID)).toBe(true)
   })
 
   it('reflects invocation lifecycle state transitions in order', () => {

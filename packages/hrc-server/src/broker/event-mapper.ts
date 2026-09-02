@@ -1481,14 +1481,11 @@ export class BrokerEventMapper {
     }
   }
 
-  // ── Continuation -> DUAL write/clear: runtime AND session (must-not-miss) ─
-  // A user-initiated end (Claude `/quit`) drops the captured continuation so
-  // the next `hrc run` starts fresh instead of `--resume`-ing the quit
-  // session. Must clear BOTH sides: the next-launch resolution reads
-  // `runtime.continuation ?? session.continuation` (index.ts ~2728/3120), so
-  // clearing only one leaves the other as a fallback that re-resumes.
-  // External pane-kill / crash reports reason `other` and never reaches here,
-  // so resume durability survives pane recreation (T-01761 ariadne case).
+  // ── Continuation history + automatic-reuse intent (T-07899) ─────────────
+  // Provider keys are durable history on BOTH runtime and session rows.
+  // continuation.cleared records that ordinary run/start must be fresh by
+  // disabling automatic reuse on the session; explicit `hrc resume` remains
+  // able to select the retained key.
   private projectContinuation(
     envelope: InvocationEventEnvelope,
     ctx: ProjectionContext,
@@ -1520,8 +1517,7 @@ export class BrokerEventMapper {
         break
       }
       case 'continuation.cleared': {
-        db.runtimes.clearContinuation(ctx.runtimeId, now)
-        db.sessions.updateContinuation(ctx.hostSessionId, undefined, now)
+        db.sessions.setContinuationReuseDisabled(ctx.hostSessionId, true, now)
         // T-07235: a clear that leaves the harness process RUNNING (reason=clear
         // — ordinary broker-controller behavior) must not disarm, or a wedged
         // TUI escapes the watchdog with a pre-first-turn clear.

@@ -415,14 +415,14 @@ export class SessionRepository {
 
   updateContinuation(
     hostSessionId: string,
-    continuation: HrcContinuationRef | undefined,
+    continuation: HrcContinuationRef,
     updatedAt: string
   ): HrcSessionRecord | null {
     execute(
       this.db,
       `
         UPDATE sessions
-        SET continuation_json = ?, updated_at = ?
+        SET continuation_json = ?, continuation_reuse_disabled = 0, updated_at = ?
         WHERE host_session_id = ?
       `,
       serializeJson(continuation),
@@ -431,6 +431,38 @@ export class SessionRepository {
     )
 
     return this.getByHostSessionId(hostSessionId)
+  }
+
+  setContinuationReuseDisabled(
+    hostSessionId: string,
+    disabled: boolean,
+    updatedAt: string
+  ): HrcSessionRecord | null {
+    execute(
+      this.db,
+      `
+        UPDATE sessions
+        SET continuation_reuse_disabled = ?, updated_at = ?
+        WHERE host_session_id = ?
+      `,
+      disabled ? 1 : 0,
+      updatedAt,
+      hostSessionId
+    )
+
+    return this.getByHostSessionId(hostSessionId)
+  }
+
+  isContinuationReuseDisabled(hostSessionId: string): boolean {
+    const row = this.db
+      .query<{ continuation_reuse_disabled: number }, [string]>(
+        `SELECT continuation_reuse_disabled
+           FROM sessions
+          WHERE host_session_id = ?`
+      )
+      .get(hostSessionId)
+
+    return row?.continuation_reuse_disabled === 1
   }
 
   private listByFilters(filters: SessionListFilters): HrcSessionRecord[] {

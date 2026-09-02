@@ -75,6 +75,10 @@ import {
   dispatchRunPersistence,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import {
+  automaticContinuationForRuntime,
+  automaticContinuationForSession,
+} from './session-continuation-reuse.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { createTmuxManager } from './tmux.js'
 import {
@@ -193,7 +197,7 @@ export async function handleHeadlessDispatchTurn(
     ) ?? this.createHeadlessRuntimeForSession(session, intent)
   assertRuntimeNotBusy(this.db, runtime)
 
-  const continuation = runtime.continuation ?? session.continuation
+  const continuation = automaticContinuationForRuntime(this.db, session, runtime)
   const now = timestamp()
   this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
@@ -1217,7 +1221,7 @@ export async function startInteractiveTmuxBrokerRuntime(
               continuation: toRuntimeContinuationRef(
                 decideInteractiveTmuxBrokerContinuation({
                   allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-                  sessionContinuation: session.continuation,
+                  sessionContinuation: automaticContinuationForSession(this.db, session),
                 })
               ),
               responseFormat: flagOptions.responseFormat,

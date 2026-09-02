@@ -479,7 +479,7 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(listRuntimeEvents('runtime.sweep_completed')).toHaveLength(2)
   })
 
-  it('nulls continuation_json for matched headless sessions with dropContinuation', async () => {
+  it('retains continuation_json and disables reuse with dropContinuation', async () => {
     seedRuntime({
       runtimeId: 'rt-drop-explicit',
       hostSessionId: 'hsid-drop-explicit',
@@ -501,7 +501,13 @@ describe('POST /v1/runtimes/sweep', () => {
       runtimeId: 'rt-drop-explicit',
       droppedContinuation: true,
     })
-    expect(readContinuationJson('hsid-drop-explicit')).toBeNull()
+    expect(readContinuationJson('hsid-drop-explicit')).not.toBeNull()
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(db.sessions.isContinuationReuseDisabled('hsid-drop-explicit')).toBe(true)
+    } finally {
+      db.close()
+    }
   })
 
   it('preserves busy continuation and only ages the inactive ready runtime', async () => {

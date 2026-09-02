@@ -363,8 +363,8 @@ function printResumeUsage(): void {
   HRC status (archived / dormant / broken / removed-orphaned). Unlike \`hrc run\`,
   resume NEVER starts a fresh session and NEVER attaches as a substitute for
   resume — it requires a captured provider continuation and fails clearly if
-  none exists or if it was explicitly invalidated (\`/quit\`, drop-continuation,
-  clear-context, terminate-with-drop).
+  none was ever recorded. Explicit clear/drop/end operations do not erase or
+  invalidate the stored provider continuation.
 
   <scope>  Agent scope: agent, agent@project, or full scope ref.
            When run from a project directory, the project is inferred
@@ -385,9 +385,10 @@ Options:
 
 /**
  * T-04836 Part A — `hrc resume`. A DISTINCT continuation-resume verb (no longer
- * an alias of `hrc run`). It asks the server to select the latest non-invalidated
+ * an alias of `hrc run`). It asks the server to select the latest recorded
  * continuation, mint an active successor, and then starts/prepares/dispatches
- * ONLY against that successor with stale-generation rotation disabled.
+ * ONLY against that successor with stale-generation rotation disabled. Clear,
+ * drop, and terminate audit events do not block explicit resume.
  */
 export async function cmdResumeContinuation(args: string[]): Promise<void> {
   if (hasFlag(args, '--attach-only')) {
@@ -452,7 +453,7 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
       w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
       w(`  cwd:          ${intent.placement.cwd}`)
       w('  action:       POST /v1/sessions/resume-continuation (mint successor from latest')
-      w('                non-invalidated continuation), then prepare/start against it with')
+      w('                recorded continuation), then prepare/start against it with')
       w('                allowStaleGeneration:true. Fails if no captured continuation exists.')
       w(`  attach:       ${noAttach ? 'no (--no-attach)' : 'yes'}`)
       w(`  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`)

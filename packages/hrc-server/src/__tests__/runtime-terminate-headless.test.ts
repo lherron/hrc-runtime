@@ -102,6 +102,15 @@ function readContinuationJson(hostSessionId: string): string | null {
   }
 }
 
+function readContinuationReuseDisabled(hostSessionId: string): boolean {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.sessions.isContinuationReuseDisabled(hostSessionId)
+  } finally {
+    db.close()
+  }
+}
+
 function listTerminatedEvents(runtimeId: string): HrcLifecycleEvent[] {
   const db = openHrcDatabase(fixture.dbPath)
   try {
@@ -172,7 +181,8 @@ describe('POST /v1/terminate transport branching', () => {
     const body = await terminate('rt-tmux-drop', true)
 
     expect(body.droppedContinuation).toBe(true)
-    expect(readContinuationJson('hsid-tmux-drop')).toBeNull()
+    expect(readContinuationJson('hsid-tmux-drop')).not.toBeNull()
+    expect(readContinuationReuseDisabled('hsid-tmux-drop')).toBe(true)
     expect(listTerminatedEvents('rt-tmux-drop')[0]?.payload).toMatchObject({
       transport: 'tmux',
       droppedContinuation: true,
@@ -217,7 +227,8 @@ describe('POST /v1/terminate transport branching', () => {
     const body = await terminate('rt-headless-busy', true)
 
     expect(body.droppedContinuation).toBe(true)
-    expect(readContinuationJson('hsid-headless-busy')).toBeNull()
+    expect(readContinuationJson('hsid-headless-busy')).not.toBeNull()
+    expect(readContinuationReuseDisabled('hsid-headless-busy')).toBe(true)
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
@@ -260,7 +271,8 @@ describe('POST /v1/terminate transport branching', () => {
     const body = await terminate('rt-sdk-busy')
 
     expect(body.droppedContinuation).toBe(true)
-    expect(readContinuationJson('hsid-sdk-busy')).toBeNull()
+    expect(readContinuationJson('hsid-sdk-busy')).not.toBeNull()
+    expect(readContinuationReuseDisabled('hsid-sdk-busy')).toBe(true)
 
     const events = listTerminatedEvents('rt-sdk-busy')
     expect(events).toHaveLength(1)

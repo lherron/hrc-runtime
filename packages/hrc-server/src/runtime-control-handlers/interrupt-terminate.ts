@@ -396,7 +396,7 @@ export async function terminateTmuxRuntime(
   const now = timestamp()
 
   if (dropContinuation) {
-    this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    this.db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, now)
   }
 
   // Idempotency: a runtime we already finalized is `terminated`. A repeated
@@ -483,7 +483,7 @@ export async function terminateHeadlessRuntime(
   const now = timestamp()
 
   if (opts.dropContinuation) {
-    this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    this.db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, now)
   }
 
   // Codex app-server tmux-tui route: a headless-transport broker runtime can

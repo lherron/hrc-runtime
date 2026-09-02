@@ -13,6 +13,7 @@ import {
 import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
+  HrcContinuationRef,
   HrcDeliveryOutcome,
   HrcDeliveryWarning,
   HrcDispatchOrigin,
@@ -253,17 +254,17 @@ export async function handleCreateSessionSuccessor(
 }
 
 /**
- * T-04836 Part A — `POST /v1/sessions/resume-continuation`.
+ * T-07899 — `POST /v1/sessions/resume-continuation`.
  *
- * Policy authority for `hrc resume`: select the latest non-invalidated provider
+ * Policy authority for `hrc resume`: select the latest recorded provider
  * continuation for the normalized target (status-neutral — archived/dormant/
  * removed-orphaned all count), mint an active successor that inherits it, and
  * return the successor so the CLI starts/prepares/dispatches ONLY against it.
  *
- * Never fresh-launches: a target with no valid captured continuation, or a
- * newer explicit invalidation barrier, fails with a structured non-2xx error
- * and creates no successor. A selected prior whose runtime is still live (not
- * an unavailable status) returns a 409 conflict and creates no successor.
+ * Never fresh-launches: a target with no captured continuation fails with a
+ * structured non-2xx error and creates no successor. A selected prior whose
+ * runtime is still live (not an unavailable status), or a conflicting current
+ * successor, returns a 409 conflict and creates no successor.
  */
 export async function handleResumeContinuation(
   this: HrcServerInstanceForHandlers,
@@ -299,14 +300,6 @@ export async function handleResumeContinuation(
     ...(priorHostSessionId !== undefined ? { priorHostSessionId } : {}),
   })
 
-  if (selection.outcome === 'barrier') {
-    throw new HrcUnprocessableEntityError(
-      HrcErrorCode.NO_RESUMABLE_CONTINUATION,
-      `cannot resume "${sessionRef}": the latest continuation was explicitly invalidated (${selection.barrier.kind}). Start a fresh session with \`hrc run\`.`,
-      { sessionRef, barrier: selection.barrier }
-    )
-  }
-
   if (selection.outcome === 'none') {
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.NO_RESUMABLE_CONTINUATION,
@@ -335,7 +328,14 @@ export async function handleResumeContinuation(
     )
   }
 
-  const successor = await createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
+  const successor = await createNotifiedSessionSuccessor(
+    this,
+    prior,
+    intent,
+    parsedScopeJson,
+    'local',
+    prior.continuation
+  )
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -495,7 +495,8 @@ async function createNotifiedSessionSuccessor(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
   parsedScopeJson: Record<string, unknown> | undefined,
-  origin: 'local' | 'federated-ingress' = 'local'
+  origin: 'local' | 'federated-ingress' = 'local',
+  requiredContinuation?: HrcContinuationRef | undefined
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
   // Locally inherited placement is stale evidence, not a capability. Resolve
@@ -534,7 +535,10 @@ async function createNotifiedSessionSuccessor(
         server.db,
         formatSessionRef(session.scopeRef, session.laneRef)
       )
-      if (raced !== null && raced.hostSessionId !== session.hostSessionId) return raced
+      if (raced !== null && raced.hostSessionId !== session.hostSessionId) {
+        if (requiredContinuation === undefined) return raced
+        return bindResumeContinuationToSuccessor(server, raced, requiredContinuation)
+      }
       const successor = server.db.sqlite.transaction(() => {
         const created = createSessionSuccessorFromContinuation(server.db, session, {
           ...(capabilityIntent ? { lastAppliedIntentJson: capabilityIntent } : {}),
@@ -566,6 +570,68 @@ async function createNotifiedSessionSuccessor(
       return successor
     }
   )
+}
+
+function sameContinuation(left: HrcContinuationRef, right: HrcContinuationRef): boolean {
+  return left.key === right.key && left.provider === right.provider && left.kind === right.kind
+}
+
+/**
+ * A clear-context-with-drop may already have minted the target's active,
+ * keyless successor. Explicit resume must bind the selected historical key to
+ * that successor under the same scope/lane mint lock; returning it unchanged
+ * would turn resume into a cold start (Daedalus T-07899 review).
+ */
+function bindResumeContinuationToSuccessor(
+  server: HrcServerInstanceForHandlers,
+  successor: HrcSessionRecord,
+  selected: HrcContinuationRef
+): HrcSessionRecord {
+  return server.db.sqlite.transaction(() => {
+    const current = requireSession(server.db, successor.hostSessionId)
+    const liveRuntime = server.db.runtimes
+      .listByHostSessionId(current.hostSessionId)
+      .find((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+    if (liveRuntime !== undefined) {
+      throw new HrcConflictError(
+        HrcErrorCode.RESUME_RUNTIME_LIVE,
+        `cannot bind resumed continuation to "${formatSessionRef(
+          current.scopeRef,
+          current.laneRef
+        )}": its active successor already has a live runtime`,
+        {
+          hostSessionId: current.hostSessionId,
+          runtimeId: liveRuntime.runtimeId,
+          runtimeStatus: liveRuntime.status,
+        }
+      )
+    }
+
+    if (current.continuation !== undefined && !sameContinuation(current.continuation, selected)) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `cannot bind resumed continuation to "${formatSessionRef(
+          current.scopeRef,
+          current.laneRef
+        )}": its active successor carries a different continuation`,
+        { hostSessionId: current.hostSessionId }
+      )
+    }
+
+    const now = timestamp()
+    const bound =
+      current.continuation === undefined
+        ? server.db.sessions.updateContinuation(current.hostSessionId, selected, now)
+        : server.db.sessions.setContinuationReuseDisabled(current.hostSessionId, false, now)
+    if (
+      bound === null ||
+      bound.continuation === undefined ||
+      !sameContinuation(bound.continuation, selected)
+    ) {
+      throw new Error(`failed to bind resume continuation to ${current.hostSessionId}`)
+    }
+    return bound
+  })()
 }
 
 export async function handleQueryMessages(

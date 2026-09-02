@@ -5,19 +5,17 @@ import { normalizeTargetSessionRef, targetLaneCandidates } from './messages.js'
 import { parseSessionRef } from './server-parsers.js'
 
 /**
- * T-04836 Part A — selection policy for `hrc resume`.
+ * T-07899 — selection policy for `hrc resume`.
  *
- * `hrc resume` resumes the LATEST non-invalidated provider continuation for a
+ * `hrc resume` resumes the LATEST recorded provider continuation for a
  * normalized target, REGARDLESS of HRC view/status (archived / dormant / broken
  * / removed-orphaned). Resumability is backed by the harness JSONL via the
  * provider's `--resume`/`resume <id>`, so HRC status must not gate it
  * ("Archived = view filter, not a resume gate").
  *
- * It must, however, honor EXPLICIT invalidation barriers — a user-initiated
- * `/quit`, an explicit drop-continuation, a clear-context-with-drop, or a
- * terminate-with-drop all mean "do not resurrect an older continuation". Only a
- * stale-generation auto-rotation (bookkeeping, not user intent) may be skipped
- * over to reach an otherwise-valid older continuation.
+ * Clear/drop/end events remain durable audit facts, but explicit resume ignores
+ * them. They govern automatic run/start reuse through persisted session state;
+ * they never erase or invalidate historical provider identity.
  */
 
 /** A continuation-invalidation barrier discovered on a session row. */
@@ -33,7 +31,6 @@ export type ResumeInvalidationBarrier = {
 
 export type ResumeContinuationSelection =
   | { outcome: 'ok'; session: HrcSessionRecord }
-  | { outcome: 'barrier'; barrier: ResumeInvalidationBarrier }
   | { outcome: 'none' }
 
 const STALE_GENERATION_AUTO_ROTATE_REASON = 'stale-generation-auto-rotate'
@@ -189,6 +186,87 @@ export function backfillLegacyContinuationClearBarriers(db: HrcDatabase): number
   return result.changes
 }
 
+export type ContinuationHistoryRepairResult = {
+  sessions: number
+  runtimes: number
+}
+
+/**
+ * T-07899 — restore keys erased by the retired clear/drop policy from the
+ * keep-forever broker invocation ledger. Existing non-NULL keys win. Repaired
+ * sessions remain fresh for ordinary run/start until an explicit resume mints
+ * a key-bearing successor or a new continuation.updated arrives.
+ */
+export function repairContinuationHistory(db: HrcDatabase): ContinuationHistoryRepairResult {
+  return db.sqlite.transaction(() => {
+    const sessions = db.sqlite
+      .query(
+        `WITH ranked AS (
+           SELECT
+             runtime.host_session_id,
+             event.broker_event_json AS continuation_json,
+             ROW_NUMBER() OVER (
+               PARTITION BY runtime.host_session_id
+               ORDER BY event.time DESC, event.id DESC
+             ) AS rank
+           FROM broker_invocation_events event
+           JOIN runtimes runtime ON runtime.runtime_id = event.runtime_id
+           WHERE event.type = 'continuation.updated'
+             AND json_valid(event.broker_event_json)
+             AND json_type(event.broker_event_json, '$.key') = 'text'
+             AND length(trim(json_extract(event.broker_event_json, '$.key'))) > 0
+         ), latest AS (
+           SELECT host_session_id, continuation_json
+           FROM ranked
+           WHERE rank = 1
+         )
+         UPDATE sessions
+         SET continuation_json = (
+               SELECT latest.continuation_json
+               FROM latest
+               WHERE latest.host_session_id = sessions.host_session_id
+             ),
+             continuation_reuse_disabled = 1
+         WHERE continuation_json IS NULL
+           AND host_session_id IN (SELECT host_session_id FROM latest)`
+      )
+      .run().changes
+
+    const runtimes = db.sqlite
+      .query(
+        `WITH ranked AS (
+           SELECT
+             event.runtime_id,
+             event.broker_event_json AS continuation_json,
+             ROW_NUMBER() OVER (
+               PARTITION BY event.runtime_id
+               ORDER BY event.time DESC, event.id DESC
+             ) AS rank
+           FROM broker_invocation_events event
+           WHERE event.type = 'continuation.updated'
+             AND json_valid(event.broker_event_json)
+             AND json_type(event.broker_event_json, '$.key') = 'text'
+             AND length(trim(json_extract(event.broker_event_json, '$.key'))) > 0
+         ), latest AS (
+           SELECT runtime_id, continuation_json
+           FROM ranked
+           WHERE rank = 1
+         )
+         UPDATE runtimes
+         SET continuation_json = (
+               SELECT latest.continuation_json
+               FROM latest
+               WHERE latest.runtime_id = runtimes.runtime_id
+             )
+         WHERE continuation_json IS NULL
+           AND runtime_id IN (SELECT runtime_id FROM latest)`
+      )
+      .run().changes
+
+    return { sessions, runtimes }
+  })()
+}
+
 /**
  * Gather every session row for the normalized target (all statuses, all lane
  * candidates), newest generation first then most-recently-updated first.
@@ -216,19 +294,16 @@ function gatherTargetSessions(
 }
 
 /**
- * Status-neutral selection of the latest non-invalidated continuation candidate.
+ * Status-neutral selection of the latest recorded continuation candidate.
  *
  * Walks session rows newest-first:
- *   - If the row carries an explicit invalidation barrier → STOP and report the
- *     barrier (older continuations must not be resurrected).
- *   - Else if the row has a continuation key → that is the candidate to resume.
- *   - Else (no key, no barrier — a fresh successor / stale-rotation generation)
- *     → skip and continue to the older row.
- * If no key-bearing, non-barrier candidate exists → `none`.
+ *   - If the row has a continuation key → that is the candidate to resume.
+ *   - Else (a fresh successor / stale-rotation generation) → skip and continue
+ *     to the older row.
+ * If no key-bearing candidate exists → `none`.
  *
  * When `priorHostSessionId` is supplied it must belong to the normalized target;
- * the same barrier scan still applies — a pinned prior cannot bypass a newer
- * clear/drop boundary.
+ * clear/drop/end audit events do not alter either selection mode.
  */
 export function selectResumeContinuationCandidate(
   db: HrcDatabase,
@@ -245,31 +320,14 @@ export function selectResumeContinuationCandidate(
       // A pinned prior outside the normalized target is not resumable here.
       return { outcome: 'none' }
     }
-    // Apply the same invalidation scan over everything at or newer than the pin
-    // (sessions are sorted newest-first); a pinned prior must not bypass a later
-    // clear/drop boundary.
-    for (const session of sessions) {
-      if (session.generation < pinned.generation) {
-        break
-      }
-      const barrier = detectResumeInvalidationBarrier(db, session)
-      if (barrier) {
-        return { outcome: 'barrier', barrier }
-      }
-    }
     return hasKey(pinned) ? { outcome: 'ok', session: pinned } : { outcome: 'none' }
   }
 
   for (const session of sessions) {
-    const barrier = detectResumeInvalidationBarrier(db, session)
-    if (barrier) {
-      return { outcome: 'barrier', barrier }
-    }
     if (hasKey(session)) {
       return { outcome: 'ok', session }
     }
-    // No key, no barrier — a fresh successor or stale-rotation generation. Skip
-    // to the older row.
+    // A fresh successor or stale-rotation generation. Skip to the older row.
   }
 
   return { outcome: 'none' }

@@ -273,7 +273,10 @@ import {
   type SessionIndexHandlersMethods,
   sessionIndexHandlersMethods,
 } from './session-index-handlers.js'
-import { backfillLegacyContinuationClearBarriers } from './session-resume-continuation.js'
+import {
+  backfillLegacyContinuationClearBarriers,
+  repairContinuationHistory,
+} from './session-resume-continuation.js'
 import {
   type ShadowTeardownHandlersMethods,
   shadowTeardownHandlersMethods,
@@ -2380,7 +2383,10 @@ class HrcServerInstance implements HrcServer {
     const session = requireSession(this.db, body.hostSessionId)
     const previousContinuationKey = session.continuation?.key ?? null
 
-    if (session.continuation === undefined) {
+    if (
+      session.continuation === undefined ||
+      this.db.sessions.isContinuationReuseDisabled(session.hostSessionId)
+    ) {
       return json({
         ok: true,
         hostSessionId: session.hostSessionId,
@@ -2390,7 +2396,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     const now = timestamp()
-    this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    this.db.sessions.setContinuationReuseDisabled(session.hostSessionId, true, now)
     const event = appendHrcEvent(this.db, 'session.continuation_dropped', {
       ts: now,
       hostSessionId: session.hostSessionId,
@@ -2902,6 +2908,13 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     if (backfilledContinuationClears > 0) {
       writeServerLog('INFO', 'server.start.continuation_clear_barriers_backfilled', {
         count: backfilledContinuationClears,
+      })
+    }
+    const continuationHistoryRepair = repairContinuationHistory(db)
+    if (continuationHistoryRepair.sessions > 0 || continuationHistoryRepair.runtimes > 0) {
+      writeServerLog('INFO', 'server.start.continuation_history_repaired', {
+        sessions: continuationHistoryRepair.sessions,
+        runtimes: continuationHistoryRepair.runtimes,
       })
     }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
