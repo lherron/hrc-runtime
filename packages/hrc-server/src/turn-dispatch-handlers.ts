@@ -375,8 +375,7 @@ export async function preemptAuthorized(
     manifestIds
   ).some(
     (origin) =>
-      origin.principalRef === request.origin.principalRef &&
-      origin.envelopeId === request.origin.envelopeId
+      origin.principalRef === request.origin.principalRef && origin.envelopeId !== undefined
   )
 }
 

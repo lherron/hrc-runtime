@@ -227,8 +227,8 @@ function installShapeOneDispatch(enqueueOutcome: 'accept' | 'throw'): () => Disp
 }
 
 /** Drive the target once from ordinary mail, leaving a kicker attempt in flight. */
-async function summonIntoKickerTurn(calls: () => Dispatch[]): Promise<void> {
-  say({ body: 'the ordinary work that started the turn' })
+async function summonIntoKickerTurn(calls: () => Dispatch[]): Promise<string> {
+  const driving = say({ body: 'the ordinary work that started the turn' })
   ;(server as any).requestMailKickerWake(TARGET, 'insert')
   await waitUntil(() => calls().length === 1, 'kicker summoned the seat')
   const db = serverInternals(server as HrcServer).db
@@ -236,6 +236,7 @@ async function summonIntoKickerTurn(calls: () => Dispatch[]): Promise<void> {
     () => db.mailDrives.getActiveAttempt(TARGET)?.state === 'started',
     'drive attempt in flight'
   )
+  return driving.id
 }
 
 function installLiveManifest(envelopeId: string, principalRef = 'agent:mable'): void {
@@ -593,13 +594,13 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
     expect(inFlight[0]).not.toContain('queuedDelivery')
   })
 
-  it('routes an authorized busy hold through preempt with guarded policy and ttl', async () => {
+  it('authorizes a new busy hold when the live manifest carries another envelope from the same sender', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
-    await summonIntoKickerTurn(calls)
+    const drivingEnvelopeId = await summonIntoKickerTurn(calls)
 
     const held = say({ body: 'interrupt now', delivery: 'hold' })
-    installLiveManifest(held.id)
+    installLiveManifest(drivingEnvelopeId)
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
     await waitUntil(() => calls().length === 2, 'authorized hold dispatched')
 
@@ -615,10 +616,15 @@ describe('T-07644 / rev 4 — mail reaches a seat past an in-flight kicker attem
   it('degrades an unauthorized busy hold to enqueue and records hold_refused_authority', async () => {
     await startServer()
     const calls = installShapeOneDispatch('accept')
-    await summonIntoKickerTurn(calls)
+    const drivingEnvelopeId = await summonIntoKickerTurn(calls)
 
-    const held = say({ body: 'not the driving envelope', delivery: 'hold' })
-    installLiveManifest('EN-not-this-hold')
+    const held = say({
+      body: 'not the driving sender',
+      delivery: 'hold',
+      fromPrincipalRef: 'agent:other',
+      fromScopeRef: 'other@hrc-runtime:T-07644',
+    })
+    installLiveManifest(drivingEnvelopeId)
     ;(server as any).requestMailKickerWake(TARGET, 'insert')
     await waitUntil(
       () => (ledger.envelopes.get(held.id)?.presentedTo.length ?? 0) === 1,
