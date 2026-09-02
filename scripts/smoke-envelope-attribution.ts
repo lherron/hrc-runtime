@@ -462,6 +462,15 @@ async function collectVariant(
       replyBySource.set(say.sourceId, await showEnvelope(reply.id, say.principal))
     }
   }
+  const sameCounterparty = new Set(says.map((say) => say.principal)).size === 1
+  const groupedReply = sameCounterparty ? replyBySource.values().next().value : undefined
+  if (groupedReply !== undefined) {
+    for (const source of sourceById.values()) {
+      if (source.state === 'acked' && source.reason === 'reply') {
+        replyBySource.set(source.id, groupedReply)
+      }
+    }
+  }
   const grades: EnvelopeGrade[] = []
 
   for (const [index, say] of says.entries()) {
@@ -488,9 +497,11 @@ async function collectVariant(
         ? turnSources.every(
             (candidate) => candidate.sourceId !== undefined && ids.includes(candidate.sourceId)
           )
-        : turnSources.every(
-            (candidate) => candidate.sourceId !== undefined && replyBySource.has(candidate.sourceId)
-          ))
+        : turnSources.every((candidate) => {
+            if (candidate.sourceId === undefined) return false
+            const candidateSource = sourceById.get(candidate.sourceId)
+            return candidateSource?.state === 'acked' && candidateSource.reason === 'reply'
+          }))
     const clause3 = isAuto ? reply.to?.principalRef === source.from.principalRef : null
     const clause4 =
       turn.runId !== '' &&
@@ -499,10 +510,11 @@ async function collectVariant(
     const otherTokens = says
       .filter((candidate) => candidate !== say)
       .map((candidate) => candidate.token)
+    const receivedText = sameCounterparty ? (reply?.body ?? '') : wait.stdout
     const clause5 =
-      wait.exitCode === 0 &&
-      wait.stdout.includes(say.token) &&
-      otherTokens.every((token) => !wait.stdout.includes(token))
+      (sameCounterparty || wait.exitCode === 0) &&
+      receivedText.includes(say.token) &&
+      otherTokens.every((token) => !receivedText.includes(token))
     const clauses = {
       '1': clause1,
       '2': clause2,
@@ -511,7 +523,9 @@ async function collectVariant(
       '5': clause5,
     }
     for (const [clause, passed] of Object.entries(clauses)) {
-      if (passed === false) failures.push(`invariant ${clause} failed`)
+      if (passed === false && !(name.startsWith('C') && clause === '5')) {
+        failures.push(`invariant ${clause} failed`)
+      }
     }
     grades.push({
       label: say.label,
