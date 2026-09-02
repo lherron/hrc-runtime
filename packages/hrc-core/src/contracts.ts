@@ -271,6 +271,12 @@ export type HrcRuntimeIntent = {
   execution?: HrcExecutionIntent | undefined
   launch?: HrcLaunchEnvConfig | undefined
   initialPrompt?: string | undefined
+  /**
+   * Suppress profile priming so `initialPrompt` is the whole launch turn.
+   * This is a one-shot compilation hint; callers must not persist it as
+   * reusable session authority.
+   */
+  omitPriming?: boolean | undefined
   attachments?: AttachmentRef[] | undefined
   taskContext?: HrcTaskContext | undefined
   presentation?: HrcPresentationIntent | undefined

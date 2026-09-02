@@ -192,6 +192,27 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(withTurn?.identity.runId).toBe('run_T1')
   })
 
+  it('forwards omitPriming only when the one-shot intent requests it', async () => {
+    const omitted = makeCapturingCompile()
+    await compileBrokerRuntimePlan(
+      {
+        ...STANDARD_INPUT(),
+        intent: makeIntent({ omitPriming: true }),
+      },
+      { compileHarnessInvocation: omitted.compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+    expect(omitted.captured.request?.materialization.omitPriming).toBe(true)
+
+    const ordinary = makeCapturingCompile()
+    await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation: ordinary.compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
+    expect(Object.hasOwn(ordinary.captured.request?.materialization ?? {}, 'omitPriming')).toBe(
+      false
+    )
+  })
+
   it('omits initialInputId and runId when there is no initial turn', async () => {
     const { compileHarnessInvocation, captured } = makeCapturingCompile()
     const input = {

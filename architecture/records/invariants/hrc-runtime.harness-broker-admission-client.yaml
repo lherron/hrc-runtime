@@ -59,10 +59,10 @@ required_tests:
   - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
   - T-07891 observed-seat busy detection, no-TTL durable held-batch, terminal-member revalidation, shared-input receipt, broker-expiry failure, boundary-race, and preempt-isolation gates
   - T-07914 one-counterparty idle and boundary selection, same-sender fan-out coalescing, and distinct-sender serialization gates
-  - T-07920 launch-primed cold birth carries priming plus summons in one launch turn with no broker submission or receipt input id, while warm, non-launch-primed, and high-risk routes retain guarded admission
+  - T-07920 launch-primed cold birth suppresses profile priming and carries the summons alone in one launch turn with no broker submission or receipt input id, while warm, non-launch-primed, and high-risk routes retain guarded admission
 last_verified:
   date: 2026-09-02
-  evidence: T-07920 verified that a launch-primed cold summons is the launch turn and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
+  evidence: T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn

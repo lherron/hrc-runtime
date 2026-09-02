@@ -1217,12 +1217,17 @@ export async function startInteractiveTmuxBrokerRuntime(
           agentHarnessCommand: resolveBrokerBinary('agent-harness-tmux'),
         })
       : undefined
-  // Only compiler-selected interactive tmux profiles own launch-argv priming.
-  // Direct agent-harness uses broker initialInput, so it keeps a promptless
-  // boot and the caller prompt takes the ordinary admission door afterwards.
+  // Only compiler-selected interactive tmux profiles own launch prompt
+  // material. Direct agent-harness uses broker initialInput, so it keeps a
+  // promptless boot and the caller prompt takes the ordinary admission door
+  // afterwards. This compile-only intent is deliberately not persisted below.
   const compileIntent =
     flagOptions.coldBirthPrompt !== undefined && directPlan === undefined
-      ? { ...effectiveTurnIntent, initialPrompt: flagOptions.coldBirthPrompt }
+      ? {
+          ...effectiveTurnIntent,
+          initialPrompt: flagOptions.coldBirthPrompt,
+          omitPriming: true,
+        }
       : effectiveTurnIntent
   if (directPlan !== undefined && hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] === undefined) {
     hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] = join(homedir(), '.pi', 'agent', 'auth.json')

@@ -452,6 +452,7 @@ export async function compileBrokerRuntimePlan(
     },
     materialization: {
       initialPrompt: intent.initialPrompt,
+      ...(intent.omitPriming !== undefined ? { omitPriming: intent.omitPriming } : {}),
       attachments: toCompileAttachments(intent.attachments),
       taskContext: intent.taskContext,
       ...(input.responseFormat?.kind === 'json_schema'

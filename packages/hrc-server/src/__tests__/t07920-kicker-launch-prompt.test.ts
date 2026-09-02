@@ -16,7 +16,6 @@ import { makeCompileResponse, makeInteractiveTmuxProfile } from './broker-compil
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE = 'agent:t07920:project:hrc-runtime:task:T-07920'
-const PROFILE_PRIMING = 'Profile priming: begin the assigned task.'
 const KICK = 'Message Type: MESSAGE\nTask name: T-07920\nImplement the requested change.'
 
 const INTENT: HrcRuntimeIntent = {
@@ -54,7 +53,7 @@ afterEach(async () => {
 })
 
 describe('T-07920 launch-primed cold summons', () => {
-  it('compiles priming plus kick into launch material and creates no broker initialInput', async () => {
+  it('compiles the kick alone into launch material and creates no broker initialInput', async () => {
     let compileRequest: AspcCompileHarnessInvocationRequest['compileRequest'] | undefined
     let startedRequest: InvocationStartRequest | undefined
     facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
@@ -71,7 +70,7 @@ describe('T-07920 launch-primed cold summons', () => {
           const identity = request.compileRequest.identity as RuntimeIdentityAllocation
           const caller = request.compileRequest.materialization.initialPrompt
           const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
-            launchInitialPrompt: `${PROFILE_PRIMING}\n\n${caller}`,
+            launchInitialPrompt: caller,
             withInitialInput: false,
           })
           const compileResponse = makeCompileResponse(identity, [profile])
@@ -159,10 +158,12 @@ describe('T-07920 launch-primed cold summons', () => {
 
     expect(rodeLaunch).toBe(true)
     expect(compileRequest?.materialization.initialPrompt).toBe(KICK)
-    expect(startedRequest?.spec.launch?.initialPrompt).toBe(`${PROFILE_PRIMING}\n\n${KICK}`)
+    expect(compileRequest?.materialization.omitPriming).toBe(true)
+    expect(startedRequest?.spec.launch?.initialPrompt).toBe(KICK)
     expect(startedRequest?.initialInput).toBeUndefined()
     // The one-shot summons must not become reusable session authority.
     const persisted = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
     expect(persisted?.lastAppliedIntentJson?.initialPrompt).toBeUndefined()
+    expect(persisted?.lastAppliedIntentJson?.omitPriming).toBeUndefined()
   })
 })
