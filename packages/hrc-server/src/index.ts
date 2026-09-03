@@ -1369,12 +1369,19 @@ class HrcServerInstance implements HrcServer {
           error: error instanceof Error ? error.message : String(error),
         })
       })
-      // T-07944: a cold-birth accepted run whose caller prompt was still owed
-      // when this daemon restarted. Its wait-priming -> submit chain lived in
-      // the dead process, so it is re-armed here (or failed with a positive
-      // reason code when the invocation it was owed to is gone). Chained onto
-      // the warmup because attach+replay is the sole binding authority — a seat
-      // probe before it would read a LIVE runtime as absent.
+
+    // T-07944: a cold-birth accepted run whose caller prompt was still owed when
+    // this daemon restarted. Its wait-priming -> submit chain lived in the dead
+    // process, so it is re-armed here (or failed with a positive reason code
+    // when the invocation it was owed to is gone).
+    //
+    // It runs AFTER the warmup — attach+replay is the sole binding authority, and
+    // a seat probe before it would read a LIVE runtime as absent — but strictly
+    // BESIDE `brokerWarmupComplete`, never inside it. Every broker input handler
+    // awaits that promise before submitting, so folding recovery into it deadlocks
+    // recovery's own submit against itself: a live hrcdev smoke re-armed, emitted
+    // `turn.user_prompt`, and then hung forever with the run still `accepted`.
+    void this.brokerWarmupComplete
       .then(() => recoverColdBootInputContinuations(this))
       .catch((error: unknown) => {
         writeServerLog('WARN', 'broker.cold_boot_input.recovery_failed', {
