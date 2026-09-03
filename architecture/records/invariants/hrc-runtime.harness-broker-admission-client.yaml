@@ -26,8 +26,11 @@ predicate: >
   kicker reads busy state only from the broker-observed seat turn, never from an
   HRC run row. Ordinary queue-class envelopes arriving during that turn remain
   in one durable HRC-held batch with no broker submission or wrkq presentation
-  receipt; the terminal turn event, backed by the periodic sweep, freezes and
-  flushes after a second idle-seat observation. Every boundary or idle input
+  receipt. A mail hint is a count-only PostToolUse context injection about
+  HRC-held queue mail; it is not a presentation, creates no receipt, submission
+  or obligation, and never changes batch membership or auto-reply attribution.
+  The terminal turn event, backed by the periodic sweep, freezes and flushes
+  after a second idle-seat observation. Every boundary or idle input
   contains only envelopes sharing the oldest actionable envelope's exact
   presentation key: room, sender identity, reply addressee, and fan-out group,
   up to MAX_PRESENTED_PER_ATTEMPT. Other keys remain held or pending for later
@@ -41,11 +44,12 @@ predicate: >
   member of that shared input as undeliverable so the sender sees a terminal
   outcome. Each hold/preempt request remains an immediate isolated admission
   decision and is never batched.
-authority: Lance principal rulings 2026-09-01 and 2026-09-02, including wrkq:T-07920 cold-birth ruling / Daedalus approval wrkq:T-07843 rev 7
+authority: Lance principal rulings 2026-09-01 through 2026-09-03, including wrkq:T-07920 cold-birth ruling and wrkq:T-07926 mail-hint direction / Daedalus approvals wrkq:T-07843 rev 7 and wrkq:T-07926 rev 2
 source:
   - wrkq:T-07843
   - wrkq:T-07914
   - wrkq:T-07920
+  - wrkq:T-07926
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
   - packages/hrcchat-cli/src/commands/turn.ts
@@ -60,9 +64,10 @@ required_tests:
   - T-07891 observed-seat busy detection, no-TTL durable held-batch, terminal-member revalidation, shared-input receipt, broker-expiry failure, boundary-race, and preempt-isolation gates
   - T-07914 one-counterparty idle and boundary selection, same-sender fan-out coalescing, and distinct-sender serialization gates
   - T-07920 launch-primed cold birth suppresses profile priming and carries the summons alone in one launch turn with no broker submission or receipt input id, while warm, non-launch-primed, and high-risk routes retain guarded admission
+  - T-07926 mail-hint gates cover counterparty-namespace counts, cadence and fail-open silence, no broker submission or presentation receipt, unchanged batch and auto-reply behavior, and a real PostToolUse additionalContext round-trip with no user row
 last_verified:
-  date: 2026-09-02
-  evidence: T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
+  date: 2026-09-03
+  evidence: T-07926 rev 2 design approval established the count-only, non-presenting PostToolUse mail-hint boundary; implementation gates remain pending. T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
@@ -71,5 +76,6 @@ reopen_when:
   - HRC reads harness internals instead of broker disposition manifest and decision surfaces
   - collaboration busy-state authority, one-counterparty presentation partitioning, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
   - launch-primed cold-birth delivery stops riding the launch turn or starts requiring a broker input identity
+  - a mail hint carries envelope ids or bodies or gains a disposition
 supersedes: []
 superseded_by: []
