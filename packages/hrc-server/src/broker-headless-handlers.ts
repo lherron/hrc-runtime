@@ -16,6 +16,10 @@ import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-ada
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { buildDirectAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
+import {
+  compilerPrimingSubmissionId,
+  isCompilerPrimingSubmissionTerminal,
+} from './compiler-priming.js'
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
@@ -35,6 +39,7 @@ import {
 } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
+import { isClosedDbError } from './broker/controller/internal.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
@@ -74,43 +79,6 @@ type DispatchTurnResponseBase = Omit<
 
 export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
-function parseBrokerEventPayload(record: { brokerEventJson: string }): Record<string, unknown> {
-  try {
-    const payload = JSON.parse(record.brokerEventJson) as unknown
-    return payload !== null && typeof payload === 'object'
-      ? (payload as Record<string, unknown>)
-      : {}
-  } catch {
-    return {}
-  }
-}
-
-function compilerPrimingSubmissionId(
-  server: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
-): string | undefined {
-  if (runtime.planHash === undefined || runtime.selectedProfileHash === undefined) return undefined
-  const record = server.db.compiledRuntimePlans.getByPlanHash(runtime.planHash)
-  if (record === null) return undefined
-  try {
-    const plan = JSON.parse(record.planProjectionJson) as {
-      executionProfiles?: Array<{
-        profileHash?: unknown
-        harnessInvocation?: {
-          startRequest?: { initialInput?: { inputId?: unknown } }
-        }
-      }>
-    }
-    const selected = plan.executionProfiles?.find(
-      (profile) => profile.profileHash === runtime.selectedProfileHash
-    )
-    const inputId = selected?.harnessInvocation?.startRequest?.initialInput?.inputId
-    return typeof inputId === 'string' && inputId.length > 0 ? inputId : undefined
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * A promptless cold Codex boot still runs the compiler-owned agent priming
  * input. The caller prompt is a separate guarded invoke, so it must wait for
@@ -123,39 +91,12 @@ export async function waitForCompilerPrimingTerminal(
   runtime: HrcRuntimeSnapshot,
   signal: AbortSignal
 ): Promise<void> {
-  const submissionId = compilerPrimingSubmissionId(server, runtime)
+  const submissionId = compilerPrimingSubmissionId(server.db, runtime)
   const invocationId = runtime.activeInvocationId
   if (submissionId === undefined || invocationId === undefined) return
 
-  const evaluate = (): boolean => {
-    const records = server.db.brokerInvocationEvents.listByInvocationId(invocationId)
-    let turnId: string | undefined
-    for (const record of records) {
-      const payload = parseBrokerEventPayload(record)
-      if (payload['submissionId'] !== submissionId) continue
-      if (
-        record.type === 'submission.rejected' ||
-        record.type === 'submission.expired' ||
-        record.type === 'submission.cancelled'
-      ) {
-        return true
-      }
-      if (record.type === 'submission.executed' && typeof payload['turnId'] === 'string') {
-        turnId = payload['turnId']
-      }
-    }
-    if (turnId === undefined) return false
-    return records.some((record) => {
-      if (
-        record.type !== 'turn.completed' &&
-        record.type !== 'turn.failed' &&
-        record.type !== 'turn.interrupted'
-      ) {
-        return false
-      }
-      return parseBrokerEventPayload(record)['turnId'] === turnId
-    })
-  }
+  const evaluate = (): boolean =>
+    isCompilerPrimingSubmissionTerminal(server.db, invocationId, submissionId)
 
   if (evaluate()) return
   await new Promise<void>((resolve, reject) => {
@@ -222,6 +163,62 @@ function parseDurableHeadlessTurnInput(value: string | null): DurableHeadlessTur
 type DurableHeadlessQueueEntry = {
   run: HrcRunRecord
   delivery: DurableHeadlessTurnInput
+}
+
+/**
+ * The caller prompt of a cold-birth accepted run, made durable (T-07944).
+ *
+ * A promptless cold boot accepts the run and then waits for the compiler
+ * priming turn before submitting the caller's prompt through the invoke door.
+ * That wait used to live only in an in-memory `.then` chain, so a daemon
+ * restart in the window dropped the prompt with no record: the run stayed
+ * `accepted` with no `dispatched_input_id` until the zombie sweep buried it 30
+ * minutes later. Persisting the prompt and its dispatch options at acceptance
+ * (in the SAME `runs.correlation_json` column the queued path already uses)
+ * lets startup recovery re-arm the wait -> submit, or fail the run positively
+ * and immediately when the invocation it was owed to is gone.
+ */
+const DURABLE_COLD_BOOT_INPUT_KIND = 'durable_cold_boot_turn_input'
+
+type DurableColdBootTurnInput = DurableHeadlessTurnInput & {
+  kind: typeof DURABLE_COLD_BOOT_INPUT_KIND
+  source: 'cold_boot'
+  /**
+   * The shared dispatch-persistence options verbatim (all JSON scalars/objects),
+   * so a re-armed submit rebuilds `executeHeadlessBrokerInputTurn`'s options
+   * exactly instead of inventing a fresh, lossier set.
+   */
+  dispatch: DispatchRunPersistenceOptions
+}
+
+export function parseDurableColdBootTurnInput(
+  value: string | null
+): DurableColdBootTurnInput | undefined {
+  const parsed = parseDurableHeadlessTurnInput(value)
+  if (parsed === undefined || parsed.kind !== DURABLE_COLD_BOOT_INPUT_KIND) return undefined
+  const dispatch = (parsed as { dispatch?: unknown }).dispatch
+  return {
+    ...parsed,
+    kind: DURABLE_COLD_BOOT_INPUT_KIND,
+    source: 'cold_boot',
+    dispatch:
+      dispatch !== null && typeof dispatch === 'object'
+        ? (dispatch as DispatchRunPersistenceOptions)
+        : { dispatchIdempotencyKey: undefined },
+  }
+}
+
+export function serializeDurableColdBootTurnInput(
+  prompt: string,
+  options: DispatchRunPersistenceOptions & { responseFormat?: HrcTurnResponseFormat | undefined }
+): string {
+  return JSON.stringify({
+    kind: DURABLE_COLD_BOOT_INPUT_KIND,
+    prompt,
+    source: 'cold_boot',
+    ...(options.responseFormat !== undefined ? { responseFormat: options.responseFormat } : {}),
+    dispatch: dispatchRunPersistence(options),
+  } satisfies DurableColdBootTurnInput)
 }
 
 function isDefaultPlainResponseFormat(responseFormat: HrcTurnResponseFormat | undefined): boolean {
@@ -879,6 +876,22 @@ export async function executeHeadlessBrokerStartTurn(
           updatedAt: acceptedAt,
         })
       }
+      // T-07944: the caller prompt is owed but not yet submitted — the priming
+      // turn has to finish first. Make it durable NOW, at acceptance, so a
+      // daemon restart in that window can re-arm the submit from the ledger
+      // instead of losing the prompt with the process. Written only for the
+      // exact shape recovery acts on (accepted, nothing dispatched), so it can
+      // never overwrite another route's correlation on the same run row.
+      const persistedRun = this.db.runs.getByRunId(runId)
+      if (persistedRun?.status === 'accepted' && persistedRun.dispatchedInputId === undefined) {
+        this.db.runs.setCorrelationJson(
+          runId,
+          serializeDurableColdBootTurnInput(prompt, {
+            ...dispatchRunPersistence(options),
+            responseFormat: options.responseFormat,
+          })
+        )
+      }
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
           ts: acceptedAt,
@@ -924,12 +937,23 @@ export async function executeHeadlessBrokerStartTurn(
     if (!acceptedSettled) rejectAccepted(error)
   })
   if (options.waitForCompletion === false) {
+    // T-07944: this detached chain owns the caller prompt until the priming turn
+    // ends. It used to `.catch(() => undefined)`, which left an accepted run with
+    // no continuation and no record of why — the sweep then buried it as a zombie
+    // 30 minutes later and the sender was told a lie. Every failure now lands as
+    // a positively reason-coded `turn.failed` on the run itself.
     void bootOperation
       .then(async (runtime) => {
         await waitForCompilerPrimingTerminal(this, runtime, this.runtimeStartPresentationSignal)
         await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        failColdBootInputContinuation(this, runId, {
+          errorCode: HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED,
+          phase: 'cold-boot-input-continuation',
+          error,
+        })
+      })
     const runtime = await accepted
     return json({
       runId,
@@ -947,6 +971,103 @@ export async function executeHeadlessBrokerStartTurn(
     ...options,
     waitForCompletion: false,
   })
+}
+
+/**
+ * Terminalize a cold-birth accepted run whose owed prompt can no longer be
+ * submitted (T-07944).
+ *
+ * The reason code is POSITIVE — it names what was lost — so the mail drive that
+ * is waiting on this run fails truthfully and at once, instead of the sender
+ * being told 30 minutes later that the turn "had no events" while the agent had
+ * in fact already run.
+ *
+ * Idempotent by construction: a run that already reached a terminal status, or
+ * that got its prompt dispatched after all, is left exactly as it is.
+ */
+export function failColdBootInputContinuation(
+  server: HrcServerInstanceForHandlers,
+  runId: string,
+  input: {
+    errorCode:
+      | typeof HrcErrorCode.COLD_INPUT_CONTINUATION_LOST
+      | typeof HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED
+    phase: string
+    error?: unknown
+    detail?: Record<string, unknown> | undefined
+  }
+): boolean {
+  try {
+    return writeColdBootInputContinuationFailure(server, runId, input)
+  } catch (writeError) {
+    // The detached continuation can outlive the store: a daemon stop aborts the
+    // priming wait, and `stop()` closes the DB without draining this chain. A
+    // closed store is not a failure to record — the run stays `accepted`, and
+    // the NEXT startup's recovery pass is what disposes it.
+    if (isClosedDbError(writeError)) return false
+    throw writeError
+  }
+}
+
+function writeColdBootInputContinuationFailure(
+  server: HrcServerInstanceForHandlers,
+  runId: string,
+  input: {
+    errorCode:
+      | typeof HrcErrorCode.COLD_INPUT_CONTINUATION_LOST
+      | typeof HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED
+    phase: string
+    error?: unknown
+    detail?: Record<string, unknown> | undefined
+  }
+): boolean {
+  const run = server.db.runs.getByRunId(runId)
+  if (run === null || run.status !== 'accepted' || run.dispatchedInputId !== undefined) {
+    return false
+  }
+  const message =
+    input.error === undefined
+      ? 'cold-birth accepted run lost the continuation that owed its prompt'
+      : input.error instanceof Error
+        ? input.error.message
+        : String(input.error)
+  const failedAt = timestamp()
+  server.db.runs.markCompleted(runId, {
+    status: 'failed',
+    completedAt: failedAt,
+    updatedAt: failedAt,
+    errorCode: input.errorCode,
+    errorMessage: message,
+  })
+  writeServerLog('ERROR', 'broker.cold_boot_input.continuation_failed', {
+    runId,
+    runtimeId: run.runtimeId,
+    hostSessionId: run.hostSessionId,
+    scopeRef: run.scopeRef,
+    errorCode: input.errorCode,
+    phase: input.phase,
+    error: message,
+    ...(input.detail ?? {}),
+  })
+  const failedEvent = appendHrcEvent(server.db, 'turn.failed', {
+    ts: failedAt,
+    hostSessionId: run.hostSessionId,
+    scopeRef: run.scopeRef,
+    laneRef: run.laneRef,
+    generation: run.generation,
+    runId,
+    ...(run.runtimeId !== undefined ? { runtimeId: run.runtimeId } : {}),
+    transport: 'headless',
+    errorCode: input.errorCode,
+    payload: {
+      code: input.errorCode,
+      message,
+      phase: input.phase,
+      ...(input.detail ?? {}),
+    },
+  })
+  server.notifyEvent(failedEvent)
+  return true
 }
 
 export async function executeHeadlessBrokerInputTurn(

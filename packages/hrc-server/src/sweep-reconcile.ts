@@ -21,6 +21,7 @@ import {
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
+import { isCompilerPrimingActive } from './compiler-priming.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { HRC_SERVER_RUN_COLUMNS } from './server-constants.js'
@@ -145,7 +146,73 @@ function listZombieRunCandidates(ctx: ServerContext, cutoffMs: number): ZombieRu
   return candidates
 }
 
+/**
+ * T-07944: a cold-birth accepted run whose caller prompt is still owed.
+ *
+ * A promptless cold boot accepts the run, boots the invocation with the
+ * compiler-owned priming input (no run identity, by design), and only submits
+ * the caller's prompt once that priming turn goes terminal. Between those two
+ * points the run emits NOTHING after `turn.accepted` — while the seat is in
+ * fact working. Reading the run's own clock therefore counted priming time as
+ * silence and buried live seats as zombies (8 of 12 observed zombies had
+ * priming turns of 32-97 min still running at sweep time).
+ *
+ * The runtime's clock is the honest one for that window. It is not an
+ * exemption: a runtime that goes genuinely silent still ages out at the same
+ * threshold, and the result carries `observedSource: 'runtime_event'` so the
+ * zombied payload says which clock made it a candidate.
+ */
+function coldBirthPrimingObservedActivity(
+  ctx: ServerContext,
+  run: HrcRunRecord
+): ObservedRunActivity | undefined {
+  if (run.status !== 'accepted' || run.dispatchedInputId !== undefined) return undefined
+  const runtimeId = run.runtimeId
+  if (runtimeId === undefined) return undefined
+  const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+  if (runtime === null || !isCompilerPrimingActive(ctx.db, runtime)) return undefined
+
+  const latestRuntimeEvent = ctx.db.sqlite
+    .query<LatestRunEventRow, [string]>(
+      `
+          SELECT ts FROM hrc_events
+          WHERE runtime_id = ?
+          ORDER BY ts DESC, hrc_seq DESC
+          LIMIT 1
+        `
+    )
+    .get(runtimeId)
+  const latestBrokerEvent = ctx.db.sqlite
+    .query<{ ts: string }, [string]>(
+      `
+          SELECT time AS ts FROM broker_invocation_events
+          WHERE runtime_id = ?
+          ORDER BY time DESC, id DESC
+          LIMIT 1
+        `
+    )
+    .get(runtimeId)
+  const observedAt = [
+    latestRuntimeEvent?.ts,
+    latestBrokerEvent?.ts,
+    runtime.lastActivityAt,
+    run.acceptedAt,
+    run.updatedAt,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .reduce((newest, value) => (value > newest ? value : newest), '')
+  if (observedAt.length === 0) return undefined
+  return {
+    observedAt,
+    observedSource: 'runtime_event',
+    ...(latestRuntimeEvent ? { latestEventAt: latestRuntimeEvent.ts } : {}),
+  }
+}
+
 function latestObservedRunActivity(ctx: ServerContext, run: HrcRunRecord): ObservedRunActivity {
+  const coldBirthPriming = coldBirthPrimingObservedActivity(ctx, run)
+  if (coldBirthPriming) return coldBirthPriming
+
   const latestEvent = ctx.db.sqlite
     .query<LatestRunEventRow, [string]>(
       `

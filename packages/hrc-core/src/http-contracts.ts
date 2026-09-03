@@ -1190,7 +1190,7 @@ export type SweepZombieRunResult = {
   runtimeId?: string | undefined
   status: 'zombied' | 'matched' | 'skipped' | 'error'
   observedAt: string
-  observedSource: 'event' | 'started_at' | 'accepted_at' | 'updated_at'
+  observedSource: 'event' | 'runtime_event' | 'started_at' | 'accepted_at' | 'updated_at'
   runtimeOwnershipCleared: boolean
   runtimeStatus?: string | undefined
   errorCode?: string | undefined
@@ -1249,7 +1249,7 @@ export type ReconcileActiveRunResult = {
   status: 'reaped' | 'repaired' | 'matched' | 'suspect' | 'skipped' | 'error'
   reason: ReconcileActiveRunReason
   observedAt: string
-  observedSource: 'event' | 'started_at' | 'accepted_at' | 'updated_at'
+  observedSource: 'event' | 'runtime_event' | 'started_at' | 'accepted_at' | 'updated_at'
   runtimeStatus: string
   nextRuntimeStatus?: string | undefined
   runtimeOwnershipCleared: boolean

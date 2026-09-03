@@ -63,6 +63,15 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.accepted': 'turn',
   'turn.started': 'turn',
   'turn.completed': 'turn',
+  // T-07944: `turn.failed`/`turn.interrupted` were consumed as terminal turn
+  // kinds (the mail drive's terminal set, the ACP notify filter) and produced by
+  // three sites — the broker start-failure path, the interactive start-failure
+  // path, and the T-04240 evidence finalize — but were never registered here, so
+  // every one of those appends threw `unknown hrc event kind` instead of writing
+  // the terminal fact. The live ledger has zero of either kind, which is what
+  // that looks like from the outside.
+  'turn.failed': 'turn',
+  'turn.interrupted': 'turn',
   'turn.degraded_input_delivered': 'turn',
   'turn.zombied': 'turn',
   'turn.reaped': 'turn',
