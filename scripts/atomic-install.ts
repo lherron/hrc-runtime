@@ -23,6 +23,8 @@ import {
 
 import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
 import { readCoherentInstalledAspBuild, readPublishedHrcBuild } from './lib/praesidium-build'
+import { assertPublishContainment } from './lib/publish-containment'
+import { activeRegistryUrl } from './lib/registry'
 import {
   type PublicationSource,
   provePublicationSource,
@@ -509,6 +511,11 @@ function parseCli(argv: string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2))
+  // Every install path here ends in a publish. `publish-local-verdaccio` holds
+  // the authoritative refusal, but it only runs AFTER the release snapshot is
+  // copied, installed, and built — minutes on the small guest this guard exists
+  // for. Same function, same message, evaluated before any of that work.
+  assertPublishContainment(activeRegistryUrl())
   const paths = defaultInstalledSurfacePaths()
   console.log(
     `[install] concurrency lock=${paths.lockDir} link=${options.linkMode} publish=${options.publishChannel}`

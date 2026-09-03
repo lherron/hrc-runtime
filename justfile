@@ -431,7 +431,17 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
       fail "$busy_count runtime(s) are busy; drain them before deployment"
     fi
 
-    just install no-sync=1
+    # Publish containment (T-07959). hrcdev is a disposable Tart guest that
+    # reaches BOTH its own Verdaccio and the shared fleet registry, so its
+    # publishes must stay on loopback; the publish boundary refuses a non-loopback
+    # target from that node and there is no override flag. The guest plist declares
+    # this same value, but plist env stops at the broker and never reaches an agent
+    # shell — which is why the lane names it here instead of inheriting it.
+    install_env=(env)
+    if [[ "$expected_node" == hrcdev ]]; then
+      install_env=(env VERDACCIO_REGISTRY=http://127.0.0.1:4873/)
+    fi
+    "${install_env[@]}" just install no-sync=1
     # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
     # gate). A node's login profile may export convenience vars from that
     # envelope (svc exports ASP_DEFAULT_TASK=minisvc, lab exports minilab), which

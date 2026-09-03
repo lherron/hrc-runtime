@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { type PraesidiumBuild, environmentWithoutGitOverrides } from 'hrc-core'
 
 import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
+import { assertPublishContainment } from './lib/publish-containment'
 import { activeRegistryUrl } from './lib/registry'
 
 const ROOT = resolve(import.meta.dir, '..')
@@ -655,6 +656,12 @@ async function verifyCanonicalPublishedSet(
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
+  // Before ANYTHING touches the registry — packing, `npm ping`, `npm unpublish`,
+  // upload. A node under publish containment (T-07959) must fail here, with the
+  // loopback command named, rather than after a tarball is already on the wire.
+  // Dry runs are refused too: a dry run validated against the wrong registry
+  // proves nothing about the publish it is standing in for.
+  assertPublishContainment(REGISTRY)
   if (options.channel === 'canonical' && options.force) {
     throw new Error('Canonical publication does not permit --force replacement')
   }

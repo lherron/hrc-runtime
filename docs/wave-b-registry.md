@@ -67,6 +67,35 @@ Main-checkout `just install` may publish as part of the repository lifecycle.
 Linked worktrees retain their isolated publication channel unless an operator
 explicitly requests a cutover.
 
+## Publish containment: hrcdev
+
+`hrcdev` — the Tart macOS guest hosted on max3 — is NOT an authorized publisher
+to mini. It is a disposable node that gets rebuilt and broken deliberately, so
+nothing it mints may become a version the rest of the fleet installs. Its
+publishes go to its own Verdaccio at `http://127.0.0.1:4873/`.
+
+Containment is enforced at the publish boundary, not by environment. The guest's
+supervisor plist declares `VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, but that
+value stops at the harness broker and never reaches an agent shell, so every
+seat on the guest published straight to mini (T-07959; the T-07958 verification
+deploy minted 11 guest-built packages as `0.1.0-dev.20260903203541 --tag latest`
+on mini before this was found). `scripts/lib/publish-containment.ts` therefore
+resolves the local `nodeId` — running daemon, else the declared `nodeId` in the
+federation config, else the hostname — and refuses a non-loopback publish from a
+contained node before anything touches the registry.
+
+There is no override flag. `just deploy-hrcdev` names the loopback registry
+explicitly for the guest-side install. An agent or operator publishing by hand on
+the guest passes it the same way:
+
+```bash
+VERDACCIO_REGISTRY=http://127.0.0.1:4873/ just install
+```
+
+A guest that must genuinely publish to mini is an operator lifecycle decision
+made by changing its declared `nodeId` in the federation config from an operator
+shell, not by an environment variable.
+
 ## Canonical service supervision
 
 The canonical source for mini's logout- and reboot-durable service is:
