@@ -1087,10 +1087,11 @@ export class GhostmuxManager {
   private async ensureHeadlessWindow(windowKey: string): Promise<HeadlessWindowTarget> {
     if (await this.supportsWindowsApi()) {
       try {
-        // T-07603: the INTERACTIVE window is adopted from what the operator already
-        // has open, so it needs a find-only pass before find-or-CREATE. The headless
-        // pile keeps the plain atomic find-or-create below, byte-for-byte unchanged.
-        if (windowKey !== DEFAULT_HEADLESS_WINDOW_KEY) {
+        // T-07603: only the INTERACTIVE window is adopted from what the operator
+        // already has open, so it needs a find-only pass before find-or-CREATE.
+        // T-07930: chief and every other named key are managed windows, just like
+        // the default pile, and must never stamp an untagged operator window.
+        if (windowKey === INTERACTIVE_WINDOW_KEY) {
           const adopted = await this.adoptInteractiveWindow(windowKey)
           if (adopted !== undefined) return { kind: 'managed', windowId: adopted }
         }

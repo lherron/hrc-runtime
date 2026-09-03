@@ -262,6 +262,57 @@ describe('T-07603 interactive-window adoption', () => {
   })
 })
 
+describe('T-07930 non-interactive keyed-window isolation', () => {
+  it('creates a dedicated chief window without stamping the operator window', async () => {
+    const fake = makeFake()
+    const operatorWindow = fake.allocWindow()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef: 'agent:chief:project:hcs:task:T-07930',
+      runtimeId: 'rt-chief',
+      attachCommand: 'a',
+    })
+
+    expect(result.status).toBe('created')
+    if (result.status !== 'created') throw new Error(`expected created, got ${result.status}`)
+    expect(fake.windows.get(operatorWindow)?.metadata).toEqual({})
+    expect(fake.windows.size).toBe(2)
+
+    const chiefWindow = [...fake.windows.entries()].find(
+      ([, window]) => window.metadata['hrc_window_key'] === CHIEF_WINDOW_KEY
+    )
+    expect(chiefWindow?.[1].metadata).toMatchObject({
+      hrc_role: 'headless-sessions-window',
+      hrc_window_key: CHIEF_WINDOW_KEY,
+    })
+    expect(fake.surfaces.get(result.surfaceId)?.windowId).toBe(chiefWindow?.[0])
+  })
+
+  it('creates a custom keyed window without adopting the operator window', async () => {
+    const fake = makeFake()
+    const operatorWindow = fake.allocWindow()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef: 'agent:cody:project:hrc-runtime:task:T-07930',
+      runtimeId: 'rt-custom',
+      attachCommand: 'a',
+      windowKey: 'review',
+    })
+
+    expect(result.status).toBe('created')
+    if (result.status !== 'created') throw new Error(`expected created, got ${result.status}`)
+    expect(fake.windows.get(operatorWindow)?.metadata).toEqual({})
+    expect(fake.windows.size).toBe(2)
+
+    const customWindow = [...fake.windows.entries()].find(
+      ([, window]) => window.metadata['hrc_window_key'] === 'review'
+    )
+    expect(fake.surfaces.get(result.surfaceId)?.windowId).toBe(customWindow?.[0])
+  })
+})
+
 describe('T-07603 reap safety inside an adopted operator window', () => {
   it('refuses to reap a surface the operator owns', async () => {
     const fake = makeFake()
