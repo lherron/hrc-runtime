@@ -44,12 +44,15 @@ export type {
   LaunchctlKickstartResult,
   LaunchdOwner,
   ServerRuntimeStatus,
+  StrandedLaunchAgent,
 } from './cli-runtime/server-status.js'
 export {
   collectServerRuntimeStatus,
   daemonizeAndWait,
   detectLaunchdOwner,
+  detectStrandedLaunchAgent,
   formatServerRuntimeStatus,
+  formatStrandedLaunchAgentRefusal,
   LAUNCHCTL_EALREADY,
   launchctlKickstart,
   resolveServerMode,

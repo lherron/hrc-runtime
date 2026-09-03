@@ -10,10 +10,12 @@ import {
   consumeShutdownIntent,
   daemonizeAndWait,
   detectLaunchdOwner,
+  detectStrandedLaunchAgent,
   evaluateServerLifecycleAuthorization,
   execProcess,
   formatInFlightWork,
   formatServerRuntimeStatus,
+  formatStrandedLaunchAgentRefusal,
   formatTmuxStatus,
   isLiveProcess,
   launchctlKickstart,
@@ -198,6 +200,8 @@ export async function cmdServerStart(
     return
   }
 
+  await refuseStrandedLaunchAgent('start')
+
   if (mode === 'daemon') {
     assertNoMaintenanceSweep()
     await daemonizeAndWait(timeoutMs)
@@ -206,6 +210,19 @@ export async function cmdServerStart(
 
   assertNoMaintenanceSweep()
   return serverForeground()
+}
+
+/**
+ * Guard the ownerless start/restart path. `detectLaunchdOwner` returning null
+ * conflates two states — "this node has no LaunchAgent" and "this node's
+ * LaunchAgent is not loaded right now" — and self-daemonizing is only correct
+ * for the first. In the second it strands the daemon outside the plist's
+ * environment, which is not visible in `hrc server status` and disables the mail
+ * kicker (T-07957). Refuse, and say exactly how to load the job.
+ */
+async function refuseStrandedLaunchAgent(action: 'start' | 'restart'): Promise<void> {
+  const stranded = await detectStrandedLaunchAgent()
+  if (stranded !== null) fatal(formatStrandedLaunchAgentRefusal(stranded, action))
 }
 
 /**
@@ -460,6 +477,17 @@ export async function cmdServerRestart(args: string[]): Promise<void> {
     if (before?.running && processStartedAt(before) === undefined) {
       await requireRestartProof(before, proofTimeoutMs)
     }
+
+    // Ahead of the shutdown intent and of any process mutation: this refusal has
+    // to leave the running daemon exactly as it found it, so an operator who hits
+    // it can bootstrap the job and retry without a node outage in between, and
+    // without a stale restart intent left behind to mis-attribute the next
+    // shutdown. It is a no-op when the job IS loaded, so ordering it before the
+    // owner probe costs only one launchctl call. `--force` does not bypass it:
+    // force governs the in-flight gate and the SIGTERM escalation, not which
+    // supervisor owns the daemon, and the T-07957 outage came from a --force
+    // restart taking the self-daemonize path.
+    await refuseStrandedLaunchAgent('restart')
 
     writeShutdownIntent('restart', attribution)
 

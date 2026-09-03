@@ -7,13 +7,15 @@
  * spawning a subprocess, and we assert that behavior directly.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   LAUNCHCTL_EALREADY,
   detectLaunchdOwner,
+  detectStrandedLaunchAgent,
+  formatStrandedLaunchAgentRefusal,
   launchctlKickstart,
   resolveOtelPreferredPortFromEnv,
 } from '../cli-runtime'
@@ -102,6 +104,192 @@ describe('detectLaunchdOwner', () => {
 
     const owner = await detectLaunchdOwner()
     expect(owner).toBeNull()
+  })
+})
+
+/**
+ * T-07957. `detectLaunchdOwner` returns null both for a node with no
+ * LaunchAgent and for a node whose LaunchAgent is merely not loaded, and the
+ * self-daemonize path is only correct for the first. These tests pin the
+ * discriminator: plist present + job not loaded + the plist governs THIS
+ * runtime root.
+ */
+describe('detectStrandedLaunchAgent', () => {
+  let originalPath: string | undefined
+  let originalLabel: string | undefined
+  let originalHome: string | undefined
+  let originalRuntimeDir: string | undefined
+  let shim: Shim | null = null
+  let home: string | null = null
+
+  const LABEL = 'com.example.stranded-hrc'
+
+  // Reflect.deleteProperty rather than `process.env.X = undefined`: on Node that
+  // assignment stores the STRING "undefined", which the detector would then read
+  // as a real HRC_RUNTIME_DIR override.
+  const setEnv = (key: string, value: string | undefined): void => {
+    if (value === undefined) Reflect.deleteProperty(process.env, key)
+    else process.env[key] = value
+  }
+
+  async function writeAgentPlist(env: Record<string, string> | null): Promise<string> {
+    home = home ?? (await mkdtemp(join(tmpdir(), 'stranded-home-')))
+    const agents = join(home, 'Library', 'LaunchAgents')
+    await mkdir(agents, { recursive: true })
+    const plistPath = join(agents, `${LABEL}.plist`)
+    const envBlock =
+      env === null
+        ? ''
+        : `\t<key>EnvironmentVariables</key>\n\t<dict>\n${Object.entries(env)
+            .map(([key, value]) => `\t\t<key>${key}</key>\n\t\t<string>${value}</string>`)
+            .join('\n')}\n\t</dict>\n`
+    await writeFile(
+      plistPath,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        '<dict>',
+        `\t<key>Label</key>\n\t<string>${LABEL}</string>`,
+        `${envBlock}</dict>`,
+        '</plist>',
+        '',
+      ].join('\n')
+    )
+    return plistPath
+  }
+
+  beforeEach(() => {
+    originalPath = process.env.PATH
+    originalLabel = process.env.HRC_LAUNCHD_LABEL
+    originalHome = process.env.HOME
+    originalRuntimeDir = process.env.HRC_RUNTIME_DIR
+    process.env.HRC_LAUNCHD_LABEL = LABEL
+  })
+
+  afterEach(async () => {
+    setEnv('PATH', originalPath)
+    setEnv('HRC_LAUNCHD_LABEL', originalLabel)
+    setEnv('HOME', originalHome)
+    setEnv('HRC_RUNTIME_DIR', originalRuntimeDir)
+    if (shim) {
+      await rm(shim.dir, { recursive: true, force: true })
+      shim = null
+    }
+    if (home) {
+      await rm(home, { recursive: true, force: true })
+      home = null
+    }
+  })
+
+  it.if(!IS_DARWIN)('returns null on non-darwin platforms', async () => {
+    expect(await detectStrandedLaunchAgent()).toBeNull()
+  })
+
+  it.if(IS_DARWIN)('returns null when no plist exists for the label', async () => {
+    // No launchctl shim on PATH at all: absence of a plist must short-circuit
+    // before any probe, so unsupervised nodes pay nothing on the start path.
+    home = await mkdtemp(join(tmpdir(), 'stranded-home-'))
+    process.env.HOME = home
+    process.env.HRC_RUNTIME_DIR = join(home, 'run')
+
+    expect(await detectStrandedLaunchAgent()).toBeNull()
+  })
+
+  it.if(IS_DARWIN)('returns null when the plist exists and the job IS loaded', async () => {
+    const runtimeDir = join(tmpdir(), 'stranded-runtime-loaded')
+    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir, HRC_MAIL_KICKER_ENABLED: '1' })
+    process.env.HOME = home as string
+    process.env.HRC_RUNTIME_DIR = runtimeDir
+    shim = await writeShim({ exitCode: 0 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    expect(await detectStrandedLaunchAgent()).toBeNull()
+  })
+
+  it.if(IS_DARWIN)(
+    'detects a plist that exists but is not loaded for this runtime root',
+    async () => {
+      const runtimeDir = join(tmpdir(), 'stranded-runtime-unloaded')
+      const plistPath = await writeAgentPlist({
+        HRC_RUNTIME_DIR: runtimeDir,
+        HRC_MAIL_KICKER_ENABLED: '1',
+        HRC_WRKQ_DB: 'rpc://127.0.0.1:7171',
+        LANG: 'en_US.UTF-8',
+      })
+      process.env.HOME = home as string
+      process.env.HRC_RUNTIME_DIR = runtimeDir
+      shim = await writeShim({ exitCode: 113 })
+      process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+      const stranded = await detectStrandedLaunchAgent()
+      expect(stranded).not.toBeNull()
+      expect(stranded?.label).toBe(LABEL)
+      expect(stranded?.plistPath).toBe(plistPath)
+      expect(stranded?.serviceTarget).toBe(`${stranded?.domain}/${LABEL}`)
+      // Only HRC_* keys, sorted; LANG is the daemon's locale, not its wiring.
+      expect(stranded?.declaredEnvKeys).toEqual([
+        'HRC_MAIL_KICKER_ENABLED',
+        'HRC_RUNTIME_DIR',
+        'HRC_WRKQ_DB',
+      ])
+    }
+  )
+
+  // The governance rule. A `hrc dev env` or test daemon runs on its own runtime
+  // root while the operator's plist sits in ~/Library/LaunchAgents; gating those
+  // would break every isolated daemon on the box.
+  it.if(IS_DARWIN)('returns null when the plist governs a different runtime root', async () => {
+    await writeAgentPlist({ HRC_RUNTIME_DIR: join(tmpdir(), 'operator-runtime') })
+    process.env.HOME = home as string
+    process.env.HRC_RUNTIME_DIR = join(tmpdir(), 'hrc-dev-env-502-abc')
+    shim = await writeShim({ exitCode: 113 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    expect(await detectStrandedLaunchAgent()).toBeNull()
+  })
+
+  it.if(IS_DARWIN)(
+    'treats a plist with no declared runtime dir as governing only the default root',
+    async () => {
+      await writeAgentPlist(null)
+      process.env.HOME = home as string
+      shim = await writeShim({ exitCode: 113 })
+      process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+      process.env.HRC_RUNTIME_DIR = join(tmpdir(), 'some-other-root')
+      expect(await detectStrandedLaunchAgent()).toBeNull()
+
+      setEnv('HRC_RUNTIME_DIR', undefined)
+      const stranded = await detectStrandedLaunchAgent()
+      expect(stranded).not.toBeNull()
+      expect(stranded?.declaredEnvKeys).toEqual([])
+    }
+  )
+})
+
+describe('formatStrandedLaunchAgentRefusal', () => {
+  const agent = {
+    label: 'com.praesidium.hrc-server',
+    plistPath: '/Users/lherron/Library/LaunchAgents/com.praesidium.hrc-server.plist',
+    serviceTarget: 'gui/501/com.praesidium.hrc-server',
+    domain: 'gui/501',
+    declaredEnvKeys: ['HRC_MAIL_KICKER_ENABLED', 'HRC_WRKQ_DB'] as const,
+  }
+
+  it('names the action, the missing environment, and the exact repair', () => {
+    const message = formatStrandedLaunchAgentRefusal(agent, 'restart')
+    expect(message).toContain('refusing to restart an unsupervised daemon')
+    expect(message).toContain(agent.plistPath)
+    expect(message).toContain('HRC_MAIL_KICKER_ENABLED, HRC_WRKQ_DB')
+    expect(message).toContain(`launchctl bootstrap ${agent.domain} ${agent.plistPath}`)
+    expect(message).toContain('T-07957')
+  })
+
+  it('names the start action when start is what was refused', () => {
+    expect(formatStrandedLaunchAgentRefusal(agent, 'start')).toContain(
+      'refusing to start an unsupervised daemon'
+    )
   })
 })
 

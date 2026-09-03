@@ -441,10 +441,16 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     lifecycle_env=(env -u HRC_SESSION_REF -u HRC_RUN_ID -u HRC_BIRTH_CREDENTIAL
       -u ASP_SCOPE_REF -u ASP_TASK_ID -u ASP_DEFAULT_TASK -u ASP_HANDLE)
     # Restart onto the freshly-selected release. The correct mechanism differs by
-    # supervisor: svc/max3 run gui LaunchAgents that `hrc server restart` detects and
-    # kickstarts cleanly. hrcdev runs its daemon unsupervised with no plist at all,
-    # where the same command finds no launchd owner and takes its stop +
-    # self-daemonize + restart-proof path — also correct, no special case needed.
+    # supervisor: max3, svc AND hrcdev all run gui LaunchAgents that
+    # `hrc server restart` detects and kickstarts cleanly. hrcdev has been
+    # launchd-managed since 2026-08-18; the comment that used to sit here claimed
+    # it ran unsupervised with no plist at all and called the self-daemonize path
+    # correct for it, and that fiction is what let T-07957 pass as a green deploy:
+    # with the job bootted out, the restart found no launchd owner, self-daemonized
+    # a detached daemon carrying none of the plist's environment, and the node
+    # served turns normally while its mail kicker was off and it had no canonical
+    # wrkq endpoint. The CLI now refuses that path; the assertion after the restart
+    # proves the outcome on the node instead of trusting the mechanism.
     # lab runs a system LaunchDaemon (no gui session for uid 502), which
     # `hrc server restart` does NOT detect — it would self-daemonize a second
     # process and race the KeepAlive respawn. For lab, stop and let launchd bring it
@@ -497,6 +503,42 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
       fail "daemon is running ${deployed_sha}, expected ${target_sha}"
     [[ "$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_after")" == 'true' ]] ||
       fail 'running daemon is not the installed release'
+    # Supervisor identity, not just health. Everything above proves a healthy
+    # daemon running the requested release — and a detached daemon that
+    # self-daemonized past an unloaded LaunchAgent proves exactly that too, while
+    # carrying none of the environment the plist declares. That daemon has no mail
+    # kicker and no canonical wrkq endpoint, so cold summonses to the node are
+    # never seated and nothing local says why (T-07957). Assert the process, not
+    # the mechanism. Nodes with no gui LaunchAgent (lab, which runs a system
+    # LaunchDaemon) are skipped: there is no gui job to own the pid.
+    plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+    if [[ -f "$plist" ]]; then
+      uid="$(id -u)"
+      server_pid="$(jq -er '.pid' <<<"$status_after")" ||
+        fail 'post-restart status did not report a daemon pid'
+      job="$(launchctl print "gui/${uid}/com.praesidium.hrc-server" 2>/dev/null)" ||
+        fail "LaunchAgent plist exists at ${plist} but gui/${uid}/com.praesidium.hrc-server is not loaded; the daemon serving this node (pid ${server_pid}) is unsupervised. Repair: hrc server stop; launchctl bootstrap gui/${uid} ${plist}"
+      job_pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
+      [[ -n "$job_pid" ]] ||
+        fail "launchd job com.praesidium.hrc-server is loaded but reports no pid; the daemon serving this node (pid ${server_pid}) is not launchd-owned"
+      [[ "$job_pid" == "$server_pid" ]] ||
+        fail "the daemon serving this node (pid ${server_pid}) is not the launchd job pid ${job_pid}; an unsupervised daemon holds the socket"
+
+      # Ownership is not the environment. `ps eww` prints the process environment
+      # as inherited, which is the only place the plist's keys are observable on
+      # the running daemon.
+      daemon_env="$(ps eww -p "$server_pid" -o command= | tr ' ' '\n')" ||
+        fail "could not read the environment of daemon pid ${server_pid}"
+      while read -r key; do
+        [[ -n "$key" ]] || continue
+        grep -q "^${key}=" <<<"$daemon_env" ||
+          fail "daemon pid ${server_pid} is missing ${key}, which ${plist} declares; it is not running with the plist's environment"
+      done < <(plutil -extract EnvironmentVariables json -o - "$plist" 2>/dev/null |
+        jq -r 'keys[] | select(startswith("HRC_"))')
+      printf 'supervisor ok on %s: launchd job pid %s carries the plist environment\n' \
+        "$expected_node" "$server_pid"
+    fi
+
     asp_version="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status_after")"
 
     printf 'deployed %s to %s: %s (asp %s)\n' \

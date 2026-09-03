@@ -106,6 +106,130 @@ export async function detectLaunchdOwner(): Promise<LaunchdOwner | null> {
 }
 
 /**
+ * A LaunchAgent plist that exists on disk for this label, governs THIS runtime
+ * root, and whose job is not loaded in the user's gui domain.
+ *
+ * This is the state that produced T-07957: the plist carries the daemon's whole
+ * environment (HRC_MAIL_KICKER_ENABLED, HRC_WRKQ_DB, the broker flags), and when
+ * the job is not loaded `detectLaunchdOwner` returns null exactly as it does on
+ * a node that has no LaunchAgent at all. `hrc server start`/`restart` then take
+ * the self-daemonize path and produce a healthy, correctly-versioned daemon with
+ * none of that environment: the mail kicker is off and there is no canonical
+ * wrkq endpoint, so cold summonses to that node are never seated and no local
+ * signal says why.
+ */
+export type StrandedLaunchAgent = {
+  label: string
+  plistPath: string
+  serviceTarget: string
+  domain: string
+  /** HRC_* keys the plist declares, sorted; empty when the plist declares none. */
+  declaredEnvKeys: readonly string[]
+}
+
+function normalizeRoot(path: string): string {
+  return path.length > 1 && path.endsWith('/') ? path.replace(/\/+$/, '') : path
+}
+
+/**
+ * Read a plist's `EnvironmentVariables` dict via plutil. Returns null when the
+ * plist has no such key, is unreadable, or is not a string dict — all of which
+ * mean "this plist declares no environment we can reason about", never "the
+ * plist is absent".
+ */
+async function readPlistEnvironment(plistPath: string): Promise<Record<string, string> | null> {
+  const result = await execProcess([
+    'plutil',
+    '-extract',
+    'EnvironmentVariables',
+    'json',
+    '-o',
+    '-',
+    plistPath,
+  ])
+  if (result.exitCode !== 0) return null
+  try {
+    const parsed: unknown = JSON.parse(result.stdout)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const env: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string') env[key] = value
+    }
+    return env
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Detect a plist that exists but is not loaded, for the daemon this CLI would
+ * act on. Call only after `detectLaunchdOwner()` has returned null.
+ *
+ * Governance is the discriminator, not mere existence: a `hrc dev env` daemon or
+ * a test daemon runs on its own runtime root and must keep self-daemonizing even
+ * though the operator's plist sits in ~/Library/LaunchAgents. So the plist
+ * governs this daemon only when its declared HRC_RUNTIME_DIR matches the
+ * runtime root we resolved, or — when the plist declares none — when this
+ * process also has no HRC_RUNTIME_DIR override, so both take the same default.
+ */
+export async function detectStrandedLaunchAgent(): Promise<StrandedLaunchAgent | null> {
+  if (process.platform !== 'darwin') return null
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  if (uid === undefined) return null
+  const home = process.env['HOME']
+  if (home === undefined || home.length === 0) return null
+
+  const label = process.env['HRC_LAUNCHD_LABEL'] ?? DEFAULT_LAUNCHD_LABEL
+  const plistPath = `${home}/Library/LaunchAgents/${label}.plist`
+  // Cheapest discriminator first: nodes that are genuinely unsupervised have no
+  // plist, and must not pay for a launchctl probe on every start.
+  if (!existsSync(plistPath)) return null
+
+  const domain = `gui/${uid}`
+  const serviceTarget = `${domain}/${label}`
+  const loaded = await execProcess(['launchctl', 'print', serviceTarget])
+  if (loaded.exitCode === 0) return null
+
+  const declared = await readPlistEnvironment(plistPath)
+  const declaredRuntimeDir = declared?.['HRC_RUNTIME_DIR']
+  if (declaredRuntimeDir === undefined) {
+    if (process.env['HRC_RUNTIME_DIR'] !== undefined) return null
+  } else if (
+    normalizeRoot(declaredRuntimeDir) !== normalizeRoot(resolveServerPaths().runtimeRoot)
+  ) {
+    return null
+  }
+
+  const declaredEnvKeys = Object.keys(declared ?? {})
+    .filter((key) => key.startsWith('HRC_'))
+    .sort()
+  return { label, plistPath, serviceTarget, domain, declaredEnvKeys }
+}
+
+/**
+ * The refusal text for a stranded LaunchAgent. Names the mechanism and the exact
+ * repair, because the failure it prevents is silent: the operator who ignores
+ * this and self-daemonizes gets a green `hrc server status` on the right release
+ * and a node that quietly stops seating cold summonses.
+ */
+export function formatStrandedLaunchAgentRefusal(
+  agent: StrandedLaunchAgent,
+  action: 'start' | 'restart'
+): string {
+  const missing =
+    agent.declaredEnvKeys.length > 0 ? agent.declaredEnvKeys.join(', ') : 'its environment'
+  return [
+    `refusing to ${action} an unsupervised daemon: the LaunchAgent plist ${agent.plistPath} exists but ${agent.serviceTarget} is not loaded.`,
+    `Self-daemonizing here would run a daemon with none of the environment the plist declares (${missing}), which silently disables the mail kicker and the canonical wrkq endpoint (T-07957).`,
+    'Repair:',
+    '  hrc server stop            # if an unsupervised daemon already holds the socket',
+    `  launchctl bootout ${agent.serviceTarget} 2>/dev/null || true`,
+    `  launchctl bootstrap ${agent.domain} ${agent.plistPath}`,
+    `If this node is deliberately unsupervised, move ${agent.plistPath} aside first.`,
+  ].join('\n')
+}
+
+/**
  * `EALREADY` from launchctl. `kickstart -k` asked launchd to kill and relaunch a
  * job whose restart was already in flight, so launchd declined to start a second
  * one. The actuation still happened — this is a race with our own shutdown or
