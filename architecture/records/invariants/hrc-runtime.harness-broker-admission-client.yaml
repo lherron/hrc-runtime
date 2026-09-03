@@ -53,7 +53,9 @@ source:
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
   - packages/hrcchat-cli/src/commands/turn.ts
-  - packages/hrc-server/src/mail-kicker-handlers.ts
+  - packages/hrc-mail-kicker/src/controller.ts
+  - packages/hrc-mail-kicker/src/drive/held-batch-flush.ts
+  - packages/hrc-mail-kicker/src/drive/target-driver.ts
 required_tests:
   - the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four
   - steer signatures cannot express wait obligation or own-response semantics
