@@ -129,11 +129,21 @@ prepend the canonical locations rather than requiring the dotfiles to agree.
   release with plist env, root-free; `just deploy-lab` encodes this. Only the
   one-time install needs root (`sudo install` + `sudo launchctl bootstrap system`).
 
-- **hrcdev** runs its daemon **unsupervised** — no plist, orphaned to PID 1, so it
-  never self-restarts and no plist env can reach it. `hrc server restart` finds no
-  launchd owner and takes its stop + self-daemonize + restart-proof path, which is
-  correct; the deploy recipe needs no special case for it. But nothing brings that
-  daemon back on its own, so a failed restart there stays down.
+- **hrcdev** runs a **gui LaunchAgent** exactly like svc and max3
+  (`~/Library/LaunchAgents/com.praesidium.hrc-server.plist` in `gui/502`), and
+  `hrc server restart` detects and kickstarts it. It is **not** unsupervised: the
+  claim that it ran with no plist, orphaned to PID 1, was wrong and is what let
+  T-07957 pass as a green deploy over a detached daemon carrying none of the
+  plist's environment. Until T-07958 it also declared a **second** supervisor for
+  the same label — a root `/Library/LaunchDaemons/com.praesidium.hrc-server.plist`
+  — and the two fought over `hrc.sock`, the loser respawning on KeepAlive and
+  exiting 2 on `daemon already running`. The root job is retired
+  (`.retired-T07958`); the gui LaunchAgent is the single supervisor, and it
+  carries `VERDACCIO_REGISTRY=http://127.0.0.1:4873/`, the guest's only live
+  publish-containment guard, which daemon-spawned seats inherit. If a node ever
+  declares two jobs for one label again, pick one — `hrc server restart` refuses
+  to self-daemonize past an unloaded LaunchAgent (T-07957), so the deploy lane
+  stays red until it is resolved.
 
 **Env-gated flags** (e.g. `HRC_MAIL_KICKER_ENABLED`) are read from `process.env`
 only: they live in the node's plist `EnvironmentVariables` and apply on the next

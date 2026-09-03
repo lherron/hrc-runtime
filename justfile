@@ -511,11 +511,11 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     # never seated and nothing local says why (T-07957). Assert the process, not
     # the mechanism.
     #
-    # Either domain counts. lab runs a system LaunchDaemon and hrcdev was found
-    # declaring BOTH a gui LaunchAgent and a system one for the same label; the
-    # invariant is that SOME loaded launchd job owns the serving pid and that the
-    # pid carries that job's declared environment, not that the gui job in
-    # particular does.
+    # Either domain counts. lab runs a system LaunchDaemon, and hrcdev was once
+    # found declaring BOTH a gui LaunchAgent and a system one for the same label
+    # (T-07958 retired the system job; hrcdev is gui-only now). The invariant is
+    # that SOME loaded launchd job owns the serving pid and that the pid carries
+    # that job's declared environment, not that the gui job in particular does.
     declare -a supervisor_plists=(
       "gui/$(id -u)/com.praesidium.hrc-server::$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
       "system/com.praesidium.hrc-server::/Library/LaunchDaemons/com.praesidium.hrc-server.plist"
