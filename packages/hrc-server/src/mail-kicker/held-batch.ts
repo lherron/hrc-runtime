@@ -9,7 +9,10 @@ import { presentationKeyFor } from '../auto-reply-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
-import type { EnvelopePresentationForm } from '../wrkq/envelope-presentation.js'
+import {
+  type EnvelopePresentationForm,
+  envelopeReplyAddressee,
+} from '../wrkq/envelope-presentation.js'
 import { buildKickRuntimeIntent } from '../wrkq/kick-intent.js'
 import type { WrkqEnvelope } from '../wrkq/ledger-types.js'
 
@@ -50,6 +53,12 @@ export function holdQueueForBusyTarget(
       targetSessionRef,
       wakeReason,
       envelopeIds: queue.map((item) => item.envelope.id),
+      counterpartyRefs: Object.fromEntries(
+        queue.flatMap((item) => {
+          const counterpartyRef = envelopeReplyAddressee(item.envelope)
+          return counterpartyRef === undefined ? [] : [[item.envelope.id, counterpartyRef]]
+        })
+      ),
       heldBehindTurnId: seat.turnId,
       hostSessionId: session.hostSessionId,
       generation: session.generation,

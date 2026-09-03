@@ -3,10 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { Database } from 'bun:sqlite'
 import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { openHrcDatabase } from '../index.js'
 import type { HrcDatabase } from '../index.js'
+import { phase1Migrations } from '../migrations.js'
 
 /**
  * The drive slot after the wrkq re-point (T-07615).
@@ -67,6 +69,60 @@ function startAttempt(runId: string, hrcSeq: number) {
 }
 
 describe('HrcMailDriveRepository', () => {
+  it('8. migrates legacy held rows with null counterparty refs that count only toward heldCount', () => {
+    const legacyPath = join(tmpDir, 'legacy.sqlite')
+    const raw = new Database(legacyPath)
+    raw.exec('CREATE TABLE hrc_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)')
+    for (const migration of phase1Migrations) {
+      if (migration.id === '0054_hrcmail_hint_decision') break
+      migration.apply(raw)
+      raw
+        .query('INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)')
+        .run(migration.id, '2026-09-03T00:00:00.000Z')
+    }
+    raw
+      .query(
+        `INSERT INTO hrcmail_drive_attempts (
+           drive_attempt_id, target_session_ref, run_id, wake_reason, state,
+           prompt, presented_count, host_session_id, generation, runtime_id,
+           held_behind_turn_id, claimed_at, updated_at
+         ) VALUES (?, ?, ?, 'insert', 'held', ?, 1, ?, 1, ?, ?, ?, ?)`
+      )
+      .run(
+        'queued-legacy',
+        target,
+        'run-legacy',
+        '1 envelope pending',
+        'hsid-legacy',
+        'rt-legacy',
+        'turn-legacy',
+        '2026-09-03T00:00:00.000Z',
+        '2026-09-03T00:00:00.000Z'
+      )
+    raw
+      .query(
+        `INSERT INTO hrcmail_drive_presentations (
+           drive_attempt_id, envelope_id, presented_at
+         ) VALUES (?, ?, ?)`
+      )
+      .run('queued-legacy', 'EN-legacy', '2026-09-03T00:00:00.000Z')
+    raw.close()
+
+    const migrated = openHrcDatabase(legacyPath)
+    try {
+      expect(migrated.migrations.applied).toContain('0054_hrcmail_hint_decision')
+      expect(
+        migrated.mailDrives.evaluateHeldHint(target, 'rt-legacy', 'mable@hcs:T-07904')
+      ).toMatchObject({
+        outcome: 'issued',
+        heldCount: 1,
+        fromDrivingParty: 0,
+      })
+    } finally {
+      migrated.close()
+    }
+  })
+
   it('carries the ledger-supplied materialization intent onto the claim', () => {
     const claim = db.mailDrives.claim(target, 'insert', actionable('EN-00001'))
     expect(claim.outcome).toBe('acquired')

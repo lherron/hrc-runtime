@@ -1033,6 +1033,8 @@ class HrcServerInstance implements HrcServer {
     // path by name, so renaming it is a separate coordinated change.
     [exactRouteKey('POST', '/v1/internal/mail/stop-decision')]: (request) =>
       this.handleMailStopDecision(request),
+    [exactRouteKey('POST', '/v1/internal/mail/hint-decision')]: (request) =>
+      this.handleMailHintDecision(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>

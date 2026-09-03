@@ -47,6 +47,9 @@ export type HrcMailDriveAttempt = {
   /** The broker-observed turn boundary an HRC-held queue batch is waiting for. */
   heldBehindTurnId?: string | undefined
   autoReplyCandidate?: HrcMailAutoReplyCandidate | undefined
+  hintCount?: number | undefined
+  lastHintAt?: string | undefined
+  lastHintPresentedCount?: number | undefined
   claimedAt: string
   startedAt?: string | undefined
   completedAt?: string | undefined
@@ -120,6 +123,8 @@ export type HrcMailHeldAttemptInput = {
   targetSessionRef: string
   wakeReason: HrcMailDriveWakeReason
   envelopeIds: readonly string[]
+  /** Reply addressee keyed by envelope id, captured while HRC has the ledger row in hand. */
+  counterpartyRefs?: Readonly<Record<string, string>> | undefined
   heldBehindTurnId: string
   hostSessionId: string
   generation: number
@@ -131,6 +136,17 @@ export type HrcMailHeldAttemptUpdate = {
   attempt: HrcMailDriveAttempt
   addedEnvelopeIds: string[]
 }
+
+export type HrcMailHintDecision =
+  | { outcome: 'suppressed'; reason: 'no_held_batch' | 'runtime_mismatch' | 'cadence' }
+  | {
+      outcome: 'issued'
+      reason: 'first' | 'count_changed' | 'periodic'
+      driveAttemptId: string
+      heldCount: number
+      fromDrivingParty: number
+      hintCount: number
+    }
 
 export type HrcMailAttemptRuntimeBinding = {
   hostSessionId: string
@@ -262,6 +278,9 @@ type DriveAttemptRow = {
   auto_reply_source_envelope_ids_json: string | null
   auto_reply_room_key: string | null
   auto_reply_counterparty_ref: string | null
+  hint_count: number | null
+  last_hint_at: string | null
+  last_hint_presented_count: number | null
 }
 
 type AutoReplyIntentRow = {
@@ -297,7 +316,8 @@ const DRIVE_ATTEMPT_COLUMNS = `
   started_at, completed_at, updated_at, queued_behind_run_id,
   held_behind_turn_id,
   auto_reply_source_ref, auto_reply_source_envelope_ids_json,
-  auto_reply_room_key, auto_reply_counterparty_ref
+  auto_reply_room_key, auto_reply_counterparty_ref,
+  hint_count, last_hint_at, last_hint_presented_count
 `
 
 const AUTO_REPLY_INTENT_COLUMNS = `
@@ -384,6 +404,11 @@ function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
       const candidate = mapAutoReplyCandidate(row)
       return candidate === undefined ? {} : { autoReplyCandidate: candidate }
     })(),
+    ...(row.hint_count === null ? {} : { hintCount: row.hint_count }),
+    ...(row.last_hint_at === null ? {} : { lastHintAt: row.last_hint_at }),
+    ...(row.last_hint_presented_count === null
+      ? {}
+      : { lastHintPresentedCount: row.last_hint_presented_count }),
     claimedAt: row.claimed_at,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
@@ -768,10 +793,15 @@ export class HrcMailDriveRepository {
           this.db
             .query(
               `INSERT OR IGNORE INTO hrcmail_drive_presentations (
-                 drive_attempt_id, envelope_id, presented_at
-               ) VALUES (?, ?, ?)`
+                 drive_attempt_id, envelope_id, presented_at, counterparty_ref
+               ) VALUES (?, ?, ?, ?)`
             )
-            .run(attempt.driveAttemptId, envelopeId, now)
+            .run(
+              attempt.driveAttemptId,
+              envelopeId,
+              now,
+              input.counterpartyRefs?.[envelopeId] ?? null
+            )
         }
         const count = existing.size + addedEnvelopeIds.length
         this.db
@@ -800,6 +830,75 @@ export class HrcMailDriveRepository {
       )
       .get(normalizeTarget(targetSessionRef))
     return row === null ? undefined : mapAttempt(row)
+  }
+
+  /** Atomically apply the count-change / five-minute hint cadence to one held batch. */
+  evaluateHeldHint(
+    targetSessionRef: string,
+    runtimeId: string,
+    drivingCounterpartyRef?: string | undefined,
+    now: Date = new Date()
+  ): HrcMailHintDecision {
+    const target = normalizeTarget(targetSessionRef)
+    return this.db
+      .transaction(() => {
+        const attempt = this.getHeldAttempt(target)
+        if (attempt === undefined) return { outcome: 'suppressed', reason: 'no_held_batch' }
+        if (attempt.runtimeId !== runtimeId) {
+          return { outcome: 'suppressed', reason: 'runtime_mismatch' }
+        }
+
+        const counts = this.db
+          .query<
+            { held_count: number; from_driving_party: number },
+            [string | null, string | null, string]
+          >(
+            `SELECT COUNT(*) AS held_count,
+                    COALESCE(SUM(
+                      CASE WHEN ? IS NOT NULL AND counterparty_ref = ? THEN 1 ELSE 0 END
+                    ), 0) AS from_driving_party
+               FROM hrcmail_drive_presentations
+              WHERE drive_attempt_id = ?`
+          )
+          .get(
+            drivingCounterpartyRef ?? null,
+            drivingCounterpartyRef ?? null,
+            attempt.driveAttemptId
+          )
+        const heldCount = counts?.held_count ?? 0
+        const fromDrivingParty = counts?.from_driving_party ?? 0
+        const nowMs = now.getTime()
+        const lastHintMs =
+          attempt.lastHintAt === undefined ? Number.NaN : Date.parse(attempt.lastHintAt)
+        const reason =
+          attempt.lastHintAt === undefined
+            ? 'first'
+            : attempt.lastHintPresentedCount !== heldCount
+              ? 'count_changed'
+              : !Number.isNaN(lastHintMs) && nowMs - lastHintMs >= 5 * 60_000
+                ? 'periodic'
+                : undefined
+        if (reason === undefined) return { outcome: 'suppressed', reason: 'cadence' }
+
+        const hintCount = (attempt.hintCount ?? 0) + 1
+        const at = now.toISOString()
+        this.db
+          .query(
+            `UPDATE hrcmail_drive_attempts
+                SET hint_count = ?, last_hint_at = ?, last_hint_presented_count = ?, updated_at = ?
+              WHERE drive_attempt_id = ? AND state = 'held' AND runtime_id = ?`
+          )
+          .run(hintCount, at, heldCount, at, attempt.driveAttemptId, runtimeId)
+        return {
+          outcome: 'issued',
+          reason,
+          driveAttemptId: attempt.driveAttemptId,
+          heldCount,
+          fromDrivingParty,
+          hintCount,
+        }
+      })
+      .immediate() as HrcMailHintDecision
   }
 
   /**
@@ -876,8 +975,8 @@ export class HrcMailDriveRepository {
             )
           for (const envelopeId of remainingEnvelopeIds) {
             const presentation = this.db
-              .query<{ presented_at: string }, [string, string]>(
-                `SELECT presented_at
+              .query<{ presented_at: string; counterparty_ref: string | null }, [string, string]>(
+                `SELECT presented_at, counterparty_ref
                    FROM hrcmail_drive_presentations
                   WHERE drive_attempt_id = ? AND envelope_id = ?`
               )
@@ -888,10 +987,15 @@ export class HrcMailDriveRepository {
             this.db
               .query(
                 `INSERT INTO hrcmail_drive_presentations (
-                   drive_attempt_id, envelope_id, presented_at
-                 ) VALUES (?, ?, ?)`
+                   drive_attempt_id, envelope_id, presented_at, counterparty_ref
+                 ) VALUES (?, ?, ?, ?)`
               )
-              .run(successorAttemptId, envelopeId, presentation.presented_at)
+              .run(
+                successorAttemptId,
+                envelopeId,
+                presentation.presented_at,
+                presentation.counterparty_ref
+              )
             this.db
               .query(
                 `DELETE FROM hrcmail_drive_presentations

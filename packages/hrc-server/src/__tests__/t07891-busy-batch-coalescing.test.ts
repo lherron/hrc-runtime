@@ -243,6 +243,19 @@ describe('T-07891 HRC-held busy batches', () => {
     expect(calls()).toHaveLength(1)
     expect(queued.every((item) => item.presentedTo.length === 0)).toBe(true)
 
+    // T-07926: hint calls interleaved with the active turn are count-only. They
+    // neither dispatch nor receipt this batch, and cadence suppresses a repeat.
+    const firstHint = await fixture.postJson('/v1/internal/mail/hint-decision', {
+      runtimeId: RUNTIME_ID,
+    })
+    expect(await firstHint.json()).toMatchObject({ heldCount: 3, reason: 'first' })
+    const repeatHint = await fixture.postJson('/v1/internal/mail/hint-decision', {
+      runtimeId: RUNTIME_ID,
+    })
+    expect(await repeatHint.json()).toEqual({})
+    expect(calls()).toHaveLength(1)
+    expect(queued.every((item) => item.presentedTo.length === 0)).toBe(true)
+
     seat = { state: 'idle' }
     const drivingRunId = ledger.envelopes.get(driving.id)?.presentedTo[0]?.runId
     if (drivingRunId === undefined) throw new Error('foreground receipt has no run')
@@ -282,6 +295,32 @@ describe('T-07891 HRC-held busy batches', () => {
     })
     expect(replay.lines.some((line) => line.includes('queue_batch_receipts_replayed'))).toBe(true)
     expect(calls()).toHaveLength(2)
+
+    // The later boundary still owns one exact auto-reply discharge for the
+    // whole same-counterparty fan-out group.
+    const boundaryRun = db.runs.getByRunId(boundary?.runId ?? '')
+    if (boundaryRun === null) throw new Error('missing boundary run')
+    const message = appendHrcEvent(db, 'turn.message', {
+      ts: timestamp(),
+      hostSessionId: boundaryRun.hostSessionId,
+      scopeRef: boundaryRun.scopeRef,
+      laneRef: boundaryRun.laneRef,
+      generation: boundaryRun.generation,
+      runtimeId: boundaryRun.runtimeId,
+      runId: boundaryRun.runId,
+      transport: 'tmux',
+      payload: { message: { role: 'assistant', content: 'one boundary response' } },
+    })
+    serverInternals(server as HrcServer).notifyEvent(message)
+    await completeRun(server as HrcServer, boundaryRun.runId)
+    await waitUntil(() => ledger.roomSayRequests.length === 1, 'boundary auto reply')
+    expect(ledger.roomSayRequests[0]).toMatchObject({
+      ref: queued[0]?.roomKey,
+      body: 'one boundary response',
+      to: ['mable@hcs:fixall'],
+      dischargeEnvelopeIds: queued.map((item) => item.id),
+    })
+    expect(queued.every((item) => ledger.envelopes.get(item.id)?.state === 'acked')).toBe(true)
   })
 
   it('serializes three held counterparties across three boundary turns', async () => {

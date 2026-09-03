@@ -2479,6 +2479,19 @@ const continuationReuseStateMigration: HrcMigration = {
   },
 }
 
+/** T-07926 — count-only PostToolUse hints for queue mail held behind an active turn. */
+const hrcmailHintDecisionMigration: HrcMigration = {
+  id: '0054_hrcmail_hint_decision',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN hint_count INTEGER;
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN last_hint_at TEXT;
+      ALTER TABLE hrcmail_drive_attempts ADD COLUMN last_hint_presented_count INTEGER;
+      ALTER TABLE hrcmail_drive_presentations ADD COLUMN counterparty_ref TEXT;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2528,4 +2541,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailQueuedAttemptWithdrawalMigration,
   hrcmailHeldQueueBatchMigration,
   continuationReuseStateMigration,
+  hrcmailHintDecisionMigration,
 ]

@@ -162,6 +162,7 @@ export type {
   HrcMailDriveWakeReason,
   HrcMailEnvelopeReminder,
   HrcMailFailureNotice,
+  HrcMailHintDecision,
 } from './mail/drive-repository.js'
 export type {
   AckHrcMailEnvelopeInput,

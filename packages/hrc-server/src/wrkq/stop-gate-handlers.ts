@@ -31,6 +31,11 @@ const STOP_SUMMARY_LIMIT = 8
 const STOP_BODY_PREVIEW_CHARS = 160
 const STOP_REASON_MAX_CHARS = 4_096
 
+const ACTIVE_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
+
+export const MAIL_HINT_GUIDANCE =
+  'They present at turn end. This is a count, not the mail; it carries no obligation and nothing to reply to. Finish the current step; if you want the mail sooner, end the turn at a coherent point.'
+
 export async function handleMailStopDecision(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -130,7 +135,99 @@ export async function handleMailStopDecision(
 }
 
 function isActiveStopRunStatus(status: string): boolean {
-  return status === 'accepted' || status === 'started' || status === 'running'
+  return ACTIVE_RUN_STATUSES.has(status)
+}
+
+/**
+ * Count-only local hint for queue mail held behind the active broker turn.
+ *
+ * Unlike the Stop gate above, this path never consults wrkq: PostToolUse owns a
+ * 250 ms bridge budget, and a hint is optional execution context rather than a
+ * presentation or obligation.
+ */
+export async function handleMailHintDecision(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  let runtimeId = ''
+  try {
+    const body = await parseJsonBody(request)
+    runtimeId = isRecord(body) && typeof body['runtimeId'] === 'string' ? body['runtimeId'] : ''
+    if (runtimeId.length === 0) {
+      writeHintSuppressed(runtimeId, 'error')
+      return json({})
+    }
+
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime === null || runtime.activeRunId === undefined) {
+      writeHintSuppressed(runtimeId, 'no_active_turn')
+      return json({})
+    }
+    const run = this.db.runs.getByRunId(runtime.activeRunId)
+    if (
+      run === null ||
+      run.runtimeId !== runtimeId ||
+      run.scopeRef !== runtime.scopeRef ||
+      run.laneRef !== runtime.laneRef ||
+      !ACTIVE_RUN_STATUSES.has(run.status)
+    ) {
+      writeHintSuppressed(runtimeId, 'no_active_turn')
+      return json({})
+    }
+
+    const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
+    const drivingCounterpartyRef = this.db.mailDrives.getAttemptByRunId(run.runId)
+      ?.autoReplyCandidate?.counterpartyRef
+    const decision = this.db.mailDrives.evaluateHeldHint(
+      targetSessionRef,
+      runtimeId,
+      drivingCounterpartyRef
+    )
+    if (decision.outcome === 'suppressed') {
+      writeHintSuppressed(runtimeId, decision.reason)
+      return json({})
+    }
+
+    const partyClause =
+      drivingCounterpartyRef === undefined
+        ? ''
+        : `, ${decision.fromDrivingParty} from the party driving this turn`
+    const noun = decision.heldCount === 1 ? 'envelope is' : 'envelopes are'
+    const hint = `Mail hint from HRC: ${decision.heldCount} ${noun} held for this seat${partyClause}. ${MAIL_HINT_GUIDANCE}`
+    writeServerLog('INFO', 'wrkq.kicker.hint_issued', {
+      runtimeId,
+      targetSessionRef,
+      driveAttemptId: decision.driveAttemptId,
+      heldCount: decision.heldCount,
+      fromDrivingParty: decision.fromDrivingParty,
+      hintCount: decision.hintCount,
+      reason: decision.reason,
+    })
+    return json({
+      hint,
+      heldCount: decision.heldCount,
+      fromDrivingParty: decision.fromDrivingParty,
+      driveAttemptId: decision.driveAttemptId,
+      reason: decision.reason,
+    })
+  } catch (error) {
+    writeHintSuppressed(runtimeId, 'error', error)
+    return json({})
+  }
+}
+
+function writeHintSuppressed(
+  runtimeId: string,
+  reason: 'no_active_turn' | 'no_held_batch' | 'runtime_mismatch' | 'cadence' | 'error',
+  error?: unknown
+): void {
+  writeServerLog('DEBUG', 'wrkq.kicker.hint_suppressed', {
+    runtimeId,
+    reason,
+    ...(error === undefined
+      ? {}
+      : { error: error instanceof Error ? error.message : String(error) }),
+  })
 }
 
 function formatStopReason(
@@ -164,6 +261,6 @@ function clip(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, Math.max(maxChars - 1, 0))}…`
 }
 
-export const wrkqStopGateHandlersMethods = { handleMailStopDecision }
+export const wrkqStopGateHandlersMethods = { handleMailHintDecision, handleMailStopDecision }
 
 export type WrkqStopGateHandlersMethods = typeof wrkqStopGateHandlersMethods

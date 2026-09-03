@@ -1,4 +1,4 @@
-type ServerLogLevel = 'INFO' | 'WARN' | 'ERROR'
+type ServerLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 
 const SERVER_LOG_REDACT_KEY_PATTERN =
   /token|secret|password|passwd|pwd|auth|cookie|session|credential|api[_-]?key|access[_-]?key|refresh[_-]?token|bearer|oauth|client[_-]?secret/i
