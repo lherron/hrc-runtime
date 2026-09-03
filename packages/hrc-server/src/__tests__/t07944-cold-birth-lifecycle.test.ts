@@ -15,7 +15,10 @@ import type { HrcRuntimeSnapshot, SweepZombieRunsResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
-import { serializeDurableColdBootTurnInput } from '../broker-headless-handlers'
+import {
+  disposeColdBootInputContinuationFailure,
+  serializeDurableColdBootTurnInput,
+} from '../broker-headless-handlers'
 import { HarnessBrokerController } from '../broker/controller'
 import { recoverColdBootInputContinuations } from '../cold-boot-input-recovery'
 import { createHrcServer } from '../index'
@@ -371,6 +374,81 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
       })
       expect(readRun('run-rearm').status).toBe('accepted')
       expect(readTurnFailedPayloads('run-rearm')).toHaveLength(0)
+    })
+
+    it('leaves the run accepted when the priming wait was aborted by daemon shutdown', () => {
+      // A live e2e on hrcdev caught this: the shutdown abort rejects the priming
+      // wait, and failing the run there buried exactly the case recovery exists
+      // for — the run must survive as `accepted` for the next process to re-arm.
+      seedColdBirth({
+        runId: 'run-shutdown',
+        hostSessionId: 'hsid-shutdown',
+        scopeRef: 't07944-shutdown',
+        runtimeId: 'rt-shutdown',
+        invocationId: 'inv-shutdown',
+        operationId: 'op-shutdown',
+        acceptedAt: isoMinutesAgo(1),
+        runtimeActivityAt: isoMinutesAgo(1),
+        primingTerminal: false,
+        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
+          dispatchIdempotencyKey: undefined,
+        }),
+      })
+
+      const stopping = new AbortController()
+      stopping.abort()
+      const seam = instance() as unknown as Record<string, unknown>
+      const realSignal = instance().runtimeStartPresentationSignal
+      Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+        value: stopping.signal,
+        configurable: true,
+      })
+      try {
+        expect(
+          disposeColdBootInputContinuationFailure(
+            instance(),
+            'run-shutdown',
+            new Error('compiler priming wait aborted')
+          )
+        ).toBe('deferred_to_restart')
+      } finally {
+        Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+          value: realSignal,
+          configurable: true,
+        })
+      }
+      expect(readRun('run-shutdown').status).toBe('accepted')
+      expect(readTurnFailedPayloads('run-shutdown')).toHaveLength(0)
+    })
+
+    it('fails the run positively when the continuation errored for any other reason', () => {
+      seedColdBirth({
+        runId: 'run-chain-error',
+        hostSessionId: 'hsid-chain-error',
+        scopeRef: 't07944-chain-error',
+        runtimeId: 'rt-chain-error',
+        invocationId: 'inv-chain-error',
+        operationId: 'op-chain-error',
+        acceptedAt: isoMinutesAgo(1),
+        runtimeActivityAt: isoMinutesAgo(1),
+        primingTerminal: false,
+        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
+          dispatchIdempotencyKey: undefined,
+        }),
+      })
+
+      expect(
+        disposeColdBootInputContinuationFailure(
+          instance(),
+          'run-chain-error',
+          new Error('broker refused the invoke')
+        )
+      ).toBe('failed')
+      expect(readRun('run-chain-error')).toMatchObject({
+        status: 'failed',
+        errorCode: 'cold_input_continuation_failed',
+      })
+      expect(readTurnFailedPayloads('run-chain-error')).toHaveLength(1)
     })
 
     it('fails the run positively when the invocation that owed the prompt is gone', async () => {
