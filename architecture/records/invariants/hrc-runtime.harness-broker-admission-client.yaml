@@ -15,10 +15,14 @@ predicate: >
   absorbed or executed disposition. Every obligation-bearing call uses enqueue,
   invoke, or preempt and originates its own turn; blocking callers correlate by
   submission disposition and then the identified turn terminal rather than by
-  delivery inference. A summons that births a launch-primed seat rides the
-  launch turn: the obligation correlates by that turn's identified terminal,
-  and its presentation receipt carries no invocation input id (the T-07693
-  class). Preempt requires operator authority or the sender's
+  delivery inference. An indeterminate submission.lost is a terminal failed
+  disposition: HRC settles its run immediately, then the following non-retryable
+  invocation.failed marks the runtime crashed and closes the broker client. A
+  failed invocation receives no later input, and the next submission provisions
+  a fresh runtime through HRC's existing cross-seat authority. A summons that
+  births a launch-primed seat rides the launch turn: the obligation correlates
+  by that turn's identified terminal, and its presentation receipt carries no
+  invocation input id (the T-07693 class). Preempt requires operator authority or the sender's
   authority over the envelope driving the active turn, and never arises from a
   silent class upgrade. HRC consumes broker capability, seat probe, queue,
   disposition, manifest, and decision-ledger surfaces without reading harness
@@ -44,12 +48,13 @@ predicate: >
   member of that shared input as undeliverable so the sender sees a terminal
   outcome. Each hold/preempt request remains an immediate isolated admission
   decision and is never batched.
-authority: Lance principal rulings 2026-09-01 through 2026-09-03, including wrkq:T-07920 cold-birth ruling and wrkq:T-07926 mail-hint direction / Daedalus approvals wrkq:T-07843 rev 7 and wrkq:T-07926 rev 2
+authority: Lance principal rulings 2026-09-01 through 2026-09-03, including wrkq:T-07920 cold-birth ruling and wrkq:T-07926 mail-hint direction / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, and wrkq:T-07962 rev 3
 source:
   - wrkq:T-07843
   - wrkq:T-07914
   - wrkq:T-07920
   - wrkq:T-07926
+  - wrkq:T-07962
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
   - packages/hrcchat-cli/src/commands/turn.ts
@@ -67,9 +72,10 @@ required_tests:
   - T-07914 one-counterparty idle and boundary selection, same-sender fan-out coalescing, and distinct-sender serialization gates
   - T-07920 launch-primed cold birth suppresses profile priming and carries the summons alone in one launch turn with no broker submission or receipt input id, while warm, non-launch-primed, and high-risk routes retain guarded admission
   - T-07926 mail-hint gates cover counterparty-namespace counts, cadence and fail-open silence, no broker submission or presentation receipt, unchanged batch and auto-reply behavior, and a real PostToolUse additionalContext round-trip with no user row
+  - T-07962 lost-disposition gates settle the HRC waiter and run failed, project the runtime crashed, close the old broker client, reject later delivery to that invocation, and provision the next submission on a fresh runtime
 last_verified:
   date: 2026-09-03
-  evidence: T-07926 rev 2 design approval established the count-only, non-presenting PostToolUse mail-hint boundary; implementation gates remain pending. T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
+  evidence: T-07962 rev 3 source-grounded design approval established terminal lost-disposition consumption and non-retryable fresh-runtime recovery; implementation gates remain pending. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
@@ -79,5 +85,6 @@ reopen_when:
   - collaboration busy-state authority, one-counterparty presentation partitioning, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
   - launch-primed cold-birth delivery stops riding the launch turn or starts requiring a broker input identity
   - a mail hint carries envelope ids or bodies or gains a disposition
+  - HRC stops treating submission.lost as terminal failed or permits the failed invocation to receive later input instead of provisioning fresh
 supersedes: []
 superseded_by: []
