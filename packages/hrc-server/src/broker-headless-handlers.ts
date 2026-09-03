@@ -948,11 +948,7 @@ export async function executeHeadlessBrokerStartTurn(
         await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
       })
       .catch((error: unknown) => {
-        failColdBootInputContinuation(this, runId, {
-          errorCode: HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED,
-          phase: 'cold-boot-input-continuation',
-          error,
-        })
+        disposeColdBootInputContinuationFailure(this, runId, error)
       })
     const runtime = await accepted
     return json({
@@ -971,6 +967,43 @@ export async function executeHeadlessBrokerStartTurn(
     ...options,
     waitForCompletion: false,
   })
+}
+
+/**
+ * Dispose the failure of the detached wait-priming -> submit continuation.
+ *
+ * Two outcomes, and the distinction is load-bearing (a live e2e on hrcdev is
+ * what surfaced it):
+ *
+ *  - `deferred_to_restart` — this daemon is stopping. `stop()` aborts the
+ *    presentation signal, which rejects the priming wait. That is not a lost
+ *    continuation; it is the continuation moving to the NEXT process, where
+ *    `recoverColdBootInputContinuations` re-arms it from the durable prompt.
+ *    Recovery only ever looks at runs still `accepted`, so failing the run here
+ *    would bury exactly the case recovery exists for.
+ *  - `failed` — anything else. The swallow this replaced left an accepted run
+ *    with no continuation and no record of why, and the sweep buried it as a
+ *    zombie 30 minutes later.
+ */
+export function disposeColdBootInputContinuationFailure(
+  server: HrcServerInstanceForHandlers,
+  runId: string,
+  error: unknown
+): 'deferred_to_restart' | 'failed' | 'noop' {
+  if (server.runtimeStartPresentationSignal.aborted) {
+    writeServerLog('INFO', 'broker.cold_boot_input.continuation_deferred_to_restart', {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return 'deferred_to_restart'
+  }
+  return failColdBootInputContinuation(server, runId, {
+    errorCode: HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED,
+    phase: 'cold-boot-input-continuation',
+    error,
+  })
+    ? 'failed'
+    : 'noop'
 }
 
 /**

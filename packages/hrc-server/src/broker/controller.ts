@@ -536,6 +536,7 @@ export class HarnessBrokerController {
       },
       markBrokerClosing: (runtimeId, reason, client) =>
         this.markBrokerClosing(runtimeId, reason, client),
+      intentionalCloseReason: (runtimeId) => this.intentionalCloseReason(runtimeId),
       fireBrokerTmuxLeaseReap: (runtimeId, reason) =>
         this.fireBrokerTmuxLeaseReap(runtimeId, reason),
     }

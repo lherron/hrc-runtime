@@ -15,7 +15,10 @@ import type { HrcRuntimeSnapshot, SweepZombieRunsResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
-import { serializeDurableColdBootTurnInput } from '../broker-headless-handlers'
+import {
+  disposeColdBootInputContinuationFailure,
+  serializeDurableColdBootTurnInput,
+} from '../broker-headless-handlers'
 import { HarnessBrokerController } from '../broker/controller'
 import { recoverColdBootInputContinuations } from '../cold-boot-input-recovery'
 import { createHrcServer } from '../index'
@@ -27,8 +30,17 @@ import {
   RUNTIME_ID,
   RUN_ID,
   type SeededFixture,
+  envelope,
   makeSeededFixture,
 } from './broker-event-mapper-fixtures'
+import {
+  FakeBrokerClient,
+  NOW,
+  type TestFixture,
+  makeFixture,
+  makeStartInput,
+  tick,
+} from './fixtures/broker-controller.fixture'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -364,6 +376,81 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
       expect(readTurnFailedPayloads('run-rearm')).toHaveLength(0)
     })
 
+    it('leaves the run accepted when the priming wait was aborted by daemon shutdown', () => {
+      // A live e2e on hrcdev caught this: the shutdown abort rejects the priming
+      // wait, and failing the run there buried exactly the case recovery exists
+      // for — the run must survive as `accepted` for the next process to re-arm.
+      seedColdBirth({
+        runId: 'run-shutdown',
+        hostSessionId: 'hsid-shutdown',
+        scopeRef: 't07944-shutdown',
+        runtimeId: 'rt-shutdown',
+        invocationId: 'inv-shutdown',
+        operationId: 'op-shutdown',
+        acceptedAt: isoMinutesAgo(1),
+        runtimeActivityAt: isoMinutesAgo(1),
+        primingTerminal: false,
+        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
+          dispatchIdempotencyKey: undefined,
+        }),
+      })
+
+      const stopping = new AbortController()
+      stopping.abort()
+      const seam = instance() as unknown as Record<string, unknown>
+      const realSignal = instance().runtimeStartPresentationSignal
+      Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+        value: stopping.signal,
+        configurable: true,
+      })
+      try {
+        expect(
+          disposeColdBootInputContinuationFailure(
+            instance(),
+            'run-shutdown',
+            new Error('compiler priming wait aborted')
+          )
+        ).toBe('deferred_to_restart')
+      } finally {
+        Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+          value: realSignal,
+          configurable: true,
+        })
+      }
+      expect(readRun('run-shutdown').status).toBe('accepted')
+      expect(readTurnFailedPayloads('run-shutdown')).toHaveLength(0)
+    })
+
+    it('fails the run positively when the continuation errored for any other reason', () => {
+      seedColdBirth({
+        runId: 'run-chain-error',
+        hostSessionId: 'hsid-chain-error',
+        scopeRef: 't07944-chain-error',
+        runtimeId: 'rt-chain-error',
+        invocationId: 'inv-chain-error',
+        operationId: 'op-chain-error',
+        acceptedAt: isoMinutesAgo(1),
+        runtimeActivityAt: isoMinutesAgo(1),
+        primingTerminal: false,
+        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
+          dispatchIdempotencyKey: undefined,
+        }),
+      })
+
+      expect(
+        disposeColdBootInputContinuationFailure(
+          instance(),
+          'run-chain-error',
+          new Error('broker refused the invoke')
+        )
+      ).toBe('failed')
+      expect(readRun('run-chain-error')).toMatchObject({
+        status: 'failed',
+        errorCode: 'cold_input_continuation_failed',
+      })
+      expect(readTurnFailedPayloads('run-chain-error')).toHaveLength(1)
+    })
+
     it('fails the run positively when the invocation that owed the prompt is gone', async () => {
       seedColdBirth({
         runId: 'run-lost',
@@ -529,5 +616,86 @@ describe('T-07944 defect 2 — event-consumer catch on an intentional reap', () 
     expect(crashes[0]?.runtimeId).toBe(RUNTIME_ID)
     // The runtime owns the crash; the completed turn does not.
     expect(crashes[0]?.runId).toBeUndefined()
+  })
+})
+
+describe('T-07944 defect 2 — invocation.exited that IS the reap finishing', () => {
+  let fixture: TestFixture
+
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
+
+  async function startAndExit(intentional: boolean): Promise<HarnessBrokerController> {
+    const fake = new FakeBrokerClient()
+    fake.emitCloseOnClose = true
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 0,
+      reapBrokerTmuxLease: async () => undefined,
+      now: () => NOW,
+    })
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    if (intentional) {
+      // What terminate records before it stops the broker. The broker's own
+      // `invocation.exited` then arrives as the LAST act of that teardown.
+      ;(
+        controller as unknown as { markBrokerClosing: (id: string, reason: string) => void }
+      ).markBrokerClosing('runtime_w2', 'operator_reap')
+    }
+
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 0, signal: null, reason: 'operator_reap' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    await tick()
+    return controller
+  }
+
+  function terminalEvents(kind: string) {
+    return fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+      .filter((event) => event.eventKind === kind)
+  }
+
+  it('classifies a reap-driven exit as terminated, with no crash and no error code', async () => {
+    await startAndExit(true)
+
+    expect(terminalEvents('runtime.crashed')).toHaveLength(0)
+    const terminated = terminalEvents('runtime.terminated')
+    expect(terminated).toHaveLength(1)
+    expect(terminated[0]?.errorCode).toBeUndefined()
+    expect(terminated[0]).toMatchObject({
+      payload: {
+        reason: 'operator_initiated_teardown',
+        operatorCloseReason: 'operator_reap',
+      },
+    })
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('terminated')
+  })
+
+  it('still classifies an unannounced exit as a crash', async () => {
+    await startAndExit(false)
+
+    expect(terminalEvents('runtime.terminated')).toHaveLength(0)
+    const crashes = terminalEvents('runtime.crashed')
+    expect(crashes).toHaveLength(1)
+    expect(crashes[0]?.errorCode).toBe('runtime_unavailable')
+    expect(crashes[0]).toMatchObject({
+      payload: { reason: 'broker_invocation_abnormal_terminal' },
+    })
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('crashed')
   })
 })

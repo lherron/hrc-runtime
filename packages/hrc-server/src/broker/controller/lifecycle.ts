@@ -35,6 +35,13 @@ export type LifecycleContext = {
   getActiveClient: (runtimeId: string) => BrokerClientLike | undefined
   deleteActive: (runtimeId: string, client: BrokerClientLike) => void
   markBrokerClosing: (runtimeId: string, reason: string, client: BrokerClientLike) => void
+  /**
+   * The reason teardown declared for this runtime, if any (T-07944). Set by
+   * `markBrokerClosing` at the START of dispose — before the broker is even
+   * asked to stop — so it is reliably in place by the time the resulting
+   * `invocation.exited` is projected.
+   */
+  intentionalCloseReason: (runtimeId: string) => string | undefined
   fireBrokerTmuxLeaseReap: (runtimeId: string, reason: string) => void
 }
 
@@ -105,9 +112,17 @@ export function markBrokerInvocationTerminal(
           envelope.seq
         )
       : undefined
-  const terminalStatus = userExitReason !== undefined ? 'terminated' : 'crashed'
+  // T-07944: an operator reap is as intentional as a user `/quit`. Terminate
+  // calls `markBrokerClosing` before it stops the broker, so the exit this
+  // projects is the reap finishing — not a runtime dying. Without this consult
+  // every deliberate terminate also emitted `runtime.crashed`: 2425 of them in
+  // 14 days, each within 5s of a `runtime.terminated` carrying an explicit
+  // human reason ("agent-loop complete", "operator_reap", …).
+  const intentionalCloseReason = ctx.intentionalCloseReason(runtimeId)
+  const intentional = userExitReason !== undefined || intentionalCloseReason !== undefined
+  const terminalStatus = intentional ? 'terminated' : 'crashed'
   const occurredAt = envelope.time ?? now
-  const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.crashed'
+  const terminalEventKind = intentional ? 'runtime.terminated' : 'runtime.crashed'
   const invocationFailure =
     envelope.type === 'invocation.failed'
       ? (envelope.payload as InvocationFailedPayload)
@@ -119,7 +134,9 @@ export function markBrokerInvocationTerminal(
   const terminalReason =
     userExitReason !== undefined
       ? 'user_initiated_session_end'
-      : (providerFailureMessage ?? 'broker_invocation_abnormal_terminal')
+      : intentionalCloseReason !== undefined
+        ? 'operator_initiated_teardown'
+        : (providerFailureMessage ?? 'broker_invocation_abnormal_terminal')
   if (runtime.activeRunId !== undefined) {
     const activeRun = ctx.db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && isActiveBrokerRun(activeRun)) {
@@ -131,9 +148,11 @@ export function markBrokerInvocationTerminal(
         errorMessage:
           userExitReason !== undefined
             ? `broker invocation ${String(envelope.invocationId)} ended by user request (${userExitReason})`
-            : providerFailureMessage !== undefined
-              ? `broker invocation ${String(envelope.invocationId)} failed: ${providerFailureMessage}`
-              : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
+            : intentionalCloseReason !== undefined
+              ? `broker invocation ${String(envelope.invocationId)} ended by operator teardown (${intentionalCloseReason})`
+              : providerFailureMessage !== undefined
+                ? `broker invocation ${String(envelope.invocationId)} failed: ${providerFailureMessage}`
+                : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
       })
     }
     ctx.db.runtimes.updateRunId(runtimeId, undefined, now)
@@ -152,6 +171,9 @@ export function markBrokerInvocationTerminal(
       updatedAt: now,
       terminalReason,
       ...(userExitReason !== undefined ? { userExitReason } : {}),
+      ...(intentionalCloseReason !== undefined
+        ? { operatorCloseReason: intentionalCloseReason }
+        : {}),
       terminalInvocation: {
         invocationId: String(envelope.invocationId),
         eventType: envelope.type,
@@ -172,15 +194,19 @@ export function markBrokerInvocationTerminal(
       ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
         ? { transport: runtime.transport }
         : {}),
-      ...(userExitReason === undefined ? { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE } : {}),
+      ...(intentional ? {} : { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE }),
       payload: {
         reason: terminalReason,
         ...(userExitReason !== undefined ? { userExitReason } : {}),
+        ...(intentionalCloseReason !== undefined
+          ? { operatorCloseReason: intentionalCloseReason }
+          : {}),
         invocationId: String(envelope.invocationId),
         eventType: envelope.type,
         seq: envelope.seq,
-        ...(userExitReason === undefined
-          ? {
+        ...(intentional
+          ? {}
+          : {
               providerTerminal: {
                 eventType: envelope.type,
                 ...((envelope.payload as { exitCode?: unknown } | undefined)?.exitCode !== undefined
@@ -201,8 +227,7 @@ export function markBrokerInvocationTerminal(
                   ? { reason: (envelope.payload as { reason?: unknown }).reason }
                   : {}),
               },
-            }
-          : {}),
+            }),
       },
     })
   }
