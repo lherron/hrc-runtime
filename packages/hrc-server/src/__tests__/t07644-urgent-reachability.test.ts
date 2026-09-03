@@ -328,7 +328,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
 
     const mail = say({ body: 'mail through the claim race' })
     const lines = await withServerLog(async (captured) => {
-      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      ;(server as any).mailKicker.wake(TARGET, 'insert')
       await waitUntil(
         () => captured.some((line) => line.includes('wrkq.kicker.drive_in_flight')),
         'claim-route decline logged'
@@ -353,7 +353,7 @@ describe('T-07644 — the claim route answers the same way the active-attempt ro
     await holdTheSlotViaClaim('completed')
 
     say({ body: 'work that must not be dropped by the race' })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    ;(server as any).mailKicker.wake(TARGET, 'insert')
     // The finished attempt released the slot, so the re-entry claims a fresh
     // one and drives. Dropping the wake here would strand the envelope until
     // some unrelated later traffic happened to wake the scope again.

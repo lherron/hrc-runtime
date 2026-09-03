@@ -32,6 +32,7 @@ const PACKAGES = [
   'packages/hrc-server',
   'packages/hrc-events',
   'packages/hrc-store-sqlite',
+  'packages/hrc-mail-kicker',
 ] as const
 
 type CheckOutcome =

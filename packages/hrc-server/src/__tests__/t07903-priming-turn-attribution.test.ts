@@ -8,10 +8,11 @@ import type {
   TurnId,
 } from 'spaces-harness-broker-protocol'
 
-import { autoReplyCandidateFor, reconcileAutoReplyIntent } from '../auto-reply-handlers.js'
+import { autoReplyCandidateFor } from 'hrc-mail-kicker'
+import { observeMailDriveLifecycleEvent } from 'hrc-mail-kicker'
+import { reconcileAutoReplyIntent } from '../auto-reply-handlers.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
-import { observeMailDriveLifecycleEvent } from '../mail-kicker-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { storedManifestEnvelopeIdsForTurn } from '../turn-dispatch-handlers.js'
 import {
@@ -136,7 +137,7 @@ describe('T-07903 fresh-seat priming attribution', () => {
     const observer = {
       db,
       mailKickerLapsedRuntimes: new Set<string>(),
-      requestMailKickerWake: () => {
+      wake: () => {
         db.mailDrives.completeStartedAttempt(RUN_ID, 'turn.completed')
       },
     } as unknown as HrcServerInstanceForHandlers
@@ -432,7 +433,7 @@ describe('T-07903 fresh-seat priming attribution', () => {
     const observer = {
       db,
       mailKickerLapsedRuntimes: new Set<string>(),
-      requestMailKickerWake: () => {
+      wake: () => {
         db.mailDrives.completeStartedAttempt(RUN_ID, 'turn.completed')
       },
     } as unknown as HrcServerInstanceForHandlers

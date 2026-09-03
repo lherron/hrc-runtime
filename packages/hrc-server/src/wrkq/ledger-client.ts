@@ -1,5 +1,8 @@
-import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
-import { writeServerLog } from '../server-log.js'
+import {
+  type MailKickerLedger,
+  WrkqLedgerRequestError,
+  WrkqLedgerUnavailableError,
+} from 'hrc-mail-kicker'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
@@ -19,7 +22,9 @@ import type {
   WrkqRoomSayResult,
   WrkqRoomShowParams,
   WrkqRoomView,
-} from './ledger-types.js'
+} from 'hrc-mail-kicker'
+import { wrkqAuthorityEnvironment } from '../federation/wrkq-authority.js'
+import { writeServerLog } from '../server-log.js'
 
 /**
  * HRC's client for the wrkq collaboration ledger (T-07612 §10).
@@ -53,32 +58,9 @@ import type {
  * on it (§8), while the kicker simply declines to drive.
  */
 
-/** wrkq could not be reached, or did not answer in time. Never a ledger refusal. */
-export class WrkqLedgerUnavailableError extends Error {
-  constructor(
-    message: string,
-    readonly method: string
-  ) {
-    super(message)
-    this.name = 'WrkqLedgerUnavailableError'
-  }
-}
+export { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from 'hrc-mail-kicker'
 
-/** wrkq answered, and the answer was an error frame. The ledger spoke; it said no. */
-export class WrkqLedgerRequestError extends Error {
-  constructor(
-    message: string,
-    readonly method: string,
-    readonly code: number,
-    readonly data?: unknown
-  ) {
-    super(message)
-    this.name = 'WrkqLedgerRequestError'
-  }
-}
-
-export type WrkqLedgerClient = {
-  pendingView(params: WrkqEnvelopePendingViewParams): Promise<WrkqEnvelopePendingView>
+export type WrkqLedgerClient = MailKickerLedger & {
   /**
    * The BIRTH ENVELOPE of a target scope (T-07655): the lowest-seq
    * `reply_required` envelope ever addressed to it, in any state, or null.

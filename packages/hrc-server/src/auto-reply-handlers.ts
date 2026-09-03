@@ -1,19 +1,14 @@
 import { formatScopeHandle, parseScopeRef } from 'agent-scope'
-import type {
-  HrcMailAutoReplyCandidate,
-  HrcMailAutoReplyIntent,
-  HrcMailAutoReplyIntentState,
-} from 'hrc-store-sqlite'
+import type { HrcMailAutoReplyIntent, HrcMailAutoReplyIntentState } from 'hrc-store-sqlite'
 
+import type { WrkqEnvelope } from 'hrc-mail-kicker'
 import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { parseSessionRef } from './server-parsers.js'
 import { storedManifestEnvelopeIdsForTurn } from './turn-dispatch-handlers.js'
-import { envelopeReplyAddressee } from './wrkq/envelope-presentation.js'
 import { WrkqLedgerRequestError } from './wrkq/ledger-client.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
-import type { WrkqEnvelope } from './wrkq/ledger-types.js'
 
 const AUTO_REPLY_RECONCILE_INTERVAL_MS = 1_000
 
@@ -24,57 +19,6 @@ type AutoReplyReconcileDeps = {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function senderIdentity(envelope: WrkqEnvelope): string {
-  return envelope.from.scopeRef?.trim() || envelope.from.principalRef.trim()
-}
-
-/**
- * The exact identity shared by one presentation input and its automatic reply.
- *
- * JSON is deliberate: it is an unambiguous, loggable encoding of the tuple,
- * including values that may themselves contain punctuation.
- */
-export function presentationKeyFor(envelope: WrkqEnvelope): string | undefined {
-  const counterpartyRef = envelopeReplyAddressee(envelope)
-  if (counterpartyRef === undefined) return undefined
-  return JSON.stringify([
-    envelope.roomKey,
-    senderIdentity(envelope),
-    counterpartyRef,
-    envelope.groupId ?? envelope.id,
-  ])
-}
-
-/**
- * The exact rev 6 trigger projection.
- *
- * A drive carrying unrelated envelopes is a manual-discipline batch. The only
- * multi-envelope shape eligible here is one fan-out group in one room from one
- * sender. Presented/reminder rows are excluded: the trigger says PENDING mail.
- */
-export function autoReplyCandidateFor(
-  envelopes: readonly WrkqEnvelope[]
-): HrcMailAutoReplyCandidate | undefined {
-  const first = envelopes[0]
-  if (first === undefined || envelopes.some((envelope) => envelope.state !== 'pending')) {
-    return undefined
-  }
-  const presentationKey = presentationKeyFor(first)
-  if (presentationKey === undefined) return undefined
-  const groupId = first.groupId ?? first.id
-  const counterpartyRef = envelopeReplyAddressee(first)
-  if (counterpartyRef === undefined) return undefined
-  if (envelopes.some((envelope) => presentationKeyFor(envelope) !== presentationKey)) {
-    return undefined
-  }
-  return {
-    sourceRef: envelopes.length === 1 ? first.id : groupId,
-    sourceEnvelopeIds: envelopes.map((envelope) => envelope.id),
-    roomKey: first.roomKey,
-    counterpartyRef,
-  }
 }
 
 function agentSayIdentity(targetSessionRef: string): {

@@ -1,15 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { FakeWrkqLedger } from '../../__tests__/fixtures/fake-wrkq-ledger.js'
-import {
-  type HrcServerTestFixture,
-  createHrcTestFixture,
-} from '../../__tests__/fixtures/hrc-test-fixture.js'
-import { captureServerLog, serverInternals } from '../../__tests__/fixtures/mail-kicker-harness.js'
-import { createHrcServer } from '../../index.js'
-import type { HrcServer } from '../../index.js'
-import type { WrkqEnvelope, WrkqEnvelopeFailParams } from '../../wrkq/ledger-types.js'
-import { handleQueuedInjectionExpiry } from '../queued-injection-expiry.js'
+import { handleQueuedInjectionExpiry } from 'hrc-mail-kicker'
+import type { WrkqEnvelope, WrkqEnvelopeFailParams } from 'hrc-mail-kicker'
+import { createHrcServer } from '../index.js'
+import type { HrcServer } from '../index.js'
+import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog, serverInternals } from './fixtures/mail-kicker-harness.js'
 
 const SCOPE = 'agent:expiry-unit:project:hrc-runtime:task:T-07891'
 const TARGET = `${SCOPE}/lane:main`
@@ -62,6 +59,7 @@ describe('mail-kicker queued injection expiry', () => {
   it('fails every receipted batch member undeliverable and warns once across both broker expiry events', async () => {
     const active = server as HrcServer
     const internals = serverInternals(active)
+    const kicker = (active as any).mailKicker
     const envelopes = [
       ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07891', body: 'first' }),
       ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07891', body: 'second' }),
@@ -119,8 +117,8 @@ describe('mail-kicker queued injection expiry', () => {
 
     const captured = await captureServerLog(async () => {
       await Promise.all([
-        handleQueuedInjectionExpiry(internals, queueExpired),
-        handleQueuedInjectionExpiry(internals, submissionExpired),
+        handleQueuedInjectionExpiry(kicker, queueExpired),
+        handleQueuedInjectionExpiry(kicker, submissionExpired),
       ])
     })
 

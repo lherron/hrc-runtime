@@ -36,9 +36,10 @@ import type {
   SweepRuntimesResponse,
   SweepZombieRunsResponse,
 } from 'hrc-core'
+import type { MailKicker } from 'hrc-mail-kicker'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
-import type { HrcDatabase, HrcMailDriveWakeReason, SqliteSlowStatement } from 'hrc-store-sqlite'
+import type { HrcDatabase, SqliteSlowStatement } from 'hrc-store-sqlite'
 import { AcpEventBridge } from './acp-event-bridge.js'
 import {
   type AppSessionHandlersMethods,
@@ -142,10 +143,7 @@ import {
   assertLocalPersonaAllowed,
   normalizeLocalPersonaAllowlist,
 } from './local-persona-policy.js'
-import {
-  type MailKickerHandlersMethods,
-  mailKickerHandlersMethods,
-} from './mail-kicker-handlers.js'
+import { createServerMailKicker } from './mail-kicker-adapter.js'
 import {
   resolveAgentHarnessTmuxBrokerEnabled,
   resolveClaudeCodeTmuxBrokerEnabled,
@@ -776,7 +774,6 @@ interface HrcServerInstance
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
     LaunchLifecycleHandlersMethods,
-    MailKickerHandlersMethods,
     WrkqStopGateHandlersMethods,
     RosterClaimHandlersMethods,
     ExactClaimHandlersMethods,
@@ -848,19 +845,9 @@ class HrcServerInstance implements HrcServer {
   sessionRetentionInFlight: Promise<void> | undefined
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
-  mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
-  mailKickerSweepInFlight: Promise<void> | undefined
+  readonly mailKicker: MailKicker
   autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
   autoReplyReconcileInFlight: Promise<void> | undefined
-  wrkqLedgerTailInFlight: Promise<void> | undefined
-  /** T-07643: a first-ever tail start owes one catch-up over its homed scopes. */
-  mailKickerColdStartCatchupPending = false
-  readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
-  readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
-  readonly mailKickerForeignHomeAnnounced = new Map<string, string>()
-  readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
-  readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
-  readonly mailKickerLapsedRuntimes = new Set<string>()
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
   shadowTeardownTimer: ReturnType<typeof setInterval> | undefined
   shadowTeardownInFlight: Promise<void> | undefined
@@ -1302,6 +1289,7 @@ class HrcServerInstance implements HrcServer {
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
     this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
     this.wrkqLedger = options.wrkqLedger ?? new WrkqStdioLedgerClient()
+    this.mailKicker = createServerMailKicker(this)
     this.ctx = {
       db: this.db,
       tmux: this.tmux,
@@ -1332,7 +1320,7 @@ class HrcServerInstance implements HrcServer {
     this.startTmuxAging()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
-    this.startMailKicker()
+    this.mailKicker.start()
     this.startAutoReplyReconciler()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -1422,7 +1410,7 @@ class HrcServerInstance implements HrcServer {
       ...(tcpPort !== undefined ? { tcpPort } : {}),
       onLifecycleEvent: (event) => this.notifyEvent(event),
       onBrokerEvent: (record) => {
-        this.observeMailDriveBrokerEvent(record)
+        this.mailKicker.observeBrokerEvent(record)
         if (!record.brokerEnvelopeJson) return
         try {
           const notification = {
@@ -1637,29 +1625,7 @@ class HrcServerInstance implements HrcServer {
         writeServerLog('WARN', 'server.stop.shadow_teardown_wait_failed', { error })
       }
     }
-    if (this.mailKickerSweepTimer) {
-      clearInterval(this.mailKickerSweepTimer)
-      this.mailKickerSweepTimer = undefined
-    }
-    this.mailKickerPendingTargets.clear()
-    if (this.mailKickerSweepInFlight) {
-      try {
-        await this.mailKickerSweepInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.mail_kicker_sweep_wait_failed', { error })
-      }
-    }
-    if (this.wrkqLedgerTailInFlight) {
-      try {
-        await this.wrkqLedgerTailInFlight
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.wrkq_ledger_tail_wait_failed', { error })
-      }
-    }
-    const mailTargetOperations = [...this.mailKickerTargetOperations.values()]
-    if (mailTargetOperations.length > 0) {
-      await Promise.allSettled(mailTargetOperations)
-    }
+    await this.mailKicker.stop()
     if (this.autoReplyReconcileTimer) {
       clearInterval(this.autoReplyReconcileTimer)
       this.autoReplyReconcileTimer = undefined
@@ -2823,7 +2789,6 @@ Object.assign(
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
   launchLifecycleHandlersMethods,
-  mailKickerHandlersMethods,
   wrkqStopGateHandlersMethods,
   runtimeInspectHandlersMethods,
   rosterClaimHandlersMethods,

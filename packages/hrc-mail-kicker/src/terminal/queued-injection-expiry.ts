@@ -1,8 +1,7 @@
 import type { HrcBrokerInvocationEventRecord } from 'hrc-core'
 
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
-import { targetSessionRefForLedgerScope } from '../wrkq/ledger-scope.js'
+import type { MailKickerContext } from '../context.js'
+import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { failEnvelopeWithAudit } from './envelope-terminal.js'
 
 const EXPIRY_EVENT_TYPES = new Set(['queue.expired', 'submission.expired'])
@@ -36,7 +35,7 @@ function envelopeOriginForSubmission(
 }
 
 async function failReceiptedExpiredSubmission(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   record: HrcBrokerInvocationEventRecord,
   submissionId: string
 ): Promise<void> {
@@ -44,7 +43,7 @@ async function failReceiptedExpiredSubmission(
   const originEnvelopeId = envelopeOriginForSubmission(records, submissionId)
   if (originEnvelopeId === undefined) return
 
-  const originEnvelope = await server.wrkqLedger.envelopeShow({
+  const originEnvelope = await server.ledger.envelopeShow({
     envelope: originEnvelopeId,
   })
   const originReceipt = originEnvelope.presentedTo.find(
@@ -55,7 +54,7 @@ async function failReceiptedExpiredSubmission(
   const driveAttemptId = originReceipt.driveAttemptId
   let failedCount = 0
   for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(driveAttemptId)) {
-    const envelope = await server.wrkqLedger.envelopeShow({
+    const envelope = await server.ledger.envelopeShow({
       envelope: envelopeId,
     })
     if (envelope.terminal || envelope.state !== 'presented') continue
@@ -71,7 +70,7 @@ async function failReceiptedExpiredSubmission(
         ? undefined
         : targetSessionRefForLedgerScope(envelope.to.scopeRef)
     if (targetSessionRef === undefined) {
-      writeServerLog('WARN', 'wrkq.kicker.queued_injection_expiry_target_invalid', {
+      server.log('WARN', 'wrkq.kicker.queued_injection_expiry_target_invalid', {
         envelopeId,
         runtimeId: record.runtimeId,
         inputId: submissionId,
@@ -80,7 +79,7 @@ async function failReceiptedExpiredSubmission(
       continue
     }
 
-    writeServerLog('WARN', 'wrkq.kicker.queued_injection_expired', {
+    server.log('WARN', 'wrkq.kicker.queued_injection_expired', {
       envelopeId,
       runtimeId: record.runtimeId,
       inputId: submissionId,
@@ -96,7 +95,7 @@ async function failReceiptedExpiredSubmission(
       })
       if (terminal.outcome === 'failed') failedCount += 1
     } catch (error) {
-      writeServerLog('WARN', 'wrkq.kicker.queued_injection_expiry_fail_failed', {
+      server.log('WARN', 'wrkq.kicker.queued_injection_expiry_fail_failed', {
         envelopeId,
         runtimeId: record.runtimeId,
         inputId: submissionId,
@@ -121,7 +120,7 @@ async function failReceiptedExpiredSubmission(
  * and every batch member has an execution-bound presentation receipt.
  */
 export function handleQueuedInjectionExpiry(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   record: HrcBrokerInvocationEventRecord
 ): Promise<void> {
   if (!EXPIRY_EVENT_TYPES.has(record.type)) return Promise.resolve()

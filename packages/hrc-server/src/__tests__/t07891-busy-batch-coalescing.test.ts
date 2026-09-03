@@ -214,8 +214,8 @@ function installDispatchCapture(runtimeId = RUNTIME_ID): () => Dispatch[] {
 }
 
 async function drain(reason: 'insert' | 'turn_completion' | 'periodic' = 'insert'): Promise<void> {
-  ;(server as any).requestMailKickerWake(TARGET, reason)
-  await (server as any).drainMailKickerTarget(TARGET)
+  ;(server as any).mailKicker.wake(TARGET, reason)
+  await (server as any).mailKicker.drainTarget(TARGET)
 }
 
 function heldAttempt(db: HrcDatabase) {
@@ -259,10 +259,10 @@ describe('T-07891 HRC-held busy batches', () => {
     // Rev 3: replying from inside the hinted turn disposes only that member.
     // The ledger ack event subtracts it from HRC's still-unpresented batch, so
     // the boundary can present only the unanswered members.
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     ledger.ack(queued[0]?.id ?? '')
     const acked = await captureServerLog(async () => {
-      await (server as any).runWrkqLedgerTail()
+      await (server as any).mailKicker.runTailOnce()
     })
     await waitUntil(() => heldAttempt(db)?.presentedCount === 2, 'mid-turn held-member ack')
     expect(acked.lines.some((line) => line.includes('wrkq.kicker.held_member_acked'))).toBe(true)
@@ -623,15 +623,15 @@ describe('T-07891 HRC-held busy batches', () => {
 
     // The periodic full sweep performs both D3/D7 maintenance and the seated
     // target read. Six simulated minutes of age is not terminal evidence.
-    await (active as any).runMailKickerSweep()
+    await (active as any).mailKicker.runSweepOnce()
     expectStillHeld()
 
     // Replay the one-time cold-start catch-up against the already-persisted
     // store. It may rediscover the target, but cannot reinterpret held mail as
     // an unborn scope.
-    ;(active as any).mailKickerColdStartCatchupPending = true
-    await (active as any).runWrkqLedgerTail()
-    await (active as any).drainMailKickerTarget(TARGET)
+    ;(active as any).mailKicker.mailKickerColdStartCatchupPending = true
+    await (active as any).mailKicker.runTailOnce()
+    await (active as any).mailKicker.drainTarget(TARGET)
     expectStillHeld()
 
     // A sender-side failure notice is another wake for this same busy seat.
@@ -644,8 +644,8 @@ describe('T-07891 HRC-held busy batches', () => {
     })
     internals.db.wrkqLedgerCursors.advance(ledger.events.length)
     await ledger.fail({ envelope: failedOutbound.id, reason: 'undeliverable' })
-    await (active as any).runWrkqLedgerTail()
-    await (active as any).drainMailKickerTarget(TARGET)
+    await (active as any).mailKicker.runTailOnce()
+    await (active as any).mailKicker.drainTarget(TARGET)
     expectStillHeld(1)
 
     // The first observed boundary presents the original envelope exactly once;

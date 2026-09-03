@@ -78,7 +78,7 @@ export function notifyEvent(
   // this event. Disabled unless explicitly configured.
   this.acpEventBridge.observe(event)
   if ('hrcSeq' in event) {
-    this.observeMailDriveLifecycleEvent(event)
+    this.mailKicker.observeLifecycleEvent(event)
   }
   if (
     'hrcSeq' in event &&

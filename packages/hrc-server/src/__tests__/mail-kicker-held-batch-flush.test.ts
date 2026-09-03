@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
-
-import { FakeWrkqLedger } from '../../__tests__/fixtures/fake-wrkq-ledger.js'
 import {
-  type HrcServerTestFixture,
-  createHrcTestFixture,
-} from '../../__tests__/fixtures/hrc-test-fixture.js'
-import { serverInternals } from '../../__tests__/fixtures/mail-kicker-harness.js'
-import { createHrcServer } from '../../index.js'
-import type { HrcServer } from '../../index.js'
-import { timestamp } from '../../server-util.js'
-import { prepareHeldBatchForBoundary, replayHeldBatchReceipts } from '../batch-flush.js'
-import { holdQueueForBusyTarget } from '../held-batch.js'
+  holdQueueForBusyTarget,
+  prepareHeldBatchForBoundary,
+  replayHeldBatchReceipts,
+} from 'hrc-mail-kicker'
+
+import { createHrcServer } from '../index.js'
+import type { HrcServer } from '../index.js'
+import { timestamp } from '../server-util.js'
+import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { serverInternals } from './fixtures/mail-kicker-harness.js'
 
 const SCOPE = 'agent:batch-flush-unit:project:hrc-runtime:task:T-07891'
 const TARGET = `${SCOPE}/lane:main`
@@ -80,10 +80,11 @@ function say(body: string, groupId = 'EN-batch-flush-fanout') {
 async function heldFixture() {
   const active = server as HrcServer
   const internals = serverInternals(active)
+  const kicker = (active as any).mailKicker
   const session = await seedSession()
   const envelopes = [say('first'), say('second')]
   holdQueueForBusyTarget(
-    internals,
+    kicker,
     TARGET,
     session,
     { state: 'turn-active', runtimeId: RUNTIME_ID, turnId: 'turn-busy' },
@@ -92,14 +93,14 @@ async function heldFixture() {
   )
   const held = internals.db.mailDrives.getHeldAttempt(TARGET)
   if (held === undefined) throw new Error('missing held attempt')
-  return { internals, session, envelopes, held }
+  return { internals, kicker, session, envelopes, held }
 }
 
 describe('mail-kicker batch-flush seam', () => {
   it('freezes one stable batch only after the authoritative second probe is idle', async () => {
-    const { internals, session, envelopes, held } = await heldFixture()
+    const { kicker, session, envelopes, held } = await heldFixture()
     const prepared = await prepareHeldBatchForBoundary(
-      internals,
+      kicker,
       TARGET,
       session,
       held,
@@ -119,9 +120,9 @@ describe('mail-kicker batch-flush seam', () => {
   })
 
   it('atomically rebinds a held attempt to the runtime that wins the boundary', async () => {
-    const { internals, session, envelopes, held } = await heldFixture()
+    const { kicker, session, envelopes, held } = await heldFixture()
     const prepared = await prepareHeldBatchForBoundary(
-      internals,
+      kicker,
       TARGET,
       session,
       held,
@@ -140,9 +141,9 @@ describe('mail-kicker batch-flush seam', () => {
   })
 
   it('keeps the batch held when a foreign turn wins the second probe', async () => {
-    const { internals, session, envelopes, held } = await heldFixture()
+    const { internals, kicker, session, envelopes, held } = await heldFixture()
     const prepared = await prepareHeldBatchForBoundary(
-      internals,
+      kicker,
       TARGET,
       session,
       held,
@@ -161,9 +162,9 @@ describe('mail-kicker batch-flush seam', () => {
   })
 
   it('replays missing per-envelope receipts under the accepted batch input identity', async () => {
-    const { internals, session, envelopes, held } = await heldFixture()
+    const { internals, kicker, session, envelopes, held } = await heldFixture()
     const prepared = await prepareHeldBatchForBoundary(
-      internals,
+      kicker,
       TARGET,
       session,
       held,
@@ -200,7 +201,7 @@ describe('mail-kicker batch-flush seam', () => {
       driveAttemptId: prepared.attempt.driveAttemptId,
     })
 
-    await replayHeldBatchReceipts(internals, prepared.attempt)
+    await replayHeldBatchReceipts(kicker, prepared.attempt)
     const receipts = envelopes.map((envelope) => envelope.presentedTo[0])
     expect(receipts.map((receipt) => receipt?.driveAttemptId)).toEqual([
       prepared.attempt.driveAttemptId,

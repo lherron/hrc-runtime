@@ -10,12 +10,12 @@ import type {
   TurnId,
 } from 'spaces-harness-broker-protocol'
 
-import { autoReplyCandidateFor } from '../auto-reply-handlers.js'
+import { autoReplyCandidateFor } from 'hrc-mail-kicker'
+import { observeMailDriveLifecycleEvent } from 'hrc-mail-kicker'
 import { executeHeadlessBrokerInputTurn } from '../broker-headless-handlers.js'
 import { executeInteractiveBrokerInputTurn } from '../broker-interactive-handlers.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
-import { observeMailDriveLifecycleEvent } from '../mail-kicker-handlers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import {
   LANE_REF,
@@ -236,7 +236,7 @@ describe('T-07881 hook-observed mail turn binding', () => {
     const observer = {
       db,
       mailKickerLapsedRuntimes: new Set<string>(),
-      requestMailKickerWake: () => {
+      wake: () => {
         db.mailDrives.completeStartedAttempt(RUN_ID, 'turn.completed')
       },
     } as unknown as HrcServerInstanceForHandlers

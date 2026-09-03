@@ -6,9 +6,10 @@ import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
+import { runWrkqLedgerTail } from 'hrc-mail-kicker'
 import { HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
-import { runWrkqLedgerTail } from '../mail-kicker-handlers.js'
+import { writeServerLog } from '../server-log.js'
 import {
   INVOCATION_ID,
   envelope as brokerEnvelope,
@@ -30,20 +31,21 @@ type WithdrawOutcome =
   | { outcome: 'unknown' }
 
 type TailServer = {
-  hrcMailKickerEnabled: boolean
+  enabled: boolean
   stopping: boolean
   wrkqLedgerTailInFlight: Promise<void> | undefined
   mailKickerColdStartCatchupPending: boolean
   db: HrcDatabase
-  wrkqLedger: FakeWrkqLedger
-  getHarnessBrokerController(): {
+  ledger: FakeWrkqLedger
+  broker: {
     withdraw(input: {
       runtimeId: string
       envelopeId: string
       reason: string
     }): Promise<{ ok: true; response: WithdrawOutcome }>
   }
-  requestMailKickerWake(target: string, reason: string): void
+  wake(target: string, reason: string): void
+  log(level: string, event: string, detail: Record<string, unknown>): void
 }
 
 describe('T-07890 queued injection withdrawal', () => {
@@ -63,19 +65,20 @@ describe('T-07890 queued injection withdrawal', () => {
     withdrawCalls = []
     wakes = []
     server = {
-      hrcMailKickerEnabled: true,
+      enabled: true,
       stopping: false,
       wrkqLedgerTailInFlight: undefined,
       mailKickerColdStartCatchupPending: false,
       db,
-      wrkqLedger: ledger,
-      getHarnessBrokerController: () => ({
+      ledger,
+      broker: {
         withdraw: async (input) => {
           withdrawCalls.push(input)
           return { ok: true as const, response: withdrawOutcome }
         },
-      }),
-      requestMailKickerWake: (target, reason) => wakes.push({ target, reason }),
+      },
+      wake: (target, reason) => wakes.push({ target, reason }),
+      log: writeServerLog,
     }
   })
 

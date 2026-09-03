@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { access, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import type { HrcSessionRecord } from 'hrc-core'
+import type { MailKicker } from 'hrc-mail-kicker'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
@@ -70,7 +72,8 @@ function say(overrides: Partial<Parameters<FakeWrkqLedger['say']>[0]> = {}) {
   return ledger.say({ toScopeRef: SCOPE, fromScopeRef: SENDER, ...overrides })
 }
 
-/** A `now` far enough ahead that every armed reminder reads as due. */
+const kicker = (): MailKicker => (server as any).mailKicker
+
 function farFuture(): string {
   return new Date(Date.now() + 60 * 60_000).toISOString()
 }
@@ -152,9 +155,9 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
-    await Promise.all([(server as any).runMailKickerSweep(), (server as any).runMailKickerSweep()])
+    kicker().wake(TARGET, 'insert')
+    kicker().wake(TARGET, 'turn_completion')
+    await Promise.all([kicker().runSweepOnce(), kicker().runSweepOnce()])
     await waitUntil(() => deterministic.calls() === 1, 'one dispatched drive')
 
     const db = (server as any).db as HrcDatabase
@@ -162,7 +165,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(attempts).toHaveLength(1)
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
 
-    await Promise.all([(server as any).runMailKickerSweep(), (server as any).runMailKickerSweep()])
+    await Promise.all([kicker().runSweepOnce(), kicker().runSweepOnce()])
     expect(deterministic.calls()).toBe(1)
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
@@ -171,7 +174,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say({ body: 'answer this without a manual say' })
     await startServer()
     installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
 
     const db = serverInternals(server as HrcServer).db
     const runId = await startedRunId(db, TARGET, 0)
@@ -209,7 +212,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say({ body: 'the body that must be injected verbatim' })
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'drive dispatched')
 
     const prompt = deterministic.prompts()[0] ?? ''
@@ -238,7 +241,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say({ body: 'idle hold', delivery: 'hold', expiresAt })
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'idle hold dispatched')
 
     expect(deterministic.submissionDoors()).toEqual(['enqueue'])
@@ -261,7 +264,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'live row dispatched')
 
     expect(deterministic.prompts()[0]).toContain('live body')
@@ -301,7 +304,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // Two messages already in the room, so there IS history to cue.
     const first = say({ body: 'first' })
     say({ body: 'second' })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'first drive')
     expect(deterministic.prompts()[0]).toContain('history: wrkc log T-07615')
 
@@ -310,7 +313,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     // Same WARM runtime, another message: it has seen this room, so no cue.
     say({ body: 'third' })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 2, 'second drive')
     expect(deterministic.prompts()[1]).not.toContain('history:')
 
@@ -321,7 +324,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // keys this on runtimeId rather than generation.
     deterministic.rotateRuntime()
     say({ body: 'fourth' })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 3, 'third drive')
     expect(deterministic.prompts()[2]).toContain('history: wrkc log T-07615')
   })
@@ -360,7 +363,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       body: 'for your information only',
     })
 
-    await (server as any).runMailKickerSweep()
+    await kicker().runSweepOnce()
     await waitUntil(
       () => ledger.envelopes.get(envelope.id)?.state === 'acked',
       'fyi presented and auto-acked'
@@ -383,15 +386,15 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const deterministic = installDeterministicStart(server as HrcServer)
     // Establish the cursor first: a virgin daemon starts at "now", so anything
     // written before its first tail belongs to the sweep, not the tail.
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     say({ obligation: 'fyi', body: 'for your information only' })
 
     // A fyi to an UNSEATED scope is not a wake: the tail skips it, so nothing
     // is provisioned. (A seated addressee is woken — see the next test.)
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     // And a SWEEP that finds only a fyi for an unseated scope must not birth
     // one either — §5 says a fyi never summons, full stop.
-    await (server as any).runMailKickerSweep()
+    await kicker().runSweepOnce()
     await Bun.sleep(50)
     const db = (server as any).db as HrcDatabase
     expect(deterministic.calls()).toBe(0)
@@ -410,12 +413,12 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const deterministic = installDeterministicStart(server as HrcServer)
     // Establish the cursor first, as the fyi case does: anything written
     // before the first tail belongs to the sweep, not the tail.
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     say({ obligation: 'notify', body: 'no reply owed, but wake up' })
 
     // The tail must treat this as a wake — the gate that used to read
     // `obligation !== 'reply_required'` and drop it.
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await Bun.sleep(50)
 
     const db = (server as any).db as HrcDatabase
@@ -429,10 +432,10 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
   it('summons a reply_required target through the gate and arms ONE reminder on a bare turn', async () => {
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     const envelope = say()
 
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'tail-triggered summon')
 
     const db = (server as any).db as HrcDatabase
@@ -456,7 +459,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'drive dispatched')
 
     // The reply IS the ack; by the time the turn ends the obligation is gone.
@@ -472,8 +475,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
     ledger.unavailable = true
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    await (server as any).runMailKickerSweep()
+    kicker().wake(TARGET, 'insert')
+    await kicker().runSweepOnce()
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(0)
     const db = (server as any).db as HrcDatabase
@@ -490,26 +493,26 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const deterministic = installDeterministicStart(server as HrcServer)
     const db = (server as any).db as HrcDatabase
 
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(0)
     const afterFirst = db.wrkqLedgerCursors.get() as number
     expect(afterFirst).toBeGreaterThan(0)
 
     say({ body: 'arrived while the daemon was up' })
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'tail woke the new envelope')
     expect(db.wrkqLedgerCursors.get()).toBeGreaterThan(afterFirst)
 
     // A second tail over the same ground finds nothing new.
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(1)
   })
 
   it('resumes the tail from the persisted cursor rather than sweeping for a cold scope', async () => {
     await startServer()
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     const db = (server as any).db as HrcDatabase
     const cursorBefore = db.wrkqLedgerCursors.get() as number
     await (server as unknown as HrcServer).stop()
@@ -524,7 +527,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const reopened = (server as any).db as HrcDatabase
     expect(reopened.wrkqLedgerCursors.get()).toBe(cursorBefore)
 
-    await (server as any).runWrkqLedgerTail()
+    await kicker().runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'tail replayed the downtime gap')
   })
 
@@ -541,7 +544,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     // A pending envelope for a scope with no seat here: the sweep must not go
     // looking for it, because a sweep that widens with history is a load bug.
     say()
-    await (server as any).runMailKickerSweep()
+    await kicker().runSweepOnce()
     expect(scopes.flat()).not.toContain(TARGET)
 
     const resolved = await fixture.resolveSession(SCOPE)
@@ -564,7 +567,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       updatedAt: now,
     })
     const deterministic = installDeterministicStart(server as HrcServer)
-    await (server as any).runMailKickerSweep()
+    await kicker().runSweepOnce()
     await waitUntil(() => deterministic.calls() === 1, 'seated scope swept')
   })
 
@@ -610,7 +613,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       obligation: 'fyi',
       body: 'do not wait for the active turn to finish',
     })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     // T-07891: this fixture has no broker controller/turn observation. Its HRC
     // run row therefore cannot classify the seat as busy; this is an ordinary
     // slot-owning drive, and the fyi auto-acks on commit as before.
@@ -631,7 +634,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'first drive')
 
     const db = (server as any).db as HrcDatabase
@@ -647,8 +650,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     if (receipt !== undefined) {
       receipt.presentedAt = new Date(Date.now() - 60 * 60_000).toISOString()
     }
-    ;(server as any).requestMailKickerWake(TARGET, 'periodic')
-    await (server as any).drainMailKickerTarget(TARGET)
+    kicker().wake(TARGET, 'periodic')
+    await kicker().drainTarget(TARGET)
     await Bun.sleep(50)
     // Still exactly one drive: the only thing that surfaces it again is its own
     // DUE reminder, and that one is held for a minute.
@@ -659,7 +662,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
+    kicker().wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
   })
 
@@ -689,8 +692,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       throw new Error('dispatch rejected after preview')
     }
     const envelope = say({ obligation: 'fyi', body: 'must stay pending' })
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    await (server as any).drainMailKickerTarget(TARGET)
+    kicker().wake(TARGET, 'insert')
+    await kicker().drainTarget(TARGET)
 
     const requests = ledger.presentRequests.filter((request) => request.envelope === envelope.id)
     expect(requests).toHaveLength(1)
@@ -743,8 +746,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
 
     const held = say()
     const captured = await captureServerLog(async () => {
-      ;(server as any).requestMailKickerWake(TARGET, 'insert')
-      await (server as any).drainMailKickerTarget(TARGET)
+      kicker().wake(TARGET, 'insert')
+      await kicker().drainTarget(TARGET)
     })
     // T-07891: status/activeRunId are not busy authority. With no broker seat
     // observation this follows the ordinary slot-owning drive path.
@@ -762,8 +765,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     ledger.say({ toScopeRef: stranded, fromScopeRef: SENDER })
 
     const captured = await captureServerLog(async () => {
-      ;(server as any).requestMailKickerWake(strandedTarget, 'insert')
-      await (server as any).drainMailKickerTarget(strandedTarget)
+      kicker().wake(strandedTarget, 'insert')
+      await kicker().drainTarget(strandedTarget)
     })
     expect(captured.lines.some((line) => line.includes('wrkq.kicker.placement_unresolvable'))).toBe(
       true
@@ -812,7 +815,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
             await new Promise(() => undefined);
           },
         });
-        server.requestMailKickerWake(${JSON.stringify(TARGET)}, 'insert');
+        server.mailKicker.wake(${JSON.stringify(TARGET)}, 'insert');
         await new Promise(() => undefined);
       `
     crashChild = Bun.spawn({
@@ -857,9 +860,9 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
     await startServer()
     const deterministic = installDeterministicStart(server as HrcServer)
-    ;(server as any).requestMailKickerWake(TARGET, 'insert')
-    ;(server as any).requestMailKickerWake(TARGET, 'turn_completion')
-    await Promise.all([(server as any).runMailKickerSweep(), (server as any).runMailKickerSweep()])
+    kicker().wake(TARGET, 'insert')
+    kicker().wake(TARGET, 'turn_completion')
+    await Promise.all([kicker().runSweepOnce(), kicker().runSweepOnce()])
 
     const db = (server as any).db as HrcDatabase
     const recovered = db.mailDrives.getAttempt(claimed.driveAttemptId)
@@ -877,12 +880,12 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       db.hrcEvents.listByRun(claimed.runId).filter((event) => event.eventKind === 'turn.started')
     ).toHaveLength(1)
 
-    await Promise.all([(server as any).runMailKickerSweep(), (server as any).runMailKickerSweep()])
+    await Promise.all([kicker().runSweepOnce(), kicker().runSweepOnce()])
     expect(deterministic.calls()).toBe(1)
 
     ledger.ack(envelope.id)
     await completeRun(server as HrcServer, claimed.runId)
-    await (server as any).runMailKickerSweep()
+    await kicker().runSweepOnce()
 
     expect(db.mailDrives.getSlot(TARGET)?.activeDriveAttemptId).toBeUndefined()
     expect(db.mailDrives.getAttempt(claimed.driveAttemptId)?.state).toBe('completed')
@@ -928,8 +931,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     })
 
     const captured = await captureServerLog(async () => {
-      ;(server as any).requestMailKickerWake(TARGET, 'insert')
-      await (server as any).drainMailKickerTarget(TARGET)
+      kicker().wake(TARGET, 'insert')
+      await kicker().drainTarget(TARGET)
       await waitUntil(
         () => ledger.envelopes.get(envelope.id)?.state === 'acked',
         'fyi presented and auto-acked'
@@ -970,7 +973,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     const envelope = say()
 
     const captured = await captureServerLog(async () => {
-      ;(server as any).requestMailKickerWake(TARGET, 'insert')
+      kicker().wake(TARGET, 'insert')
       await waitUntil(() => deterministic.calls() === 1, 'drive dispatched')
     })
 

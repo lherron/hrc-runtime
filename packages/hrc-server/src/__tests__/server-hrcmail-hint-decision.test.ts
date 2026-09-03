@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
-import { autoReplyCandidateFor } from '../auto-reply-handlers.js'
+import { autoReplyCandidateFor } from 'hrc-mail-kicker'
+import { holdQueueForBusyTarget } from 'hrc-mail-kicker'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
-import { holdQueueForBusyTarget } from '../mail-kicker/held-batch.js'
 import { timestamp } from '../server-util.js'
 import { MAIL_HINT_TEXT } from '../wrkq/stop-gate-handlers.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
@@ -112,7 +112,7 @@ function say(body: string, sender: { principalRef: string; scopeRef?: string | u
 function hold(...envelopes: ReturnType<typeof say>[]): string {
   const active = server as HrcServer
   holdQueueForBusyTarget(
-    serverInternals(active),
+    (active as any).mailKicker,
     TARGET,
     session,
     { state: 'turn-active', runtimeId: RUNTIME_ID, turnId: 'turn-active-hint' },

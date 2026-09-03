@@ -1,15 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { FakeWrkqLedger } from '../../__tests__/fixtures/fake-wrkq-ledger.js'
-import {
-  type HrcServerTestFixture,
-  createHrcTestFixture,
-} from '../../__tests__/fixtures/hrc-test-fixture.js'
-import { captureServerLog, serverInternals } from '../../__tests__/fixtures/mail-kicker-harness.js'
-import { createHrcServer } from '../../index.js'
-import type { HrcServer } from '../../index.js'
-import { timestamp } from '../../server-util.js'
-import { failEnvelopeWithAudit } from '../envelope-terminal.js'
+import { failEnvelopeWithAudit } from 'hrc-mail-kicker'
+import { createHrcServer } from '../index.js'
+import type { HrcServer } from '../index.js'
+import { timestamp } from '../server-util.js'
+import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { captureServerLog, serverInternals } from './fixtures/mail-kicker-harness.js'
 
 const SCOPE = 'agent:terminal-audit:project:hrc-runtime:task:T-07917'
 const TARGET = `${SCOPE}/lane:main`
@@ -71,7 +68,7 @@ describe('T-07917 envelope terminal boundary', () => {
     await seedLiveRuntime()
 
     const captured = await captureServerLog(async () => {
-      await failEnvelopeWithAudit(serverInternals(server as HrcServer), {
+      await failEnvelopeWithAudit((server as any).mailKicker, {
         envelope: envelope.id,
         reason: 'undeliverable',
         targetSessionRef: TARGET,
@@ -99,7 +96,7 @@ describe('T-07917 envelope terminal boundary', () => {
     const envelope = ledger.say({ toScopeRef: SCOPE, roomKey: 'T-07917' })
 
     const captured = await captureServerLog(async () => {
-      await failEnvelopeWithAudit(serverInternals(server as HrcServer), {
+      await failEnvelopeWithAudit((server as any).mailKicker, {
         envelope: envelope.id,
         reason: 'undeliverable',
         targetSessionRef: TARGET,

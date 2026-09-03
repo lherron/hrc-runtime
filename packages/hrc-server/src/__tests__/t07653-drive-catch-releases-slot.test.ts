@@ -130,7 +130,7 @@ function seedLiveSeat(): void {
 }
 
 async function sweep(): Promise<void> {
-  await (server as unknown as { runMailKickerSweep: () => Promise<void> }).runMailKickerSweep()
+  await (server as any).mailKicker.runSweepOnce()
 }
 
 function onlyAttempt(): HrcMailDriveAttempt {

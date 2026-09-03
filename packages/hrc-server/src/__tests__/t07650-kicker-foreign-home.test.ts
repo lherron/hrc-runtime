@@ -186,7 +186,7 @@ function serverDb(): HrcDatabase {
 }
 
 async function sweep(): Promise<void> {
-  await (server as unknown as { runMailKickerSweep: () => Promise<void> }).runMailKickerSweep()
+  await (server as any).mailKicker.runSweepOnce()
 }
 
 /** Count the registry consults the daemon actually makes. */

@@ -109,6 +109,20 @@
         "typescript": "^5.8.3",
       },
     },
+    "packages/hrc-mail-kicker": {
+      "name": "hrc-mail-kicker",
+      "version": "0.1.0",
+      "dependencies": {
+        "agent-scope": "latest",
+        "hrc-core": "*",
+        "hrc-store-sqlite": "*",
+        "spaces-harness-broker-protocol": "latest",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/hrc-sdk": {
       "name": "hrc-sdk",
       "version": "0.1.0",
@@ -133,6 +147,7 @@
         "agent-spaces": "latest",
         "hrc-core": "*",
         "hrc-events": "*",
+        "hrc-mail-kicker": "*",
         "hrc-store-sqlite": "*",
         "spaces-aspc-facade": "latest",
         "spaces-aspc-protocol": "latest",
@@ -562,6 +577,8 @@
     "hrc-events": ["hrc-events@workspace:packages/hrc-events"],
 
     "hrc-frame-render": ["hrc-frame-render@workspace:packages/hrc-frame-render"],
+
+    "hrc-mail-kicker": ["hrc-mail-kicker@workspace:packages/hrc-mail-kicker"],
 
     "hrc-sdk": ["hrc-sdk@workspace:packages/hrc-sdk"],
 

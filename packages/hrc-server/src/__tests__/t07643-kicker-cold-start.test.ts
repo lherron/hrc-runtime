@@ -103,7 +103,7 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     homeScopeHere(server as HrcServer)
     const deterministic = installDeterministicStart(server as HrcServer)
 
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'cold-start catch-up summoned the target')
 
     const db = (server as any).db as HrcDatabase
@@ -127,12 +127,12 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     const scopes = recordPendingViewScopes()
     const deterministic = installDeterministicStart(server as HrcServer)
 
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'catch-up ran once')
     expect(scopes.flat()).toContain(TARGET)
 
     scopes.length = 0
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await Bun.sleep(50)
     // Disarmed: a second tail reads the event page and nothing else, so an
     // unseated homed scope is not re-queried every tick forever.
@@ -143,7 +143,7 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     await startServer()
     const afterRestart = recordPendingViewScopes()
     installDeterministicStart(server as HrcServer)
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await Bun.sleep(50)
     expect(afterRestart.flat()).not.toContain(TARGET)
   })
@@ -154,7 +154,7 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     homeScopeHere(server as HrcServer, 'some-other-node')
     const deterministic = installDeterministicStart(server as HrcServer)
 
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(0)
     expect(queryCount((server as any).db as HrcDatabase, 'sessions')).toBe(0)
@@ -180,13 +180,13 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
       return real(params)
     }
 
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await Bun.sleep(50)
     const db = (server as any).db as HrcDatabase
     expect(deterministic.calls()).toBe(0)
     expect(db.wrkqLedgerCursors.get()).toBeGreaterThan(0)
 
-    await (server as any).runWrkqLedgerTail()
+    await (server as any).mailKicker.runTailOnce()
     await waitUntil(() => deterministic.calls() === 1, 'catch-up retried after recovery')
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
@@ -204,7 +204,7 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
       return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
     }) as typeof process.stderr.write
     try {
-      await (server as any).runWrkqLedgerTail()
+      await (server as any).mailKicker.runTailOnce()
       await waitUntil(
         () => lines.some((line) => line.includes('wrkq.kicker.turn_dispatched')),
         'turn dispatched and logged'

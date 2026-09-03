@@ -6,11 +6,11 @@ import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { observeAttempt } from 'hrc-mail-kicker'
 import { BrokerControllerError } from '../broker/controller/errors.js'
 import { markBrokerCrashTerminal } from '../broker/controller/lifecycle.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
-import { observeAttempt } from '../mail-kicker-handlers.js'
 import { timestamp } from '../server-util.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
@@ -110,10 +110,7 @@ describe('T-07908 kicker observation', () => {
         updatedAt: now,
       })
 
-      const observation = observeAttempt(
-        server as unknown as Parameters<typeof observeAttempt>[0],
-        attempt
-      )
+      const observation = observeAttempt((server as any).mailKicker, attempt)
 
       expect(observation).toBe('finished')
       expect(db.mailDrives.getAttempt(claim.attempt.driveAttemptId)).toMatchObject({

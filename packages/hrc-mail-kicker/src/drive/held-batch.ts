@@ -5,16 +5,11 @@ import type {
   HrcMailEnvelopeReminder,
 } from 'hrc-store-sqlite'
 
-import { presentationKeyFor } from '../auto-reply-handlers.js'
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
-import { parseSessionRef } from '../server-parsers.js'
-import {
-  type EnvelopePresentationForm,
-  envelopeReplyAddressee,
-} from '../wrkq/envelope-presentation.js'
-import { buildKickRuntimeIntent } from '../wrkq/kick-intent.js'
-import type { WrkqEnvelope } from '../wrkq/ledger-types.js'
+import type { MailKickerContext } from '../context.js'
+import { parseSessionRef } from '../internal.js'
+import { type EnvelopePresentationForm, envelopeReplyAddressee } from '../ledger/presentation.js'
+import type { WrkqEnvelope } from '../ledger/types.js'
+import { presentationKeyFor } from './batching.js'
 
 /** One boundary input carries at most one room-sized page of obligations. */
 export const MAX_PRESENTED_PER_ATTEMPT = 20
@@ -39,7 +34,7 @@ export type ActiveBrokerSeat = {
  * exists until a later boundary freezes and activates the batch.
  */
 export function holdQueueForBusyTarget(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   targetSessionRef: string,
   session: HrcSessionRecord,
   seat: ActiveBrokerSeat,
@@ -65,7 +60,7 @@ export function holdQueueForBusyTarget(
       runtimeId: seat.runtimeId,
       materializationIntent:
         session.lastAppliedIntentJson ??
-        buildKickRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined),
+        server.resolveRuntimeIntent(parseSessionRef(targetSessionRef).scopeRef, undefined),
     },
     MAX_PRESENTED_PER_ATTEMPT
   )
@@ -80,7 +75,7 @@ export function holdQueueForBusyTarget(
           const envelope = byId.get(envelopeId)
           return envelope !== undefined && presentationKeyFor(envelope) === presentationKey
         }).length
-  writeServerLog('INFO', 'wrkq.kicker.queue_batch_held', {
+  server.log('INFO', 'wrkq.kicker.queue_batch_held', {
     targetSessionRef,
     wakeReason,
     driveAttemptId: update.attempt.driveAttemptId,
@@ -103,12 +98,12 @@ export function holdQueueForBusyTarget(
  * terminal member is removed locally and is never composed or presented.
  */
 export async function revalidateHeldBatch(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   attempt: HrcMailDriveAttempt
 ): Promise<HeldBatchActionableEnvelope[]> {
   const surviving: HeldBatchActionableEnvelope[] = []
   for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
-    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+    const envelope = await server.ledger.envelopeShow({ envelope: envelopeId })
     if (!envelope.terminal && envelope.state === 'pending') {
       surviving.push({
         envelope,
@@ -121,7 +116,7 @@ export async function revalidateHeldBatch(
       : `no_longer_actionable:${envelope.state}`
     const dropped = server.db.mailDrives.dropHeldEnvelope(envelopeId, reason)
     if (dropped === undefined) continue
-    writeServerLog('INFO', 'wrkq.kicker.held_member_dropped', {
+    server.log('INFO', 'wrkq.kicker.held_member_dropped', {
       targetSessionRef: attempt.targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
       envelopeId,
@@ -141,13 +136,13 @@ export async function revalidateHeldBatch(
  * caller must return without invoking `submission.withdraw`.
  */
 export function dropAckedHeldMember(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   envelopeId: string,
   reason: string
 ): boolean {
   const heldDrop = server.db.mailDrives.dropHeldEnvelope(envelopeId, reason)
   if (heldDrop === undefined) return false
-  writeServerLog('INFO', 'wrkq.kicker.held_member_acked', {
+  server.log('INFO', 'wrkq.kicker.held_member_acked', {
     envelopeId,
     driveAttemptId: heldDrop.attempt.driveAttemptId,
     reason,

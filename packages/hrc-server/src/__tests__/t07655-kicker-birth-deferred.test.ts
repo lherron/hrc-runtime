@@ -119,8 +119,8 @@ function refuseWithDesignation(
 
 /** One drive pass. A bare drain is a no-op: it only drains PENDING targets. */
 async function wake(serverInstance: HrcServer): Promise<void> {
-  ;(serverInstance as any).mailKickerPendingTargets.set(TARGET, 'periodic')
-  await (serverInstance as any).drainMailKickerTarget(TARGET)
+  ;(serverInstance as any).mailKicker.mailKickerPendingTargets.set(TARGET, 'periodic')
+  await (serverInstance as any).mailKicker.drainTarget(TARGET)
 }
 
 function logged(lines: string[], event: string): Record<string, unknown>[] {

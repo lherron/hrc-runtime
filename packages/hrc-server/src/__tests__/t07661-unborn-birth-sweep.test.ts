@@ -159,11 +159,11 @@ function serverDb(): HrcDatabase {
 }
 
 async function sweep(): Promise<void> {
-  await (server as unknown as { runMailKickerSweep: () => Promise<void> }).runMailKickerSweep()
+  await (server as any).mailKicker.runSweepOnce()
 }
 
 async function tail(): Promise<void> {
-  await (server as unknown as { runWrkqLedgerTail: () => Promise<void> }).runWrkqLedgerTail()
+  await (server as any).mailKicker.runTailOnce()
 }
 
 /**

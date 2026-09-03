@@ -62,7 +62,7 @@ export const SESSION_RECENCY_SQL = `MAX(
  * `starting`, `stopping`, `awaiting_input`, `stopped`, `failed`, `disposed` and
  * `adopted` as well (`runtime-status-contract.ts`), and the running-turn
  * authority counts `busy`, `awaiting_input`, `starting` and `stopping` all as
- * running (`mail-kicker-handlers.ts`). Under the allow-list, a continuation-
+ * running (`hrc-mail-kicker`). Under the allow-list, a continuation-
  * bearing turn parked on an operator prompt for a week had no activity, was not
  * `ready` or `busy`, and so became an archive candidate — the sweep would have
  * filed a live turn as dormant. Idle cleanup already records exactly why that

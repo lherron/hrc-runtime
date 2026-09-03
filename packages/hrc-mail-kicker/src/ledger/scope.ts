@@ -1,6 +1,6 @@
 import { formatScopeRef, parseScopeHandle } from 'agent-scope'
 
-import { normalizeTargetSessionRef } from '../messages.js'
+import { normalizeTargetSessionRef } from '../internal.js'
 
 /**
  * Translate between wrkq's scope spelling and HRC's.

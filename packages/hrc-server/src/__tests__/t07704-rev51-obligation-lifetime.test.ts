@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import type { MailKicker } from 'hrc-mail-kicker'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
@@ -89,10 +90,7 @@ async function startServer(): Promise<HrcServer> {
 function internals() {
   return server as unknown as {
     db: HrcDatabase
-    requestMailKickerWake: (target: string, reason: string) => void
-    drainMailKickerTarget: (target: string) => Promise<void>
-    runMailKickerSweep: () => Promise<void>
-    runWrkqLedgerTail: () => Promise<void>
+    mailKicker: MailKicker
   }
 }
 
@@ -122,7 +120,7 @@ describe('rev 5.1 scenario 1 — control', () => {
     const hrc = internals()
     const db = serverDb()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'cold summon')
     expect(db.sessions.listByScopeRef(SCOPE, 'main')).toHaveLength(1)
 
@@ -153,9 +151,9 @@ describe('rev 5.1 scenario 2 — rotation lapse (EN-01165 replayed)', () => {
     await fixture.resolveSession('agent:mable:project:hrc-runtime:task:T-07704')
     // The tail cursor must predate the failure: `envelope.failed` rides the
     // same cursor as `envelope.created`, and a first tail starts at the end.
-    await hrc.runWrkqLedgerTail()
+    await hrc.mailKicker.runTailOnce()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'full-form drive')
     await waitUntil(() => ledger.envelopes.get(first.id)?.state === 'presented', 'receipt')
     const rtA = holdingRuntimeId(first.id)
@@ -163,12 +161,12 @@ describe('rev 5.1 scenario 2 — rotation lapse (EN-01165 replayed)', () => {
     // The turn ends undisposed AND the runtime terminates.
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     db.runtimes.updateStatus(rtA, 'terminated', timestamp())
-    await hrc.runMailKickerSweep()
+    await hrc.mailKicker.runSweepOnce()
     await waitUntil(() => ledger.envelopes.get(first.id)?.state === 'failed', 'D3 lapse')
     expect(ledger.envelopes.get(first.id)?.failureReason).toBe('runtime_terminated')
 
     // §5: the sender is told, from the ledger row and not from the payload.
-    await hrc.runWrkqLedgerTail()
+    await hrc.mailKicker.runTailOnce()
     await waitUntil(
       () => db.mailDrives.listUndeliveredFailureNotices(SENDER_TARGET).length === 1,
       'sender notice'
@@ -182,15 +180,15 @@ describe('rev 5.1 scenario 2 — rotation lapse (EN-01165 replayed)', () => {
     // runtime that held it; the sender decides, not the next reader.
     deterministic.rotateRuntime()
     const drivesBefore = deterministic.calls()
-    hrc.requestMailKickerWake(TARGET, 'periodic')
-    await hrc.drainMailKickerTarget(TARGET)
+    hrc.mailKicker.wake(TARGET, 'periodic')
+    await hrc.mailKicker.drainTarget(TARGET)
     await Bun.sleep(60)
     expect(deterministic.calls()).toBe(drivesBefore)
 
     // The sender RESENDS: a new envelope, full form, and the history cue now
     // carries the failed one too.
     const resent = say({ body: 'the resend' })
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === drivesBefore + 1, 'resend delivered')
     const prompt = deterministic.prompts().at(-1) ?? ''
     expect(prompt).toContain('the resend')
@@ -208,7 +206,7 @@ describe('rev 5.1 scenario 3 — ignored', () => {
     const hrc = internals()
     const db = serverDb()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'first delivery, full form')
     expect(deterministic.prompts()[0]).toContain('the body the reader never answered')
 
@@ -218,7 +216,7 @@ describe('rev 5.1 scenario 3 — ignored', () => {
     expect(ledger.failRequests).toEqual([])
 
     dueNow(db, mail.id)
-    hrc.requestMailKickerWake(TARGET, 'periodic')
+    hrc.mailKicker.wake(TARGET, 'periodic')
     await waitUntil(() => deterministic.calls() === 2, 'reminder delivered')
     const reminder = deterministic.prompts().at(-1) ?? ''
     expect(reminder).toContain(`read: wrkc show ${mail.id}`)
@@ -230,8 +228,8 @@ describe('rev 5.1 scenario 3 — ignored', () => {
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'failed', 'strike-out')
     expect(ledger.envelopes.get(mail.id)?.failureReason).toBe('ignored')
     // At most one reminder ever, so nothing can drive it a third time.
-    hrc.requestMailKickerWake(TARGET, 'periodic')
-    await hrc.drainMailKickerTarget(TARGET)
+    hrc.mailKicker.wake(TARGET, 'periodic')
+    await hrc.mailKicker.drainTarget(TARGET)
     await Bun.sleep(50)
     expect(deterministic.calls()).toBe(2)
   })
@@ -245,7 +243,7 @@ describe('rev 5.1 scenario 4 — defer across rotation', () => {
     const hrc = internals()
     const db = serverDb()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'full form into rt-X')
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
     const rtX = holdingRuntimeId(mail.id)
@@ -258,7 +256,7 @@ describe('rev 5.1 scenario 4 — defer across rotation', () => {
     // rt-X /quits. D3 finds no `presented` obligation on it: a deferral is a
     // reader commitment, not a delivery, so nothing fails.
     db.runtimes.updateStatus(rtX, 'terminated', timestamp())
-    await hrc.runMailKickerSweep()
+    await hrc.mailKicker.runSweepOnce()
     await Bun.sleep(60)
     expect(ledger.envelopes.get(mail.id)?.state).toBe('deferred')
     expect(ledger.failRequests).toEqual([])
@@ -266,7 +264,7 @@ describe('rev 5.1 scenario 4 — defer across rotation', () => {
     // The retry promise fires: back to `pending` with `presented_to` intact.
     ledger.repend(mail.id)
     deterministic.rotateRuntime()
-    hrc.requestMailKickerWake(TARGET, 'periodic')
+    hrc.mailKicker.wake(TARGET, 'periodic')
     await waitUntil(() => deterministic.calls() === 2, 'defer retry into rt-Y')
     const retry = deterministic.prompts().at(-1) ?? ''
     expect(retry).toContain('you deferred this: "mid-restart drain, back in 10"')
@@ -299,7 +297,7 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     const hrc = internals()
     const db = serverDb()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'delivery')
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
     const runtimeId = holdingRuntimeId(mail.id)
@@ -310,12 +308,12 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     // The runtime dies inside the hold: D3 fails the obligation, and the
     // reminder now names something that will never stand again.
     db.runtimes.updateStatus(runtimeId, 'terminated', timestamp())
-    await hrc.runMailKickerSweep()
+    await hrc.mailKicker.runSweepOnce()
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'failed', 'D3 lapse')
 
     dueNow(db, mail.id)
-    hrc.requestMailKickerWake(TARGET, 'periodic')
-    await hrc.drainMailKickerTarget(TARGET)
+    hrc.mailKicker.wake(TARGET, 'periodic')
+    await hrc.mailKicker.drainTarget(TARGET)
     await waitUntil(
       () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
       'reminder retired'
@@ -333,7 +331,7 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     const hrc = internals()
     const db = serverDb()
 
-    hrc.requestMailKickerWake(TARGET, 'insert')
+    hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'delivery')
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
     await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
@@ -341,8 +339,8 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     // A deferred envelope gets no reminder (D6). The row must not outlive that.
     ledger.defer(mail.id, 'not now')
     dueNow(db, mail.id)
-    hrc.requestMailKickerWake(TARGET, 'periodic')
-    await hrc.drainMailKickerTarget(TARGET)
+    hrc.mailKicker.wake(TARGET, 'periodic')
+    await hrc.mailKicker.drainTarget(TARGET)
     await waitUntil(
       () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
       'reminder retired'
@@ -352,7 +350,7 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     // And retiring must not look like a delivery: D5 can never strike out over
     // a reminder nobody was shown.
     ledger.repend(mail.id)
-    hrc.requestMailKickerWake(TARGET, 'periodic')
+    hrc.mailKicker.wake(TARGET, 'periodic')
     await waitUntil(() => deterministic.calls() === 2, 'defer retry delivered')
     await completeRun(server as HrcServer, await startedRunId(db, TARGET, 1))
     await Bun.sleep(80)
@@ -377,13 +375,13 @@ describe('rev 5.1 D3 — every terminal runtime status lapses the obligation', (
       const hrc = internals()
       const db = serverDb()
 
-      hrc.requestMailKickerWake(TARGET, 'insert')
+      hrc.mailKicker.wake(TARGET, 'insert')
       await waitUntil(() => deterministic.calls() === 1, 'delivery')
       await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
       const runtimeId = holdingRuntimeId(mail.id)
 
       db.runtimes.updateStatus(runtimeId, status, timestamp())
-      await hrc.runMailKickerSweep()
+      await hrc.mailKicker.runSweepOnce()
       await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'failed', `lapse on ${status}`)
 
       const failed = ledger.envelopes.get(mail.id)

@@ -6,7 +6,8 @@ import type {
   HrcProvider,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { MailKicker } from 'hrc-mail-kicker'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { DurableBrokerDispatchReattachResult } from './startup-reconcile.js'
@@ -35,7 +36,6 @@ import type { ForeignHome } from './federation/home-authority.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
-import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
 import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
 import type { RegistrationHandlersMethods } from './registration-handlers.js'
@@ -89,7 +89,6 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   EventNotificationHandlersMethods &
   ExternalRegistrationRendezvousMethods &
   LaunchLifecycleHandlersMethods &
-  MailKickerHandlersMethods &
   WrkqStopGateHandlersMethods &
   PresentationPublishMethods &
   RosterClaimHandlersMethods &
@@ -193,55 +192,9 @@ type HrcServerInstanceDataForHandlers = {
   /** T-07235 provision-liveness watchdog: its own cadence, not the zombie sweep's. */
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<unknown> | undefined
-  mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
-  mailKickerSweepInFlight: Promise<void> | undefined
+  readonly mailKicker: MailKicker
   autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
   autoReplyReconcileInFlight: Promise<void> | undefined
-  readonly mailKickerPendingTargets: Map<string, HrcMailDriveWakeReason>
-  readonly mailKickerTargetOperations: Map<string, Promise<void>>
-  /**
-   * The kicker's own log dedupe for `foreign_home_skipped`: scopeRef ->
-   * `<homeNodeId>@<epoch>`, so the line is written once per scope per epoch.
-   * Separate from `foreignHomeMemo` because that memo is shared with the shadow
-   * teardown, and whichever mechanism resolved a scope first would otherwise
-   * silence the other's line.
-   */
-  readonly mailKickerForeignHomeAnnounced: Map<string, string>
-  /**
-   * T-07655 — birth deferrals already announced, keyed by scopeRef with value
-   * `<homeNodeId>@<designationEpoch>`, so the line is written once per scope
-   * per designation epoch. Its OWN map, for the same reason the one above is:
-   * a deferral and a foreign-home skip are different facts about a scope and
-   * neither may silence the other. Keying on the epoch rather than the scope
-   * re-arms the line after a tier-1-4 establishment supersedes a designation.
-   */
-  readonly mailKickerBirthDeferredAnnounced: Map<string, string>
-  /**
-   * T-07661 — the per-target retry bound for sweep-driven VIRGIN births, keyed
-   * by targetSessionRef.
-   *
-   * A scope that was never born was never presented anything, so nothing on the
-   * envelope can bound its retries. This carries a doubling shape (1m, 2m, 4m,
-   * 8m, 16m) applied to birth attempts, and under rev 5.1 D7 the fifth refusal
-   * ENDS it: the pending mail is failed `undeliverable` and the sender decides.
-   *
-   * Process-local, like `foreignHomeMemo` and for the same reason: a restart is
-   * precisely when a refused birth deserves an immediate retry, so losing the
-   * bound at one is correct rather than a gap. Entries are pruned whenever the
-   * scope leaves the candidate set, which is what a successful birth does.
-   */
-  readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
-  /**
-   * T-07704 (rev 5.1 D3) — runtimes whose lapse has already been observed,
-   * keyed by runtimeId.
-   *
-   * Nothing can be presented TO a dead runtime, so one complete observation per
-   * runtime is the whole job and this is a pure cost memo. Process-local for
-   * the usual reason: a restart re-walks the lookback window, and
-   * `wrkq.envelope.fail` is idempotent per (envelope, runtime), so the overlap
-   * costs a read rather than a wrong answer.
-   */
-  readonly mailKickerLapsedRuntimes: Set<string>
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
@@ -255,14 +208,6 @@ type HrcServerInstanceDataForHandlers = {
   readonly hrcMailKickerSweepIntervalMs: number
   readonly wrkqLedger: WrkqLedgerClient
   readonly federationNodeId: string
-  wrkqLedgerTailInFlight: Promise<void> | undefined
-  /**
-   * T-07643: a first-ever tail start owes one widened catch-up sweep over the
-   * scopes this node homes. Armed when the cursor is minted, cleared only when
-   * a catch-up completes, so a ledger outage retries instead of losing the
-   * backlog silently.
-   */
-  mailKickerColdStartCatchupPending: boolean
   harnessBrokerController: HarnessBrokerController | undefined
   /**
    * Resolves once the post-construction durable-broker warmup has finished (or

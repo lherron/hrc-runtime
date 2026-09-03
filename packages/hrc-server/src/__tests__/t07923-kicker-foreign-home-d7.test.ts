@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { HrcConflictError, HrcErrorCode } from 'hrc-core'
+import type { MailKicker } from 'hrc-mail-kicker'
 import { openBindingRegistry } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -34,9 +35,7 @@ type KickerInternals = HrcServer & {
   federationRegistryClient: {
     consult: (scopeRef: string) => Promise<unknown>
   }
-  mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
-  runMailKickerSweep: () => Promise<void>
-  runWrkqLedgerTail: () => Promise<void>
+  mailKicker: MailKicker
   ensureTargetSession: (...args: unknown[]) => Promise<unknown>
 }
 
@@ -150,10 +149,10 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
   it('does not charge a routed-elsewhere insert refusal after the registry binds elsewhere', async () => {
     const hrc = await startServer()
     refuseNextBirth(hrc)
-    await hrc.runWrkqLedgerTail()
+    await hrc.mailKicker.runTailOnce()
 
     const envelope = say()
-    await hrc.runWrkqLedgerTail()
+    await hrc.mailKicker.runTailOnce()
     await waitUntil(
       () => hrc.db.mailDrives.listAttempts(TARGET)[0]?.state === 'failed',
       'insert wake recorded its routed-elsewhere refusal'
@@ -164,9 +163,9 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
 
     bindScopeToForeignHome()
     const { lines } = await captureServerLog(async () => {
-      await hrc.runMailKickerSweep()
-      await hrc.runMailKickerSweep()
-      await hrc.runMailKickerSweep()
+      await hrc.mailKicker.runSweepOnce()
+      await hrc.mailKicker.runSweepOnce()
+      await hrc.mailKicker.runSweepOnce()
     })
 
     expect(eventLines(lines, 'wrkq.kicker.unborn_birth_retry')).toHaveLength(0)
@@ -183,7 +182,7 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     expect(hrc.db.mailDrives.listRefusedBirthTargets()).toEqual([TARGET])
 
     const { lines } = await captureServerLog(async () => {
-      await hrc.runMailKickerSweep()
+      await hrc.mailKicker.runSweepOnce()
     })
 
     expect(eventLines(lines, 'wrkq.kicker.unborn_birth_retry')).toHaveLength(0)
@@ -197,7 +196,7 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     const hrc = await startServer()
     const envelope = say()
     seedRefusedBirth(hrc, envelope.id)
-    hrc.mailKickerBirthSweepBackoff.set(TARGET, { attempts: 4, nextAtMs: 0 })
+    hrc.mailKicker.mailKickerBirthSweepBackoff.set(TARGET, { attempts: 4, nextAtMs: 0 })
     refuseNextBirth(hrc, 'simulated-local-refusal')
 
     const realConsult = hrc.federationRegistryClient.consult.bind(hrc.federationRegistryClient)
@@ -209,7 +208,7 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     }
 
     const { lines } = await captureServerLog(async () => {
-      await hrc.runMailKickerSweep()
+      await hrc.mailKicker.runSweepOnce()
     })
 
     expect(consults).toBe(2)

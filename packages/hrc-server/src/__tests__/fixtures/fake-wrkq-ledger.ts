@@ -1,6 +1,4 @@
-import type { WrkqLedgerClient } from '../../wrkq/ledger-client.js'
-import { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
-import { newestPresentationReceipt } from '../../wrkq/ledger-types.js'
+import { newestPresentationReceipt } from 'hrc-mail-kicker'
 import type {
   WrkqEnvelope,
   WrkqEnvelopeBirth,
@@ -20,7 +18,9 @@ import type {
   WrkqRoomSayResult,
   WrkqRoomShowParams,
   WrkqRoomView,
-} from '../../wrkq/ledger-types.js'
+} from 'hrc-mail-kicker'
+import type { WrkqLedgerClient } from '../../wrkq/ledger-client.js'
+import { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
 
 /**
  * A wrkq collaboration ledger, standing in for wrkqd.

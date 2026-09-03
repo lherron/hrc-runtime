@@ -1,9 +1,5 @@
-import { newestPresentationReceipt, obligationOwesReply } from './ledger-types.js'
-import type {
-  WrkqEnvelope,
-  WrkqEnvelopeDelivery,
-  WrkqEnvelopeFailureReason,
-} from './ledger-types.js'
+import { newestPresentationReceipt, obligationOwesReply } from './types.js'
+import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } from './types.js'
 
 /**
  * The rev 5.1 §4 injection formats (T-07612 rev 5.1, T-07702).

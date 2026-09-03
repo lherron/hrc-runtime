@@ -79,7 +79,7 @@ it('wakes a seated addressee for a fyi from the tail, without waiting for the sw
   })
   const deterministic = installDeterministicStart(server)
   // Establish the cursor first: a virgin daemon starts at "now".
-  await (server as any).runWrkqLedgerTail()
+  await (server as any).mailKicker.runTailOnce()
   const envelope = ledger.say({
     toScopeRef: SCOPE,
     fromScopeRef: SENDER,
@@ -89,7 +89,7 @@ it('wakes a seated addressee for a fyi from the tail, without waiting for the sw
 
   // The tail alone — no sweep — must present it, because the addressee is
   // seated.
-  await (server as any).runWrkqLedgerTail()
+  await (server as any).mailKicker.runTailOnce()
   await waitUntil(
     () => ledger.envelopes.get(envelope.id)?.state === 'acked',
     'fyi presented from the tail'

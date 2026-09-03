@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, HrcMailAutoReplyIntent } from 'hrc-store-sqlite'
 
-import { autoReplyCandidateFor, reconcileAutoReplyIntent } from '../auto-reply-handlers.js'
+import { autoReplyCandidateFor } from 'hrc-mail-kicker'
+import { reconcileAutoReplyIntent } from '../auto-reply-handlers.js'
 import { TURN_TEXT_LIMIT, appendHrcEvent } from '../hrc-event-helper.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 

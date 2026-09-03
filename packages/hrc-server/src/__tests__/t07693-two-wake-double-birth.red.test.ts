@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+import type { MailKicker } from 'hrc-mail-kicker'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -92,10 +93,7 @@ afterEach(async () => {
 type ServerPeek = {
   db: HrcDatabase
   federationNodeId: string
-  runWrkqLedgerTail: () => Promise<void>
-  requestMailKickerWake: (targetSessionRef: string, reason: 'periodic') => void
-  drainMailKickerTarget: (targetSessionRef: string) => Promise<void>
-  mailKickerTargetOperations: Map<string, Promise<void>>
+  mailKicker: MailKicker
   dispatchTurnForSession: (
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
@@ -324,7 +322,7 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     homeScopeHere(instance)
     const broker = installGatedBrokerStart(instance)
 
-    const tail = peek(instance).runWrkqLedgerTail()
+    const tail = peek(instance).mailKicker.runTailOnce()
     await broker.accepted
     broker.release()
     await tail
@@ -431,13 +429,13 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       roomKey: 'T-07693',
       body: 'arrives mid-birth',
     })
-    await peek(instance).runWrkqLedgerTail()
+    await peek(instance).mailKicker.runTailOnce()
 
     // Release only AFTER the second wake is in. While the broker reports the
     // operator turn active, the envelope remains HRC-held: no second broker
     // input and no presentation receipt exist yet.
     await waitUntil(
-      () => peek(instance).mailKickerTargetOperations.has(TARGET),
+      () => peek(instance).mailKicker.mailKickerTargetOperations.has(TARGET),
       'the envelope wake joined the in-flight seat birth'
     )
     await waitUntil(
@@ -460,8 +458,8 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     // A periodic boundary wake is the sweep backstop's delivery edge. It
     // flushes the local batch only after the seat probe turns idle, into the
     // already-born runtime.
-    peek(instance).requestMailKickerWake(TARGET, 'periodic')
-    await peek(instance).drainMailKickerTarget(TARGET)
+    peek(instance).mailKicker.wake(TARGET, 'periodic')
+    await peek(instance).mailKicker.drainTarget(TARGET)
     expect(joins).toEqual(['rt-t07693-1', 'rt-t07693-1'])
 
     const runtimes = db.runtimes.listByHostSessionId(resolved.hostSessionId)

@@ -1,9 +1,8 @@
 import type { HrcSessionRecord } from 'hrc-core'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
-import { presentationKeyFor } from '../auto-reply-handlers.js'
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
+import type { MailKickerContext } from '../context.js'
+import { presentationKeyFor } from './batching.js'
 import {
   type HeldBatchActionableEnvelope,
   MAX_PRESENTED_PER_ATTEMPT,
@@ -28,7 +27,7 @@ export function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
  * this fills only missing wrkq receipts with the same driveAttemptId/inputId.
  */
 export async function replayHeldBatchReceipts(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   attempt: HrcMailDriveAttempt
 ): Promise<void> {
   if (attempt.heldBehindTurnId === undefined || attempt.state === 'held') return
@@ -46,16 +45,16 @@ export async function replayHeldBatchReceipts(
 
   const replayed: string[] = []
   for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(attempt.driveAttemptId)) {
-    const envelope = await server.wrkqLedger.envelopeShow({ envelope: envelopeId })
+    const envelope = await server.ledger.envelopeShow({ envelope: envelopeId })
     if (
       envelope.terminal ||
       envelope.presentedTo.some((receipt) => receipt.driveAttemptId === attempt.driveAttemptId)
     ) {
       continue
     }
-    await server.wrkqLedger.present({
+    await server.ledger.present({
       envelope: envelopeId,
-      node: server.federationNodeId,
+      node: server.nodeId,
       hostSessionId: attempt.hostSessionId,
       generation: String(attempt.generation),
       runId: attempt.runId,
@@ -66,7 +65,7 @@ export async function replayHeldBatchReceipts(
     replayed.push(envelopeId)
   }
   if (replayed.length > 0) {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_receipts_replayed', {
+    server.log('INFO', 'wrkq.kicker.queue_batch_receipts_replayed', {
       targetSessionRef: attempt.targetSessionRef,
       driveAttemptId: attempt.driveAttemptId,
       runId: attempt.runId,
@@ -83,7 +82,7 @@ export async function replayHeldBatchReceipts(
  * boundary interval, the batch remains held for the next terminal event.
  */
 export async function prepareHeldBatchForBoundary(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   targetSessionRef: string,
   session: HrcSessionRecord,
   held: HrcMailDriveAttempt,
@@ -98,7 +97,7 @@ export async function prepareHeldBatchForBoundary(
       held.driveAttemptId,
       'HRC-held queue batch has no broker runtime identity'
     )
-    writeServerLog('WARN', 'wrkq.kicker.queue_batch_invalid', {
+    server.log('WARN', 'wrkq.kicker.queue_batch_invalid', {
       targetSessionRef,
       driveAttemptId: held.driveAttemptId,
       reason: 'missing_runtime_id',
@@ -136,7 +135,7 @@ export async function prepareHeldBatchForBoundary(
 
   const boundarySeat = await observeSeat(session)
   if (!seatCanDispatch(boundarySeat)) {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_foreign_turn_won', {
+    server.log('INFO', 'wrkq.kicker.queue_batch_foreign_turn_won', {
       targetSessionRef,
       driveAttemptId: held.driveAttemptId,
       wakeReason,
@@ -159,7 +158,7 @@ export async function prepareHeldBatchForBoundary(
     }
   )
   if (activated.outcome !== 'acquired') {
-    writeServerLog('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
+    server.log('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
       targetSessionRef,
       driveAttemptId: held.driveAttemptId,
       wakeReason,
@@ -169,7 +168,7 @@ export async function prepareHeldBatchForBoundary(
     return undefined
   }
   const leftHeldCount = server.db.mailDrives.getHeldAttempt(targetSessionRef)?.presentedCount ?? 0
-  writeServerLog('INFO', 'wrkq.kicker.queue_batch_flush_selected', {
+  server.log('INFO', 'wrkq.kicker.queue_batch_flush_selected', {
     targetSessionRef,
     driveAttemptId: activated.attempt.driveAttemptId,
     wakeReason,

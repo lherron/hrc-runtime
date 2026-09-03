@@ -18,6 +18,7 @@
  * collaboration — `messages` and the mail ENVELOPE tables — not this one.
  */
 import { sessionRefFor } from 'hrc-core'
+import { envelopeIdSequence } from 'hrc-mail-kicker'
 import type { HrcMailStopEnvelopeSummary } from 'hrc-store-sqlite'
 
 import { normalizeTargetSessionRef } from '../messages.js'
@@ -25,7 +26,6 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { writeServerLog } from '../server-log.js'
 import { isRecord, parseJsonBody } from '../server-parsers.js'
 import { json } from '../server-util.js'
-import { envelopeIdSequence } from './ledger-types.js'
 
 const STOP_SUMMARY_LIMIT = 8
 const STOP_BODY_PREVIEW_CHARS = 160

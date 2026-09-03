@@ -5,10 +5,10 @@ import {
   formatEnvelopeFailureNotice,
   formatEnvelopePresentation,
   formatEnvelopePresentations,
-} from '../wrkq/envelope-presentation.js'
-import { targetSessionRefForLedgerScope } from '../wrkq/ledger-scope.js'
-import type { WrkqEnvelope } from '../wrkq/ledger-types.js'
-import { envelopeIdSequence } from '../wrkq/ledger-types.js'
+} from '../index.js'
+import { targetSessionRefForLedgerScope } from '../index.js'
+import type { WrkqEnvelope } from '../index.js'
+import { envelopeIdSequence } from '../index.js'
 
 /**
  * The §4 injection formats and the wrkq↔HRC scope seam (T-07612 rev 5.1,

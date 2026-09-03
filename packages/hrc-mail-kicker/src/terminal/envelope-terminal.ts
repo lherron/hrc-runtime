@@ -2,10 +2,9 @@ import { randomUUID } from 'node:crypto'
 
 import { RUNTIME_STATUS_LEVEL_BY_STATUS } from 'hrc-core'
 
-import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
-import { parseSessionRef } from '../server-parsers.js'
-import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from '../wrkq/ledger-types.js'
+import type { MailKickerContext } from '../context.js'
+import { parseSessionRef } from '../internal.js'
+import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from '../ledger/types.js'
 
 export type EnvelopeFailCallSite =
   | 'birth_refusals_exhausted'
@@ -36,7 +35,7 @@ const serverInstanceIds = new WeakMap<object, string>()
  * the process, argv/role explains how it was entered, and the stable UUID
  * distinguishes two HrcServer instances constructed inside the same process.
  */
-function terminalActorIdentity(server: HrcServerInstanceForHandlers): {
+function terminalActorIdentity(server: MailKickerContext): {
   processId: number
   processArgv0: string
   processRole: string
@@ -59,7 +58,7 @@ function terminalActorIdentity(server: HrcServerInstanceForHandlers): {
 
 /** A local runtime row is live until monitor truth classifies it runtime-dead. */
 function liveRuntimeForTarget(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   targetSessionRef: string
 ): { runtimeId: string; status: string } | undefined {
   let target: ReturnType<typeof parseSessionRef>
@@ -89,14 +88,14 @@ function liveRuntimeForTarget(
  * born between them, and D7 has no authority to fail mail once that happens.
  */
 export async function failEnvelopeWithAudit(
-  server: HrcServerInstanceForHandlers,
+  server: MailKickerContext,
   input: EnvelopeFailInput
 ): Promise<EnvelopeFailOutcome> {
   const actor = terminalActorIdentity(server)
   if (input.reason === 'undeliverable') {
     const live = liveRuntimeForTarget(server, input.targetSessionRef)
     if (live !== undefined) {
-      writeServerLog('WARN', 'wrkq.kicker.envelope_terminal_suppressed', {
+      server.log('WARN', 'wrkq.kicker.envelope_terminal_suppressed', {
         ...actor,
         operation: 'fail',
         callSite: input.callSite,
@@ -115,7 +114,7 @@ export async function failEnvelopeWithAudit(
     }
   }
 
-  writeServerLog('INFO', 'wrkq.kicker.envelope_terminal_call', {
+  server.log('INFO', 'wrkq.kicker.envelope_terminal_call', {
     ...actor,
     operation: 'fail',
     callSite: input.callSite,
@@ -126,12 +125,12 @@ export async function failEnvelopeWithAudit(
     ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
     phase: 'before_rpc',
   })
-  const failed = await server.wrkqLedger.fail({
+  const failed = await server.ledger.fail({
     envelope: input.envelope,
     reason: input.reason,
     ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
   })
-  writeServerLog('INFO', 'wrkq.kicker.envelope_failed', {
+  server.log('INFO', 'wrkq.kicker.envelope_failed', {
     ...actor,
     callSite: input.callSite,
     targetSessionRef: input.targetSessionRef,

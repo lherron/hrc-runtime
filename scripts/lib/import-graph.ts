@@ -52,6 +52,7 @@ export const hrcPackages = [
   'hrc-core',
   'hrc-events',
   'hrc-frame-render',
+  'hrc-mail-kicker',
   'hrc-sdk',
   'hrc-server',
   'hrc-store-sqlite',
@@ -76,7 +77,12 @@ export const layers: Layer[] = [
   },
   {
     name: 'HRC Runtime',
-    roots: ['packages/hrc-capture-verifier/src', 'packages/hrc-sdk/src', 'packages/hrc-server/src'],
+    roots: [
+      'packages/hrc-capture-verifier/src',
+      'packages/hrc-mail-kicker/src',
+      'packages/hrc-sdk/src',
+      'packages/hrc-server/src',
+    ],
     forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
