@@ -132,6 +132,12 @@ export type HrcMailHeldAttemptUpdate = {
   addedEnvelopeIds: string[]
 }
 
+export type HrcMailAttemptRuntimeBinding = {
+  hostSessionId: string
+  generation: number
+  runtimeId?: string | undefined
+}
+
 export type HrcMailHeldEnvelopeDrop = {
   attempt: HrcMailDriveAttempt
   remainingEnvelopeIds: string[]
@@ -801,11 +807,14 @@ export class HrcMailDriveRepository {
    *
    * Members outside `selectedEnvelopeIds` move atomically to a successor held
    * attempt, so they retain durable HRC ownership without becoming receipts of
-   * the broker input being activated.
+   * the broker input being activated. The activated attempt is rebound in this
+   * same transaction to the seat that won the boundary; a held attempt's old
+   * runtime is historical evidence and must never remain its reap authority.
    */
   activateHeldAttempt(
     driveAttemptId: string,
-    selectedEnvelopeIds?: readonly string[]
+    selectedEnvelopeIds?: readonly string[],
+    runtimeBinding?: HrcMailAttemptRuntimeBinding
   ): HrcMailDriveClaimResult {
     return this.db
       .transaction(() => {
@@ -911,13 +920,30 @@ export class HrcMailDriveRepository {
           if (raced !== undefined) return { outcome: 'active', attempt: raced }
           throw new Error(`failed to activate held mail drive ${driveAttemptId}`)
         }
-        this.db
-          .query(
-            `UPDATE hrcmail_drive_attempts
-                SET state = 'claimed', updated_at = ?
-              WHERE drive_attempt_id = ? AND state = 'held'`
-          )
-          .run(now, driveAttemptId)
+        if (runtimeBinding === undefined) {
+          this.db
+            .query(
+              `UPDATE hrcmail_drive_attempts
+                  SET state = 'claimed', updated_at = ?
+                WHERE drive_attempt_id = ? AND state = 'held'`
+            )
+            .run(now, driveAttemptId)
+        } else {
+          this.db
+            .query(
+              `UPDATE hrcmail_drive_attempts
+                  SET state = 'claimed', host_session_id = ?, generation = ?,
+                      runtime_id = ?, updated_at = ?
+                WHERE drive_attempt_id = ? AND state = 'held'`
+            )
+            .run(
+              runtimeBinding.hostSessionId,
+              runtimeBinding.generation,
+              runtimeBinding.runtimeId ?? null,
+              now,
+              driveAttemptId
+            )
+        }
         return { outcome: 'acquired', attempt: this.requireAttempt(driveAttemptId) }
       })
       .immediate() as HrcMailDriveClaimResult

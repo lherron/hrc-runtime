@@ -30,6 +30,7 @@ import {
 const TARGET = 'agent:kicker-proof:project:hrc-runtime:task:T-07891/lane:main'
 const SCOPE = 'agent:kicker-proof:project:hrc-runtime:task:T-07891'
 const RUNTIME_ID = 'rt-t07891-seat'
+const ROTATED_RUNTIME_ID = 'rt-t07925-rotated-seat'
 const INVOCATION_ID = 'inv-t07891-seat'
 
 type Seat = { state: 'idle' } | { state: 'turn-active'; turnId: string; policy: 'open' }
@@ -142,7 +143,7 @@ async function seedObservedSeat(initialSeat: Seat): Promise<HrcSessionRecord> {
   return session
 }
 
-function installDispatchCapture(): () => Dispatch[] {
+function installDispatchCapture(runtimeId = RUNTIME_ID): () => Dispatch[] {
   const instance = server as HrcServer
   const calls: Dispatch[] = []
   serverInternals(instance).dispatchTurnForSession = async (
@@ -172,7 +173,7 @@ function installDispatchCapture(): () => Dispatch[] {
       db.runs.insert({
         runId,
         hostSessionId: session.hostSessionId,
-        runtimeId: RUNTIME_ID,
+        runtimeId,
         scopeRef: SCOPE,
         laneRef: 'main',
         generation: session.generation,
@@ -183,7 +184,7 @@ function installDispatchCapture(): () => Dispatch[] {
         updatedAt: now,
         dispatchedInputId: inputId,
       })
-      db.runtimes.updateRunId(RUNTIME_ID, runId, now)
+      db.runtimes.updateRunId(runtimeId, runId, now)
       serverInternals(instance).notifyEvent(
         appendHrcEvent(db, 'turn.started', {
           ts: now,
@@ -191,7 +192,7 @@ function installDispatchCapture(): () => Dispatch[] {
           scopeRef: SCOPE,
           laneRef: 'main',
           generation: session.generation,
-          runtimeId: RUNTIME_ID,
+          runtimeId,
           runId,
           transport: 'tmux',
         })
@@ -202,7 +203,7 @@ function installDispatchCapture(): () => Dispatch[] {
       runId,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
-      runtimeId: RUNTIME_ID,
+      runtimeId,
       transport: 'tmux',
       status: 'started',
       inputId,
@@ -395,6 +396,92 @@ describe('T-07891 HRC-held busy batches', () => {
       calls()[0]?.inputId,
       calls()[0]?.inputId,
     ])
+  })
+
+  it('keeps a held attempt live when its seat rotates before the boundary flush', async () => {
+    await startServer()
+    const session = await seedObservedSeat({
+      state: 'turn-active',
+      turnId: 'turn-before-rotation',
+      policy: 'open',
+    })
+    const calls = installDispatchCapture(ROTATED_RUNTIME_ID)
+    const queued = say('reply after the rotated boundary')
+    await drain()
+
+    const active = server as HrcServer
+    const db = serverInternals(active).db
+    const held = heldAttempt(db)
+    if (held === undefined) throw new Error('missing held attempt')
+    expect(held.runtimeId).toBe(RUNTIME_ID)
+
+    const now = timestamp()
+    db.runtimes.updateStatus(RUNTIME_ID, 'terminated', now)
+    db.runtimes.insert({
+      runtimeId: ROTATED_RUNTIME_ID,
+      runtimeKind: 'harness',
+      controllerKind: 'harness-broker',
+      hostSessionId: session.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      statusChangedAt: now,
+      supportsInflightInput: false,
+      adopted: false,
+      activeInvocationId: 'inv-t07925-rotated-seat',
+      createdAt: now,
+      updatedAt: now,
+    })
+    seat = { state: 'idle' }
+
+    const flush = await captureServerLog(async () => drain('turn_completion'))
+    expect(calls()).toHaveLength(1)
+    expect(flush.lines.some((line) => line.includes('terminal_runtime_attempt_reaped'))).toBe(false)
+    expect(db.mailDrives.getAttempt(held.driveAttemptId)).toMatchObject({
+      state: 'started',
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: ROTATED_RUNTIME_ID,
+    })
+
+    const runId = calls()[0]?.runId
+    if (runId === undefined) throw new Error('rotated dispatch has no run')
+    appendHrcEvent(db, 'turn.message', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: session.generation,
+      runtimeId: ROTATED_RUNTIME_ID,
+      runId,
+      transport: 'tmux',
+      payload: { message: { role: 'assistant', content: 'rotated seat reply' } },
+    })
+    await completeRun(active, runId)
+    await waitUntil(
+      () => db.mailDrives.getAttempt(held.driveAttemptId)?.state === 'completed',
+      'rotated attempt completion'
+    )
+    await waitUntil(
+      () => db.mailDrives.listDueReminders(TARGET, '9999-12-31T23:59:59.999Z').length === 1,
+      'rotated attempt reminder'
+    )
+    await waitUntil(
+      () => db.mailDrives.getAutoReplyIntent(held.driveAttemptId) !== undefined,
+      'rotated attempt auto-reply intent'
+    )
+    expect(db.runs.getByRunId(runId)).toMatchObject({
+      status: 'completed',
+      runtimeId: ROTATED_RUNTIME_ID,
+    })
+    expect(db.mailDrives.listDueReminders(TARGET, '9999-12-31T23:59:59.999Z')[0]).toMatchObject({
+      envelopeId: queued.id,
+      runtimeId: ROTATED_RUNTIME_ID,
+    })
   })
 
   it('keeps an unreceipted HRC-held member past 30 minutes and gives it a broker TTL only at flush', async () => {

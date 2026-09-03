@@ -1544,9 +1544,11 @@ async function driveMailTargetOnce(
       )
       birthEstablished = true
     }
+    const runtimeId = presentationRuntimeIdFor(server, session)
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: session.hostSessionId,
       generation: session.generation,
+      runtimeId,
     })
 
     // The local receipt is written FIRST, then the ledger is told with the same
@@ -1571,7 +1573,6 @@ async function driveMailTargetOnce(
       return
     }
 
-    const runtimeId = presentationRuntimeIdFor(server, session)
     const byId = new Map(actionable.map((item) => [item.envelope.id, item]))
     const ordered = envelopeIds
       .map((id) => byId.get(id))
@@ -1621,10 +1622,12 @@ async function driveMailTargetOnce(
     if (body.status !== 'started') {
       throw new Error(`mail dispatch did not start a turn (status=${body.status})`)
     }
+    const committedRuntimeId =
+      body.runtimeId ?? presentationRuntimeIdFor(server, session) ?? runtimeId
     server.db.mailDrives.recordSession(attempt.driveAttemptId, {
       hostSessionId: body.hostSessionId,
       generation: body.generation,
-      runtimeId: body.runtimeId,
+      runtimeId: committedRuntimeId,
     })
     writeServerLog('INFO', 'wrkq.kicker.turn_dispatched', {
       targetSessionRef,
@@ -1640,7 +1643,6 @@ async function driveMailTargetOnce(
       inputId,
       wakeReason,
     })
-    const committedRuntimeId = body.runtimeId ?? runtimeId
     await commitPresentations(server, presentables, attempt, session, committedRuntimeId, inputId)
     // The reminder is bound to the attempt that carried it: D5 reads this row
     // back when that attempt's own turn ends, and it is what stops a second

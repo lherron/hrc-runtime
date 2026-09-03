@@ -17,6 +17,7 @@ import { holdQueueForBusyTarget } from '../held-batch.js'
 const SCOPE = 'agent:batch-flush-unit:project:hrc-runtime:task:T-07891'
 const TARGET = `${SCOPE}/lane:main`
 const RUNTIME_ID = 'rt-batch-flush-unit'
+const ROTATED_RUNTIME_ID = 'rt-batch-flush-unit-rotated'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
@@ -115,6 +116,27 @@ describe('mail-kicker batch-flush seam', () => {
     expect(prepared?.actionable.map((item) => item.envelope.id)).toEqual(
       envelopes.map((envelope) => envelope.id)
     )
+  })
+
+  it('atomically rebinds a held attempt to the runtime that wins the boundary', async () => {
+    const { internals, session, envelopes, held } = await heldFixture()
+    const prepared = await prepareHeldBatchForBoundary(
+      internals,
+      TARGET,
+      session,
+      held,
+      envelopes.map((envelope) => ({ envelope, form: 'full' as const })),
+      'turn_completion',
+      async () => ({ state: 'idle', runtimeId: ROTATED_RUNTIME_ID })
+    )
+
+    expect(prepared?.attempt).toMatchObject({
+      driveAttemptId: held.driveAttemptId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: ROTATED_RUNTIME_ID,
+      state: 'claimed',
+    })
   })
 
   it('keeps the batch held when a foreign turn wins the second probe', async () => {

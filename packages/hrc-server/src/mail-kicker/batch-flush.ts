@@ -149,7 +149,14 @@ export async function prepareHeldBatchForBoundary(
 
   const activated = server.db.mailDrives.activateHeldAttempt(
     held.driveAttemptId,
-    selected.map((item) => item.envelope.id)
+    selected.map((item) => item.envelope.id),
+    {
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      // `absent` is also dispatchable: clear the dead held runtime now and let
+      // the accepted dispatch install the newly materialized runtime below.
+      runtimeId: boundarySeat.state === 'idle' ? boundarySeat.runtimeId : undefined,
+    }
   )
   if (activated.outcome !== 'acquired') {
     writeServerLog('INFO', 'wrkq.kicker.queue_batch_slot_busy', {
