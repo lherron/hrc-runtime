@@ -7,7 +7,7 @@ import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import { holdQueueForBusyTarget } from '../mail-kicker/held-batch.js'
 import { timestamp } from '../server-util.js'
-import { MAIL_HINT_GUIDANCE } from '../wrkq/stop-gate-handlers.js'
+import { MAIL_HINT_TEXT } from '../wrkq/stop-gate-handlers.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 import { captureServerLog, serverInternals } from './fixtures/mail-kicker-harness.js'
@@ -152,7 +152,7 @@ describe('T-07926 — local held-mail hint decision', () => {
 
     const captured = await captureServerLog(async () => hint())
     expect(captured.result).toEqual({
-      hint: `Mail hint from HRC: 2 envelopes are held for this seat, 1 from the party driving this turn. ${MAIL_HINT_GUIDANCE}`,
+      hint: MAIL_HINT_TEXT(2, 1),
       heldCount: 2,
       fromDrivingParty: 1,
       driveAttemptId,

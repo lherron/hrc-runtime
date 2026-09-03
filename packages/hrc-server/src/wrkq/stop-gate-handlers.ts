@@ -33,8 +33,12 @@ const STOP_REASON_MAX_CHARS = 4_096
 
 const ACTIVE_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
 
-export const MAIL_HINT_GUIDANCE =
-  'They present at turn end. This is a count, not the mail; it carries no obligation and nothing to reply to. Finish the current step; if you want the mail sooner, end the turn at a coherent point.'
+export const MAIL_HINT_TEXT = (heldCount: number, fromDrivingParty: number | undefined): string => {
+  const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
+  const partyClause =
+    fromDrivingParty === undefined ? '' : `, ${fromDrivingParty} from the party driving this turn`
+  return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat${partyClause}. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender>\` answers it now; anything unanswered presents at turn end.`
+}
 
 export async function handleMailStopDecision(
   this: HrcServerInstanceForHandlers,
@@ -188,12 +192,10 @@ export async function handleMailHintDecision(
       return json({})
     }
 
-    const partyClause =
-      drivingCounterpartyRef === undefined
-        ? ''
-        : `, ${decision.fromDrivingParty} from the party driving this turn`
-    const noun = decision.heldCount === 1 ? 'envelope is' : 'envelopes are'
-    const hint = `Mail hint from HRC: ${decision.heldCount} ${noun} held for this seat${partyClause}. ${MAIL_HINT_GUIDANCE}`
+    const hint = MAIL_HINT_TEXT(
+      decision.heldCount,
+      drivingCounterpartyRef === undefined ? undefined : decision.fromDrivingParty
+    )
     writeServerLog('INFO', 'wrkq.kicker.hint_issued', {
       runtimeId,
       targetSessionRef,

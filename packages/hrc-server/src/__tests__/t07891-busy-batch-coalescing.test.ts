@@ -256,26 +256,40 @@ describe('T-07891 HRC-held busy batches', () => {
     expect(calls()).toHaveLength(1)
     expect(queued.every((item) => item.presentedTo.length === 0)).toBe(true)
 
+    // Rev 3: replying from inside the hinted turn disposes only that member.
+    // The ledger ack event subtracts it from HRC's still-unpresented batch, so
+    // the boundary can present only the unanswered members.
+    await (server as any).runWrkqLedgerTail()
+    ledger.ack(queued[0]?.id ?? '')
+    const acked = await captureServerLog(async () => {
+      await (server as any).runWrkqLedgerTail()
+    })
+    await waitUntil(() => heldAttempt(db)?.presentedCount === 2, 'mid-turn held-member ack')
+    expect(acked.lines.some((line) => line.includes('wrkq.kicker.held_member_acked'))).toBe(true)
+    expect(ledger.envelopes.get(queued[0]?.id ?? '')?.presentedTo).toEqual([])
+
     seat = { state: 'idle' }
     const drivingRunId = ledger.envelopes.get(driving.id)?.presentedTo[0]?.runId
     if (drivingRunId === undefined) throw new Error('foreground receipt has no run')
     await completeRun(server as HrcServer, drivingRunId)
     await waitUntil(() => calls().length === 2, 'boundary batch dispatch')
     await waitUntil(
-      () => queued.every((item) => (ledger.envelopes.get(item.id)?.presentedTo.length ?? 0) === 1),
-      'three boundary receipts'
+      () =>
+        queued
+          .slice(1)
+          .every((item) => (ledger.envelopes.get(item.id)?.presentedTo.length ?? 0) === 1),
+      'remaining boundary receipts'
     )
 
     const boundary = calls()[1]
-    expect(boundary?.prompt).toContain('queued one')
+    expect(boundary?.prompt).not.toContain('queued one')
     expect(boundary?.prompt).toContain('queued two')
     expect(boundary?.prompt).toContain('queued three')
-    const receipts = queued.map((item) => ledger.envelopes.get(item.id)?.presentedTo[0])
+    const receipts = queued.slice(1).map((item) => ledger.envelopes.get(item.id)?.presentedTo[0])
     expect(new Set(receipts.map((receipt) => receipt?.inputId))).toEqual(
       new Set([boundary?.inputId])
     )
     expect(receipts.map((receipt) => receipt?.driveAttemptId)).toEqual([
-      heldDriveAttemptId,
       heldDriveAttemptId,
       heldDriveAttemptId,
     ])
@@ -315,10 +329,10 @@ describe('T-07891 HRC-held busy batches', () => {
     await completeRun(server as HrcServer, boundaryRun.runId)
     await waitUntil(() => ledger.roomSayRequests.length === 1, 'boundary auto reply')
     expect(ledger.roomSayRequests[0]).toMatchObject({
-      ref: queued[0]?.roomKey,
+      ref: queued[1]?.roomKey,
       body: 'one boundary response',
       to: ['mable@hcs:fixall'],
-      dischargeEnvelopeIds: queued.map((item) => item.id),
+      dischargeEnvelopeIds: queued.slice(1).map((item) => item.id),
     })
     expect(queued.every((item) => ledger.envelopes.get(item.id)?.state === 'acked')).toBe(true)
   })
