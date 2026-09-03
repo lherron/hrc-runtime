@@ -479,16 +479,29 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
 
     # The daemon can lag its supervisor respawn by a few seconds; a single
     # unretried status probe here failed three deploys in a row on max3.
+    #
+    # The wait must satisfy EVERY field this block goes on to read, not just
+    # `.status` (T-07957). Breaking the instant health flips captures ONE
+    # snapshot that every later read is taken from, and `.pid` lags health: a
+    # deploy-svc run aborted with "post-restart status did not report a daemon
+    # pid" while svc was healthy under launchd the whole time. Retrying around
+    # the `jq` would not help — it would re-parse the same stale bytes forever.
+    # `.pidAlive` is required too, because a lagging `.pid` is not always
+    # missing: it can still name the PRE-restart process, which is present
+    # enough to pass a null check and then fail the launchctl ownership match
+    # below as a confusing "unsupervised" verdict.
     status_after=""
     for _ in $(seq 1 20); do
       if status_after="$(hrc server status --json 2>/dev/null)" &&
-        [[ "$(jq -r '.status // "down"' <<<"$status_after")" == healthy ]]; then
+        [[ "$(jq -r '.status // "down"' <<<"$status_after")" == healthy ]] &&
+        [[ "$(jq -r '.pid // "none"' <<<"$status_after")" != none ]] &&
+        [[ "$(jq -r '.pidAlive // false' <<<"$status_after")" == true ]]; then
         break
       fi
       status_after=""
       sleep 3
     done
-    [[ -n "$status_after" ]] || fail 'HRC daemon did not become healthy'
+    [[ -n "$status_after" ]] || fail 'HRC daemon did not become healthy with a live pid'
     actual_node="$(jq -er '.node.nodeId' <<<"$status_after")" ||
       fail 'post-restart status did not report a logical node ID'
     [[ "$actual_node" == "$expected_node" ]] ||
