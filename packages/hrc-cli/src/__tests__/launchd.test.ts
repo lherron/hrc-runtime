@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import {
   LAUNCHCTL_EALREADY,
   detectLaunchdOwner,
@@ -27,14 +26,21 @@ type Shim = {
 
 const IS_DARWIN = process.platform === 'darwin'
 
-async function writeShim(opts: { exitCode: number }): Promise<Shim> {
+async function writeShim(opts: { exitCode: number; systemExitCode?: number }): Promise<Shim> {
   const dir = await mkdtemp(join(tmpdir(), 'launchctl-shim-'))
   const shimPath = join(dir, 'launchctl')
   const logFile = join(dir, 'invocations.log')
 
+  // `systemExitCode` lets one shim answer the gui and system domains
+  // differently, which is the only way to exercise a node that declares a
+  // supervisor in both (hrcdev, T-07957).
+  const systemBranch =
+    opts.systemExitCode === undefined
+      ? ''
+      : `case "$*" in *system/*) exit ${opts.systemExitCode};; esac\n`
   const script = `#!/bin/bash
 printf '%s\\n' "$*" >> "${logFile}"
-exit ${opts.exitCode}
+${systemBranch}exit ${opts.exitCode}
 `
   await writeFile(shimPath, script)
   await chmod(shimPath, 0o755)
@@ -233,8 +239,30 @@ describe('detectStrandedLaunchAgent', () => {
         'HRC_RUNTIME_DIR',
         'HRC_WRKQ_DB',
       ])
+      expect(stranded?.systemJobLoaded).toBe(false)
     }
   )
+
+  // hrcdev, found live during T-07957: a gui LaunchAgent and a
+  // /Library/LaunchDaemons job both claiming com.praesidium.hrc-server. The
+  // refusal still stands — the system job's KeepAlive would race anything we
+  // spawn — but it has to name the second supervisor rather than report a
+  // missing one.
+  it.if(IS_DARWIN)('reports a same-label system job that IS loaded', async () => {
+    const runtimeDir = join(tmpdir(), 'stranded-runtime-two-supervisors')
+    await writeAgentPlist({ HRC_RUNTIME_DIR: runtimeDir, HRC_MAIL_KICKER_ENABLED: '1' })
+    process.env.HOME = home as string
+    process.env.HRC_RUNTIME_DIR = runtimeDir
+    shim = await writeShim({ exitCode: 113, systemExitCode: 0 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+
+    const stranded = await detectStrandedLaunchAgent()
+    expect(stranded).not.toBeNull()
+    expect(stranded?.systemJobLoaded).toBe(true)
+    expect(formatStrandedLaunchAgentRefusal(stranded as StrandedLaunchAgent, 'restart')).toContain(
+      'two supervisors for one label'
+    )
+  })
 
   // The governance rule. A `hrc dev env` or test daemon runs on its own runtime
   // root while the operator's plist sits in ~/Library/LaunchAgents; gating those
@@ -275,6 +303,7 @@ describe('formatStrandedLaunchAgentRefusal', () => {
     serviceTarget: 'gui/501/com.praesidium.hrc-server',
     domain: 'gui/501',
     declaredEnvKeys: ['HRC_MAIL_KICKER_ENABLED', 'HRC_WRKQ_DB'] as const,
+    systemJobLoaded: false,
   }
 
   it('names the action, the missing environment, and the exact repair', () => {
@@ -284,6 +313,10 @@ describe('formatStrandedLaunchAgentRefusal', () => {
     expect(message).toContain('HRC_MAIL_KICKER_ENABLED, HRC_WRKQ_DB')
     expect(message).toContain(`launchctl bootstrap ${agent.domain} ${agent.plistPath}`)
     expect(message).toContain('T-07957')
+  })
+
+  it('stays silent about the system domain when no job is loaded there', () => {
+    expect(formatStrandedLaunchAgentRefusal(agent, 'restart')).not.toContain('two supervisors')
   })
 
   it('names the start action when start is what was refused', () => {

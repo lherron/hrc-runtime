@@ -125,6 +125,17 @@ export type StrandedLaunchAgent = {
   domain: string
   /** HRC_* keys the plist declares, sorted; empty when the plist declares none. */
   declaredEnvKeys: readonly string[]
+  /**
+   * A job with the same label is loaded in the SYSTEM domain. hrcdev was found
+   * in exactly this state (T-07957 live run): a gui LaunchAgent and a
+   * /Library/LaunchDaemons job both declaring com.praesidium.hrc-server,
+   * fighting over one socket — the loser crash-loops on `daemon already
+   * running`. Self-daemonizing is still wrong here (the system job's KeepAlive
+   * would race whatever we spawn), so this does not soften the refusal; it only
+   * makes the refusal name the real problem instead of reporting a missing
+   * supervisor that is in fact present in another domain.
+   */
+  systemJobLoaded: boolean
 }
 
 function normalizeRoot(path: string): string {
@@ -203,7 +214,15 @@ export async function detectStrandedLaunchAgent(): Promise<StrandedLaunchAgent |
   const declaredEnvKeys = Object.keys(declared ?? {})
     .filter((key) => key.startsWith('HRC_'))
     .sort()
-  return { label, plistPath, serviceTarget, domain, declaredEnvKeys }
+  const systemJob = await execProcess(['launchctl', 'print', `system/${label}`])
+  return {
+    label,
+    plistPath,
+    serviceTarget,
+    domain,
+    declaredEnvKeys,
+    systemJobLoaded: systemJob.exitCode === 0,
+  }
 }
 
 /**
@@ -218,15 +237,23 @@ export function formatStrandedLaunchAgentRefusal(
 ): string {
   const missing =
     agent.declaredEnvKeys.length > 0 ? agent.declaredEnvKeys.join(', ') : 'its environment'
-  return [
+  const lines = [
     `refusing to ${action} an unsupervised daemon: the LaunchAgent plist ${agent.plistPath} exists but ${agent.serviceTarget} is not loaded.`,
     `Self-daemonizing here would run a daemon with none of the environment the plist declares (${missing}), which silently disables the mail kicker and the canonical wrkq endpoint (T-07957).`,
+  ]
+  if (agent.systemJobLoaded) {
+    lines.push(
+      `NOTE: system/${agent.label} IS loaded, so this node declares two supervisors for one label and one socket. Pick one before restarting — the loser crash-loops on "daemon already running", and this CLI can only kickstart the gui job.`
+    )
+  }
+  lines.push(
     'Repair:',
     '  hrc server stop            # if an unsupervised daemon already holds the socket',
     `  launchctl bootout ${agent.serviceTarget} 2>/dev/null || true`,
     `  launchctl bootstrap ${agent.domain} ${agent.plistPath}`,
-    `If this node is deliberately unsupervised, move ${agent.plistPath} aside first.`,
-  ].join('\n')
+    `If this node is deliberately unsupervised, move ${agent.plistPath} aside first.`
+  )
+  return lines.join('\n')
 }
 
 /**

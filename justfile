@@ -509,20 +509,43 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
     # carrying none of the environment the plist declares. That daemon has no mail
     # kicker and no canonical wrkq endpoint, so cold summonses to the node are
     # never seated and nothing local says why (T-07957). Assert the process, not
-    # the mechanism. Nodes with no gui LaunchAgent (lab, which runs a system
-    # LaunchDaemon) are skipped: there is no gui job to own the pid.
-    plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-    if [[ -f "$plist" ]]; then
-      uid="$(id -u)"
+    # the mechanism.
+    #
+    # Either domain counts. lab runs a system LaunchDaemon and hrcdev was found
+    # declaring BOTH a gui LaunchAgent and a system one for the same label; the
+    # invariant is that SOME loaded launchd job owns the serving pid and that the
+    # pid carries that job's declared environment, not that the gui job in
+    # particular does.
+    declare -a supervisor_plists=(
+      "gui/$(id -u)/com.praesidium.hrc-server::$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
+      "system/com.praesidium.hrc-server::/Library/LaunchDaemons/com.praesidium.hrc-server.plist"
+    )
+    declared_supervisors=()
+    for entry in "${supervisor_plists[@]}"; do
+      [[ -f "${entry#*::}" ]] && declared_supervisors+=("$entry")
+    done
+    if (( ${#declared_supervisors[@]} > 0 )); then
       server_pid="$(jq -er '.pid' <<<"$status_after")" ||
         fail 'post-restart status did not report a daemon pid'
-      job="$(launchctl print "gui/${uid}/com.praesidium.hrc-server" 2>/dev/null)" ||
-        fail "LaunchAgent plist exists at ${plist} but gui/${uid}/com.praesidium.hrc-server is not loaded; the daemon serving this node (pid ${server_pid}) is unsupervised. Repair: hrc server stop; launchctl bootstrap gui/${uid} ${plist}"
-      job_pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
-      [[ -n "$job_pid" ]] ||
-        fail "launchd job com.praesidium.hrc-server is loaded but reports no pid; the daemon serving this node (pid ${server_pid}) is not launchd-owned"
-      [[ "$job_pid" == "$server_pid" ]] ||
-        fail "the daemon serving this node (pid ${server_pid}) is not the launchd job pid ${job_pid}; an unsupervised daemon holds the socket"
+      owner_target=""
+      owner_plist=""
+      for entry in "${declared_supervisors[@]}"; do
+        target="${entry%%::*}"
+        job="$(launchctl print "$target" 2>/dev/null)" || continue
+        job_pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
+        [[ "$job_pid" == "$server_pid" ]] || continue
+        owner_target="$target"
+        owner_plist="${entry#*::}"
+        break
+      done
+      if [[ -z "$owner_target" ]]; then
+        for entry in "${declared_supervisors[@]}"; do
+          printf 'declared supervisor: %s (plist %s)\n' "${entry%%::*}" "${entry#*::}" >&2
+          launchctl print "${entry%%::*}" 2>/dev/null |
+            awk '$1 == "state" || $1 == "pid" || $1 == "runs" { print "  " $0 }' >&2
+        done
+        fail "no loaded launchd job owns the daemon serving this node (pid ${server_pid}); it is unsupervised, or a second supervisor holds the socket. Repair: hrc server stop, then bootstrap the node's own job"
+      fi
 
       # Ownership is not the environment. `ps eww` prints the process environment
       # as inherited, which is the only place the plist's keys are observable on
@@ -532,11 +555,11 @@ _deploy-node ssh-target expected-node target-ref="origin/main":
       while read -r key; do
         [[ -n "$key" ]] || continue
         grep -q "^${key}=" <<<"$daemon_env" ||
-          fail "daemon pid ${server_pid} is missing ${key}, which ${plist} declares; it is not running with the plist's environment"
-      done < <(plutil -extract EnvironmentVariables json -o - "$plist" 2>/dev/null |
+          fail "daemon pid ${server_pid} is missing ${key}, which ${owner_plist} declares; it is not running with its supervisor's environment"
+      done < <(plutil -extract EnvironmentVariables json -o - "$owner_plist" 2>/dev/null |
         jq -r 'keys[] | select(startswith("HRC_"))')
-      printf 'supervisor ok on %s: launchd job pid %s carries the plist environment\n' \
-        "$expected_node" "$server_pid"
+      printf 'supervisor ok on %s: %s owns pid %s and it carries the plist environment\n' \
+        "$expected_node" "$owner_target" "$server_pid"
     fi
 
     asp_version="$(jq -r '.release.aspBuild.setVersion // "unknown"' <<<"$status_after")"
