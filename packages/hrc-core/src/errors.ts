@@ -113,6 +113,19 @@ export const HrcErrorCode = {
   PLACEMENT_DIRECTIVE_CONFLICT: 'placement_directive_conflict',
   /** A `node=` directive named a node this daemon's federation registry does not know. */
   UNKNOWN_NODE: 'unknown_node',
+  /**
+   * T-07944 — a cold-birth accepted run's owed prompt could not be submitted.
+   *
+   * A promptless cold boot accepts the run, then waits for the compiler priming
+   * turn before submitting the caller's prompt. These two codes name what
+   * happened in that window, so the waiting mail drive fails on a positive fact
+   * instead of on 30 minutes of apparent silence:
+   *   - LOST: the daemon restarted and the invocation that owed the prompt is
+   *     gone, so the submit can never happen.
+   *   - FAILED: the continuation itself errored (priming wait or submit).
+   */
+  COLD_INPUT_CONTINUATION_LOST: 'cold_input_continuation_lost',
+  COLD_INPUT_CONTINUATION_FAILED: 'cold_input_continuation_failed',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -188,6 +201,10 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.INVALID_PROVISION_VALUE]: 422,
   [HrcErrorCode.PLACEMENT_DIRECTIVE_CONFLICT]: 409,
   [HrcErrorCode.UNKNOWN_NODE]: 422,
+  // The runtime accepted the turn and the prompt was never delivered to it:
+  // an upstream lifecycle loss, not a caller-fixable request fact.
+  [HrcErrorCode.COLD_INPUT_CONTINUATION_LOST]: 503,
+  [HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED]: 503,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {

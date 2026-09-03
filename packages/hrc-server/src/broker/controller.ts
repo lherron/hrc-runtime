@@ -387,6 +387,15 @@ export class HarnessBrokerController {
   // a replacement client may legitimately reuse that ID before an older close
   // callback arrives.
   private readonly intentionalClosingClients = new WeakMap<BrokerClientLike, string>()
+  /**
+   * T-07944: the same intentional-close fact, keyed by runtime rather than by
+   * client. The event consumer's `for await` throws AFTER teardown has already
+   * dropped the active binding (dispose deletes it, then closes the transport),
+   * so by the time the consumer asks, the client-keyed record is unreachable
+   * and an operator reap read as a crash. Cleared when a new binding is
+   * established for the runtime, so it can never mask a later real crash.
+   */
+  private readonly intentionalClosingRuntimes = new Map<string, string>()
   // Lever 2 graceful exit: runtimes whose broker-tmux lease reap has been fired,
   // so the several user-exit signals that can arrive for one /quit (continuation
   // clear, then invocation.exited and/or broker close) reap exactly once.
@@ -555,6 +564,10 @@ export class HarnessBrokerController {
       markBrokerClosing: (runtimeId, reason, client) =>
         this.markBrokerClosing(runtimeId, reason, client),
       setActive: (record) => {
+        // A fresh binding retires any intentional-close verdict recorded for the
+        // previous one: from here on, a consumer failure on this runtime is a
+        // real crash again.
+        this.intentionalClosingRuntimes.delete(record.runtimeId)
         this.active.set(record.runtimeId, record)
       },
       consumeEvents: (runtimeId, events) => this.consumeEvents(runtimeId, events),
@@ -1379,6 +1392,23 @@ export class HarnessBrokerController {
           return
         }
         const controllerError = toControllerError('broker_event_consumer_failed', error)
+        // T-07944: an operator reap tears the transport down on purpose, and the
+        // consumer's `for await` throws `Broker transport is closed` on the way
+        // out. That is teardown finishing, not a runtime dying — escalating it
+        // stamped `runtime.crashed` on a runtime that had just been terminated
+        // deliberately, attached it to a run that had completed over an hour
+        // earlier, and flipped the already-completed operation row to `failed`.
+        // Consult the same intentional-close verdict `handleBrokerClose` does.
+        const intentionalReason = this.intentionalCloseReason(runtimeId)
+        if (intentionalReason !== undefined) {
+          this.logger.info?.('harness broker event consumer ended on intentional close', {
+            runtimeId,
+            reason: intentionalReason,
+            error: controllerError.message,
+          })
+          this.completeBrokerInvocationOperationOnIntentionalClose(runtimeId, intentionalReason)
+          return
+        }
         this.logger.error?.('harness broker event consumer failed', {
           runtimeId,
           error: controllerError.message,
@@ -1966,11 +1996,7 @@ export class HarnessBrokerController {
       })
       return
     }
-    const intentionalReason = client
-      ? this.intentionalClosingClients.get(client)
-      : active?.closing === true
-        ? active.closeReason
-        : undefined
+    const intentionalReason = this.intentionalCloseReason(runtimeId, client)
     if (intentionalReason) {
       this.logger.info?.('harness broker process closed intentionally', {
         runtimeId,
@@ -2072,9 +2098,70 @@ export class HarnessBrokerController {
     if (client) {
       this.intentionalClosingClients.set(client, reason)
     }
+    this.intentionalClosingRuntimes.set(runtimeId, reason)
     if (active && active.client === client) {
       active.closing = true
       active.closeReason = reason
+    }
+  }
+
+  /**
+   * The intentional-close reason for this runtime, if teardown declared one.
+   *
+   * `handleBrokerClose` and the event-consumer catch must agree about this: they
+   * are two observations of ONE teardown (the transport going away), and a
+   * disagreement is exactly the defect T-07944 fixes — the close path logged
+   * "closed intentionally" while the consumer emitted `runtime.crashed` for the
+   * same operator reap.
+   */
+  private intentionalCloseReason(
+    runtimeId: string,
+    closingClient?: BrokerClientLike
+  ): string | undefined {
+    const active = this.active.get(runtimeId)
+    const client = closingClient ?? active?.client
+    const byClient = client ? this.intentionalClosingClients.get(client) : undefined
+    if (byClient !== undefined) return byClient
+    if (active?.closing === true && active.closeReason !== undefined) return active.closeReason
+    return this.intentionalClosingRuntimes.get(runtimeId)
+  }
+
+  /**
+   * On an intentional close the invocation's operation row must end `completed`,
+   * never `failed`. The successful start path already completed it, so this is
+   * a no-op in the ordinary case and a repair in the one where teardown raced
+   * ahead of it.
+   */
+  private completeBrokerInvocationOperationOnIntentionalClose(
+    runtimeId: string,
+    reason: string
+  ): void {
+    try {
+      const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+      const invocation =
+        runtime?.activeInvocationId !== undefined
+          ? this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+          : this.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)
+      if (!invocation) return
+      const operation = this.db.runtimeOperations.getByOperationId(invocation.operationId)
+      if (!operation || operation.status === 'completed' || operation.status === 'failed') return
+      const now = this.now()
+      this.db.runtimeOperations.update(invocation.operationId, {
+        status: 'completed',
+        completedAt: now,
+        updatedAt: now,
+      })
+      this.logger.info?.('broker invocation operation completed on intentional close', {
+        runtimeId,
+        operationId: invocation.operationId,
+        reason,
+      })
+    } catch (error) {
+      if (this.shuttingDown || isClosedDbError(error)) return
+      this.logger.warn?.('broker invocation operation completion on intentional close failed', {
+        runtimeId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 

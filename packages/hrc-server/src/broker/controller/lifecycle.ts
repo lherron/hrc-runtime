@@ -417,9 +417,18 @@ export function markBrokerCrashTerminal(
       ...(runtime?.activeRunId === undefined ? [] : [runtime.activeRunId]),
       ...driveRunIds,
     ])
+    // T-07944: which of the owned runs was still LIVE when the crash landed.
+    // Captured before the terminalizing loop below, because that loop is what
+    // makes them terminal — and only a run this crash actually killed may carry
+    // it. `invocation.runId` outlives its turn, so the old unconditional pick
+    // stamped `runtime.crashed` onto runs that had completed (73 minutes
+    // earlier, in the case that surfaced this): a red band on a timeline for a
+    // turn that ended cleanly.
+    const crashedRunIds = new Set<string>()
     for (const runId of ownedRunIds) {
       const run = ctx.db.runs.getByRunId(runId)
       if (run === null || !isActiveBrokerRun(run)) continue
+      crashedRunIds.add(runId)
       ctx.db.runs.markCompleted(runId, {
         status: 'failed',
         completedAt: now,
@@ -428,7 +437,11 @@ export function markBrokerCrashTerminal(
         errorMessage: error.message,
       })
     }
-    const terminalRunId = invocation?.runId ?? runtime?.activeRunId ?? driveRunIds.at(-1)
+    // Attach the crash to a run only when this crash is what ended it; otherwise
+    // it belongs to the runtime alone.
+    const terminalRunId = [invocation?.runId, runtime?.activeRunId, driveRunIds.at(-1)].find(
+      (candidate): candidate is string => candidate !== undefined && crashedRunIds.has(candidate)
+    )
 
     if (invocation) {
       ctx.db.brokerInvocations.update(invocation.invocationId, {
