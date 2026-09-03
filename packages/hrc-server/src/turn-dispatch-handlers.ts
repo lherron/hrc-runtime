@@ -247,6 +247,11 @@ function submissionDisposition(
       return { type: 'expired' }
     case 'submission.cancelled':
       return { type: 'cancelled' }
+    case 'submission.lost':
+      return {
+        type: 'lost',
+        reason: typeof payload['reason'] === 'string' ? payload['reason'] : 'turn-correlation-lost',
+      }
     default:
       return undefined
   }
@@ -677,7 +682,8 @@ export function projectSubmissionResponse(
   if (
     disposition?.type === 'rejected' ||
     disposition?.type === 'expired' ||
-    disposition?.type === 'cancelled'
+    disposition?.type === 'cancelled' ||
+    disposition?.type === 'lost'
   ) {
     return {
       submissionId: dispatch.submissionId,

@@ -133,4 +133,50 @@ describe('broker submission wait follows the disposition ledger', () => {
     append(20, 'submission.expired', { submissionId: 'sub-expired' })
     expect(await wait('sub-expired')).toEqual({ disposition: { type: 'expired' } })
   })
+
+  it('lost resolves typed without waiting for a turn terminal', async () => {
+    append(20, 'submission.lost', {
+      submissionId: 'sub-lost',
+      reason: 'turn-correlation-lost',
+    })
+    expect(await wait('sub-lost')).toEqual({
+      disposition: { type: 'lost', reason: 'turn-correlation-lost' },
+    })
+  })
+
+  it('lost is terminal for compiler priming correlation', async () => {
+    const planHash = 'plan-lost-compiler-priming'
+    const profileHash = 'profile-lost-compiler-priming'
+    const submissionId = 'input-lost-compiler-priming'
+    fixture.db.compiledRuntimePlans.insert({
+      planHash,
+      compileId: 'compile-lost-compiler-priming',
+      schemaVersion: 'agent-runtime-plan/v1',
+      compilerName: 'agent-spaces',
+      compilerVersion: 'test',
+      planProjectionJson: JSON.stringify({
+        executionProfiles: [
+          {
+            profileHash,
+            harnessInvocation: { startRequest: { initialInput: { inputId: submissionId } } },
+          },
+        ],
+      }),
+      createdAt: new Date().toISOString(),
+    })
+    append(20, 'submission.lost', { submissionId, reason: 'turn-correlation-lost' })
+
+    await expect(
+      waitForCompilerPrimingTerminal(
+        { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+        {
+          runtimeId: Q_RUNTIME_ID,
+          activeInvocationId: Q_INVOCATION_ID,
+          planHash,
+          selectedProfileHash: profileHash,
+        } as never,
+        new AbortController().signal
+      )
+    ).resolves.toBeUndefined()
+  })
 })

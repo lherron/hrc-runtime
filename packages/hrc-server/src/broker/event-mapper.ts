@@ -48,6 +48,7 @@ import {
   HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA,
   HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND,
   HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
+  HrcErrorCode,
 } from 'hrc-core'
 import { BrokerInvocationEventConflictError, type HrcDatabase } from 'hrc-store-sqlite'
 import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
@@ -1087,6 +1088,7 @@ export class BrokerEventMapper {
       case 'submission.expired':
       case 'submission.withdrawn':
       case 'submission.cancelled':
+      case 'submission.lost':
       case 'turn.started':
       case 'turn.completed':
       case 'turn.failed':
@@ -1351,6 +1353,22 @@ export class BrokerEventMapper {
               completedAt: envelope.time ?? now,
               updatedAt: now,
               ...(payload.reason !== undefined ? { errorMessage: payload.reason } : {}),
+            })
+          }
+        }
+        break
+      }
+      case 'submission.lost': {
+        if (runId !== undefined) {
+          const run = db.runs.getByRunId(runId)
+          if (run?.completedAt === undefined) {
+            const payload = envelope.payload as { reason?: string | undefined }
+            db.runs.markCompleted(runId, {
+              status: 'failed',
+              completedAt: envelope.time ?? now,
+              updatedAt: now,
+              errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+              errorMessage: payload.reason ?? 'turn-correlation-lost',
             })
           }
         }

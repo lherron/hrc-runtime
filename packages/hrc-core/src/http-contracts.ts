@@ -495,6 +495,7 @@ export type HrcSubmissionDisposition =
   | { type: 'rejected'; reason: string }
   | { type: 'expired' }
   | { type: 'cancelled' }
+  | { type: 'lost'; reason: string }
 
 export type HrcSubmissionTurnTerminal = {
   turnId: string
@@ -511,7 +512,7 @@ type HrcSubmissionResponseBase = {
 
 type HrcSubmissionCursorlessDisposition = Extract<
   HrcSubmissionDisposition,
-  { type: 'rejected' | 'expired' | 'cancelled' }
+  { type: 'rejected' | 'expired' | 'cancelled' | 'lost' }
 >
 
 export type HrcSubmissionResponse = HrcSubmissionResponseBase &

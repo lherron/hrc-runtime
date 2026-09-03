@@ -68,7 +68,8 @@ export function isCompilerPrimingSubmissionTerminal(
     if (
       record.type === 'submission.rejected' ||
       record.type === 'submission.expired' ||
-      record.type === 'submission.cancelled'
+      record.type === 'submission.cancelled' ||
+      record.type === 'submission.lost'
     ) {
       return true
     }

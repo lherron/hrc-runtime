@@ -71,6 +71,7 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
     expect(handlers).toContain("case 'submission.executed'")
     expect(handlers).toContain("case 'submission.rejected'")
     expect(handlers).toContain("case 'submission.expired'")
+    expect(handlers).toContain("case 'submission.lost'")
     expect(handlers).toContain("payload['submissionId'] !== submissionId")
     expect(handlers).toContain("payload['turnId'] !== turnId")
     expect(handlers).toContain('projectSemanticTurnResponse')
@@ -103,7 +104,12 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
     expect(capabilities).toContain('admission?: { classes?: unknown }')
     expect(handlers).toContain('.seatProbe(')
     expect(handlers).toContain('.turnManifest(')
-    for (const event of ['submission.executed', 'submission.rejected', 'submission.expired']) {
+    for (const event of [
+      'submission.executed',
+      'submission.rejected',
+      'submission.expired',
+      'submission.lost',
+    ]) {
       expect(`${handlers}\n${mapper}`).toContain(event)
     }
     expect(`${handlers}\n${mapper}`).not.toContain('capturePane')

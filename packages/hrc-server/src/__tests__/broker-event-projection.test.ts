@@ -57,6 +57,26 @@ import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.f
 const harness = createBrokerEventMapperTestFixture()
 
 describe('projection mapping (ordered sequence)', () => {
+  it('projects an indeterminate lost submission as an immediate failed run', () => {
+    const mapper = harness.makeMapper()
+    const db = harness.fixture.db
+
+    mapper.apply(
+      envelope(
+        'submission.lost',
+        3,
+        { submissionId: 'submission_lost', reason: 'turn-correlation-lost' },
+        { inputId: 'submission_lost' as never, turnId: 'turn_contested' as never }
+      )
+    )
+
+    expect(db.runs.getByRunId(RUN_ID)).toMatchObject({
+      status: 'failed',
+      errorCode: 'runtime_unavailable',
+      errorMessage: 'turn-correlation-lost',
+    })
+  })
+
   it('maps normalized pi-sdk driver events unchanged without requiring a terminal surface', () => {
     const db = harness.fixture.db
     db.brokerInvocations.update(INVOCATION_ID, {
