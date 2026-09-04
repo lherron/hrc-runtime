@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { selectFinalTurnMessage } from 'hrc-core'
 import type { HrcDomainError } from 'hrc-core'
 import type {
   FederationSemanticTurnSignal,
@@ -376,14 +377,7 @@ export function projectSemanticTurnResponse(
     .filter((segment) => segment.text.length > 0)
   // `lib` is ES2022 here, so no Array.findLast: walk back to the last flagged
   // segment and fall through to the last segment when nothing is flagged.
-  let finalSegment = segments.at(-1)
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const segment = segments[index]
-    if (segment?.final === true) {
-      finalSegment = segment
-      break
-    }
-  }
+  const finalSegment = selectFinalTurnMessage(segments)
   const unbounded =
     finalSegment !== undefined
       ? finalSegment.text

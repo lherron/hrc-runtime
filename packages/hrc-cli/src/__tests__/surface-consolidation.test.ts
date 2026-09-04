@@ -20,13 +20,14 @@ function visibleChildren(parent: Command): string[] {
 describe('consolidated hrc command graph', () => {
   const program = buildProgram()
 
-  test('exposes exactly eight top-level noun groups', () => {
+  test('exposes the top-level noun groups', () => {
     const visibleTop = visibleChildren(program)
     const nounGroups = [
       'server',
       'session',
       'monitor',
       'admin',
+      'index',
       'capture',
       'runtime',
       'federation',
@@ -67,6 +68,7 @@ describe('consolidated hrc command graph', () => {
       'show',
       'wait',
       'watch',
+      'search',
       'events',
       'transcript',
       'stats',

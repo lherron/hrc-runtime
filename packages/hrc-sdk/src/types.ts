@@ -22,6 +22,65 @@ export type BrokerCaptureReleaseRequest = Omit<InvocationCaptureReleaseRequest, 
 
 export type BrokerCaptureReleaseResponse = InvocationCaptureReleaseResponse
 
+export type TranscriptTerminalStatus = 'completed' | 'failed' | 'interrupted'
+
+export type TranscriptSearchHit = {
+  turnRowid: number
+  invocationId: string
+  runtimeId: string
+  agent?: string | undefined
+  project?: string | undefined
+  task?: string | undefined
+  scopeRef?: string | undefined
+  generation?: number | undefined
+  scopeGenerationCount: number
+  seqFrom: number
+  seqTo: number
+  startedAt: string
+  completedAt: string
+  terminalStatus: TranscriptTerminalStatus
+  messageCount: number
+  truncated: boolean
+  userText: string
+  finalText: string
+  midText: string
+  score: number
+  snippet: string
+}
+
+export type TranscriptIndexStats = {
+  turnsIndexed: number
+  lastEventId: number
+  ledgerMaxEventId: number
+  lagEvents: number
+  invocationsReindexed: number
+}
+
+export type TranscriptSearchRequest = {
+  query: string
+  agent?: string | undefined
+  project?: string | undefined
+  task?: string | undefined
+  scopeRef?: string | undefined
+  runtimeId?: string | undefined
+  invocationId?: string | undefined
+  since?: string | undefined
+  until?: string | undefined
+  limit?: number | undefined
+  candidateLimit?: number | undefined
+}
+
+export type TranscriptSearchResponse = {
+  mode: 'discovery' | 'within_runtime'
+  hits: TranscriptSearchHit[]
+  index: TranscriptIndexStats
+}
+
+export type TranscriptIndexRebuildResponse = {
+  accepted: true
+  index: TranscriptIndexStats
+}
+
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
   AttachRuntimeRequest,

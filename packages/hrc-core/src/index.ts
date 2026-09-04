@@ -95,6 +95,9 @@ export {
   lifecycleKindForBrokerEvent,
 } from './broker-lifecycle-policy.js'
 
+export { selectFinalTurnMessage } from './final-turn-message.js'
+export type { FinalTurnMessageCandidate } from './final-turn-message.js'
+
 export {
   TOOL_RESULT_SPILL_HEAD_CHARS,
   TOOL_RESULT_SPILL_TAIL_CHARS,

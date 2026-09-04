@@ -340,6 +340,26 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
       seedRuntimeWithDependents(db, 'rt-ledger-cascade')
       createPhaseFourBlobTables(db)
       seedLedgerDependents(db, 'rt-ledger-cascade', { withBlobs: true })
+      db.transcriptIndex.upsertTurn({
+        invocationId: 'inv-rt-ledger-cascade',
+        runtimeId: 'rt-ledger-cascade',
+        seqFrom: 1,
+        seqTo: 1,
+        startedAt: ts(),
+        completedAt: ts(),
+        terminalStatus: 'completed',
+        messageCount: 1,
+        truncated: false,
+        userText: 'prune sentinel',
+        finalText: 'answer',
+        midText: '',
+      })
+      db.transcriptIndex.setInvocationMark({
+        invocationId: 'inv-rt-ledger-cascade',
+        runtimeId: 'rt-ledger-cascade',
+        lastTerminalSeq: 1,
+        updatedAt: ts(),
+      })
 
       expect(
         db.runtimes.countPruneRows(['rt-ledger-cascade'], { includeLedgers: true })
@@ -363,6 +383,8 @@ describe('RuntimeRepository.pruneRuntime (T-05441)', () => {
 
       for (const table of [
         'broker_invocation_events',
+        'transcript_turns',
+        'transcript_index_invocations',
         'hrc_events',
         'broker_invocations',
         'runtime_operations',

@@ -8,6 +8,7 @@ import type {
 } from 'hrc-core'
 import type { MailKicker } from 'hrc-mail-kicker'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { TranscriptIndexer } from 'hrc-transcript-index'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { DurableBrokerDispatchReattachResult } from './startup-reconcile.js'
@@ -193,6 +194,7 @@ type HrcServerInstanceDataForHandlers = {
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<unknown> | undefined
   readonly mailKicker: MailKicker
+  readonly transcriptIndexer: TranscriptIndexer
   autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
   autoReplyReconcileInFlight: Promise<void> | undefined
   stopping: boolean
@@ -206,6 +208,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
+  readonly hrcTranscriptIndexEnabled: boolean
+  readonly hrcTranscriptIndexTickIntervalMs: number
   readonly wrkqLedger: WrkqLedgerClient
   readonly federationNodeId: string
   harnessBrokerController: HarnessBrokerController | undefined

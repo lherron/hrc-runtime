@@ -554,6 +554,16 @@ export class RuntimeRepository {
         )
       }
 
+      // Store invariant (T-08015): any deletion of broker_invocation_events
+      // must delete its transcript projection by the same runtime key in the
+      // same transaction. The FTS external-content delete trigger follows.
+      executeSelected(
+        'DELETE FROM transcript_turns WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+      executeSelected(
+        'DELETE FROM transcript_index_invocations WHERE runtime_id IN (SELECT runtime_id FROM selected)'
+      )
+
       executeSelected(
         'DELETE FROM broker_invocation_events WHERE runtime_id IN (SELECT runtime_id FROM selected)'
       )

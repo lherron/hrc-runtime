@@ -815,6 +815,81 @@ const runBrokerSubmissionIdMigration: HrcMigration = {
   },
 }
 
+/** T-08015 — rebuildable full-text projection of terminated transcript turns. */
+const transcriptTurnIndexMigration: HrcMigration = {
+  id: '0053_transcript_turn_index',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS transcript_turns (
+        turn_rowid INTEGER PRIMARY KEY,
+        invocation_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        agent TEXT,
+        project TEXT,
+        task TEXT,
+        scope_ref TEXT,
+        generation INTEGER,
+        seq_from INTEGER NOT NULL,
+        seq_to INTEGER NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        terminal_status TEXT NOT NULL
+          CHECK (terminal_status IN ('completed', 'failed', 'interrupted')),
+        message_count INTEGER NOT NULL,
+        truncated INTEGER NOT NULL DEFAULT 0,
+        user_text TEXT NOT NULL,
+        final_text TEXT NOT NULL,
+        mid_text TEXT NOT NULL,
+        UNIQUE (invocation_id, seq_from)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_transcript_turns_runtime_seq
+        ON transcript_turns(runtime_id, seq_from);
+      CREATE INDEX IF NOT EXISTS idx_transcript_turns_facets
+        ON transcript_turns(project, agent, task, started_at);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS transcript_turns_fts USING fts5(
+        user_text,
+        final_text,
+        mid_text,
+        content='transcript_turns',
+        content_rowid='turn_rowid',
+        tokenize='unicode61 remove_diacritics 2'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS transcript_turns_ai AFTER INSERT ON transcript_turns BEGIN
+        INSERT INTO transcript_turns_fts(rowid, user_text, final_text, mid_text)
+        VALUES (new.turn_rowid, new.user_text, new.final_text, new.mid_text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS transcript_turns_ad AFTER DELETE ON transcript_turns BEGIN
+        INSERT INTO transcript_turns_fts(transcript_turns_fts, rowid, user_text, final_text, mid_text)
+        VALUES ('delete', old.turn_rowid, old.user_text, old.final_text, old.mid_text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS transcript_turns_au AFTER UPDATE ON transcript_turns BEGIN
+        INSERT INTO transcript_turns_fts(transcript_turns_fts, rowid, user_text, final_text, mid_text)
+        VALUES ('delete', old.turn_rowid, old.user_text, old.final_text, old.mid_text);
+        INSERT INTO transcript_turns_fts(rowid, user_text, final_text, mid_text)
+        VALUES (new.turn_rowid, new.user_text, new.final_text, new.mid_text);
+      END;
+
+      CREATE TABLE IF NOT EXISTS transcript_index_cursor (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        last_event_id INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS transcript_index_invocations (
+        invocation_id TEXT PRIMARY KEY,
+        runtime_id TEXT NOT NULL,
+        last_terminal_seq INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_transcript_index_invocations_runtime
+        ON transcript_index_invocations(runtime_id);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -834,4 +909,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   pruneCandidateIndexesMigration,
   brokerCommittedProjectionCursorMigration,
   runBrokerSubmissionIdMigration,
+  transcriptTurnIndexMigration,
 ]

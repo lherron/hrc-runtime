@@ -129,6 +129,14 @@ export type {
 } from './repositories/broker-repositories.js'
 export { BrokerInvocationEventConflictError } from './repositories/broker-repositories.js'
 export type { MessageChangeListener, MessageInsertInput } from './message-repository.js'
+export { TranscriptIndexRepository } from './transcript-index-repository.js'
+export type {
+  TranscriptInvocationMark,
+  TranscriptSearchFilters,
+  TranscriptSearchHit,
+  TranscriptTerminalStatus,
+  TranscriptTurn,
+} from './transcript-index-repository.js'
 export {
   HrcMailEnvelopeRepository,
   HrcMailRepositoryError,

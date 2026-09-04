@@ -150,6 +150,7 @@
         "hrc-events": "*",
         "hrc-mail-kicker": "*",
         "hrc-store-sqlite": "*",
+        "hrc-transcript-index": "*",
         "spaces-aspc-facade": "latest",
         "spaces-aspc-protocol": "latest",
         "spaces-config": "latest",
@@ -172,6 +173,18 @@
       "dependencies": {
         "ajv": "^8.20.0",
         "hrc-core": "*",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/hrc-transcript-index": {
+      "name": "hrc-transcript-index",
+      "version": "0.1.0",
+      "dependencies": {
+        "hrc-core": "*",
+        "hrc-store-sqlite": "*",
       },
       "devDependencies": {
         "@types/bun": "1.3.14",
@@ -586,6 +599,8 @@
     "hrc-server": ["hrc-server@workspace:packages/hrc-server"],
 
     "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
+
+    "hrc-transcript-index": ["hrc-transcript-index@workspace:packages/hrc-transcript-index"],
 
     "hrc-viewer": ["hrc-viewer@workspace:packages/hrc-viewer"],
 

@@ -37,6 +37,7 @@ import type {
   SweepZombieRunsResponse,
 } from 'hrc-core'
 import type { MailKicker } from 'hrc-mail-kicker'
+import type { TranscriptIndexer } from 'hrc-transcript-index'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, SqliteSlowStatement } from 'hrc-store-sqlite'
@@ -153,6 +154,8 @@ import {
   resolveHeadlessCodexBrokerEnabled,
   resolveHrcMailKickerEnabled,
   resolveHrcMailKickerSweepIntervalMs,
+  resolveHrcTranscriptIndexEnabled,
+  resolveHrcTranscriptIndexTickIntervalMs,
   resolvePiTuiTmuxBrokerEnabled,
   resolveSessionProjectionDays,
   resolveStaleGenerationEnabled,
@@ -300,6 +303,12 @@ import {
   type TmuxManagerOptions,
   createTmuxManager,
 } from './tmux.js'
+import { createServerTranscriptIndexer } from './transcript-index-adapter.js'
+import {
+  handleTranscriptIndexRebuild,
+  handleTranscriptIndexStatus,
+  handleTranscriptSearch,
+} from './transcript-index-handlers.js'
 import { TurnAdmissionGate } from './turn-admission-gate.js'
 import {
   type TurnDispatchHandlersMethods,
@@ -850,6 +859,7 @@ class HrcServerInstance implements HrcServer {
   firstTurnEvalTimer: ReturnType<typeof setInterval> | undefined
   firstTurnEvalInFlight: Promise<FirstTurnEvalSummary> | undefined
   readonly mailKicker: MailKicker
+  readonly transcriptIndexer: TranscriptIndexer
   autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
   autoReplyReconcileInFlight: Promise<void> | undefined
   readonly foreignHomeMemo = new Map<string, ForeignHome>()
@@ -868,6 +878,8 @@ class HrcServerInstance implements HrcServer {
   readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
+  readonly hrcTranscriptIndexEnabled: boolean
+  readonly hrcTranscriptIndexTickIntervalMs: number
   /**
    * HRC's client for the wrkq collaboration ledger (T-07612 §10). wrkq owns
    * rooms and envelopes; this is the ONLY door HRC reads or writes them through.
@@ -907,6 +919,11 @@ class HrcServerInstance implements HrcServer {
       this.handleBrokerEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-forensics')]: (_request, url) =>
       this.handleBrokerForensics(url),
+    [exactRouteKey('POST', '/v1/transcript-search')]: (request) =>
+      handleTranscriptSearch(this, request),
+    [exactRouteKey('GET', '/v1/transcript-index/status')]: () => handleTranscriptIndexStatus(this),
+    [exactRouteKey('POST', '/v1/transcript-index/rebuild')]: () =>
+      handleTranscriptIndexRebuild(this),
     [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
       this.handleEventsLatestBySession(url),
     [exactRouteKey('GET', '/v1/server/subscribers')]: () =>
@@ -1291,9 +1308,12 @@ class HrcServerInstance implements HrcServer {
     this.agentHarnessTmuxBrokerEnabled = resolveAgentHarnessTmuxBrokerEnabled(options)
     this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
+    this.hrcTranscriptIndexEnabled = resolveHrcTranscriptIndexEnabled(options)
+    this.hrcTranscriptIndexTickIntervalMs = resolveHrcTranscriptIndexTickIntervalMs(options)
     this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
     this.wrkqLedger = options.wrkqLedger ?? new WrkqStdioLedgerClient()
     this.mailKicker = createServerMailKicker(this)
+    this.transcriptIndexer = createServerTranscriptIndexer(this)
     this.ctx = {
       db: this.db,
       tmux: this.tmux,
@@ -1325,6 +1345,7 @@ class HrcServerInstance implements HrcServer {
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
     this.mailKicker.start()
+    this.transcriptIndexer.start()
     this.startAutoReplyReconciler()
     this.startForeignHomeShadowTeardown()
     for (const grant of this.db.externalRegistrationGrants.listRendezvousCandidates(timestamp())) {
@@ -1648,6 +1669,7 @@ class HrcServerInstance implements HrcServer {
         writeServerLog('WARN', 'server.stop.shadow_teardown_wait_failed', { error })
       }
     }
+    await this.transcriptIndexer.stop()
     await this.mailKicker.stop()
     if (this.autoReplyReconcileTimer) {
       clearInterval(this.autoReplyReconcileTimer)

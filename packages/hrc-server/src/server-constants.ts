@@ -38,6 +38,8 @@ export const HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV = 'HRC_AGENT_HARNESS_TMUX
 export const HRC_BROKER_DURABLE_IPC_ENABLED_ENV = 'HRC_BROKER_DURABLE_IPC_ENABLED'
 // T-06810 Wave 2 — mailbox orchestration stays dark until fleet burn-in.
 export const HRC_MAIL_KICKER_ENABLED_ENV = 'HRC_MAIL_KICKER_ENABLED'
+export const HRC_TRANSCRIPT_INDEX_ENABLED_ENV = 'HRC_TRANSCRIPT_INDEX_ENABLED'
+export const HRC_TRANSCRIPT_INDEX_TICK_MS_ENV = 'HRC_TRANSCRIPT_INDEX_TICK_MS'
 export const HRC_TMUX_AGING_ENABLED_ENV = 'HRC_TMUX_AGING_ENABLED'
 // T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy DEFAULT for
 // the codex-app-server tmux-tui route. Set to 'tmux-tui' to request the
@@ -53,6 +55,7 @@ export const DEFAULT_ATTACHED_START_READY_TIMEOUT_MS = 120_000
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS = 1_000
+export const DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS = 2_000
 
 /**
  * T-07575 session retention. The session store keeps every row forever (the

@@ -112,6 +112,12 @@ export type {
   WaitMessageResponse,
   SemanticDmRequest,
   SemanticDmResponse,
+  TranscriptIndexRebuildResponse,
+  TranscriptIndexStats,
+  TranscriptSearchHit,
+  TranscriptSearchRequest,
+  TranscriptSearchResponse,
+  TranscriptTerminalStatus,
 } from './types.js'
 export type {
   HrcBoundedEventStreamRecord,

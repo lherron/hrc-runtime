@@ -29,6 +29,7 @@
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-mail-kicker": "*",
+    "hrc-transcript-index": "*",
     "hrc-store-sqlite": "*",
     "spaces-aspc-facade": "latest",
     "spaces-aspc-protocol": "latest",

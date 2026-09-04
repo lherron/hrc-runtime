@@ -155,6 +155,10 @@ import type {
   TargetListFilter,
   TerminateRuntimeRequest,
   TerminateRuntimeResponse,
+  TranscriptIndexRebuildResponse,
+  TranscriptIndexStats,
+  TranscriptSearchRequest,
+  TranscriptSearchResponse,
   UnbindSurfaceRequest,
   WaitMessageRequest,
   WaitMessageResponse,
@@ -618,6 +622,18 @@ export class HrcClient {
       sourceRef: options.sourceRef,
     })
     return this.getJson<BrokerForensicsResponse>(path)
+  }
+
+  async searchTranscripts(request: TranscriptSearchRequest): Promise<TranscriptSearchResponse> {
+    return this.postJson<TranscriptSearchResponse>('/v1/transcript-search', request)
+  }
+
+  async transcriptIndexStatus(): Promise<TranscriptIndexStats> {
+    return this.getJson<TranscriptIndexStats>('/v1/transcript-index/status')
+  }
+
+  async rebuildTranscriptIndex(): Promise<TranscriptIndexRebuildResponse> {
+    return this.postJson<TranscriptIndexRebuildResponse>('/v1/transcript-index/rebuild', {})
   }
 
   async brokerCaptureStatus(runtimeId: string): Promise<BrokerCaptureStatusResponse> {

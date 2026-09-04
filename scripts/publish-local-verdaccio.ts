@@ -19,6 +19,7 @@ const PACKAGES = [
   'packages/hrc-frame-render',
   'packages/hrc-events',
   'packages/hrc-store-sqlite',
+  'packages/hrc-transcript-index',
   'packages/hrc-mail-kicker',
   'packages/hrc-capture-verifier',
   'packages/hrc-server',

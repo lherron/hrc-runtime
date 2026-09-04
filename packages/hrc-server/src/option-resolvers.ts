@@ -15,6 +15,7 @@ import {
 } from './precompile-launch-timing.js'
 import {
   DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
+  DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS,
   DEFAULT_SESSION_IDLE_ARCHIVE_DAYS,
   DEFAULT_SESSION_PROJECTION_DAYS,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
@@ -28,6 +29,8 @@ import {
   HRC_SESSION_IDLE_ARCHIVE_DAYS_ENV,
   HRC_SESSION_PROJECTION_DAYS_ENV,
   HRC_TMUX_AGING_ENABLED_ENV,
+  HRC_TRANSCRIPT_INDEX_ENABLED_ENV,
+  HRC_TRANSCRIPT_INDEX_TICK_MS_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
 
@@ -149,6 +152,27 @@ export function resolveHrcMailKickerSweepIntervalMs(options: HrcServerOptions): 
     return Math.max(10, Math.floor(value))
   }
   return DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS
+}
+
+export function resolveHrcTranscriptIndexEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.hrcTranscriptIndexEnabled,
+    process.env[HRC_TRANSCRIPT_INDEX_ENABLED_ENV],
+    { defaultOn: true }
+  )
+}
+
+export function resolveHrcTranscriptIndexTickIntervalMs(options: HrcServerOptions): number {
+  const override = options.hrcTranscriptIndexTickIntervalMs
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) {
+    return Math.max(10, Math.floor(override))
+  }
+  const raw = process.env[HRC_TRANSCRIPT_INDEX_TICK_MS_ENV]
+  if (raw !== undefined) {
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed) && parsed > 0) return Math.max(10, Math.floor(parsed))
+  }
+  return DEFAULT_HRC_TRANSCRIPT_INDEX_TICK_INTERVAL_MS
 }
 
 function resolveAspcFacadeArgs(env: Record<string, string | undefined>): string[] {

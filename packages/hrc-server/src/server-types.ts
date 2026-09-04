@@ -305,6 +305,12 @@ export type HrcServerOptions = {
   hrcMailKickerEnabled?: boolean | undefined
   /** Test/embedded periodic sweep override; production defaults to one second. */
   hrcMailKickerSweepIntervalMs?: number | undefined
+  /** Resident transcript index is default-on; override only for isolated tests. */
+  hrcTranscriptIndexEnabled?: boolean | undefined
+  /** Test/embedded periodic tail cadence; production defaults to 2000ms. */
+  hrcTranscriptIndexTickIntervalMs?: number | undefined
+  /** Test/embedded bounded transaction size; production defaults to 1000. */
+  hrcTranscriptIndexBatchSize?: number | undefined
   /**
    * Test-only crash-boundary seam. It runs after the durable slot CAS and
    * before summon/presentation/dispatch; throwing leaves the attempt recoverable.

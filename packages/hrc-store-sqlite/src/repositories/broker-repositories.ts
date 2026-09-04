@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite'
+import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
   type HrcBrokerInvocationEventRecord,
   type HrcBrokerInvocationRecord,
@@ -820,6 +820,82 @@ export class BrokerInvocationEventRepository {
       )
       .all(afterId, limit)
       .map((row) => this.mapRow(row, options))
+  }
+
+  /** Global insertion high-water mark, including event types the transcript projection ignores. */
+  maxEventId(): number {
+    return (
+      this.db
+        .query<{ max_id: number | null }, []>(
+          'SELECT MAX(id) AS max_id FROM broker_invocation_events'
+        )
+        .get()?.max_id ?? 0
+    )
+  }
+
+  /** Bounded global-id tail used only to detect transcript boundaries and late prose. */
+  listTranscriptTail(
+    afterId: number,
+    throughId: number,
+    types: readonly string[],
+    limit: number
+  ): HrcBrokerInvocationEventRecord[] {
+    if (types.length === 0) return []
+    const placeholders = types.map(() => '?').join(', ')
+    return this.db
+      .query<BrokerInvocationEventRow, SQLQueryBindings[]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+         WHERE id > ? AND id <= ? AND type IN (${placeholders})
+         ORDER BY id ASC LIMIT ?`
+      )
+      .all(afterId, throughId, ...types, Math.max(1, Math.floor(limit)))
+      .map((row) => this.mapRow(row))
+  }
+
+  /** Invocation-seq source read for one derived transcript segment. */
+  listTranscriptRange(
+    invocationId: string,
+    afterSeq: number,
+    throughSeq: number,
+    types: readonly string[]
+  ): HrcBrokerInvocationEventRecord[] {
+    if (types.length === 0) return []
+    const placeholders = types.map(() => '?').join(', ')
+    return this.db
+      .query<BrokerInvocationEventRow, SQLQueryBindings[]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+         WHERE invocation_id = ? AND seq > ? AND seq <= ? AND type IN (${placeholders})
+         ORDER BY seq ASC`
+      )
+      .all(invocationId, afterSeq, throughSeq, ...types)
+      .map((row) => this.mapRow(row))
+  }
+
+  listTranscriptTerminals(
+    invocationId: string,
+    terminalTypes: readonly string[]
+  ): HrcBrokerInvocationEventRecord[] {
+    if (terminalTypes.length === 0) return []
+    const placeholders = terminalTypes.map(() => '?').join(', ')
+    return this.db
+      .query<BrokerInvocationEventRow, SQLQueryBindings[]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+         WHERE invocation_id = ? AND type IN (${placeholders}) ORDER BY seq ASC`
+      )
+      .all(invocationId, ...terminalTypes)
+      .map((row) => this.mapRow(row))
+  }
+
+  listTranscriptInvocationIds(terminalTypes: readonly string[]): string[] {
+    if (terminalTypes.length === 0) return []
+    const placeholders = terminalTypes.map(() => '?').join(', ')
+    return this.db
+      .query<{ invocation_id: string }, SQLQueryBindings[]>(
+        `SELECT DISTINCT invocation_id FROM broker_invocation_events
+         WHERE type IN (${placeholders}) ORDER BY invocation_id ASC`
+      )
+      .all(...terminalTypes)
+      .map((row) => row.invocation_id)
   }
 
   getByInvocationAndSeq(invocationId: string, seq: number): HrcBrokerInvocationEventRecord | null {

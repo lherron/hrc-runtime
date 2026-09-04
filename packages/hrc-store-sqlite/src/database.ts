@@ -55,6 +55,7 @@ import { SessionIndexRepository } from './session-index-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 import { SessionTitleRepository } from './session-title-repository.js'
 import { type SqliteSlowStatement, instrumentSqliteStatements } from './statement-telemetry.js'
+import { TranscriptIndexRepository } from './transcript-index-repository.js'
 import { WrkqLedgerCursorRepository } from './wrkq/ledger-cursor-repository.js'
 
 export type OpenHrcDatabaseOptions = {
@@ -110,6 +111,7 @@ export type HrcDatabase = {
   firstTurnWatch: FirstTurnWatchRepository
   acpBridgeEmissions: AcpBridgeEmissionRepository
   toolResultBlobs: ToolResultBlobRepository
+  transcriptIndex: TranscriptIndexRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -203,5 +205,6 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     firstTurnWatch: new FirstTurnWatchRepository(sqlite),
     acpBridgeEmissions: new AcpBridgeEmissionRepository(sqlite),
     toolResultBlobs,
+    transcriptIndex: new TranscriptIndexRepository(sqlite),
   }
 }

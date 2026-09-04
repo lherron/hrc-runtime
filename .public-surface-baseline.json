@@ -1007,6 +1007,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FinalTurnMessageCandidate",
+      "kind": "type",
+      "file": "packages/hrc-core/src/final-turn-message.ts",
+      "hash": "hrc-core|FinalTurnMessageCandidate|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "findWrkqProjectEntry",
       "kind": "value",
       "file": "packages/hrc-core/src/project-registry.ts",
@@ -3711,6 +3719,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "selectFinalTurnMessage",
+      "kind": "value",
+      "file": "packages/hrc-core/src/final-turn-message.ts",
+      "hash": "hrc-core|selectFinalTurnMessage|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "selectorFor",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
@@ -5275,6 +5291,54 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|TargetListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptIndexRebuildResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptIndexRebuildResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptIndexStats",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptIndexStats|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptSearchHit",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptSearchHit|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptSearchRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptSearchRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptSearchResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptSearchResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TranscriptTerminalStatus",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TranscriptTerminalStatus|type",
       "count": 1
     },
     {

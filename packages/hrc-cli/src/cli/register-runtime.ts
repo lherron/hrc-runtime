@@ -3,6 +3,11 @@ import type { Command } from 'commander'
 import { cmdBrokerEvents, cmdBrokerStats, cmdBrokerTranscript } from '../broker-forensics.js'
 import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
 import { cmdEventsDrain } from '../events-drain.js'
+import {
+  cmdTranscriptIndexRebuild,
+  cmdTranscriptIndexStatus,
+  cmdTranscriptSearch,
+} from '../transcript-search.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
 import { cmdCaptureRelease, cmdCaptureStatus } from './handlers-capture.js'
@@ -37,6 +42,41 @@ function annotateChild(parent: Command, name: string, metadata: CommandMetadataI
 }
 
 function registerBrokerReads(monitor: Command): void {
+  monitor
+    .command('search')
+    .description('search completed transcript turns across runtimes with the resident BM25 index')
+    .argument('<query>', 'bare words (implicit AND) or a double-quoted phrase')
+    .option('--agent <agent>', 'filter by exact agent ID')
+    .option('--project <project>', 'filter by exact project ID')
+    .option('--task <task>', 'filter by exact task ID')
+    .option('--target <target>', 'handle, scope, runtime, or invocation target')
+    .option('--since <duration-or-iso>', 'lower completion-time bound')
+    .option('--until <iso>', 'upper completion-time bound')
+    .option('--limit <n>', 'maximum runtime groups or within-runtime hits', '20')
+    .option('--candidate-limit <n>', 'bounded discovery candidates before aggregation', '300')
+    .option('--json', 'output the full pointer tuples and index stats as JSON')
+    .addHelpText(
+      'after',
+      '\nExample: hrc monitor search "deployment failed" --project hrc-runtime --limit 10\n'
+    )
+    .action(async (query, _opts, cmd: Command) => {
+      await cmdTranscriptSearch(
+        toLegacyArgv([query], cmd.opts(), {
+          strings: [
+            'agent',
+            'project',
+            'task',
+            'target',
+            'since',
+            'until',
+            'limit',
+            'candidate-limit',
+          ],
+          booleans: ['json'],
+        })
+      )
+    })
+
   monitor
     .command('events')
     .description(
@@ -263,6 +303,29 @@ export function registerRuntimeCommands(program: Command): void {
   registerAdminEvents(admin)
   registerAdminRegistrations(admin)
 
+  const index = program
+    .command('index')
+    .description('inspect or rebuild the transcript search index')
+  index
+    .command('status')
+    .description('show transcript index coverage and ledger lag')
+    .option('--json', 'output index statistics as JSON')
+    .action(async (_opts, cmd: Command) => {
+      await cmdTranscriptIndexStatus(
+        toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json'] })
+      )
+    })
+  index
+    .command('rebuild')
+    .description('truncate the rebuildable projection and start a background backfill')
+    .requiredOption('--yes', 'confirm projection truncation')
+    .option('--json', 'output the accepted rebuild and current statistics as JSON')
+    .action(async (_opts, cmd: Command) => {
+      await cmdTranscriptIndexRebuild(
+        toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['yes', 'json'] })
+      )
+    })
+
   const capture = program.command('capture').description('inspect or release broker capture state')
 
   capture
@@ -487,6 +550,7 @@ export function registerRuntimeCommands(program: Command): void {
   registerMovedCommandShim(program, 'launch', 'hrc ls launches')
 
   annotateCommand(runtime, { audience: 'human' })
+  annotateCommand(index, { audience: 'agent' })
   annotateCommand(capture, { audience: 'human' })
   annotateChild(runtime, 'list', {
     audience: 'agent',
@@ -534,6 +598,14 @@ export function registerRuntimeCommands(program: Command): void {
       example: 'hrc monitor transcript cody@hrc-runtime:T-07011 --previous --tail 100',
       exitCodes: '0 success; 2 usage; 1 read failure',
       output: 'invocation activity, not conversation readback; events --ndjson is structured',
+    },
+  })
+  annotateChild(monitor, 'search', {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc monitor search "deployment failed" --project hrc-runtime --json',
+      exitCodes: '0 success; 2 query/usage error; 1 read failure',
+      output: 'ranked turn pointers plus resident-index lag',
     },
   })
   annotateChild(monitor, 'stats', {
