@@ -1729,7 +1729,11 @@ async function dispatchAdmittedTurnForSession(
               ? false
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
-          launchPromptOnColdBirth: options.launchPromptOnColdBirth,
+          coldBirthPromptMode: options.launchPromptOnColdBirth
+            ? 'replace-priming'
+            : options.submissionDoor === 'invoke'
+              ? 'append-to-priming'
+              : undefined,
           responseFormat: options.responseFormat,
           ...dispatchRunPersistence(options),
         }),

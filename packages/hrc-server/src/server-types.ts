@@ -104,6 +104,32 @@ export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempote
 }
 
 /**
+ * Durable proof that an invoke-door caller rode an interactive broker's launch
+ * prompt instead of being submitted as a second broker input (T-08004).
+ *
+ * Interactive tmux profiles carry their first prompt through process argv, so
+ * they have no `startRequest.initialInput` / `runs.dispatched_input_id` to use
+ * as the ordinary ownership proof. This marker lets the event mapper bind the
+ * first native, input-less turn bracket to the run without widening the old
+ * "nearest priming run" fallback that T-07915 deliberately closed.
+ */
+export const LAUNCH_CARRIED_INVOKE_CORRELATION_KIND = 'launch_carried_invoke_turn'
+
+export function launchCarriedInvokeCorrelationJson(): string {
+  return JSON.stringify({ kind: LAUNCH_CARRIED_INVOKE_CORRELATION_KIND })
+}
+
+export function isLaunchCarriedInvokeCorrelationJson(value: string | null): boolean {
+  if (value === null) return false
+  try {
+    const parsed = JSON.parse(value) as { kind?: unknown }
+    return parsed.kind === LAUNCH_CARRIED_INVOKE_CORRELATION_KIND
+  } catch {
+    return false
+  }
+}
+
+/**
  * Re-thread the shared dispatch-persistence options through a nested call.
  *
  * These options are handed down several hops (public dispatch -> route handler

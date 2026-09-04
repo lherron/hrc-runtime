@@ -464,6 +464,8 @@ export type BrokerControllerStartInput = {
   firstTurnTimeoutMs?: number | undefined
   /** Caller retry identity persisted atomically with the accepted run row. */
   dispatchIdempotencyKey?: string | undefined
+  /** Public submission door whose cold-start carriage selected this run. */
+  submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
   /**
    * Recorded initiating principal of the dispatch (T-07236). Dispatch-time
    * provenance, NOT compiler closure: like the watchdog override it never

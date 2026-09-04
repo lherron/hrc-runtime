@@ -22,7 +22,7 @@ import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 
 import { armFirstTurnWatch } from '../../first-turn-watch'
 import { runtimeActivityPatch } from '../../runtime-activity'
-import { dispatchOriginRunFields } from '../../server-types'
+import { dispatchOriginRunFields, launchCarriedInvokeCorrelationJson } from '../../server-types'
 import { BROKER_TRANSPORT } from '../constants'
 import {
   extractRuntimeStateTmux,
@@ -182,6 +182,21 @@ export function persistStartGraph(
           ...dispatchOriginRunFields(input),
         })
       : undefined
+
+  // T-08004: compiler-selected interactive tmux profiles deliver their first
+  // prompt through launch argv and therefore have no broker `initialInput` to
+  // bind. Record the narrower structural fact while the start graph is written:
+  // this exact invoke-door run supplied the launch prompt. The event mapper uses
+  // it to own only the first input-less native bracket; ordinary promptless
+  // priming and queued-behind-priming runs remain foreign.
+  if (
+    run !== undefined &&
+    initialInputId === undefined &&
+    input.submissionDoor === 'invoke' &&
+    input.startRequest.spec.launch?.initialPrompt !== undefined
+  ) {
+    ctx.db.runs.setCorrelationJson(run.runId, launchCarriedInvokeCorrelationJson())
+  }
 
   // T-07235 — arm the provision-liveness watchdog for this generation.
   //

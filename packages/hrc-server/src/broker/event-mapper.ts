@@ -86,6 +86,7 @@ import {
 import { appendHrcEvent } from '../hrc-event-helper'
 import { runtimeActivityPatch } from '../runtime-activity'
 import { writeServerLog } from '../server-log'
+import { isLaunchCarriedInvokeCorrelationJson } from '../server-types'
 import {
   type BrokerEventMapperDeps,
   type BrokerProjectionResult,
@@ -762,10 +763,13 @@ export class BrokerEventMapper {
         // that foreign priming turn unowned.
         const fallbackRun =
           fallbackRunId === undefined ? null : this.db.runs.getByRunId(fallbackRunId)
+        const launchCarriedInvoke =
+          fallbackRunId !== undefined &&
+          isLaunchCarriedInvokeCorrelationJson(this.db.runs.getCorrelationJson(fallbackRunId))
         if (
           fallbackRunId !== undefined &&
           fallbackRun?.dispatchedInputId === undefined &&
-          this.db.mailDrives.getAttemptByRunId(fallbackRunId) !== undefined
+          (this.db.mailDrives.getAttemptByRunId(fallbackRunId) !== undefined || launchCarriedInvoke)
         ) {
           return fallbackRunId
         }
@@ -1334,7 +1338,20 @@ export class BrokerEventMapper {
       case 'submission.executed':
       case 'submission.absorbed': {
         if (runId !== undefined) {
-          db.runs.update(runId, { updatedAt: now })
+          const run = db.runs.getByRunId(runId)
+          const launchCarriedInvoke = isLaunchCarriedInvokeCorrelationJson(
+            db.runs.getCorrelationJson(runId)
+          )
+          const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
+          db.runs.update(runId, {
+            updatedAt: now,
+            ...(envelope.type === 'submission.executed' &&
+            launchCarriedInvoke &&
+            run?.brokerSubmissionId === undefined &&
+            submissionId !== undefined
+              ? { brokerSubmissionId: submissionId }
+              : {}),
+          })
           if (envelope.type === 'submission.executed') {
             db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
           }

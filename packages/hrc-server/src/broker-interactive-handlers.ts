@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
@@ -601,7 +602,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
     joinInFlightRuntimeStart?: boolean | undefined
-    launchPromptOnColdBirth?: boolean | undefined
+    coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
@@ -651,9 +652,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
-    ...(flagOptions.launchPromptOnColdBirth
+    ...(flagOptions.coldBirthPromptMode !== undefined
       ? {
           coldBirthPrompt: prompt,
+          includePrimingForColdBirthPrompt: flagOptions.coldBirthPromptMode === 'append-to-priming',
           onColdBirthPromptRoute: (rodeLaunch: boolean) => {
             promptRodeLaunch = rodeLaunch
           },
@@ -727,6 +729,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   }
   const runtime = await bootOperation
   if (promptRodeLaunch) {
+    const submissionId =
+      flagOptions.submissionDoor === 'invoke'
+        ? await waitForLaunchCarriedInvokeSubmission(this, runId, runtime.runtimeId)
+        : undefined
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -735,12 +741,43 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
+      ...(submissionId === undefined ? {} : { submissionId, admission: 'admitted' as const }),
     } satisfies DispatchTurnResponseBase)
   }
   return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
     waitForCompletion: false,
     responseFormat: flagOptions.responseFormat,
     ...dispatchRunPersistence(flagOptions),
+  })
+}
+
+async function waitForLaunchCarriedInvokeSubmission(
+  server: HrcServerInstanceForHandlers,
+  runId: string,
+  runtimeId: string
+): Promise<string> {
+  const deadline = Date.now() + 2 * 60 * 1000
+  while (Date.now() < deadline) {
+    const run = server.db.runs.getByRunId(runId)
+    if (run?.brokerSubmissionId !== undefined) return run.brokerSubmissionId
+    if (run !== null && !isRunActive(run)) {
+      throw new HrcRuntimeUnavailableError(
+        'launch-carried invoke ended without broker submission identity',
+        {
+          runtimeId,
+          runId,
+          status: run.status,
+          errorCode: run.errorCode,
+          errorMessage: run.errorMessage,
+        }
+      )
+    }
+    await delay(25)
+  }
+  throw new HrcRuntimeUnavailableError('launch-carried invoke admission timed out', {
+    runtimeId,
+    runId,
+    route: 'interactive-broker',
   })
 }
 
@@ -1183,6 +1220,7 @@ export async function startInteractiveTmuxBrokerRuntime(
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
     coldBirthPrompt?: string | undefined
+    includePrimingForColdBirthPrompt?: boolean | undefined
     onColdBirthPromptRoute?: ((rodeLaunch: boolean) => void) | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
@@ -1226,7 +1264,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       ? {
           ...effectiveTurnIntent,
           initialPrompt: flagOptions.coldBirthPrompt,
-          omitPriming: true,
+          ...(flagOptions.includePrimingForColdBirthPrompt ? {} : { omitPriming: true }),
         }
       : effectiveTurnIntent
   if (directPlan !== undefined && hrcDispatchEnv['HARNESS_PI_AUTH_STORE'] === undefined) {
