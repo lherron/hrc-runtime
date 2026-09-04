@@ -279,6 +279,113 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     ).toHaveLength(0)
   })
 
+  it('keeps a crossing invoke behind the launch-carried run until its terminal', async () => {
+    const resolved = await fixture.resolveSession(SCOPE)
+    const internal = server as unknown as HrcServerInstanceForHandlers
+    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
+    if (session === null) throw new Error('T-08012 fixture session missing')
+
+    const firstRunId = 'run-t08012-launch-carried'
+    const runtime: HrcRuntimeSnapshot = {
+      runtimeId: 'rt-t08012-crossing',
+      runtimeKind: 'harness',
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'busy',
+      supportsInflightInput: true,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      activeRunId: firstRunId,
+      activeOperationId: 'op-t08012-crossing',
+      activeInvocationId: 'inv-t08012-crossing',
+      createdAt: fixture.now(),
+      updatedAt: fixture.now(),
+    }
+    const { activeRunId: _activeRunId, ...runtimeBeforeRun } = runtime
+    internal.db.runtimes.insert(runtimeBeforeRun)
+    internal.db.runs.insert({
+      runId: firstRunId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'running',
+      acceptedAt: fixture.now(),
+      startedAt: fixture.now(),
+      updatedAt: fixture.now(),
+      invocationId: runtime.activeInvocationId,
+      operationId: runtime.activeOperationId,
+      brokerSubmissionId: 'human_submission_t08012_1',
+    })
+    internal.db.runtimes.update(runtime.runtimeId, { activeRunId: firstRunId })
+
+    let startCalls = 0
+    let independentSubmissions = 0
+    internal.startInteractiveTmuxBrokerRuntime = async (
+      _session: HrcSessionRecord,
+      _intent: HrcRuntimeIntent,
+      _runId: string,
+      options
+    ) => {
+      startCalls += 1
+      options.onColdBirthPromptRoute?.(startCalls === 1)
+      await options.onAccepted?.(runtime)
+      return runtime
+    }
+    internal.executeInteractiveBrokerInputTurn = async () => {
+      independentSubmissions += 1
+      return Response.json({ ok: true })
+    }
+
+    await internal.handleInteractiveTmuxBrokerDispatchTurn(
+      session,
+      claudeIntent(),
+      'first caller rides launch',
+      firstRunId,
+      {
+        waitForCompletion: false,
+        submissionDoor: 'invoke',
+        coldBirthPromptMode: 'append-to-priming',
+      }
+    )
+    await Bun.sleep(0)
+
+    const crossing = internal.handleInteractiveTmuxBrokerDispatchTurn(
+      session,
+      claudeIntent(),
+      'second caller crosses birth',
+      'run-t08012-crossing',
+      {
+        waitForCompletion: true,
+        joinInFlightRuntimeStart: true,
+        submissionDoor: 'invoke',
+        turnPolicy: 'guarded',
+        coldBirthPromptMode: 'append-to-priming',
+      }
+    )
+    await Bun.sleep(10)
+
+    expect(startCalls).toBe(1)
+    expect(independentSubmissions).toBe(0)
+
+    internal.db.runs.markCompleted(firstRunId, {
+      status: 'completed',
+      completedAt: fixture.now(),
+      updatedAt: fixture.now(),
+    })
+    await crossing
+
+    expect(startCalls).toBe(1)
+    expect(independentSubmissions).toBe(1)
+  })
+
   it('binds the input-less launch bracket to the invoke run and releases it at terminal', async () => {
     const resolved = await fixture.resolveSession(SCOPE)
     const internal = server as unknown as HrcServerInstanceForHandlers & { db: HrcDatabase }

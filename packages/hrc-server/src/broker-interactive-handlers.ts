@@ -684,24 +684,39 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       }
       resolveAccepted(runtime)
     },
+  }).then((runtime) => {
+    // Claude broker dispatch through non-attached surfaces (hrcchat,
+    // agent-loop) starts a tmux TUI with no operator terminal watching it.
+    // Presentation stays best-effort and outside the acceptance boundary.
+    if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
+      void this.publishPresentation(runtime, {
+        operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+        signal: this.runtimeStartPresentationSignal,
+      })
+    }
+    if (!acceptedSettled) resolveAccepted(runtime)
+    return runtime
   })
-    .then((runtime) => {
-      // Claude broker dispatch through non-attached surfaces (hrcchat,
-      // agent-loop) starts a tmux TUI with no operator terminal watching it.
-      // Presentation stays best-effort and outside the acceptance boundary.
-      if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-        void this.publishPresentation(runtime, {
-          operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
-          signal: this.runtimeStartPresentationSignal,
-        })
+  const publishedOperation = bootOperation
+    .then(async (runtime) => {
+      // T-08012: the runtime is born before its argv-carried first turn owns a
+      // terminal bracket. Keep the host-session birth fence published through
+      // that terminal so a crossing invoke joins here and submits only after
+      // the launch-carried run has released the broker surface. Publishing the
+      // bare boot promise let the crossing caller become the first admitted
+      // broker input and steal the initial bracket from this run.
+      if (promptRodeLaunch) {
+        await waitForLaunchCarriedFirstTurnTerminal(this, runId)
       }
-      if (!acceptedSettled) resolveAccepted(runtime)
-      return runtime
+      return this.db.runtimes.getByRuntimeId(runtime.runtimeId) ?? runtime
     })
     .finally(() => {
-      this.runtimeStartOperations?.delete(session.hostSessionId)
+      if (this.runtimeStartOperations?.get(session.hostSessionId) === publishedOperation) {
+        this.runtimeStartOperations.delete(session.hostSessionId)
+      }
     })
-  this.runtimeStartOperations?.set(session.hostSessionId, bootOperation)
+  this.runtimeStartOperations?.set(session.hostSessionId, publishedOperation)
+  void publishedOperation.catch(() => undefined)
   void bootOperation.catch((error) => {
     if (!acceptedSettled) rejectAccepted(error)
   })
@@ -779,6 +794,20 @@ async function waitForLaunchCarriedInvokeSubmission(
     runId,
     route: 'interactive-broker',
   })
+}
+
+async function waitForLaunchCarriedFirstTurnTerminal(
+  server: HrcServerInstanceForHandlers,
+  runId: string
+): Promise<void> {
+  while (true) {
+    const run = server.db.runs.getByRunId(runId)
+    // The real launch path persists the run before resolving boot. Keep this
+    // tolerant for a controller/start failure that removed or never committed
+    // the graph: there is then no owned first turn for the fence to protect.
+    if (run === null || !isRunActive(run)) return
+    await delay(25)
+  }
 }
 
 export async function executeInteractiveBrokerInputTurn(
