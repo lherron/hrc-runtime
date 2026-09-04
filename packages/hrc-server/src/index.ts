@@ -188,6 +188,7 @@ import { replaySpool } from './replay-spool.js'
 import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
 import {
   findManagedAppSessionForSession,
+  isRunActive,
   requireKnownRuntime,
   requireRuntime,
   requireSession,
@@ -258,6 +259,7 @@ import type {
   FollowSubscriber,
   HrcServer,
   HrcServerOptions,
+  InvokeFirstTurnRendezvous,
   MessageSubscriber,
   PendingAttachedRunOperation,
   PendingBrokerLiteralInput,
@@ -827,6 +829,7 @@ class HrcServerInstance implements HrcServer {
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
   >()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  readonly invokeFirstTurnRendezvous = new Map<string, InvokeFirstTurnRendezvous>()
   private readonly runtimeStartPresentationAbortController = new AbortController()
   readonly runtimeStartPresentationSignal = this.runtimeStartPresentationAbortController.signal
   readonly brokerReattachOperations = new Map<
@@ -2370,6 +2373,17 @@ class HrcServerInstance implements HrcServer {
   async handleInterrupt(request: Request): Promise<Response> {
     const body = parseRuntimeActionBody(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
+    if (body.ownerRunId !== undefined && runtime.activeRunId !== body.ownerRunId) {
+      return json({
+        ok: true,
+        hostSessionId: runtime.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        warning:
+          runtime.activeRunId === undefined
+            ? 'owned run is no longer active; interrupt skipped'
+            : 'another run is active; interrupt skipped',
+      })
+    }
     return await this.interruptRuntime(runtime, false)
   }
 
@@ -2383,6 +2397,46 @@ class HrcServerInstance implements HrcServer {
     const runtime = isExternalLifecycleOwner(knownRuntime)
       ? knownRuntime
       : requireRuntime(this.db, body.runtimeId)
+
+    if (body.ownerRunId !== undefined && !isExternalLifecycleOwner(runtime)) {
+      const rendezvous = this.invokeFirstTurnRendezvous.get(runtime.hostSessionId)
+      const crossingRunIds =
+        rendezvous !== undefined &&
+        (rendezvous.runtimeId === undefined || rendezvous.runtimeId === runtime.runtimeId)
+          ? [...rendezvous.crossingRunIds].filter((runId) => runId !== body.ownerRunId)
+          : []
+      const durableRunIds = this.db.runs
+        .listByRuntimeId(runtime.runtimeId)
+        .filter((run) => run.runId !== body.ownerRunId && isRunActive(run))
+        .map((run) => run.runId)
+      const protectedRunIds = [...new Set([...crossingRunIds, ...durableRunIds])]
+      if (protectedRunIds.length > 0) {
+        return json({
+          ok: true,
+          hostSessionId: runtime.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          droppedContinuation: false,
+          warning: `runtime preserved for other run(s): ${protectedRunIds.join(', ')}`,
+        })
+      }
+
+      // No crossing invoke exists now. Close the old runtime to later
+      // admission synchronously, before broker disposal reaches its first
+      // await. Broker input-dispatchability reads invocation state, not only
+      // the runtime row, so transition both projections in one event-loop turn.
+      const stoppingAt = timestamp()
+      if (runtime.activeInvocationId !== undefined) {
+        this.db.brokerInvocations.update(runtime.activeInvocationId, {
+          invocationState: 'stopping',
+          updatedAt: stoppingAt,
+        })
+      }
+      this.db.runtimes.update(runtime.runtimeId, {
+        status: 'stopping',
+        statusChangedAt: stoppingAt,
+        updatedAt: stoppingAt,
+      })
+    }
     return await this.terminateRuntime(runtime, {
       dropContinuation: body.dropContinuation,
       ...(body.reason !== undefined ? { reason: body.reason } : {}),

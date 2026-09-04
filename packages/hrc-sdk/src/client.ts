@@ -582,8 +582,11 @@ export class HrcClient {
     return this.postJson<AttachRuntimeResponse>('/v1/runtimes/attach', request)
   }
 
-  async interrupt(runtimeId: string): Promise<RuntimeActionResponse> {
-    return this.postJson<RuntimeActionResponse>('/v1/interrupt', { runtimeId })
+  async interrupt(
+    runtimeId: string,
+    options: { ownerRunId?: string | undefined } = {}
+  ): Promise<RuntimeActionResponse> {
+    return this.postJson<RuntimeActionResponse>('/v1/interrupt', { runtimeId, ...options })
   }
 
   async terminate(

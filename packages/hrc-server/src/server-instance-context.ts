@@ -51,6 +51,7 @@ import type { SelectorWaitHandlersMethods } from './selector-wait-handlers.js'
 import type { ServerContext } from './server-context.js'
 import type {
   HrcServerOptions,
+  InvokeFirstTurnRendezvous,
   PendingAttachedRunOperation,
   PendingBrokerLiteralInput,
   RawBrokerSubscriber,
@@ -168,6 +169,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
   readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
+  readonly invokeFirstTurnRendezvous: Map<string, InvokeFirstTurnRendezvous>
   /** Cancelled by stop() before the store closes; never used as a shutdown drain. */
   readonly runtimeStartPresentationSignal: AbortSignal
   readonly brokerReattachOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>

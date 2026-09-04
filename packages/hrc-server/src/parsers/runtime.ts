@@ -1001,7 +1001,10 @@ export function parseClearContextRequest(input: unknown): ClearContextRequest {
   }
 }
 
-export function parseRuntimeActionBody(input: unknown): { runtimeId: string } {
+export function parseRuntimeActionBody(input: unknown): {
+  runtimeId: string
+  ownerRunId?: string | undefined
+} {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
@@ -1013,8 +1016,11 @@ export function parseRuntimeActionBody(input: unknown): { runtimeId: string } {
     })
   }
 
+  const ownerRunId = readOptionalNonEmptyStringField(input, 'ownerRunId')
+
   return {
     runtimeId: runtimeId.trim(),
+    ...(ownerRunId !== undefined ? { ownerRunId } : {}),
   }
 }
 
@@ -1032,6 +1038,7 @@ export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRe
 
   return {
     runtimeId: body.runtimeId,
+    ...(body.ownerRunId !== undefined ? { ownerRunId: body.ownerRunId } : {}),
     ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
     ...(reason !== undefined ? { reason } : {}),
     ...(source !== undefined ? { source } : {}),

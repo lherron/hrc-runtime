@@ -73,6 +73,7 @@ import {
   type AttachBeforeInvocationStartOption,
   type CoalescedQueuedMember,
   type DispatchRunPersistenceOptions,
+  type InvokeFirstTurnRendezvous,
   dispatchOriginRunFields,
   dispatchRunPersistence,
 } from './server-types.js'
@@ -121,6 +122,20 @@ function createRuntimeStartOwnership(): RuntimeStartOwnership {
   // rejection observed while preserving the original promise for later joiners.
   void operation.catch(() => undefined)
   return { operation, resolve, reject }
+}
+
+function cleanupInvokeFirstTurnRendezvous(
+  server: HrcServerInstanceForHandlers,
+  hostSessionId: string,
+  rendezvous: InvokeFirstTurnRendezvous
+): void {
+  if (
+    rendezvous.settled &&
+    rendezvous.crossingRunIds.size === 0 &&
+    server.invokeFirstTurnRendezvous.get(hostSessionId) === rendezvous
+  ) {
+    server.invokeFirstTurnRendezvous.delete(hostSessionId)
+  }
 }
 
 function assertBrokerPermissionPolicyAdmitted(input: {
@@ -616,17 +631,30 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   // already-published host-session boot and deliver this caller's own input
   // through the winner. Keep this route opt-in so reattach and non-DM dispatch
   // policy remain outside this cold-provision fix.
+  const existingInvokeRendezvous =
+    flagOptions.joinInFlightRuntimeStart && flagOptions.submissionDoor === 'invoke'
+      ? this.invokeFirstTurnRendezvous.get(session.hostSessionId)
+      : undefined
   const existingBootOperation = flagOptions.joinInFlightRuntimeStart
-    ? this.runtimeStartOperations?.get(session.hostSessionId)
+    ? (existingInvokeRendezvous?.operation ??
+      this.runtimeStartOperations?.get(session.hostSessionId))
     : undefined
   if (existingBootOperation) {
-    const runtime = await existingBootOperation
-    assertActuatorSplitRuntimeReuse(turnIntent, runtime)
-    return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
-      waitForCompletion: flagOptions.waitForCompletion,
-      responseFormat: flagOptions.responseFormat,
-      ...dispatchRunPersistence(flagOptions),
-    })
+    existingInvokeRendezvous?.crossingRunIds.add(runId)
+    try {
+      const runtime = await existingBootOperation
+      assertActuatorSplitRuntimeReuse(turnIntent, runtime)
+      return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
+        waitForCompletion: flagOptions.waitForCompletion,
+        responseFormat: flagOptions.responseFormat,
+        ...dispatchRunPersistence(flagOptions),
+      })
+    } finally {
+      if (existingInvokeRendezvous !== undefined) {
+        existingInvokeRendezvous.crossingRunIds.delete(runId)
+        cleanupInvokeFirstTurnRendezvous(this, session.hostSessionId, existingInvokeRendezvous)
+      }
+    }
   }
   let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
   let rejectAccepted!: (error: unknown) => void
@@ -697,26 +725,47 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     if (!acceptedSettled) resolveAccepted(runtime)
     return runtime
   })
-  const publishedOperation = bootOperation
-    .then(async (runtime) => {
-      // T-08012: the runtime is born before its argv-carried first turn owns a
-      // terminal bracket. Keep the host-session birth fence published through
-      // that terminal so a crossing invoke joins here and submits only after
-      // the launch-carried run has released the broker surface. Publishing the
-      // bare boot promise let the crossing caller become the first admitted
-      // broker input and steal the initial bracket from this run.
+  // The ordinary birth singleflight is shared by every admission door and must
+  // end at bare boot. In particular, enqueue/mail deliberately reaches the
+  // newborn broker while the launch-carried turn is live so its existing
+  // steer/merge semantics remain intact.
+  const publishedBootOperation = bootOperation.finally(() => {
+    if (this.runtimeStartOperations?.get(session.hostSessionId) === publishedBootOperation) {
+      this.runtimeStartOperations.delete(session.hostSessionId)
+    }
+  })
+  this.runtimeStartOperations?.set(session.hostSessionId, publishedBootOperation)
+  void publishedBootOperation.catch(() => undefined)
+
+  // T-08012: request-response invokes need a stronger, door-local projection.
+  // The runtime is born before its argv-carried first turn owns a terminal
+  // bracket, so a crossing invoke must not submit until that bracket closes.
+  // Keep this promise out of runtimeStartOperations: sharing it there also
+  // fenced enqueue/mail, contrary to their intentional live-turn steering.
+  if (flagOptions.submissionDoor === 'invoke') {
+    const invokeOperation = bootOperation.then(async (runtime) => {
       if (promptRodeLaunch) {
         await waitForLaunchCarriedFirstTurnTerminal(this, runId)
       }
       return this.db.runtimes.getByRuntimeId(runtime.runtimeId) ?? runtime
     })
-    .finally(() => {
-      if (this.runtimeStartOperations?.get(session.hostSessionId) === publishedOperation) {
-        this.runtimeStartOperations.delete(session.hostSessionId)
-      }
-    })
-  this.runtimeStartOperations?.set(session.hostSessionId, publishedOperation)
-  void publishedOperation.catch(() => undefined)
+    const rendezvous: InvokeFirstTurnRendezvous = {
+      ownerRunId: runId,
+      operation: invokeOperation,
+      crossingRunIds: new Set(),
+      settled: false,
+    }
+    this.invokeFirstTurnRendezvous.set(session.hostSessionId, rendezvous)
+    void invokeOperation
+      .then((runtime) => {
+        rendezvous.runtimeId = runtime.runtimeId
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        rendezvous.settled = true
+        cleanupInvokeFirstTurnRendezvous(this, session.hostSessionId, rendezvous)
+      })
+  }
   void bootOperation.catch((error) => {
     if (!acceptedSettled) rejectAccepted(error)
   })

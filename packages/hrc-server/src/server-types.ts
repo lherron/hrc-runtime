@@ -77,6 +77,23 @@ export type PendingBrokerLiteralInput = {
   text: string
 }
 
+/**
+ * Invoke-only ordering state for an interactive launch-carried first turn.
+ *
+ * The ordinary runtime-start map remains the all-door birth singleflight. This
+ * rendezvous is deliberately separate so enqueue/mail can proceed after bare
+ * boot while request-response invokes wait for the launch turn's terminal
+ * bracket. Crossing run ids cover the interval before their durable accepted
+ * rows exist.
+ */
+export type InvokeFirstTurnRendezvous = {
+  ownerRunId: string
+  operation: Promise<HrcRuntimeSnapshot>
+  crossingRunIds: Set<string>
+  settled: boolean
+  runtimeId?: string | undefined
+}
+
 export type AttachBeforeInvocationStartOption = {
   pendingStartId: string
 }

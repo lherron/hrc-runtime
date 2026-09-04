@@ -209,6 +209,44 @@ describe('runtime lifecycle client methods', () => {
     expect(result.argv).toEqual(['tmux', 'attach', '-t', 'hrc-demo'])
   })
 
+  it('forwards run ownership on interrupt and terminate cleanup', async () => {
+    const captured: Array<{ path: string; body: unknown }> = []
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        captured.push({ path: new URL(req.url).pathname, body: await req.json() })
+        return Response.json({
+          ok: true,
+          hostSessionId: 'hsid-owner-1',
+          runtimeId: 'rt-owner-1',
+          droppedContinuation: false,
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    await client.interrupt('rt-owner-1', { ownerRunId: 'run-owner-1' })
+    await client.terminate('rt-owner-1', {
+      ownerRunId: 'run-owner-1',
+      source: 'agent-loop',
+    })
+
+    expect(captured).toEqual([
+      {
+        path: '/v1/interrupt',
+        body: { runtimeId: 'rt-owner-1', ownerRunId: 'run-owner-1' },
+      },
+      {
+        path: '/v1/terminate',
+        body: {
+          runtimeId: 'rt-owner-1',
+          ownerRunId: 'run-owner-1',
+          source: 'agent-loop',
+        },
+      },
+    ])
+  })
+
   it('listRuns sends filters to /v1/runs and returns run lifecycle rows', async () => {
     let capturedPath = ''
     let capturedQuery = ''

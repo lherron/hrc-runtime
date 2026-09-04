@@ -339,9 +339,22 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
       await options.onAccepted?.(runtime)
       return runtime
     }
-    internal.executeInteractiveBrokerInputTurn = async () => {
+    internal.executeInteractiveBrokerInputTurn = async (
+      submittedSession,
+      submittedRuntime,
+      _prompt,
+      submittedRunId
+    ) => {
       independentSubmissions += 1
-      return Response.json({ ok: true })
+      return Response.json({
+        runId: submittedRunId,
+        hostSessionId: submittedSession.hostSessionId,
+        generation: submittedSession.generation,
+        runtimeId: submittedRuntime.runtimeId,
+        transport: 'tmux',
+        status: 'started',
+        supportsInFlightInput: true,
+      })
     }
 
     await internal.handleInteractiveTmuxBrokerDispatchTurn(
@@ -357,23 +370,27 @@ describe('T-08004 cold invoke carries nonempty priming and caller in one native 
     )
     await Bun.sleep(0)
 
-    const crossing = internal.handleInteractiveTmuxBrokerDispatchTurn(
+    const crossing = internal.dispatchTurnForSession(
       session,
       claudeIntent(),
       'second caller crosses birth',
-      'run-t08012-crossing',
       {
+        runId: 'run-t08012-crossing',
         waitForCompletion: true,
-        joinInFlightRuntimeStart: true,
         submissionDoor: 'invoke',
         turnPolicy: 'guarded',
-        coldBirthPromptMode: 'append-to-priming',
       }
     )
     await Bun.sleep(10)
 
     expect(startCalls).toBe(1)
     expect(independentSubmissions).toBe(0)
+
+    // Bare boot has settled and is no longer published to the all-door map,
+    // while only invoke retains the stronger terminal rendezvous. Enqueue/mail
+    // therefore cannot wait on the launch-carried terminal operation.
+    expect(internal.runtimeStartOperations.has(session.hostSessionId)).toBe(false)
+    expect(internal.invokeFirstTurnRendezvous.has(session.hostSessionId)).toBe(true)
 
     internal.db.runs.markCompleted(firstRunId, {
       status: 'completed',

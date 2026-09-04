@@ -1596,34 +1596,55 @@ async function dispatchAdmittedTurnForSession(
   // and an already-accepted birth is past that point. Attached start has its own
   // ready-wait (T-07304); silently dropping the attach here would trade a
   // visible double-seat for an invisible broken promise.
+  const invokeRendezvous =
+    options.attachBeforeInvocationStart === undefined && options.submissionDoor === 'invoke'
+      ? this.invokeFirstTurnRendezvous.get(session.hostSessionId)
+      : undefined
   const inFlightBirth =
     options.attachBeforeInvocationStart === undefined
-      ? this.runtimeStartOperations.get(session.hostSessionId)
+      ? (invokeRendezvous?.operation ?? this.runtimeStartOperations.get(session.hostSessionId))
       : undefined
   if (inFlightBirth !== undefined) {
-    const bornRuntime = await inFlightBirth
-    // The headless broker registers its boot in the SAME map for the same host
-    // session, and a headless runtime is not deliverable through the
-    // interactive executor. Only an interactive broker seat is joined here;
-    // anything else falls through to the ordinary route with the runtime
-    // re-read, since awaiting the birth is exactly what made the old snapshot
-    // stale.
-    if (bornRuntime.transport === 'tmux' && bornRuntime.controllerKind === 'harness-broker') {
-      // Same authority re-check the broker-reuse branch below makes, against
-      // the caller's own intent: joining a birth is a reuse, and a
-      // write-capable newborn must not become a route around actuator-split
-      // validation.
-      assertActuatorSplitRuntimeReuse(intent, bornRuntime)
-      return await withObservation(
-        await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
-          waitForCompletion: options.waitForCompletion,
-          repairCorrelation: options.repairCorrelation,
-          responseFormat: options.responseFormat,
-          ...dispatchRunPersistence(options),
-        })
-      )
+    // An invoke crossing a launch-carried first turn has no durable accepted
+    // row yet. Register it before the await so owner-scoped completion cleanup
+    // can preserve the shared runtime across that pre-persistence interval.
+    invokeRendezvous?.crossingRunIds.add(runId)
+    try {
+      const bornRuntime = await inFlightBirth
+      // The headless broker registers its boot in the SAME map for the same host
+      // session, and a headless runtime is not deliverable through the
+      // interactive executor. Only an interactive broker seat is joined here;
+      // anything else falls through to the ordinary route with the runtime
+      // re-read, since awaiting the birth is exactly what made the old snapshot
+      // stale.
+      if (bornRuntime.transport === 'tmux' && bornRuntime.controllerKind === 'harness-broker') {
+        // Same authority re-check the broker-reuse branch below makes, against
+        // the caller's own intent: joining a birth is a reuse, and a
+        // write-capable newborn must not become a route around actuator-split
+        // validation.
+        assertActuatorSplitRuntimeReuse(intent, bornRuntime)
+        return await withObservation(
+          await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
+            waitForCompletion: options.waitForCompletion,
+            repairCorrelation: options.repairCorrelation,
+            responseFormat: options.responseFormat,
+            ...dispatchRunPersistence(options),
+          })
+        )
+      }
+      latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
+    } finally {
+      if (invokeRendezvous !== undefined) {
+        invokeRendezvous.crossingRunIds.delete(runId)
+        if (
+          invokeRendezvous.settled &&
+          invokeRendezvous.crossingRunIds.size === 0 &&
+          this.invokeFirstTurnRendezvous.get(session.hostSessionId) === invokeRendezvous
+        ) {
+          this.invokeFirstTurnRendezvous.delete(session.hostSessionId)
+        }
+      }
     }
-    latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
   }
 
   const admission = decideInteractiveBrokerAdmission(

@@ -723,6 +723,8 @@ export const OPERATOR_REAP_REASON = 'operator_reap'
 
 export type TerminateRuntimeRequest = {
   runtimeId: string
+  /** Narrow cleanup to the run owned by this logical caller. Omission is operator semantics. */
+  ownerRunId?: string | undefined
   dropContinuation?: boolean | undefined
   /** Operator intent stamped on the runtime.terminated audit event (e.g. 'operator_reap'). */
   reason?: string | undefined
