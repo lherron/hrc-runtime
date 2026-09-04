@@ -46,6 +46,13 @@ export type MailKickerContext = {
   readonly mailKickerBirthDeferredAnnounced: Map<string, string>
   readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
   readonly mailKickerLapsedRuntimes: Set<string>
+  /**
+   * In-flight obligation disposals (T-07963). `stop()` drains these before the
+   * store closes; T-07964's `mailKickerDisposalsInFlight` is the DIAGNOSTIC
+   * register of the same work and is deliberately separate — one answers "what
+   * must I wait for", the other "what was outstanding when we were told to stop".
+   */
+  readonly mailKickerDisposalsPending: Set<Promise<void>>
   /** Live obligation disposals, keyed by attempt; what `dispose_interrupted` reports. */
   readonly mailKickerDisposalsInFlight: Map<string, DisposalInFlight>
   /** One boot-reconcile report is owed per process (T-07964 §4). */

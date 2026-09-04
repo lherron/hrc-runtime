@@ -626,16 +626,19 @@ describe('runtime lifecycle start/attach', () => {
       await request.catch(() => undefined)
 
       expect(stub.calls).toHaveLength(1)
-      expect(stub.calls[0].startRequest.initialInput).toBeUndefined()
+      // T-07963: the prompt is IN the boot's own first input now, not owed as a
+      // second submission afterwards. That is what makes this test's subject —
+      // the prompt surviving the caller's exit — structural rather than
+      // dependent on a detached chain outliving the request.
+      expect(stub.calls[0].startRequest.initialInput).toBeDefined()
     } finally {
       releaseGate()
     }
 
     await stub.runtimePersisted
     expect(stub.runtimeIds).toHaveLength(1)
-    await stub.inputDispatched
-    expect(stub.invokeCalls).toHaveLength(1)
-    expect(stub.invokeCalls[0].body).toBe('fresh prompt must survive caller timeout')
+    // No invoke: there is no deferred caller prompt left to submit.
+    expect(stub.invokeCalls).toHaveLength(0)
   })
 
   it(

@@ -841,11 +841,19 @@ export async function executeHeadlessBrokerStartTurn(
     }
     rejectAccepted = reject
   })
-  const bootOperation = this.startHeadlessBrokerRuntime(session, promptlessIntent, '', runId, {
-    // A promptless Codex seat still receives the compiler-owned agent priming
-    // turn. It has no HRC run/input identity because the caller's prompt is
-    // submitted separately through the invoke door after boot.
-    allowCompilerInitialInputWithoutIdentity: true,
+  const bootOperation = this.startHeadlessBrokerRuntime(session, promptlessIntent, prompt, runId, {
+    // T-07963 (Lance's ruling): the cold boot's FIRST turn IS the delivery of the
+    // message that initiated it. The caller prompt rides the compile as
+    // `initialPrompt`, so the compiler emits ONE initial input holding priming +
+    // caller text (`combineBrokerPrompts`) and allocates `initialInputId` + this
+    // run's identity for it. There is no second submission to owe, and therefore
+    // no window in which a restart can lose one.
+    //
+    // The flag stays ONLY for the promptless shape, which still takes the
+    // compiler-owned priming input with no HRC run/input identity to bind it to.
+    // With a prompt, `identity.initialInputId` exists and the strict
+    // identity check in `selectBrokerExecutionProfile` is the one that must pass.
+    ...(prompt.length === 0 ? { allowCompilerInitialInputWithoutIdentity: true } : {}),
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),
     onAccepted: (runtime) => {
@@ -876,22 +884,13 @@ export async function executeHeadlessBrokerStartTurn(
           updatedAt: acceptedAt,
         })
       }
-      // T-07944: the caller prompt is owed but not yet submitted — the priming
-      // turn has to finish first. Make it durable NOW, at acceptance, so a
-      // daemon restart in that window can re-arm the submit from the ledger
-      // instead of losing the prompt with the process. Written only for the
-      // exact shape recovery acts on (accepted, nothing dispatched), so it can
-      // never overwrite another route's correlation on the same run row.
-      const persistedRun = this.db.runs.getByRunId(runId)
-      if (persistedRun?.status === 'accepted' && persistedRun.dispatchedInputId === undefined) {
-        this.db.runs.setCorrelationJson(
-          runId,
-          serializeDurableColdBootTurnInput(prompt, {
-            ...dispatchRunPersistence(options),
-            responseFormat: options.responseFormat,
-          })
-        )
-      }
+      // T-07963: nothing is owed any more. T-07944 persisted the caller prompt
+      // here so a restart could re-arm the second submission; the prompt now
+      // rides the boot's own first input, so there is no deferred submission to
+      // make durable and writing one would advertise an obligation that does not
+      // exist. `recoverColdBootInputContinuations` is retained for the old-shape
+      // runs still in flight across the upgrade restart, and its candidate set
+      // drains to empty because this write is the only thing that ever fed it.
       if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
         const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
           ts: acceptedAt,
@@ -937,19 +936,12 @@ export async function executeHeadlessBrokerStartTurn(
     if (!acceptedSettled) rejectAccepted(error)
   })
   if (options.waitForCompletion === false) {
-    // T-07944: this detached chain owns the caller prompt until the priming turn
-    // ends. It used to `.catch(() => undefined)`, which left an accepted run with
-    // no continuation and no record of why — the sweep then buried it as a zombie
-    // 30 minutes later and the sender was told a lie. Every failure now lands as
-    // a positively reason-coded `turn.failed` on the run itself.
-    void bootOperation
-      .then(async (runtime) => {
-        await waitForCompilerPrimingTerminal(this, runtime, this.runtimeStartPresentationSignal)
-        await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
-      })
-      .catch((error: unknown) => {
-        disposeColdBootInputContinuationFailure(this, runId, error)
-      })
+    // T-07963: the wait-priming -> guarded-invoke continuation that used to live
+    // here is RETIRED. The prompt is already in the boot's own first input, so
+    // there is nothing detached to own and nothing for a daemon stop to abort.
+    // That chain is what made a restart inside the priming window strand the
+    // sender's obligation: it failed the run, the drive attempt never reached
+    // `started`, and no auto-reply intent was ever armed.
     const runtime = await accepted
     return json({
       runId,
@@ -962,11 +954,18 @@ export async function executeHeadlessBrokerStartTurn(
     } satisfies DispatchTurnResponseBase)
   }
   const runtime = await bootOperation
-  await waitForCompilerPrimingTerminal(this, runtime, this.runtimeStartPresentationSignal)
-  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, {
-    ...options,
-    waitForCompletion: false,
-  })
+  // A blocking caller waits for the FIRST turn now, because the first turn is the
+  // delivery. There is no second submission whose completion it could await.
+  await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
+  return json({
+    runId,
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    transport: 'headless',
+    status: 'completed',
+    supportsInFlightInput: false,
+  } satisfies DispatchTurnResponseBase)
 }
 
 /**

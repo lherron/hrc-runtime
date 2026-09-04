@@ -147,6 +147,21 @@ export function persistStartGraph(
     updatedAt: now,
   })
 
+  // T-07963 — bind the run to the broker input the start actually carries.
+  //
+  // A start whose request has an `initialInput` delivers the caller's prompt in
+  // that input, so the run OWNS it and must say so durably. Without this the run
+  // sat `accepted` with a NULL `dispatched_input_id` for the whole first turn,
+  // `runForInputIdentity` could not resolve the `turn.started` that quotes the
+  // input id, and the turn was orphaned from its own run — which is what left a
+  // mail drive stuck at `claimed`, armed no auto-reply intent, and stranded the
+  // sender's obligation with no reminder and no failure (EN-03687).
+  //
+  // Gated on the START REQUEST rather than on a route flag, because that is the
+  // structural fact: interactive tmux profiles deliver launch text through argv
+  // and carry no `initialInput` at all, so they keep `dispatchedInputId ===
+  // undefined` and the separate T-07920 launch-primed attribution it selects.
+  const initialInputId = input.startRequest.initialInput?.inputId
   const run =
     identity.runId !== undefined
       ? ctx.db.runs.insert({
@@ -163,6 +178,7 @@ export function persistStartGraph(
           operationId: String(identity.operationId),
           invocationId: String(identity.invocationId),
           dispatchIdempotencyKey: input.dispatchIdempotencyKey,
+          ...(initialInputId === undefined ? {} : { dispatchedInputId: String(initialInputId) }),
           ...dispatchOriginRunFields(input),
         })
       : undefined

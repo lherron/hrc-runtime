@@ -24,6 +24,18 @@ export const LEDGER_SWEEP_TICKS = 30
 export const BIRTH_SWEEP_BACKOFF_BASE_MS = 60_000
 export const BIRTH_SWEEP_MAX_REFUSALS = 5
 export const LAPSE_SWEEP_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000
+/**
+ * How long `stop()` will wait for in-flight obligation disposals (T-07963).
+ *
+ * BOUNDED on purpose. Each disposal is a wrkq RPC per envelope, and a stop that
+ * waits on an unreachable ledger forever is a daemon that cannot be restarted —
+ * strictly worse than the stranding this drain exists to prevent. The bound is
+ * safe because the drain is not the only mechanism: every disposition is written
+ * durably as it is decided, so whatever this deadline cuts off is recovered by
+ * the next boot's reconcile and reported as `dispose_interrupted` rather than
+ * lost silently.
+ */
+export const DISPOSAL_DRAIN_DEADLINE_MS = 2_000
 
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

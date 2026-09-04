@@ -2,6 +2,7 @@ import { HrcErrorCode } from 'hrc-core'
 import type { HrcRunRecord } from 'hrc-core'
 
 import {
+  disposeColdBootInputContinuationFailure,
   failColdBootInputContinuation,
   parseDurableColdBootTurnInput,
   waitForCompilerPrimingTerminal,
@@ -128,11 +129,16 @@ async function recoverOne(server: HrcServerInstanceForHandlers, run: HrcRunRecor
       waitForCompletion: false,
     })
   } catch (error) {
-    failColdBootInputContinuation(server, runId, {
-      errorCode: HrcErrorCode.COLD_INPUT_CONTINUATION_FAILED,
-      phase: 'cold-boot-input-recovery',
-      error,
-      detail: { runtimeId: runtime.runtimeId, invocationId },
-    })
+    // T-07963: route through the STOP-AWARE disposer, exactly as the original
+    // continuation does. This catch used to fail the run unconditionally, and a
+    // re-armed wait is aborted by the very next daemon stop — so a restart while
+    // a re-armed priming turn was live wrote
+    // `cold_input_continuation_failed / phase: cold-boot-input-recovery` over a
+    // run whose seat was alive and still working (observed 23:47:33.266 on
+    // run-72fece2f, re-armed by the 23:12:45 pass 35 minutes earlier). Aborting
+    // an in-process wait during our own shutdown is not loss: it leaves the run
+    // `accepted` with a NULL dispatched_input_id, which is the shape the NEXT
+    // daemon's recovery acts on.
+    disposeColdBootInputContinuationFailure(server, runId, error)
   }
 }

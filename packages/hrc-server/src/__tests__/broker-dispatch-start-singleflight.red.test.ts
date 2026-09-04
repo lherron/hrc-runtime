@@ -260,7 +260,10 @@ describe('headless broker dispatch start single-flight', () => {
 
     expect(response.status).toBe(200)
     expect(presentationStarted).toBe(true)
-    expect(compilerPrimingAllowed).toBe(true)
+    // T-07963: a dispatch WITH a caller prompt allocates a real input identity,
+    // so the identity-less compiler-priming escape hatch is not requested. It
+    // survives only for the promptless boot, which has nothing to bind.
+    expect(compilerPrimingAllowed).toBe(false)
   })
 
   it('converges crossing dispatches for one empty host session onto one broker start', async () => {
@@ -636,11 +639,14 @@ describe('headless broker dispatch start single-flight', () => {
     expect(starts).toEqual([
       {
         continuation: { provider: 'openai', kind: 'thread', key: 'thread-t07031-stored' },
-        prompt: '',
+        // T-07963: the caller prompt rides the fresh start rather than a
+        // follow-up invoke, so the retry's replacement invocation carries the
+        // delivery itself.
+        prompt: 'fresh turn after exhausted retries',
         runId: 'run-t07031-fresh',
       },
     ])
-    expect(invokedPrompts).toEqual(['fresh turn after exhausted retries'])
+    expect(invokedPrompts).toEqual([])
     expect(body.runtimeId).toBe('rt-t07031-fresh')
     expect((server as any).runtimeStartOperations.size).toBe(0)
   })

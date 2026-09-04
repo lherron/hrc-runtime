@@ -130,19 +130,51 @@ export function beginDisposeLog(
   }
 }
 
+/** The disposals still running at the moment a stop was ordered. */
+function liveDisposals(server: MailKickerContext) {
+  return [...server.mailKickerDisposalsInFlight.values()].filter(
+    (record) => record.pending.size > 0
+  )
+}
+
 /**
  * What was still being disposed when the daemon was told to stop (§2).
  *
- * Disposal is fire-and-forget by construction, so a SIGTERM that lands mid-loop
- * takes the remaining envelopes with it. This line does not save them — that is
- * T-07963's job — but it names them, which is the difference between "the
- * obligation was lost at 23:47:33 by this stop" and a store that simply has no
- * row for it.
+ * T-07963 changed what this MEANS, so it changed name. `stop()` now drains
+ * in-flight disposals before the store closes, so work outstanding at stop-entry
+ * is normally work that then COMPLETES. Reporting that as `dispose_interrupted`
+ * would fire a loss warning on every clean restart that happens to catch a
+ * disposal mid-loop — the common case, not the rare one — and a later reader
+ * greping it would conclude obligations were being dropped when they were
+ * drained. This line is the census; `logDisposeInterrupted` below is the alarm,
+ * and it now runs AFTER the drain where the word is true.
+ */
+export function logDisposePendingAtStop(server: MailKickerContext): void {
+  const live = liveDisposals(server)
+  if (live.length === 0) return
+  server.log('INFO', 'wrkq.kicker.dispose_pending_at_stop', {
+    disposals: live.length,
+    pendingEnvelopes: live.reduce((total, record) => total + record.pending.size, 0),
+    pending: live.map((record) => ({
+      targetSessionRef: record.targetSessionRef,
+      driveAttemptId: record.driveAttemptId,
+      runId: record.runId,
+      startedAt: record.startedAt,
+      envelopeIds: [...record.pending],
+    })),
+    note: 'the stop sequence drains these; see dispose_interrupted for anything that did not finish',
+  })
+}
+
+/**
+ * Obligations this stop genuinely did not finish disposing (§2 + T-07963).
+ *
+ * Emitted AFTER the drain, so reaching it means the drain did not settle the
+ * work — a real loss, and the reconcile on the next boot is what recovers it
+ * from the durable per-presentation disposition rows.
  */
 export function logDisposeInterrupted(server: MailKickerContext): void {
-  const live = [...server.mailKickerDisposalsInFlight.values()].filter(
-    (record) => record.pending.size > 0
-  )
+  const live = liveDisposals(server)
   if (live.length === 0) return
   server.log('WARN', 'wrkq.kicker.dispose_interrupted', {
     disposals: live.length,

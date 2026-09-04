@@ -1566,6 +1566,33 @@ export class HrcMailDriveRepository {
     return this.requireAutoReplyIntent(driveAttemptId)
   }
 
+  /**
+   * Record how one presented envelope's obligation was disposed (T-07963).
+   *
+   * Written by `disposeAttemptObligations` as it decides each envelope, and by
+   * the startup reconcile when it replays a disposition the dead process never
+   * finished. It is what makes the reconcile's candidate set structural — a row
+   * with `disposed_at IS NULL` on a terminal attempt is work still owed — so no
+   * lookback window is needed and no obligation can age out of reach.
+   *
+   * Idempotent: a row already dispositioned keeps its FIRST answer, because the
+   * disposition that actually acted is the true one and a replay must not
+   * overwrite it with a later re-derivation.
+   */
+  recordPresentationDisposition(
+    driveAttemptId: string,
+    envelopeId: string,
+    disposition: string
+  ): void {
+    this.db
+      .query(
+        `UPDATE hrcmail_drive_presentations
+            SET disposed_at = ?, disposition = ?
+          WHERE drive_attempt_id = ? AND envelope_id = ? AND disposed_at IS NULL`
+      )
+      .run(new Date().toISOString(), disposition, driveAttemptId, envelopeId)
+  }
+
   presentationEnvelopeIds(driveAttemptId: string): string[] {
     return this.db
       .query<{ envelope_id: string }, [string]>(

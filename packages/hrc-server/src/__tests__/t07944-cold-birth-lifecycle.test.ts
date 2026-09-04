@@ -451,6 +451,65 @@ describe('T-07944 defect 1a — zombie sweep vs. a live cold-birth priming turn'
       expect(readTurnFailedPayloads('run-chain-error')).toHaveLength(1)
     })
 
+    /**
+     * T-07963 criterion 1 — the RECOVERY path's own abort must defer too.
+     *
+     * `disposeColdBootInputContinuationFailure` grew the `deferred_to_restart`
+     * guard in cc830deb, but only the PRIMARY continuation used it; recovery's
+     * catch called `failColdBootInputContinuation` directly. A run re-armed by
+     * one restart and aborted by the next therefore died with
+     * `cold_input_continuation_failed / phase: cold-boot-input-recovery` while
+     * its seat was alive and still working. That is the exact line that
+     * terminalised run-72fece2f at 23:47:33.266 and stranded EN-03687.
+     */
+    it('T-07963: leaves a RE-ARMED run accepted when shutdown aborts the recovery wait', async () => {
+      seedColdBirth({
+        runId: 'run-rearm-shutdown',
+        hostSessionId: 'hsid-rearm-shutdown',
+        scopeRef: 't07963-rearm-shutdown',
+        runtimeId: 'rt-rearm-shutdown',
+        invocationId: 'inv-rearm-shutdown',
+        operationId: 'op-rearm-shutdown',
+        acceptedAt: isoMinutesAgo(35),
+        runtimeActivityAt: isoMinutesAgo(1),
+        // The re-armed priming turn is STILL RUNNING when the daemon stops,
+        // which is what makes the wait abort rather than resolve.
+        primingTerminal: false,
+        correlationJson: serializeDurableColdBootTurnInput('the caller prompt', {
+          dispatchIdempotencyKey: undefined,
+        }),
+      })
+
+      const stopping = new AbortController()
+      const seam = instance() as unknown as Record<string, unknown>
+      seam['getHarnessBrokerController'] = () => ({
+        seatProbe: async () => ({ ok: true, response: { busy: true } }),
+      })
+      const realSignal = instance().runtimeStartPresentationSignal
+      Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+        value: stopping.signal,
+        configurable: true,
+      })
+      try {
+        const recovery = recoverColdBootInputContinuations(instance())
+        // Stop the daemon while the re-armed wait is pending.
+        stopping.abort()
+        await recovery
+      } finally {
+        Object.defineProperty(seam, 'runtimeStartPresentationSignal', {
+          value: realSignal,
+          configurable: true,
+        })
+      }
+
+      // The shape the NEXT daemon's recovery acts on, not a terminal lie.
+      expect(readRun('run-rearm-shutdown')).toMatchObject({
+        status: 'accepted',
+        dispatchedInputId: undefined,
+      })
+      expect(readTurnFailedPayloads('run-rearm-shutdown')).toHaveLength(0)
+    })
+
     it('fails the run positively when the invocation that owed the prompt is gone', async () => {
       seedColdBirth({
         runId: 'run-lost',

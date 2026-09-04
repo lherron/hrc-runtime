@@ -94,18 +94,32 @@ function disposeAttemptObligations(
       .remindersForAttempt(driveAttemptId)
       .map((reminder) => [reminder.envelopeId, reminder] as const)
   )
+  // A disposition is durable the moment it is DECIDED, not when the loop ends:
+  // the reconcile's candidate set is "presentation not yet dispositioned", so a
+  // per-envelope write is what makes a partially-completed loop resumable.
+  const dispose = (envelope: string, disposition: string): void => {
+    server.db.mailDrives.recordPresentationDisposition(driveAttemptId, envelope, disposition)
+  }
   const turnEndedAt = attempt.completedAt ?? new Date().toISOString()
   const remindAt = new Date(Date.now() + REMINDER_HOLD_MS).toISOString()
   // T-07964 §2: every branch below used to be a bare `continue`, so a disposal
   // that ran and decided nothing looked exactly like one that never ran at all.
   const disposeLog = beginDisposeLog(server, attempt, envelopeIds)
-  void (async () => {
+  // T-07963: this was `void (async () => {…})()`, so a daemon stop between an
+  // attempt going terminal and its obligations being disposed took the whole
+  // loop with it — the 28 ms that stranded EN-03687. The promise is registered
+  // so `MailKicker.stop()` can drain it, and every decision below is ALSO
+  // written durably, so a stop that still beats the loop leaves the boot
+  // reconcile a candidate rather than silence. Two mechanisms because the drain
+  // alone cannot cover a kill -9.
+  const disposal = (async () => {
     try {
       for (const envelope of envelopeIds) {
         try {
           const row = await server.ledger.envelopeShow({ envelope })
           if (row.state !== 'presented') {
             disposeLog.outcome(envelope, 'skipped:not_presented', { envelopeState: row.state })
+            dispose(envelope, `skipped:not_presented:${row.state}`)
             continue
           }
           const newest = newestPresentationReceipt(row)
@@ -117,11 +131,13 @@ function disposeAttemptObligations(
                 ? {}
                 : { newestDriveAttemptId: newest.driveAttemptId }),
             })
+            dispose(envelope, 'skipped:superseded')
             continue
           }
           const runtime = newest.runtimeId ?? attempt.runtimeId
           if (runtime === undefined) {
             disposeLog.outcome(envelope, 'skipped:no_runtime')
+            dispose(envelope, 'skipped:no_runtime')
             continue
           }
           if (reminded.has(envelope)) {
@@ -134,6 +150,7 @@ function disposeAttemptObligations(
               callSite: 'dispose_attempt_obligations',
             })
             disposeLog.outcome(envelope, 'failed:ignored', { runtimeId: runtime })
+            dispose(envelope, 'failed:ignored')
             continue
           }
           const armed = server.db.mailDrives.armReminder({
@@ -145,6 +162,7 @@ function disposeAttemptObligations(
           })
           if (!armed) {
             disposeLog.outcome(envelope, 'skipped:reminder_exists', { runtimeId: runtime })
+            dispose(envelope, 'skipped:reminder_exists')
             continue
           }
           server.log('INFO', 'wrkq.kicker.reminder_armed', {
@@ -155,6 +173,7 @@ function disposeAttemptObligations(
             remindAt,
           })
           disposeLog.outcome(envelope, 'reminded', { runtimeId: runtime, remindAt })
+          dispose(envelope, 'reminder_armed')
         } catch (error) {
           server.log('WARN', 'wrkq.kicker.dispose_obligation_failed', {
             targetSessionRef,
@@ -169,6 +188,8 @@ function disposeAttemptObligations(
       disposeLog.finish()
     }
   })()
+  server.mailKickerDisposalsPending.add(disposal)
+  void disposal.finally(() => server.mailKickerDisposalsPending.delete(disposal))
 }
 
 /**

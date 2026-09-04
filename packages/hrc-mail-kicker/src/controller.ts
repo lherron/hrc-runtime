@@ -18,12 +18,13 @@ import type {
   MailKickerDependencies,
   MailKickerOptions,
 } from './contracts.js'
-import { logDisposeInterrupted } from './diagnostics/attempt-log.js'
+import { logDisposeInterrupted, logDisposePendingAtStop } from './diagnostics/attempt-log.js'
 import type { DisposalInFlight } from './diagnostics/attempt-log.js'
 import { reportUnownedTurn } from './diagnostics/stranded.js'
 import { isRuntimeTerminal } from './drive/attempt-lifecycle.js'
 import { driveMailTargetOnce } from './drive/target-driver.js'
 import {
+  DISPOSAL_DRAIN_DEADLINE_MS,
   LEDGER_SWEEP_TICKS,
   MAIL_DRIVE_TERMINAL_EVENTS,
   RUNTIME_TERMINAL_EVENTS,
@@ -60,6 +61,7 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
   readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
   readonly mailKickerLapsedRuntimes = new Set<string>()
+  readonly mailKickerDisposalsPending = new Set<Promise<void>>()
   readonly mailKickerDisposalsInFlight = new Map<string, DisposalInFlight>()
   mailKickerBootReconcilePending = true
 
@@ -148,20 +150,51 @@ export class MailKicker implements MailKickerContext {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
-    // Read FIRST, before anything is drained: the whole point of the line is
-    // what was genuinely still outstanding at the moment the stop was ordered.
-    logDisposeInterrupted(this)
+    // Read FIRST, before anything is drained: what was outstanding at the moment
+    // the stop was ordered. T-07963 note — this is no longer evidence of LOSS,
+    // because the drain below now waits for these; `dispose_interrupted` is
+    // emitted after the drain, for whatever genuinely did not finish.
+    logDisposePendingAtStop(this)
     if (this.mailKickerSweepTimer !== undefined) {
       clearInterval(this.mailKickerSweepTimer)
       this.mailKickerSweepTimer = undefined
     }
     this.mailKickerPendingTargets.clear()
-    const operations = [
-      this.mailKickerSweepInFlight,
-      this.wrkqLedgerTailInFlight,
-      ...this.mailKickerTargetOperations.values(),
-    ].filter((operation): operation is Promise<void> => operation !== undefined)
-    if (operations.length > 0) await Promise.allSettled(operations)
+    // T-07963: a FIXED POINT, not one snapshot. A target operation inside the
+    // first snapshot can still reach `observeAttempt` and start a disposal after
+    // the disposal set was read, and that disposal would never be waited for.
+    // `stopping` is already set, so `wake()` and `drainTarget`'s loop refuse new
+    // work and the set is strictly decreasing.
+    //
+    // DEADLINED, because a disposal is a wrkq RPC per envelope: an unreachable
+    // ledger would otherwise make the drain unbounded and the daemon
+    // unrestartable, which is a worse failure than the stranding it prevents.
+    // The bound is safe because the drain is a latency optimisation over the
+    // durable path, not the correctness path — dispositions are written as they
+    // are decided, so anything cut off here is recovered by the next boot.
+    const deadline = Date.now() + DISPOSAL_DRAIN_DEADLINE_MS
+    for (;;) {
+      const operations = [
+        this.mailKickerSweepInFlight,
+        this.wrkqLedgerTailInFlight,
+        ...this.mailKickerTargetOperations.values(),
+        ...this.mailKickerDisposalsPending,
+      ].filter((operation): operation is Promise<void> => operation !== undefined)
+      if (operations.length === 0) break
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) break
+      const raced = await Promise.race([
+        Promise.allSettled(operations).then(() => 'settled' as const),
+        new Promise<'timeout'>((resolve) => {
+          const timer = setTimeout(() => resolve('timeout'), remaining)
+          timer.unref?.()
+        }),
+      ])
+      if (raced === 'timeout') break
+    }
+    // Only now is "interrupted" a true word: the drain is complete, so anything
+    // still registered was genuinely not finished by this stop.
+    logDisposeInterrupted(this)
   }
 
   wake(targetSessionRef: string, wakeReason: HrcMailDriveWakeReason): void {

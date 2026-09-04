@@ -2492,6 +2492,36 @@ const hrcmailHintDecisionMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07963 — a per-presentation disposition record.
+ *
+ * `disposeAttemptObligations` was fire-and-forget async, so a daemon exit
+ * between an attempt going terminal and its obligations being disposed left the
+ * envelope `presented` with no reminder, no failure and no local trace that a
+ * disposition was ever owed. The startup reconcile needs a candidate set that is
+ * STRUCTURAL rather than time-bounded — "terminal attempt, presentation not yet
+ * dispositioned" — because any lookback window puts an effective recovery TTL on
+ * keep-forever collaboration state: a daemon down longer than the window, or a
+ * reconcile whose ledger reads keep failing until the row ages out, would never
+ * examine it again.
+ *
+ * `disposed_at` is a monotone one-way processed flag, not a recency column: the
+ * write removes the row from the candidate set permanently and by intent.
+ */
+const hrcmailPresentationDispositionMigration: HrcMigration = {
+  id: '0055_hrcmail_presentation_disposition',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE hrcmail_drive_presentations ADD COLUMN disposed_at TEXT;
+      ALTER TABLE hrcmail_drive_presentations ADD COLUMN disposition TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_drive_presentations_undisposed
+        ON hrcmail_drive_presentations(drive_attempt_id)
+        WHERE disposed_at IS NULL;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2542,4 +2572,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailHeldQueueBatchMigration,
   continuationReuseStateMigration,
   hrcmailHintDecisionMigration,
+  hrcmailPresentationDispositionMigration,
 ]

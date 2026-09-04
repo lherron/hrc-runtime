@@ -60,6 +60,13 @@ export type FixtureOpts = {
   initialInputId?: string | undefined
   /** Whether to include an initialInput at all. */
   withInitialInput?: boolean
+  /**
+   * The initial input's text. Callers that assert what HRC handed to compile
+   * echo `materialization.initialPrompt` in here; the fixture deliberately does
+   * NOT model the compiler's priming concatenation, which is real ASP behaviour
+   * and provable only against the real compiler.
+   */
+  initialInputText?: string | undefined
   /** Profile-level diagnostics. */
   diagnostics?: CompiledRuntimePlan['diagnostics']
   /** profileId for the candidate. */
@@ -114,7 +121,7 @@ export function makeBrokerProfile(
           initialInput: {
             inputId: (opts.initialInputId ?? identity.initialInputId) as string,
             kind: 'user',
-            content: [{ type: 'text', text: 'hello broker' }],
+            content: [{ type: 'text', text: opts.initialInputText ?? 'hello broker' }],
           },
         }
       : {}),
