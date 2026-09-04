@@ -226,6 +226,8 @@ export function registerTopLevelCommands(program: Command): void {
     .allowExcessArguments(true)
     .allowUnknownOption(true)
     .option('--no-attach', 'resume and start without attaching to the tmux session')
+    .option('--prior', "resume the current session's immediate predecessor")
+    .option('--host-session <id>', 'resume an exact historical host session')
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
@@ -239,8 +241,10 @@ export function registerTopLevelCommands(program: Command): void {
       'after',
       `
 Semantics:
-  resume force-resumes the most recent stored continuation for a target,
-  REGARDLESS of HRC status (archived / dormant / broken / removed-orphaned).
+  resume force-resumes the selected stored continuation for a target: newest by
+  default, the active session's predecessor with --prior, or an exact historical
+  row with --host-session. Selection is REGARDLESS of HRC status (archived /
+  dormant / broken / removed-orphaned).
   Unlike \`hrc run\`, it requires a captured continuation: if none has ever been
   recorded, it fails clearly and does NOT start fresh. Clear/drop/terminate audit
   events never erase or invalidate a recorded continuation for explicit resume.
@@ -253,12 +257,12 @@ Semantics:
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
       assertNoUnknownOptions(rawArgv, {
-        boolean: ['--no-attach', '--dry-run', '--debug', '--no-register', '--json'],
-        value: ['--project-id', '--project-root', '--cwd', '-p', '--prompt-file'],
+        boolean: ['--no-attach', '--prior', '--dry-run', '--debug', '--no-register', '--json'],
+        value: ['--host-session', '--project-id', '--project-root', '--cwd', '-p', '--prompt-file'],
       })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'cwd', 'prompt-file'],
-        booleans: ['dry-run', 'debug', 'json'],
+        strings: ['host-session', 'project-id', 'project-root', 'cwd', 'prompt-file'],
+        booleans: ['prior', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['attach', 'register'],
       })
       await cmdResumeContinuation(args)

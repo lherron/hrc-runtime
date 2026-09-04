@@ -529,9 +529,9 @@ export class HrcClient {
   }
 
   /**
-   * T-04836 — resume the latest non-invalidated continuation for a target,
-   * minting an active successor. Throws on barrier / no-continuation / live-prior
-   * conflict (the server is the policy authority); never fresh-launches.
+   * T-04836/T-07953 — resume the latest continuation for a target, or the exact
+   * historical host session named by `priorHostSessionId`, minting an active
+   * successor. The server is the policy authority; this never fresh-launches.
    */
   async resumeContinuation(
     request: ResumeContinuationRequest

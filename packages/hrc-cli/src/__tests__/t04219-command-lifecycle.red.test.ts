@@ -414,6 +414,50 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
       expect(result.stdout).toContain('--no-attach')
     })
 
+    it('hrc resume advertises prior-generation and exact-host-session selection', async () => {
+      const result = await runCli(['resume', '--help'])
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('--prior')
+      expect(result.stdout).toContain('--host-session <id>')
+    })
+
+    it('hrc resume accepts --prior in a dry-run preview', async () => {
+      const result = await runCli(
+        ['resume', 'rex@agent-spaces', '--prior', '--dry-run'],
+        cliEnv({
+          ASP_AGENTS_ROOT: agentsRoot,
+          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+        })
+      )
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('immediate predecessor')
+    })
+
+    it('hrc resume accepts an exact host session in a dry-run preview', async () => {
+      const result = await runCli(
+        ['resume', 'rex@agent-spaces', '--host-session', 'hsid-explicit', '--dry-run'],
+        cliEnv({
+          ASP_AGENTS_ROOT: agentsRoot,
+          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+        })
+      )
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('exact host session hsid-explicit')
+    })
+
+    it('hrc resume rejects combining --prior with --host-session', async () => {
+      const result = await runCli([
+        'resume',
+        'rex@agent-spaces',
+        '--prior',
+        '--host-session',
+        'hsid-explicit',
+        '--dry-run',
+      ])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toContain('either --prior or --host-session')
+    })
+
     it('hrc resume does NOT advertise --force-restart (continuation is always preserved)', async () => {
       const result = await runCli(['resume', '--help'])
       expect(result.exitCode).toBe(0)

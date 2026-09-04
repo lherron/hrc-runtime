@@ -151,6 +151,33 @@ describe('selectResumeContinuationCandidate', () => {
     expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
   })
 
+  it('keeps default selection on the newest key-bearing generation', () => {
+    insertSession('hs-1', 1, { continuation: { ...continuation, key: 'older-key' } })
+    insertSession('hs-2', 2, {
+      continuation: { ...continuation, key: 'newer-key' },
+      priorHostSessionId: 'hs-1',
+    })
+
+    const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })
+    expect(result.outcome).toBe('ok')
+    expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-2')
+  })
+
+  it('pins an exact older key-bearing host session when requested', () => {
+    insertSession('hs-1', 1, { continuation: { ...continuation, key: 'older-key' } })
+    insertSession('hs-2', 2, {
+      continuation: { ...continuation, key: 'newer-key' },
+      priorHostSessionId: 'hs-1',
+    })
+
+    const result = selectResumeContinuationCandidate(db, {
+      sessionRef: SESSION_REF,
+      priorHostSessionId: 'hs-1',
+    })
+    expect(result.outcome).toBe('ok')
+    expect(result.outcome === 'ok' && result.session.hostSessionId).toBe('hs-1')
+  })
+
   it('selects an archived/dormant continuation status-neutrally', () => {
     insertSession('hs-1', 1, { status: 'archived', continuation })
     const result = selectResumeContinuationCandidate(db, { sessionRef: SESSION_REF })

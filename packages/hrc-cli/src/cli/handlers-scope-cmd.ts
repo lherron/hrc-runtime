@@ -372,6 +372,8 @@ function printResumeUsage(): void {
 
 Options:
   --no-attach          Resume and start without attaching to the tmux session
+  --prior              Resume the current session's immediate predecessor
+  --host-session <id>  Resume an exact historical host session
   --dry-run            Local plan preview — no server calls, no side effects
   --debug              Keep tmux shell alive after harness exits
   --project-id <id>    Override the inferred project id (cwd is treated as its root)
@@ -399,6 +401,9 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
       'hrc resume does not support --force-restart; it always preserves the resumed continuation'
     )
   }
+  if (hasFlag(args, '--prior') && parseFlag(args, '--host-session') !== undefined) {
+    fatal('hrc resume accepts either --prior or --host-session, not both')
+  }
 
   if (args.length === 0) {
     printResumeUsage()
@@ -407,6 +412,8 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
   const scopeInput = requireArg(args, 0, '<scope>')
   const noAttach = hasFlag(args, '--no-attach')
+  const prior = hasFlag(args, '--prior')
+  const pinnedHostSessionId = parseFlag(args, '--host-session')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
@@ -418,6 +425,8 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
     command: 'run',
     passthroughFlags: [
       '--no-attach',
+      '--prior',
+      '--host-session',
       '--dry-run',
       '--debug',
       '--no-register',
@@ -452,8 +461,11 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
       w(`  sessionRef:   ${sessionRef}`)
       w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
       w(`  cwd:          ${intent.placement.cwd}`)
-      w('  action:       POST /v1/sessions/resume-continuation (mint successor from latest')
-      w('                recorded continuation), then prepare/start against it with')
+      w(
+        `  selection:    ${prior ? 'immediate predecessor of the active session (--prior)' : pinnedHostSessionId !== undefined ? `exact host session ${pinnedHostSessionId}` : 'latest recorded continuation (default)'}`
+      )
+      w('  action:       POST /v1/sessions/resume-continuation (mint successor from the')
+      w('                selected recorded continuation), then prepare/start against it with')
       w('                allowStaleGeneration:true. Fails if no captured continuation exists.')
       w(`  attach:       ${noAttach ? 'no (--no-attach)' : 'yes'}`)
       w(`  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`)
@@ -465,9 +477,24 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
     const client = createClient()
 
+    let priorHostSessionId = pinnedHostSessionId
+    if (prior) {
+      const current = await client.resolveSession({ sessionRef, create: false })
+      if (!current.found) {
+        throw new Error(`cannot resume prior session for "${scopeInput}": no session exists`)
+      }
+      priorHostSessionId = current.session.priorHostSessionId
+      if (priorHostSessionId === undefined) {
+        throw new Error(
+          `cannot resume prior session for "${scopeInput}": the current session has no predecessor`
+        )
+      }
+    }
+
     const resumed = await client.resumeContinuation({
       sessionRef,
       intent,
+      ...(priorHostSessionId !== undefined ? { priorHostSessionId } : {}),
     })
     const hostSessionId = resumed.hostSessionId
     const hasPrompt = prompt !== undefined && prompt.length > 0

@@ -7,6 +7,7 @@ export function createSessionSuccessorFromContinuation(
   db: HrcDatabase,
   prior: HrcSessionRecord,
   overrides: {
+    generation?: number | undefined
     lastAppliedIntentJson?: HrcSessionRecord['lastAppliedIntentJson'] | undefined
     parsedScopeJson?: HrcSessionRecord['parsedScopeJson'] | undefined
   } = {}
@@ -16,7 +17,7 @@ export function createSessionSuccessorFromContinuation(
     hostSessionId: createHostSessionId(),
     scopeRef: prior.scopeRef,
     laneRef: prior.laneRef,
-    generation: prior.generation + 1,
+    generation: overrides.generation ?? prior.generation + 1,
     status: 'active',
     priorHostSessionId: prior.hostSessionId,
     createdAt: now,

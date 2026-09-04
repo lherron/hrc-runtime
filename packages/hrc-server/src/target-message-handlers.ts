@@ -51,6 +51,7 @@ import {
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
+import type { TaskClaimAuthority } from './federation/task-claim-client.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { buildMessageTrace } from './message-trace.js'
@@ -538,6 +539,20 @@ async function createNotifiedSessionSuccessor(
       )
       if (raced !== null && raced.hostSessionId !== session.hostSessionId) {
         if (requiredContinuation === undefined) return raced
+        if (
+          raced.continuation !== undefined &&
+          !sameContinuation(raced.continuation, requiredContinuation)
+        ) {
+          return createHistoricalResumeSuccessor(
+            server,
+            session,
+            raced,
+            requiredContinuation,
+            capabilityIntent,
+            parsedScopeJson,
+            claimAuthority
+          )
+        }
         return bindResumeContinuationToSuccessor(server, raced, requiredContinuation)
       }
       const successor = server.db.sqlite.transaction(() => {
@@ -571,6 +586,72 @@ async function createNotifiedSessionSuccessor(
       return successor
     }
   )
+}
+
+/**
+ * An explicit historical resume is allowed to branch away from a newer stored
+ * continuation. Keep generations monotonic for the target while linking the
+ * new row directly to the session whose provider continuation was selected.
+ */
+function createHistoricalResumeSuccessor(
+  server: HrcServerInstanceForHandlers,
+  selected: HrcSessionRecord,
+  current: HrcSessionRecord,
+  requiredContinuation: HrcContinuationRef,
+  capabilityIntent: HrcRuntimeIntent | undefined,
+  parsedScopeJson: Record<string, unknown> | undefined,
+  claimAuthority: TaskClaimAuthority | undefined
+): HrcSessionRecord {
+  const liveRuntime = server.db.runtimes
+    .listByHostSessionId(current.hostSessionId)
+    .find((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+  if (liveRuntime !== undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.RESUME_RUNTIME_LIVE,
+      `cannot resume historical session "${selected.hostSessionId}": the current successor already has a live runtime`,
+      {
+        hostSessionId: current.hostSessionId,
+        runtimeId: liveRuntime.runtimeId,
+        runtimeStatus: liveRuntime.status,
+      }
+    )
+  }
+
+  const successor = server.db.sqlite.transaction(() => {
+    const created = createSessionSuccessorFromContinuation(
+      server.db,
+      { ...selected, continuation: requiredContinuation },
+      {
+        generation: Math.max(selected.generation, current.generation) + 1,
+        ...(capabilityIntent ? { lastAppliedIntentJson: capabilityIntent } : {}),
+        ...(parsedScopeJson ? { parsedScopeJson } : {}),
+      }
+    )
+    if (claimAuthority !== undefined) {
+      persistSessionTaskClaimAuthority(
+        server,
+        created.hostSessionId,
+        claimAuthority,
+        created.createdAt
+      )
+    } else {
+      server.db.sessionTaskClaimAuthorities.copy(
+        selected.hostSessionId,
+        created.hostSessionId,
+        created.createdAt
+      )
+    }
+    return created
+  })()
+  server.notifyEvent(
+    server.appendEvent(successor, 'session.created', {
+      created: true,
+      priorHostSessionId: selected.hostSessionId,
+      displacedHostSessionId: current.hostSessionId,
+      reason: 'successor-from-historical-continuation',
+    })
+  )
+  return successor
 }
 
 function sameContinuation(left: HrcContinuationRef, right: HrcContinuationRef): boolean {

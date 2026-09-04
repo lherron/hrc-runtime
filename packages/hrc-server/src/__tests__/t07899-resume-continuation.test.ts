@@ -136,7 +136,7 @@ describe('T-07899 explicit resume successor binding', () => {
     }
   })
 
-  it('conflicts instead of replacing a different key on a pinned successor race', async () => {
+  it('branches from a pinned historical key when the current successor has a different key', async () => {
     seedDropContextSuccessor({
       successorContinuation: {
         provider: 'anthropic',
@@ -149,15 +149,48 @@ describe('T-07899 explicit resume successor binding', () => {
       sessionRef: SESSION_REF,
       priorHostSessionId: 'hsid-t07899-prior',
     })
-    expect(response.status).toBe(409)
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as ResumeContinuationResponse
+    expect(body).toMatchObject({
+      generation: 3,
+      priorHostSessionId: 'hsid-t07899-prior',
+      continuation: CONTINUATION,
+    })
+    expect(body.hostSessionId).not.toBe('hsid-t07899-successor')
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
       expect(db.sessions.getByHostSessionId('hsid-t07899-successor')?.continuation?.key).toBe(
         'different-successor-key'
       )
+      expect(db.sessions.getByHostSessionId(body.hostSessionId)?.continuation).toEqual(CONTINUATION)
     } finally {
       db.close()
     }
+  })
+
+  it('keeps an unpinned resume on the newest continuation', async () => {
+    seedDropContextSuccessor({
+      successorContinuation: {
+        provider: 'anthropic',
+        kind: 'session',
+        key: 'newest-successor-key',
+      },
+    })
+
+    const response = await fixture.postJson('/v1/sessions/resume-continuation', {
+      sessionRef: SESSION_REF,
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as ResumeContinuationResponse
+    expect(body).toMatchObject({
+      generation: 3,
+      priorHostSessionId: 'hsid-t07899-successor',
+      continuation: {
+        provider: 'anthropic',
+        kind: 'session',
+        key: 'newest-successor-key',
+      },
+    })
   })
 })
