@@ -177,6 +177,14 @@ export function logDisposeInterrupted(server: MailKickerContext): void {
   const live = liveDisposals(server)
   if (live.length === 0) return
   server.log('WARN', 'wrkq.kicker.dispose_interrupted', {
+    // Reaching this line means the drain hit `DISPOSAL_DRAIN_DEADLINE_MS`, which
+    // a slow-but-HEALTHY wrkq can do as readily as an unreachable one. Say so:
+    // read bare, "interrupted" invites the conclusion that these obligations
+    // were lost, and they were not -- an undecided envelope leaves no
+    // disposition row, so it is still a boot-reconcile candidate.
+    reason: 'drain_deadline_expired',
+    recovery:
+      'undecided envelopes have no disposition row and are replayed by the next boot reconcile',
     disposals: live.length,
     pendingEnvelopes: live.reduce((total, record) => total + record.pending.size, 0),
     interrupted: live.map((record) => ({

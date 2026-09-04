@@ -1971,6 +1971,15 @@ export class HrcMailDriveRepository {
           WHERE a.state IN ('completed', 'failed', 'no_op', 'withdrawn')
             AND a.updated_at >= ?
             AND (?2 IS NULL OR a.runtime_id = ?3)
+            -- T-07963: a presentation this node has already dispositioned is
+            -- settled work, not a candidate. Without this the method's own name
+            -- is false the moment migration 0055 lands, and two things break:
+            -- reportUnownedTurn runs on EVERY mail-drive turn terminal and is
+            -- cheap only while this set is empty, and the boot reconcile's
+            -- candidate set degrades from "what the drain did not finish" to
+            -- "everything terminal in the lookback" -- which is precisely the
+            -- distinction the bounded drain's safety argument depends on.
+            AND p.disposed_at IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM hrcmail_envelope_reminders r
                WHERE r.envelope_id = p.envelope_id
