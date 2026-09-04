@@ -73,7 +73,20 @@ function exactDischargeForIntent(
   const turnId = disposition === undefined ? undefined : brokerPayload(disposition)['turnId']
   if (typeof turnId === 'string') {
     const manifest = storedManifestEnvelopeIdsForTurn(records, turnId)
-    if (manifest.eventsPresent) {
+    // T-07963: `eventsPresent` means "admission-request events exist for this
+    // turn", NOT "those admissions attributed any envelope". A cold birth's
+    // initial input is admitted by the broker itself as
+    // `legacy:invocation.input` with no `envelopeId`, so the manifest comes back
+    // present-but-EMPTY. Treating that as authoritative derived an empty
+    // discharge set, which cannot be said: the intent pended every second
+    // forever, the 60s reminder drove a pointer turn, and the agent ended up
+    // replying by hand — the reply-is-ack failure this task exists to close,
+    // surviving the run binding that was supposed to fix it.
+    //
+    // An empty manifest carries no attribution and is therefore no evidence
+    // about what the turn carried. Only a manifest that actually names
+    // envelopes outranks the drive attempt's own recorded candidate.
+    if (manifest.eventsPresent && manifest.envelopeIds.length > 0) {
       return { source: 'manifest', envelopeIds: manifest.envelopeIds }
     }
   }
