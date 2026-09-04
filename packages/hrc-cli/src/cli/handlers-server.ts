@@ -4,6 +4,7 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
 
 import {
+  type ServerLifecycleCallerKind,
   type ShutdownIntent,
   collectServerRuntimeStatus,
   collectTmuxStatus,
@@ -127,6 +128,7 @@ function rejectionCauseChain(reason: unknown): SerializedRejectionCause[] {
 
 function shutdownIntentLogDetails(intent: ShutdownIntent | undefined): Record<string, unknown> {
   return {
+    callerKind: intent?.callerKind ?? null,
     requestedBy: intent?.requestedBy ?? null,
     ...(intent
       ? {
@@ -405,6 +407,7 @@ async function closeAdmissionAndDrainForRestart(
 }
 
 function requireServerLifecycleAuthorization(args: string[]): {
+  callerKind: ServerLifecycleCallerKind
   requestedBy: string | null
   reason: string | null
 } {
@@ -413,6 +416,7 @@ function requireServerLifecycleAuthorization(args: string[]): {
     fatal(result.message)
   }
   return {
+    callerKind: result.callerKind,
     requestedBy: result.requestedBy,
     reason: result.reason,
   }

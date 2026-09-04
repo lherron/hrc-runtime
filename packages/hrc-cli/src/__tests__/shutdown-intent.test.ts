@@ -45,6 +45,7 @@ describe('shutdown intent', () => {
     process.env['HRC_RUN_ID'] = 'run-5da14a6b'
 
     writeShutdownIntent('restart', {
+      callerKind: 'operator-agent',
       requestedBy: process.env['HRC_SESSION_REF'],
       reason: 'coordinated maintenance',
     })
@@ -53,6 +54,7 @@ describe('shutdown intent', () => {
     const intent = consumeShutdownIntent()
     expect(intent).toBeDefined()
     expect(intent?.action).toBe('restart')
+    expect(intent?.callerKind).toBe('operator-agent')
     expect(intent?.requestedBy).toBe('agent:larry:project:hrc-runtime:task:T-01854/lane:main')
     expect(intent?.requestedRunId).toBe('run-5da14a6b')
     expect(intent?.reason).toBe('coordinated maintenance')

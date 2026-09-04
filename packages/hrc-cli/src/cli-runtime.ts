@@ -7,6 +7,7 @@ export {
 } from './cli-runtime/server-paths.js'
 
 export type {
+  ServerLifecycleCallerKind,
   ServerLifecycleAuthorization,
   ShutdownIntent,
 } from './cli-runtime/shutdown-intent.js'

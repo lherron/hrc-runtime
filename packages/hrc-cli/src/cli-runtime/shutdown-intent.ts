@@ -1,7 +1,11 @@
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { parseScopeRef } from 'agent-scope'
 import { resolveRuntimeRoot, splitSessionRef } from 'hrc-core'
+import { getAgentsRoot, parseAgentProfile } from 'spaces-config'
+
+export type ServerLifecycleCallerKind = 'operator' | 'operator-agent' | 'primary' | 'seat'
 
 /**
  * Attribution for a daemon stop/restart. The CLI process that runs
@@ -13,6 +17,7 @@ import { resolveRuntimeRoot, splitSessionRef } from 'hrc-core'
  */
 export type ShutdownIntent = {
   action: 'stop' | 'restart'
+  callerKind: ServerLifecycleCallerKind | null
   requestedBy: string | null
   requestedRunId: string | null
   reason: string | null
@@ -23,7 +28,7 @@ export type ShutdownIntent = {
 export type ServerLifecycleAuthorization =
   | {
       allowed: true
-      callerKind: 'operator' | 'primary' | 'seat'
+      callerKind: ServerLifecycleCallerKind
       requestedBy: string | null
       reason: string | null
     }
@@ -44,6 +49,23 @@ const SERVER_LIFECYCLE_ENVELOPE_KEYS = [
 function normalizedOptionalText(value: string | undefined): string | null {
   const normalized = value?.trim()
   return normalized ? normalized : null
+}
+
+function callerAgentIsOperator(
+  agentId: string,
+  env: Readonly<Record<string, string | undefined>>
+): boolean {
+  const agentsRoot = getAgentsRoot({ env: { ...env } })
+  if (agentsRoot === undefined) return false
+
+  const profilePath = join(agentsRoot, agentId, 'agent-profile.toml')
+  if (!existsSync(profilePath)) return false
+
+  try {
+    return parseAgentProfile(readFileSync(profilePath, 'utf8'), profilePath).operator === true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -143,6 +165,21 @@ export function evaluateServerLifecycleAuthorization(
     }
   }
 
+  if (callerAgentIsOperator(parsedScope.agentId, env)) {
+    if (requestedReason === null) {
+      return {
+        allowed: false,
+        message: 'operator-agent server lifecycle mutations require --reason <text>',
+      }
+    }
+    return {
+      allowed: true,
+      callerKind: 'operator-agent',
+      requestedBy,
+      reason: requestedReason,
+    }
+  }
+
   if (taskId?.startsWith('T-')) {
     return {
       allowed: false,
@@ -190,12 +227,14 @@ function shutdownIntentPath(): string {
 export function writeShutdownIntent(
   action: 'stop' | 'restart',
   attribution?: {
+    callerKind?: ServerLifecycleCallerKind | null | undefined
     requestedBy?: string | null | undefined
     reason?: string | null | undefined
   }
 ): void {
   const intent: ShutdownIntent = {
     action,
+    callerKind: attribution?.callerKind ?? null,
     requestedBy:
       attribution === undefined
         ? (process.env['HRC_SESSION_REF'] ?? null)
