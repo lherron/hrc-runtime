@@ -423,10 +423,11 @@ export function buildManagedStartIntent(
     ...intent,
     harness: {
       ...intent.harness,
-      interactive:
-        options.prompt !== undefined && options.prompt.length > 0
-          ? false
-          : intent.harness.interactive,
+      // `hrc start` provisions without attaching an operator terminal whether
+      // or not it also dispatches an initial prompt. Harness-specific server
+      // normalizers (notably Claude's interactive broker redirect) can opt the
+      // detached request back into an interactive runtime shape deliberately.
+      interactive: false,
     },
     ...(options.viewerWindow !== undefined
       ? { presentation: { viewerWindow: options.viewerWindow } }

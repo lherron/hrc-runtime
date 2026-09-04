@@ -12,6 +12,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import {
+  normalizeClaudeInteractiveBrokerIntent,
+  shouldRedirectClaudeToInteractiveBroker,
+} from 'hrc-server'
+
 import { harnessStringToHarnessId, resolveAgentHarness } from '../cli'
 import { executeManagedStart } from '../cli/handlers-scope-cmd'
 import { buildManagedStartIntent, parseScopePrompt, resolveManagedScopeContext } from '../cli/scope'
@@ -187,8 +192,50 @@ describe('buildManagedStartIntent', () => {
     expect(intent.initialPrompt).toBe('wake up')
   })
 
-  it('leaves promptless detached start classification unchanged', () => {
-    expect(buildManagedStartIntent(scope()).harness.interactive).toBe(true)
+  it('classifies promptless detached start as non-interactive headless', () => {
+    const intent = buildManagedStartIntent(scope())
+
+    expect(intent.harness.interactive).toBe(false)
+    expect(intent.execution?.preferredMode).toBe('headless')
+  })
+
+  it('keeps prompted agent-harness start on the non-interactive headless route', () => {
+    const scopeContext = resolveManagedScopeContext(
+      'codex-agent@fixture-project:primary+harness=agent-harness+model=gpt-5.6-sol',
+      { projectRootOverride: projectRoot, registerPolicy: 'never' }
+    )
+    const intent = buildManagedStartIntent(scopeContext, { prompt: 'wake up' })
+
+    expect(intent.harness).toMatchObject({
+      provider: 'openai',
+      id: 'agent-harness',
+      interactive: false,
+    })
+    expect(intent.execution?.preferredMode).toBe('headless')
+    expect(intent.initialPrompt).toBe('wake up')
+  })
+
+  it('keeps promptless Claude start redirected to the interactive Claude broker', async () => {
+    await writeFile(
+      join(projectRoot, 'agents', 'codex-agent', 'agent-profile.toml'),
+      'version = 3\n\n[provisioning]\nharness = "claude-code"\n'
+    )
+    const startIntent = buildManagedStartIntent(scope())
+
+    expect(startIntent.harness).toMatchObject({
+      provider: 'anthropic',
+      id: 'claude-code',
+      interactive: false,
+    })
+    expect(shouldRedirectClaudeToInteractiveBroker(startIntent)).toBe(true)
+
+    const normalized = normalizeClaudeInteractiveBrokerIntent(startIntent)
+    expect(normalized.harness).toMatchObject({
+      provider: 'anthropic',
+      id: 'claude-code',
+      interactive: true,
+    })
+    expect(normalized.execution?.preferredMode).toBe('interactive')
   })
 
   it('assembles an explicit execution cwd without changing the resolved project root', async () => {

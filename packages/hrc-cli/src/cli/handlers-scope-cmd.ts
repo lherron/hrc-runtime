@@ -744,6 +744,9 @@ async function renderBrokerPlanPreview(
   w(`  controller:   ${brokerPreview.controllerKind}`)
   w(`  driver:       ${brokerPreview.brokerDriver}`)
   w(`  interaction:  ${brokerPreview.interactionMode}`)
+  w(`  agentRoot:    ${intent.placement.agentRoot}`)
+  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+  w(`  provider:     ${intent.harness.provider}`)
   w(`  profileId:    ${brokerPreview.profileId}`)
   w(`  profileHash:  ${brokerPreview.profileHash}`)
   w(`  specHash:     ${brokerPreview.specHash}`)
@@ -902,11 +905,12 @@ async function printLocalRunPreview(
     w(`  placement:    ${placementReason}`)
   }
 
-  if (command === 'run') {
-    const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
-    if (rendered) {
-      return
-    }
+  // Detached starts and interactive runs can both be broker-owned. Ask the
+  // route-aware preview first; only legacy CLI shapes fall through to the
+  // interactive adapter.
+  const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
+  if (rendered) {
+    return
   }
 
   await renderSpecBuildPreview(w, intent, sessionRef, restartStyle, prompt)
