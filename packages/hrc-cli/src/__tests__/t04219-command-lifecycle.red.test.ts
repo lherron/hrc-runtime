@@ -435,7 +435,15 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
 
     it('hrc resume accepts an exact host session in a dry-run preview', async () => {
       const result = await runCli(
-        ['resume', 'rex@agent-spaces', '--host-session', 'hsid-explicit', '--dry-run'],
+        [
+          'resume',
+          'rex@agent-spaces',
+          '--host-session',
+          'hsid-explicit',
+          '--dry-run',
+          '-p',
+          'prove',
+        ],
         cliEnv({
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
@@ -443,6 +451,7 @@ describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume ve
       )
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain('exact host session hsid-explicit')
+      expect(result.stdout).toContain('initialPrompt: 5 chars')
     })
 
     it('hrc resume rejects combining --prior with --host-session', async () => {

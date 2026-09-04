@@ -457,6 +457,7 @@ const VALUE_TAKING_PASSTHROUGH_FLAGS = new Set([
   '--idempotency-key',
   '--viewer-window',
   '--on-conflict',
+  '--host-session',
 ])
 
 export async function parseScopePrompt(
