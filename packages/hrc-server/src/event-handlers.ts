@@ -862,19 +862,33 @@ export function handleBrokerForensics(this: HrcServerInstanceForHandlers, url: U
     invocationIds = [invocation.invocationId]
   } else {
     const runtime = this.db.runtimes.getByRuntimeId(resolvedTargetId)
-    if (!runtime) {
+    const ledgerInvocationRows = runtime
+      ? []
+      : this.db.brokerInvocationEvents.listByInvocationId(resolvedTargetId)
+    const ledgerRuntimeRows =
+      runtime || ledgerInvocationRows.length > 0
+        ? []
+        : this.db.brokerInvocationEvents.listByRuntimeId(resolvedTargetId)
+    if (!runtime && ledgerInvocationRows.length === 0 && ledgerRuntimeRows.length === 0) {
       throw new HrcBadRequestError(
         HrcErrorCode.INVALID_SELECTOR,
         `no persisted broker runtime or invocation matched "${resolvedTargetId}"`,
         { targetId: resolvedTargetId }
       )
     }
-    targetKind = 'runtime'
-    rows = this.db.brokerInvocationEvents.listByRuntimeId(runtime.runtimeId)
-    runtimeIds = [runtime.runtimeId]
-    invocationIds = this.db.brokerInvocations
-      .listByRuntimeId(runtime.runtimeId)
-      .map((entry) => entry.invocationId)
+    if (ledgerInvocationRows.length > 0) {
+      targetKind = 'invocation'
+      rows = ledgerInvocationRows
+      runtimeIds = [...new Set(rows.map((row) => row.runtimeId))]
+      invocationIds = [resolvedTargetId]
+    } else {
+      targetKind = 'runtime'
+      rows = runtime
+        ? this.db.brokerInvocationEvents.listByRuntimeId(runtime.runtimeId)
+        : ledgerRuntimeRows
+      runtimeIds = [resolvedTargetId]
+      invocationIds = [...new Set(rows.map((row) => row.invocationId))]
+    }
   }
 
   return json({

@@ -525,6 +525,34 @@ describe('hrc monitor events', () => {
 })
 
 describe('hrc monitor transcript', () => {
+  it('accepts a runtime retained only by the keep-forever broker event ledger', async () => {
+    appendEvent(fixture, {
+      runtimeId: 'rt-ledger-only',
+      invocationId: 'inv-ledger-only',
+      runId: 'run-ledger-only',
+      seq: 1,
+      type: 'assistant.message.completed',
+      payload: { content: [{ type: 'text', text: 'historical searchable answer' }] },
+    })
+    appendEvent(fixture, {
+      runtimeId: 'rt-ledger-only',
+      invocationId: 'inv-ledger-only',
+      runId: 'run-ledger-only',
+      seq: 2,
+      type: 'turn.completed',
+      payload: {},
+    })
+
+    const result = await runCli(
+      ['monitor', 'transcript', 'rt-ledger-only', '--seq', '1..2'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('historical searchable answer')
+  })
+
   it('renders completed tool results and preserves the full body with --full', async () => {
     appendEvent(fixture, {
       seq: 13,
