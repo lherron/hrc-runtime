@@ -51,6 +51,18 @@ export const CURATED_AGENT_COLORS: Readonly<Record<string, string>> = {
   chief: '#A72F41',
 }
 
+/**
+ * Per-agent TERMINAL-tint overrides, consulted before the derived tint.
+ *
+ * `terminalTint()` derives every agent's tint from the two shared constants above,
+ * so nudging one agent by moving them would repaint the whole cast. This map is the
+ * narrow escape hatch: it changes exactly one agent and leaves the band alone.
+ * An override is still graded by the cast-wide luminance ceiling in the tests.
+ */
+export const CURATED_TERMINAL_TINTS: Readonly<Record<string, string>> = {
+  chief: '#41161C', // redder than the derived #361217, at Lance's pick (T-07995)
+}
+
 /** Saturation/lightness band the hash fallback lives in (matches the cast). */
 const FALLBACK_SATURATION = 0.5
 const FALLBACK_LIGHTNESS = 0.42
@@ -62,7 +74,8 @@ const FALLBACK_LIGHTNESS = 0.42
 export function agentTheme(agentId: string): AgentTheme {
   const key = agentId.trim().toLowerCase()
   const bg = CURATED_AGENT_COLORS[key] ?? hashColor(key)
-  return { bg, fg: contrastForeground(bg), terminalBg: terminalTint(bg) }
+  const terminalBg = CURATED_TERMINAL_TINTS[key] ?? terminalTint(bg)
+  return { bg, fg: contrastForeground(bg), terminalBg }
 }
 
 /** Force a base color into the dark, low-luminance terminal-tint band. */
