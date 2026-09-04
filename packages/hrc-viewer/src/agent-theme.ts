@@ -46,6 +46,9 @@ export const CURATED_AGENT_COLORS: Readonly<Record<string, string>> = {
   smokey: '#B5562E', // Ember
   ariadne: '#9C3F77', // Plum
   curly: '#A8792B', // Ochre
+  // Garnet — the cast's only red, centered in the empty arc between ariadne's
+  // plum (324°) and smokey's ember (18°): 27° clear of each (T-07980).
+  chief: '#A72F41',
 }
 
 /** Saturation/lightness band the hash fallback lives in (matches the cast). */
