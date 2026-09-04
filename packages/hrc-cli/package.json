@@ -24,6 +24,7 @@
     "hrc-capture-verifier": "*",
     "hrc-core": "*",
     "hrc-events": "*",
+    "hrc-mail-kicker": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*",

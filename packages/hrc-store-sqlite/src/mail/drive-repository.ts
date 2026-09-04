@@ -202,6 +202,24 @@ export type HrcMailEnvelopeReminder = {
   createdAt: string
 }
 
+/** One presentation receipt joined to the attempt that wrote it (T-07964). */
+export type HrcMailDrivePresentedAttempt = {
+  attempt: HrcMailDriveAttempt
+  envelopeId: string
+  presentedAt: string
+}
+
+/** A drive-bound run that was accepted and never entered the broker (T-07964). */
+export type HrcMailUndispatchedDriveRun = {
+  driveAttemptId: string
+  targetSessionRef: string
+  runId: string
+  attemptState: HrcMailDriveAttemptState
+  runStatus: string
+  runtimeId?: string | undefined
+  acceptedAt?: string | undefined
+}
+
 /** One §5 sender-side failure notice awaiting a live generation to land in. */
 export type HrcMailFailureNotice = {
   envelopeId: string
@@ -320,6 +338,21 @@ const DRIVE_ATTEMPT_COLUMNS = `
   hint_count, last_hint_at, last_hint_presented_count
 `
 
+/**
+ * The attempt column list, qualified for a join.
+ *
+ * `SELECT a.drive_attempt_id, ...` yields the same unqualified result keys, so
+ * `mapAttempt` keeps working unchanged over a joined row.
+ */
+function qualified(columns: string, alias: string): string {
+  return columns
+    .split(',')
+    .map((column) => column.trim())
+    .filter((column) => column.length > 0)
+    .map((column) => `${alias}.${column}`)
+    .join(', ')
+}
+
 const AUTO_REPLY_INTENT_COLUMNS = `
   drive_attempt_id, source_ref, source_envelope_ids_json, room_key,
   counterparty_ref, run_id, target_session_ref, state, attempt_count,
@@ -413,6 +446,16 @@ function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
     updatedAt: row.updated_at,
+  }
+}
+
+function mapPresentedAttempt(
+  row: DriveAttemptRow & { presented_at: string; presented_envelope_id: string }
+): HrcMailDrivePresentedAttempt {
+  return {
+    attempt: mapAttempt(row),
+    envelopeId: row.presented_envelope_id,
+    presentedAt: row.presented_at,
   }
 }
 
@@ -1784,6 +1827,178 @@ export class HrcMailDriveRepository {
         }
       })
       .immediate()
+  }
+
+  // ── T-07964 diagnostic reads ───────────────────────────────────────────────
+  //
+  // Read-only, and deliberately so. Every method below answers a question a
+  // stranded obligation raises AFTER the fact — "which attempt carried this
+  // envelope", "what did this runtime present", "which terminal attempts left a
+  // receipt nobody ever disposed" — and none of them may transition anything.
+  // The disposition authority stays where it was; this half exists because
+  // EN-03687 (2026-09-03) was diagnosable only by hand-joining four sources.
+
+  /** Every attempt that presented this envelope, oldest receipt first. */
+  attemptsForEnvelope(envelopeId: string): HrcMailDrivePresentedAttempt[] {
+    return this.db
+      .query<DriveAttemptRow & { presented_at: string; presented_envelope_id: string }, [string]>(
+        `SELECT ${qualified(DRIVE_ATTEMPT_COLUMNS, 'a')},
+                p.presented_at AS presented_at,
+                p.envelope_id AS presented_envelope_id
+           FROM hrcmail_drive_attempts a
+           JOIN hrcmail_drive_presentations p
+             ON p.drive_attempt_id = a.drive_attempt_id
+          WHERE p.envelope_id = ?
+          ORDER BY p.presented_at ASC, a.drive_attempt_id ASC`
+      )
+      .all(envelopeId)
+      .map(mapPresentedAttempt)
+  }
+
+  /** Every presentation receipt this runtime's attempts hold, oldest first. */
+  presentationsForRuntime(runtimeId: string): HrcMailDrivePresentedAttempt[] {
+    return this.db
+      .query<DriveAttemptRow & { presented_at: string; presented_envelope_id: string }, [string]>(
+        `SELECT ${qualified(DRIVE_ATTEMPT_COLUMNS, 'a')},
+                p.presented_at AS presented_at,
+                p.envelope_id AS presented_envelope_id
+           FROM hrcmail_drive_attempts a
+           JOIN hrcmail_drive_presentations p
+             ON p.drive_attempt_id = a.drive_attempt_id
+          WHERE a.runtime_id = ?
+          ORDER BY p.presented_at ASC, p.envelope_id ASC`
+      )
+      .all(runtimeId)
+      .map(mapPresentedAttempt)
+  }
+
+  /** Every presentation receipt this scope's attempts hold, oldest first. */
+  presentationsForTarget(targetSessionRef: string): HrcMailDrivePresentedAttempt[] {
+    return this.db
+      .query<DriveAttemptRow & { presented_at: string; presented_envelope_id: string }, [string]>(
+        `SELECT ${qualified(DRIVE_ATTEMPT_COLUMNS, 'a')},
+                p.presented_at AS presented_at,
+                p.envelope_id AS presented_envelope_id
+           FROM hrcmail_drive_attempts a
+           JOIN hrcmail_drive_presentations p
+             ON p.drive_attempt_id = a.drive_attempt_id
+          WHERE a.target_session_ref = ?
+          ORDER BY p.presented_at ASC, p.envelope_id ASC`
+      )
+      .all(normalizeTarget(targetSessionRef))
+      .map(mapPresentedAttempt)
+  }
+
+  /** Every reminder ever armed for one envelope, on any runtime. */
+  remindersForEnvelope(envelopeId: string): HrcMailEnvelopeReminder[] {
+    return this.db
+      .query<ReminderRow, [string]>(
+        `SELECT envelope_id, runtime_id, target_session_ref, turn_ended_at,
+                remind_at, drive_attempt_id, delivered_at, created_at
+           FROM hrcmail_envelope_reminders
+          WHERE envelope_id = ?
+          ORDER BY created_at ASC, runtime_id ASC`
+      )
+      .all(envelopeId)
+      .map(mapReminder)
+  }
+
+  /** Every sender-side failure notice queued for one envelope. */
+  failureNoticesForEnvelope(envelopeId: string): HrcMailFailureNotice[] {
+    return this.db
+      .query<FailureNoticeRow, [string]>(
+        `SELECT envelope_id, target_session_ref, notice, created_at, delivered_at
+           FROM hrcmail_failure_notices
+          WHERE envelope_id = ?
+          ORDER BY created_at ASC, target_session_ref ASC`
+      )
+      .all(envelopeId)
+      .map(mapFailureNotice)
+  }
+
+  /**
+   * Presentation receipts held by a TERMINAL attempt that left no local trace
+   * of having disposed them: no reminder for the envelope, no failure notice.
+   *
+   * This is a CANDIDATE set, not a verdict. Whether the obligation is actually
+   * still outstanding is the ledger's answer alone — a reply, a defer, or an
+   * ack all clear it without writing anything here. It is bounded by a lookback
+   * and a limit because the caller runs it at boot, once, to report.
+   */
+  listUndisposedTerminalPresentations(options: {
+    since: string
+    limit: number
+    runtimeId?: string | undefined
+  }): HrcMailDrivePresentedAttempt[] {
+    return this.db
+      .query<
+        DriveAttemptRow & { presented_at: string; presented_envelope_id: string },
+        [string, string | null, string | null, number]
+      >(
+        `SELECT ${qualified(DRIVE_ATTEMPT_COLUMNS, 'a')},
+                p.presented_at AS presented_at,
+                p.envelope_id AS presented_envelope_id
+           FROM hrcmail_drive_attempts a
+           JOIN hrcmail_drive_presentations p
+             ON p.drive_attempt_id = a.drive_attempt_id
+          WHERE a.state IN ('completed', 'failed', 'no_op', 'withdrawn')
+            AND a.updated_at >= ?
+            AND (?2 IS NULL OR a.runtime_id = ?3)
+            AND NOT EXISTS (
+              SELECT 1 FROM hrcmail_envelope_reminders r
+               WHERE r.envelope_id = p.envelope_id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM hrcmail_failure_notices n
+               WHERE n.envelope_id = p.envelope_id
+            )
+          ORDER BY p.presented_at DESC, p.envelope_id ASC
+          LIMIT ?4`
+      )
+      .all(options.since, options.runtimeId ?? null, options.runtimeId ?? null, options.limit)
+      .map(mapPresentedAttempt)
+  }
+
+  /**
+   * Drive attempts whose run is still `accepted` with no dispatched input.
+   *
+   * The T-07963 signature read from the other side: a run that was accepted,
+   * bound to a drive, and never entered the broker. After a few minutes it is
+   * no longer "about to start" — it is a run whose caller input is nowhere.
+   */
+  listUndispatchedAcceptedDriveRuns(acceptedBefore: string): HrcMailUndispatchedDriveRun[] {
+    return this.db
+      .query<
+        {
+          drive_attempt_id: string
+          target_session_ref: string
+          run_id: string
+          state: string
+          runtime_id: string | null
+          accepted_at: string | null
+          run_status: string
+        },
+        [string]
+      >(
+        `SELECT a.drive_attempt_id, a.target_session_ref, a.run_id, a.state,
+                a.runtime_id, r.accepted_at, r.status AS run_status
+           FROM hrcmail_drive_attempts a
+           JOIN runs r ON r.run_id = a.run_id
+          WHERE r.status = 'accepted'
+            AND r.dispatched_input_id IS NULL
+            AND COALESCE(r.accepted_at, a.claimed_at) <= ?
+          ORDER BY COALESCE(r.accepted_at, a.claimed_at) ASC, a.drive_attempt_id ASC`
+      )
+      .all(acceptedBefore)
+      .map((row) => ({
+        driveAttemptId: row.drive_attempt_id,
+        targetSessionRef: row.target_session_ref,
+        runId: row.run_id,
+        attemptState: row.state as HrcMailDriveAttemptState,
+        runStatus: row.run_status,
+        ...(row.runtime_id === null ? {} : { runtimeId: row.runtime_id }),
+        ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
+      }))
   }
 
   private releaseSlot(targetSessionRef: string, driveAttemptId: string, now: string): void {

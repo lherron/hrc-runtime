@@ -23,6 +23,7 @@
  * traffic re-woke the kicker. See `unbornBirthWakeCandidates`.
  */
 import type { MailKickerContext } from '../context.js'
+import { reportBootReconcileOnce } from '../diagnostics/stranded.js'
 import { LEDGER_SWEEP_SCOPE_BATCH, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { sweepLapsedObligations } from '../terminal/runtime-lapse.js'
@@ -34,6 +35,10 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
   if (this.mailKickerSweepInFlight !== undefined) return this.mailKickerSweepInFlight
 
   const sweep = (async () => {
+    // T-07964 §4: one boot report, on the first periodic sweep rather than at
+    // `start()`, so runtime reattachment and the broker's warmup have already
+    // happened and the runs it names are the ones that really did survive.
+    await reportBootReconcileOnce(this)
     // rev 5.1 D3 backstop. Ahead of the delivery sweep on purpose: an
     // obligation that has already lapsed should be failed before the same tick
     // reads the wake set, so the sender's notice and the reader's next

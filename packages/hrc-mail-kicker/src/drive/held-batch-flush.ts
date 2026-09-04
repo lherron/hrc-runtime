@@ -2,6 +2,7 @@ import type { HrcSessionRecord } from 'hrc-core'
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
+import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { presentationKeyFor } from './batching.js'
 import {
   type HeldBatchActionableEnvelope,
@@ -93,10 +94,14 @@ export async function prepareHeldBatchForBoundary(
   { attempt: HrcMailDriveAttempt; actionable: HeldBatchActionableEnvelope[] } | undefined
 > {
   if (held.runtimeId === undefined) {
-    server.db.mailDrives.failWithoutStart(
+    const failed = server.db.mailDrives.failWithoutStart(
       held.driveAttemptId,
       'HRC-held queue batch has no broker runtime identity'
     )
+    logAttemptTerminal(server, failed, {
+      reason: 'queue_batch_missing_runtime_id',
+      presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(failed.driveAttemptId),
+    })
     server.log('WARN', 'wrkq.kicker.queue_batch_invalid', {
       targetSessionRef,
       driveAttemptId: held.driveAttemptId,

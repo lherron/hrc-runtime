@@ -649,6 +649,8 @@ async function finalizeConfiguredCommandRun(
 
 // Re-export CLI invocation builder so hrc-cli can produce dry-run previews
 // without duplicating the intent → argv/env translation.
+export { WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
+export type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
 export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
 export { drainEventDatabase } from './event-ingest.js'

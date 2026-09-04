@@ -20,6 +20,7 @@ import type {
   KickerLogLevel,
   KickerRegistryClient,
 } from './contracts.js'
+import type { DisposalInFlight } from './diagnostics/attempt-log.js'
 import type { MailKickerLedger } from './ledger/client.js'
 
 /** Internal capability surface shared by the decomposed kicker state machines. */
@@ -45,6 +46,10 @@ export type MailKickerContext = {
   readonly mailKickerBirthDeferredAnnounced: Map<string, string>
   readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
   readonly mailKickerLapsedRuntimes: Set<string>
+  /** Live obligation disposals, keyed by attempt; what `dispose_interrupted` reports. */
+  readonly mailKickerDisposalsInFlight: Map<string, DisposalInFlight>
+  /** One boot-reconcile report is owed per process (T-07964 §4). */
+  mailKickerBootReconcilePending: boolean
 
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(

@@ -5,6 +5,7 @@ import { throwCommanderError } from './command-errors.js'
 import { annotateCommand, finalizeCommandMetadata } from './command-metadata.js'
 import { printInfo, renderRootHelp, resolveHelpView } from './help.js'
 import { registerFederationCommands } from './register-federation.js'
+import { registerMailCommands } from './register-mail.js'
 import { registerMetricsCommands } from './register-metrics.js'
 import { registerRuntimeCommands } from './register-runtime.js'
 import { registerServerSessionCommands } from './register-server-session.js'
@@ -59,6 +60,7 @@ export function buildProgram(): Command {
   registerRuntimeCommands(program)
   registerMetricsCommands(program)
   registerFederationCommands(program)
+  registerMailCommands(program)
   finalizeCommandMetadata(program)
 
   program.configureHelp({

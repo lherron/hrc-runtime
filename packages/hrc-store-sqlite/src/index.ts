@@ -158,11 +158,13 @@ export type {
   HrcMailDriveAttempt,
   HrcMailDriveAttemptState,
   HrcMailDriveClaimResult,
+  HrcMailDrivePresentedAttempt,
   HrcMailDriveSlot,
   HrcMailDriveWakeReason,
   HrcMailEnvelopeReminder,
   HrcMailFailureNotice,
   HrcMailHintDecision,
+  HrcMailUndispatchedDriveRun,
 } from './mail/drive-repository.js'
 export type {
   AckHrcMailEnvelopeInput,

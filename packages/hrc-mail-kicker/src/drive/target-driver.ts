@@ -257,7 +257,13 @@ export async function driveMailTargetOnce(
       // long as the row exists. Observed live — a smoketest scope this node
       // cannot place held its slot for 80 minutes.
       const reason = `no runtime intent for ${targetSessionRef}: this node cannot resolve the agent's placement`
-      server.db.mailDrives.failWithoutStart(attempt.driveAttemptId, reason)
+      const unplaceable = server.db.mailDrives.failWithoutStart(attempt.driveAttemptId, reason)
+      logAttemptTerminal(server, unplaceable, {
+        reason: 'placement_unresolvable',
+        presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(
+          unplaceable.driveAttemptId
+        ),
+      })
       server.log('WARN', 'wrkq.kicker.placement_unresolvable', {
         targetSessionRef,
         driveAttemptId: attempt.driveAttemptId,
@@ -294,7 +300,11 @@ export async function driveMailTargetOnce(
       actionable.map((item) => item.envelope.id)
     )
     if (envelopeIds.length === 0) {
-      server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
+      const noOp = server.db.mailDrives.completeNoOp(attempt.driveAttemptId)
+      logAttemptTerminal(server, noOp, {
+        reason: 'already_presented',
+        presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(noOp.driveAttemptId),
+      })
       // T-07671: an attempt that ends here wrote no receipts and dispatched no
       // turn. Silent, it is indistinguishable from a kicker that never ran.
       server.log('WARN', 'wrkq.kicker.drive_no_op', {
@@ -439,6 +449,7 @@ export async function driveMailTargetOnce(
 import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
+import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { deliverFailureNotices } from '../terminal/failure-notices.js'

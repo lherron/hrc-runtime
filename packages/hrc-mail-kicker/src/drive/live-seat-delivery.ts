@@ -306,6 +306,12 @@ export async function declineForInFlightAttempt(
             wakeReason
           )
         : holdQueueForBusyTarget(server, targetSessionRef, session, seat, actionable, wakeReason)
+  // T-07964 §5. The heartbeat used to say only "an attempt holds the slot",
+  // which reads identically for a turn that has been running for an hour and
+  // for a run that was accepted and never entered the broker at all. Those are
+  // opposite diagnoses and one of them cost EN-03687 fifty-one minutes of
+  // silence, so the run's own status and input binding ride along.
+  const inFlightRun = server.db.runs.getByRunId(attempt.runId)
   server.log('INFO', 'wrkq.kicker.drive_in_flight', {
     ...(delivered ? { heldOrPreemptedDelivery: true } : {}),
     targetSessionRef,
@@ -323,6 +329,12 @@ export async function declineForInFlightAttempt(
     // the line names the mail that is stuck behind it.
     envelopeIds: actionable.map((item) => item.envelope.id),
     observedSeatState: seat.state,
-    ...(seat.state === 'turn-active' ? { observedTurnId: seat.turnId } : {}),
+    // `turnId` and `observedTurnId` carry the same broker observation. §5 names
+    // the first; the second predates it and is what existing greps and the
+    // T-07644 assertions use, so both are written rather than one renamed.
+    ...(seat.state === 'turn-active' ? { turnId: seat.turnId, observedTurnId: seat.turnId } : {}),
+    runStatus: inFlightRun?.status ?? 'absent',
+    dispatchedInputId: inFlightRun?.dispatchedInputId ?? null,
+    ...(inFlightRun?.startedAt === undefined ? {} : { runStartedAt: inFlightRun.startedAt }),
   })
 }

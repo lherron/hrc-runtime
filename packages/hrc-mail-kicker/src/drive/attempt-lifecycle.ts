@@ -96,51 +96,77 @@ function disposeAttemptObligations(
   )
   const turnEndedAt = attempt.completedAt ?? new Date().toISOString()
   const remindAt = new Date(Date.now() + REMINDER_HOLD_MS).toISOString()
+  // T-07964 §2: every branch below used to be a bare `continue`, so a disposal
+  // that ran and decided nothing looked exactly like one that never ran at all.
+  const disposeLog = beginDisposeLog(server, attempt, envelopeIds)
   void (async () => {
-    for (const envelope of envelopeIds) {
-      try {
-        const row = await server.ledger.envelopeShow({ envelope })
-        if (row.state !== 'presented') continue
-        const newest = newestPresentationReceipt(row)
-        // Superseded: another attempt has presented this since, so the
-        // obligation is bound to that delivery and not to this one.
-        if (newest?.driveAttemptId !== driveAttemptId) continue
-        const runtime = newest.runtimeId ?? attempt.runtimeId
-        if (runtime === undefined) continue
-        if (reminded.has(envelope)) {
-          await failEnvelope(server, {
-            envelope,
-            reason: 'ignored',
-            runtime,
+    try {
+      for (const envelope of envelopeIds) {
+        try {
+          const row = await server.ledger.envelopeShow({ envelope })
+          if (row.state !== 'presented') {
+            disposeLog.outcome(envelope, 'skipped:not_presented', { envelopeState: row.state })
+            continue
+          }
+          const newest = newestPresentationReceipt(row)
+          // Superseded: another attempt has presented this since, so the
+          // obligation is bound to that delivery and not to this one.
+          if (newest?.driveAttemptId !== driveAttemptId) {
+            disposeLog.outcome(envelope, 'skipped:superseded', {
+              ...(newest?.driveAttemptId === undefined
+                ? {}
+                : { newestDriveAttemptId: newest.driveAttemptId }),
+            })
+            continue
+          }
+          const runtime = newest.runtimeId ?? attempt.runtimeId
+          if (runtime === undefined) {
+            disposeLog.outcome(envelope, 'skipped:no_runtime')
+            continue
+          }
+          if (reminded.has(envelope)) {
+            await failEnvelope(server, {
+              envelope,
+              reason: 'ignored',
+              runtime,
+              targetSessionRef,
+              driveAttemptId,
+              callSite: 'dispose_attempt_obligations',
+            })
+            disposeLog.outcome(envelope, 'failed:ignored', { runtimeId: runtime })
+            continue
+          }
+          const armed = server.db.mailDrives.armReminder({
+            envelopeId: envelope,
+            runtimeId: runtime,
+            targetSessionRef,
+            turnEndedAt,
+            remindAt,
+          })
+          if (!armed) {
+            disposeLog.outcome(envelope, 'skipped:reminder_exists', { runtimeId: runtime })
+            continue
+          }
+          server.log('INFO', 'wrkq.kicker.reminder_armed', {
             targetSessionRef,
             driveAttemptId,
-            callSite: 'dispose_attempt_obligations',
+            envelope,
+            runtimeId: runtime,
+            remindAt,
           })
-          continue
+          disposeLog.outcome(envelope, 'reminded', { runtimeId: runtime, remindAt })
+        } catch (error) {
+          server.log('WARN', 'wrkq.kicker.dispose_obligation_failed', {
+            targetSessionRef,
+            driveAttemptId,
+            envelope,
+            error: errorText(error),
+          })
+          disposeLog.outcome(envelope, 'failed:error', { error: errorText(error) })
         }
-        const armed = server.db.mailDrives.armReminder({
-          envelopeId: envelope,
-          runtimeId: runtime,
-          targetSessionRef,
-          turnEndedAt,
-          remindAt,
-        })
-        if (!armed) continue
-        server.log('INFO', 'wrkq.kicker.reminder_armed', {
-          targetSessionRef,
-          driveAttemptId,
-          envelope,
-          runtimeId: runtime,
-          remindAt,
-        })
-      } catch (error) {
-        server.log('WARN', 'wrkq.kicker.dispose_obligation_failed', {
-          targetSessionRef,
-          driveAttemptId,
-          envelope,
-          error: errorText(error),
-        })
       }
+    } finally {
+      disposeLog.finish()
     }
   })()
 }
@@ -197,6 +223,11 @@ export function observeAttempt(
   if (terminal !== undefined) {
     const completed = server.db.mailDrives.completeStartedAttempt(current.runId, terminal.eventKind)
     if (completed !== undefined) {
+      logAttemptTerminal(server, completed.attempt, {
+        reason: terminal.eventKind,
+        presentedEnvelopeIds: completed.presentedEnvelopeIds,
+        runStatus: server.db.runs.getByRunId(current.runId)?.status,
+      })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
       server.requestAutoReplyReconcile()
     }
@@ -220,6 +251,11 @@ export function observeAttempt(
       `runtime.${runtime.status}`
     )
     if (completed !== undefined) {
+      logAttemptTerminal(server, completed.attempt, {
+        reason: `runtime.${runtime.status}`,
+        presentedEnvelopeIds: completed.presentedEnvelopeIds,
+        runStatus: run?.status,
+      })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
       server.requestAutoReplyReconcile()
     }
@@ -239,7 +275,13 @@ export function observeAttempt(
   if (started === undefined && isQueuedAttempt(current)) {
     const reason = run === null ? 'queued input has no run row' : undefined
     if (reason !== undefined) {
-      server.db.mailDrives.failWithoutStart(current.driveAttemptId, reason)
+      const failed = server.db.mailDrives.failWithoutStart(current.driveAttemptId, reason)
+      logAttemptTerminal(server, failed, {
+        reason,
+        // An unstarted attempt never owned a turn, so it disposes nothing. The
+        // empty list is the point: it says the receipt is going nowhere.
+        presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(failed.driveAttemptId),
+      })
       server.log('INFO', 'wrkq.kicker.queued_attempt_reaped', {
         targetSessionRef: current.targetSessionRef,
         driveAttemptId: current.driveAttemptId,
@@ -259,6 +301,11 @@ export function observeAttempt(
       `run.${run.status}`
     )
     if (completed !== undefined) {
+      logAttemptTerminal(server, completed.attempt, {
+        reason: `run.${run.status}`,
+        presentedEnvelopeIds: completed.presentedEnvelopeIds,
+        runStatus: run.status,
+      })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
       server.requestAutoReplyReconcile()
     }
@@ -272,6 +319,7 @@ import type { HrcLifecycleEvent, HrcRunRecord, HrcSessionRecord } from 'hrc-core
 import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
+import { beginDisposeLog, logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import {
   MAIL_DRIVE_TERMINAL_EVENTS,
   REMINDER_HOLD_MS,

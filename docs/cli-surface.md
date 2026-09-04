@@ -174,6 +174,36 @@ At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
 source label. Low-level runtime ensure/adopt live under `hrc admin runtime`.
 `runtime send` sends input to an active run.
 
+## `mail inspect` — what HRC did with an obligation
+
+```bash
+hrc mail inspect EN-03687
+hrc mail inspect EN-03687 --json
+hrc mail inspect cody@agent-spaces:T-07962
+hrc mail inspect rt-ab0029c2-1d3f-4f54-89a4-d77e79978c6a
+```
+
+Read-only. It joins the wrkq envelope row with HRC's own drive attempts,
+presentation receipts, reminders, failure notices, auto-reply intents and the
+bound `runs` row, and prints a timeline plus a one-line verdict — `stranded`,
+`awaiting_turn`, `reminder_armed`, `reminder_delivered`, `auto_reply_pending`,
+`discharged`, `failed`, `awaiting_delivery`, `no_hrc_record` or
+`ledger_unavailable`. `--json` emits one document.
+
+The target form is decided by shape: `EN-xxxxx` inspects one envelope, `rt-…` a
+runtime, anything else an addressee (handle or session ref) — the last two
+report on that party's newest presentation receipts. A wrkq ledger that cannot
+be reached is reported per envelope rather than failing the command: the HRC
+half is what explains a stranded obligation.
+
+The kicker's own log lines carry the same identities (T-07964): a terminal
+attempt writes `wrkq.kicker.attempt_terminal`, its obligation disposal writes
+`wrkq.kicker.dispose_begin` and one `wrkq.kicker.dispose_outcome` per envelope
+(with `wrkq.kicker.dispose_interrupted` at a stop that lands mid-loop), a turn
+that ends on a runtime still holding an obligation nobody owns writes
+`wrkq.auto_reply.unowned_turn`, and the first sweep after boot writes one
+`wrkq.kicker.boot_reconcile` summary.
+
 ## Session continuity
 
 `hrc session rotate <hostSessionId>` archives the current host session and

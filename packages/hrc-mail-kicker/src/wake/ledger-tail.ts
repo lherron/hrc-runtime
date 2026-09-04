@@ -8,6 +8,7 @@
  * an already-pending envelope unreachable (T-07643).
  */
 import type { MailKickerContext } from '../context.js'
+import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { dropAckedHeldMember } from '../drive/held-batch.js'
 import { LEDGER_TAIL_PAGE_LIMIT, errorText, isRecord } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
@@ -87,10 +88,14 @@ export async function withdrawAckedQueuedInjection(
   }
 
   if (withdrawal.response.outcome === 'withdrawn') {
-    server.db.mailDrives.markClaimedAttemptWithdrawn(
+    const withdrawn = server.db.mailDrives.markClaimedAttemptWithdrawn(
       attempt.driveAttemptId,
       QUEUED_INJECTION_WITHDRAW_REASON
     )
+    logAttemptTerminal(server, withdrawn, {
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+      presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(withdrawn.driveAttemptId),
+    })
     server.log('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
       envelopeId,
       runtimeId,

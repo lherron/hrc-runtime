@@ -1,6 +1,7 @@
 import type { HrcBrokerInvocationEventRecord } from 'hrc-core'
 
 import type { MailKickerContext } from '../context.js'
+import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { failEnvelopeWithAudit } from './envelope-terminal.js'
 
@@ -105,10 +106,12 @@ async function failReceiptedExpiredSubmission(
   }
 
   if (failedCount > 0) {
-    server.db.mailDrives.failWithoutStart(
-      driveAttemptId,
-      `broker queued injection expired before acceptance (${submissionId})`
-    )
+    const reason = `broker queued injection expired before acceptance (${submissionId})`
+    const failed = server.db.mailDrives.failWithoutStart(driveAttemptId, reason)
+    logAttemptTerminal(server, failed, {
+      reason: 'queued_injection_expired',
+      presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(driveAttemptId),
+    })
   }
 }
 

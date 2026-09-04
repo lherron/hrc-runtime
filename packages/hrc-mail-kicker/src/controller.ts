@@ -18,6 +18,9 @@ import type {
   MailKickerDependencies,
   MailKickerOptions,
 } from './contracts.js'
+import { logDisposeInterrupted } from './diagnostics/attempt-log.js'
+import type { DisposalInFlight } from './diagnostics/attempt-log.js'
+import { reportUnownedTurn } from './diagnostics/stranded.js'
 import { isRuntimeTerminal } from './drive/attempt-lifecycle.js'
 import { driveMailTargetOnce } from './drive/target-driver.js'
 import {
@@ -57,6 +60,8 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerBirthDeferredAnnounced = new Map<string, string>()
   readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
   readonly mailKickerLapsedRuntimes = new Set<string>()
+  readonly mailKickerDisposalsInFlight = new Map<string, DisposalInFlight>()
+  mailKickerBootReconcilePending = true
 
   constructor(
     private readonly dependencies: MailKickerDependencies,
@@ -139,6 +144,9 @@ export class MailKicker implements MailKickerContext {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    // Read FIRST, before anything is drained: the whole point of the line is
+    // what was genuinely still outstanding at the moment the stop was ordered.
+    logDisposeInterrupted(this)
     if (this.mailKickerSweepTimer !== undefined) {
       clearInterval(this.mailKickerSweepTimer)
       this.mailKickerSweepTimer = undefined
@@ -258,7 +266,18 @@ export function observeMailDriveLifecycleEvent(
     return
   }
   if (!MAIL_DRIVE_TERMINAL_EVENTS.has(event.eventKind)) return
-  this.wake(formatSessionRef(event.scopeRef, event.laneRef), 'turn_completion')
+  const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
+  // T-07964 §3. Ahead of the wake and independent of it: the wake re-drives the
+  // scope, which is a different question from "did this turn end holding
+  // somebody's obligation with no drive left to mint the reply from".
+  void reportUnownedTurn(this, event, targetSessionRef).catch((error: unknown) => {
+    this.log('WARN', 'wrkq.auto_reply.unowned_turn_check_failed', {
+      targetSessionRef,
+      ...(event.runtimeId === undefined ? {} : { runtimeId: event.runtimeId }),
+      error: errorText(error),
+    })
+  })
+  this.wake(targetSessionRef, 'turn_completion')
 }
 
 export function createMailKicker(

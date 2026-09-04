@@ -61,9 +61,17 @@ export function failDriveAfterThrow(
   message: string
 ): HrcMailDriveAttemptState {
   const current = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
-  return current.state === 'started'
-    ? server.db.mailDrives.recordError(current.driveAttemptId, message).state
-    : server.db.mailDrives.failWithoutStart(current.driveAttemptId, message).state
+  // `recordError` only ANNOTATES a started attempt, so only the second branch
+  // is a terminal transition and only it earns the line.
+  if (current.state === 'started') {
+    return server.db.mailDrives.recordError(current.driveAttemptId, message).state
+  }
+  const failed = server.db.mailDrives.failWithoutStart(current.driveAttemptId, message)
+  logAttemptTerminal(server, failed, {
+    reason: 'drive_threw',
+    presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(failed.driveAttemptId),
+  })
+  return failed.state
 }
 
 /** The scope behind a drive target, or nothing when the ref is unparseable. */
@@ -230,4 +238,5 @@ import type {
 
 import type { MailKickerContext } from '../context.js'
 import type { ForeignHome } from '../contracts.js'
+import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { isRecord, isRuntimeUnavailableStatus, parseSessionRef } from '../internal.js'

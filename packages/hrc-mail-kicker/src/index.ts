@@ -44,6 +44,21 @@ export {
   seatCanDispatch,
 } from './drive/held-batch-flush.js'
 export { observeAttempt } from './drive/attempt-lifecycle.js'
+export {
+  buildMailInspection,
+  mailInspectEnvelopeIds,
+  resolveMailInspectQuery,
+} from './diagnostics/inspect.js'
+export type {
+  MailInspectAttempt,
+  MailInspectEnvelope,
+  MailInspectEvent,
+  MailInspectLedgerRow,
+  MailInspectQuery,
+  MailInspectRun,
+  MailInspectVerdictCode,
+  MailInspection,
+} from './diagnostics/inspect.js'
 export { handleQueuedInjectionExpiry } from './terminal/queued-injection-expiry.js'
 export { failEnvelopeWithAudit } from './terminal/envelope-terminal.js'
 export type {
