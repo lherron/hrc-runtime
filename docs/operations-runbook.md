@@ -212,6 +212,89 @@ Then the installed-binary bar: `just install`, restart the real launchd
 daemon, and smoke `hrc --help`, `hrc server status`, and at least one real
 read-only API/CLI command.
 
+## Gate traps: correct guards that fail silently and report success
+
+Four traps on the `just verify` / `just install` / `git push` path. All four are
+working-as-intended guards, none prints the reason where the caller looks, and
+each has independently cost more than one agent a cycle. Documented here after
+three of them were rediscovered by three different agents in a single evening
+(T-07963 / T-07964 / T-07969, 2026-09-03).
+
+### 1. The harness guard: `hrc server serve` refuses inside a coding agent
+
+`just verify` and the pre-push `code-validation` hook both boot an ephemeral
+daemon through `scripts/dev-env.sh`, and `hrc server serve` REFUSES to start
+when it is a descendant of a coding-agent harness. The caller sees a bare
+`exit status 1`; the real message is only in
+`$TMPDIR/hrc-dev-env-<uid>-<n>/daemon.log`.
+
+The guard is right and has **no escape hatch by design** — see the docblock in
+`packages/hrc-cli/src/harness-guard.ts`. A daemon started under a harness
+inherits that harness's recursion-guard variables and leaks them into every
+child harness it launches, so every dispatched run dies silently.
+
+**The variables it actually checks are three** (`harness-guard.ts:17`):
+
+```ts
+const HARNESS_GUARD_VARS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX'] as const
+```
+
+Cite that line rather than a habit. Two agents independently arrived at a
+four-variable incantation including `CLAUDE_CODE_SSE_PORT` and
+`CLAUDECODE_SESSION_ID`, **neither of which is consulted anywhere**, while
+neither was stripping `CODEX_SANDBOX`, which is. Converging anecdotes are not
+evidence; the constant is.
+
+**Preferred remedy — a clean-env shell**, which carries none of the three:
+
+```bash
+ssh user@host 'cd ~/praesidium/hrc-runtime && just verify'
+```
+
+`env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CODEX_SANDBOX <cmd>` also works
+and genuinely removes the inheritance rather than merely silencing the check —
+but **only for the EPHEMERAL daemon**. Never use it to force-boot the real
+daemon: that process launches every agent on the node, so a leaked variable
+kills every dispatched run fleet-wide. The real daemon has a supported path that
+needs no override at all — `hrc server start` / `hrc server restart` delegate to
+launchd, which respawns with a clean environment. (A task-scoped runtime is not
+permitted to restart the daemon and must escalate to the project primary or an
+operator shell, which lands on that path automatically.)
+
+### 2. `HRC_EVENT_INGEST_TCP_PORT` collides across in-suite servers
+
+The user session exports it; the ephemeral daemon and every in-suite server
+inherit it and then collide on that port. `unset HRC_EVENT_INGEST_TCP_PORT`
+before running the gate — absent means no TCP listener, which is the tree
+default. This one presents as flaky test infrastructure rather than an
+environment problem, so it gets blamed on the suite.
+
+### 3. `just install` from a linked worktree does not activate anything
+
+Run from `~/praesidium/under-construction/*` it prints
+`NON_CANONICAL publication channel=worktree` and
+`linked-worktree install complete; global HRC wrappers unchanged`, publishes
+under the `worktree` npm tag, leaves both `~/.bun/bin/hrc` and the running
+daemon's atomic release untouched — and **exits 0**, so it reads as success.
+
+`scripts/install-policy.ts` decides this by comparing `git rev-parse --git-dir`
+against `--git-common-dir`; different means `linked-worktree`. There is no
+override, and there should not be — the guard is what stops a worktree build
+reaching the fleet. A canonical install must run from
+`~/praesidium/hrc-runtime` with a clean tree.
+
+**Prove activation from `hrc server status --json` → `release.hrcBuild.sourceCommit`,
+never from an install's exit code.**
+
+### 4. Two gates that need an explicit regeneration step
+
+Neither is breakage; both look like a red gate to someone who has not seen them.
+
+- Editing `architecture/records/**` fails `just architecture-records` until
+  `--write` regenerates the index.
+- A newly exported `hrc-core` symbol fails `check-public-surface` until
+  `bun scripts/check-public-surface.ts --update-baseline`.
+
 ## Per-user hrc-viewer LaunchAgent
 
 `hrc-viewer` is the sole Ghostty presentation actuator. Run one LaunchAgent for
