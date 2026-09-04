@@ -57,6 +57,8 @@ export type MailKickerContext = {
   readonly mailKickerDisposalsInFlight: Map<string, DisposalInFlight>
   /** One boot-reconcile report is owed per process (T-07964 §4). */
   mailKickerBootReconcilePending: boolean
+  /** Attempts already named by a stalled-delivery line; one per attempt per process. */
+  readonly mailKickerStalledDeliveryAnnounced: Set<string>
 
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(

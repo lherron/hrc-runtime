@@ -23,7 +23,7 @@
  * traffic re-woke the kicker. See `unbornBirthWakeCandidates`.
  */
 import type { MailKickerContext } from '../context.js'
-import { reportBootReconcileOnce } from '../diagnostics/stranded.js'
+import { reportBootReconcileOnce, reportStalledDeliveries } from '../diagnostics/stranded.js'
 import { LEDGER_SWEEP_SCOPE_BATCH, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { sweepLapsedObligations } from '../terminal/runtime-lapse.js'
@@ -39,6 +39,12 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
     // `start()`, so runtime reattachment and the broker's warmup have already
     // happened and the runs it names are the ones that really did survive.
     await reportBootReconcileOnce(this)
+    // Every sweep, but at most one line per attempt per process: a wedge does
+    // not clear on its own, so a seat that stalls between boots must not stay
+    // silent until the next one.
+    await reportStalledDeliveries(this).catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.stalled_delivery_check_failed', { error: errorText(error) })
+    })
     // rev 5.1 D3 backstop. Ahead of the delivery sweep on purpose: an
     // obligation that has already lapsed should be failed before the same tick
     // reads the wake set, so the sender's notice and the reader's next

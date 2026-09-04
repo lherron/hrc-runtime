@@ -15,7 +15,7 @@ import type { HrcLifecycleEvent } from 'hrc-core'
 import type { HrcMailDrivePresentedAttempt } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import { LAPSE_SWEEP_LOOKBACK_MS, errorText } from '../internal.js'
+import { LAPSE_SWEEP_LOOKBACK_MS, STALLED_DELIVERY_THRESHOLD_MS, errorText } from '../internal.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
 
 /** Attempt states that still own their envelopes; anything else has let go. */
@@ -78,6 +78,103 @@ async function confirmStranded(
     }
   }
   return { stranded, ledgerErrors }
+}
+
+export type StalledDelivery = StrandedPresentation & {
+  /** How long this attempt has held the obligation without its turn starting. */
+  liveAgeMs: number
+}
+
+/**
+ * Deliveries that are not awaited but WEDGED (T-07964, mable's ruling for the
+ * T-07971 interim net).
+ *
+ * The gap this closes: every other reader here keys on a TERMINAL attempt,
+ * because a live attempt owns its own disposal. That is true right up until the
+ * attempt stops being live in any meaningful sense — and then the obligation is
+ * stranded exactly as EN-03687 was, while `hrc mail inspect` says
+ * `awaiting_turn`, which is indistinguishable from a healthy in-flight delivery
+ * at any age.
+ *
+ * Three filters, in order of cost:
+ *
+ *  1. SQL: live state, `started_at IS NULL`, claimed before the threshold. The
+ *     second is structural — an attempt that observed its `turn.started` cannot
+ *     appear, so "started, at any age" is silent by construction, not by a case.
+ *  2. A HELD batch is excluded while its runtime still has an active run. Held
+ *     batches wait for a turn boundary BY DESIGN, and turns legitimately run for
+ *     an hour — EN-03687's own ran 54 minutes. Reporting those would fire on
+ *     every long turn on the node, which is the failure mode that makes a signal
+ *     worthless. A held batch behind a runtime with nothing running is waiting
+ *     for a boundary that has already passed, and that IS wedged.
+ *  3. The ledger: still `presented`, and this attempt still owns the newest
+ *     receipt. Same authority as everywhere else here.
+ *
+ * It REPORTS. Nothing is disposed, no attempt is transitioned; the whole point
+ * is to make the operator ack possible until T-07971 lands the real fix.
+ */
+export async function findStalledDeliveries(
+  server: MailKickerContext
+): Promise<{ stalled: StalledDelivery[]; ledgerErrors: number }> {
+  const now = Date.now()
+  const candidates = server.db.mailDrives
+    .listStalledLivePresentations({
+      claimedBefore: new Date(now - STALLED_DELIVERY_THRESHOLD_MS).toISOString(),
+      limit: STRANDED_LEDGER_READ_CAP,
+    })
+    .filter((candidate) => {
+      if (candidate.attempt.state !== 'held') return true
+      const runtimeId = candidate.attempt.runtimeId
+      if (runtimeId === undefined) return true
+      const runtime = server.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
+      return runtime?.activeRunId === undefined
+    })
+  if (candidates.length === 0) return { stalled: [], ledgerErrors: 0 }
+
+  const { stranded, ledgerErrors } = await confirmStranded(server, candidates)
+  const claimedAtById = new Map(
+    candidates.map((candidate) => [candidate.attempt.driveAttemptId, candidate.attempt.claimedAt])
+  )
+  return {
+    stalled: stranded.map((item) => {
+      const claimedAt = Date.parse(claimedAtById.get(item.driveAttemptId) ?? '')
+      return {
+        ...item,
+        liveAgeMs: Number.isNaN(claimedAt) ? 0 : Math.max(now - claimedAt, 0),
+      }
+    }),
+    ledgerErrors,
+  }
+}
+
+/**
+ * One line per wedged delivery, at most once per attempt per process.
+ *
+ * Bounded because the periodic sweep re-reads the same rows forever and a
+ * wedge does not clear on its own; unbounded it would be the loudest thing in
+ * the log. Bounded per PROCESS rather than permanently because a restart is
+ * exactly when someone is reading, and `boot_reconcile` names the population
+ * again there anyway.
+ */
+export async function reportStalledDeliveries(server: MailKickerContext): Promise<void> {
+  const { stalled, ledgerErrors } = await findStalledDeliveries(server)
+  for (const delivery of stalled) {
+    if (server.mailKickerStalledDeliveryAnnounced.has(delivery.driveAttemptId)) continue
+    server.mailKickerStalledDeliveryAnnounced.add(delivery.driveAttemptId)
+    server.log('WARN', 'wrkq.kicker.stalled_delivery', {
+      targetSessionRef: delivery.targetSessionRef,
+      driveAttemptId: delivery.driveAttemptId,
+      runId: delivery.runId,
+      ...(delivery.runtimeId === undefined ? {} : { runtimeId: delivery.runtimeId }),
+      envelope: delivery.envelope,
+      attemptState: delivery.attemptState,
+      liveAgeMs: delivery.liveAgeMs,
+      thresholdMs: STALLED_DELIVERY_THRESHOLD_MS,
+      reason: 'presented but no turn.started observed for this attempt',
+      recovery: 'reporting only; disposition is T-07971. Clear by operator ack.',
+      ...(ledgerErrors > 0 ? { ledgerErrors } : {}),
+    })
+  }
 }
 
 /**
@@ -164,9 +261,15 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
   const undispatched = server.db.mailDrives.listUndispatchedAcceptedDriveRuns(
     new Date(now - UNDISPATCHED_RUN_MIN_AGE_MS).toISOString()
   )
+  // The third population (mable's T-07971 interim net): live attempts holding an
+  // obligation whose turn never started. The other two key on a TERMINAL
+  // attempt, so without this a wedged live delivery is silent between boots and
+  // reads as `awaiting_turn` in the inspect command.
+  const { stalled, ledgerErrors: stalledLedgerErrors } = await findStalledDeliveries(server)
+  const errors = ledgerErrors + stalledLedgerErrors
 
   server.log(
-    stranded.length > 0 || undispatched.length > 0 ? 'WARN' : 'INFO',
+    stranded.length > 0 || undispatched.length > 0 || stalled.length > 0 ? 'WARN' : 'INFO',
     'wrkq.kicker.boot_reconcile',
     {
       nodeId: server.nodeId,
@@ -176,7 +279,10 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
       stranded,
       undispatchedCount: undispatched.length,
       undispatched,
-      ...(ledgerErrors > 0 ? { ledgerErrors } : {}),
+      stalledCount: stalled.length,
+      stalled,
+      stalledThresholdMs: STALLED_DELIVERY_THRESHOLD_MS,
+      ...(errors > 0 ? { ledgerErrors: errors } : {}),
     }
   )
 }

@@ -1996,6 +1996,44 @@ export class HrcMailDriveRepository {
   }
 
   /**
+   * Presentations held by a LIVE attempt whose turn never started (T-07964).
+   *
+   * The discriminator is `started_at IS NULL`, and it is structural rather than
+   * heuristic: `recordStart` sets `state='started'` and `started_at` in one
+   * statement, so an attempt that has observed its `turn.started` cannot appear
+   * here at any age. What is left is an attempt that has been holding somebody's
+   * obligation since it was claimed and has never begun to deliver it.
+   *
+   * Deliberately independent of the disposition column: a live attempt has not
+   * disposed anything yet, so there is nothing to exclude and this read does not
+   * depend on that migration.
+   */
+  listStalledLivePresentations(options: {
+    claimedBefore: string
+    limit: number
+  }): HrcMailDrivePresentedAttempt[] {
+    return this.db
+      .query<
+        DriveAttemptRow & { presented_at: string; presented_envelope_id: string },
+        [string, number]
+      >(
+        `SELECT ${qualified(DRIVE_ATTEMPT_COLUMNS, 'a')},
+                p.presented_at AS presented_at,
+                p.envelope_id AS presented_envelope_id
+           FROM hrcmail_drive_attempts a
+           JOIN hrcmail_drive_presentations p
+             ON p.drive_attempt_id = a.drive_attempt_id
+          WHERE a.state IN ('held', 'claimed', 'started')
+            AND a.started_at IS NULL
+            AND a.claimed_at <= ?
+          ORDER BY a.claimed_at ASC, p.envelope_id ASC
+          LIMIT ?`
+      )
+      .all(options.claimedBefore, options.limit)
+      .map(mapPresentedAttempt)
+  }
+
+  /**
    * Drive attempts whose run is still `accepted` with no dispatched input.
    *
    * The T-07963 signature read from the other side: a run that was accepted,

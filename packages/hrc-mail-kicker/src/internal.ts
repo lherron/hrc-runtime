@@ -37,6 +37,21 @@ export const LAPSE_SWEEP_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000
  */
 export const DISPOSAL_DRAIN_DEADLINE_MS = 2_000
 
+/**
+ * How long a LIVE attempt may hold a presentation without its turn ever
+ * starting before the delivery is called stalled rather than awaited (T-07964,
+ * assigned by mable as the interim net for T-07971).
+ *
+ * Five minutes, and ONE constant so T-07971 can revisit it in one place. The
+ * number is chosen against the thing it must not false-positive on: a cold
+ * birth reaches its seat in about thirteen seconds and `turn.started` arrives
+ * at the HEAD of the turn, not its end. So five minutes without one is not a
+ * slow turn — a turn that has started is excluded structurally, because
+ * `recordStart` writes `state='started'` and `started_at` in the same
+ * statement — it is a delivery that never began.
+ */
+export const STALLED_DELIVERY_THRESHOLD_MS = 5 * 60_000
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

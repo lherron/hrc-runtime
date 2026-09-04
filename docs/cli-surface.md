@@ -186,9 +186,18 @@ hrc mail inspect rt-ab0029c2-1d3f-4f54-89a4-d77e79978c6a
 Read-only. It joins the wrkq envelope row with HRC's own drive attempts,
 presentation receipts, reminders, failure notices, auto-reply intents and the
 bound `runs` row, and prints a timeline plus a one-line verdict — `stranded`,
-`awaiting_turn`, `reminder_armed`, `reminder_delivered`, `auto_reply_pending`,
-`discharged`, `failed`, `awaiting_delivery`, `no_hrc_record` or
-`ledger_unavailable`. `--json` emits one document.
+`stalled_delivery`, `awaiting_turn`, `reminder_armed`, `reminder_delivered`,
+`auto_reply_pending`, `discharged`, `failed`, `awaiting_delivery`,
+`no_hrc_record` or `ledger_unavailable`. `--json` emits one document.
+
+`stalled_delivery` separates a wedged delivery from a healthy in-flight one: a
+LIVE attempt (`held`/`claimed`/`started`) that has held a presented obligation
+past `STALLED_DELIVERY_THRESHOLD_MS` (5 minutes) without its `turn.started`
+being observed. The discriminator is structural rather than heuristic —
+`recordStart` writes `state='started'` and `started_at` in one statement, so a
+turn that began cannot be called stalled however long it runs. A held batch is
+excluded while its runtime still has an active run, because held batches wait
+for a turn boundary by design.
 
 The target form is decided by shape: `EN-xxxxx` inspects one envelope, `rt-…` a
 runtime, anything else an addressee (handle or session ref) — the last two
@@ -201,8 +210,10 @@ attempt writes `wrkq.kicker.attempt_terminal`, its obligation disposal writes
 `wrkq.kicker.dispose_begin` and one `wrkq.kicker.dispose_outcome` per envelope
 (with `wrkq.kicker.dispose_interrupted` at a stop that lands mid-loop), a turn
 that ends on a runtime still holding an obligation nobody owns writes
-`wrkq.auto_reply.unowned_turn`, and the first sweep after boot writes one
-`wrkq.kicker.boot_reconcile` summary.
+`wrkq.auto_reply.unowned_turn`, a wedged live delivery writes one
+`wrkq.kicker.stalled_delivery` per attempt per process, and the first sweep
+after boot writes one `wrkq.kicker.boot_reconcile` summary naming all three
+populations.
 
 ## Session continuity
 

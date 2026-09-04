@@ -8,7 +8,7 @@ import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { type MailKicker, createMailKicker } from '../controller.js'
 import { observeMailDriveLifecycleEvent } from '../controller.js'
-import { reportBootReconcile } from '../diagnostics/stranded.js'
+import { reportBootReconcile, reportStalledDeliveries } from '../diagnostics/stranded.js'
 import { observeAttempt } from '../drive/attempt-lifecycle.js'
 import { failDriveAfterThrow } from '../drive/authority.js'
 import { declineForInFlightAttempt } from '../drive/live-seat-delivery.js'
@@ -537,6 +537,157 @@ describe('T-07964 §4 boot_reconcile', () => {
     await server.runSweepOnce()
     await server.runSweepOnce()
     expect(lines('wrkq.kicker.boot_reconcile')).toHaveLength(1)
+  })
+})
+
+/**
+ * The interim net for T-07971, assigned by mable: a LIVE attempt holding an
+ * obligation whose turn never started is wedged, not awaited.
+ *
+ * Every other reader here keys on a terminal attempt. Without these the wedged
+ * case is silent between boots and `hrc mail inspect` calls it `awaiting_turn`,
+ * which is indistinguishable from a healthy in-flight delivery — the same
+ * silence that lost EN-03687.
+ */
+describe('T-07964 stalled_delivery (T-07971 interim net)', () => {
+  /** Backdate the claim without touching the repository's own transitions. */
+  function ageClaim(minutes: number): void {
+    db.sqlite
+      .query('UPDATE hrcmail_drive_attempts SET claimed_at = ? WHERE drive_attempt_id = ?')
+      .run(new Date(Date.now() - minutes * 60_000).toISOString(), DRIVE)
+  }
+
+  it('reports an attempt claimed six hours ago whose turn never started', async () => {
+    seedRuntime('accepted')
+    seedClaimedDrive()
+    ageClaim(360)
+
+    await reportStalledDeliveries(server)
+
+    const [line] = lines('wrkq.kicker.stalled_delivery')
+    expect(line?.level).toBe('WARN')
+    expect(line?.detail).toMatchObject({
+      targetSessionRef: TARGET,
+      driveAttemptId: DRIVE,
+      runId: RUN,
+      runtimeId: RUNTIME,
+      envelope: ENVELOPE,
+      attemptState: 'claimed',
+      thresholdMs: 5 * 60_000,
+    })
+    expect(line?.detail['liveAgeMs']).toBeGreaterThan(5 * 60_000)
+  })
+
+  it('stays silent for an attempt claimed two seconds ago', async () => {
+    seedRuntime('accepted')
+    seedClaimedDrive()
+
+    await reportStalledDeliveries(server)
+
+    expect(lines('wrkq.kicker.stalled_delivery')).toHaveLength(0)
+  })
+
+  it('stays silent for a started attempt at any age, structurally', async () => {
+    seedRuntime('running')
+    seedClaimedDrive()
+    appendEvent('turn.started', '2026-09-03T22:56:54Z')
+    // recordStart writes state='started' and started_at in one statement, so a
+    // turn that began cannot be stalled however long it runs.
+    observeAttempt(server, db.mailDrives.getAttempt(DRIVE)!)
+    ageClaim(360)
+    expect(db.mailDrives.getAttempt(DRIVE)?.startedAt).toBeDefined()
+
+    await reportStalledDeliveries(server)
+
+    expect(lines('wrkq.kicker.stalled_delivery')).toHaveLength(0)
+  })
+
+  it('does not fire on a held batch that is waiting behind a live turn', async () => {
+    seedRuntime('running')
+    seedClaimedDrive()
+    ageClaim(360)
+    db.sqlite
+      .query("UPDATE hrcmail_drive_attempts SET state = 'held' WHERE drive_attempt_id = ?")
+      .run(DRIVE)
+    // A held batch waits for a turn boundary BY DESIGN and turns legitimately
+    // run for an hour; EN-03687's own ran 54 minutes.
+    db.runtimes.updateRunId(RUNTIME, RUN, new Date().toISOString())
+
+    await reportStalledDeliveries(server)
+
+    expect(lines('wrkq.kicker.stalled_delivery')).toHaveLength(0)
+  })
+
+  it('does fire on a held batch whose runtime has nothing running', async () => {
+    seedRuntime('accepted')
+    seedClaimedDrive()
+    ageClaim(360)
+    db.sqlite
+      .query("UPDATE hrcmail_drive_attempts SET state = 'held' WHERE drive_attempt_id = ?")
+      .run(DRIVE)
+
+    await reportStalledDeliveries(server)
+
+    expect(lines('wrkq.kicker.stalled_delivery')[0]?.detail).toMatchObject({
+      envelope: ENVELOPE,
+      attemptState: 'held',
+    })
+  })
+
+  it('reports the daedalus flaw-1 shape: claimed with a placeholder prompt after a crash', async () => {
+    seedRuntime('accepted')
+    // The flaw-1 sequence: claim writes the placeholder prompt, presentForAttempt
+    // writes the local receipt, and the crash lands before the full presentation
+    // is composed — so `recordPresentation` never runs and the prompt stays the
+    // placeholder while the receipt exists.
+    seedClaimedDrive()
+    ageClaim(360)
+    const attempt = db.mailDrives.getAttempt(DRIVE)!
+    expect(attempt.state).toBe('claimed')
+    expect(attempt.startedAt).toBeUndefined()
+    expect(db.mailDrives.presentationEnvelopeIds(DRIVE)).toEqual([ENVELOPE])
+
+    await reportStalledDeliveries(server)
+
+    expect(lines('wrkq.kicker.stalled_delivery')[0]?.detail).toMatchObject({
+      driveAttemptId: DRIVE,
+      envelope: ENVELOPE,
+      attemptState: 'claimed',
+    })
+  })
+
+  it('names the population in boot_reconcile and repeats no attempt per process', async () => {
+    seedRuntime('accepted')
+    seedClaimedDrive()
+    ageClaim(360)
+
+    await reportBootReconcile(server)
+    const [boot] = lines('wrkq.kicker.boot_reconcile')
+    expect(boot?.level).toBe('WARN')
+    expect(boot?.detail).toMatchObject({ stalledCount: 1, stalledThresholdMs: 5 * 60_000 })
+    expect(boot?.detail['stalled']).toEqual([
+      expect.objectContaining({
+        envelope: ENVELOPE,
+        driveAttemptId: DRIVE,
+        attemptState: 'claimed',
+      }),
+    ])
+
+    await reportStalledDeliveries(server)
+    await reportStalledDeliveries(server)
+    expect(lines('wrkq.kicker.stalled_delivery')).toHaveLength(1)
+  })
+
+  it('does not dispose anything it reports', async () => {
+    seedRuntime('accepted')
+    seedClaimedDrive()
+    ageClaim(360)
+
+    await reportStalledDeliveries(server)
+
+    expect(db.mailDrives.getAttempt(DRIVE)?.state).toBe('claimed')
+    expect(db.mailDrives.remindersForEnvelope(ENVELOPE)).toHaveLength(0)
+    expect(db.mailDrives.failureNoticesForEnvelope(ENVELOPE)).toHaveLength(0)
   })
 })
 

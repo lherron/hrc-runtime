@@ -20,6 +20,7 @@ import type {
   HrcMailFailureNotice,
 } from 'hrc-store-sqlite'
 
+import { STALLED_DELIVERY_THRESHOLD_MS } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
@@ -77,6 +78,7 @@ export type MailInspectEvent = {
  */
 export type MailInspectVerdictCode =
   | 'stranded'
+  | 'stalled_delivery'
   | 'awaiting_turn'
   | 'reminder_armed'
   | 'reminder_delivered'
@@ -380,6 +382,19 @@ function verdictFor(
     }
   }
   if (isLive(owner.attempt)) {
+    // A live attempt is normally awaiting its own turn — but only until the
+    // turn has plainly never begun. `startedAt` is written in the same
+    // statement as `state='started'`, so its absence past the threshold is
+    // proof the delivery never started rather than a slow one (T-07964).
+    const liveAgeMs = Date.now() - (Date.parse(owner.attempt.claimedAt) || Date.now())
+    if (owner.attempt.startedAt === undefined && liveAgeMs > STALLED_DELIVERY_THRESHOLD_MS) {
+      return {
+        code: 'stalled_delivery',
+        line: `stalled_delivery: attempt ${owner.attempt.driveAttemptId} has been ${
+          owner.attempt.state
+        } for ${Math.round(liveAgeMs / 60_000)}m with no turn.started, envelope presented`,
+      }
+    }
     return {
       code: 'awaiting_turn',
       line: `awaiting_turn: attempt ${owner.attempt.driveAttemptId} is ${owner.attempt.state}, run ${

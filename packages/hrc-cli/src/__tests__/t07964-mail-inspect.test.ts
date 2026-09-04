@@ -190,6 +190,45 @@ describe('hrc mail inspect (T-07964 §6)', () => {
     expect(kinds.indexOf('attempt.claimed')).toBeLessThan(kinds.indexOf('attempt.failed'))
   })
 
+  it('calls a long-live attempt with no turn.started stalled, not awaiting', () => {
+    // Reset the fixture's terminal attempt back to the live, never-started shape
+    // and age it past the threshold: this is the T-07971 case mable assigned the
+    // interim net, and `awaiting_turn` here is indistinguishable from health.
+    db.sqlite
+      .query(
+        "UPDATE hrcmail_drive_attempts SET state = 'claimed', completed_at = NULL, claimed_at = ? WHERE drive_attempt_id = ?"
+      )
+      .run(new Date(Date.now() - 6 * 60 * 60_000).toISOString(), DRIVE)
+
+    const view = inspect(ledgerRow('presented')).envelopes[0]
+    expect(view?.verdict.code).toBe('stalled_delivery')
+    expect(view?.verdict.line).toContain('with no turn.started')
+  })
+
+  it('still calls a freshly claimed attempt awaiting_turn', () => {
+    db.sqlite
+      .query(
+        "UPDATE hrcmail_drive_attempts SET state = 'claimed', completed_at = NULL, claimed_at = ? WHERE drive_attempt_id = ?"
+      )
+      .run(new Date().toISOString(), DRIVE)
+
+    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('awaiting_turn')
+  })
+
+  it('never calls a started attempt stalled, however long it has run', () => {
+    db.sqlite
+      .query(
+        "UPDATE hrcmail_drive_attempts SET state = 'started', completed_at = NULL, claimed_at = ?, started_at = ?, start_hrc_seq = 1 WHERE drive_attempt_id = ?"
+      )
+      .run(
+        new Date(Date.now() - 6 * 60 * 60_000).toISOString(),
+        new Date(Date.now() - 6 * 60 * 60_000).toISOString(),
+        DRIVE
+      )
+
+    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('awaiting_turn')
+  })
+
   it('yields to the ledger once the obligation is discharged', () => {
     expect(inspect(ledgerRow('acked')).envelopes[0]?.verdict.code).toBe('discharged')
   })

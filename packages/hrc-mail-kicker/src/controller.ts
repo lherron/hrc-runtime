@@ -64,6 +64,7 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerDisposalsPending = new Set<Promise<void>>()
   readonly mailKickerDisposalsInFlight = new Map<string, DisposalInFlight>()
   mailKickerBootReconcilePending = true
+  readonly mailKickerStalledDeliveryAnnounced = new Set<string>()
 
   constructor(
     private readonly dependencies: MailKickerDependencies,
