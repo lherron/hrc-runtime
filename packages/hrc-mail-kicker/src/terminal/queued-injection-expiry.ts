@@ -94,7 +94,16 @@ async function failReceiptedExpiredSubmission(
         driveAttemptId,
         callSite: 'queued_injection_expiry',
       })
-      if (terminal.outcome === 'failed') failedCount += 1
+      if (terminal.outcome === 'failed') {
+        failedCount += 1
+        // T-07963: see runtime-lapse — a terminating path that does not record
+        // its disposition leaves the row a reconcile candidate forever.
+        server.db.mailDrives.recordPresentationDisposition(
+          driveAttemptId,
+          envelopeId,
+          'failed:undeliverable'
+        )
+      }
     } catch (error) {
       server.log('WARN', 'wrkq.kicker.queued_injection_expiry_fail_failed', {
         envelopeId,

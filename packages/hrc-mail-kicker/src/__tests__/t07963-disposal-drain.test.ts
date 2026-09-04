@@ -24,6 +24,7 @@ import { type MailKicker, createMailKicker } from '../controller.js'
 import { observeAttempt } from '../drive/attempt-lifecycle.js'
 import type { MailKickerLedger } from '../ledger/client.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
+import { failLapsedObligations } from '../terminal/runtime-lapse.js'
 import { reconcileStrandedObligations } from '../terminal/stranded-reconcile.js'
 
 const SCOPE = 'agent:cody:project:agent-spaces:task:T-07962'
@@ -56,6 +57,8 @@ let logs: LogLine[]
 let ledgerDelayMs: number
 /** When set, a ledger read never returns — the unreachable-ledger case. */
 let ledgerHangs: boolean
+/** What `pendingView` serves; only the D3 sweep reads it. */
+let pendingItems: () => WrkqEnvelope[]
 /** Envelope rows the fake ledger serves, and what `fail` did to them. */
 let failed: { envelope: string; reason: string }[]
 let server: MailKicker
@@ -91,7 +94,7 @@ function envelopeRow(): WrkqEnvelope {
 function ledger(): MailKickerLedger {
   const unsupported = () => Promise.reject(new Error('not used by these tests'))
   return {
-    pendingView: () => Promise.resolve({ items: [], repended: 0 }),
+    pendingView: () => Promise.resolve({ items: pendingItems(), repended: 0 }),
     present: unsupported,
     async fail({ envelope, reason }: { envelope: string; reason: string }) {
       failed.push({ envelope, reason })
@@ -194,6 +197,7 @@ beforeEach(async () => {
   ledgerDelayMs = 0
   ledgerHangs = false
   failed = []
+  pendingItems = () => []
   server = createMailKicker(
     {
       db,
@@ -368,5 +372,61 @@ describe('T-07963 criterion 2 — startup reconcile disposition', () => {
     await reconcileStrandedObligations(server)
 
     expect(dispositionRow()?.disposition).toBe('reminder_armed')
+  })
+})
+
+/**
+ * T-07963 — every path that ENDS an obligation must record it locally.
+ *
+ * The reconcile's candidate set is "terminal attempt, presentation not yet
+ * dispositioned", and I claimed it is bounded because rows leave once disposed.
+ * That is only true if every terminating path writes the fact. Before this,
+ * exactly one of four did — which is why EN-03687's presentation row still
+ * reads `disposed_at IS NULL` while the envelope is terminal in wrkq. The D3
+ * lapse sweep did that, and would have kept doing it on every future lapse.
+ */
+describe('T-07963 — terminating paths record their disposition', () => {
+  it('D3 lapse sweep marks the row it just failed', async () => {
+    seed()
+    db.mailDrives.failWithoutStart(DRIVE, 'terminal without turn.started')
+    db.runtimes.update(RUNTIME, {
+      status: 'terminated',
+      statusChangedAt: '2026-09-04T01:05:30Z',
+      updatedAt: '2026-09-04T01:05:30Z',
+    })
+    expect(dispositionRow()?.disposed_at).toBeNull()
+    pendingItems = () => [envelopeRow()]
+
+    await failLapsedObligations(server, TARGET, new Set([RUNTIME]))
+
+    expect(failed).toEqual([{ envelope: ENVELOPE, reason: 'runtime_terminated' }])
+    expect(dispositionRow()?.disposition).toBe('failed:runtime_terminated')
+    // The point of the whole exercise: it has LEFT the candidate set.
+    expect(
+      db.mailDrives.listUndisposedTerminalPresentations({
+        since: new Date(0).toISOString(),
+        limit: 50,
+      })
+    ).toHaveLength(0)
+  })
+
+  /**
+   * The third audited call site, `birth-retry`'s exhausted refusals, is
+   * deliberately NOT given a disposition write, and this pins why rather than
+   * leaving the omission to look like one. It fails only envelopes that are
+   * still `pending` with an EMPTY `presentedTo` — never presented, so no
+   * presentation row exists to dispose and none can ever become a reconcile
+   * candidate. A write there would target a row that does not exist.
+   */
+  it('an unpresented envelope has no presentation row to strand', () => {
+    seed()
+    db.mailDrives.failWithoutStart(DRIVE, 'terminal without turn.started')
+
+    const rows = db.sqlite
+      .query<{ n: number }, [string]>(
+        'SELECT COUNT(*) AS n FROM hrcmail_drive_presentations WHERE envelope_id = ?'
+      )
+      .get('EN-never-presented')
+    expect(rows?.n).toBe(0)
   })
 })

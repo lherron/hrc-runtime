@@ -38,7 +38,8 @@ export async function failLapsedObligations(
   let complete = true
   for (const envelope of view.items) {
     if (envelope.state !== 'presented') continue
-    const runtime = newestPresentationReceipt(envelope)?.runtimeId
+    const receipt = newestPresentationReceipt(envelope)
+    const runtime = receipt?.runtimeId
     if (runtime === undefined || !runtimeIds.has(runtime)) continue
     try {
       await failEnvelopeWithAudit(server, {
@@ -46,8 +47,24 @@ export async function failLapsedObligations(
         reason: 'runtime_terminated',
         runtime,
         targetSessionRef,
+        ...(receipt?.driveAttemptId === undefined
+          ? {}
+          : { driveAttemptId: receipt.driveAttemptId }),
         callSite: 'lapsed_obligations',
       })
+      // T-07963: record the disposition LOCALLY too. This path ends the
+      // obligation without going through `disposeAttemptObligations`, so
+      // without this the presentation row stays `disposed_at IS NULL` forever
+      // while the envelope is terminal in wrkq — which is exactly the state
+      // EN-03687 was left in. The reconcile's candidate set is only
+      // "self-emptying" if every terminating path says so.
+      if (receipt?.driveAttemptId !== undefined) {
+        server.db.mailDrives.recordPresentationDisposition(
+          receipt.driveAttemptId,
+          envelope.id,
+          'failed:runtime_terminated'
+        )
+      }
     } catch (error) {
       server.log('WARN', 'wrkq.kicker.lapse_failed', {
         targetSessionRef,
