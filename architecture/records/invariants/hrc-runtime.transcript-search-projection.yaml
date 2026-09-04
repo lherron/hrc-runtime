@@ -1,0 +1,59 @@
+id: hrc-runtime.transcript-search-projection
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: resident broker-transcript indexing, search ranking, pointer projection, and source-ledger deletion coupling
+predicate: >
+  HRC transcript search is a resident hrc-server-maintained, rebuildable bounded
+  projection of broker_invocation_events and is never source-of-truth state or a
+  manual freshness step. Its implementation begins as the separate
+  hrc-transcript-index package, with projection tables owned by hrc-store-sqlite
+  and thin operator/query surfaces in the hrc CLI. One document represents one
+  terminated invocation turn: each turn.completed, turn.failed, or
+  turn.interrupted terminal closes the exact invocation-sequence segment since
+  the preceding terminal, no document crosses a terminal, and no terminal-less
+  segment emits a document. Documents carry terminal status and exact runtime,
+  invocation, seq-from, and seq-to identity. Searchable content contains only
+  user-message prose and assistant-message-completed prose, partitions canonical
+  assistant text with the shared last-final-true-else-last-non-empty selector,
+  excludes tool calls, tool results, lifecycle notices, and narration
+  classification, and applies configured per-column byte bounds.
+  The global ledger-id cursor detects relevant events only: every emitted
+  segment is reconstructed from the authoritative ledger in invocation seq
+  order. Each bounded scan captures a ledger-id ceiling, advances the cursor to
+  that ceiling when complete, and can report zero lag at quiescence. Cursor,
+  per-invocation terminal high-water mark, and emitted rows advance atomically;
+  prose or terminals arriving at or below an emitted high-water mark cause that
+  invocation to be reprojected from its ledger terminals. FTS5 content rows and
+  external-content index remain transactionally aligned. Scope, project, agent,
+  task, generation, runtime, invocation, and sequence identity remain plain
+  columns; scope is a facet and runtime_id is the transcript hand-off key.
+  Ranking negates bm25 so larger scores are better, evaluates bm25 and snippets
+  inside the FTS query before windowing, ranks candidates within each runtime,
+  and uses the single strongest turn rather than summing evidence across a
+  scope; per-runtime candidate caps bound discovery monopolization. Every hit
+  renders the exact runtime and sequence-range transcript hand-off. An explicit
+  include-ledgers runtime prune deletes matching transcript documents and
+  per-invocation projection marks in the same transaction as their source ledger
+  rows. Rebuild is an operator recovery surface, not normal operation. The local
+  CLI surface adds neither redaction nor authentication or authorization.
+authority: Lance HCS T-07989 / Daedalus approval wrkq:T-08015 revision 4, 2026-09-04
+source:
+  - wrkq:T-08015
+  - architecture/records/invariants/hrc-runtime.collaboration-auto-reply-actuation.yaml
+  - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
+  - packages/hrc-core/src/broker-lifecycle-policy.ts
+  - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts
+required_tests:
+  - just architecture-records
+  - T-08015 cold-start and live cursor-ceiling, atomic emission, crash-recovery, and late-arrival invocation-repair gates
+  - T-08015 completed, failed, and interrupted segment-boundary, no-start, scrambled-id, and terminal-less exclusion gates
+  - T-08015 prose-only extraction, shared-finality, truncation, and tool-result exclusion gates
+  - T-08015 real-FTS5 scoring, per-runtime aggregation, pointer hand-off, and scope-facet gates
+  - T-08015 include-ledgers prune-transaction and rebuild-convergence gates
+  - T-08015 installed max3 background-backfill and live-transcript round-trip
+last_verified: 2026-09-04 design approval; implementation gates pending
+reopen_when: Source-ledger authority or retention, the terminal alphabet, invocation-sequence segmentation or repair, prose extraction or finality, cursor freshness, score normalization or aggregation, pointer identity or facets, package and daemon ownership, deletion coupling, or the local trust boundary changes.
+supersedes: []
+superseded_by: []
