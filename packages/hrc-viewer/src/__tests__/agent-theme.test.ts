@@ -79,7 +79,7 @@ describe('agentTheme', () => {
   })
 
   it('prefers a per-agent terminal-tint override over the derived tint (T-07995)', () => {
-    expect(agentTheme('chief').terminalBg).toBe('#41161C')
+    expect(agentTheme('chief').terminalBg).toBe('#41161c')
     // the override replaces the derived value rather than coinciding with it
     expect(agentTheme('chief').terminalBg).not.toBe(terminalTint(CURATED_AGENT_COLORS.chief))
     // and it does not disturb the statusbar identity color

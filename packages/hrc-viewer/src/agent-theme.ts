@@ -60,7 +60,7 @@ export const CURATED_AGENT_COLORS: Readonly<Record<string, string>> = {
  * An override is still graded by the cast-wide luminance ceiling in the tests.
  */
 export const CURATED_TERMINAL_TINTS: Readonly<Record<string, string>> = {
-  chief: '#41161C', // redder than the derived #361217, at Lance's pick (T-07995)
+  chief: '#41161c', // redder than the derived #361217, at Lance's pick (T-07995)
 }
 
 /** Saturation/lightness band the hash fallback lives in (matches the cast). */
