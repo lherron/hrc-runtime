@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 import {
@@ -33,7 +34,17 @@ describe('dev-env project search root', () => {
 
   test('resolves this checkout even under a hostile inherited hook context', () => {
     const repoRoot = resolve(import.meta.dir, '..')
-    const expected = projectSearchRootFromCommonGitDir(resolve(repoRoot, '.git'))
+    // The expectation comes from Git's COMMON directory, not from
+    // `<repoRoot>/.git`. Those are the same path only in the canonical
+    // checkout: in a linked worktree `.git` is a file pointing elsewhere, and
+    // deriving the expectation from it asserted the exact behaviour this module
+    // exists to avoid — `under-construction/` instead of the source parent.
+    const commonGitDir = execFileSync(
+      'git',
+      ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8' }
+    ).trim()
+    const expected = projectSearchRootFromCommonGitDir(commonGitDir)
 
     expect(
       resolveProjectSearchRoot(repoRoot, {
