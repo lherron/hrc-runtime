@@ -47,13 +47,17 @@ export type StrandedPresentation = {
  * re-presented the same envelope owns it now, and reporting it against the
  * older attempt would name the wrong drive in the verdict.
  */
-async function confirmStranded(
+export async function confirmStranded(
   server: MailKickerContext,
-  candidates: readonly HrcMailDrivePresentedAttempt[]
+  candidates: readonly HrcMailDrivePresentedAttempt[],
+  // T-07963's reconcile ACTS on this set rather than reporting it, so it reads
+  // the whole candidate list; the diagnostic readers keep their cap, because a
+  // report costing 200 ledger reads on every turn terminal is not a report.
+  cap: number = STRANDED_LEDGER_READ_CAP
 ): Promise<{ stranded: StrandedPresentation[]; ledgerErrors: number }> {
   const stranded: StrandedPresentation[] = []
   let ledgerErrors = 0
-  for (const candidate of candidates.slice(0, STRANDED_LEDGER_READ_CAP)) {
+  for (const candidate of candidates.slice(0, cap)) {
     try {
       const row = await server.ledger.envelopeShow({ envelope: candidate.envelopeId })
       if (row.state !== 'presented') continue
@@ -277,6 +281,11 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
       candidatesFound: candidates.length,
       strandedCount: stranded.length,
       stranded,
+      // T-07963: its own labelled count, never inside `stranded`. These rows
+      // predate local disposition tracking, are excluded from the actionable
+      // set, and can never empty — inside the stranded array they would be a
+      // permanent false alarm that teaches the reader to skip the line.
+      preMigrationUnknown: server.db.mailDrives.countPreMigrationUnknownPresentations(),
       undispatchedCount: undispatched.length,
       undispatched,
       stalledCount: stalled.length,

@@ -24,6 +24,7 @@ import { type MailKicker, createMailKicker } from '../controller.js'
 import { observeAttempt } from '../drive/attempt-lifecycle.js'
 import type { MailKickerLedger } from '../ledger/client.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
+import { reconcileStrandedObligations } from '../terminal/stranded-reconcile.js'
 
 const SCOPE = 'agent:cody:project:agent-spaces:task:T-07962'
 const TARGET = `${SCOPE}/lane:main`
@@ -55,6 +56,8 @@ let logs: LogLine[]
 let ledgerDelayMs: number
 /** When set, a ledger read never returns — the unreachable-ledger case. */
 let ledgerHangs: boolean
+/** Envelope rows the fake ledger serves, and what `fail` did to them. */
+let failed: { envelope: string; reason: string }[]
 let server: MailKicker
 
 function envelopeRow(): WrkqEnvelope {
@@ -90,7 +93,10 @@ function ledger(): MailKickerLedger {
   return {
     pendingView: () => Promise.resolve({ items: [], repended: 0 }),
     present: unsupported,
-    fail: unsupported,
+    async fail({ envelope, reason }: { envelope: string; reason: string }) {
+      failed.push({ envelope, reason })
+      return { ...envelopeRow(), state: 'failed', terminal: true }
+    },
     eventsView: () => Promise.resolve({ items: [], highWater: 0 }),
     async envelopeShow() {
       if (ledgerHangs) await new Promise<void>(() => {})
@@ -187,6 +193,7 @@ beforeEach(async () => {
   logs = []
   ledgerDelayMs = 0
   ledgerHangs = false
+  failed = []
   server = createMailKicker(
     {
       db,
@@ -263,5 +270,103 @@ describe('T-07963 criterion 3 — disposal survives the stop sequence', () => {
     // Nothing was decided, so nothing is dispositioned: the reconcile must still
     // see this presentation as work owed.
     expect(dispositionRow()?.disposed_at).toBeNull()
+  })
+})
+
+/**
+ * T-07963 criterion 2 — the startup reconcile's three branches.
+ *
+ * Each seeds the EN-03687 shape (terminal attempt, presentation still
+ * undispositioned, envelope still `presented` with the newest receipt naming
+ * that attempt) and differs only in the two facts that decide disposition: is
+ * the receipt's runtime terminal, and did a turn provably carry the body.
+ */
+describe('T-07963 criterion 2 — startup reconcile disposition', () => {
+  /** Seed the stranding, then terminalise without a disposition running. */
+  function seedStranded(options: { carriedATurn: boolean; runtimeTerminal: boolean }): void {
+    seed()
+    if (options.carriedATurn) {
+      // `startHrcSeq` is the positive evidence a turn carried the body. Stamped
+      // only by `recordStart`, and it survives the later failure below.
+      db.mailDrives.recordStart({
+        runId: RUN,
+        startHrcSeq: 1,
+        startedAt: '2026-09-03T22:56:54Z',
+        hostSessionId: HOST_SESSION,
+        generation: 1,
+        runtimeId: RUNTIME,
+      })
+    }
+    // Terminal WITHOUT the disposal loop ever running -- the 28ms window.
+    db.mailDrives.failWithoutStart(DRIVE, 'terminal turn.failed observed without turn.started')
+    if (options.runtimeTerminal) {
+      db.runtimes.update(RUNTIME, {
+        status: 'terminated',
+        statusChangedAt: '2026-09-04T01:05:30Z',
+        updatedAt: '2026-09-04T01:05:30Z',
+      })
+    }
+  }
+
+  it('fails runtime_terminated when the receipt runtime is gone', async () => {
+    seedStranded({ carriedATurn: false, runtimeTerminal: true })
+
+    await reconcileStrandedObligations(server)
+
+    expect(failed).toEqual([{ envelope: ENVELOPE, reason: 'runtime_terminated' }])
+    expect(dispositionRow()?.disposition).toBe('failed:runtime_terminated')
+  })
+
+  it('arms the reminder when the runtime is alive and a turn carried the body', async () => {
+    seedStranded({ carriedATurn: true, runtimeTerminal: false })
+
+    await reconcileStrandedObligations(server)
+
+    // The D4 lifecycle, not a failure: the reader saw it and their turn ended.
+    expect(failed).toEqual([])
+    expect(db.mailDrives.listDueReminders(TARGET, '2100-01-01T00:00:00Z')).toHaveLength(1)
+    expect(dispositionRow()?.disposition).toBe('reminder_armed')
+  })
+
+  it('REPORTS and does not dispose when the seat is live and no turn carried the body', async () => {
+    // The EN-03687 shape exactly. Every available failure reason would assert
+    // something false here, so nothing is disposed; redelivery is T-07971's.
+    seedStranded({ carriedATurn: false, runtimeTerminal: false })
+
+    await reconcileStrandedObligations(server)
+
+    expect(failed).toEqual([])
+    expect(db.mailDrives.listDueReminders(TARGET, '2100-01-01T00:00:00Z')).toHaveLength(0)
+    // Undispositioned ON PURPOSE: it must stay a candidate so the operator
+    // surface keeps naming it and T-07971 has something to act on.
+    expect(dispositionRow()?.disposed_at).toBeNull()
+  })
+
+  it('does not loop: a second pass repeats no action on the reported case', async () => {
+    seedStranded({ carriedATurn: false, runtimeTerminal: false })
+
+    await reconcileStrandedObligations(server)
+    await reconcileStrandedObligations(server)
+
+    // The branch performs no ledger write and no state change, so repeated
+    // boots re-report and never act. That is what makes "reported, not
+    // disposed" safe to leave standing until T-07971 lands.
+    expect(failed).toEqual([])
+    expect(db.mailDrives.listDueReminders(TARGET, '2100-01-01T00:00:00Z')).toHaveLength(0)
+    expect(dispositionRow()?.disposed_at).toBeNull()
+  })
+
+  it('branches on startHrcSeq, never on attempt.state', async () => {
+    // The trap: `failWithoutStart` moves a STARTED attempt to `failed`, so
+    // state cannot tell "carried the body" from "never did". Branching on it
+    // would send a carried obligation down the never-carried path.
+    seedStranded({ carriedATurn: true, runtimeTerminal: false })
+    const attempt = db.mailDrives.getAttempt(DRIVE)
+    expect(attempt?.state).toBe('failed')
+    expect(attempt?.startHrcSeq).toBe(1)
+
+    await reconcileStrandedObligations(server)
+
+    expect(dispositionRow()?.disposition).toBe('reminder_armed')
   })
 })

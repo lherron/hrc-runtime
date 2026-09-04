@@ -27,6 +27,7 @@ import { reportBootReconcileOnce, reportStalledDeliveries } from '../diagnostics
 import { LEDGER_SWEEP_SCOPE_BATCH, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { sweepLapsedObligations } from '../terminal/runtime-lapse.js'
+import { reconcileStrandedObligations } from '../terminal/stranded-reconcile.js'
 import { unbornBirthWakeCandidates } from './birth-retry.js'
 import { chunk, collectPendingTargets } from './cold-start.js'
 
@@ -35,6 +36,17 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
   if (this.mailKickerSweepInFlight !== undefined) return this.mailKickerSweepInFlight
 
   const sweep = (async () => {
+    // T-07963 criterion 2: ACT before reporting. The reconcile disposes what it
+    // can truthfully dispose — a terminal runtime's obligation, and a carried
+    // turn's D4/D5 lifecycle — so what T-07964's line then names is the set an
+    // operator actually has to do something about, rather than a list the
+    // daemon quietly fixed a second later. Both are boot-once and both run
+    // after warmup, so they see the same reattached world.
+    if (this.mailKickerBootReconcilePending) {
+      await reconcileStrandedObligations(this).catch((error: unknown) => {
+        this.log('WARN', 'wrkq.kicker.stranded_reconcile_failed', { error: errorText(error) })
+      })
+    }
     // T-07964 §4: one boot report, on the first periodic sweep rather than at
     // `start()`, so runtime reattachment and the broker's warmup have already
     // happened and the runs it names are the ones that really did survive.

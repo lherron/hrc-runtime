@@ -2522,6 +2522,45 @@ const hrcmailPresentationDispositionMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-07963 — give pre-disposition presentations an explicit third state.
+ *
+ * `0055` added `disposed_at`, and the reconcile's candidate set is "terminal
+ * attempt, presentation not yet dispositioned". Every row written before that
+ * column existed is NULL forever, and nothing distinguishes "never disposed"
+ * from "disposed before we recorded it" — so the set never empties and the
+ * reconcile re-reads the ledger on every boot to rediscover terminal states
+ * wrkq already knows.
+ *
+ * Blanket-marking them as DISPOSED would be the easy fix and the wrong one: it
+ * asserts a disposition this daemon never made, and would bury a genuinely
+ * stranded historical obligation inside a migration. So they get a third state
+ * instead. `pre_migration_unknown` means exactly what it says — this row
+ * predates local disposition tracking and its history cannot be read — and it
+ * is deliberately NOT a claim that the obligation was handled.
+ *
+ * Consequences, ruled by mable 2026-09-04: excluded from the ACTIONABLE set,
+ * because acting on a guess is what the third state exists to avoid; reported
+ * as a separate labelled count and never inside the stranded array, because a
+ * population that can never empty trains readers to skip the line; and
+ * answerable individually by `hrc mail inspect`, so an operator who asks about
+ * one still gets the truth.
+ */
+const hrcmailPreMigrationDispositionMigration: HrcMigration = {
+  id: '0056_hrcmail_pre_migration_disposition',
+  apply(db) {
+    db.exec(`
+      UPDATE hrcmail_drive_presentations
+         SET disposed_at = COALESCE(disposed_at, presented_at),
+             disposition = 'pre_migration_unknown'
+       WHERE disposed_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_drive_presentations_disposition
+        ON hrcmail_drive_presentations(disposition);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2573,4 +2612,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   continuationReuseStateMigration,
   hrcmailHintDecisionMigration,
   hrcmailPresentationDispositionMigration,
+  hrcmailPreMigrationDispositionMigration,
 ]

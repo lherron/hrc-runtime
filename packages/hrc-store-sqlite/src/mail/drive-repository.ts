@@ -1593,6 +1593,25 @@ export class HrcMailDriveRepository {
       .run(new Date().toISOString(), disposition, driveAttemptId, envelopeId)
   }
 
+  /**
+   * How many presentations predate local disposition tracking (T-07963).
+   *
+   * Reported as its own labelled count beside the stranded population, never
+   * inside it. These rows are excluded from the actionable set by construction
+   * — `0056` stamps `disposed_at` — but their number is honest information: it
+   * says how much of this node's history the reconcile cannot speak to.
+   */
+  countPreMigrationUnknownPresentations(): number {
+    return (
+      this.db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM hrcmail_drive_presentations
+            WHERE disposition = 'pre_migration_unknown'`
+        )
+        .get()?.n ?? 0
+    )
+  }
+
   presentationEnvelopeIds(driveAttemptId: string): string[] {
     return this.db
       .query<{ envelope_id: string }, [string]>(
