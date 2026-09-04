@@ -87,9 +87,18 @@ function ledgerRow(state: WrkqEnvelope['state']): Map<string, MailInspectLedgerR
   ])
 }
 
-function inspect(rows: Map<string, MailInspectLedgerRow>) {
+function inspect(
+  rows: Map<string, MailInspectLedgerRow>,
+  projectTurnResponse?: (runId: string) => { body: string; truncated: boolean }
+) {
   const query = resolveMailInspectQuery(ENVELOPE)
-  return buildMailInspection(db, query, mailInspectEnvelopeIds(db, query), rows)
+  return buildMailInspection(
+    db,
+    query,
+    mailInspectEnvelopeIds(db, query),
+    rows,
+    projectTurnResponse
+  )
 }
 
 beforeEach(async () => {
@@ -251,5 +260,34 @@ describe('hrc mail inspect registration (T-07964 §6)', () => {
     const program = buildProgram()
     expect(buildInfoText(program, undefined, 'agent')).toContain('hrc mail inspect')
     expect(buildInfoText(program, undefined, 'human')).toContain('mail')
+  })
+})
+
+describe('T-07969 hrc mail inspect canonical response', () => {
+  it('reports the projected response for an attempt that has a run', () => {
+    // Criterion 4, out-of-process half: the CLI supplies the ONE server-owned
+    // projection the same way it supplies the ledger rows, so inspect never
+    // grows a second canonical-response reader.
+    const projected: string[] = []
+    const inspection = inspect(ledgerRow('presented'), (runId) => {
+      projected.push(runId)
+      return { body: 'the answer that was never minted', truncated: false }
+    })
+
+    const attempt = inspection.envelopes[0]?.attempts[0]
+    expect(attempt?.canonicalResponse).toBe('the answer that was never minted')
+    expect(projected.length).toBeGreaterThan(0)
+  })
+
+  it('omits the field when the projection is empty', () => {
+    const inspection = inspect(ledgerRow('presented'), () => ({ body: '', truncated: false }))
+    expect(inspection.envelopes[0]?.attempts[0]).not.toHaveProperty('canonicalResponse')
+  })
+
+  it('stays usable with no projector supplied', () => {
+    // The builder is still callable without one, so a caller that has no server
+    // in the process gets an inspection rather than a crash.
+    const inspection = inspect(ledgerRow('presented'))
+    expect(inspection.envelopes[0]?.attempts[0]).not.toHaveProperty('canonicalResponse')
   })
 })

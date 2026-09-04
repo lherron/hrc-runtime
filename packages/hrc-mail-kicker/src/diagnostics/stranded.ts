@@ -114,11 +114,23 @@ export async function reportUnownedTurn(
   const { stranded, ledgerErrors } = await confirmStranded(server, candidates)
   if (stranded.length === 0) return
 
+  // Only now — AFTER the guard — do we pay for the response read. This function
+  // runs on EVERY mail-drive turn terminal on the node and is cheap because the
+  // healthy answer costs one indexed query and stops; a projection read above
+  // this line would move that cost onto every healthy turn. The text is the one
+  // server-owned projection (T-07969), so what the log names is exactly what an
+  // auto-reply would have minted — "the turn's canonical response was sitting
+  // right there" becomes a line an operator can read instead of an inference.
+  const response = event.runId === undefined ? undefined : server.projectTurnResponse(event.runId)
+
   server.log('WARN', 'wrkq.auto_reply.unowned_turn', {
     targetSessionRef,
     runtimeId,
     ...(event.runId === undefined ? {} : { runId: event.runId }),
     turnEventKind: event.eventKind,
+    ...(response === undefined || response.body.length === 0
+      ? {}
+      : { canonicalResponse: response.body, canonicalResponseTruncated: response.truncated }),
     ...(owner === undefined
       ? { owningAttempt: 'none' }
       : { terminalAttemptId: owner.driveAttemptId, terminalAttemptState: owner.state }),

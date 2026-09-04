@@ -176,9 +176,14 @@ export function lifecyclePayload(
         .filter((part) => part.type === 'text')
         .map((part) => part.text)
         .join('')
+      // T-07969: carry the broker's finality flag through. A turn emits every
+      // assistant message, `final:false` for the mid-turn narration and exactly
+      // one `final:true` per run; dropping it here left the reply projection
+      // unable to tell an agent notice from the answer.
       const event: AgentMessageEvent = {
         type: 'message_end',
         message: { role: 'assistant', content },
+        ...(payload.final !== undefined ? { final: payload.final } : {}),
       }
       return event as unknown as Record<string, unknown>
     }

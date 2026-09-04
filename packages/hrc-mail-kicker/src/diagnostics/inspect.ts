@@ -55,6 +55,13 @@ export type MailInspectAttempt = {
   run?: MailInspectRun | undefined
   runtimeStatus?: string | undefined
   autoReplyIntent?: HrcMailAutoReplyIntent | undefined
+  /**
+   * What this attempt's turn would have replied — the ONE server-owned response
+   * projection, not a second reader (T-07969). Present only when the attempt has
+   * a run that produced text, so an inspection of a stranded obligation shows the
+   * answer that never got minted.
+   */
+  canonicalResponse?: string | undefined
 }
 
 export type MailInspectEvent = {
@@ -89,6 +96,17 @@ export type MailInspectEnvelope = {
   failureNotices: HrcMailFailureNotice[]
   timeline: MailInspectEvent[]
   verdict: { code: MailInspectVerdictCode; line: string }
+}
+
+/**
+ * The canonical response reader, supplied by the caller exactly as `ledgerRows`
+ * is. Keeping it a parameter rather than an import is what lets this builder
+ * stay synchronous and testable with no server in the process, while still
+ * reading the single body authority rather than growing a second one.
+ */
+export type MailInspectTurnResponseProjector = (runId: string) => {
+  body: string
+  truncated: boolean
 }
 
 export type MailInspection = {
@@ -159,7 +177,11 @@ function runFor(db: HrcDatabase, runId: string): MailInspectRun | undefined {
   }
 }
 
-function attemptsFor(db: HrcDatabase, envelopeId: string): MailInspectAttempt[] {
+function attemptsFor(
+  db: HrcDatabase,
+  envelopeId: string,
+  projectTurnResponse: MailInspectTurnResponseProjector | undefined
+): MailInspectAttempt[] {
   return db.mailDrives.attemptsForEnvelope(envelopeId).map((receipt) => {
     const { attempt } = receipt
     const runtime =
@@ -168,12 +190,17 @@ function attemptsFor(db: HrcDatabase, envelopeId: string): MailInspectAttempt[] 
         : (db.runtimes.getByRuntimeId(attempt.runtimeId) ?? undefined)
     const run = runFor(db, attempt.runId)
     const intent = db.mailDrives.getAutoReplyIntent(attempt.driveAttemptId)
+    const response =
+      projectTurnResponse === undefined || attempt.runId === undefined
+        ? undefined
+        : projectTurnResponse(attempt.runId).body
     return {
       attempt,
       presentedAt: receipt.presentedAt,
       ...(run === undefined ? {} : { run }),
       ...(runtime === undefined ? {} : { runtimeStatus: runtime.status }),
       ...(intent === undefined ? {} : { autoReplyIntent: intent }),
+      ...(response === undefined || response.length === 0 ? {} : { canonicalResponse: response }),
     }
   })
 }
@@ -394,13 +421,14 @@ export function buildMailInspection(
   db: HrcDatabase,
   query: MailInspectQuery,
   envelopeIds: readonly string[],
-  ledgerRows: ReadonlyMap<string, MailInspectLedgerRow>
+  ledgerRows: ReadonlyMap<string, MailInspectLedgerRow>,
+  projectTurnResponse?: MailInspectTurnResponseProjector
 ): MailInspection {
   return {
     query,
     generatedAt: new Date().toISOString(),
     envelopes: envelopeIds.map((envelopeId) => {
-      const attempts = attemptsFor(db, envelopeId)
+      const attempts = attemptsFor(db, envelopeId, projectTurnResponse)
       const reminders = db.mailDrives.remindersForEnvelope(envelopeId)
       const notices = db.mailDrives.failureNoticesForEnvelope(envelopeId)
       const row = ledgerRows.get(envelopeId)

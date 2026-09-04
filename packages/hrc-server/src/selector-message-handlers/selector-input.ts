@@ -17,6 +17,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { normalizeDispatchIntent } from '../dispatch-invocation.js'
+import { projectSemanticTurnResponse } from '../event-notification-handlers.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
@@ -467,14 +468,13 @@ export async function handleDispatchTurnBySelector(
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
   const transport = turnBody.transport
 
+  // T-07969: one body authority — the projection selects the turn's final
+  // message rather than joining the raw narrated buffer stream.
   let finalOutput: string | undefined
   if (transport !== 'tmux') {
-    const bufferedOutput = this.db.runtimeBuffers
-      .listByRunId(turnBody.runId)
-      .map((chunk) => chunk.text)
-      .join('')
-    if (bufferedOutput.length > 0) {
-      finalOutput = bufferedOutput
+    const { body } = projectSemanticTurnResponse(this.db, turnBody.runId)
+    if (body.length > 0) {
+      finalOutput = body
     }
   }
 

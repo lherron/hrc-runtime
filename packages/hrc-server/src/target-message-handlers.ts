@@ -43,6 +43,7 @@ import {
   parseBrokerRuntimeHostingState,
 } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
+import { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import { resolveNodeLocalPlacement } from './federation/summon-capability.js'
 import {
   assertProvisionDirectiveAdmissible,
@@ -1664,14 +1665,14 @@ export async function executeSemanticTurn(
       return { warnings: turnBody.warnings, delivery: steerDelivery }
     }
 
+    // T-07969: one body authority. This used to join the raw runtime buffer,
+    // which since the Claude authority cutover is the whole narrated stream and
+    // not the answer. The projection selects the turn's final message.
     let finalOutput: string | undefined
     if (transport !== 'tmux') {
-      const bufferedOutput = this.db.runtimeBuffers
-        .listByRunId(turnBody.runId)
-        .map((chunk) => chunk.text)
-        .join('')
-      if (bufferedOutput.length > 0) {
-        finalOutput = bufferedOutput
+      const { body } = projectSemanticTurnResponse(this.db, turnBody.runId)
+      if (body.length > 0) {
+        finalOutput = body
       }
     }
 

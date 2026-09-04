@@ -34,8 +34,10 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
+type TurnSegment = string | { content: string; final?: boolean }
+
 async function pendingIntent(
-  body: string | string[] | undefined = 'Canonical final answer'
+  body: string | TurnSegment[] | undefined = 'Canonical final answer'
 ): Promise<{
   intent: HrcMailAutoReplyIntent
   sourceId: string
@@ -73,7 +75,13 @@ async function pendingIntent(
       updatedAt: now,
       ancestorScopeRefs: [],
     })
-    for (const content of Array.isArray(body) ? body : [body]) {
+    // A plain string is one message; an array is one message per entry. An
+    // entry may also carry the broker's finality flag (T-07969) as
+    // `{ content, final }`, which is how a narrate-then-answer turn is shaped.
+    const segments = Array.isArray(body) ? body : [body]
+    for (const segment of segments) {
+      const content = typeof segment === 'string' ? segment : segment.content
+      const final = typeof segment === 'string' ? undefined : segment.final
       appendHrcEvent(db, 'turn.message', {
         ts: now,
         hostSessionId: `hsid-auto-${sequence}`,
@@ -82,7 +90,10 @@ async function pendingIntent(
         generation: 1,
         runId,
         runtimeId: `rt-auto-${sequence}`,
-        payload: { message: { role: 'assistant', content } },
+        payload: {
+          message: { role: 'assistant', content },
+          ...(final === undefined ? {} : { final }),
+        },
       })
     }
   }
@@ -312,16 +323,46 @@ describe('T-07820 auto-reply reconciliation', () => {
     )
   })
 
-  it('separates multiple semantic turn messages in the canonical response body', async () => {
+  it('replies with the final semantic turn message, not a join of the narration', async () => {
+    // T-07969 criterion 5, the accepted consequence of the ruling that agent
+    // notices are not part of a reply (Lance, 2026-09-04). This is T-07824's own
+    // example, inverted deliberately: it used to assert the two segments joined
+    // with a blank line. Nothing here is flagged `final`, so the rule falls back
+    // to the last non-empty segment — which is the answer either way.
     const { intent } = await pendingIntent([
       "I'll check with pwd and return the exact path.",
       '/Users/lherron/praesidium/signal-pipeline',
     ])
 
     expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
-    expect(ledger.roomSayRequests[0]?.body).toBe(
-      "I'll check with pwd and return the exact path.\n\n/Users/lherron/praesidium/signal-pipeline"
-    )
+    expect(ledger.roomSayRequests[0]?.body).toBe('/Users/lherron/praesidium/signal-pipeline')
+  })
+
+  it('mints the flagged final message and none of the narration (EN-03734 shape)', async () => {
+    // T-07969 criterion 3: the auto-reply intent body must equal the seq-728
+    // text exactly. EN-03734 shipped 22 narration lines ahead of this answer.
+    const narration = Array.from({ length: 22 }, (_, index) => ({
+      content: `Now doing step ${index + 1}:`,
+      final: false,
+    }))
+    const answer = '**Landed and pushed to `origin/main`** — 77db9216 + 6523eba5.'
+    const { intent } = await pendingIntent([...narration, { content: answer, final: true }])
+
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    const minted = ledger.roomSayRequests[0]?.body
+    expect(minted).toBe(answer)
+    for (const line of narration) expect(minted).not.toContain(line.content)
+  })
+
+  it('falls back to the last non-empty segment when the flagged final is empty', async () => {
+    const { intent } = await pendingIntent([
+      { content: 'narrating', final: false },
+      { content: 'the real answer', final: false },
+      { content: '', final: true },
+    ])
+
+    expect(await reconcileAutoReplyIntent({ db, wrkqLedger: ledger }, intent)).toBe('minted')
+    expect(ledger.roomSayRequests[0]?.body).toBe('the real answer')
   })
 
   it('records already-discharged when a manual reply won precedence', async () => {

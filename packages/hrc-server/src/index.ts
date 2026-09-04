@@ -82,6 +82,7 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+export { projectSemanticTurnResponse } from './event-notification-handlers.js'
 import {
   type ExactClaimHandlersMethods,
   exactClaimHandlersMethods,

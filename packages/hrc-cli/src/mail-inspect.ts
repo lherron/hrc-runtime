@@ -22,7 +22,7 @@ import {
   mailInspectEnvelopeIds,
   resolveMailInspectQuery,
 } from 'hrc-mail-kicker'
-import { WrkqStdioLedgerClient } from 'hrc-server'
+import { WrkqStdioLedgerClient, projectSemanticTurnResponse } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { printJson } from './print.js'
@@ -127,7 +127,12 @@ export async function cmdMailInspect(target: string, flags: MailInspectFlags): P
   try {
     const envelopeIds = mailInspectEnvelopeIds(db, query)
     const ledgerRows = await readLedgerRows(envelopeIds)
-    const inspection = buildMailInspection(db, query, envelopeIds, ledgerRows)
+    // The one server-owned projection (T-07969 criterion 4): `hrc mail inspect`
+    // runs out-of-process, so it supplies the projector the same way it supplies
+    // the ledger rows rather than growing a second canonical-response reader.
+    const inspection = buildMailInspection(db, query, envelopeIds, ledgerRows, (runId) =>
+      projectSemanticTurnResponse(db, runId)
+    )
     if (flags.json === true) {
       printJson(inspection)
       return

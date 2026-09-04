@@ -43,6 +43,14 @@ export interface AgentMessageEvent {
     content: string | ContentBlock[]
   }
   truncated?: boolean | undefined
+  /**
+   * The broker's per-message finality flag (T-01705/T-01706/T-07551): a turn
+   * emits its intermediate assistant messages with `final:false` and exactly
+   * one `final:true` message per RUN. Optional because transports predating the
+   * flag omit it; consumers that need the answer alone select on it and fall
+   * back to the last non-empty message (T-07969).
+   */
+  final?: boolean | undefined
 }
 
 // ============================================================================

@@ -121,6 +121,10 @@ export class MailKicker implements MailKickerContext {
     this.dependencies.requestAutoReplyReconcile()
   }
 
+  projectTurnResponse(runId: string): { body: string; truncated: boolean } {
+    return this.dependencies.projectTurnResponse(runId)
+  }
+
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void {
     this.dependencies.log(level, event, detail)
   }

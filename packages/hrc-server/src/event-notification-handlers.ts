@@ -320,38 +320,92 @@ function recoverDurableTurnResponseFinalizer(
 /**
  * The canonical body a completed semantic turn exposes to its response path.
  *
- * Rev 6 auto-reply and the pre-existing semantic handoff finalizer deliberately
- * share this function: a run has one response projection, regardless of which
- * durable intent consumes it. TURN_TEXT_LIMIT is the existing turn-text bound;
- * returning the marker keeps inherited truncation observable to the reconciler.
+ * Rev 6 auto-reply, the semantic handoff finalizer, the dispatcher response and
+ * the mail diagnostics deliberately share this function: a run has one response
+ * projection, regardless of which consumer reads it. TURN_TEXT_LIMIT is the
+ * existing turn-text bound; returning the marker keeps inherited truncation
+ * observable to the reconciler.
+ *
+ * The body is the turn's FINAL assistant message, never a join (T-07969). Since
+ * the T-07873 Claude authority cutover a turn emits every assistant message it
+ * produced — the mid-turn narration flagged `final:false` and exactly one
+ * `final:true`. Joining them put "I'll start by reading the task spec" ahead of
+ * the answer in every auto-reply and truncated long turns before reaching it.
+ * Lance ruled 2026-09-04 that agent notices are not part of a reply.
+ *
+ * Selection order, and why each step is where it is:
+ *
+ *   1. Empty segments are dropped BEFORE the finality pick, so a turn whose
+ *      final message is empty falls back to its last message with text rather
+ *      than projecting a blank reply. One rule, no special case.
+ *   2. The last segment flagged `final === true` wins. "Last" matters: a legacy
+ *      hook-derived cumulative `turn.message` can land after the broker's rows,
+ *      and it carries no flag, so a flagged row still beats it.
+ *   3. With nothing flagged (transports predating the flag) the last non-empty
+ *      segment is the answer — the same message the flag would have named.
+ *
+ * The raw runtime buffer is the FALLBACK, not the authority, and the ORDER is
+ * the whole defect. The buffer is turn-scoped where a reply needs to be
+ * final-message-scoped: it accumulates every assistant text chunk the turn
+ * produced and the old code called that concatenation the response. Because it
+ * was tested FIRST and is written for every transport, the semantic branch that
+ * would have given the right answer was unreachable on any transport that
+ * buffers — which is why this was never a tmux-specific bug and why the fix is
+ * a branch reorder rather than a new rule bolted onto a dead path.
+ *
+ * The buffer stays a faithful raw stream: `hrc capture` serves sdk/headless
+ * runtimes from these same rows, the analogue of a tmux pane capture, and it is
+ * still the only body a delta-only transport produces. Narrowing the reply must
+ * not narrow that surface, so this reads around the buffer, never rewrites it.
+ *
+ * Nothing here assumes a run HAS a final message. "Exactly one `final:true` per
+ * run" is a terminal-state invariant; a turn still in flight has emitted its
+ * narration and not yet its answer, and the fallback projects its latest line.
  */
 export function projectSemanticTurnResponse(
   db: HrcDatabase,
   runId: string
 ): { body: string; truncated: boolean } {
   const run = db.runs.getByRunId(runId)
-  const bufferedOutput = db.runtimeBuffers
-    .listByRunId(runId)
-    .map((chunk) => chunk.text)
-    .join('')
-  const semanticOutput =
-    bufferedOutput.length > 0
-      ? ''
-      : db.hrcEvents
-          .listByRun(runId, { eventKind: 'turn.message' })
-          .map((messageEvent) => extractTextFromTurnMessagePayload(messageEvent.payload))
-          .filter((text) => text.length > 0)
-          .join('\n\n')
+  const segments = db.hrcEvents
+    .listByRun(runId, { eventKind: 'turn.message' })
+    .map((messageEvent) => ({
+      text: extractTextFromTurnMessagePayload(messageEvent.payload),
+      final: isFinalTurnMessagePayload(messageEvent.payload),
+    }))
+    .filter((segment) => segment.text.length > 0)
+  // `lib` is ES2022 here, so no Array.findLast: walk back to the last flagged
+  // segment and fall through to the last segment when nothing is flagged.
+  let finalSegment = segments.at(-1)
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index]
+    if (segment?.final === true) {
+      finalSegment = segment
+      break
+    }
+  }
   const unbounded =
-    bufferedOutput.length > 0
-      ? bufferedOutput
-      : semanticOutput.length > 0
-        ? semanticOutput
-        : (run?.errorMessage ?? '')
+    finalSegment !== undefined
+      ? finalSegment.text
+      : (bufferedTurnOutput(db, runId) ?? run?.errorMessage ?? '')
   return {
     body: unbounded.slice(0, TURN_TEXT_LIMIT),
     truncated: unbounded.length > TURN_TEXT_LIMIT,
   }
+}
+
+/** The raw runtime-buffer stream for a run, or undefined when it wrote nothing. */
+function bufferedTurnOutput(db: HrcDatabase, runId: string): string | undefined {
+  const buffered = db.runtimeBuffers
+    .listByRunId(runId)
+    .map((chunk) => chunk.text)
+    .join('')
+  return buffered.length > 0 ? buffered : undefined
+}
+
+/** Read the broker finality flag the mapper carries on a `turn.message` payload. */
+function isFinalTurnMessagePayload(payload: unknown): boolean {
+  return isRecord(payload) && payload['final'] === true
 }
 
 export function finalizeSemanticTurnResponse(

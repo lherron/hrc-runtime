@@ -49,6 +49,10 @@ export const AgentMessageEventSchema = z.object({
     content: z.union([z.string(), z.array(ContentBlockSchema)]),
   }),
   truncated: z.boolean().optional(),
+  // Declared because z.object STRIPS unknown keys: without this the broker's
+  // finality flag would survive the mapper and be dropped by any schema parse
+  // on the way to a consumer (T-07969).
+  final: z.boolean().optional(),
 })
 
 // ============================================================================

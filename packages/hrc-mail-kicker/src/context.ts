@@ -70,6 +70,8 @@ export type MailKickerContext = {
   ): Promise<KickerDispatchResult>
   preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
   requestAutoReplyReconcile(): void
+  /** Canonical run response body; one server-owned projection (T-07969). */
+  projectTurnResponse(runId: string): { body: string; truncated: boolean }
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 
   wake(targetSessionRef: string, reason: HrcMailDriveWakeReason): void

@@ -86,6 +86,12 @@ export type MailKickerDependencies = {
   broker: KickerBrokerPort
   preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
   requestAutoReplyReconcile(): void
+  /**
+   * The canonical response body for a run, injected rather than reimplemented:
+   * a turn has ONE body authority and it is server-owned (T-07969 criterion 4).
+   * The kicker only ever REPORTS this text — nothing here disposes on it.
+   */
+  projectTurnResponse(runId: string): { body: string; truncated: boolean }
   afterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 }

@@ -194,10 +194,15 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 5))
 }
 
+/** The one server-owned projection, stubbed here (T-07969 criterion 4). */
+const CANONICAL_RESPONSE = 'the answer that was never minted'
+let projectedRuns: string[]
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 't07964-'))
   db = openHrcDatabase(join(tmpDir, 'state.sqlite'))
   logs = []
+  projectedRuns = []
   ledgerGate = undefined
   ledgerRows = new Map([[ENVELOPE, envelopeRow()]])
   server = createMailKicker(
@@ -217,6 +222,10 @@ beforeEach(async () => {
       },
       preemptAuthorized: () => Promise.resolve(false),
       requestAutoReplyReconcile: () => {},
+      projectTurnResponse: (runId) => {
+        projectedRuns.push(runId)
+        return { body: CANONICAL_RESPONSE, truncated: false }
+      },
       log: (level, event, detail) => logs.push({ level, event, detail }),
     },
     { enabled: true, sweepIntervalMs: 60_000 }
@@ -371,6 +380,43 @@ describe('T-07964 §3 auto_reply.unowned_turn', () => {
       terminalAttemptState: 'failed',
       envelopeIds: [ENVELOPE],
     })
+  })
+
+  it('names the canonical response the stranded turn would have replied', async () => {
+    // T-07969 criterion 4: the diagnostic reads the ONE server-owned projection
+    // rather than a second reader, so the line quotes exactly what an auto-reply
+    // would have minted. "The turn's canonical response was sitting right there"
+    // becomes something an operator can read.
+    seedRuntime('failed')
+    seedClaimedDrive()
+    db.mailDrives.failWithoutStart(DRIVE, 'compiler priming wait aborted')
+
+    observeMailDriveLifecycleEvent.call(
+      server,
+      appendEvent('turn.completed', '2026-09-03T23:50:51Z')
+    )
+    await settle()
+
+    const [unowned] = lines('wrkq.auto_reply.unowned_turn')
+    expect(unowned?.detail).toMatchObject({ canonicalResponse: CANONICAL_RESPONSE })
+    expect(projectedRuns).toEqual([RUN])
+  })
+
+  it('does not pay for the response read on the healthy path', async () => {
+    // This runs on EVERY mail-drive turn terminal on the node. The projection
+    // read lives INSIDE the stranded guard; a read above it would put the cost
+    // on every healthy turn.
+    seedRuntime('running')
+    seedClaimedDrive()
+
+    observeMailDriveLifecycleEvent.call(
+      server,
+      appendEvent('turn.completed', '2026-09-03T23:50:51Z')
+    )
+    await settle()
+
+    expect(lines('wrkq.auto_reply.unowned_turn')).toHaveLength(0)
+    expect(projectedRuns).toEqual([])
   })
 
   it('stays silent when a live attempt owns the turn', async () => {
