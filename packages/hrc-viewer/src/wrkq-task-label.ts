@@ -30,6 +30,23 @@ const TASK_ID_PATTERN = /^T-\d+$/
 const WRKQ_TIMEOUT_MS = 2000
 
 /**
+ * The placeholder slug hcs mints for a context task before its slugger renames
+ * it (`context-` + a 19-digit nanosecond timestamp). Since hcs T-07984 made
+ * context slugging ASYNCHRONOUS, this value is what a seat-birth resolution
+ * sees, and it is superseded moments later — so it is a NON-TERMINAL answer.
+ */
+const PLACEHOLDER_SLUG_PATTERN = /^context-\d{19}$/
+
+/**
+ * True when a resolved slug is a provisional hcs placeholder that will be
+ * replaced by a human slug. Such a slug is still rendered (it is what wrkq
+ * currently says) but must not be memoized, or the pane pins it forever.
+ */
+export function isPlaceholderTaskSlug(slug: string): boolean {
+  return PLACEHOLDER_SLUG_PATTERN.test(slug)
+}
+
+/**
  * Extract a wrkq task id from a scope ref, but only when the task segment looks
  * like a canonical `T-<digits>` id. Returns null for `primary`, lane-only, or
  * unparseable refs — those have no slug to resolve.
@@ -83,10 +100,13 @@ async function defaultWrkqRunner(taskId: string): Promise<WrkqRunResult> {
 
 /**
  * Build a memoizing task-slug resolver. The lookup is keyed by task id and
- * caches only SUCCESSFUL resolutions, so frequent lifecycle repaints reuse one
- * subprocess result while transient failures stay retryable. Non-task scopes
- * short-circuit to null without spawning anything. The returned resolver never
- * throws.
+ * caches only SETTLED resolutions, so frequent lifecycle repaints reuse one
+ * subprocess result while transient failures — and hcs's provisional
+ * `context-<ns>` placeholder (T-08028) — stay retryable. A placeholder is
+ * returned for display but never admitted to the cache, so the next repaint
+ * re-reads it and picks up the renamed slug; once a real slug lands it is
+ * cached exactly as before and never re-read. Non-task scopes short-circuit to
+ * null without spawning anything. The returned resolver never throws.
  */
 export function createTaskSlugResolver(options: { runner?: WrkqRunner } = {}): TaskSlugResolver {
   const runner = options.runner ?? defaultWrkqRunner
@@ -100,7 +120,7 @@ export function createTaskSlugResolver(options: { runner?: WrkqRunner } = {}): T
       const result = await runner(taskId)
       if (result.exitCode !== 0) return null
       const slug = parseTaskSlug(result.stdout)
-      if (slug !== null) cache.set(taskId, slug)
+      if (slug !== null && !isPlaceholderTaskSlug(slug)) cache.set(taskId, slug)
       return slug
     } catch {
       return null
@@ -112,8 +132,9 @@ let sharedResolver: TaskSlugResolver | undefined
 
 /**
  * Process-wide shared resolver so the initial viewer-spawn path and the
- * lifecycle projector share one memo cache (a task's slug is read at most once
- * per process under normal flow).
+ * lifecycle projector share one memo cache. A task's slug is read at most once
+ * per process once it has SETTLED; a task still carrying hcs's provisional
+ * `context-<ns>` placeholder is re-read on each repaint until it settles.
  */
 export function defaultTaskSlugResolver(): TaskSlugResolver {
   if (!sharedResolver) sharedResolver = createTaskSlugResolver()
