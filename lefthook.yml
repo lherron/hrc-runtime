@@ -34,14 +34,17 @@ pre-commit:
 
 pre-push:
   parallel: false
+  piped: true
   # Keep the hook alive for deleted paths, which Lefthook omits from push_files.
   files: printf 'lefthook.yml\n'
   commands:
     # No use_stdin: the gate reads the index, not the pushed refs, so it does
     # not compete with code-validation for the hook's single stdin.
     lock-hygiene:
+      priority: 1
       run: bun scripts/check-lock-hygiene.ts
     code-validation:
+      priority: 2
       use_stdin: true
       # TMPDIR=/tmp is load-bearing on macOS: the default
       # /var/folders/.../T/ prefix is 49 chars, which puts hrc-server's test
@@ -53,4 +56,14 @@ pre-push:
       # `just verify`; otherwise the hook silently borrows the operator's live
       # environment and changes result across hosts (T-07506).
       # One stdin consumer is intentional: Lefthook cannot fan pre-push stdin out to commands.
-      run: bun scripts/run-if-code-changed.ts pre-push -- sh -c 'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast' {files}
+      run: >-
+        sh -c 'refs=$(cat);
+        printf "%s\n" "$refs" | bun scripts/run-if-code-changed.ts pre-push -- sh -c '"'"'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast'"'"' {files}; rc=$?;
+        if [ $rc -eq 0 ] && command -v wrkp >/dev/null 2>&1; then
+          printf "%s\n" "$refs" | wrkp git push "$@" || true;
+        fi; exit $rc' sh {0}
+
+post-commit:
+  commands:
+    wrkp-git-commit:
+      run: command -v wrkp >/dev/null 2>&1 && wrkp git commit || true

@@ -83,7 +83,7 @@ function cleanEnv(): Record<string, string | undefined> {
   return {}
 }
 
-describe.serial('T-07764 ASP toolchain selection', () => {
+describe('T-07764 ASP toolchain selection', () => {
   it('uses override > root > bundled for every binary kind', () => {
     for (const kind of ASP_TOOLCHAIN_BINARY_KINDS) {
       const bundled = resolveAspToolchainBinary(kind, cleanEnv())

@@ -225,21 +225,27 @@ describe('lefthook v2 configuration', () => {
   })
 
   test('uses one fail-safe pre-push stdin consumer and preserves TMPDIR', async () => {
-    const prePush = (await readConfig())['pre-push']
+    const config = await readConfig()
+    const prePush = config['pre-push']
     expect(prePush.files).toBe("printf 'lefthook.yml\\n'")
-    expect(prePush.commands).toEqual({
-      // Reads the index rather than the pushed refs, so it needs no stdin and
-      // leaves code-validation the hook's single consumer (T-07412).
-      'lock-hygiene': { run: 'bun scripts/check-lock-hygiene.ts' },
-      'code-validation': {
-        use_stdin: true,
-        // `bun scripts/install-workspace-deps.ts`, not a bare `bun install`: this
-        // repo is its own workspace root, so a bare install here repopulates a
-        // repo-local node_modules with registry copies and shadows the source
-        // links of a parent praesidium dev workspace. See scripts/lib/workspace-root.ts.
-        run: 'bun scripts/run-if-code-changed.ts pre-push -- sh -c \'bun scripts/install-workspace-deps.ts && bash scripts/dev-env.sh up && eval "$(bash scripts/dev-env.sh env)" && TMPDIR=/tmp bun run test:fast\' {files}',
-      },
+    expect(prePush.piped).toBeTrue()
+    expect(prePush.commands['lock-hygiene']).toEqual({
+      priority: 1,
+      run: 'bun scripts/check-lock-hygiene.ts',
     })
+    const codeValidation = prePush.commands['code-validation']
+    expect(codeValidation.use_stdin).toBeTrue()
+    expect(codeValidation.priority).toBe(2)
+    expect(codeValidation.run).toContain('refs=$(cat)')
+    expect(codeValidation.run).toContain('bun scripts/run-if-code-changed.ts pre-push -- sh -c')
+    expect(codeValidation.run).toContain('bun scripts/install-workspace-deps.ts')
+    expect(codeValidation.run).toContain('TMPDIR=/tmp bun run test:fast')
+    expect(codeValidation.run.indexOf('wrkp git push "$@"')).toBeGreaterThan(
+      codeValidation.run.indexOf('TMPDIR=/tmp bun run test:fast')
+    )
+    expect(config['post-commit'].commands['wrkp-git-commit'].run).toBe(
+      'command -v wrkp >/dev/null 2>&1 && wrkp git commit || true'
+    )
   })
 })
 

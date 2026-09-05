@@ -6,16 +6,25 @@ scope: declared repository landing gate
 predicate: >
   The declared verify gate checks architecture records and their generated
   projections in addition to build, structural checks, lint, types, tests, and
-  the fixture-owned federation loopback corpus.
+  the fixture-owned federation loopback corpus. Enforcement note (T-08054): the
+  pre-push path captures stdin once, runs lock-hygiene first under `piped: true`,
+  replays the refs through the unchanged code-validation gate, and posts
+  `git.push` only at the successful tail; tracked executable
+  `.githooks/post-commit` enters the best-effort `git.commit` producer.
 authority: wrkq:T-06958
 source:
   - justfile
+  - lefthook.yml
+  - .githooks/post-commit
   - package.json
   - scripts/check-architecture-records.ts
+  - scripts/lefthook-boundaries.test.ts
 required_tests:
   - just architecture-records
   - just verify
-last_verified: 2026-07-24
+last_verified:
+  date: 2026-09-05
+  evidence: T-08054 landing `just verify` green with the hook topology above
 reopen_when: The verify recipe or repository validation topology changes.
 supersedes: []
 superseded_by: []
