@@ -950,6 +950,7 @@ export async function executeInteractiveBrokerInputTurn(
       options.submissionDoor ?? 'enqueue',
       {
         runtimeId: runtime.runtimeId,
+        runId,
         body: prompt,
         origin: submissionOrigin(session.scopeRef, options),
         ...(toBrokerResponseFormat(options.responseFormat) !== undefined

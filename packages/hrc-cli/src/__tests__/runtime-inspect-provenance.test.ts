@@ -62,6 +62,57 @@ beforeEach(() => {
 })
 
 describe('runtime inspect authority provenance', () => {
+  test('renders the live seat as the dispatch gate with milestones and turn origin', async () => {
+    const view: InspectRuntimeResponse = {
+      ...hrcView,
+      brokerDispatch: {
+        dispatchGate: 'live-seat',
+        agreement: 'disagree',
+        runtimeProjection: 'ready',
+        invocationProjection: 'ready',
+        liveSeatProbe: {
+          availability: 'current',
+          state: 'starting',
+          observedAt: '2026-09-05T18:00:00.000Z',
+          invocationId: 'inv-observed',
+          brokerHeldDepth: 0,
+          cause: 'runtime-inspect',
+        },
+        seatTransitions: [],
+        submissions: [
+          {
+            submissionId: 'sub-stalled',
+            runId: 'run-stalled',
+            lastMilestone: 'accepted',
+          },
+        ],
+        turns: [{ turnId: 'turn-local', origin: 'local-interactive', runId: null }],
+        lastUnexpectedClose: null,
+      },
+    }
+    spyOn(HrcClient.prototype, 'inspectRuntime').mockResolvedValue(view)
+    spyOn(HrcClient.prototype, 'brokerInspect').mockResolvedValue({
+      runtimeId: RUNTIME_ID,
+      source: 'broker',
+      transport: 'tmux',
+      harness: 'codex',
+      status: 'ready',
+      lastActivityAt: null,
+      invocations: [],
+    })
+    const output = captureStdout()
+    try {
+      await cmdRuntimeInspect([RUNTIME_ID])
+      expect(output.read()).toContain('dispatch gate live-seat')
+      expect(output.read()).toContain('live seat     starting (current')
+      expect(output.read()).toContain('agreement     disagree')
+      expect(output.read()).toContain('submission    sub-stalled last=accepted run=run-stalled')
+      expect(output.read()).toContain('origin=local-interactive')
+    } finally {
+      output.restore()
+    }
+  })
+
   test('renders capture state and broker-declared evidence authority', async () => {
     const capture: CaptureStateView = {
       state: 'blocked',

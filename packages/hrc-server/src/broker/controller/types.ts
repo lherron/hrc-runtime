@@ -390,6 +390,10 @@ export type HarnessBrokerControllerDeps = {
    * shorten it without changing the recovery contract.
    */
   eventGapBackfillDelayMs?: number | undefined
+  /** Production live-seat observation cadence. 0 disables; direct test controllers default off. */
+  brokerSeatProbeIntervalMs?: number | undefined
+  /** Warn once per seat/submission stall after this duration. */
+  brokerDispatchStallThresholdMs?: number | undefined
   /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
@@ -516,6 +520,10 @@ type BrokerControllerSubmissionInput<T extends { invocationId: unknown }> = Omit
   'invocationId'
 > & {
   runtimeId: string
+  /** HRC-only durable correlation; never sent over the broker wire. */
+  runId?: string | undefined
+  /** HRC-only door label used by dispatch diagnostics. */
+  submissionDoor?: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
 }
 
 export type BrokerControllerSteerInput = BrokerControllerSubmissionInput<SubmissionSteerRequest>

@@ -114,6 +114,62 @@ async function inspectRuntimeJson(runtimeId: string): Promise<InspectRuntimeResp
 }
 
 describe('POST /v1/runtimes/inspect', () => {
+  it('labels retained live-seat state stale when the current probe is unavailable', async () => {
+    fixture.seedSession('hsid-inspect-stale-seat', 'inspect-stale-seat')
+    seedRuntime({
+      runtimeId: 'rt-inspect-stale-seat',
+      hostSessionId: 'hsid-inspect-stale-seat',
+      scopeRef: 'inspect-stale-seat',
+      transport: 'tmux',
+      controllerKind: 'harness-broker',
+      activeInvocationId: 'inv-inspect-stale-seat',
+      runtimeStateJson: {
+        brokerDispatchDiagnostics: {
+          liveSeatProbe: {
+            availability: 'current',
+            state: 'starting',
+            observedAt: '2026-09-05T14:21:00.000Z',
+            invocationId: 'inv-inspect-stale-seat',
+            brokerHeldDepth: 0,
+            cause: 'periodic-monitor',
+          },
+        },
+      },
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-stale-seat')
+    expect(body.brokerDispatch).toMatchObject({
+      dispatchGate: 'live-seat',
+      agreement: 'stale',
+      runtimeProjection: 'ready',
+      invocationProjection: null,
+      liveSeatProbe: {
+        availability: 'stale',
+        state: 'starting',
+        observedAt: '2026-09-05T14:21:00.000Z',
+        attemptedAt: expect.any(String),
+      },
+    })
+  })
+
+  it('labels live-seat authority unavailable when no probe evidence exists', async () => {
+    fixture.seedSession('hsid-inspect-unavailable-seat', 'inspect-unavailable-seat')
+    seedRuntime({
+      runtimeId: 'rt-inspect-unavailable-seat',
+      hostSessionId: 'hsid-inspect-unavailable-seat',
+      scopeRef: 'inspect-unavailable-seat',
+      transport: 'headless',
+      controllerKind: 'harness-broker',
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-unavailable-seat')
+    expect(body.brokerDispatch).toMatchObject({
+      dispatchGate: 'live-seat',
+      agreement: 'unavailable',
+      liveSeatProbe: { availability: 'unavailable', state: null },
+    })
+  })
+
   it('returns broker capture and evidence authority projections verbatim', async () => {
     const capture: CaptureStateView = {
       state: 'blocked',

@@ -11,10 +11,17 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
+import {
+  type BrokerSeatObservation,
+  getBrokerDispatchDiagnostics,
+  projectBrokerDispatchInspectView,
+  recordAuthorityDisagreement,
+} from './broker/dispatch-observability.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { requireSession } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
+import { writeServerLog } from './server-log.js'
 import {
   isRecord,
   parseBrokerInspectRequest,
@@ -68,6 +75,57 @@ export async function handleInspectRuntime(
     ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
     : 0
 
+  let brokerDispatch: InspectRuntimeResponse['brokerDispatch']
+  if (runtime.controllerKind === 'harness-broker') {
+    const invocation = runtime.activeInvocationId
+      ? this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+      : this.db.brokerInvocations.listByRuntimeId(runtime.runtimeId).at(-1)
+    if (this.harnessBrokerController) {
+      await this.harnessBrokerController.seatProbe(runtime.runtimeId)
+    }
+    let diagnostics = getBrokerDispatchDiagnostics(this.db, runtime.runtimeId)
+    const liveSeatProbe: BrokerSeatObservation = diagnostics?.liveSeatProbe ?? {
+      availability: 'unavailable',
+      state: null,
+      observedAt: new Date(nowMs).toISOString(),
+      invocationId: invocation?.invocationId ?? null,
+      brokerHeldDepth: null,
+      cause: 'runtime-inspect',
+      error: this.harnessBrokerController
+        ? 'live seat probe returned no retained observation'
+        : 'broker controller unavailable',
+    }
+    const logger = {
+      warn: (event: string, fields?: Record<string, unknown>) =>
+        writeServerLog('WARN', event, fields),
+    }
+    try {
+      recordAuthorityDisagreement({
+        db: this.db,
+        logger,
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation?.invocationId ?? null,
+        runtimeState: runtime.status,
+        invocationState: invocation?.invocationState ?? null,
+        seat: liveSeatProbe,
+        observedAt: new Date(nowMs).toISOString(),
+      })
+    } catch (error) {
+      writeServerLog('WARN', 'broker.dispatch_observability.failed', {
+        runtimeId: runtime.runtimeId,
+        cause: 'runtime-inspect-disagreement',
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    diagnostics = getBrokerDispatchDiagnostics(this.db, runtime.runtimeId) ?? diagnostics
+    brokerDispatch = projectBrokerDispatchInspectView({
+      runtimeProjection: runtime.status,
+      invocationProjection: invocation?.invocationState ?? null,
+      liveSeatProbe,
+      diagnostics,
+    })
+  }
+
   const response = {
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
@@ -99,6 +157,7 @@ export async function handleInspectRuntime(
       this.staleGenerationEnabled &&
       this.staleGenerationThresholdSec > 0 &&
       continuationAgeSec > this.staleGenerationThresholdSec,
+    ...(brokerDispatch !== undefined ? { brokerDispatch } : {}),
     ...(capture !== undefined ? { capture } : {}),
     ...(evidenceAuthority !== undefined ? { evidenceAuthority } : {}),
     ...(authority ? { authority } : {}),

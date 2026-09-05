@@ -742,6 +742,30 @@ export type InspectRuntimeRequest = {
   runtimeId: string
 }
 
+export type BrokerDispatchSeatObservation = {
+  availability: 'current' | 'stale' | 'unavailable'
+  state: 'idle' | 'turn-active' | 'starting' | 'stopping' | 'terminal' | null
+  observedAt: string
+  attemptedAt?: string | undefined
+  invocationId: string | null
+  brokerHeldDepth: number | null
+  turnId?: string | undefined
+  cause: string
+  error?: string | undefined
+}
+
+export type BrokerDispatchInspectView = {
+  dispatchGate: 'live-seat'
+  agreement: 'agree' | 'disagree' | 'stale' | 'unavailable'
+  runtimeProjection: string
+  invocationProjection: string | null
+  liveSeatProbe: BrokerDispatchSeatObservation
+  seatTransitions: unknown[]
+  submissions: unknown[]
+  turns: unknown[]
+  lastUnexpectedClose: unknown | null
+}
+
 export type InspectRuntimeResponse = {
   runtimeId: string
   hostSessionId: string
@@ -765,6 +789,8 @@ export type InspectRuntimeResponse = {
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
+  /** Broker dispatch authority and retained evidence; live-seat is the only dispatch gate. */
+  brokerDispatch?: BrokerDispatchInspectView | undefined
   /** Non-secret effective mutation authority projected from durable runtime state. */
   authority?: HrcActuatorSplitAuthorityView | undefined
   control?:

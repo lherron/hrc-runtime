@@ -47,6 +47,17 @@ import { DEFAULT_ATTACHED_RUN_RESUME_TIMEOUT_MS } from '../server-constants'
 import { isLiveProcess } from '../server-lock'
 import { createTmuxManager } from '../tmux'
 import { droppedBrokerClientEventFields } from './client-observability'
+import {
+  DEFAULT_BROKER_DISPATCH_STALL_THRESHOLD_MS,
+  DEFAULT_BROKER_SEAT_PROBE_INTERVAL_MS,
+  buildBrokerCloseDiagnostic,
+  persistBrokerCloseDiagnostic,
+  recordBrokerEventMilestones,
+  recordSeatProbe,
+  recordSubmissionAccepted,
+  recordUnavailableSeatProbe,
+  warnStalledSubmissions,
+} from './dispatch-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
 import { parseBrokerRuntimeHostingState } from './runtime-hosting'
@@ -357,6 +368,8 @@ export class HarnessBrokerController {
   private readonly brokerActiveRpcTimeoutMs: number
   private readonly brokerAttachControlProbeTimeoutMs: number
   private readonly eventGapBackfillDelayMs: number
+  private readonly brokerSeatProbeIntervalMs: number
+  private readonly brokerDispatchStallThresholdMs: number
   private readonly brokerDbBusyRetryWindowMs: number
   private readonly brokerDbBusyRetryBaseDelayMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
@@ -407,6 +420,8 @@ export class HarnessBrokerController {
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
   private readonly pendingBrokerEventGapBackfills = new Map<string, PendingBrokerEventGapBackfill>()
+  private readonly brokerSeatMonitorTimers = new Map<string, ReturnType<typeof setInterval>>()
+  private readonly brokerSeatProbesInFlight = new Set<string>()
   // Explicit dispose is a two-RPC terminal sequence: stop emits
   // invocation.exited, then dispose emits invocation.disposed. Keep the fenced
   // control client alive through both facts so the committed projection cursor
@@ -482,6 +497,26 @@ export class HarnessBrokerController {
       deps.eventGapBackfillDelayMs >= 0
         ? deps.eventGapBackfillDelayMs
         : DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS
+    this.brokerSeatProbeIntervalMs =
+      typeof deps.brokerSeatProbeIntervalMs === 'number' &&
+      Number.isFinite(deps.brokerSeatProbeIntervalMs) &&
+      deps.brokerSeatProbeIntervalMs >= 0
+        ? deps.brokerSeatProbeIntervalMs
+        : deps.metricsStateRoot !== undefined
+          ? resolveNonNegativeNumber(
+              deps.env?.['HRC_BROKER_SEAT_PROBE_INTERVAL_MS'],
+              DEFAULT_BROKER_SEAT_PROBE_INTERVAL_MS
+            )
+          : 0
+    this.brokerDispatchStallThresholdMs =
+      typeof deps.brokerDispatchStallThresholdMs === 'number' &&
+      Number.isFinite(deps.brokerDispatchStallThresholdMs) &&
+      deps.brokerDispatchStallThresholdMs >= 0
+        ? deps.brokerDispatchStallThresholdMs
+        : resolveNonNegativeNumber(
+            deps.env?.['HRC_BROKER_DISPATCH_STALL_THRESHOLD_MS'],
+            DEFAULT_BROKER_DISPATCH_STALL_THRESHOLD_MS
+          )
     this.brokerDbBusyRetryWindowMs = resolveNonNegativeNumber(
       deps.env?.['HRC_BROKER_DB_BUSY_RETRY_WINDOW_MS'],
       DEFAULT_BROKER_DB_BUSY_RETRY_WINDOW_MS
@@ -532,6 +567,7 @@ export class HarnessBrokerController {
       deleteActive: (runtimeId, client) => {
         if (this.active.get(runtimeId)?.client === client) {
           this.active.delete(runtimeId)
+          this.clearSeatMonitor(runtimeId)
         }
       },
       markBrokerClosing: (runtimeId, reason, client) =>
@@ -569,7 +605,9 @@ export class HarnessBrokerController {
         // previous one: from here on, a consumer failure on this runtime is a
         // real crash again.
         this.intentionalClosingRuntimes.delete(record.runtimeId)
+        this.clearSeatMonitor(record.runtimeId)
         this.active.set(record.runtimeId, record)
+        this.startSeatMonitor(record.runtimeId)
       },
       consumeEvents: (runtimeId, events) => this.consumeEvents(runtimeId, events),
       afterMappedEvent: (runtimeId, envelope, result) =>
@@ -690,7 +728,7 @@ export class HarnessBrokerController {
   async steer(
     input: BrokerControllerSteerInput
   ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
-    return this.withActive(
+    const result = await this.withActive(
       input.runtimeId,
       {
         failureCode: 'broker_steer_failed',
@@ -706,12 +744,14 @@ export class HarnessBrokerController {
           ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
         })
     )
+    this.recordAcceptedSubmission(input, result, 'steer')
+    return result
   }
 
   async enqueue(
     input: BrokerControllerEnqueueInput
   ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
-    return this.withActive(
+    const result = await this.withActive(
       input.runtimeId,
       {
         failureCode: 'broker_enqueue_failed',
@@ -729,12 +769,14 @@ export class HarnessBrokerController {
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
     )
+    this.recordAcceptedSubmission(input, result, 'enqueue')
+    return result
   }
 
   async invoke(
     input: BrokerControllerInvokeInput
   ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
-    return this.withActive(
+    const result = await this.withActive(
       input.runtimeId,
       {
         failureCode: 'broker_invoke_failed',
@@ -751,12 +793,14 @@ export class HarnessBrokerController {
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
     )
+    this.recordAcceptedSubmission(input, result, 'invoke')
+    return result
   }
 
   async preempt(
     input: BrokerControllerPreemptInput
   ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
-    return this.withActive(
+    const result = await this.withActive(
       input.runtimeId,
       {
         failureCode: 'broker_preempt_failed',
@@ -774,6 +818,8 @@ export class HarnessBrokerController {
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
     )
+    this.recordAcceptedSubmission(input, result, 'preempt')
+    return result
   }
 
   async withdraw(
@@ -816,7 +862,42 @@ export class HarnessBrokerController {
   }
 
   async seatProbe(runtimeId: string): Promise<BrokerControllerRpcResult<SeatProbeResponse>> {
-    return this.withActive(
+    return this.probeSeat(runtimeId, 'explicit-probe')
+  }
+
+  private recordAcceptedSubmission(
+    input:
+      | BrokerControllerSteerInput
+      | BrokerControllerEnqueueInput
+      | BrokerControllerInvokeInput
+      | BrokerControllerPreemptInput,
+    result: BrokerControllerRpcResult<SubmissionResponse>,
+    door: 'steer' | 'enqueue' | 'invoke' | 'preempt'
+  ): void {
+    if (!result.ok || result.response.admission !== 'admitted') return
+    const active = this.active.get(input.runtimeId)
+    try {
+      recordSubmissionAccepted({
+        db: this.db,
+        logger: this.logger,
+        runtimeId: input.runtimeId,
+        invocationId: active?.invocationId ?? 'unknown',
+        submissionId: result.response.submissionId,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        door: input.submissionDoor ?? door,
+        observedAt: this.now(),
+      })
+    } catch (error) {
+      this.logDispatchObservabilityFailure(input.runtimeId, 'submission-accepted', error)
+    }
+    this.probeSeatInBackground(input.runtimeId, `submission-${door}-admitted`)
+  }
+
+  private async probeSeat(
+    runtimeId: string,
+    cause: string
+  ): Promise<BrokerControllerRpcResult<SeatProbeResponse>> {
+    const result = await this.withActive(
       runtimeId,
       { failureCode: 'broker_seat_probe_failed', timeoutCode: 'broker_seat_probe_timeout' },
       (active) =>
@@ -824,6 +905,83 @@ export class HarnessBrokerController {
           invocationId: active.invocationId as InvocationId,
         })
     )
+    if (this.shuttingDown) return result
+    const observedAt = this.now()
+    const active = this.active.get(runtimeId)
+    try {
+      if (result.ok && active) {
+        const observation = recordSeatProbe({
+          db: this.db,
+          logger: this.logger,
+          runtimeId,
+          invocationId: active.invocationId,
+          response: result.response,
+          observedAt,
+          cause,
+          stallThresholdMs: this.brokerDispatchStallThresholdMs,
+        })
+        const invocation = this.db.brokerInvocations.getByInvocationId(active.invocationId)
+        warnStalledSubmissions({
+          db: this.db,
+          logger: this.logger,
+          runtimeId,
+          invocationId: active.invocationId,
+          observedAt,
+          thresholdMs: this.brokerDispatchStallThresholdMs,
+          seatState: observation.state ?? 'unknown',
+          invocationPhase: invocation?.invocationState ?? 'unknown',
+        })
+      } else {
+        recordUnavailableSeatProbe({
+          db: this.db,
+          runtimeId,
+          ...(active?.invocationId !== undefined ? { invocationId: active.invocationId } : {}),
+          observedAt,
+          cause,
+          error: result.ok ? 'active broker binding changed during probe' : result.error.message,
+        })
+      }
+    } catch (error) {
+      this.logDispatchObservabilityFailure(runtimeId, cause, error)
+    }
+    return result
+  }
+
+  private probeSeatInBackground(runtimeId: string, cause: string): void {
+    if (this.shuttingDown || this.brokerSeatProbesInFlight.has(runtimeId)) return
+    this.brokerSeatProbesInFlight.add(runtimeId)
+    void this.probeSeat(runtimeId, cause)
+      .catch((error) => this.logDispatchObservabilityFailure(runtimeId, cause, error))
+      .finally(() => this.brokerSeatProbesInFlight.delete(runtimeId))
+  }
+
+  private logDispatchObservabilityFailure(runtimeId: string, cause: string, error: unknown): void {
+    if (this.shuttingDown && isClosedDbError(error)) return
+    this.logger.warn?.('broker.dispatch_observability.failed', {
+      runtimeId,
+      cause,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  private startSeatMonitor(runtimeId: string): void {
+    if (!(this.brokerSeatProbeIntervalMs > 0) || this.shuttingDown) return
+    this.probeSeatInBackground(runtimeId, 'binding-established')
+    const timer = setInterval(() => {
+      if (this.shuttingDown || !this.active.has(runtimeId)) {
+        this.clearSeatMonitor(runtimeId)
+        return
+      }
+      this.probeSeatInBackground(runtimeId, 'periodic-monitor')
+    }, this.brokerSeatProbeIntervalMs)
+    timer.unref?.()
+    this.brokerSeatMonitorTimers.set(runtimeId, timer)
+  }
+
+  private clearSeatMonitor(runtimeId: string): void {
+    const timer = this.brokerSeatMonitorTimers.get(runtimeId)
+    if (timer !== undefined) clearInterval(timer)
+    this.brokerSeatMonitorTimers.delete(runtimeId)
   }
 
   async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
@@ -1783,6 +1941,10 @@ export class HarnessBrokerController {
    */
   shutdown(): void {
     this.shuttingDown = true
+    for (const timer of this.brokerSeatMonitorTimers.values()) {
+      clearInterval(timer)
+    }
+    this.brokerSeatMonitorTimers.clear()
     for (const pending of this.pendingBrokerTmuxReaps.values()) {
       clearTimeout(pending.timer)
     }
@@ -1812,6 +1974,27 @@ export class HarnessBrokerController {
       const rawEnvelope = parseRawBrokerEnvelope(result.brokerEvent)
       if (rawEnvelope) {
         this.notifyRawBrokerEvent?.({ envelope: rawEnvelope, record: result.brokerEvent })
+      }
+      try {
+        recordBrokerEventMilestones({
+          db: this.db,
+          logger: this.logger,
+          runtimeId,
+          envelope,
+          ...(result.brokerEvent.runId !== undefined ? { runId: result.brokerEvent.runId } : {}),
+          observedAt: this.now(),
+        })
+      } catch (error) {
+        this.logDispatchObservabilityFailure(runtimeId, `broker-event:${envelope.type}`, error)
+      }
+      if (
+        envelope.type === 'input.accepted' ||
+        envelope.type === 'turn.started' ||
+        envelope.type === 'turn.completed' ||
+        envelope.type === 'turn.failed' ||
+        envelope.type === 'turn.interrupted'
+      ) {
+        this.probeSeatInBackground(runtimeId, `broker-event:${envelope.type}`)
       }
     }
 
@@ -2082,11 +2265,24 @@ export class HarnessBrokerController {
       }
       return
     }
-    this.logger.error?.('harness broker process closed', {
-      runtimeId,
-      error: error.message,
-    })
-    this.markBrokerCrashTerminal(runtimeId, toControllerError('broker_process_closed', error))
+    let controllerError = toControllerError('broker_process_closed', error)
+    try {
+      const diagnostic = buildBrokerCloseDiagnostic({
+        db: this.db,
+        runtimeId,
+        error,
+        observedAt: this.now(),
+      })
+      persistBrokerCloseDiagnostic({ db: this.db, logger: this.logger, diagnostic })
+      controllerError = new BrokerControllerError('broker_process_closed', diagnostic.error, {
+        name: error.name,
+        close: diagnostic,
+      })
+    } catch (diagnosticError) {
+      this.logDispatchObservabilityFailure(runtimeId, 'unexpected-close', diagnosticError)
+    }
+    this.clearSeatMonitor(runtimeId)
+    this.markBrokerCrashTerminal(runtimeId, controllerError)
   }
 
   private markBrokerClosing(

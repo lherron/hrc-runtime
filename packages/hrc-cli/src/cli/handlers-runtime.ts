@@ -210,6 +210,55 @@ export function printRuntimeInspect(
   if (runtime.capture !== undefined) {
     lines.push(`  capture       ${formatCaptureState(runtime.capture)}`)
   }
+  if (runtime.brokerDispatch !== undefined) {
+    const dispatch = runtime.brokerDispatch
+    const seat = dispatch.liveSeatProbe
+    lines.push(
+      `  dispatch gate ${dispatch.dispatchGate}`,
+      `  live seat     ${seat.state ?? '(unknown)'} (${seat.availability}, observed ${seat.observedAt})`,
+      `  projections   runtime=${dispatch.runtimeProjection} invocation=${dispatch.invocationProjection ?? '(none)'}`,
+      `  agreement     ${dispatch.agreement}`
+    )
+    const submission = dispatch.submissions.at(-1) as
+      | {
+          submissionId?: string
+          runId?: string | null
+          lastMilestone?: string
+          acceptedAt?: string | null
+          handedToHarnessAt?: string | null
+          turnStartedAt?: string | null
+        }
+      | undefined
+    if (submission) {
+      lines.push(
+        `  submission    ${submission.submissionId ?? '(unknown)'} last=${submission.lastMilestone ?? '(unknown)'} run=${submission.runId ?? '(none)'}`
+      )
+    }
+    const turn = dispatch.turns.at(-1) as
+      | { turnId?: string | null; origin?: string; runId?: string | null }
+      | undefined
+    if (turn) {
+      lines.push(
+        `  latest turn   ${turn.turnId ?? '(unknown)'} origin=${turn.origin ?? 'unknown'} run=${turn.runId ?? '(none)'}`
+      )
+    }
+    const close = dispatch.lastUnexpectedClose as {
+      observedAt?: string
+      invocationPhaseAtClose?: string
+      brokerPid?: number | null
+      childPid?: number | null
+      exitCode?: number | null
+      signal?: string | null
+      output?: { availability?: string; source?: string; tail?: string | null }
+    } | null
+    if (close) {
+      lines.push(
+        `  broker close  ${close.observedAt ?? '(unknown)'} phase=${close.invocationPhaseAtClose ?? 'unknown'} brokerPid=${close.brokerPid ?? 'unknown'} childPid=${close.childPid ?? 'unknown'} exit=${close.exitCode ?? 'unknown'} signal=${close.signal ?? 'unknown'}`,
+        `  close output  ${close.output?.availability ?? 'unavailable'} source=${close.output?.source ?? 'unavailable'}`
+      )
+      if (close.output?.tail) lines.push(`    ${close.output.tail.replaceAll('\n', '\n    ')}`)
+    }
+  }
   if (runtime.evidenceAuthority !== undefined) {
     lines.push(
       `  evidence      ${Object.entries(runtime.evidenceAuthority)

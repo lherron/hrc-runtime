@@ -240,6 +240,8 @@ export type {
   BrokerInspectRequest,
   BrokerForensicsEvent,
   BrokerForensicsResponse,
+  BrokerDispatchInspectView,
+  BrokerDispatchSeatObservation,
   HrcBrokerIngestItem,
   HrcEventIngestAck,
   HrcEventIngestBatch,

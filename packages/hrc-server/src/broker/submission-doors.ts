@@ -11,6 +11,7 @@ export type HrcBrokerSubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
 
 export type HrcBrokerSubmissionInput = {
   runtimeId: string
+  runId?: string | undefined
   body: string
   origin: SubmissionOrigin
   responseFormat?: InvocationResponseFormat | undefined
@@ -26,6 +27,8 @@ export function submitThroughBrokerDoor(
 ) {
   const common = {
     runtimeId: input.runtimeId,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    submissionDoor: door,
     body: input.body,
     origin: input.origin,
     ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
