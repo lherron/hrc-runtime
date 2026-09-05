@@ -127,8 +127,8 @@ describe('rev 5.1 scenario 1 — control', () => {
     const prompt = deterministic.prompts()[0] ?? ''
     expect(prompt).toContain(`[T-07704 · ${SENDER} → you · reply required]`)
     expect(prompt).toContain('the control body')
-    expect(prompt).not.toContain('reply: wrkc say')
-    expect(prompt).toContain('defer: wrkc defer EN-')
+    expect(prompt).toContain('reply: wrkc say EN-')
+    expect(prompt).not.toContain('wrkc defer')
 
     const [envelope] = [...ledger.envelopes.values()]
     ledger.ack(envelope?.id as string)

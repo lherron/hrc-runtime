@@ -14,19 +14,25 @@ import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } fr
  *   [T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]
  *   history: wrkc log T-07604   (14 messages · last 2h ago)
  *   <body>
- *   defer: wrkc defer EN-01165 --reason … [--retry-after 10m]
+ *   reply: wrkc say EN-01165 --to cody@hrc-runtime:T-07604 - <<'EOF'
+ *   …
+ *   EOF
  *
- * The runtime's canonical final response is auto-minted as the reply on this
- * driven form. Only defer remains an explicit verb.
+ * EVERY reply_required form carries that line, first contact included. HRC
+ * still auto-mints an undisposed turn's final response as the reply, but that
+ * is a backstop and NOT what the reader is told: a hint that says "just answer"
+ * teaches a reader to rely on a mechanism they cannot see fail, and a room whose
+ * mint did not land leaves them with no verb at all. An explicit say takes
+ * precedence over the mint, so following this line is always correct.
  *
  * POINTER FORM — every later surface. It carries NO BODY. That is a rule and
  * not a size optimization: the reminder goes to the runtime that already has
  * the body in context, and the defer retry goes to a reader who asked for it
  * back, so in both cases `wrkc show EN-xxxxx` is the read.
  *
- *   [T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply or defer]
+ *   [T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply]
  *   read: wrkc show EN-01165   ·   thread: wrkc log T-07604
- *   reply: … / defer: …
+ *   reply: …
  *
  * NO ROOM HISTORY IS EVER INJECTED: the cue is a pointer the agent pulls on,
  * which is the whole reason the ledger exists rather than a bigger context
@@ -34,7 +40,7 @@ import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } fr
  *
  * The envelope's `EN-xxxxx` id was internal under rev 4 and is NOT any more: a
  * pointer form has to name the row the reader is being sent to read, and the
- * `defer:` line has to name the row the reader is being asked to defer. The
+ * `reply:` line has to name the row the reader is being asked to answer. The
  * ROOM KEY is the header's display token, but the reply line addresses the
  * ENVELOPE, not the room key — see formatReplyLine.
  */
@@ -100,8 +106,6 @@ export function formatEnvelopePresentation(
   }
   const reply = formatReplyLine(presentable)
   if (reply !== undefined) lines.push(reply)
-  const defer = formatDeferLine(envelope)
-  if (defer !== undefined) lines.push(defer)
   return lines.join('\n')
 }
 
@@ -216,8 +220,8 @@ function formatWhy(presentable: PresentableEnvelope, now: Date): string | undefi
   if (form === 'reminder') {
     const ago = elapsedClause(presentable.turnEndedAt, now)
     return ago === undefined
-      ? 'still owed — your turn ended without a reply or defer'
-      : `still owed — your turn ended ${ago} ago without a reply or defer`
+      ? 'still owed — your turn ended without a reply'
+      : `still owed — your turn ended ${ago} ago without a reply`
   }
   const reason = presentable.envelope.deferReason?.trim()
   const ago = elapsedClause(presentable.envelope.retryAt, now)
@@ -295,11 +299,19 @@ function formatDuration(elapsedMs: number): string {
 }
 
 /**
- * The reply line on a pointer form, which is also the ack: saying back into the
- * room with `--to` discharges every presented obligation from that sender
- * (section 6). The initial driven form carries no line because the runtime's
- * canonical final response is auto-minted as the reply. An `fyi` is auto-acked
- * at its own presentation and therefore carries no reply line either.
+ * The reply line, which is also the ack: saying back into the room with `--to`
+ * discharges every presented obligation from that sender (section 6).
+ *
+ * It rides EVERY reply_required form, first contact included. The full form
+ * used to carry none, on the grounds that the runtime's canonical final
+ * response is auto-minted as the reply — but that reasoning stated a mechanism
+ * the reader cannot observe and cannot tell has failed. A room whose mint did
+ * not land (observed live on R-00057) left its reader with a defer verb and no
+ * reply verb at all, which is precisely the case the line exists for. The mint
+ * remains as a backstop, and an explicit say takes precedence over it, so this
+ * line is correct whether or not the mint would have fired.
+ *
+ * A `notify`/`fyi` still carries no reply line: nothing is owed on it.
  *
  * T-07638: it addresses the sender's EXACT scope, never the bare agent name.
  * A bare name resolves against the ROOM, and the room default is not always the
@@ -327,25 +339,11 @@ function formatDuration(elapsedMs: number): string {
  * room kind, so it cannot drift.
  */
 function formatReplyLine(presentable: PresentableEnvelope): string | undefined {
-  if (formOf(presentable) === 'full') return undefined
   const { envelope } = presentable
   if (envelope.obligation !== 'reply_required') return undefined
   const to = envelopeReplyAddressee(envelope)
   if (to === undefined) return undefined
   return [`reply: wrkc say ${envelope.id} --to ${to} - <<'EOF'`, '…', 'EOF'].join('\n')
-}
-
-/**
- * The defer line (rev 5.1 §4).
- *
- * It rides EVERY reply_required form, first contact included, so the reader
- * learns the verb before the obligation is already late. Not answering now is a
- * verb rather than a silence, and a reader who has never been shown it defaults
- * to the silence.
- */
-function formatDeferLine(envelope: WrkqEnvelope): string | undefined {
-  if (envelope.obligation !== 'reply_required') return undefined
-  return `defer: wrkc defer ${envelope.id} --reason … [--retry-after 10m]`
 }
 
 export function envelopeReplyAddressee(envelope: WrkqEnvelope): string | undefined {

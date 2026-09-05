@@ -49,23 +49,32 @@ function presentable(overrides: Partial<PresentableEnvelope> = {}): PresentableE
 }
 
 describe('T-07612 rev 5.1 §4 presentation', () => {
-  it('renders the driven full form without a manual reply block but with defer', () => {
+  it('renders the driven full form with the reply block and no defer verb', () => {
     const rendered = formatEnvelopePresentation(presentable({ senderGeneration: 3 }), NOW)
     expect(rendered).toBe(
       [
         '[T-07604 · cody@hrc-runtime:T-07604 (gen 3) → you · reply required]',
         'the body',
-        'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
+        "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
+        '…',
+        'EOF',
       ].join('\n')
     )
   })
 
-  // rev 5.1: not answering now is a VERB. A reader who has never been shown it
-  // defaults to the silence the whole revision exists to stop.
-  it('teaches the defer verb at first contact', () => {
+  // The auto-mint is a backstop the reader cannot observe and cannot tell has
+  // failed. First contact is exactly where a missing verb strands them, so the
+  // say is spelled out before the obligation is ever late.
+  it('teaches the reply verb at first contact', () => {
     expect(formatEnvelopePresentation(presentable(), NOW)).toContain(
-      'defer: wrkc defer EN-00042 --reason …'
+      "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'"
     )
+  })
+
+  it('never teaches the defer verb in an injection', () => {
+    for (const form of ['full', 'reminder', 'defer-retry'] as const) {
+      expect(formatEnvelopePresentation(presentable({ form }), NOW)).not.toContain('wrkc defer')
+    }
   })
 
   it('omits the generation when this node cannot see the sender', () => {
@@ -85,7 +94,8 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     )
     expect(cold).toContain('history: wrkc log T-07604   (14 messages · last 2h ago)')
     // A cue, never the history itself: no room content is ever injected.
-    expect(cold.split('\n')).toHaveLength(4)
+    // Header + cue + body + the three-line reply block, and nothing else.
+    expect(cold.split('\n')).toHaveLength(6)
   })
 
   it('never cues a brand-new room even when asked', () => {
@@ -127,16 +137,15 @@ describe('T-07612 rev 5.1 §4 presentation', () => {
     expect(rendered).not.toContain('defer:')
   })
 
-  // The other side of the axis: reply_required still says so, but a completed
-  // driven turn replies implicitly through the auto-minted canonical response.
-  it('marks a reply_required driven header without manual reply ceremony', () => {
+  // The other side of the axis: a reply_required driven header says so AND
+  // hands over the verb that discharges it.
+  it('marks a reply_required driven header and names the say that discharges it', () => {
     const rendered = formatEnvelopePresentation(
       presentable({ envelope: envelope({ obligation: 'reply_required' }) }),
       NOW
     )
     expect(rendered).toContain('· reply required]')
-    expect(rendered).not.toContain('reply: wrkc say')
-    expect(rendered).toContain('defer: wrkc defer EN-00042')
+    expect(rendered).toContain("reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'")
   })
 
   it('marks a stored hold in the recipient header without changing the body grammar', () => {
@@ -261,12 +270,11 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
     )
     expect(rendered).toBe(
       [
-        '[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply or defer]',
+        '[T-07604 · cody@hrc-runtime:T-07604 → you · reply required · still owed — your turn ended 4m ago without a reply]',
         'read: wrkc show EN-00042   ·   thread: wrkc log T-07604',
         "reply: wrkc say EN-00042 --to cody@hrc-runtime:T-07604 - <<'EOF'",
         '…',
         'EOF',
-        'defer: wrkc defer EN-00042 --reason … [--retry-after 10m]',
       ].join('\n')
     )
     // The rule, not an optimization: a pointer NEVER carries the body.
