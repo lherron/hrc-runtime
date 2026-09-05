@@ -42,9 +42,13 @@ do not wait for a message or reply row. The canonical final text comes from the
 identified turn projection.
 
 For a kicker presentation, send an addressed `wrkc say` while the seat is busy.
-The ledger must show `admission.requested(queue)` with `origin.envelopeId` and a
-positive TTL, followed by boundary presentation. It must contain no steer or
-preempt admission for that delivery.
+The admission class the ledger must show is the one the seat's driver
+advertises (T-08094): `admission.requested(steer)` with `origin.envelopeId`
+followed by `submission.absorbed` on a steer-capable seat, and
+`admission.requested(queue)` with a positive TTL followed by boundary
+`submission.executed` on one without. Either way exactly ONE envelope rides that
+submission, the wrkq receipt is written on the landing and not on the admission,
+and no `preempt` admission appears for a queue-intent delivery.
 
 Run the timing-dependent set—busy enqueue, guarded wait, and preempt—twice on
 the same certified source commit. Across every scenario require zero

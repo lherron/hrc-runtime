@@ -22,7 +22,7 @@ import {
   mailInspectEnvelopeIds,
   resolveMailInspectQuery,
 } from 'hrc-mail-kicker'
-import { WrkqStdioLedgerClient, projectSemanticTurnResponse } from 'hrc-server'
+import { WrkqStdioLedgerClient } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { printJson } from './print.js'
@@ -70,21 +70,33 @@ function renderEnvelope(view: MailInspectEnvelope): string {
   } else if (view.ledgerError !== undefined) {
     lines.push(`  ledger   unavailable: ${view.ledgerError}`)
   }
-  for (const entry of view.attempts) {
-    const run = entry.run
+  const intent = view.intent
+  if (intent !== undefined) {
     lines.push(
-      `  attempt  ${entry.attempt.driveAttemptId} state=${entry.attempt.state} runtime=${
-        entry.attempt.runtimeId ?? '-'
-      }${entry.runtimeStatus === undefined ? '' : `(${entry.runtimeStatus})`}`
+      `  intent   door=${intent.door} form=${intent.form} runtime=${
+        intent.runtimeId ?? '-'
+      } submission=${intent.submissionId ?? '(pending)'} submittedAt=${intent.submittedAt}`
+    )
+  }
+  for (const entry of view.presentations) {
+    const row = entry.presentation
+    lines.push(
+      `  landed   ${row.presentationId} outcome=${row.deliveryOutcome} runtime=${row.runtimeId}${
+        entry.runtimeStatus === undefined ? '' : `(${entry.runtimeStatus})`
+      }`
     )
     lines.push(
-      `           run=${entry.attempt.runId} status=${run?.status ?? 'absent'} dispatchedInputId=${
-        run?.dispatchedInputId ?? 'null'
-      }`
+      `           at=${row.landedAt} seq=${row.landingHrcSeq} reminder=${
+        row.reminderLandedAt !== undefined
+          ? `landed@${row.reminderLandingHrcSeq ?? '?'}`
+          : row.reminderDueAt !== undefined
+            ? `due@${row.reminderDueAt}`
+            : 'none'
+      } disposition=${row.disposition ?? 'none'}`
     )
   }
   lines.push(
-    `  disposal reminders=${view.reminders.length} failureNotices=${view.failureNotices.length}`
+    `  disposal presentations=${view.presentations.length} failureNotices=${view.failureNotices.length}`
   )
   lines.push('  timeline')
   if (view.timeline.length === 0) {
@@ -106,7 +118,7 @@ export function renderMailInspection(inspection: MailInspection): string {
         : `scope ${inspection.query.targetSessionRef}`
   const body =
     inspection.envelopes.length === 0
-      ? '  (no presentation receipts on this node)'
+      ? '  (no delivery records on this node)'
       : inspection.envelopes.map(renderEnvelope).join('\n\n')
   return `hrc mail inspect — ${header}\n\n${body}\n`
 }
@@ -122,12 +134,7 @@ export async function cmdMailInspect(target: string, flags: MailInspectFlags): P
   try {
     const envelopeIds = mailInspectEnvelopeIds(db, query)
     const ledgerRows = await readLedgerRows(envelopeIds)
-    // The one server-owned projection (T-07969 criterion 4): `hrc mail inspect`
-    // runs out-of-process, so it supplies the projector the same way it supplies
-    // the ledger rows rather than growing a second canonical-response reader.
-    const inspection = buildMailInspection(db, query, envelopeIds, ledgerRows, (runId) =>
-      projectSemanticTurnResponse(db, runId)
-    )
+    const inspection = buildMailInspection(db, query, envelopeIds, ledgerRows)
     if (flags.json === true) {
       printJson(inspection)
       return

@@ -8,8 +8,6 @@
  * an already-pending envelope unreachable (T-07643).
  */
 import type { MailKickerContext } from '../context.js'
-import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
-import { dropAckedHeldMember } from '../drive/held-batch.js'
 import { LEDGER_TAIL_PAGE_LIMIT, errorText, isRecord } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
@@ -29,7 +27,7 @@ export async function withdrawAckedQueuedInjection(
       const payload: unknown = JSON.parse(event.payload)
       // A legacy fyi/notify is terminalized by its OWN presentation. Its held
       // input still owes the addressee one delivery, so that automatic ack is
-      // not a reader disposal and must never revoke the input.
+      // not a reader disposal and must never revoke the submission.
       if (isRecord(payload) && payload['reason'] === 'fyi_presented') return
     } catch {
       // An unreadable additive payload must not change the pre-existing ack
@@ -40,47 +38,23 @@ export async function withdrawAckedQueuedInjection(
   const envelopeId = event.resourceId
   if (envelopeId === undefined) return
 
-  // T-07891: no broker submission and no ledger receipt exist while an
-  // ordinary queue member is HRC-held. An in-turn reader ack is therefore a
-  // pure local subtraction; calling submission.withdraw would invent work the
-  // broker never received.
-  if (dropAckedHeldMember(server, envelopeId, QUEUED_INJECTION_WITHDRAW_REASON)) return
-
-  const attempt = server.db.mailDrives.getClaimedAttemptForEnvelope(envelopeId)
-  if (attempt === undefined) return
-
-  // The wrkq receipt is the durable join to the broker input. Do not infer an
-  // input from the queued run: old receipts can legitimately lack inputId, and
-  // the broker's envelope selector exists precisely for that mixed history.
-  const envelope = await server.ledger.envelopeShow({ envelope: envelopeId })
-  const receipt = envelope.presentedTo
-    .filter((candidate) => candidate.driveAttemptId === attempt.driveAttemptId)
-    .at(-1)
-  const inputId = receipt?.inputId
-  const runtimeId = receipt?.runtimeId ?? attempt.runtimeId
-  if (inputId === undefined || runtimeId === undefined) return
-
-  // Once input.accepted is durable, the harness owns the input. The accepted
-  // race is deliberately left to the normal one-turn lifecycle.
-  if (server.db.brokerInvocationEvents.hasInputAccepted(runtimeId, inputId)) return
-
-  // A typed interactive turn is visible to the broker but does not mint an
-  // HRC run row. In that shape the kicker initially owns an ordinary claimed
-  // attempt even though the broker queued its input. Require the broker's own
-  // queue evidence here: it admits that real shape without ever withdrawing
-  // an idle-path presentation.
-  if (!server.db.brokerInvocationEvents.hasQueueEnqueued(runtimeId, inputId)) return
+  // The OPEN INTENT is the proof that HRC submitted this envelope and has not
+  // seen it land. Nothing else is consulted: under T-08094 an envelope with no
+  // open intent either never went to a door or has already landed, and in both
+  // shapes there is nothing to recall.
+  const intent = server.db.mailDelivery.getIntent(envelopeId)
+  if (intent === undefined || intent.runtimeId === undefined || intent.door === 'launch') return
 
   const withdrawal = await server.broker.withdraw({
-    runtimeId,
+    runtimeId: intent.runtimeId,
     envelopeId,
     reason: QUEUED_INJECTION_WITHDRAW_REASON,
   })
   if (!withdrawal.ok) {
     server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
       envelopeId,
-      runtimeId,
-      inputId,
+      runtimeId: intent.runtimeId,
+      ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
       reason: QUEUED_INJECTION_WITHDRAW_REASON,
       error: withdrawal.error.message,
     })
@@ -88,27 +62,24 @@ export async function withdrawAckedQueuedInjection(
   }
 
   if (withdrawal.response.outcome === 'withdrawn') {
-    const withdrawn = server.db.mailDrives.markClaimedAttemptWithdrawn(
-      attempt.driveAttemptId,
-      QUEUED_INJECTION_WITHDRAW_REASON
-    )
-    logAttemptTerminal(server, withdrawn, {
-      reason: QUEUED_INJECTION_WITHDRAW_REASON,
-      presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(withdrawn.driveAttemptId),
-    })
+    server.db.mailDelivery.clearIntent(envelopeId)
     server.log('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
       envelopeId,
-      runtimeId,
-      inputId,
+      runtimeId: intent.runtimeId,
+      ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
+      door: intent.door,
       reason: QUEUED_INJECTION_WITHDRAW_REASON,
     })
     return
   }
 
+  // `not_held` means the broker has already applied it: the landing is on its
+  // way and will write the receipt. Leaving the intent open is what keeps that
+  // idempotent.
   server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
     envelopeId,
-    runtimeId,
-    inputId,
+    runtimeId: intent.runtimeId,
+    door: intent.door,
     reason: QUEUED_INJECTION_WITHDRAW_REASON,
     outcome: withdrawal.response.outcome,
     ...('state' in withdrawal.response ? { state: withdrawal.response.state } : {}),

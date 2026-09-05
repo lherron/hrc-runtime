@@ -963,6 +963,65 @@ export class BrokerInvocationEventRepository {
     )
   }
 
+  /**
+   * The committed broker disposition of one submission on a runtime (T-08094).
+   *
+   * This is the RECONCILE half of write-ahead delivery: an intent whose landing
+   * HRC never observed live — a crash, a restart, a dropped observer — is
+   * resolved by asking the mirrored stream what actually happened, rather than
+   * by guessing from HRC memory that no longer exists.
+   */
+  findSubmissionDisposition(
+    runtimeId: string,
+    submissionId: string
+  ): { type: string; turnId?: string | undefined; reason?: string | undefined } | undefined {
+    const row = this.db
+      .query<{ type: string; turnId: string | null; reason: string | null }, [string, string]>(
+        `SELECT type,
+                json_extract(broker_event_json, '$.turnId') AS turnId,
+                json_extract(broker_event_json, '$.reason') AS reason
+           FROM broker_invocation_events
+          WHERE runtime_id = ?
+            AND type IN (
+              'submission.absorbed', 'submission.executed', 'submission.rejected',
+              'submission.expired', 'submission.withdrawn', 'submission.cancelled',
+              'submission.lost'
+            )
+            AND json_extract(broker_event_json, '$.submissionId') = ?
+          ORDER BY time ASC, seq ASC
+          LIMIT 1`
+      )
+      .get(runtimeId, submissionId)
+    if (row === null) return undefined
+    return {
+      type: row.type,
+      ...(row.turnId === null ? {} : { turnId: row.turnId }),
+      ...(row.reason === null ? {} : { reason: row.reason }),
+    }
+  }
+
+  /**
+   * The submission a mail envelope's admission request minted on this runtime.
+   *
+   * `origin.envelopeId` is carried into the broker's own admission record by
+   * every kicker door, so the envelope-to-submission join is reconstructable
+   * from durable evidence and never from HRC memory (spec T-08092 D2 step 2).
+   */
+  findSubmissionIdForEnvelope(runtimeId: string, envelopeId: string): string | undefined {
+    const row = this.db
+      .query<{ submissionId: string | null }, [string, string]>(
+        `SELECT json_extract(broker_event_json, '$.submissionId') AS submissionId
+           FROM broker_invocation_events
+          WHERE runtime_id = ?
+            AND type = 'admission.requested'
+            AND json_extract(broker_event_json, '$.origin.envelopeId') = ?
+          ORDER BY time DESC, seq DESC
+          LIMIT 1`
+      )
+      .get(runtimeId, envelopeId)
+    return row?.submissionId ?? undefined
+  }
+
   maxBrokerSeq(invocationId: string): number {
     const row = this.db
       .query<{ max_seq: number | null }, [string]>(

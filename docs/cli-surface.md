@@ -183,37 +183,47 @@ hrc mail inspect cody@agent-spaces:T-07962
 hrc mail inspect rt-ab0029c2-1d3f-4f54-89a4-d77e79978c6a
 ```
 
-Read-only. It joins the wrkq envelope row with HRC's own drive attempts,
-presentation receipts, reminders, failure notices and the bound `runs` row, and
-prints a timeline plus a one-line verdict — `stranded`, `stalled_delivery`,
-`awaiting_turn`, `reminder_armed`, `reminder_delivered`, `discharged`,
-`failed`, `awaiting_delivery`, `no_hrc_record` or `ledger_unavailable`.
-`--json` emits one document.
+Read-only. It joins the wrkq envelope row with HRC's own delivery intents,
+presentation records, reminder state and failure notices, and prints a timeline
+plus a one-line verdict — `stranded`, `stalled_delivery`, `awaiting_landing`,
+`reminder_armed`, `reminder_delivered`, `discharged`, `failed`,
+`awaiting_delivery`, `no_hrc_record` or `ledger_unavailable`. `--json` emits one
+document.
 
-`stalled_delivery` separates a wedged delivery from a healthy in-flight one: a
-LIVE attempt (`held`/`claimed`/`started`) that has held a presented obligation
-past `STALLED_DELIVERY_THRESHOLD_MS` (5 minutes) without its `turn.started`
-being observed. The discriminator is structural rather than heuristic —
-`recordStart` writes `state='started'` and `started_at` in one statement, so a
-turn that began cannot be called stalled however long it runs. A held batch is
-excluded while its runtime still has an active run, because held batches wait
-for a turn boundary by design.
+The two HRC records it reads are the whole model (T-08094). A DELIVERY INTENT is
+a submission this daemon made and has not seen land: it is written before the
+broker door is called, at most one per envelope, and it is what makes an
+envelope unactionable while a delivery is in flight. A PRESENTATION is a body
+that landed — keyed by (envelope, runtime), carrying the landing sequence, the
+reminder state and the disposition. No run or turn id appears in either.
+
+`stalled_delivery` separates a wedged delivery from a healthy in-flight one: an
+open intent whose submission was admitted more than `STALLED_DELIVERY_THRESHOLD_MS`
+(5 minutes) ago with no landing fact on the broker stream. Below that threshold
+the same shape reads `awaiting_landing`, which is an ordinary in-flight
+delivery. The periodic reconcile clears a stalled intent at its TTL and
+redelivers once — the bounded window of the accepted at-least-once risk.
+
+`stranded` is reserved for a presented obligation whose runtime has gone
+terminal with nothing disposed: on a LIVE runtime the verdict is
+`awaiting_delivery`, because D3 disposes it at that runtime's next turn
+terminal.
 
 The target form is decided by shape: `EN-xxxxx` inspects one envelope, `rt-…` a
 runtime, anything else an addressee (handle or session ref) — the last two
-report on that party's newest presentation receipts. A wrkq ledger that cannot
-be reached is reported per envelope rather than failing the command: the HRC
-half is what explains a stranded obligation.
+report on that party's newest presentations plus anything still in flight. A
+wrkq ledger that cannot be reached is reported per envelope rather than failing
+the command: the HRC half is what explains a stranded obligation.
 
-The kicker's own log lines carry the same identities (T-07964): a terminal
-attempt writes `wrkq.kicker.attempt_terminal`, its obligation disposal writes
-`wrkq.kicker.dispose_begin` and one `wrkq.kicker.dispose_outcome` per envelope
-(with `wrkq.kicker.dispose_interrupted` at a stop that lands mid-loop), a turn
-that ends on a runtime still holding an obligation nobody owns writes
-`wrkq.kicker.unowned_turn`, a wedged live delivery writes one
-`wrkq.kicker.stalled_delivery` per attempt per process, and the first sweep
-after boot writes one `wrkq.kicker.boot_reconcile` summary naming all three
-populations.
+The kicker's own log lines carry the same identities: a delivery writes
+`wrkq.kicker.delivery_intent` (before the door), `wrkq.kicker.delivery_admitted`
+(the door's admission) and `wrkq.kicker.presented` (the landing fact and the
+receipt), all naming the same presentation id; a refused or lost submission
+writes `wrkq.kicker.landing_refused`; a turn terminal writes one
+`wrkq.kicker.runtime_disposal` naming what it decided per envelope; a wedged
+delivery writes one `wrkq.kicker.stalled_delivery` per envelope per process; the
+reconcile writes `wrkq.kicker.intent_reconciled`; and the first sweep after boot
+writes one `wrkq.kicker.boot_reconcile` summary.
 
 ## Session continuity
 

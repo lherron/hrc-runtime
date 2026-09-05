@@ -219,22 +219,28 @@ describe('T-07881 hook-observed mail turn binding', () => {
       roomKey: ROOM,
       body: 'exercise the hook-observed reply-is-ack path',
     })
-    const driveAttemptId = 'drive-t07881'
-    db.mailDrives.claim(
-      TARGET,
-      'insert',
-      { envelopeIds: [source.id] },
-      { driveAttemptId, runId: RUN_ID }
-    )
-    db.mailDrives.presentForAttempt(driveAttemptId, [source.id])
+    // T-08094: the delivery owns no run, so what stands here is the local
+    // PRESENTATION RECORD — a body that landed on this runtime. The run binding
+    // under test is the broker's, and the two no longer touch.
+    db.mailDelivery.recordPresentation({
+      envelopeId: source.id,
+      runtimeId: TMUX_RUNTIME_ID,
+      targetSessionRef: TARGET,
+      generation: 1,
+      presentationId: 'present-t07881',
+      inputId: SUBMISSION_ID,
+      deliveryOutcome: 'executed',
+      landingHrcSeq: 1,
+    })
 
     const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
     const observer = {
       db,
       mailKickerLapsedRuntimes: new Set<string>(),
-      wake: () => {
-        db.mailDrives.completeStartedAttempt(RUN_ID, 'turn.completed')
-      },
+      mailKickerDisposalsPending: new Set<Promise<void>>(),
+      ledger: { envelopeShow: async () => ledger.envelopes.get(source.id) },
+      log: () => undefined,
+      wake: () => undefined,
     } as unknown as HrcServerInstanceForHandlers
     const applyAndObserve = (event: InvocationEventEnvelope) => {
       const projected = mapper.apply(event)
@@ -302,10 +308,6 @@ describe('T-07881 hook-observed mail turn binding', () => {
     // works. What it no longer feeds is a reply. The turn produced text and
     // ended; the envelope is untouched by that, and HRC wrote nothing to the
     // room on the seat's behalf.
-    expect(db.mailDrives.getAttempt(driveAttemptId)).toMatchObject({
-      driveAttemptId,
-      state: 'completed',
-    })
     expect(ledger.roomSayRequests).toEqual([])
     expect(ledger.envelopes.get(source.id)?.state).not.toBe('acked')
     expect(

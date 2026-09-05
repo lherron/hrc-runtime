@@ -24,60 +24,12 @@ let db: HrcDatabase
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-mail-stop-test-'))
   db = openHrcDatabase(join(tmpDir, 'state.sqlite'))
-  seedTurn('run-mail-stop-1')
 })
 
 afterEach(async () => {
   db.close()
   await rm(tmpDir, { recursive: true, force: true })
 })
-
-/** The refusal row references a run, so the turn has to exist to refuse it. */
-function seedTurn(runId: string): void {
-  const now = new Date().toISOString()
-  if (db.sessions.getByHostSessionId('hsid-mail-stop') === null) {
-    db.sessions.insert({
-      hostSessionId: 'hsid-mail-stop',
-      scopeRef: scope,
-      laneRef: 'main',
-      generation: 1,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: [],
-    })
-    db.runtimes.insert({
-      runtimeId: 'rt-mail-stop',
-      hostSessionId: 'hsid-mail-stop',
-      scopeRef: scope,
-      laneRef: 'main',
-      generation: 1,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'busy',
-      supportsInflightInput: false,
-      adopted: false,
-      activeRunId: runId,
-      createdAt: now,
-      updatedAt: now,
-    })
-  }
-  db.runs.insert({
-    runId,
-    hostSessionId: 'hsid-mail-stop',
-    runtimeId: 'rt-mail-stop',
-    scopeRef: scope,
-    laneRef: 'main',
-    generation: 1,
-    transport: 'tmux',
-    status: 'running',
-    acceptedAt: now,
-    startedAt: now,
-    updatedAt: now,
-  })
-  db.runtimes.updateRunId('rt-mail-stop', runId, now)
-}
 
 function blocking(...envelopeIds: string[]): HrcMailStopEnvelopeSummary[] {
   return envelopeIds.map((envelopeId) => ({
@@ -96,8 +48,8 @@ function newest(envelopeIds: string[]): number {
   )
 }
 
-function evaluate(runId: string, ids: string[]) {
-  return db.mailStopRefusals.evaluate(runId, target, blocking(...ids), newest(ids))
+function evaluate(runtimeId: string, ids: string[]) {
+  return db.mailStopRefusals.evaluate(runtimeId, target, blocking(...ids), newest(ids))
 }
 
 describe('HrcMailStopRefusalRepository', () => {
@@ -156,7 +108,7 @@ describe('HrcMailStopRefusalRepository', () => {
       .query(
         `UPDATE hrcmail_stop_refusals
          SET refusal_count = 0, total_refusal_count = ?
-         WHERE run_id = ?`
+         WHERE runtime_id = ?`
       )
       .run(HRC_MAIL_STOP_HARD_CAP - 1, 'run-mail-stop-1')
     expect(evaluate('run-mail-stop-1', ['EN-00001', 'EN-00002', 'EN-00003'])).toMatchObject({
@@ -175,7 +127,6 @@ describe('HrcMailStopRefusalRepository', () => {
   it('starts fresh counters for a new stable run id', () => {
     evaluate('run-mail-stop-1', ['EN-00001'])
     evaluate('run-mail-stop-1', ['EN-00001'])
-    seedTurn('run-mail-stop-2')
 
     expect(evaluate('run-mail-stop-2', ['EN-00001'])).toMatchObject({
       decision: 'block',

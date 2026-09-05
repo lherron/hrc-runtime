@@ -1,42 +1,17 @@
-import type { HrcSessionRecord } from 'hrc-core'
-import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
+import type { HrcMailPresentation } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import type { EnvelopePresentationForm, PresentableEnvelope } from '../ledger/presentation.js'
+import type { EnvelopePresentationForm } from '../ledger/presentation.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
 import { newestPresentationReceipt, obligationSummons } from '../ledger/types.js'
-import type { HeldBatchActionableEnvelope } from './held-batch.js'
-import { MAX_PRESENTED_PER_ATTEMPT } from './held-batch.js'
 
-export type ActionableEnvelope = HeldBatchActionableEnvelope
-
-/**
- * A stored hold is an interruption request and therefore owns one admission
- * decision. It can never inherit another envelope's origin by being batched,
- * nor lend its hold intent to ordinary queue mail.
- */
-export function isolatedDeliveryBatch(actionable: readonly ActionableEnvelope[]): {
-  selected: ActionableEnvelope[]
-  deferredCount: number
-} {
-  const hold = actionable.find((item) => item.envelope.delivery === 'hold')
-  if (hold === undefined) return { selected: [...actionable], deferredCount: 0 }
-  return { selected: [hold], deferredCount: actionable.length - 1 }
-}
-
-/**
- * One page of what stands, in ledger order.
- *
- * T-08093 removed the counterparty partition this used to apply. It existed so
- * that a completed turn's final text had exactly one addressee to be minted
- * back to; with the auto-mint retired nothing about a presentation is
- * attributable to a single sender, and a reader who owes three people answers
- * each one by envelope id. Oldest-first up to the contract cap is now the whole
- * rule, and mail from distinct senders no longer serializes across turns.
- */
-export function presentationBatch(actionable: readonly ActionableEnvelope[]): ActionableEnvelope[] {
-  return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
+/** One envelope the kicker may deliver, with the form its body will take. */
+export type ActionableEnvelope = {
+  envelope: WrkqEnvelope
+  form: EnvelopePresentationForm
+  /** The landed presentation a due reminder is pointing back at. */
+  presentation?: HrcMailPresentation | undefined
 }
 
 /**
@@ -46,14 +21,15 @@ export function presentationBatch(actionable: readonly ActionableEnvelope[]): Ac
  * sweep re-pends due deferrals — so calling it here IS the periodic-sweep half
  * of §5's wake routing.
  *
- * REV 5.1 D2 lives here, and it is a subtraction rather than a gate. A
- * `presented` envelope is simply not deliverable: it is bound to the runtime in
- * its newest receipt, and the only thing that can surface it again is that same
- * runtime's own due reminder. Everything else this returns is `pending` — first
- * delivery (empty `presented_to`, full form) or a defer retry (non-empty,
- * pointer form carrying the reader's own reason). The redelivery floor that
- * used to hold a presented envelope back for 1/2/4/8/16 minutes is gone with
- * the re-presentation it was throttling.
+ * Two subtractions, and they are subtractions rather than gates:
+ *
+ *  - a `presented` envelope is bound to the runtime in its newest receipt, and
+ *    the only thing that can surface it again is that same runtime's own due
+ *    reminder (rev 5.1 D2);
+ *  - an envelope with an OPEN DELIVERY INTENT is never actionable (T-08094 D2
+ *    step 1). A submission may already be in flight for it, and the intent — not
+ *    HRC's memory of this pass — is what makes a second delivery impossible
+ *    across a crash, a restart, or two wakes racing for one scope.
  */
 export async function readActionableEnvelopes(
   server: MailKickerContext,
@@ -71,14 +47,18 @@ export async function readActionableEnvelopes(
       repended: view.repended,
     })
   }
+  const outstanding = new Set(
+    server.db.mailDelivery.listOpenIntents(targetSessionRef).map((intent) => intent.envelopeId)
+  )
   const due = new Map(
-    server.db.mailDrives
+    server.db.mailDelivery
       .listDueReminders(targetSessionRef, new Date().toISOString())
-      .map((reminder) => [reminder.envelopeId, reminder] as const)
+      .map((presentation) => [presentation.envelopeId, presentation] as const)
   )
   const actionable: ActionableEnvelope[] = []
   const claimedReminders = new Set<string>()
   for (const envelope of view.items) {
+    if (outstanding.has(envelope.id)) continue
     if (envelope.state === 'pending') {
       // D1 vs D6: `presented_to` non-empty means the body has already been
       // pushed once, so this is a defer retry and takes the pointer form.
@@ -88,26 +68,29 @@ export async function readActionableEnvelopes(
       continue
     }
     if (envelope.state !== 'presented') continue
-    const reminder = due.get(envelope.id)
-    if (reminder === undefined) continue
+    const presentation = due.get(envelope.id)
+    if (presentation === undefined) continue
     // The reminder is bound to ONE runtime. If the newest receipt has moved on,
     // this reminder is stale evidence about a delivery that no longer stands.
-    if (newestPresentationReceipt(envelope)?.runtimeId !== reminder.runtimeId) continue
-    claimedReminders.add(reminder.envelopeId)
-    actionable.push({ envelope, form: 'reminder', reminder })
+    if (newestPresentationReceipt(envelope)?.runtimeId !== presentation.runtimeId) continue
+    claimedReminders.add(presentation.envelopeId)
+    actionable.push({ envelope, form: 'reminder', presentation })
   }
   // Every due reminder this read did NOT claim is one whose obligation has
   // stopped standing on that runtime — replied, deferred, lapsed by D3, or
   // superseded. Retire it here, where the wake set that decided so is in hand.
   // Left armed it stays due forever and puts this scope in every later sweep's
   // candidate set for nothing.
-  for (const reminder of due.values()) {
-    if (claimedReminders.has(reminder.envelopeId)) continue
-    if (!server.db.mailDrives.retireReminder(reminder.envelopeId, reminder.runtimeId)) continue
+  for (const presentation of due.values()) {
+    if (claimedReminders.has(presentation.envelopeId)) continue
+    if (outstanding.has(presentation.envelopeId)) continue
+    if (!server.db.mailDelivery.retireReminder(presentation.envelopeId, presentation.runtimeId)) {
+      continue
+    }
     server.log('INFO', 'wrkq.kicker.reminder_retired', {
       targetSessionRef,
-      envelope: reminder.envelopeId,
-      runtimeId: reminder.runtimeId,
+      envelope: presentation.envelopeId,
+      runtimeId: presentation.runtimeId,
     })
   }
   return actionable
@@ -144,77 +127,6 @@ export function actionableDirectives(
     if (raw !== undefined && raw.length > 0) return raw
   }
   return undefined
-}
-
-/**
- * Ask wrkq what each presentation would contain, without writing a receipt.
- *
- * The ledger remains the sole authority for the §7 history cue, but a preview
- * neither marks the runtime warm nor auto-acks a fyi. Delivery is committed
- * only after the broker accepts the prompt below.
- */
-export async function recordPresentations(
-  server: MailKickerContext,
-  actionable: readonly ActionableEnvelope[],
-  attempt: HrcMailDriveAttempt,
-  session: HrcSessionRecord,
-  runtimeId: string | undefined
-): Promise<PresentableEnvelope[]> {
-  const presentables: PresentableEnvelope[] = []
-  for (const item of actionable) {
-    const result = await server.ledger.present({
-      envelope: item.envelope.id,
-      preview: true,
-      node: server.nodeId,
-      hostSessionId: session.hostSessionId,
-      generation: String(session.generation),
-      runId: attempt.runId,
-      driveAttemptId: attempt.driveAttemptId,
-      ...(runtimeId === undefined ? {} : { runtimeId }),
-    })
-    presentables.push({
-      envelope: result.envelope,
-      delivery: result.envelope.delivery,
-      // A pointer form carries no body and therefore no history cue: the cue
-      // exists to orient a cold reader at first contact, and every pointer
-      // goes to a reader who has already had one.
-      historyHint: item.form === 'full' && result.historyHint,
-      messageCount: result.messageCount,
-      ...(result.lastMessageAt === undefined ? {} : { lastMessageAt: result.lastMessageAt }),
-      form: item.form,
-      ...(item.reminder === undefined ? {} : { turnEndedAt: item.reminder.turnEndedAt }),
-      ...senderGenerationFor(server, result.envelope),
-    })
-  }
-  return presentables
-}
-
-/** Commit receipts only after an ordinary dispatch accepted the composed prompt. */
-export async function commitPresentations(
-  server: MailKickerContext,
-  presentables: readonly PresentableEnvelope[],
-  attempt: HrcMailDriveAttempt,
-  session: HrcSessionRecord,
-  runtimeId: string | undefined,
-  /**
-   * Absent for a cold birth: the prompt rode the runtime's `initialPrompt`, so
-   * that delivery class has no invocation input to name (T-07693). The receipt
-   * contract already declares this field optional for exactly that reason.
-   */
-  inputId: string | undefined
-): Promise<void> {
-  for (const presentable of presentables) {
-    await server.ledger.present({
-      envelope: presentable.envelope.id,
-      node: server.nodeId,
-      hostSessionId: session.hostSessionId,
-      generation: String(session.generation),
-      runId: attempt.runId,
-      ...(inputId === undefined ? {} : { inputId }),
-      driveAttemptId: attempt.driveAttemptId,
-      ...(runtimeId === undefined ? {} : { runtimeId }),
-    })
-  }
 }
 
 /**

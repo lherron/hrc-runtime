@@ -756,11 +756,18 @@ export class BrokerEventMapper {
         this.turnStartedInputId(envelope, openTurnStartedSeq) === undefined
       ) {
         // T-07920: a summons that births a launch-primed seat deliberately has
-        // no broker input. The invocation's initial run is the mail drive and
-        // the first observed bracket is its launch turn. This stays narrower
-        // than the historical fallback: an older promptless birth followed by
-        // a queued summons has dispatchedInputId set, so T-07915 still leaves
-        // that foreign priming turn unowned.
+        // no broker input. The invocation's initial run supplied the launch
+        // prompt and the first observed bracket is its launch turn. This stays
+        // narrower than the historical fallback: an older promptless birth
+        // followed by a queued summons has dispatchedInputId set, so T-07915
+        // still leaves that foreign priming turn unowned.
+        //
+        // T-08094 removed a second arm here — "this run belongs to a mail drive
+        // attempt". The drive attempt is gone, and the kicker's cold birth now
+        // goes through the invoke door like every other launch-carried first
+        // turn, so the correlation below is the whole (and more truthful) test:
+        // it records that THIS run put the prompt on launch, rather than that
+        // some mail was involved.
         const fallbackRun =
           fallbackRunId === undefined ? null : this.db.runs.getByRunId(fallbackRunId)
         const launchCarriedInvoke =
@@ -769,7 +776,7 @@ export class BrokerEventMapper {
         if (
           fallbackRunId !== undefined &&
           fallbackRun?.dispatchedInputId === undefined &&
-          (this.db.mailDrives.getAttemptByRunId(fallbackRunId) !== undefined || launchCarriedInvoke)
+          launchCarriedInvoke
         ) {
           return fallbackRunId
         }

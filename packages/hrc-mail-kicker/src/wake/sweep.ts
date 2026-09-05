@@ -24,10 +24,10 @@
  */
 import type { MailKickerContext } from '../context.js'
 import { reportBootReconcileOnce, reportStalledDeliveries } from '../diagnostics/stranded.js'
+import { reconcileOpenIntents } from '../drive/reconcile.js'
 import { LEDGER_SWEEP_SCOPE_BATCH, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { sweepLapsedObligations } from '../terminal/runtime-lapse.js'
-import { reconcileStrandedObligations } from '../terminal/stranded-reconcile.js'
 import { unbornBirthWakeCandidates } from './birth-retry.js'
 import { chunk, collectPendingTargets } from './cold-start.js'
 
@@ -42,11 +42,13 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
     // operator actually has to do something about, rather than a list the
     // daemon quietly fixed a second later. Both are boot-once and both run
     // after warmup, so they see the same reattached world.
-    if (this.mailKickerBootReconcilePending) {
-      await reconcileStrandedObligations(this).catch((error: unknown) => {
-        this.log('WARN', 'wrkq.kicker.stranded_reconcile_failed', { error: errorText(error) })
-      })
-    }
+    // D2 step 5's PERIODIC leg. An intent whose landing this daemon never saw
+    // — a broker that went away, an observer that dropped, a crash between the
+    // door and the receipt — is resolved against the mirrored stream here, and
+    // its envelope becomes actionable again or gets its receipt.
+    await reconcileOpenIntents(this, { reason: 'periodic' }).catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.intent_reconcile_failed', { error: errorText(error) })
+    })
     // T-07964 §4: one boot report, on the first periodic sweep rather than at
     // `start()`, so runtime reattachment and the broker's warmup have already
     // happened and the runs it names are the ones that really did survive.
@@ -63,13 +65,13 @@ export function runMailKickerSweep(this: MailKickerContext): Promise<void> {
     // presentation cannot cross.
     await sweepLapsedObligations(this)
     const now = new Date().toISOString()
-    const targets = new Set<string>(this.db.mailDrives.listInFlightTargets())
+    const targets = new Set<string>(this.db.mailDelivery.listIntentTargets())
     // Two rev 5.1 candidate sources that key on nothing in the ledger: a due
     // D4 reminder, and a §5 notice waiting for its sender's next attend.
     // Neither shows up as pending mail, so without these a scope whose only
     // outstanding business is one of them is never woken at all.
-    for (const target of this.db.mailDrives.listDueReminderTargets(now)) targets.add(target)
-    for (const target of this.db.mailDrives.listFailureNoticeTargets()) targets.add(target)
+    for (const target of this.db.mailDelivery.listDueReminderTargets(now)) targets.add(target)
+    for (const target of this.db.mailDelivery.listFailureNoticeTargets()) targets.add(target)
     const seated = this.db.runtimes.listLiveSessionRefs()
     const unborn = await unbornBirthWakeCandidates(this, seated)
     for (const batch of chunk([...seated, ...unborn], LEDGER_SWEEP_SCOPE_BATCH)) {

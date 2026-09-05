@@ -2611,6 +2611,233 @@ const hrcmailRetireAutoReplyMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08094 / spec T-08092 rev 4 D2+D3 — steer-first delivery, presentation on a
+ * landing fact, runtime-keyed disposal.
+ *
+ * The drive ATTEMPT is deleted, not extended. It existed to join "run X
+ * finished" to "envelope E" so the retired auto-mint could speak as E's
+ * addressee (`run_id NOT NULL UNIQUE` is that join), and with the mint gone the
+ * join has no customer. Human-typed pane turns mint no run at all, so every
+ * path keyed on one was blind to exactly the turns this rev must gate.
+ *
+ * Three tables replace it, and each holds one thing the attempt conflated:
+ *
+ *  - `hrcmail_delivery_intents` is the WRITE-AHEAD record. One open row per
+ *    envelope (the primary key IS that guarantee), committed BEFORE any door is
+ *    called, so no landing can precede the record and an HRC-side crash leaves
+ *    durable intent rather than nothing. Rows are deleted when the delivery
+ *    lands or is refused: this is the live set, never history.
+ *  - `hrcmail_presentations` is the local record of a LANDED receipt, keyed by
+ *    (envelope, runtime) — the binding rev 5.1 means — carrying the landing
+ *    sequence and the reminder state D3 decides on. It absorbs
+ *    `hrcmail_envelope_reminders`, which held the same (envelope, runtime)
+ *    at-most-once reminder under a second key.
+ *  - `hrcmail_birth_refusals` is the T-07661 candidate source that used to be
+ *    read off failed drive attempts: the virgin births this node owes.
+ *
+ * History is BACKFILLED rather than dropped. A pre-cutover presentation whose
+ * attempt named a runtime becomes a presentation record with its disposition
+ * intact, so an obligation disposed under the old rules stays disposed and one
+ * that was not stays actionable. `landing_hrc_seq` falls back to the attempt's
+ * observed turn start, or 0 when it never started — 0 is below every real
+ * terminal sequence, which is the safe direction: the next turn terminal on
+ * that runtime re-examines it instead of skipping it forever.
+ *
+ * `hrcmail_stop_refusals` keeps its shape and changes its KEY: the Stop gate
+ * resolves the seat from the runtime row rather than from `activeRunId`, so the
+ * refusal counter is per runtime and obligation-set. Existing rows are keyed by
+ * a run id that nothing will ever look up again and are cleared.
+ */
+const hrcmailSteerFirstDeliveryMigration: HrcMigration = {
+  id: '0058_hrcmail_steer_first_delivery',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_delivery_intents (
+        envelope_id TEXT PRIMARY KEY,
+        target_session_ref TEXT NOT NULL,
+        door TEXT NOT NULL CHECK (
+          door IN ('steer', 'enqueue', 'preempt', 'invoke', 'launch')
+        ),
+        form TEXT NOT NULL CHECK (form IN ('full', 'defer-retry', 'reminder')),
+        presentation_id TEXT NOT NULL,
+        runtime_id TEXT,
+        submission_id TEXT,
+        host_session_id TEXT,
+        generation INTEGER CHECK (generation IS NULL OR generation >= 1),
+        delivery_outcome TEXT,
+        submitted_hrc_seq INTEGER NOT NULL,
+        submitted_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_delivery_intents_target
+        ON hrcmail_delivery_intents(target_session_ref);
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_delivery_intents_submission
+        ON hrcmail_delivery_intents(submission_id);
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_delivery_intents_runtime
+        ON hrcmail_delivery_intents(runtime_id);
+
+      CREATE TABLE IF NOT EXISTS hrcmail_presentations (
+        envelope_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        generation INTEGER CHECK (generation IS NULL OR generation >= 1),
+        presentation_id TEXT NOT NULL,
+        input_id TEXT,
+        delivery_outcome TEXT NOT NULL,
+        landing_hrc_seq INTEGER NOT NULL,
+        landed_at TEXT NOT NULL,
+        turn_ended_at TEXT,
+        reminder_armed_at TEXT,
+        reminder_due_at TEXT,
+        reminder_landing_hrc_seq INTEGER,
+        reminder_landed_at TEXT,
+        disposed_at TEXT,
+        disposition TEXT,
+        PRIMARY KEY (envelope_id, runtime_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_presentations_runtime
+        ON hrcmail_presentations(runtime_id)
+        WHERE disposed_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_presentations_target
+        ON hrcmail_presentations(target_session_ref);
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_presentations_reminder_due
+        ON hrcmail_presentations(target_session_ref, reminder_due_at)
+        WHERE reminder_due_at IS NOT NULL
+          AND reminder_landing_hrc_seq IS NULL
+          AND disposed_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS hrcmail_birth_refusals (
+        target_session_ref TEXT PRIMARY KEY,
+        scope_ref TEXT NOT NULL,
+        refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals >= 0),
+        last_reason TEXT,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_birth_refusals_open
+        ON hrcmail_birth_refusals(resolved_at);
+
+      CREATE TABLE IF NOT EXISTS hrcmail_seat_hints (
+        runtime_id TEXT PRIMARY KEY,
+        target_session_ref TEXT NOT NULL,
+        hint_count INTEGER NOT NULL DEFAULT 0 CHECK (hint_count >= 0),
+        last_hint_at TEXT,
+        last_count INTEGER NOT NULL DEFAULT 0 CHECK (last_count >= 0)
+      );
+    `)
+
+    const attempts = db
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'table' AND name = 'hrcmail_drive_attempts'`
+      )
+      .get()?.sql
+    if (attempts !== undefined) {
+      db.exec(`
+        INSERT OR IGNORE INTO hrcmail_presentations (
+          envelope_id, runtime_id, target_session_ref, generation, presentation_id,
+          delivery_outcome, landing_hrc_seq, landed_at, disposed_at, disposition
+        )
+        SELECT
+          p.envelope_id,
+          a.runtime_id,
+          a.target_session_ref,
+          a.generation,
+          a.drive_attempt_id,
+          'migrated',
+          COALESCE(a.start_hrc_seq, 0),
+          p.presented_at,
+          p.disposed_at,
+          p.disposition
+        FROM hrcmail_drive_presentations p
+        JOIN hrcmail_drive_attempts a
+          ON a.drive_attempt_id = p.drive_attempt_id
+        WHERE a.runtime_id IS NOT NULL;
+
+        UPDATE hrcmail_presentations
+           SET reminder_armed_at = (
+                 SELECT r.created_at FROM hrcmail_envelope_reminders r
+                  WHERE r.envelope_id = hrcmail_presentations.envelope_id
+                    AND r.runtime_id = hrcmail_presentations.runtime_id
+               ),
+               reminder_due_at = (
+                 SELECT r.remind_at FROM hrcmail_envelope_reminders r
+                  WHERE r.envelope_id = hrcmail_presentations.envelope_id
+                    AND r.runtime_id = hrcmail_presentations.runtime_id
+               ),
+               turn_ended_at = (
+                 SELECT r.turn_ended_at FROM hrcmail_envelope_reminders r
+                  WHERE r.envelope_id = hrcmail_presentations.envelope_id
+                    AND r.runtime_id = hrcmail_presentations.runtime_id
+               ),
+               reminder_landed_at = (
+                 SELECT r.delivered_at FROM hrcmail_envelope_reminders r
+                  WHERE r.envelope_id = hrcmail_presentations.envelope_id
+                    AND r.runtime_id = hrcmail_presentations.runtime_id
+                    AND r.drive_attempt_id IS NOT NULL
+               )
+         WHERE EXISTS (
+                 SELECT 1 FROM hrcmail_envelope_reminders r
+                  WHERE r.envelope_id = hrcmail_presentations.envelope_id
+                    AND r.runtime_id = hrcmail_presentations.runtime_id
+               );
+
+        UPDATE hrcmail_presentations
+           SET reminder_landing_hrc_seq = 0
+         WHERE reminder_landed_at IS NOT NULL;
+      `)
+      db.exec(`
+        DROP TABLE IF EXISTS hrcmail_drive_presentations;
+        DROP TABLE IF EXISTS hrcmail_drive_slots;
+        DROP TABLE IF EXISTS hrcmail_drive_attempts;
+        DROP TABLE IF EXISTS hrcmail_envelope_reminders;
+      `)
+    }
+
+    // The refusal counter is REBUILT rather than renamed: its key column carried
+    // a foreign key into `runs`, and a per-runtime counter has no run to point
+    // at. Existing rows are keyed by a run id nothing will look up again, so the
+    // table starts empty — a refusal count is a within-turn courtesy, never
+    // history.
+    const refusals = db
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'table' AND name = 'hrcmail_stop_refusals'`
+      )
+      .get()?.sql
+    if (refusals !== undefined && !refusals.includes('runtime_id')) {
+      db.exec(`
+        DROP TABLE hrcmail_stop_refusals;
+
+        CREATE TABLE hrcmail_stop_refusals (
+          runtime_id TEXT PRIMARY KEY,
+          target_session_ref TEXT NOT NULL,
+          observed_envelope_seq INTEGER NOT NULL DEFAULT 0
+            CHECK (observed_envelope_seq >= 0),
+          refusal_count INTEGER NOT NULL DEFAULT 0
+            CHECK (refusal_count >= 0 AND refusal_count <= 3),
+          total_refusal_count INTEGER NOT NULL DEFAULT 0
+            CHECK (total_refusal_count >= 0 AND total_refusal_count <= 50),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_hrcmail_stop_refusals_target
+          ON hrcmail_stop_refusals(target_session_ref, updated_at);
+      `)
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2664,4 +2891,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailPresentationDispositionMigration,
   hrcmailPreMigrationDispositionMigration,
   hrcmailRetireAutoReplyMigration,
+  hrcmailSteerFirstDeliveryMigration,
 ]

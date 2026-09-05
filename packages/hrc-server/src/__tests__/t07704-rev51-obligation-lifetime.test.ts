@@ -12,7 +12,6 @@ import {
   completeRun,
   installDeterministicStart,
   installMailKickerAgentHome,
-  startedRunId,
   waitUntil,
 } from './fixtures/mail-kicker-harness.js'
 
@@ -102,7 +101,7 @@ function serverDb(): HrcDatabase {
 /** Expire one armed reminder's hold, keeping the production `remind_at <= now`. */
 function dueNow(db: HrcDatabase, envelopeId: string): void {
   db.sqlite
-    .query('UPDATE hrcmail_envelope_reminders SET remind_at = ? WHERE envelope_id = ?')
+    .query('UPDATE hrcmail_presentations SET reminder_due_at = ? WHERE envelope_id = ?')
     .run(new Date(Date.now() - 1_000).toISOString(), envelopeId)
 }
 
@@ -132,11 +131,11 @@ describe('rev 5.1 scenario 1 — control', () => {
 
     const [envelope] = [...ledger.envelopes.values()]
     ledger.ack(envelope?.id as string)
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
     await Bun.sleep(60)
     // A replied obligation costs nothing: no reminder, no failure.
     expect(ledger.failRequests).toEqual([])
-    expect(db.mailDrives.listDueReminders(TARGET, farFuture())).toEqual([])
+    expect(db.mailDelivery.listDueReminders(TARGET, farFuture())).toEqual([])
   })
 })
 
@@ -159,7 +158,7 @@ describe('rev 5.1 scenario 2 — rotation lapse (EN-01165 replayed)', () => {
     const rtA = holdingRuntimeId(first.id)
 
     // The turn ends undisposed AND the runtime terminates.
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
     db.runtimes.updateStatus(rtA, 'terminated', timestamp())
     await hrc.mailKicker.runSweepOnce()
     await waitUntil(() => ledger.envelopes.get(first.id)?.state === 'failed', 'D3 lapse')
@@ -168,10 +167,10 @@ describe('rev 5.1 scenario 2 — rotation lapse (EN-01165 replayed)', () => {
     // §5: the sender is told, from the ledger row and not from the payload.
     await hrc.mailKicker.runTailOnce()
     await waitUntil(
-      () => db.mailDrives.listUndeliveredFailureNotices(SENDER_TARGET).length === 1,
+      () => db.mailDelivery.listUndeliveredFailureNotices(SENDER_TARGET).length === 1,
       'sender notice'
     )
-    const notice = db.mailDrives.listUndeliveredFailureNotices(SENDER_TARGET)[0]?.notice ?? ''
+    const notice = db.mailDelivery.listUndeliveredFailureNotices(SENDER_TARGET)[0]?.notice ?? ''
     expect(notice).toContain(`your ${first.id}`)
     expect(notice).toContain('failed: runtime_terminated')
     expect(notice).toContain(rtA)
@@ -211,8 +210,11 @@ describe('rev 5.1 scenario 3 — ignored', () => {
     expect(deterministic.prompts()[0]).toContain('the body the reader never answered')
 
     // Turn A ends undisposed: strike one is a REMINDER, held for a minute.
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
+    await waitUntil(
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 1,
+      'armed'
+    )
     expect(ledger.failRequests).toEqual([])
 
     dueNow(db, mail.id)
@@ -224,7 +226,7 @@ describe('rev 5.1 scenario 3 — ignored', () => {
     expect(reminder).not.toContain('the body the reader never answered')
 
     // The reminder's OWN turn starts and ends undisposed: strike two.
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 1))
+    await completeRun(server as HrcServer, deterministic.runIds()[1] as string)
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'failed', 'strike-out')
     expect(ledger.envelopes.get(mail.id)?.failureReason).toBe('ignored')
     // At most one reminder ever, so nothing can drive it a third time.
@@ -247,8 +249,11 @@ describe('rev 5.1 scenario 4 — defer across rotation', () => {
     await waitUntil(() => deterministic.calls() === 1, 'full form into rt-X')
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
     const rtX = holdingRuntimeId(mail.id)
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
+    await waitUntil(
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 1,
+      'armed'
+    )
 
     // The reader DEFERS with a reason and a retry time.
     ledger.defer(mail.id, 'mid-restart drain, back in 10')
@@ -302,8 +307,11 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     await waitUntil(() => ledger.envelopes.get(mail.id)?.state === 'presented', 'receipt')
     const runtimeId = holdingRuntimeId(mail.id)
 
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
+    await waitUntil(
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 1,
+      'armed'
+    )
 
     // The runtime dies inside the hold: D3 fails the obligation, and the
     // reminder now names something that will never stand again.
@@ -315,12 +323,12 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     hrc.mailKicker.wake(TARGET, 'periodic')
     await hrc.mailKicker.drainTarget(TARGET)
     await waitUntil(
-      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 0,
       'reminder retired'
     )
     // Retired, never delivered: the scope leaves the due-reminder candidate set
     // and no pointer was ever pushed for an obligation that no longer exists.
-    expect(db.mailDrives.listDueReminderTargets(farFuture())).not.toContain(TARGET)
+    expect(db.mailDelivery.listDueReminderTargets(farFuture())).not.toContain(TARGET)
     expect(deterministic.calls()).toBe(1)
   })
 
@@ -333,8 +341,11 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
 
     hrc.mailKicker.wake(TARGET, 'insert')
     await waitUntil(() => deterministic.calls() === 1, 'delivery')
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 0))
-    await waitUntil(() => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1, 'armed')
+    await completeRun(server as HrcServer, deterministic.runIds()[0] as string)
+    await waitUntil(
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 1,
+      'armed'
+    )
 
     // A deferred envelope gets no reminder (D6). The row must not outlive that.
     ledger.defer(mail.id, 'not now')
@@ -342,7 +353,7 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     hrc.mailKicker.wake(TARGET, 'periodic')
     await hrc.mailKicker.drainTarget(TARGET)
     await waitUntil(
-      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 0,
+      () => db.mailDelivery.listDueReminders(TARGET, farFuture()).length === 0,
       'reminder retired'
     )
     expect(deterministic.calls()).toBe(1)
@@ -352,7 +363,7 @@ describe('rev 5.1 D4 — a reminder is retired when its obligation stops standin
     ledger.repend(mail.id)
     hrc.mailKicker.wake(TARGET, 'periodic')
     await waitUntil(() => deterministic.calls() === 2, 'defer retry delivered')
-    await completeRun(server as HrcServer, await startedRunId(db, TARGET, 1))
+    await completeRun(server as HrcServer, deterministic.runIds()[1] as string)
     await Bun.sleep(80)
     expect(ledger.envelopes.get(mail.id)?.state).not.toBe('failed')
   })

@@ -42,7 +42,6 @@ export function createServerMailKicker(server: HrcServerInstanceForHandlers): Ma
         withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
       },
       preemptAuthorized: (session, request) => preemptAuthorized(server, session, request),
-      afterClaim: server.options.hrcMailKickerAfterClaim,
       log: writeServerLog,
     },
     {

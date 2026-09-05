@@ -218,10 +218,11 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
       await sweep()
     })
 
-    // Nothing claimed, nothing dispatched, nothing failed typed.
+    // Nothing submitted, nothing dispatched, nothing failed typed.
     expect(deterministic.calls()).toBe(0)
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(0)
-    expect(lines.filter((line) => line.includes('wrkq.kicker.drive_failed'))).toHaveLength(0)
+    expect(serverDb().mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
+    expect(serverDb().mailDelivery.presentationsForTarget(TARGET)).toHaveLength(0)
+    expect(lines.filter((line) => line.includes('wrkq.kicker.delivery_failed'))).toHaveLength(0)
 
     const skipped = skipLines(lines)
     expect(skipped).toHaveLength(1)
@@ -250,29 +251,30 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
 
     expect(skipLines(lines)).toHaveLength(1)
     expect(consults()).toBe(1)
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(0)
+    expect(serverDb().mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
   })
 
-  it('finishes the claimed attempt a foreign-homed scope left holding the drive slot', async () => {
+  it('resolves the birth this node still believed it owed for a foreign-homed scope', async () => {
     registerScopeHomedOn(HOME_NODE)
     say()
     await startServer()
     seedLiveRuntime()
     installDeterministicStart(server as HrcServer)
 
-    // Exactly the rows found live: claimed, never started, holding the slot and
-    // re-entering listInFlightTargets() on every tick for hours.
-    const claim = serverDb().mailDrives.claim(TARGET, 'periodic', { envelopeIds: ['EN-00001'] })
-    expect(claim.outcome).toBe('acquired')
-    expect(serverDb().mailDrives.listInFlightTargets()).toContain(TARGET)
+    // The row a refused birth leaves behind. Left open it re-enters the sweep's
+    // candidate set on every tick for the life of the store — the T-08094 shape
+    // of the twelve dead attempts this test was written for.
+    serverDb().mailDelivery.recordBirthRefusal({
+      targetSessionRef: TARGET,
+      scopeRef: SCOPE,
+      reason: 'seeded birth refusal',
+    })
+    expect(serverDb().mailDelivery.listRefusedBirthTargets()).toContain(TARGET)
 
     await sweep()
 
-    const attempts = serverDb().mailDrives.listAttempts(TARGET)
-    expect(attempts).toHaveLength(1)
-    expect(attempts[0]?.state).toBe('withdrawn')
-    expect(attempts[0]?.lastError).toContain(HOME_NODE)
-    expect(serverDb().mailDrives.listInFlightTargets()).not.toContain(TARGET)
+    expect(serverDb().mailDelivery.listRefusedBirthTargets()).not.toContain(TARGET)
+    expect(serverDb().mailDelivery.getBirthRefusal(TARGET)?.lastReason).toContain(HOME_NODE)
   })
 
   it('answers from the local placement ledger without touching the registry', async () => {
@@ -318,7 +320,10 @@ describe('T-07650 — the sweep does not drive scopes another node homes', () =>
     // No evidence of a foreign home is not evidence of one. The wake proceeds
     // and the gate classifies the failure exactly as it did before.
     expect(skipLines(lines)).toHaveLength(0)
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(1)
+    await waitUntil(
+      () => serverDb().mailDelivery.presentationsForTarget(TARGET).length === 1,
+      'delivery landed for the unresolved-home target'
+    )
   })
 })
 

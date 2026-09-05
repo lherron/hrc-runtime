@@ -141,7 +141,7 @@ export {
   HrcMailEnvelopeRepository,
   HrcMailRepositoryError,
 } from './mail/envelope-repository.js'
-export { HrcMailDriveRepository } from './mail/drive-repository.js'
+export { HrcMailDeliveryRepository } from './mail/delivery-repository.js'
 export {
   WRKQ_ENVELOPE_STREAM,
   WrkqLedgerCursorRepository,
@@ -157,19 +157,15 @@ export type {
   HrcMailStopRefusalRecord,
 } from './mail/stop-refusal-repository.js'
 export type {
-  CompleteHrcMailDriveResult,
-  HrcMailDriveActionable,
-  HrcMailDriveAttempt,
-  HrcMailDriveAttemptState,
-  HrcMailDriveClaimResult,
-  HrcMailDrivePresentedAttempt,
-  HrcMailDriveSlot,
+  HrcMailBirthRefusal,
+  HrcMailDeliveryDoor,
+  HrcMailDeliveryForm,
+  HrcMailDeliveryIntent,
   HrcMailDriveWakeReason,
-  HrcMailEnvelopeReminder,
   HrcMailFailureNotice,
   HrcMailHintDecision,
-  HrcMailUndispatchedDriveRun,
-} from './mail/drive-repository.js'
+  HrcMailPresentation,
+} from './mail/delivery-repository.js'
 export type {
   AckHrcMailEnvelopeInput,
   CreateHrcMailEnvelopeInput,

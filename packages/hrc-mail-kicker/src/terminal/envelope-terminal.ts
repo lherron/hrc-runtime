@@ -8,16 +8,16 @@ import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from '../ledger/types.js
 
 export type EnvelopeFailCallSite =
   | 'birth_refusals_exhausted'
-  | 'dispose_attempt_obligations'
+  | 'dispose_runtime_obligations'
   | 'lapsed_obligations'
-  | 'queued_injection_expiry'
 
 type EnvelopeFailInput = {
   envelope: string
   reason: Exclude<WrkqEnvelopeFailureReason, 'legacy'>
   runtime?: string | undefined
   targetSessionRef: string
-  driveAttemptId?: string | undefined
+  /** The opaque HRC presentation id this failure is about, when there is one. */
+  presentationId?: string | undefined
   callSite: EnvelopeFailCallSite
 }
 
@@ -119,7 +119,7 @@ export async function failEnvelopeWithAudit(
     operation: 'fail',
     callSite: input.callSite,
     targetSessionRef: input.targetSessionRef,
-    ...(input.driveAttemptId === undefined ? {} : { driveAttemptId: input.driveAttemptId }),
+    ...(input.presentationId === undefined ? {} : { presentationId: input.presentationId }),
     envelope: input.envelope,
     reason: input.reason,
     ...(input.runtime === undefined ? {} : { runtime: input.runtime }),
@@ -134,7 +134,7 @@ export async function failEnvelopeWithAudit(
     ...actor,
     callSite: input.callSite,
     targetSessionRef: input.targetSessionRef,
-    ...(input.driveAttemptId === undefined ? {} : { driveAttemptId: input.driveAttemptId }),
+    ...(input.presentationId === undefined ? {} : { presentationId: input.presentationId }),
     envelope: input.envelope,
     reason: input.reason,
     ...(input.runtime === undefined ? {} : { runtime: input.runtime }),

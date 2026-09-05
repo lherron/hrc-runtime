@@ -5,7 +5,7 @@ import type {
   HrcSessionRecord,
   PreemptSubmissionRequest,
 } from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type {
   ForeignHome,
@@ -15,7 +15,6 @@ import type {
   KickerLogLevel,
   KickerRegistryClient,
 } from './contracts.js'
-import type { DisposalInFlight } from './diagnostics/attempt-log.js'
 import type { MailKickerLedger } from './ledger/client.js'
 
 /** Internal capability surface shared by the decomposed kicker state machines. */
@@ -26,7 +25,6 @@ export type MailKickerContext = {
   readonly registry: KickerRegistryClient | undefined
   readonly foreignHomeMemo: Map<string, ForeignHome>
   readonly broker: KickerBrokerPort
-  readonly afterClaim: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   readonly enabled: boolean
   readonly sweepIntervalMs: number
 
@@ -42,18 +40,26 @@ export type MailKickerContext = {
   readonly mailKickerBirthSweepBackoff: Map<string, { attempts: number; nextAtMs: number }>
   readonly mailKickerLapsedRuntimes: Set<string>
   /**
-   * In-flight obligation disposals (T-07963). `stop()` drains these before the
-   * store closes; T-07964's `mailKickerDisposalsInFlight` is the DIAGNOSTIC
-   * register of the same work and is deliberately separate — one answers "what
-   * must I wait for", the other "what was outstanding when we were told to stop".
+   * In-flight obligation disposals (T-07963, carried into D3). `stop()` drains
+   * these before the store closes; every decision inside one is ALSO written
+   * durably as it is made, so a stop that beats the drain leaves the reconcile
+   * a candidate rather than silence.
    */
   readonly mailKickerDisposalsPending: Set<Promise<void>>
-  /** Live obligation disposals, keyed by attempt; what `dispose_interrupted` reports. */
-  readonly mailKickerDisposalsInFlight: Map<string, DisposalInFlight>
   /** One boot-reconcile report is owed per process (T-07964 §4). */
   mailKickerBootReconcilePending: boolean
-  /** Attempts already named by a stalled-delivery line; one per attempt per process. */
+  /** Envelopes already named by a stalled-delivery line; one per envelope per process. */
   readonly mailKickerStalledDeliveryAnnounced: Set<string>
+  /**
+   * Runtimes whose broker advertised `steer` and then refused one.
+   *
+   * D2 says a refused steer becomes an enqueue while the seat is busy. Without
+   * a memo the next pass reads the same advertised capability, takes the same
+   * door and is refused again — a spin, not a fallback. Process-local because
+   * the capability projection is frozen per invocation: a new broker for the
+   * seat is a new runtime id and starts trusted again.
+   */
+  readonly mailKickerSteerRefused: Set<string>
 
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(
@@ -73,7 +79,6 @@ export type MailKickerContext = {
     options: KickerDispatchOptions
   ): Promise<KickerDispatchResult>
   preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
-  /** Canonical run response body; one server-owned projection (T-07969). */
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 
   wake(targetSessionRef: string, reason: HrcMailDriveWakeReason): void

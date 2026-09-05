@@ -5,12 +5,17 @@ import type { MailKicker } from 'hrc-mail-kicker'
 import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { appendHrcEvent } from '../hrc-event-helper.js'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import { timestamp } from '../server-util.js'
 import { FakeWrkqLedger } from './fixtures/fake-wrkq-ledger.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { installMailKickerAgentHome, waitUntil } from './fixtures/mail-kicker-harness.js'
+import {
+  installMailKickerAgentHome,
+  landSubmission,
+  waitUntil,
+} from './fixtures/mail-kicker-harness.js'
 
 /**
  * T-07693 — ONE envelope, TWO seats on the identical exact scope.
@@ -249,6 +254,21 @@ function installGatedBrokerStart(instance: HrcServer): {
       invocationState: 'ready',
       updatedAt: readyAt,
     })
+    // T-08094: the born runtime's FIRST TURN START is the landing fact for a
+    // launch-carried body (spec T-08092 D2 step 6). A fixture that never emits
+    // it is simulating a birth whose turn never ran.
+    peek(instance).notifyEvent(
+      appendHrcEvent(db, 'turn.started', {
+        ts: readyAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId,
+        runId,
+        transport: 'tmux',
+      })
+    )
     return db.runtimes.updateStatus(runtimeId, 'ready', readyAt) ?? runtime
   }
   peek(instance).publishPresentation = async () => undefined
@@ -260,6 +280,12 @@ function installGatedBrokerStart(instance: HrcServer): {
     runId: string
   ) => {
     brokerInputs.push(prompt)
+    // The door returns admission; the broker reports the landing separately.
+    landSubmission(instance, {
+      runtimeId: runtime.runtimeId,
+      submissionId: `input-${runId}`,
+      type: 'submission.executed',
+    })
     return Response.json({
       runId,
       hostSessionId: runtime.hostSessionId,
@@ -268,6 +294,8 @@ function installGatedBrokerStart(instance: HrcServer): {
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
+      submissionId: `input-${runId}`,
+      admission: 'admitted',
       inputId: `input-${runId}`,
     })
   }
@@ -334,8 +362,10 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
       'the cold birth committed its presentation'
     )
     const db = peek(instance).db
-    expect(db.mailDrives.listAttempts(TARGET).map((attempt) => attempt.state)).not.toContain(
-      'failed'
+    // Nothing is left in flight: the launch-carried landing closed the intent.
+    expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
+    expect(db.mailDelivery.presentationsForTarget(TARGET)[0]?.deliveryOutcome).toBe(
+      'launch_carried'
     )
     expect(broker.coldBirthPrompts()).toHaveLength(1)
     expect(broker.coldBirthPrompts()[0]).toContain('the one envelope')
@@ -399,6 +429,12 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
         })
         db.runtimes.updateRunId(runtime.runtimeId, runId, now)
       }
+      // The door returns admission; the landing is the broker's own later fact.
+      landSubmission(instance, {
+        runtimeId: runtime.runtimeId,
+        submissionId: inputId,
+        type: 'submission.executed',
+      })
       return Response.json({
         runId,
         hostSessionId: resolved.hostSessionId,
@@ -407,6 +443,8 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
         transport: 'tmux',
         status: 'started',
         supportsInFlightInput: true,
+        submissionId: inputId,
+        admission: 'admitted',
         inputId,
       })
     }
@@ -431,53 +469,38 @@ describe('T-07693 — two wake sources, one exact scope, one seat', () => {
     })
     await peek(instance).mailKicker.runTailOnce()
 
-    // Release only AFTER the second wake is in. While the broker reports the
-    // operator turn active, the envelope remains HRC-held: no second broker
-    // input and no presentation receipt exist yet.
-    await waitUntil(
-      () => peek(instance).mailKicker.mailKickerTargetOperations.has(TARGET),
-      'the envelope wake joined the in-flight seat birth'
-    )
-    await waitUntil(
-      () => db.mailDrives.getHeldAttempt(TARGET) !== null,
-      'the envelope wake was held behind the active broker turn'
-    )
-    expect(joins).toHaveLength(0)
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(0)
-
+    // T-08094: the envelope goes to the ENQUEUE door immediately (this driver
+    // advertises no `steer` class), so what joins the in-flight birth is a
+    // submission of its own rather than an HRC-held batch waiting for a
+    // boundary. The FENCE is unchanged and is the whole point: that submission
+    // must land on the runtime the first wake birthed, not provision a second.
     broker.release()
     await operatorTurn
-    // The cold operator prompt rode the birth itself, so it does not traverse
-    // the existing-runtime input seam recorded by `joins`.
-    expect(joins).toHaveLength(0)
-
-    const boundaryAt = timestamp()
-    db.runs.updateStatus('run-t07693-operator', 'completed', boundaryAt)
-    db.runtimes.updateRunId('rt-t07693-1', undefined, boundaryAt)
-
-    // A periodic boundary wake is the sweep backstop's delivery edge. It
-    // flushes the local batch only after the seat probe turns idle, into the
-    // already-born runtime.
-    peek(instance).mailKicker.wake(TARGET, 'periodic')
     await peek(instance).mailKicker.drainTarget(TARGET)
-    expect(joins).toEqual(['rt-t07693-1', 'rt-t07693-1'])
 
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.presentedTo.length === 1,
+      'the joined submission landed and wrote exactly one receipt'
+    )
     const runtimes = db.runtimes.listByHostSessionId(resolved.hostSessionId)
+    // The point of the fence: the envelope's submission lands on the runtime
+    // the first wake birthed instead of provisioning a seat of its own.
     expect({
       brokerStarts: broker.starts(),
       runtimeCount: runtimes.length,
       sessionCount: db.sessions.listByScopeRef(SCOPE, 'main').length,
-      // The point of the fence: both submissions join the runtime the first
-      // wake birthed instead of provisioning a seat of their own.
-      joinedRuntimes: joins,
+      presentedRuntimes: db.mailDelivery
+        .presentationsForTarget(TARGET)
+        .map((presentation) => presentation.runtimeId),
     }).toEqual({
       brokerStarts: 1,
       runtimeCount: 1,
       sessionCount: 1,
-      joinedRuntimes: ['rt-t07693-1', 'rt-t07693-1'],
+      presentedRuntimes: ['rt-t07693-1'],
     })
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
     expect(broker.coldBirthPrompts()).toHaveLength(0)
     expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBeDefined()
-  })
+    // The gate, the join and the landing are three scheduler hops; the default
+    // 5 s budget collides with the fixture's own 5 s wait deadline.
+  }, 20_000)
 })

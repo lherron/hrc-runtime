@@ -3,7 +3,6 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcRuntimeIntent } from 'hrc-core'
 import {
   type MailInspectLedgerRow,
   type WrkqEnvelope,
@@ -18,35 +17,23 @@ import { buildInfoText } from '../cli/help.js'
 import { renderMailInspection } from '../mail-inspect.js'
 
 /**
- * `hrc mail inspect` over the T-07963 fixture (T-07964 §6/§7).
+ * `hrc mail inspect` over the T-07963 fixture (T-07964 §6/§7), re-pointed for
+ * T-08094.
  *
- * The store is seeded with the EN-03687 shape: one drive attempt, one
- * presentation receipt, a run that never dispatched an input, an attempt failed
- * by the stop, and no reminder and no failure notice
- * behind it. That combination must render the `stranded` verdict, because it is
- * the one an operator has to be able to reach without reading five tables.
+ * The store is seeded with the EN-03687 shape in its post-drive-attempt form:
+ * one LANDED PRESENTATION on a runtime that has gone quiet, no reminder, no
+ * failure notice, nothing disposed. That combination must render the `stranded`
+ * verdict, because it is the one an operator has to be able to reach without
+ * reading five tables.
  */
 
 const SCOPE = 'agent:cody:project:agent-spaces:task:T-07962'
 const TARGET = `${SCOPE}/lane:main`
 const ENVELOPE = 'EN-03687'
 const RUNTIME = 'rt-ab0029c2'
-const DRIVE = 'drive-72fece2f'
+const PRESENTATION = 'present-72fece2f'
 const RUN = 'run-72fece2f'
 const HOST_SESSION = 'hsid-246e7572'
-
-const INTENT: HrcRuntimeIntent = {
-  placement: {
-    agentRoot: '/tmp/cody',
-    projectRoot: '/tmp/agent-spaces',
-    cwd: '/tmp/agent-spaces',
-    runMode: 'task',
-    bundle: { kind: 'compose', compose: [] },
-    dryRun: true,
-  },
-  harness: { provider: 'openai', id: 'codex-app-server', interactive: false },
-  execution: { preferredMode: 'nonInteractive' },
-}
 
 let tmpDir: string
 let db: HrcDatabase
@@ -75,7 +62,7 @@ function ledgerRow(state: WrkqEnvelope['state']): Map<string, MailInspectLedgerR
               memberRef: 'cody@agent-spaces:T-07962',
               runtimeId: RUNTIME,
               runId: RUN,
-              driveAttemptId: DRIVE,
+              driveAttemptId: PRESENTATION,
               presentedAt: '2026-09-03T22:56:52Z',
             },
           ],
@@ -87,18 +74,9 @@ function ledgerRow(state: WrkqEnvelope['state']): Map<string, MailInspectLedgerR
   ])
 }
 
-function inspect(
-  rows: Map<string, MailInspectLedgerRow>,
-  projectTurnResponse?: (runId: string) => { body: string; truncated: boolean }
-) {
+function inspect(rows: Map<string, MailInspectLedgerRow>) {
   const query = resolveMailInspectQuery(ENVELOPE)
-  return buildMailInspection(
-    db,
-    query,
-    mailInspectEnvelopeIds(db, query),
-    rows,
-    projectTurnResponse
-  )
+  return buildMailInspection(db, query, mailInspectEnvelopeIds(db, query), rows)
 }
 
 beforeEach(async () => {
@@ -143,19 +121,16 @@ beforeEach(async () => {
     updatedAt: '2026-09-03T23:47:33.266Z',
     errorMessage: 'compiler priming wait aborted',
   })
-  db.mailDrives.claim(
-    TARGET,
-    'insert',
-    { envelopeIds: [ENVELOPE], materializationIntent: INTENT },
-    { driveAttemptId: DRIVE, runId: RUN }
-  )
-  db.mailDrives.recordSession(DRIVE, {
-    hostSessionId: HOST_SESSION,
-    generation: 1,
+  db.mailDelivery.recordPresentation({
+    envelopeId: ENVELOPE,
     runtimeId: RUNTIME,
+    targetSessionRef: TARGET,
+    generation: 1,
+    presentationId: PRESENTATION,
+    inputId: 'sub-72fece2f',
+    deliveryOutcome: 'executed',
+    landingHrcSeq: 4,
   })
-  db.mailDrives.presentForAttempt(DRIVE, [ENVELOPE])
-  db.mailDrives.failWithoutStart(DRIVE, 'compiler priming wait aborted')
 })
 
 afterEach(async () => {
@@ -164,69 +139,78 @@ afterEach(async () => {
 })
 
 describe('hrc mail inspect (T-07964 §6)', () => {
+  /** The EN-03687 shape: the runtime that held the obligation is gone. */
+  function retireHoldingRuntime(): void {
+    db.runtimes.updateStatus(RUNTIME, 'terminated', '2026-09-03T23:47:33.266Z')
+  }
+
   it('renders the stranded verdict for the EN-03687 shape', () => {
+    retireHoldingRuntime()
     const view = inspect(ledgerRow('presented')).envelopes[0]
     expect(view?.verdict.code).toBe('stranded')
     expect(view?.verdict.line).toContain('envelope presented, no reminder, no reply')
-    expect(view?.attempts[0]?.attempt.driveAttemptId).toBe(DRIVE)
-    expect(view?.attempts[0]?.run?.dispatchedInputId).toBeUndefined()
-    expect(view?.reminders).toHaveLength(0)
+    expect(view?.presentations[0]?.presentation.presentationId).toBe(PRESENTATION)
+    expect(view?.presentations[0]?.presentation.disposition).toBeUndefined()
+    expect(view?.intent).toBeUndefined()
     expect(view?.failureNotices).toHaveLength(0)
   })
 
   it('orders the timeline by instant, not by string, across mixed stamp precision', () => {
     // wrkq stamps to the second and HRC to the millisecond, so the envelope's
-    // own creation string-sorts AFTER a claim in the same second: 'Z' > '.'.
+    // own creation string-sorts AFTER a landing in the same second: 'Z' > '.'.
     // That put creation below its first presentation in the first cut.
-    const claimedAt = db.mailDrives.getAttempt(DRIVE)!.claimedAt
-    expect(claimedAt).toContain('.')
+    const landedAt = db.mailDelivery.getPresentation(ENVELOPE, RUNTIME)?.landedAt as string
+    expect(landedAt).toContain('.')
     const rows = ledgerRow('presented')
     const row = rows.get(ENVELOPE)
     if (row?.ok !== true) throw new Error('fixture ledger row missing')
-    row.envelope.createdAt = `${claimedAt.slice(0, 19)}Z`
+    row.envelope.createdAt = `${landedAt.slice(0, 19)}Z`
 
     const kinds = inspect(rows).envelopes[0]?.timeline.map((event) => event.kind) ?? []
-    expect(kinds.indexOf('envelope.created')).toBeLessThan(kinds.indexOf('attempt.claimed'))
-    expect(kinds.indexOf('attempt.claimed')).toBeLessThan(kinds.indexOf('attempt.failed'))
+    expect(kinds.indexOf('envelope.created')).toBeLessThan(kinds.indexOf('presentation.landed'))
   })
 
-  it('calls a long-live attempt with no turn.started stalled, not awaiting', () => {
-    // Reset the fixture's terminal attempt back to the live, never-started shape
-    // and age it past the threshold: this is the T-07971 case mable assigned the
-    // interim net, and `awaiting_turn` here is indistinguishable from health.
+  it('calls a long-outstanding submission stalled, not awaiting', () => {
+    // The T-08094 shape of the T-07971 case: a submission admitted and never
+    // landed. `awaiting_landing` here is indistinguishable from health.
+    db.mailDelivery.openIntent({
+      envelopeId: ENVELOPE,
+      targetSessionRef: TARGET,
+      door: 'enqueue',
+      form: 'full',
+      presentationId: 'present-in-flight',
+      runtimeId: RUNTIME,
+      submittedHrcSeq: 9,
+    })
     db.sqlite
-      .query(
-        "UPDATE hrcmail_drive_attempts SET state = 'claimed', completed_at = NULL, claimed_at = ? WHERE drive_attempt_id = ?"
-      )
-      .run(new Date(Date.now() - 6 * 60 * 60_000).toISOString(), DRIVE)
+      .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
+      .run(new Date(Date.now() - 6 * 60 * 60_000).toISOString(), ENVELOPE)
 
     const view = inspect(ledgerRow('presented')).envelopes[0]
     expect(view?.verdict.code).toBe('stalled_delivery')
-    expect(view?.verdict.line).toContain('with no turn.started')
+    expect(view?.verdict.line).toContain('no landing fact')
   })
 
-  it('still calls a freshly claimed attempt awaiting_turn', () => {
-    db.sqlite
-      .query(
-        "UPDATE hrcmail_drive_attempts SET state = 'claimed', completed_at = NULL, claimed_at = ? WHERE drive_attempt_id = ?"
-      )
-      .run(new Date().toISOString(), DRIVE)
-
-    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('awaiting_turn')
+  it('still calls a fresh submission awaiting_landing', () => {
+    db.mailDelivery.openIntent({
+      envelopeId: ENVELOPE,
+      targetSessionRef: TARGET,
+      door: 'steer',
+      form: 'full',
+      presentationId: 'present-in-flight',
+      runtimeId: RUNTIME,
+      submittedHrcSeq: 9,
+    })
+    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('awaiting_landing')
   })
 
-  it('never calls a started attempt stalled, however long it has run', () => {
+  it('never calls a LANDED presentation stalled, however long ago it landed', () => {
+    retireHoldingRuntime()
     db.sqlite
-      .query(
-        "UPDATE hrcmail_drive_attempts SET state = 'started', completed_at = NULL, claimed_at = ?, started_at = ?, start_hrc_seq = 1 WHERE drive_attempt_id = ?"
-      )
-      .run(
-        new Date(Date.now() - 6 * 60 * 60_000).toISOString(),
-        new Date(Date.now() - 6 * 60 * 60_000).toISOString(),
-        DRIVE
-      )
+      .query('UPDATE hrcmail_presentations SET landed_at = ? WHERE envelope_id = ?')
+      .run(new Date(Date.now() - 6 * 60 * 60_000).toISOString(), ENVELOPE)
 
-    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('awaiting_turn')
+    expect(inspect(ledgerRow('presented')).envelopes[0]?.verdict.code).toBe('stranded')
   })
 
   it('yields to the ledger once the obligation is discharged', () => {
@@ -234,10 +218,9 @@ describe('hrc mail inspect (T-07964 §6)', () => {
   })
 
   it('reports an armed reminder rather than a strand', () => {
-    db.mailDrives.armReminder({
+    db.mailDelivery.armReminder({
       envelopeId: ENVELOPE,
       runtimeId: RUNTIME,
-      targetSessionRef: TARGET,
       turnEndedAt: '2026-09-03T23:47:33Z',
       remindAt: '2026-09-03T23:48:33Z',
     })
@@ -250,7 +233,7 @@ describe('hrc mail inspect (T-07964 §6)', () => {
     ])
     const view = inspect(rows).envelopes[0]
     expect(view?.verdict.code).toBe('ledger_unavailable')
-    expect(view?.attempts).toHaveLength(1)
+    expect(view?.presentations).toHaveLength(1)
     expect(renderMailInspection(inspect(rows))).toContain('ledger   unavailable')
   })
 
@@ -282,6 +265,7 @@ describe('hrc mail inspect (T-07964 §6)', () => {
   })
 
   it('renders the verdict as the first line of the human projection', () => {
+    retireHoldingRuntime()
     const rendered = renderMailInspection(inspect(ledgerRow('presented')))
     expect(rendered.split('\n')[2]).toContain(`${ENVELOPE}  stranded:`)
   })
@@ -299,34 +283,5 @@ describe('hrc mail inspect registration (T-07964 §6)', () => {
     const program = buildProgram()
     expect(buildInfoText(program, undefined, 'agent')).toContain('hrc mail inspect')
     expect(buildInfoText(program, undefined, 'human')).toContain('mail')
-  })
-})
-
-describe('T-07969 hrc mail inspect canonical response', () => {
-  it('reports the projected response for an attempt that has a run', () => {
-    // Criterion 4, out-of-process half: the CLI supplies the ONE server-owned
-    // projection the same way it supplies the ledger rows, so inspect never
-    // grows a second canonical-response reader.
-    const projected: string[] = []
-    const inspection = inspect(ledgerRow('presented'), (runId) => {
-      projected.push(runId)
-      return { body: 'the answer that was never minted', truncated: false }
-    })
-
-    const attempt = inspection.envelopes[0]?.attempts[0]
-    expect(attempt?.canonicalResponse).toBe('the answer that was never minted')
-    expect(projected.length).toBeGreaterThan(0)
-  })
-
-  it('omits the field when the projection is empty', () => {
-    const inspection = inspect(ledgerRow('presented'), () => ({ body: '', truncated: false }))
-    expect(inspection.envelopes[0]?.attempts[0]).not.toHaveProperty('canonicalResponse')
-  })
-
-  it('stays usable with no projector supplied', () => {
-    // The builder is still callable without one, so a caller that has no server
-    // in the process gets an inspection rather than a crash.
-    const inspection = inspect(ledgerRow('presented'))
-    expect(inspection.envelopes[0]?.attempts[0]).not.toHaveProperty('canonicalResponse')
   })
 })

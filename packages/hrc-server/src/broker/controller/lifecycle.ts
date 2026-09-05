@@ -424,23 +424,15 @@ export function markBrokerCrashTerminal(
         ? ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
         : ctx.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1)
 
-    // T-07908: the broker may close after dispatch has bound the run to its
-    // kicker attempt but before either runtime.activeRunId or invocation.runId
-    // is durable. The attempt is therefore an ownership link in its own right.
-    // Gather every live run this runtime owns and terminalize all of them before
-    // stamping the runtime crashed.
-    const driveRunIds = ctx.db.mailDrives
-      .listAttempts()
-      .filter(
-        (attempt) =>
-          attempt.runtimeId === runtimeId &&
-          (attempt.state === 'claimed' || attempt.state === 'started')
-      )
-      .map((attempt) => attempt.runId)
+    // T-07908 gathered a third ownership link here: the kicker's drive attempt,
+    // which bound a run to the runtime before either `runtime.activeRunId` or
+    // `invocation.runId` was durable. T-08094 deleted the attempt — mail
+    // delivery no longer owns a run at all — so the two durable links below are
+    // the whole set. A kicker submission's own run is an ordinary dispatch run
+    // and is terminalized through the same two links as any other.
     const ownedRunIds = new Set<string>([
       ...(invocation?.runId === undefined ? [] : [invocation.runId]),
       ...(runtime?.activeRunId === undefined ? [] : [runtime.activeRunId]),
-      ...driveRunIds,
     ])
     // T-07944: which of the owned runs was still LIVE when the crash landed.
     // Captured before the terminalizing loop below, because that loop is what
@@ -464,7 +456,7 @@ export function markBrokerCrashTerminal(
     }
     // Attach the crash to a run only when this crash is what ended it; otherwise
     // it belongs to the runtime alone.
-    const terminalRunId = [invocation?.runId, runtime?.activeRunId, driveRunIds.at(-1)].find(
+    const terminalRunId = [invocation?.runId, runtime?.activeRunId].find(
       (candidate): candidate is string => candidate !== undefined && crashedRunIds.has(candidate)
     )
 

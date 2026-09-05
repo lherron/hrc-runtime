@@ -135,10 +135,12 @@ function refuseNextBirth(hrc: KickerInternals, reason = 'routed-elsewhere'): voi
   }
 }
 
-function seedRefusedBirth(hrc: KickerInternals, envelopeId: string): void {
-  const claimed = hrc.db.mailDrives.claim(TARGET, 'insert', { envelopeIds: [envelopeId] })
-  if (claimed.outcome !== 'acquired') throw new Error('failed to seed refused birth')
-  hrc.db.mailDrives.failWithoutStart(claimed.attempt.driveAttemptId, 'seeded birth refusal')
+function seedRefusedBirth(hrc: KickerInternals): void {
+  hrc.db.mailDelivery.recordBirthRefusal({
+    targetSessionRef: TARGET,
+    scopeRef: SCOPE,
+    reason: 'seeded birth refusal',
+  })
 }
 
 function eventLines(lines: readonly string[], event: string): string[] {
@@ -154,12 +156,10 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     const envelope = say()
     await hrc.mailKicker.runTailOnce()
     await waitUntil(
-      () => hrc.db.mailDrives.listAttempts(TARGET)[0]?.state === 'failed',
+      () => hrc.db.mailDelivery.listRefusedBirthTargets().length === 1,
       'insert wake recorded its routed-elsewhere refusal'
     )
-    const refused = hrc.db.mailDrives.listAttempts(TARGET)[0]
-    expect(refused?.state).toBe('failed')
-    expect(refused?.hostSessionId).toBeUndefined()
+    expect(hrc.db.mailDelivery.getBirthRefusal(TARGET)?.refusals).toBe(1)
 
     bindScopeToForeignHome()
     const { lines } = await captureServerLog(async () => {
@@ -171,23 +171,23 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     expect(eventLines(lines, 'wrkq.kicker.unborn_birth_retry')).toHaveLength(0)
     expect(eventLines(lines, 'wrkq.kicker.birth_refusals_exhausted')).toHaveLength(0)
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-    expect(hrc.db.mailDrives.listRefusedBirthTargets()).toEqual([])
+    expect(hrc.db.mailDelivery.listRefusedBirthTargets()).toEqual([])
   })
 
   it('durably prunes a pre-existing refused row on the first foreign-home sweep', async () => {
     bindScopeToForeignHome()
     const hrc = await startServer()
     const envelope = say()
-    seedRefusedBirth(hrc, envelope.id)
-    expect(hrc.db.mailDrives.listRefusedBirthTargets()).toEqual([TARGET])
+    seedRefusedBirth(hrc)
+    expect(hrc.db.mailDelivery.listRefusedBirthTargets()).toEqual([TARGET])
 
     const { lines } = await captureServerLog(async () => {
       await hrc.mailKicker.runSweepOnce()
     })
 
     expect(eventLines(lines, 'wrkq.kicker.unborn_birth_retry')).toHaveLength(0)
-    expect(hrc.db.mailDrives.listRefusedBirthTargets()).toEqual([])
-    expect(hrc.db.mailDrives.listAttempts(TARGET).at(-1)?.state).toBe('withdrawn')
+    expect(hrc.db.mailDelivery.listRefusedBirthTargets()).toEqual([])
+    expect(hrc.db.mailDelivery.getBirthRefusal(TARGET)?.lastReason).toContain(HOME_NODE)
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
   })
 
@@ -195,7 +195,7 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     bindScopeToForeignHome()
     const hrc = await startServer()
     const envelope = say()
-    seedRefusedBirth(hrc, envelope.id)
+    seedRefusedBirth(hrc)
     hrc.mailKicker.mailKickerBirthSweepBackoff.set(TARGET, { attempts: 4, nextAtMs: 0 })
     refuseNextBirth(hrc, 'simulated-local-refusal')
 
@@ -216,6 +216,6 @@ describe("T-07923 — foreign-home scopes are outside this node's D7 authority",
     expect(eventLines(lines, 'wrkq.kicker.birth_refusals_exhausted')).toHaveLength(0)
     expect(ledger.failRequests).toHaveLength(0)
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-    expect(hrc.db.mailDrives.listRefusedBirthTargets()).toEqual([])
+    expect(hrc.db.mailDelivery.listRefusedBirthTargets()).toEqual([])
   })
 })

@@ -18,12 +18,10 @@ import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } fr
  *   …
  *   EOF
  *
- * EVERY reply_required form carries that line, first contact included. HRC
- * still auto-mints an undisposed turn's final response as the reply, but that
- * is a backstop and NOT what the reader is told: a hint that says "just answer"
- * teaches a reader to rely on a mechanism they cannot see fail, and a room whose
- * mint did not land leaves them with no verb at all. An explicit say takes
- * precedence over the mint, so following this line is always correct.
+ * EVERY reply_required form carries that line, first contact included, and
+ * since T-08093 it is the ONLY thing that discharges the obligation: the
+ * automatic turn-final reply is retired, so a turn that ends without an
+ * explicit say leaves its envelope presented and takes the reminder.
  *
  * POINTER FORM — every later surface. It carries NO BODY. That is a rule and
  * not a size optimization: the reminder goes to the runtime that already has

@@ -32,7 +32,7 @@ source:
   - packages/hrc-store-sqlite/src/collective-history-repository.ts
   - packages/hrc-server/src/federation/collective-history.ts
   - packages/hrc-store-sqlite/src/mail
-  - architecture/records/invariants/hrc-runtime.collaboration-obligation-discharge.yaml
+  - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
 required_tests:
   - just architecture-records
   - T-07200 collaboration-retention policy documentation gate

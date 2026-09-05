@@ -10,7 +10,7 @@ import { ExternalRegistrationGrantRepository } from './external-registration-gra
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
 import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
-import { HrcMailDriveRepository } from './mail/drive-repository.js'
+import { HrcMailDeliveryRepository } from './mail/delivery-repository.js'
 import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
 import { HrcMailFederatedOriginRepository } from './mail/federated-origin-repository.js'
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
@@ -94,7 +94,7 @@ export type HrcDatabase = {
   collectiveHistoryReplications: CollectiveHistoryReplicationRepository
   mailEnvelopes: HrcMailEnvelopeRepository
   mailFederatedOrigins: HrcMailFederatedOriginRepository
-  mailDrives: HrcMailDriveRepository
+  mailDelivery: HrcMailDeliveryRepository
   mailStopRefusals: HrcMailStopRefusalRepository
   wrkqLedgerCursors: WrkqLedgerCursorRepository
   federationAcceptedRequests: FederationAcceptedRequestRepository
@@ -188,7 +188,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     collectiveHistoryReplications: new CollectiveHistoryReplicationRepository(sqlite),
     mailEnvelopes: new HrcMailEnvelopeRepository(sqlite),
     mailFederatedOrigins: new HrcMailFederatedOriginRepository(sqlite),
-    mailDrives: new HrcMailDriveRepository(sqlite),
+    mailDelivery: new HrcMailDeliveryRepository(sqlite),
     mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
     wrkqLedgerCursors: new WrkqLedgerCursorRepository(sqlite),
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),

@@ -112,11 +112,13 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     // The cursor still starts at the END. The catch-up is what reaches the
     // backlog; widening the tail's start would replay the whole log.
     expect(db.wrkqLedgerCursors.get()).toBeGreaterThan(0)
-    expect(db.mailDrives.listAttempts(TARGET)[0]?.wakeReason).toBe('recovery')
     // The default cold target is headless Codex. It still receives the summons
     // through its broker input contract (and therefore has an input id); the
     // cold-birth hint is ignored outside a launch-primed interactive route.
     expect(deterministic.launchPromptOnColdBirth()).toEqual([true])
+    // Spec T-08092 D2: the absent-seat door is `invoke`, which is also what
+    // marks the run as having supplied the launch prompt.
+    expect(deterministic.submissionDoors()).toEqual(['invoke'])
     expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.inputId).toBeDefined()
   })
 
@@ -206,14 +208,14 @@ describe('T-07643 — a first start delivers the backlog for the scopes it homes
     try {
       await (server as any).mailKicker.runTailOnce()
       await waitUntil(
-        () => lines.some((line) => line.includes('wrkq.kicker.turn_dispatched')),
-        'turn dispatched and logged'
+        () => lines.some((line) => line.includes('wrkq.kicker.presented')),
+        'presentation landed and logged'
       )
     } finally {
       process.stderr.write = original
     }
 
-    const dispatched = lines.filter((line) => line.includes('wrkq.kicker.turn_dispatched'))
+    const dispatched = lines.filter((line) => line.includes('wrkq.kicker.presented'))
     expect(dispatched).toHaveLength(1)
     // `targetSessionRef` matched the log redactor's `session` pattern by
     // accident. Redacting it made every kicker line a log about nobody, which

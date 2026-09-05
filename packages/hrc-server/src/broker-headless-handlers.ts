@@ -1171,7 +1171,12 @@ export async function executeHeadlessBrokerInputTurn(
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
-  if (options.submissionDoor !== 'enqueue') {
+  // A STEER joins the turn that is already running and originates none of
+  // its own, so arming the first-turn watch for it would guarantee a trip
+  // on a healthy delivery. T-08094 made steer a hot path (the kicker's
+  // default door into a live seat), which is what turned a latent wrong
+  // arming into one that would fire constantly.
+  if (options.submissionDoor !== 'enqueue' && options.submissionDoor !== 'steer') {
     armFirstTurnWatch(this.db, {
       runtimeId: runtime.runtimeId,
       generation: session.generation,

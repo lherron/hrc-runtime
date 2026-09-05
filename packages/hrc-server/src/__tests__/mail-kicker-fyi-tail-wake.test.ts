@@ -96,7 +96,9 @@ it('wakes a seated addressee for a fyi from the tail, without waiting for the sw
   )
   expect(deterministic.calls()).toBe(1)
   expect(deterministic.prompts()[0]).toContain('seated fyi lands now')
-  const attempts = db.mailDrives.listAttempts(TARGET)
-  expect(attempts).toHaveLength(1)
-  expect(attempts[0]?.wakeReason).toBe('insert')
+  const landed = db.mailDelivery.presentationsForTarget(TARGET)
+  expect(landed).toHaveLength(1)
+  expect(landed[0]?.envelopeId).toBe(envelope.id)
+  // The intent closed when the landing fact arrived: nothing is left in flight.
+  expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
 })

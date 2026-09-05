@@ -102,7 +102,7 @@ async function designatedUnbornTargets(server: MailKickerContext): Promise<strin
   return targets
 }
 /**
- * Scopes this node refused a birth for, from its own drive-attempt rows.
+ * Scopes this node refused a birth for, from its own birth-refusal rows.
  *
  * Filtered against the two records that say the scope is no longer this node's
  * to birth: a local placement-ledger row (it was established, here or by a
@@ -113,7 +113,7 @@ async function designatedUnbornTargets(server: MailKickerContext): Promise<strin
 function refusedBirthTargets(server: MailKickerContext): string[] {
   const ledger = createPlacementLedgerRepository(server.db.sqlite)
   const targets: string[] = []
-  for (const targetSessionRef of server.db.mailDrives.listRefusedBirthTargets()) {
+  for (const targetSessionRef of server.db.mailDelivery.listRefusedBirthTargets()) {
     const scopeRef = kickerScopeRefFor(targetSessionRef)
     if (scopeRef === undefined) continue
     if (ledger.get(scopeRef) !== undefined) continue
@@ -139,19 +139,13 @@ function refusedBirthTargets(server: MailKickerContext): string[] {
  */
 export async function chargeBirthSweepRefusal(
   server: MailKickerContext,
-  targetSessionRef: string,
-  driveAttemptId: string
+  targetSessionRef: string
 ): Promise<void> {
   const now = Date.now()
   const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
   if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {
     try {
-      const terminal = await failUndeliverableMail(
-        server,
-        targetSessionRef,
-        driveAttemptId,
-        attempts
-      )
+      const terminal = await failUndeliverableMail(server, targetSessionRef, attempts)
       if (terminal) {
         server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
       } else {
@@ -197,7 +191,6 @@ export async function chargeBirthSweepRefusal(
 async function failUndeliverableMail(
   server: MailKickerContext,
   targetSessionRef: string,
-  driveAttemptId: string,
   refusals: number
 ): Promise<boolean> {
   const scopeRef = kickerScopeRefFor(targetSessionRef)
@@ -224,17 +217,16 @@ async function failUndeliverableMail(
     if (authority.outcome === 'bound' && authority.binding.homeNodeId !== server.nodeId) {
       const homeNodeId = authority.binding.homeNodeId
       server.foreignHomeMemo.set(scopeRef, { homeNodeId, source: 'registry' })
-      const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+      const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
         targetSessionRef,
-        `${scopeRef} is homed on ${homeNodeId}; this node has no authority to fail its mail`,
-        driveAttemptId
-      )?.driveAttemptId
+        `${scopeRef} is homed on ${homeNodeId}; this node has no authority to fail its mail`
+      )
       server.log('INFO', 'wrkq.kicker.undeliverable_skipped_foreign_home', {
         targetSessionRef,
         scopeRef,
         homeNodeId,
         refusals,
-        ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
+        resolvedBirthRefusal: resolvedBirth,
       })
       return true
     }

@@ -234,8 +234,13 @@ describe('T-07661 — the sweep is a second chance for a refused virgin birth', 
 
     // The whole point: no unrelated traffic rescued it.
     expect(ledger.events.length).toBe(insertsBefore)
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
-    expect(serverDb().mailDrives.listAttempts(TARGET).at(-1)?.wakeReason).toBe('periodic')
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.presentedTo.length === 1,
+      'the sweep-born seat received the body'
+    )
+    // T-08094: the birth this node owed is resolved once the seat exists, so
+    // the scope stops re-entering the sweep's candidate set.
+    expect(serverDb().mailDelivery.listRefusedBirthTargets()).not.toContain(TARGET)
   })
 
   it('births a `none`-class virgin scope this node is the default home for', async () => {
@@ -262,7 +267,10 @@ describe('T-07661 — the sweep is a second chance for a refused virgin birth', 
     await sweep()
     await waitUntil(() => sessionCount() === 1, 'the sweep birthed the `none`-class virgin scope')
     expect(ledger.events.length).toBe(insertsBefore)
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.presentedTo.length === 1,
+      'the sweep-born seat received the body'
+    )
   })
 
   it('does not spin: a permanently refusing scope is retried at most once per floor', async () => {
@@ -272,26 +280,20 @@ describe('T-07661 — the sweep is a second chance for a refused virgin birth', 
     installDeterministicStart(live)
     // Never succeeds. Without a bound this is a birth attempt every 30 seconds
     // for as long as the envelope stays undisposed, which is forever.
-    refuseEstablishes(live, Number.MAX_SAFE_INTEGER)
+    const establish = refuseEstablishes(live, Number.MAX_SAFE_INTEGER)
     await armTail()
 
     say()
     await tail()
-    await waitUntil(
-      () => serverDb().mailDrives.listAttempts(TARGET).length === 1,
-      'the insert wake attempted a birth'
-    )
+    await waitUntil(() => establish.calls() === 1, 'the insert wake attempted a birth')
 
     await sweep()
-    await waitUntil(
-      () => serverDb().mailDrives.listAttempts(TARGET).length === 2,
-      'the first sweep took its one retry'
-    )
+    await waitUntil(() => establish.calls() === 2, 'the first sweep took its one retry')
 
     // Five more sweeps inside the first floor. The floor is wall-clock, so none
     // of them may attempt anything.
     for (let index = 0; index < 5; index += 1) await sweep()
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(2)
+    expect(establish.calls()).toBe(2)
     expect(sessionCount()).toBe(0)
   })
 
@@ -306,13 +308,16 @@ describe('T-07661 — the sweep is a second chance for a refused virgin birth', 
     const live = server as HrcServer
     installDeterministicStart(live)
     await armTail()
-    expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(0)
+    expect(serverDb().mailDelivery.listRefusedBirthTargets()).toHaveLength(0)
 
     const insertsBefore = ledger.events.length
     await sweep()
     await waitUntil(() => sessionCount() === 1, 'the sweep birthed a scope it had never attempted')
     expect(ledger.events.length).toBe(insertsBefore)
-    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+    await waitUntil(
+      () => ledger.envelopes.get(envelope.id)?.presentedTo.length === 1,
+      'the sweep-born seat received the body'
+    )
   })
 
   it('never claims a virgin scope designated to another node (T-07650 intact)', async () => {
@@ -334,14 +339,16 @@ describe('T-07661 — the sweep is a second chance for a refused virgin birth', 
         () => captured.some((line) => line.includes('wrkq.kicker.birth_deferred')),
         'the insert wake deferred the birth'
       )
-      const deferred = serverDb().mailDrives.listAttempts(TARGET).length
       await sweep()
       await sweep()
-      expect(serverDb().mailDrives.listAttempts(TARGET)).toHaveLength(deferred)
+      // A deferral RESOLVES this node's birth debt rather than recording one,
+      // so the `none`-class candidate source never re-drives a birth the
+      // collective placed elsewhere.
+      expect(serverDb().mailDelivery.listRefusedBirthTargets()).toHaveLength(0)
     })
 
     expect(sessionCount()).toBe(0)
-    expect(lines.filter((line) => line.includes('wrkq.kicker.drive_failed'))).toHaveLength(0)
+    expect(lines.filter((line) => line.includes('wrkq.kicker.birth_failed'))).toHaveLength(0)
     expect(lines.filter((line) => line.includes('wrkq.kicker.unborn_birth_retry'))).toHaveLength(0)
   })
 })

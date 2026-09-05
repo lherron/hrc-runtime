@@ -6,6 +6,13 @@
  * the obligation — and it FAILS OPEN: a ledger this daemon cannot reach must
  * never be able to trap an agent inside a turn.
  *
+ * T-08094 re-keyed it on the RUNTIME. It used to resolve the seat from
+ * `runtime.activeRunId` and allow the stop outright when there was none — and a
+ * human-typed pane turn mints no run, so an obligation steered into one was
+ * never gated at all. The seat scope comes off the runtime row now, which is
+ * true for both shapes, and the refusal counter is keyed the same way: a
+ * per-runtime, per-obligation-set count rather than a per-run one.
+ *
  * It lived in `mail/mail-handlers.ts` until the flag day (T-07616) deleted
  * hrcmail. Only the file moved: this gate has read the wrkq ledger since wave 3
  * and never had an hrcmail predicate. The route keeps its
@@ -31,8 +38,6 @@ const STOP_SUMMARY_LIMIT = 8
 const STOP_BODY_PREVIEW_CHARS = 160
 const STOP_REASON_MAX_CHARS = 4_096
 
-const ACTIVE_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
-
 export const MAIL_HINT_TEXT = (heldCount: number): string => {
   const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
   return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender>\` answers it now; anything unanswered presents at turn end.`
@@ -57,22 +62,11 @@ export async function handleMailStopDecision(
     )
   }
   const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-  if (runtime === null || runtime.activeRunId === undefined) {
-    return json({ decision: 'allow', reason: 'no_active_turn' })
+  if (runtime === null) {
+    return json({ decision: 'allow', reason: 'no_runtime' })
   }
 
-  const run = this.db.runs.getByRunId(runtime.activeRunId)
-  if (
-    run === null ||
-    run.runtimeId !== runtimeId ||
-    run.scopeRef !== runtime.scopeRef ||
-    run.laneRef !== runtime.laneRef ||
-    !isActiveStopRunStatus(run.status)
-  ) {
-    return json({ decision: 'allow', reason: 'stale_active_turn' })
-  }
-
-  const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
+  const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(runtime))
   let blocking: HrcMailStopEnvelopeSummary[]
   try {
     // The scope ref goes RAW, lane suffix and all: wrkq strips the lane and
@@ -90,14 +84,14 @@ export async function handleMailStopDecision(
       }))
   } catch (error) {
     writeServerLog('WARN', 'wrkq.stop_hook.fail_open', {
-      runId: run.runId,
+      runtimeId,
       targetSessionRef,
       error: error instanceof Error ? error.message : String(error),
     })
     return json({
       decision: 'allow',
       reason: 'ledger_unavailable',
-      runId: run.runId,
+      runtimeId,
       targetSessionRef,
     })
   }
@@ -107,7 +101,7 @@ export async function handleMailStopDecision(
     0
   )
   const decision = this.db.mailStopRefusals.evaluate(
-    run.runId,
+    runtimeId,
     targetSessionRef,
     blocking,
     newestEnvelopeSeq,
@@ -117,7 +111,7 @@ export async function handleMailStopDecision(
     return json({
       decision: 'allow',
       reason: decision.reason,
-      runId: run.runId,
+      runtimeId,
       targetSessionRef,
       unackedCount: decision.unackedCount,
       refusalCount: decision.refusalCount,
@@ -128,7 +122,7 @@ export async function handleMailStopDecision(
   return json({
     decision: 'block',
     reason: formatStopReason(decision),
-    runId: run.runId,
+    runtimeId,
     targetSessionRef,
     unackedCount: decision.unackedCount,
     refusalCount: decision.refusalCount,
@@ -136,16 +130,16 @@ export async function handleMailStopDecision(
   })
 }
 
-function isActiveStopRunStatus(status: string): boolean {
-  return ACTIVE_RUN_STATUSES.has(status)
-}
-
 /**
- * Count-only local hint for queue mail held behind the active broker turn.
+ * Count-only local hint for mail the harness is holding behind the active turn.
  *
  * Unlike the Stop gate above, this path never consults wrkq: PostToolUse owns a
  * 250 ms bridge budget, and a hint is optional execution context rather than a
  * presentation or obligation.
+ *
+ * The count is the seat's OUTSTANDING ENQUEUE SUBMISSIONS (T-08094). On a
+ * steer-capable seat it is zero by construction: a steered body lands inside
+ * the turn the reader is already in, so there is nothing to hint about.
  */
 export async function handleMailHintDecision(
   this: HrcServerInstanceForHandlers,
@@ -161,42 +155,28 @@ export async function handleMailHintDecision(
     }
 
     const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-    if (runtime === null || runtime.activeRunId === undefined) {
-      writeHintSuppressed(runtimeId, 'no_active_turn')
-      return json({})
-    }
-    const run = this.db.runs.getByRunId(runtime.activeRunId)
-    if (
-      run === null ||
-      run.runtimeId !== runtimeId ||
-      run.scopeRef !== runtime.scopeRef ||
-      run.laneRef !== runtime.laneRef ||
-      !ACTIVE_RUN_STATUSES.has(run.status)
-    ) {
-      writeHintSuppressed(runtimeId, 'no_active_turn')
+    if (runtime === null) {
+      writeHintSuppressed(runtimeId, 'no_runtime')
       return json({})
     }
 
-    const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
-    const decision = this.db.mailDrives.evaluateHeldHint(targetSessionRef, runtimeId)
+    const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(runtime))
+    const decision = this.db.mailDelivery.evaluateSeatHint(targetSessionRef, runtimeId)
     if (decision.outcome === 'suppressed') {
       writeHintSuppressed(runtimeId, decision.reason)
       return json({})
     }
 
-    const hint = MAIL_HINT_TEXT(decision.heldCount)
+    const hint = MAIL_HINT_TEXT(decision.outstandingCount)
     writeServerLog('INFO', 'wrkq.kicker.hint_issued', {
       runtimeId,
       targetSessionRef,
-      driveAttemptId: decision.driveAttemptId,
-      heldCount: decision.heldCount,
-      hintCount: decision.hintCount,
+      outstandingCount: decision.outstandingCount,
       reason: decision.reason,
     })
     return json({
       hint,
-      heldCount: decision.heldCount,
-      driveAttemptId: decision.driveAttemptId,
+      heldCount: decision.outstandingCount,
       reason: decision.reason,
     })
   } catch (error) {
@@ -207,7 +187,7 @@ export async function handleMailHintDecision(
 
 function writeHintSuppressed(
   runtimeId: string,
-  reason: 'no_active_turn' | 'no_held_batch' | 'runtime_mismatch' | 'cadence' | 'error',
+  reason: 'no_runtime' | 'no_outstanding_mail' | 'runtime_mismatch' | 'cadence' | 'error',
   error?: unknown
 ): void {
   writeServerLog('DEBUG', 'wrkq.kicker.hint_suppressed', {

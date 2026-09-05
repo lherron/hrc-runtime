@@ -2,8 +2,8 @@
  * "What happened to EN-xxxxx on the HRC side?" — answered by one read (§6).
  *
  * Before this existed the answer required joining four sources by hand: the
- * wrkq envelope row, `hrc-server.err.log`, five tables in `state.sqlite`, and
- * the broker ledger. A sender who cannot do that has no way to tell a reply
+ * wrkq envelope row, `hrc-server.err.log`, several tables in `state.sqlite`,
+ * and the broker ledger. A sender who cannot do that has no way to tell a reply
  * that is still coming from one that will never come, and on 2026-09-03 the
  * difference went unnoticed for an hour.
  *
@@ -12,18 +12,20 @@
  * keeps the whole verdict machine testable against a seeded store with no wrkq
  * anywhere near it, and it lets the CLI degrade to an HRC-only answer when the
  * ledger cannot be reached rather than failing the command.
+ *
+ * T-08094 re-pointed the HRC half from drive attempts to the two records that
+ * replaced them. The questions are the same and now have shorter answers: an
+ * OPEN INTENT is a delivery in flight, a PRESENTATION is a body that landed,
+ * and a stranded obligation is a presentation nothing disposed.
  */
-import type { HrcDatabase } from 'hrc-store-sqlite'
-import type {
-  HrcMailDriveAttempt,
-  HrcMailEnvelopeReminder,
-  HrcMailFailureNotice,
-} from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDeliveryIntent, HrcMailPresentation } from 'hrc-store-sqlite'
+import type { HrcMailFailureNotice } from 'hrc-store-sqlite'
 
 import { STALLED_DELIVERY_THRESHOLD_MS } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
+import { isRuntimeTerminal } from '../terminal/runtime-status.js'
 
 /** Newest envelopes a scope/runtime query will report on. */
 const SCOPE_QUERY_ENVELOPE_LIMIT = 50
@@ -38,31 +40,10 @@ export type MailInspectLedgerRow =
   | { ok: true; envelope: WrkqEnvelope }
   | { ok: false; error: string }
 
-export type MailInspectRun = {
-  runId: string
-  status: string
-  dispatchedInputId?: string | undefined
-  acceptedAt?: string | undefined
-  startedAt?: string | undefined
-  completedAt?: string | undefined
-  updatedAt: string
-  errorCode?: string | undefined
-  errorMessage?: string | undefined
-}
-
-export type MailInspectAttempt = {
-  attempt: HrcMailDriveAttempt
-  presentedAt: string
-  run?: MailInspectRun | undefined
+/** One landed presentation, with the runtime status that explains it. */
+export type MailInspectPresentation = {
+  presentation: HrcMailPresentation
   runtimeStatus?: string | undefined
-  /**
-   * What this attempt's turn actually said — the ONE server-owned response
-   * projection, not a second reader (T-07969). Present only when the attempt has
-   * a run that produced text, so an operator inspecting a stranded obligation
-   * can see what the seat was doing instead of answering. It is evidence about
-   * the turn, never a reply: since T-08093 nothing turns a turn's text into one.
-   */
-  canonicalResponse?: string | undefined
 }
 
 export type MailInspectEvent = {
@@ -73,13 +54,13 @@ export type MailInspectEvent = {
 
 /**
  * What the join concluded. `stranded` is the one the command exists for: a
- * presented obligation whose newest receipt belongs to an attempt that has
- * already ended, with nothing armed and nothing minted behind it.
+ * presented obligation whose newest receipt named a runtime that has since gone
+ * quiet, with nothing armed and nothing failed behind it.
  */
 export type MailInspectVerdictCode =
   | 'stranded'
   | 'stalled_delivery'
-  | 'awaiting_turn'
+  | 'awaiting_landing'
   | 'reminder_armed'
   | 'reminder_delivered'
   | 'discharged'
@@ -92,22 +73,11 @@ export type MailInspectEnvelope = {
   envelopeId: string
   ledger?: WrkqEnvelope | undefined
   ledgerError?: string | undefined
-  attempts: MailInspectAttempt[]
-  reminders: HrcMailEnvelopeReminder[]
+  presentations: MailInspectPresentation[]
+  intent?: HrcMailDeliveryIntent | undefined
   failureNotices: HrcMailFailureNotice[]
   timeline: MailInspectEvent[]
   verdict: { code: MailInspectVerdictCode; line: string }
-}
-
-/**
- * The canonical response reader, supplied by the caller exactly as `ledgerRows`
- * is. Keeping it a parameter rather than an import is what lets this builder
- * stay synchronous and testable with no server in the process, while still
- * reading the single body authority rather than growing a second one.
- */
-export type MailInspectTurnResponseProjector = (runId: string) => {
-  body: string
-  truncated: boolean
 }
 
 export type MailInspection = {
@@ -145,69 +115,49 @@ export function resolveMailInspectQuery(target: string): MailInspectQuery {
 /** The envelope ids a query covers — what the caller must fetch from the ledger. */
 export function mailInspectEnvelopeIds(db: HrcDatabase, query: MailInspectQuery): string[] {
   if (query.kind === 'envelope') return [query.envelopeId]
-  const receipts =
+  // Newest first, then trimmed: a long-lived scope has thousands of receipts and
+  // the question is always about recent traffic. The two reads differ in their
+  // own order — the target query is already newest-first in SQL, the runtime one
+  // is oldest-first — so normalize here rather than reversing one blindly.
+  const presentations =
     query.kind === 'runtime'
-      ? db.mailDrives.presentationsForRuntime(query.runtimeId)
-      : db.mailDrives.presentationsForTarget(query.targetSessionRef)
+      ? [...db.mailDelivery.presentationsForRuntime(query.runtimeId)].reverse()
+      : db.mailDelivery.presentationsForTarget(query.targetSessionRef, SCOPE_QUERY_ENVELOPE_LIMIT)
   const ids: string[] = []
   const seen = new Set<string>()
-  // Newest first, then trimmed: a long-lived scope has thousands of receipts
-  // and the question is always about recent traffic.
-  for (const receipt of [...receipts].reverse()) {
-    if (seen.has(receipt.envelopeId)) continue
-    seen.add(receipt.envelopeId)
-    ids.push(receipt.envelopeId)
+  for (const presentation of presentations) {
+    if (seen.has(presentation.envelopeId)) continue
+    seen.add(presentation.envelopeId)
+    ids.push(presentation.envelopeId)
     if (ids.length >= SCOPE_QUERY_ENVELOPE_LIMIT) break
   }
-  return ids
-}
-
-function runFor(db: HrcDatabase, runId: string): MailInspectRun | undefined {
-  const run = db.runs.getByRunId(runId)
-  if (run === null || run === undefined) return undefined
-  return {
-    runId: run.runId,
-    status: run.status,
-    updatedAt: run.updatedAt,
-    ...(run.dispatchedInputId === undefined ? {} : { dispatchedInputId: run.dispatchedInputId }),
-    ...(run.acceptedAt === undefined ? {} : { acceptedAt: run.acceptedAt }),
-    ...(run.startedAt === undefined ? {} : { startedAt: run.startedAt }),
-    ...(run.completedAt === undefined ? {} : { completedAt: run.completedAt }),
-    ...(run.errorCode === undefined ? {} : { errorCode: String(run.errorCode) }),
-    ...(run.errorMessage === undefined ? {} : { errorMessage: run.errorMessage }),
-  }
-}
-
-function attemptsFor(
-  db: HrcDatabase,
-  envelopeId: string,
-  projectTurnResponse: MailInspectTurnResponseProjector | undefined
-): MailInspectAttempt[] {
-  return db.mailDrives.attemptsForEnvelope(envelopeId).map((receipt) => {
-    const { attempt } = receipt
-    const runtime =
-      attempt.runtimeId === undefined
-        ? undefined
-        : (db.runtimes.getByRuntimeId(attempt.runtimeId) ?? undefined)
-    const run = runFor(db, attempt.runId)
-    const response =
-      projectTurnResponse === undefined || attempt.runId === undefined
-        ? undefined
-        : projectTurnResponse(attempt.runId).body
-    return {
-      attempt,
-      presentedAt: receipt.presentedAt,
-      ...(run === undefined ? {} : { run }),
-      ...(runtime === undefined ? {} : { runtimeStatus: runtime.status }),
-      ...(response === undefined || response.length === 0 ? {} : { canonicalResponse: response }),
+  // An envelope whose delivery is still in flight has no presentation yet, and
+  // it is precisely the one an operator asks about. Open intents therefore ride
+  // the same query rather than being invisible until they land.
+  if (query.kind === 'scope') {
+    for (const intent of db.mailDelivery.listOpenIntents(query.targetSessionRef)) {
+      if (seen.has(intent.envelopeId)) continue
+      seen.add(intent.envelopeId)
+      ids.unshift(intent.envelopeId)
     }
-  })
+  }
+  return ids.slice(0, SCOPE_QUERY_ENVELOPE_LIMIT)
+}
+
+function presentationsFor(db: HrcDatabase, envelopeId: string): MailInspectPresentation[] {
+  return db.mailDelivery.presentationsForEnvelope(envelopeId).map((presentation) => ({
+    presentation,
+    ...(() => {
+      const runtime = db.runtimes.getByRuntimeId(presentation.runtimeId) ?? undefined
+      return runtime === undefined ? {} : { runtimeStatus: runtime.status }
+    })(),
+  }))
 }
 
 function buildTimeline(
-  envelope: MailInspectEnvelope['ledger'],
-  attempts: readonly MailInspectAttempt[],
-  reminders: readonly HrcMailEnvelopeReminder[],
+  envelope: WrkqEnvelope | undefined,
+  presentations: readonly MailInspectPresentation[],
+  intent: HrcMailDeliveryIntent | undefined,
   notices: readonly HrcMailFailureNotice[]
 ): MailInspectEvent[] {
   const events: MailInspectEvent[] = []
@@ -220,59 +170,41 @@ function buildTimeline(
       } ${envelope.obligation} in ${envelope.roomKey}`,
     })
   }
-  for (const entry of attempts) {
-    const { attempt } = entry
+  if (intent !== undefined) {
     events.push({
-      at: attempt.claimedAt,
-      kind: 'attempt.claimed',
-      detail: `${attempt.driveAttemptId} wake=${attempt.wakeReason} run=${attempt.runId}`,
+      at: intent.submittedAt,
+      kind: 'delivery.intent',
+      detail: `door=${intent.door} form=${intent.form} runtime=${
+        intent.runtimeId ?? '(none)'
+      } submission=${intent.submissionId ?? '(pending)'} id=${intent.presentationId}`,
     })
-    events.push({
-      at: entry.presentedAt,
-      kind: 'presentation',
-      detail: `${attempt.driveAttemptId} presented to ${attempt.runtimeId ?? '(no runtime)'}`,
-    })
-    if (attempt.startedAt !== undefined) {
-      events.push({
-        at: attempt.startedAt,
-        kind: 'attempt.started',
-        detail: `${attempt.driveAttemptId} turn started`,
-      })
-    }
-    if (entry.run !== undefined) {
-      const run = entry.run
-      events.push({
-        // `updatedAt` and not `acceptedAt`: a run that failed without ever
-        // starting has only the former, and placing it at acceptance would put
-        // the failure before the presentation that caused it.
-        at: run.completedAt ?? run.updatedAt,
-        kind: `run.${run.status}`,
-        detail: `${run.runId} dispatchedInputId=${run.dispatchedInputId ?? 'null'}${
-          run.errorCode === undefined ? '' : ` errorCode=${run.errorCode}`
-        }${run.errorMessage === undefined ? '' : ` (${run.errorMessage})`}`,
-      })
-    }
-    if (attempt.completedAt !== undefined) {
-      events.push({
-        at: attempt.completedAt,
-        kind: `attempt.${attempt.state}`,
-        detail: `${attempt.driveAttemptId}${
-          attempt.terminalEventKind === undefined ? '' : ` via ${attempt.terminalEventKind}`
-        }${attempt.lastError === undefined ? '' : ` (${attempt.lastError})`}`,
-      })
-    }
   }
-  for (const reminder of reminders) {
+  for (const entry of presentations) {
+    const row = entry.presentation
     events.push({
-      at: reminder.createdAt,
-      kind: 'reminder.armed',
-      detail: `runtime=${reminder.runtimeId} remindAt=${reminder.remindAt}`,
+      at: row.landedAt,
+      kind: 'presentation.landed',
+      detail: `${row.presentationId} landed on ${row.runtimeId} as ${row.deliveryOutcome} (seq ${row.landingHrcSeq})`,
     })
-    if (reminder.deliveredAt !== undefined) {
+    if (row.reminderArmedAt !== undefined) {
       events.push({
-        at: reminder.deliveredAt,
+        at: row.reminderArmedAt,
+        kind: 'reminder.armed',
+        detail: `runtime=${row.runtimeId} remindAt=${row.reminderDueAt ?? '(retired)'}`,
+      })
+    }
+    if (row.reminderLandedAt !== undefined) {
+      events.push({
+        at: row.reminderLandedAt,
         kind: 'reminder.delivered',
-        detail: `runtime=${reminder.runtimeId}`,
+        detail: `runtime=${row.runtimeId} seq=${row.reminderLandingHrcSeq ?? 'unknown'}`,
+      })
+    }
+    if (row.disposedAt !== undefined) {
+      events.push({
+        at: row.disposedAt,
+        kind: 'presentation.disposed',
+        detail: `${row.disposition ?? 'unknown'} on ${row.runtimeId}`,
       })
     }
   }
@@ -306,21 +238,17 @@ function clock(iso: string | undefined): string {
   return match?.[1] ?? iso
 }
 
-/** The attempt whose receipt the ledger currently regards as authoritative. */
-function owningAttempt(
+/** The presentation the ledger currently regards as authoritative. */
+function owningPresentation(
   envelope: WrkqEnvelope | undefined,
-  attempts: readonly MailInspectAttempt[]
-): MailInspectAttempt | undefined {
+  presentations: readonly MailInspectPresentation[]
+): MailInspectPresentation | undefined {
   const newest = envelope === undefined ? undefined : newestPresentationReceipt(envelope)
-  if (newest?.driveAttemptId !== undefined) {
-    const match = attempts.find((entry) => entry.attempt.driveAttemptId === newest.driveAttemptId)
+  if (newest?.runtimeId !== undefined) {
+    const match = presentations.find((entry) => entry.presentation.runtimeId === newest.runtimeId)
     if (match !== undefined) return match
   }
-  return attempts.at(-1)
-}
-
-function isLive(attempt: HrcMailDriveAttempt): boolean {
-  return attempt.state === 'held' || attempt.state === 'claimed' || attempt.state === 'started'
+  return presentations.at(-1)
 }
 
 /**
@@ -331,8 +259,8 @@ function isLive(attempt: HrcMailDriveAttempt): boolean {
  */
 function verdictFor(
   row: MailInspectLedgerRow | undefined,
-  attempts: readonly MailInspectAttempt[],
-  reminders: readonly HrcMailEnvelopeReminder[],
+  presentations: readonly MailInspectPresentation[],
+  intent: HrcMailDeliveryIntent | undefined,
   notices: readonly HrcMailFailureNotice[]
 ): { code: MailInspectVerdictCode; line: string } {
   if (row === undefined || !row.ok) {
@@ -354,59 +282,69 @@ function verdictFor(
       }${notices.length > 0 ? ', sender notice queued' : ', NO sender notice'}`,
     }
   }
-  if (envelope.state !== 'presented') {
-    return {
-      code: 'awaiting_delivery',
-      line: `awaiting_delivery: envelope ${envelope.state}, ${attempts.length} local attempt(s)`,
-    }
-  }
-
-  const owner = owningAttempt(envelope, attempts)
-  if (owner === undefined) {
-    return {
-      code: 'no_hrc_record',
-      line: 'no_hrc_record: envelope presented, but this node holds no drive attempt for it',
-    }
-  }
-  if (isLive(owner.attempt)) {
-    // A live attempt is normally awaiting its own turn — but only until the
-    // turn has plainly never begun. `startedAt` is written in the same
-    // statement as `state='started'`, so its absence past the threshold is
-    // proof the delivery never started rather than a slow one (T-07964).
-    const liveAgeMs = Date.now() - (Date.parse(owner.attempt.claimedAt) || Date.now())
-    if (owner.attempt.startedAt === undefined && liveAgeMs > STALLED_DELIVERY_THRESHOLD_MS) {
+  if (intent !== undefined) {
+    // A submission is admitted and no landing fact has arrived. Below the
+    // threshold that is an ordinary in-flight delivery; past it, the evidence
+    // is not coming and the reconcile will redeliver once at TTL.
+    const ageMs = Date.now() - (Date.parse(intent.submittedAt) || Date.now())
+    if (ageMs > STALLED_DELIVERY_THRESHOLD_MS) {
       return {
         code: 'stalled_delivery',
-        line: `stalled_delivery: attempt ${owner.attempt.driveAttemptId} has been ${
-          owner.attempt.state
-        } for ${Math.round(liveAgeMs / 60_000)}m with no turn.started, envelope presented`,
+        line: `stalled_delivery: ${intent.door} submission ${
+          intent.submissionId ?? '(no id)'
+        } admitted ${Math.round(ageMs / 60_000)}m ago with no landing fact`,
       }
     }
     return {
-      code: 'awaiting_turn',
-      line: `awaiting_turn: attempt ${owner.attempt.driveAttemptId} is ${owner.attempt.state}, run ${
-        owner.run?.status ?? 'absent'
-      }${owner.run?.dispatchedInputId === undefined ? ' with NO dispatched input' : ''}`,
+      code: 'awaiting_landing',
+      line: `awaiting_landing: ${intent.door} submission ${
+        intent.submissionId ?? '(no id)'
+      } admitted ${clock(intent.submittedAt)}, no landing fact yet`,
+    }
+  }
+  if (envelope.state !== 'presented') {
+    return {
+      code: 'awaiting_delivery',
+      line: `awaiting_delivery: envelope ${envelope.state}, ${presentations.length} local presentation(s)`,
     }
   }
 
-  const delivered = reminders.find((reminder) => reminder.deliveredAt !== undefined)
-  if (delivered !== undefined) {
+  const owner = owningPresentation(envelope, presentations)
+  if (owner === undefined) {
     return {
-      code: 'reminder_delivered',
-      line: `reminder_delivered: reminder shown ${clock(delivered.deliveredAt)}, envelope still presented`,
+      code: 'no_hrc_record',
+      line: 'no_hrc_record: envelope presented, but this node holds no presentation record for it',
     }
   }
-  if (reminders.length > 0) {
+  const record = owner.presentation
+  if (record.reminderLandedAt !== undefined) {
+    return {
+      code: 'reminder_delivered',
+      line: `reminder_delivered: reminder landed ${clock(record.reminderLandedAt)}, envelope still presented`,
+    }
+  }
+  if (record.reminderArmedAt !== undefined) {
     return {
       code: 'reminder_armed',
-      line: `reminder_armed: reminder due ${clock(reminders[0]?.remindAt)}, envelope still presented`,
+      line: `reminder_armed: reminder due ${clock(record.reminderDueAt)}, envelope still presented`,
+    }
+  }
+  // A LIVE runtime is not a strand: D3 disposes what it is holding at that
+  // runtime's next turn terminal, and calling that stranded would fire on every
+  // healthy in-flight obligation on the node. A runtime that has gone terminal
+  // is the real one — the lapse path should have failed it and did not.
+  if (owner.runtimeStatus !== undefined && !isRuntimeTerminal(owner.runtimeStatus)) {
+    return {
+      code: 'awaiting_delivery',
+      line: `awaiting_delivery: presented to ${record.runtimeId} (${owner.runtimeStatus}) ${clock(
+        record.landedAt
+      )}; disposal follows that runtime's next turn terminal`,
     }
   }
   return {
     code: 'stranded',
-    line: `stranded: attempt ${owner.attempt.state} ${clock(
-      owner.attempt.completedAt ?? owner.attempt.updatedAt
+    line: `stranded: presented to ${record.runtimeId} ${clock(
+      record.landedAt
     )}, envelope presented, no reminder, no reply`,
   }
 }
@@ -416,27 +354,26 @@ export function buildMailInspection(
   db: HrcDatabase,
   query: MailInspectQuery,
   envelopeIds: readonly string[],
-  ledgerRows: ReadonlyMap<string, MailInspectLedgerRow>,
-  projectTurnResponse?: MailInspectTurnResponseProjector
+  ledgerRows: ReadonlyMap<string, MailInspectLedgerRow>
 ): MailInspection {
   return {
     query,
     generatedAt: new Date().toISOString(),
     envelopes: envelopeIds.map((envelopeId) => {
-      const attempts = attemptsFor(db, envelopeId, projectTurnResponse)
-      const reminders = db.mailDrives.remindersForEnvelope(envelopeId)
-      const notices = db.mailDrives.failureNoticesForEnvelope(envelopeId)
+      const presentations = presentationsFor(db, envelopeId)
+      const intent = db.mailDelivery.getIntent(envelopeId)
+      const notices = db.mailDelivery.failureNoticesForEnvelope(envelopeId)
       const row = ledgerRows.get(envelopeId)
       const ledger = row?.ok === true ? row.envelope : undefined
       return {
         envelopeId,
         ...(ledger === undefined ? {} : { ledger }),
         ...(row !== undefined && !row.ok ? { ledgerError: row.error } : {}),
-        attempts,
-        reminders,
+        presentations,
+        ...(intent === undefined ? {} : { intent }),
         failureNotices: notices,
-        timeline: buildTimeline(ledger, attempts, reminders, notices),
-        verdict: verdictFor(row, attempts, reminders, notices),
+        timeline: buildTimeline(ledger, presentations, intent, notices),
+        verdict: verdictFor(row, presentations, intent, notices),
       }
     }),
   }

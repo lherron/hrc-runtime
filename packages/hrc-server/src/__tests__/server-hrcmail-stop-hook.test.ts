@@ -93,7 +93,7 @@ describe('T-07615 — the Stop gate over the wrkq ledger', () => {
       const decision = await stopDecision()
       expect(decision).toMatchObject({
         decision: 'block',
-        runId,
+        runtimeId,
         targetSessionRef: target,
         unackedCount: 1,
         refusalCount: refusal,
@@ -152,25 +152,37 @@ describe('T-07615 — the Stop gate over the wrkq ledger', () => {
     expect(await stopDecision()).toMatchObject({
       decision: 'allow',
       reason: 'ledger_unavailable',
-      runId,
+      runtimeId,
       targetSessionRef: target,
     })
   })
 
-  it('allows unknown and idle runtimes without consulting the ledger at all', async () => {
+  it('allows an unknown runtime without consulting the ledger at all', async () => {
     ledger.unavailable = true
     const unknown = await fixture.postJson('/v1/internal/mail/stop-decision', {
       runtimeId: 'rt-missing',
     })
-    expect(await unknown.json()).toEqual({ decision: 'allow', reason: 'no_active_turn' })
+    expect(await unknown.json()).toEqual({ decision: 'allow', reason: 'no_runtime' })
+  })
 
+  it('gates a turn with NO HRC run: the seat comes off the runtime row', async () => {
+    // T-08094. This is the whole reason the gate was re-keyed: a human typing
+    // in a pane mints no run, so a gate that resolved the seat from
+    // `activeRunId` allowed the stop outright — for exactly the turns a steered
+    // obligation now lands in.
+    await present('steered into a human-typed turn')
     const db = openHrcDatabase(fixture.dbPath)
     try {
       db.runtimes.updateRunId(runtimeId, undefined, fixture.now())
     } finally {
       db.close()
     }
-    const idle = await fixture.postJson('/v1/internal/mail/stop-decision', { runtimeId })
-    expect(await idle.json()).toEqual({ decision: 'allow', reason: 'no_active_turn' })
+    expect(await stopDecision()).toMatchObject({
+      decision: 'block',
+      runtimeId,
+      targetSessionRef: target,
+      unackedCount: 1,
+      refusalCount: 1,
+    })
   })
 })

@@ -32,33 +32,32 @@ export type {
 } from './ledger/presentation.js'
 export { targetSessionRefForLedgerScope } from './ledger/scope.js'
 export * from './ledger/types.js'
-export {
-  dropAckedHeldMember,
-  holdQueueForBusyTarget,
-  revalidateHeldBatch,
-} from './drive/held-batch.js'
-export {
-  prepareHeldBatchForBoundary,
-  replayHeldBatchReceipts,
-  seatCanDispatch,
-} from './drive/held-batch-flush.js'
-export { observeAttempt } from './drive/attempt-lifecycle.js'
+export { observeBrokerSeat, runtimeAdvertisesSteer, seatCanDispatch } from './drive/seat.js'
+export type { ObservedBrokerSeat } from './drive/seat.js'
+export { deliverByColdBirth, deliverToSeat } from './drive/delivery.js'
+export { clearRefusedIntent, commitLanding, observeBrokerLanding } from './drive/landing.js'
+export { reconcileIntent, reconcileOpenIntents } from './drive/reconcile.js'
+export type { IntentReconcileVerdict } from './drive/reconcile.js'
+export { readActionableEnvelopes } from './drive/presentation.js'
+export type { ActionableEnvelope } from './drive/presentation.js'
+export { disposeRuntimeObligations } from './terminal/disposal.js'
+export type { DisposalOutcome } from './terminal/disposal.js'
+export { failLapsedObligations, sweepLapsedObligations } from './terminal/runtime-lapse.js'
+export { isRuntimeTerminal } from './terminal/runtime-status.js'
 export {
   buildMailInspection,
   mailInspectEnvelopeIds,
   resolveMailInspectQuery,
 } from './diagnostics/inspect.js'
 export type {
-  MailInspectAttempt,
   MailInspectEnvelope,
   MailInspectEvent,
   MailInspectLedgerRow,
+  MailInspectPresentation,
   MailInspectQuery,
-  MailInspectRun,
   MailInspectVerdictCode,
   MailInspection,
 } from './diagnostics/inspect.js'
-export { handleQueuedInjectionExpiry } from './terminal/queued-injection-expiry.js'
 export { failEnvelopeWithAudit } from './terminal/envelope-terminal.js'
 export type {
   EnvelopeFailCallSite,

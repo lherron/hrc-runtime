@@ -9,12 +9,20 @@ export const HRC_MAIL_STOP_HARD_CAP = 50
  *
  * The PREDICATE is a wrkq query — `pendingView.blocking`, which names only what
  * was actually presented and left neither replied nor deferred — and is passed
- * in. What lives here is the part that references a run: how many times this
- * turn has already been refused, and against which obligation, so the count
- * resets when new mail arrives and the hard cap can never trap a turn forever.
+ * in. What lives here is the execution part: how many times this SEAT has
+ * already been refused, and against which obligation, so the count resets when
+ * new mail arrives and the hard cap can never trap a turn forever.
  *
  * That split is the boundary rule: the obligation is collaboration and belongs
  * to wrkq; the refusal count is execution and belongs to HRC.
+ *
+ * T-08094 re-keyed it from the RUN to the RUNTIME. A human-typed pane turn
+ * mints no run, so a run-keyed counter could not exist for exactly the turns a
+ * steered obligation now lands in. The reset rule carries the per-turn meaning
+ * that keying lost: `observedEnvelopeSeq` moves when new mail arrives, so a
+ * reader gets three refusals per obligation SET rather than three per turn, and
+ * a seat that has been told three times is released to D3's reminder and
+ * `failed:ignored` rather than blocked forever.
  */
 
 /** One blocking obligation, as wrkq reported it. */
@@ -27,7 +35,7 @@ export type HrcMailStopEnvelopeSummary = {
 }
 
 export type HrcMailStopRefusalRecord = {
-  runId: string
+  runtimeId: string
   targetSessionRef: string
   observedEnvelopeSeq: number
   refusalCount: number
@@ -54,7 +62,7 @@ export type HrcMailStopDecision =
     }
 
 type StopRefusalRow = {
-  run_id: string
+  runtime_id: string
   target_session_ref: string
   observed_envelope_seq: number
   refusal_count: number
@@ -66,19 +74,19 @@ type StopRefusalRow = {
 export class HrcMailStopRefusalRepository {
   constructor(private readonly db: Database) {}
 
-  get(runId: string): HrcMailStopRefusalRecord | undefined {
+  get(runtimeId: string): HrcMailStopRefusalRecord | undefined {
     const row = this.db
       .query<StopRefusalRow, [string]>(
-        `SELECT run_id, target_session_ref, observed_envelope_seq,
+        `SELECT runtime_id, target_session_ref, observed_envelope_seq,
                 refusal_count, total_refusal_count, created_at, updated_at
          FROM hrcmail_stop_refusals
-         WHERE run_id = ?`
+         WHERE runtime_id = ?`
       )
-      .get(runId)
+      .get(runtimeId)
     return row === null
       ? undefined
       : {
-          runId: row.run_id,
+          runtimeId: row.runtime_id,
           targetSessionRef: row.target_session_ref,
           observedEnvelopeSeq: row.observed_envelope_seq,
           refusalCount: row.refusal_count,
@@ -98,7 +106,7 @@ export class HrcMailStopRefusalRepository {
    * never shown must not trap its turn, and neither must one it has answered.
    */
   evaluate(
-    runId: string,
+    runtimeId: string,
     targetSessionRef: string,
     blocking: readonly HrcMailStopEnvelopeSummary[],
     newestEnvelopeSeq: number,
@@ -108,7 +116,7 @@ export class HrcMailStopRefusalRepository {
     return this.db
       .transaction(() => {
         const unackedCount = blocking.length
-        const previous = this.get(runId)
+        const previous = this.get(runtimeId)
         if (unackedCount === 0) {
           return {
             decision: 'allow',
@@ -134,10 +142,10 @@ export class HrcMailStopRefusalRepository {
         this.db
           .query(
             `INSERT INTO hrcmail_stop_refusals (
-               run_id, target_session_ref, observed_envelope_seq,
+               runtime_id, target_session_ref, observed_envelope_seq,
                refusal_count, total_refusal_count, created_at, updated_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(run_id) DO UPDATE SET
+             ON CONFLICT(runtime_id) DO UPDATE SET
                target_session_ref = excluded.target_session_ref,
                observed_envelope_seq = excluded.observed_envelope_seq,
                refusal_count = excluded.refusal_count,
@@ -145,7 +153,7 @@ export class HrcMailStopRefusalRepository {
                updated_at = excluded.updated_at`
           )
           .run(
-            runId,
+            runtimeId,
             targetSessionRef,
             newestEnvelopeSeq,
             refusalCount,

@@ -16,9 +16,8 @@
  * GENERATION so a prior-generation runtime left `ready` after a rotation can
  * never be named (T-07650, on Lance's max3 specimen: gen 27 `ready` since
  * 17:00Z took a message meant for gen 50). No current-generation seat means NO
- * runtimeId on the receipt: a receipt with no runtime is honest and already has
- * its own line in the audit, while a receipt naming the wrong one is not
- * recoverable after the fact.
+ * runtimeId: a delivery with no runtime is refused honestly, while one naming
+ * the wrong runtime is not recoverable after the fact.
  */
 export function presentationRuntimeIdFor(
   server: MailKickerContext,
@@ -35,45 +34,6 @@ export function presentationRuntimeIdFor(
   return undefined
 }
 
-/**
- * Finish a drive attempt that threw, instead of merely annotating it.
- *
- * `recordError` ANNOTATES; it does not finish, and a `claimed` attempt owns its
- * scope's drive slot for as long as the row exists. A catch that only annotates
- * therefore makes the target permanently undrivable by this daemon, silently —
- * the hazard the missing-intent branch already names in `driveMailTargetOnce`,
- * reached through a different door. Both generic catches were that door
- * (T-07653); this is their single exit.
- *
- * A `started` attempt is the one case that is NOT finished here, and it is not
- * an exception to the rule. It PROVED a dispatch: the turn is before the
- * harness, the run row exists, and `observeAttempt` closes the attempt from the
- * run's terminal event with the round accounting `completeStartedAttempt` owes
- * the presented envelopes. Finishing it here would release a slot the live turn
- * still holds and re-present those envelopes under a NEW attempt id, which is a
- * duplicate delivery rather than a repair. A run that ends without ever
- * reaching a terminal state is the ACTIVE-RUN RECONCILER's to terminalize
- * (`sweep-reconcile.ts`), not the kicker's — the kicker only reads that row.
- */
-export function failDriveAfterThrow(
-  server: MailKickerContext,
-  attempt: HrcMailDriveAttempt,
-  message: string
-): HrcMailDriveAttemptState {
-  const current = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
-  // `recordError` only ANNOTATES a started attempt, so only the second branch
-  // is a terminal transition and only it earns the line.
-  if (current.state === 'started') {
-    return server.db.mailDrives.recordError(current.driveAttemptId, message).state
-  }
-  const failed = server.db.mailDrives.failWithoutStart(current.driveAttemptId, message)
-  logAttemptTerminal(server, failed, {
-    reason: 'drive_threw',
-    presentedEnvelopeIds: server.db.mailDrives.presentationEnvelopeIds(failed.driveAttemptId),
-  })
-  return failed.state
-}
-
 /** The scope behind a drive target, or nothing when the ref is unparseable. */
 export function kickerScopeRefFor(targetSessionRef: string): string | undefined {
   try {
@@ -86,23 +46,14 @@ export function kickerScopeRefFor(targetSessionRef: string): string | undefined 
 /**
  * Skip a foreign-homed target: ONE positive line per scope per epoch.
  *
- * Two things happen here and both matter. The line is written once — a skip
- * repeated every tick is the same noise this fixes, wearing a calmer verb — and
- * any still-CLAIMED attempt is FINISHED rather than left annotated.
- * `recordError` alone leaves an attempt `claimed`, and a claimed attempt owns
- * the scope's drive slot forever, which is how twelve dead rows accumulated on
- * lab and kept re-entering `listInFlightTargets()` hours after the rebind. A
- * `started` attempt is left alone: it proved a dispatch, and its terminal event
- * is what closes it.
+ * The line is written once — a skip repeated every tick is noise — and any
+ * birth this node still believes it owes is RESOLVED, because a scope homed
+ * elsewhere is not this node's to birth and would otherwise re-enter the
+ * sweep's candidate set on every tick for the life of the store.
  *
  * Stale local RUNTIMES are deliberately NOT torn down here. Evicting a live
- * seat is an operator retirement decision (the retirement primitive enumerates the scope's live
- * runtime ids at revoke time), never a delivery mechanism's; a routing verdict
- * must not kill a session an operator may be attached to. Nor is the exclusion
- * pushed into `listLiveSessionRefs()`: that query lives in hrc-store-sqlite,
- * which has neither this node's identity nor a registry client, and it would
- * still leave `listInFlightTargets()` unfiltered. One filter, at the one place
- * both candidate sources converge.
+ * seat is an operator retirement decision, never a delivery mechanism's; a
+ * routing verdict must not kill a session an operator may be attached to.
  */
 export function skipForeignHomedTarget(
   server: MailKickerContext,
@@ -111,12 +62,10 @@ export function skipForeignHomedTarget(
   foreign: ForeignHome,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const activeAttempt = server.db.mailDrives.getActiveAttempt(targetSessionRef)
-  const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+  const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
     targetSessionRef,
-    `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`,
-    activeAttempt?.state === 'claimed' ? activeAttempt.driveAttemptId : undefined
-  )?.driveAttemptId
+    `${scopeRef} is homed on ${foreign.homeNodeId}; this node has no authority to drive it`
+  )
   server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
 
   // Announcement is deduped on its OWN map, not on the resolver's memo. The
@@ -125,7 +74,7 @@ export function skipForeignHomedTarget(
   const announcement = foreign.homeNodeId
   const alreadyAnnounced = server.mailKickerForeignHomeAnnounced.get(scopeRef) === announcement
   server.mailKickerForeignHomeAnnounced.set(scopeRef, announcement)
-  if (alreadyAnnounced && resolvedAttemptId === undefined) return
+  if (alreadyAnnounced && !resolvedBirth) return
 
   server.log('INFO', 'wrkq.kicker.foreign_home_skipped', {
     targetSessionRef,
@@ -133,12 +82,12 @@ export function skipForeignHomedTarget(
     homeNodeId: foreign.homeNodeId,
     source: foreign.source,
     wakeReason,
-    ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
+    resolvedBirthRefusal: resolvedBirth,
   })
 }
 
 /**
- * A gate refusal that is a BIRTH DEFERRAL rather than a drive failure (T-07655).
+ * A gate refusal that is a BIRTH DEFERRAL rather than a delivery failure (T-07655).
  *
  * Two reasons qualify, and both mean the same thing operationally: this node
  * takes no part in the birth, and there is nothing wrong with it or with the
@@ -187,27 +136,18 @@ export function birthDeferralFor(error: unknown): BirthDeferral | undefined {
   return { reason, homeNodeId, designationEpoch, birthEnvelopeId, senderScopeRef, provenance }
 }
 
-/**
- * Finish a deferred attempt and say so ONCE per scope per designation epoch.
- *
- * The attempt must be FINISHED, not merely annotated: a claimed attempt owns
- * the scope's drive slot, and a scope this node will never birth would hold its
- * own slot forever (the T-07653 invariant, and the same trap
- * `placement_unresolvable` documents above).
- */
+/** Resolve a deferred birth and say so ONCE per scope per designation epoch. */
 export function deferBirthForTarget(
   server: MailKickerContext,
   targetSessionRef: string,
   scopeRef: string,
-  attempt: HrcMailDriveAttempt,
   deferral: BirthDeferral,
   wakeReason: HrcMailDriveWakeReason
 ): void {
-  const resolvedAttemptId = server.db.mailDrives.markForeignHomeResolution(
+  const resolvedBirth = server.db.mailDelivery.resolveBirthRefusal(
     targetSessionRef,
-    `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`,
-    attempt.driveAttemptId
-  )?.driveAttemptId
+    `${scopeRef} is designated to be born on ${deferral.homeNodeId}; this node takes no part in the birth`
+  )
   server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
 
   const announcement = `${deferral.homeNodeId}@${deferral.designationEpoch}`
@@ -225,18 +165,14 @@ export function deferBirthForTarget(
     designationEpoch: deferral.designationEpoch,
     reason: deferral.reason,
     wakeReason,
-    ...(resolvedAttemptId === undefined ? {} : { resolvedAttemptId }),
+    resolvedBirthRefusal: resolvedBirth,
   })
 }
+
 import { HrcDomainError } from 'hrc-core'
 import type { HrcSessionRecord } from 'hrc-core'
-import type {
-  HrcMailDriveAttempt,
-  HrcMailDriveAttemptState,
-  HrcMailDriveWakeReason,
-} from 'hrc-store-sqlite'
+import type { HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
 import type { ForeignHome } from '../contracts.js'
-import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { isRecord, isRuntimeUnavailableStatus, parseSessionRef } from '../internal.js'

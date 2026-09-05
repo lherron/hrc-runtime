@@ -5,7 +5,7 @@ import type {
   HrcSessionRecord,
   PreemptSubmissionRequest,
 } from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from './context.js'
 import type {
@@ -18,10 +18,8 @@ import type {
   MailKickerDependencies,
   MailKickerOptions,
 } from './contracts.js'
-import { logDisposeInterrupted, logDisposePendingAtStop } from './diagnostics/attempt-log.js'
-import type { DisposalInFlight } from './diagnostics/attempt-log.js'
-import { reportUnownedTurn } from './diagnostics/stranded.js'
-import { isRuntimeTerminal } from './drive/attempt-lifecycle.js'
+import { commitLanding, observeBrokerLanding } from './drive/landing.js'
+import { reconcileOpenIntents } from './drive/reconcile.js'
 import { driveMailTargetOnce } from './drive/target-driver.js'
 import {
   DISPOSAL_DRAIN_DEADLINE_MS,
@@ -32,8 +30,9 @@ import {
   formatSessionRef,
 } from './internal.js'
 import type { MailKickerLedger } from './ledger/client.js'
-import { handleQueuedInjectionExpiry } from './terminal/queued-injection-expiry.js'
+import { disposeRuntimeObligations } from './terminal/disposal.js'
 import { failLapsedObligations } from './terminal/runtime-lapse.js'
+import { isRuntimeTerminal } from './terminal/runtime-status.js'
 import { chargeBirthSweepRefusal } from './wake/birth-retry.js'
 import { runWrkqLedgerTail } from './wake/ledger-tail.js'
 import { runMailKickerSweep } from './wake/sweep.js'
@@ -46,7 +45,6 @@ export class MailKicker implements MailKickerContext {
   readonly registry: KickerRegistryClient | undefined
   readonly foreignHomeMemo: Map<string, ForeignHome>
   readonly broker: KickerBrokerPort
-  readonly afterClaim: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   readonly enabled: boolean
   readonly sweepIntervalMs: number
 
@@ -62,9 +60,9 @@ export class MailKicker implements MailKickerContext {
   readonly mailKickerBirthSweepBackoff = new Map<string, { attempts: number; nextAtMs: number }>()
   readonly mailKickerLapsedRuntimes = new Set<string>()
   readonly mailKickerDisposalsPending = new Set<Promise<void>>()
-  readonly mailKickerDisposalsInFlight = new Map<string, DisposalInFlight>()
   mailKickerBootReconcilePending = true
   readonly mailKickerStalledDeliveryAnnounced = new Set<string>()
+  readonly mailKickerSteerRefused = new Set<string>()
 
   constructor(
     private readonly dependencies: MailKickerDependencies,
@@ -76,7 +74,6 @@ export class MailKicker implements MailKickerContext {
     this.registry = dependencies.registry
     this.foreignHomeMemo = dependencies.foreignHomeMemo
     this.broker = dependencies.broker
-    this.afterClaim = dependencies.afterClaim
     this.enabled = options.enabled
     this.sweepIntervalMs = options.sweepIntervalMs
   }
@@ -126,6 +123,13 @@ export class MailKicker implements MailKickerContext {
 
   start(): void {
     if (!this.enabled || this.mailKickerSweepTimer !== undefined || this.stopping) return
+    // D2 step 5: reconcile at daemon START. An intent committed by the previous
+    // process is the only record that a delivery may be in flight, and until it
+    // is resolved its envelope is not actionable — so this runs before the first
+    // tail tick rather than waiting thirty of them for the sweep.
+    void reconcileOpenIntents(this, { reason: 'daemon_start' }).catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.start_reconcile_failed', { error: errorText(error) })
+    })
     let tick = 0
     this.mailKickerSweepTimer = setInterval(() => {
       void this.runTailOnce().catch((error: unknown) => {
@@ -143,28 +147,23 @@ export class MailKicker implements MailKickerContext {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
-    // Read FIRST, before anything is drained: what was outstanding at the moment
-    // the stop was ordered. T-07963 note — this is no longer evidence of LOSS,
-    // because the drain below now waits for these; `dispose_interrupted` is
-    // emitted after the drain, for whatever genuinely did not finish.
-    logDisposePendingAtStop(this)
     if (this.mailKickerSweepTimer !== undefined) {
       clearInterval(this.mailKickerSweepTimer)
       this.mailKickerSweepTimer = undefined
     }
     this.mailKickerPendingTargets.clear()
     // T-07963: a FIXED POINT, not one snapshot. A target operation inside the
-    // first snapshot can still reach `observeAttempt` and start a disposal after
-    // the disposal set was read, and that disposal would never be waited for.
-    // `stopping` is already set, so `wake()` and `drainTarget`'s loop refuse new
-    // work and the set is strictly decreasing.
+    // first snapshot can still start a disposal after the disposal set was
+    // read, and that disposal would never be waited for. `stopping` is already
+    // set, so `wake()` and `drainTarget`'s loop refuse new work and the set is
+    // strictly decreasing.
     //
     // DEADLINED, because a disposal is a wrkq RPC per envelope: an unreachable
     // ledger would otherwise make the drain unbounded and the daemon
     // unrestartable, which is a worse failure than the stranding it prevents.
     // The bound is safe because the drain is a latency optimisation over the
-    // durable path, not the correctness path — dispositions are written as they
-    // are decided, so anything cut off here is recovered by the next boot.
+    // durable path, not the correctness path — every disposition is written as
+    // it is decided, so anything cut off here is recovered by the next boot.
     const deadline = Date.now() + DISPOSAL_DRAIN_DEADLINE_MS
     for (;;) {
       const operations = [
@@ -185,9 +184,6 @@ export class MailKicker implements MailKickerContext {
       ])
       if (raced === 'timeout') break
     }
-    // Only now is "interrupted" a true word: the drain is complete, so anything
-    // still registered was genuinely not finished by this stop.
-    logDisposeInterrupted(this)
   }
 
   wake(targetSessionRef: string, wakeReason: HrcMailDriveWakeReason): void {
@@ -215,7 +211,7 @@ export class MailKicker implements MailKickerContext {
         this.mailKickerPendingTargets.delete(targetSessionRef)
         const result = await driveMailTargetOnce(this, targetSessionRef, reason)
         if (reason === 'periodic' && result?.outcome === 'birth-refused') {
-          await chargeBirthSweepRefusal(this, targetSessionRef, result.driveAttemptId)
+          await chargeBirthSweepRefusal(this, targetSessionRef)
         }
       }
     })().finally(() => {
@@ -248,8 +244,8 @@ export class MailKicker implements MailKickerContext {
   }
 
   observeBrokerEvent(record: HrcBrokerInvocationEventRecord): void {
-    void handleQueuedInjectionExpiry(this, record).catch((error: unknown) => {
-      this.log('WARN', 'wrkq.kicker.queued_injection_expiry_observer_failed', {
+    void observeBrokerLanding(this, record).catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.landing_observer_failed', {
         invocationId: record.invocationId,
         runtimeId: record.runtimeId,
         brokerEventType: record.type,
@@ -259,29 +255,62 @@ export class MailKicker implements MailKickerContext {
   }
 }
 
-/** Package-level lifecycle seam retained for focused projection tests. */
+/**
+ * The lifecycle seam, and the whole of D3's trigger.
+ *
+ * NO `runId === undefined` GUARD. That guard is what made a human-typed pane
+ * turn invisible: those turns emit the same terminal event kinds against the
+ * same runtime and mint no run at all, and they are exactly the turns a steered
+ * obligation now lands in. Disposal keys on the RUNTIME and the ledger sequence,
+ * so both shapes are one case.
+ */
 export function observeMailDriveLifecycleEvent(
   this: MailKickerContext,
   event: HrcLifecycleEvent
 ): void {
-  if (event.runId === undefined) return
+  const runtimeId = event.runtimeId
   if (event.eventKind === 'turn.started') {
-    this.db.mailDrives.recordStart({
-      runId: event.runId,
-      startHrcSeq: event.hrcSeq,
-      startedAt: event.ts,
-      hostSessionId: event.hostSessionId,
-      generation: event.generation,
-      runtimeId: event.runtimeId,
-    })
+    // The LAUNCH-CARRIED landing fact (D2 step 6). A body that rode
+    // `spec.launch.initialPrompt` has no submission to be absorbed or executed;
+    // the born runtime's first turn IS the delivery. Read off HRC's own
+    // committed lifecycle ledger rather than the broker stream so the landing
+    // sequence is the same ordering D3's terminals are compared against.
+    if (runtimeId === undefined) return
+    const intents = this.db.mailDelivery.listLaunchIntentsForRuntime(runtimeId)
+    for (const intent of intents) {
+      void commitLanding(this, intent, {
+        runtimeId,
+        eventType: 'turn.started',
+        landingHrcSeq: event.hrcSeq,
+      }).catch((error: unknown) => {
+        this.log('WARN', 'wrkq.kicker.launch_landing_failed', {
+          targetSessionRef: intent.targetSessionRef,
+          envelope: intent.envelopeId,
+          runtimeId,
+          error: errorText(error),
+        })
+      })
+    }
     return
   }
   if (RUNTIME_TERMINAL_EVENTS.has(event.eventKind)) {
-    const runtimeId = event.runtimeId
     if (runtimeId === undefined || this.mailKickerLapsedRuntimes.has(runtimeId)) return
     const runtime = this.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
     if (runtime === undefined || !isRuntimeTerminal(runtime.status)) return
     const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
+    // D2 step 5: a runtime termination resolves every intent bound to it.
+    // Nothing can land in a dead seat, so an open intent there is a delivery
+    // that will never happen, and its envelope must become actionable again.
+    void reconcileOpenIntents(this, {
+      runtimeIds: new Set([runtimeId]),
+      reason: 'runtime_terminated',
+    }).catch((error: unknown) => {
+      this.log('WARN', 'wrkq.kicker.terminal_reconcile_failed', {
+        targetSessionRef,
+        runtimeId,
+        error: errorText(error),
+      })
+    })
     void failLapsedObligations(this, targetSessionRef, new Set([runtimeId]))
       .then((complete) => {
         if (complete) this.mailKickerLapsedRuntimes.add(runtimeId)
@@ -297,16 +326,15 @@ export function observeMailDriveLifecycleEvent(
   }
   if (!MAIL_DRIVE_TERMINAL_EVENTS.has(event.eventKind)) return
   const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
-  // T-07964 §3. Ahead of the wake and independent of it: the wake re-drives the
-  // scope, which is a different question from "did this turn end holding
-  // somebody's obligation with no drive left to mint the reply from".
-  void reportUnownedTurn(this, event, targetSessionRef).catch((error: unknown) => {
-    this.log('WARN', 'wrkq.kicker.unowned_turn_check_failed', {
+  if (runtimeId !== undefined) {
+    disposeRuntimeObligations(this, {
+      runtimeId,
       targetSessionRef,
-      ...(event.runtimeId === undefined ? {} : { runtimeId: event.runtimeId }),
-      error: errorText(error),
+      terminalHrcSeq: event.hrcSeq,
+      terminalEventKind: event.eventKind,
+      turnEndedAt: event.ts,
     })
-  })
+  }
   this.wake(targetSessionRef, 'turn_completion')
 }
 

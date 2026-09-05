@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
-import { holdQueueForBusyTarget } from 'hrc-mail-kicker'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
 import { timestamp } from '../server-util.js'
@@ -37,22 +36,6 @@ beforeEach(async () => {
   const storedSession = db.sessions.getByHostSessionId(resolved.hostSessionId)
   if (storedSession === null) throw new Error('missing hint test session')
   session = storedSession
-
-  const drivingEnvelope = ledger.say({
-    toScopeRef: SCOPE,
-    fromPrincipalRef: 'agent:mable',
-    fromScopeRef: DRIVING_COUNTERPARTY,
-    roomKey: 'T-07904',
-    body: 'drive the active turn',
-  })
-  const claimed = db.mailDrives.claim(
-    TARGET,
-    'insert',
-    { envelopeIds: [drivingEnvelope.id] },
-    { driveAttemptId: 'drive-t07926-driving', runId: RUN_ID }
-  )
-  if (claimed.outcome !== 'acquired') throw new Error('failed to claim driving attempt')
-  db.mailDrives.presentForAttempt(claimed.attempt.driveAttemptId, [drivingEnvelope.id])
 
   const now = timestamp()
   db.runtimes.insert({
@@ -105,19 +88,30 @@ function say(body: string, sender: { principalRef: string; scopeRef?: string | u
   })
 }
 
-function hold(...envelopes: ReturnType<typeof say>[]): string {
-  const active = server as HrcServer
-  holdQueueForBusyTarget(
-    (active as any).mailKicker,
-    TARGET,
-    session,
-    { state: 'turn-active', runtimeId: RUNTIME_ID, turnId: 'turn-active-hint' },
-    envelopes.map((envelope) => ({ envelope, form: 'full' as const })),
-    'insert'
-  )
-  const attempt = serverInternals(active).db.mailDrives.getHeldAttempt(TARGET)
-  if (attempt === undefined) throw new Error('missing held hint attempt')
-  return attempt.driveAttemptId
+/**
+ * The T-08094 shape of "mail the harness is holding": an OPEN ENQUEUE INTENT.
+ *
+ * The hint counts submissions the seat cannot read from inside its turn. A
+ * steered body is not one of them — it is already in the turn — which is why a
+ * steer-capable seat is hinted zero times by construction.
+ */
+function outstanding(...envelopes: ReturnType<typeof say>[]): void {
+  const db = serverInternals(server as HrcServer).db
+  for (const envelope of envelopes) {
+    const intent = db.mailDelivery.openIntent({
+      envelopeId: envelope.id,
+      targetSessionRef: TARGET,
+      door: 'enqueue',
+      form: 'full',
+      presentationId: `present-${envelope.id}`,
+      runtimeId: RUNTIME_ID,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      submittedHrcSeq: db.hrcEvents.maxHrcSeq(),
+    })
+    if (intent === undefined) throw new Error(`failed to open intent for ${envelope.id}`)
+    db.mailDelivery.attachAdmission(envelope.id, { submissionId: `sub-${envelope.id}` })
+  }
 }
 
 async function hint(runtimeId = RUNTIME_ID): Promise<Record<string, unknown>> {
@@ -127,23 +121,24 @@ async function hint(runtimeId = RUNTIME_ID): Promise<Record<string, unknown>> {
 }
 
 describe('T-07926 — local held-mail hint decision', () => {
-  it('1. suppresses when there is no held batch and logs the reason', async () => {
+  it('1. suppresses when nothing is outstanding and logs the reason', async () => {
     const captured = await captureServerLog(async () => hint())
     expect(captured.result).toEqual({})
     expect(
       captured.lines.some(
-        (line) => line.includes('wrkq.kicker.hint_suppressed') && line.includes('no_held_batch')
+        (line) =>
+          line.includes('wrkq.kicker.hint_suppressed') && line.includes('no_outstanding_mail')
       )
     ).toBe(true)
   })
 
-  it('2. issues the first hint as a bare count over every held sender', async () => {
+  it('2. issues the first hint as a bare count over every outstanding sender', async () => {
     const scoped = say('scoped sender', {
       principalRef: 'agent:mable',
       scopeRef: DRIVING_COUNTERPARTY,
     })
     const human = say('scope-less human', { principalRef: 'agent:lance' })
-    const driveAttemptId = hold(scoped, human)
+    outstanding(scoped, human)
     ledger.unavailable = true
 
     const captured = await captureServerLog(async () => hint())
@@ -154,78 +149,76 @@ describe('T-07926 — local held-mail hint decision', () => {
     expect(captured.result).toEqual({
       hint: MAIL_HINT_TEXT(2),
       heldCount: 2,
-      driveAttemptId,
       reason: 'first',
     })
     expect(captured.result['hint']).not.toContain('driving this turn')
-    expect(serverInternals(server as HrcServer).db.mailDrives.getHeldAttempt(TARGET)).toMatchObject(
-      {
-        hintCount: 1,
-        lastHintPresentedCount: 2,
-      }
-    )
     expect(captured.lines.some((line) => line.includes('wrkq.kicker.hint_issued'))).toBe(true)
   })
 
-  it('3. suppresses the same count inside five minutes', async () => {
-    hold(say('first', { principalRef: 'agent:lance' }))
+  it('3. suppresses the same count inside the cadence window', async () => {
+    outstanding(say('first', { principalRef: 'agent:lance' }))
     await hint()
     const captured = await captureServerLog(async () => hint())
     expect(captured.result).toEqual({})
     expect(captured.lines.some((line) => line.includes('"reason":"cadence"'))).toBe(true)
   })
 
-  it('4. issues immediately when a new held member changes the count', async () => {
-    hold(say('first', { principalRef: 'agent:lance' }))
+  it('4. issues immediately when a new outstanding submission changes the count', async () => {
+    outstanding(say('first', { principalRef: 'agent:lance' }))
     await hint()
-    hold(say('second', { principalRef: 'agent:lance' }))
+    outstanding(say('second', { principalRef: 'agent:lance' }))
     expect(await hint()).toMatchObject({ heldCount: 2, reason: 'count_changed' })
   })
 
-  it('5. issues periodically once the five-minute boundary is reached', async () => {
-    const driveAttemptId = hold(say('first', { principalRef: 'agent:lance' }))
+  it('5. issues periodically once the cadence boundary is reached', async () => {
+    outstanding(say('first', { principalRef: 'agent:lance' }))
     await hint()
     serverInternals(server as HrcServer)
-      .db.sqlite.query(
-        `UPDATE hrcmail_drive_attempts
-            SET last_hint_at = ?
-          WHERE drive_attempt_id = ?`
-      )
-      .run(new Date(Date.now() - 5 * 60_000).toISOString(), driveAttemptId)
+      .db.sqlite.query('UPDATE hrcmail_seat_hints SET last_hint_at = ? WHERE runtime_id = ?')
+      .run(new Date(Date.now() - 5 * 60_000).toISOString(), RUNTIME_ID)
     expect(await hint()).toMatchObject({ heldCount: 1, reason: 'periodic' })
   })
 
-  it('6. suppresses a missing active run and a held batch bound to another runtime', async () => {
-    hold(say('first', { principalRef: 'agent:lance' }))
+  it('6. suppresses an outstanding submission bound to another runtime', async () => {
+    outstanding(say('first', { principalRef: 'agent:lance' }))
     const db = serverInternals(server as HrcServer).db
-    db.sqlite
-      .query("UPDATE hrcmail_drive_attempts SET runtime_id = ? WHERE state = 'held'")
-      .run('rt-other')
-    expect(await hint()).toEqual({})
-
-    db.runtimes.updateRunId(RUNTIME_ID, undefined, timestamp())
+    db.sqlite.query('UPDATE hrcmail_delivery_intents SET runtime_id = ?').run('rt-other')
     expect(await hint()).toEqual({})
   })
 
   it('7. creates no broker submission or presentation receipt', async () => {
     const first = say('first', { principalRef: 'agent:lance' })
     const second = say('second', { principalRef: 'agent:other' })
-    const driveAttemptId = hold(first, second)
+    outstanding(first, second)
     expect(await hint()).toMatchObject({ heldCount: 2 })
     expect(ledger.presentRequests).toEqual([])
     expect(ledger.roomSayRequests).toEqual([])
     expect(first.presentedTo).toEqual([])
     expect(second.presentedTo).toEqual([])
-    expect(
-      serverInternals(server as HrcServer).db.mailDrives.presentationEnvelopeIds(driveAttemptId)
-    ).toEqual([first.id, second.id])
+  })
+
+  it('8. counts no steered submission: a steer is already inside the turn', async () => {
+    const envelope = say('steered', { principalRef: 'agent:lance' })
+    const db = serverInternals(server as HrcServer).db
+    db.mailDelivery.openIntent({
+      envelopeId: envelope.id,
+      targetSessionRef: TARGET,
+      door: 'steer',
+      form: 'full',
+      presentationId: `present-${envelope.id}`,
+      runtimeId: RUNTIME_ID,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      submittedHrcSeq: db.hrcEvents.maxHrcSeq(),
+    })
+    expect(await hint()).toEqual({})
   })
 
   it('fails open to an empty object on malformed input or a local store error', async () => {
     expect(
       await (await fixture.postJson('/v1/internal/mail/hint-decision', { runtimeId: '' })).json()
     ).toEqual({})
-    serverInternals(server as HrcServer).db.mailDrives.evaluateHeldHint = () => {
+    serverInternals(server as HrcServer).db.mailDelivery.evaluateSeatHint = () => {
       throw new Error('local store unavailable')
     }
     expect(await hint()).toEqual({})

@@ -3,7 +3,7 @@ export async function deliverFailureNotices(
   targetSessionRef: string,
   session: HrcSessionRecord
 ): Promise<void> {
-  const notices = server.db.mailDrives.listUndeliveredFailureNotices(targetSessionRef)
+  const notices = server.db.mailDelivery.listUndeliveredFailureNotices(targetSessionRef)
   if (notices.length === 0) return
   if (presentationRuntimeIdFor(server, session) === undefined) return
   const intent =
@@ -21,7 +21,7 @@ export async function deliverFailureNotices(
     if (body.status !== 'started') {
       throw new Error(`failure notice did not start (status=${body.status})`)
     }
-    server.db.mailDrives.markFailureNoticesDelivered(
+    server.db.mailDelivery.markFailureNoticesDelivered(
       targetSessionRef,
       notices.map((notice) => notice.envelopeId)
     )
@@ -80,7 +80,7 @@ export async function queueFailureNotice(
   const notice = formatEnvelopeFailureNotice(envelope, reason, {
     ...(runtimeId === undefined ? {} : { runtimeId }),
   })
-  if (!server.db.mailDrives.recordFailureNotice({ envelopeId, targetSessionRef, notice })) return
+  if (!server.db.mailDelivery.recordFailureNotice({ envelopeId, targetSessionRef, notice })) return
   server.log('INFO', 'wrkq.kicker.failure_notice_queued', {
     targetSessionRef,
     envelope: envelopeId,

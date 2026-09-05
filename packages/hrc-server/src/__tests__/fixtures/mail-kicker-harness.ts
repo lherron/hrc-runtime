@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import type {
   DispatchTurnResponse,
+  HrcBrokerInvocationEventRecord,
   HrcLifecycleEvent,
   HrcLifecycleTransport,
   HrcRuntimeIntent,
@@ -32,7 +33,7 @@ type ServerDispatch = (
   intent: HrcRuntimeIntent,
   prompt: string,
   options: {
-    runId: string
+    runId?: string | undefined
     submissionDoor?: string | undefined
     turnPolicy?: string | undefined
     launchPromptOnColdBirth?: boolean | undefined
@@ -50,6 +51,7 @@ type ServerInternals = {
   db: HrcDatabase
   dispatchTurnForSession: ServerDispatch
   notifyEvent: (event: HrcLifecycleEvent) => void
+  mailKicker: { observeBrokerEvent: (record: HrcBrokerInvocationEventRecord) => void }
 }
 
 export function serverInternals(serverInstance: HrcServer): ServerInternals {
@@ -95,26 +97,31 @@ export async function waitUntil(
   throw new Error(`timed out waiting for ${label}`)
 }
 
-export function startedAttempts(db: HrcDatabase, target: string) {
-  return db.mailDrives
-    .listAttempts(target)
-    .filter((attempt) => attempt.state === 'started' || attempt.state === 'completed')
+/** Presentations that have LANDED on this target, oldest first (T-08094). */
+export function landedPresentations(db: HrcDatabase, target: string) {
+  return [...db.mailDelivery.presentationsForTarget(target, 200)].reverse()
 }
 
 /**
- * The run id of the nth attempt that actually reached a runtime.
+ * The run id of the nth delivery that actually reached a runtime.
  *
- * Dispatch being CALLED is not the same as the turn having started: the drive
- * records its start from the `turn.started` event, so the wait is on the durable
- * attempt state rather than on a call counter.
+ * Dispatch being CALLED is not the same as the body having landed: presentation
+ * is a landing fact, so the wait is on the durable presentation record rather
+ * than on a call counter. The RUN is the harness's own dispatch bookkeeping and
+ * no longer participates in the envelope's lifecycle; it is returned only so a
+ * test can end that turn.
  */
-export async function startedRunId(
-  db: HrcDatabase,
-  target: string,
-  index: number
-): Promise<string> {
-  await waitUntil(() => startedAttempts(db, target).length > index, `attempt ${index} started`)
-  return startedAttempts(db, target)[index]?.runId as string
+export async function landedRunId(db: HrcDatabase, target: string, index: number): Promise<string> {
+  await waitUntil(() => landedPresentations(db, target).length > index, `delivery ${index} landed`)
+  const presentation = landedPresentations(db, target)[index]
+  const runtimeId = presentation?.runtimeId
+  const runId =
+    runtimeId === undefined
+      ? undefined
+      : (db.runtimes.getByRuntimeId(runtimeId)?.activeRunId ??
+        db.runs.listByRuntimeId(runtimeId).at(-1)?.runId)
+  if (runId === undefined) throw new Error(`no run for delivery ${index} on ${target}`)
+  return runId
 }
 
 /**
@@ -147,9 +154,67 @@ export function queryCount(db: HrcDatabase, table: string): number {
   return row?.count ?? 0
 }
 
+/**
+ * Report one broker LANDING FACT to the kicker.
+ *
+ * Presentation is never an admission (spec T-08092 rev 4 §2): a receipt is
+ * written only when the committed broker stream says the body joined a turn
+ * (`submission.absorbed`) or originated one (`submission.executed`). The
+ * fixtures therefore have to emit that fact explicitly, which is the point —
+ * a test that never lands a submission proves the envelope stays `pending`.
+ *
+ * Deferred by one macrotask so it cannot beat the delivery's own
+ * `attachAdmission`, which runs in the microtask continuation of the door call.
+ */
+export function landSubmission(
+  serverInstance: HrcServer,
+  input: {
+    runtimeId: string
+    submissionId: string
+    type: 'submission.absorbed' | 'submission.executed' | 'submission.rejected' | 'submission.lost'
+    turnId?: string | undefined
+    reason?: string | undefined
+    delay?: number | undefined
+  }
+): void {
+  const timer = setTimeout(() => {
+    serverInternals(serverInstance).mailKicker.observeBrokerEvent(
+      brokerEventRecord(input.runtimeId, input.type, {
+        submissionId: input.submissionId,
+        ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      })
+    )
+  }, input.delay ?? 0)
+  timer.unref?.()
+}
+
+/** A committed broker event record, shaped as the mirrored stream stores one. */
+export function brokerEventRecord(
+  runtimeId: string,
+  type: string,
+  payload: Record<string, unknown>
+): HrcBrokerInvocationEventRecord {
+  brokerEventSeq += 1
+  return {
+    invocationId: `inv-${runtimeId}`,
+    seq: brokerEventSeq,
+    time: timestamp(),
+    type,
+    runtimeId,
+    brokerEventJson: JSON.stringify(payload),
+    projectionStatus: 'projected',
+    createdAt: timestamp(),
+  }
+}
+
+let brokerEventSeq = 0
+
 export type DeterministicStart = {
   calls: () => number
   prompts: () => string[]
+  /** The run each dispatch minted, in call order. */
+  runIds: () => string[]
   inputIds: () => string[]
   submissionDoors: () => Array<string | undefined>
   turnPolicies: () => Array<string | undefined>
@@ -165,8 +230,10 @@ export type DeterministicStart = {
  */
 export function installDeterministicStart(serverInstance: HrcServer): DeterministicStart {
   let calls = 0
+  let dispatchRunSeq = 0
   let runtimeGeneration = 0
   const prompts: string[] = []
+  const runIds: string[] = []
   const inputIds: string[] = []
   const submissionDoors: Array<string | undefined> = []
   const turnPolicies: Array<string | undefined> = []
@@ -177,7 +244,7 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     _intent: HrcRuntimeIntent,
     prompt: string,
     options: {
-      runId: string
+      runId?: string | undefined
       submissionDoor?: string | undefined
       turnPolicy?: string | undefined
       launchPromptOnColdBirth?: boolean | undefined
@@ -186,7 +253,12 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     calls += 1
     prompts.push(prompt)
     const db = serverInternals(serverInstance).db
-    const runId = options.runId
+    // T-08094: the kicker no longer owns a run, so it names none. The real
+    // dispatch mints one here; the fixture must do the same or it is testing a
+    // shape the server does not have.
+    dispatchRunSeq += 1
+    const runId = options.runId ?? `run-fixture-${dispatchRunSeq}`
+    runIds.push(runId)
     const inputId = `input-${runId}`
     inputIds.push(inputId)
     submissionDoors.push(options.submissionDoor)
@@ -194,6 +266,13 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
     launchPromptOnColdBirth.push(options.launchPromptOnColdBirth)
     const existing = db.runs.getByRunId(runId)
     if (existing !== null) {
+      if (existing.runtimeId !== undefined) {
+        landSubmission(serverInstance, {
+          runtimeId: existing.runtimeId,
+          submissionId: inputId,
+          type: 'submission.executed',
+        })
+      }
       return Response.json({
         runId,
         hostSessionId: existing.hostSessionId,
@@ -201,6 +280,8 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
         runtimeId: existing.runtimeId,
         transport: existing.transport,
         status: existing.status === 'completed' ? 'completed' : 'started',
+        submissionId: inputId,
+        admission: 'admitted',
         supportsInFlightInput: false,
       } as DispatchTurnResponse)
     }
@@ -280,6 +361,15 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
       transport: 'headless',
     })
     serverInternals(serverInstance).notifyEvent(started)
+    // The DOOR returns admission; the LANDING is a separate broker fact and is
+    // what writes the wrkq receipt (spec T-08092 §2). Scheduled on a macrotask
+    // so it cannot beat the caller's own `attachAdmission`, which runs in the
+    // microtask continuation of this response.
+    landSubmission(serverInstance, {
+      runtimeId,
+      submissionId: inputId,
+      type: options.submissionDoor === 'steer' ? 'submission.absorbed' : 'submission.executed',
+    })
     return Response.json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -287,12 +377,15 @@ export function installDeterministicStart(serverInstance: HrcServer): Determinis
       runtimeId,
       transport: 'headless',
       status: 'started',
+      submissionId: inputId,
+      admission: 'admitted',
       supportsInFlightInput: false,
     } as DispatchTurnResponse)
   }
   return {
     calls: () => calls,
     prompts: () => prompts,
+    runIds: () => runIds,
     inputIds: () => inputIds,
     submissionDoors: () => submissionDoors,
     turnPolicies: () => turnPolicies,

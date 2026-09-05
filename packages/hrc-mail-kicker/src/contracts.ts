@@ -6,7 +6,7 @@ import type {
   HrcSessionRecord,
   PreemptSubmissionRequest,
 } from 'hrc-core'
-import type { HrcDatabase, HrcMailDriveAttempt } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { SeatProbeResponse, SubmissionWithdrawResponse } from 'spaces-harness-broker-protocol'
 
 import type { MailKickerLedger } from './ledger/client.js'
@@ -41,9 +41,16 @@ export type KickerBrokerPort = {
 }
 
 export type KickerDispatchOptions = {
-  runId?: string | undefined
   waitForCompletion?: boolean | undefined
-  submissionDoor: 'enqueue' | 'preempt'
+  /**
+   * The broker door this delivery goes through (spec T-08092 D2).
+   *
+   * `steer` is the default for a turn-active seat whose driver advertises the
+   * class: the body joins the turn the reader is already inside rather than
+   * waiting for it to end. Every door returns ADMISSION only; the landing is
+   * reported later on the committed broker stream.
+   */
+  submissionDoor: 'steer' | 'enqueue' | 'invoke' | 'preempt'
   ttlMs: number
   turnPolicy?: 'guarded' | undefined
   submissionOrigin: {
@@ -85,12 +92,6 @@ export type MailKickerDependencies = {
   ): Promise<KickerDispatchResult>
   broker: KickerBrokerPort
   preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
-  /**
-   * The canonical response body for a run, injected rather than reimplemented:
-   * a turn has ONE body authority and it is server-owned (T-07969 criterion 4).
-   * The kicker only ever REPORTS this text — nothing here disposes on it.
-   */
-  afterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 }
 

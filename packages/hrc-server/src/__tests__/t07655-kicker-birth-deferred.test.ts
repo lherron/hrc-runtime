@@ -173,16 +173,12 @@ describe('T-07655 — the kicker defers a designated birth instead of failing a 
       captured.restore()
     }
 
-    // T-07653: terminal, so the scope's drive slot is free. A claimed attempt
-    // here would make the target permanently undrivable by this daemon.
     const db = (live as any).db as HrcDatabase
-    // One attempt per wake, and EVERY one of them terminal. The count is not
-    // the property — the slot being free after each pass is, because a single
-    // attempt left `claimed` makes the target permanently undrivable here.
-    const attempts = db.mailDrives.listAttempts(TARGET)
-    expect(attempts.length).toBeGreaterThan(0)
-    expect(attempts.every((attempt) => attempt.state !== 'claimed')).toBe(true)
-    expect(db.mailDrives.getActiveAttempt(TARGET)).toBeUndefined()
+    // T-08094: the drive slot is gone, and the property it protected is now the
+    // INTENT set. A deferral must leave none open — an envelope with an open
+    // intent is never actionable, so one left behind here would make the target
+    // permanently undeliverable by this daemon in exactly the old way.
+    expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
     // No session was minted: the deferral is BEFORE materialization.
     expect(db.sessions.listByScopeRef(SCOPE, 'main')).toHaveLength(0)
   })
@@ -236,7 +232,7 @@ describe('T-07655 — the kicker defers a designated birth instead of failing a 
     try {
       await wake(live)
       await waitUntil(
-        () => logged(captured.lines, 'wrkq.kicker.drive_failed').length > 0,
+        () => logged(captured.lines, 'wrkq.kicker.birth_failed').length > 0,
         'an unrelated refusal is still a failed drive'
       )
       expect(logged(captured.lines, 'wrkq.kicker.birth_deferred')).toHaveLength(0)

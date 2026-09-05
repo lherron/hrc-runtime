@@ -12,12 +12,12 @@
  * as swept without memoizing a ledger outage as an answer.
  */
 import type { MailKickerContext } from '../context.js'
-import { isRuntimeTerminal } from '../drive/attempt-lifecycle.js'
 import { LAPSE_SWEEP_LOOKBACK_MS, errorText } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
 import type { WrkqEnvelopePendingView } from '../ledger/types.js'
 import { failEnvelopeWithAudit } from './envelope-terminal.js'
+import { isRuntimeTerminal } from './runtime-status.js'
 
 export async function failLapsedObligations(
   server: MailKickerContext,
@@ -49,22 +49,16 @@ export async function failLapsedObligations(
         targetSessionRef,
         ...(receipt?.driveAttemptId === undefined
           ? {}
-          : { driveAttemptId: receipt.driveAttemptId }),
+          : { presentationId: receipt.driveAttemptId }),
         callSite: 'lapsed_obligations',
       })
       // T-07963: record the disposition LOCALLY too. This path ends the
-      // obligation without going through `disposeAttemptObligations`, so
+      // obligation without going through D3's turn-terminal disposal, so
       // without this the presentation row stays `disposed_at IS NULL` forever
       // while the envelope is terminal in wrkq — which is exactly the state
       // EN-03687 was left in. The reconcile's candidate set is only
       // "self-emptying" if every terminating path says so.
-      if (receipt?.driveAttemptId !== undefined) {
-        server.db.mailDrives.recordPresentationDisposition(
-          receipt.driveAttemptId,
-          envelope.id,
-          'failed:runtime_terminated'
-        )
-      }
+      server.db.mailDelivery.recordDisposition(envelope.id, runtime, 'failed:runtime_terminated')
     } catch (error) {
       server.log('WARN', 'wrkq.kicker.lapse_failed', {
         targetSessionRef,
@@ -94,7 +88,7 @@ export async function failLapsedObligations(
 export async function sweepLapsedObligations(server: MailKickerContext): Promise<void> {
   const since = new Date(Date.now() - LAPSE_SWEEP_LOOKBACK_MS).toISOString()
   const byTarget = new Map<string, Set<string>>()
-  for (const bound of server.db.mailDrives.listRuntimeBoundTargets(since)) {
+  for (const bound of server.db.mailDelivery.listRuntimeBoundTargets(since)) {
     if (server.mailKickerLapsedRuntimes.has(bound.runtimeId)) continue
     const runtime = server.db.runtimes.getByRuntimeId(bound.runtimeId) ?? undefined
     if (runtime === undefined || !isRuntimeTerminal(runtime.status)) continue

@@ -15,7 +15,6 @@ import type {
   SweepZombieRunResult,
 } from 'hrc-core'
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
-import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 import type {
   InvocationEventEnvelope,
   SubmissionOrigin,
@@ -332,7 +331,6 @@ export type HrcServerOptions = {
    * Test-only crash-boundary seam. It runs after the durable slot CAS and
    * before summon/presentation/dispatch; throwing leaves the attempt recoverable.
    */
-  hrcMailKickerAfterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   /**
    * Test-build crash seam for committed broker observations. Production CLI
    * construction never supplies it; an installed-package validation harness
