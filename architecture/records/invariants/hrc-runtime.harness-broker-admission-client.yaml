@@ -13,9 +13,8 @@ predicate: >
   steer-else-queue is caller composition of typed outcomes. Steer exposes no
   wait, obligation, or own-response option and resolves only through truthful
   absorbed or executed disposition. Every obligation-bearing call uses enqueue,
-  invoke, or preempt and originates its own turn; blocking callers correlate by
-  submission disposition and then the identified turn terminal rather than by
-  delivery inference. An indeterminate submission.lost is a terminal failed
+  invoke, or preempt; blocking callers correlate by submission disposition and
+  then the identified turn terminal rather than by delivery inference. An indeterminate submission.lost is a terminal failed
   disposition: HRC settles its run immediately, then the following non-retryable
   invocation.failed marks the runtime crashed and closes the broker client. A
   failed invocation receives no later input, and the next submission provisions
@@ -45,14 +44,12 @@ predicate: >
   in one durable HRC-held batch with no broker submission or wrkq presentation
   receipt. A mail hint is a count-only PostToolUse context injection about
   HRC-held queue mail; it is not a presentation, creates no receipt, submission
-  or obligation, and never changes batch membership or auto-reply attribution.
+  or obligation, and never changes batch membership. It carries a count and no
+  sender attribution.
   The terminal turn event, backed by the periodic sweep, freezes and flushes
-  after a second idle-seat observation. Every boundary or idle input
-  contains only envelopes sharing the oldest actionable envelope's exact
-  presentation key: room, sender identity, reply addressee, and fan-out group,
-  up to MAX_PRESENTED_PER_ATTEMPT. Other keys remain held or pending for later
-  turns, and every multi-envelope input has one auto-reply candidate. A competing
-  turn keeps the batch held. Terminal members are removed before prompt
+  after a second idle-seat observation. Every boundary or idle input contains
+  the actionable envelopes in ledger order up to MAX_PRESENTED_PER_ATTEMPT,
+  regardless of sender. A competing turn keeps the batch held. Terminal members are removed before prompt
   composition. An HRC-held member has no broker submission and therefore no
   broker TTL; only its wrkq sender expiry or withdrawal can terminal it, and
   flush revalidation honors that ledger state.
@@ -61,10 +58,11 @@ predicate: >
   member of that shared input as undeliverable so the sender sees a terminal
   outcome. Each hold/preempt request remains an immediate isolated admission
   decision and is never batched.
-authority: Lance principal rulings 2026-09-01 through 2026-09-04, including wrkq:T-07920 cold-birth ruling and wrkq:T-07926 mail-hint direction / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, and wrkq:T-08012 corrected design rev 3
+authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, and wrkq:T-08012 corrected design rev 3
 source:
   - wrkq:T-07843
-  - wrkq:T-07914
+  - wrkq:T-08092
+  - wrkq:T-08093
   - wrkq:T-07920
   - wrkq:T-07926
   - wrkq:T-07962
@@ -83,26 +81,27 @@ required_tests:
   - preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts
   - HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads
   - T-07891 observed-seat busy detection, no-TTL durable held-batch, terminal-member revalidation, shared-input receipt, broker-expiry failure, boundary-race, and preempt-isolation gates
-  - T-07914 one-counterparty idle and boundary selection, same-sender fan-out coalescing, and distinct-sender serialization gates
+  - T-08093 idle and boundary selection presents every actionable sender in ledger order up to MAX_PRESENTED_PER_ATTEMPT, and no completed turn mints a reply
   - T-07920 launch-primed cold birth suppresses profile priming and carries the summons alone in one launch turn with no broker submission or receipt input id, while warm, non-launch-primed, and high-risk routes retain guarded admission
-  - T-07926 mail-hint gates cover counterparty-namespace counts, cadence and fail-open silence, no broker submission or presentation receipt, unchanged batch and auto-reply behavior, and a real PostToolUse additionalContext round-trip with no user row
+  - T-07926 mail-hint gates cover the bare held count, cadence and fail-open silence, no broker submission or presentation receipt, unchanged batch behavior, and a real PostToolUse additionalContext round-trip with no user row
   - T-07962 lost-disposition gates settle the HRC waiter and run failed, project the runtime crashed, close the old broker client, reject later delivery to that invocation, and provision the next submission on a fresh runtime
   - T-08012 invoke-only cold-birth rendezvous gate proves crossing invokes wait through the launch-carried owner terminal while enqueue and mail retain bare-boot admission
   - T-08012 owner-scoped cleanup gates prove direct and adopted response paths retain distinct owner run ids across client rotation, interrupt cannot affect a different active run, and terminate observes crossing registration or durable active-run coverage without an admission-to-teardown gap
   - T-08012 live concurrent agent-loop invoke gate proves both callers complete under distinct runs without run mismatch timeout merge cancellation or reuse refusal
 last_verified:
   date: 2026-09-04
-  evidence: T-08012 corrected design rev 3 established an invoke-only terminal rendezvous plus registration-to-ledger coverage and run-scoped agent-loop lifecycle cleanup; implementation and live gates remain pending. T-07962 rev 3 established terminal lost-disposition consumption and non-retryable fresh-runtime recovery. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914 continues to cover the four admission classes and exact presentation-key partitioning.
+  evidence: T-08012 corrected design rev 3 established an invoke-only terminal rendezvous plus registration-to-ledger coverage and run-scoped agent-loop lifecycle cleanup; implementation and live gates remain pending. T-07962 rev 3 established terminal lost-disposition consumption and non-retryable fresh-runtime recovery. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified that a launch-primed cold summons sets omitPriming on its one-shot compile intent, becomes the whole launch turn, and completes from its input-less identified terminal using candidate-source discharge; T-07914's one-counterparty partitioning is SUPERSEDED by spec T-08092: its stated premise, the auto-reply candidate, no longer exists, and T-08093 removed the partition with it.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
   - cross-seat scheduling moves into the broker or per-seat mechanism moves into HRC
   - preempt authority or active-turn policy semantics change
   - HRC reads harness internals instead of broker disposition manifest and decision surfaces
-  - collaboration busy-state authority, one-counterparty presentation partitioning, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
+  - collaboration busy-state authority, presentation selection or its cap, HRC-held boundary batching, terminal-member filtering, or preempt isolation changes
   - launch-primed cold-birth delivery stops riding the launch turn or starts requiring a broker input identity
   - invoke-only terminal rendezvous scope, registration-to-ledger coverage, owner-run cleanup narrowing, or synchronous teardown admission fencing changes
   - a mail hint carries envelope ids or bodies or gains a disposition
   - HRC stops treating submission.lost as terminal failed or permits the failed invocation to receive later input instead of provisioning fresh
-supersedes: []
+supersedes:
+  - wrkq:T-07914
 superseded_by: []

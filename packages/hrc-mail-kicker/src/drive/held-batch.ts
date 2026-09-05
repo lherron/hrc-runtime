@@ -7,9 +7,8 @@ import type {
 
 import type { MailKickerContext } from '../context.js'
 import { parseSessionRef } from '../internal.js'
-import { type EnvelopePresentationForm, envelopeReplyAddressee } from '../ledger/presentation.js'
+import type { EnvelopePresentationForm } from '../ledger/presentation.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
-import { presentationKeyFor } from './batching.js'
 
 /** One boundary input carries at most one room-sized page of obligations. */
 export const MAX_PRESENTED_PER_ATTEMPT = 20
@@ -48,12 +47,6 @@ export function holdQueueForBusyTarget(
       targetSessionRef,
       wakeReason,
       envelopeIds: queue.map((item) => item.envelope.id),
-      counterpartyRefs: Object.fromEntries(
-        queue.flatMap((item) => {
-          const counterpartyRef = envelopeReplyAddressee(item.envelope)
-          return counterpartyRef === undefined ? [] : [[item.envelope.id, counterpartyRef]]
-        })
-      ),
       heldBehindTurnId: seat.turnId,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
@@ -65,16 +58,6 @@ export function holdQueueForBusyTarget(
     MAX_PRESENTED_PER_ATTEMPT
   )
   const persistedIds = server.db.mailDrives.presentationEnvelopeIds(update.attempt.driveAttemptId)
-  const byId = new Map(queue.map((item) => [item.envelope.id, item.envelope]))
-  const oldest = byId.get(persistedIds[0] ?? '')
-  const presentationKey = oldest === undefined ? undefined : presentationKeyFor(oldest)
-  const selectedCount =
-    presentationKey === undefined
-      ? Math.min(persistedIds.length, 1)
-      : persistedIds.filter((envelopeId) => {
-          const envelope = byId.get(envelopeId)
-          return envelope !== undefined && presentationKeyFor(envelope) === presentationKey
-        }).length
   server.log('INFO', 'wrkq.kicker.queue_batch_held', {
     targetSessionRef,
     wakeReason,
@@ -85,8 +68,9 @@ export function holdQueueForBusyTarget(
     observedTurnId: seat.turnId,
     addedEnvelopeIds: update.addedEnvelopeIds,
     envelopeIds: persistedIds,
-    presentationKey,
-    leftHeldCount: persistedIds.length - selectedCount,
+    // T-08093: every held member now flushes together at the boundary, up to
+    // MAX_PRESENTED_PER_ATTEMPT, so nothing is left behind by counterparty.
+    leftHeldCount: Math.max(0, persistedIds.length - MAX_PRESENTED_PER_ATTEMPT),
   })
   return true
 }

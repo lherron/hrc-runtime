@@ -4,7 +4,7 @@
  * Since the T-07873 Claude authority cutover a turn emits every assistant
  * message it produced: the mid-turn narration flagged `final:false` and exactly
  * one `final:true` per run. HRC dropped the flag at the mapper and joined every
- * `turn.message` row, so the auto-reply and the dispatcher response both opened
+ * `turn.message` row, so the response projection and the dispatcher both opened
  * with "I'll start by reading the task spec in full." and truncated long turns
  * before the answer. Lance ruled 2026-09-04 that agent notices are not part of
  * a reply.

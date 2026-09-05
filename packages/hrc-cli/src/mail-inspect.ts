@@ -82,11 +82,6 @@ function renderEnvelope(view: MailInspectEnvelope): string {
         run?.dispatchedInputId ?? 'null'
       }`
     )
-    if (entry.autoReplyIntent !== undefined) {
-      lines.push(
-        `           autoReply=${entry.autoReplyIntent.state} attempts=${entry.autoReplyIntent.attemptCount}`
-      )
-    }
   }
   lines.push(
     `  disposal reminders=${view.reminders.length} failureNotices=${view.failureNotices.length}`

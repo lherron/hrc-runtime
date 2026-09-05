@@ -941,7 +941,7 @@ export async function executeHeadlessBrokerStartTurn(
     // there is nothing detached to own and nothing for a daemon stop to abort.
     // That chain is what made a restart inside the priming window strand the
     // sender's obligation: it failed the run, the drive attempt never reached
-    // `started`, and no auto-reply intent was ever armed.
+    // `started`, and nothing ever armed a reminder for what it carried.
     const runtime = await accepted
     return json({
       runId,

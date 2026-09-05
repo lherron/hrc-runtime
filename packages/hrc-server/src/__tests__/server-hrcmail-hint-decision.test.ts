@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
-import { autoReplyCandidateFor } from 'hrc-mail-kicker'
 import { holdQueueForBusyTarget } from 'hrc-mail-kicker'
 import { createHrcServer } from '../index.js'
 import type { HrcServer } from '../index.js'
@@ -46,8 +45,6 @@ beforeEach(async () => {
     roomKey: 'T-07904',
     body: 'drive the active turn',
   })
-  const candidate = autoReplyCandidateFor([drivingEnvelope])
-  if (candidate === undefined) throw new Error('driving envelope is not auto-reply eligible')
   const claimed = db.mailDrives.claim(
     TARGET,
     'insert',
@@ -56,7 +53,6 @@ beforeEach(async () => {
   )
   if (claimed.outcome !== 'acquired') throw new Error('failed to claim driving attempt')
   db.mailDrives.presentForAttempt(claimed.attempt.driveAttemptId, [drivingEnvelope.id])
-  db.mailDrives.recordAutoReplyCandidate(claimed.attempt.driveAttemptId, candidate)
 
   const now = timestamp()
   db.runtimes.insert({
@@ -141,7 +137,7 @@ describe('T-07926 — local held-mail hint decision', () => {
     ).toBe(true)
   })
 
-  it('2. issues the first exact hint using stored scoped counterparty refs', async () => {
+  it('2. issues the first hint as a bare count over every held sender', async () => {
     const scoped = say('scoped sender', {
       principalRef: 'agent:mable',
       scopeRef: DRIVING_COUNTERPARTY,
@@ -151,28 +147,23 @@ describe('T-07926 — local held-mail hint decision', () => {
     ledger.unavailable = true
 
     const captured = await captureServerLog(async () => hint())
+    // T-08093: the hint no longer singles out "the party driving this turn".
+    // That clause was derived from the drive attempt's auto-reply candidate,
+    // and with the mint retired there is no driving party to name — the seat
+    // owes every sender the same explicit reply.
     expect(captured.result).toEqual({
-      hint: MAIL_HINT_TEXT(2, 1),
+      hint: MAIL_HINT_TEXT(2),
       heldCount: 2,
-      fromDrivingParty: 1,
       driveAttemptId,
       reason: 'first',
     })
+    expect(captured.result['hint']).not.toContain('driving this turn')
     expect(serverInternals(server as HrcServer).db.mailDrives.getHeldAttempt(TARGET)).toMatchObject(
       {
         hintCount: 1,
         lastHintPresentedCount: 2,
       }
     )
-    expect(
-      serverInternals(server as HrcServer)
-        .db.sqlite.query<{ counterparty_ref: string | null }, [string]>(
-          `SELECT counterparty_ref FROM hrcmail_drive_presentations
-            WHERE drive_attempt_id = ? ORDER BY envelope_id`
-        )
-        .all(driveAttemptId)
-        .map((row) => row.counterparty_ref)
-    ).toEqual([DRIVING_COUNTERPARTY, 'lance'])
     expect(captured.lines.some((line) => line.includes('wrkq.kicker.hint_issued'))).toBe(true)
   })
 

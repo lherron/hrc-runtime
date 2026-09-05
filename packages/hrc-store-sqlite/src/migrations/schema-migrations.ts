@@ -2127,8 +2127,10 @@ const hrcmailEnvelopeLifetimeMigration: HrcMigration = {
 }
 
 /**
- * T-07612 rev 6 — durable auto-reply actuation lives in HRC because it joins a
- * completed run to the collaboration ledger's unchanged plain-say surface.
+ * T-07612 rev 6 — RETIRED by 0057 (T-08093). Kept as applied history.
+ *
+ * Durable auto-reply actuation lived in HRC because it joined a completed run
+ * to the collaboration ledger's unchanged plain-say surface.
  *
  * Candidate columns are populated before dispatch while the ledger envelopes
  * are available. Only `completeStartedAttempt` copies them into the intent
@@ -2561,6 +2563,54 @@ const hrcmailPreMigrationDispositionMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08093 / spec T-08092 D1 — retire automatic reply actuation.
+ *
+ * The auto-mint is deleted rather than disabled: HRC never authors an envelope
+ * as an agent principal, and turn completion discharges no obligation. What
+ * goes with it is every column that existed only to make that mint
+ * attributable — the drive attempt's candidate identity (0049), the durable
+ * intent state machine (0049-0052), and the held presentation's
+ * `counterparty_ref`, which existed only for the hint's "from the party driving
+ * this turn" clause (0054) and whose sole reader is removed in the same change.
+ *
+ * Dropping is safe here where `hrc-runtime.collaboration-state-retention` would
+ * otherwise forbid it: keep-forever protects collaboration state, and none of
+ * these columns ever held any. Room, envelope, obligation, discharge and reply
+ * bodies are wrkq's, and the presentation receipts that bind an obligation to a
+ * runtime are untouched. This removes actuation bookkeeping for a mechanism
+ * that no longer exists, not history.
+ */
+const hrcmailRetireAutoReplyMigration: HrcMigration = {
+  id: '0057_hrcmail_retire_auto_reply',
+  apply(db) {
+    db.exec('DROP TABLE IF EXISTS hrcmail_auto_reply_intents;')
+    const attempts = db
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'table' AND name = 'hrcmail_drive_attempts'`
+      )
+      .get()?.sql
+    if (attempts?.includes('auto_reply_source_ref') === true) {
+      db.exec(`
+        ALTER TABLE hrcmail_drive_attempts DROP COLUMN auto_reply_source_ref;
+        ALTER TABLE hrcmail_drive_attempts DROP COLUMN auto_reply_source_envelope_ids_json;
+        ALTER TABLE hrcmail_drive_attempts DROP COLUMN auto_reply_room_key;
+        ALTER TABLE hrcmail_drive_attempts DROP COLUMN auto_reply_counterparty_ref;
+      `)
+    }
+    const presentations = db
+      .query<{ sql: string }, []>(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'table' AND name = 'hrcmail_drive_presentations'`
+      )
+      .get()?.sql
+    if (presentations?.includes('counterparty_ref') === true) {
+      db.exec('ALTER TABLE hrcmail_drive_presentations DROP COLUMN counterparty_ref;')
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2613,4 +2663,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailHintDecisionMigration,
   hrcmailPresentationDispositionMigration,
   hrcmailPreMigrationDispositionMigration,
+  hrcmailRetireAutoReplyMigration,
 ]

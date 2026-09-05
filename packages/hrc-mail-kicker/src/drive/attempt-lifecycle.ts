@@ -250,7 +250,6 @@ export function observeAttempt(
         runStatus: server.db.runs.getByRunId(current.runId)?.status,
       })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
-      server.requestAutoReplyReconcile()
     }
     return 'finished'
   }
@@ -278,7 +277,6 @@ export function observeAttempt(
         runStatus: run?.status,
       })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
-      server.requestAutoReplyReconcile()
     }
     server.log('INFO', 'wrkq.kicker.terminal_runtime_attempt_reaped', {
       targetSessionRef: current.targetSessionRef,
@@ -328,7 +326,6 @@ export function observeAttempt(
         runStatus: run.status,
       })
       disposeAttemptObligations(server, completed.attempt, completed.presentedEnvelopeIds)
-      server.requestAutoReplyReconcile()
     }
     return 'finished'
   }

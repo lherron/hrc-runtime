@@ -170,7 +170,9 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
 
-  it('mints the canonical completed-turn response through the full server path', async () => {
+  // T-08093 / spec T-08092 A1, in unit form: the same full-path test that used
+  // to assert the mint, now asserting its absence.
+  it('mints NOTHING when a driven turn completes with a final response', async () => {
     const envelope = say({ body: 'answer this without a manual say' })
     await startServer()
     installDeterministicStart(server as HrcServer)
@@ -194,18 +196,16 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     serverInternals(server as HrcServer).notifyEvent(message)
     await completeRun(server as HrcServer, runId)
 
-    await waitUntil(() => ledger.roomSayRequests.length === 1, 'auto reply minted')
-    expect(ledger.roomSayRequests[0]).toMatchObject({
-      ref: envelope.roomKey,
-      body: 'server-path final response',
-      to: [SENDER],
-      idempotencyKey: expect.stringMatching(/^auto-reply:drive-/),
-      meta: { auto: 'turn_final' },
-      principalRef: 'agent:kicker-proof',
-      scopeRef: 'kicker-proof@hrc-runtime:T-07615',
-    })
-    expect(db.mailDrives.listPendingAutoReplyIntents()).toEqual([])
+    // The turn produced a perfectly good final response and HRC said nothing
+    // with it — on implementer seats that text was narration ("I'll start by
+    // reading the task…") being posted as the seat's own reply.
+    await waitUntil(
+      () => db.mailDrives.listDueReminders(TARGET, farFuture()).length === 1,
+      'reminder armed instead of a reply'
+    )
     expect(db.mailDrives.listAttempts(TARGET)[0]?.state).toBe('completed')
+    expect(ledger.roomSayRequests).toEqual([])
+    expect(ledger.envelopes.get(envelope.id)?.state).toBe('presented')
   })
 
   it('injects the §4 full form, not an inbox pointer', async () => {
@@ -219,8 +219,8 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     expect(prompt).toContain('[T-07615 · mable@hrc-runtime:T-07615 → you · reply required]')
     expect(prompt).toContain('the body that must be injected verbatim')
     // rev 5.1: the id is no longer internal — the reply line names the row the
-    // reader must answer, and it rides first contact (the auto-mint is an
-    // unobservable backstop, never the instruction to the reader).
+    // reader must answer, and it rides first contact. Since T-08093 it is the
+    // ONLY way the obligation is discharged.
     expect(prompt).toContain(`reply: wrkc say ${envelope.id} --to mable@hrc-runtime:T-07615`)
     expect(prompt).not.toContain('wrkc defer')
     // No room history is ever injected; the first message in a room has no cue.

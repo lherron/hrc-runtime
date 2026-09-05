@@ -5,12 +5,7 @@ import type {
   HrcSessionRecord,
   PreemptSubmissionRequest,
 } from 'hrc-core'
-import type {
-  HrcDatabase,
-  HrcMailAutoReplyCandidate,
-  HrcMailDriveAttempt,
-  HrcMailDriveWakeReason,
-} from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type {
   ForeignHome,
@@ -78,9 +73,7 @@ export type MailKickerContext = {
     options: KickerDispatchOptions
   ): Promise<KickerDispatchResult>
   preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
-  requestAutoReplyReconcile(): void
   /** Canonical run response body; one server-owned projection (T-07969). */
-  projectTurnResponse(runId: string): { body: string; truncated: boolean }
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 
   wake(targetSessionRef: string, reason: HrcMailDriveWakeReason): void
@@ -90,5 +83,3 @@ export type MailKickerContext = {
   observeLifecycleEvent(event: HrcLifecycleEvent): void
   observeBrokerEvent(event: HrcBrokerInvocationEventRecord): void
 }
-
-export type ActionableEnvelopeAutoReply = HrcMailAutoReplyCandidate | undefined

@@ -321,17 +321,20 @@ function recoverDurableTurnResponseFinalizer(
 /**
  * The canonical body a completed semantic turn exposes to its response path.
  *
- * Rev 6 auto-reply, the semantic handoff finalizer, the dispatcher response and
- * the mail diagnostics deliberately share this function: a run has one response
+ * The semantic handoff finalizer, the dispatcher response and the mail
+ * diagnostics deliberately share this function: a run has one response
  * projection, regardless of which consumer reads it. TURN_TEXT_LIMIT is the
  * existing turn-text bound; returning the marker keeps inherited truncation
- * observable to the reconciler.
+ * observable to every reader.
+ *
+ * T-08093 removed the one consumer that treated this body as a REPLY. It is
+ * now only ever what a turn said, never what a turn owed.
  *
  * The body is the turn's FINAL assistant message, never a join (T-07969). Since
  * the T-07873 Claude authority cutover a turn emits every assistant message it
  * produced — the mid-turn narration flagged `final:false` and exactly one
  * `final:true`. Joining them put "I'll start by reading the task spec" ahead of
- * the answer in every auto-reply and truncated long turns before reaching it.
+ * the answer in every projection and truncated long turns before reaching it.
  * Lance ruled 2026-09-04 that agent notices are not part of a reply.
  *
  * Selection order, and why each step is where it is:

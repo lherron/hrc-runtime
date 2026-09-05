@@ -3,7 +3,6 @@ import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqli
 
 import type { MailKickerContext } from '../context.js'
 import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
-import { presentationKeyFor } from './batching.js'
 import {
   type HeldBatchActionableEnvelope,
   MAX_PRESENTED_PER_ATTEMPT,
@@ -128,15 +127,10 @@ export async function prepareHeldBatchForBoundary(
   const surviving = await revalidateHeldBatch(server, appended.attempt)
   if (surviving.length === 0) return undefined
 
-  const oldest = surviving[0]
-  if (oldest === undefined) return undefined
-  const presentationKey = presentationKeyFor(oldest.envelope)
-  const selected =
-    presentationKey === undefined
-      ? surviving.slice(0, 1)
-      : surviving
-          .filter((item) => presentationKeyFor(item.envelope) === presentationKey)
-          .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+  // T-08093: the boundary flushes what is held, oldest first, up to the
+  // contract cap and regardless of sender. The counterparty partition this
+  // applied existed to keep the retired auto-mint attributable.
+  const selected = surviving.slice(0, MAX_PRESENTED_PER_ATTEMPT)
 
   const boundarySeat = await observeSeat(session)
   if (!seatCanDispatch(boundarySeat)) {
@@ -177,7 +171,6 @@ export async function prepareHeldBatchForBoundary(
     targetSessionRef,
     driveAttemptId: activated.attempt.driveAttemptId,
     wakeReason,
-    presentationKey,
     selectedEnvelopeIds: selected.map((item) => item.envelope.id),
     leftHeldCount,
   })

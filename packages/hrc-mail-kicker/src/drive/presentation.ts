@@ -3,11 +3,9 @@ import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
 import type { EnvelopePresentationForm, PresentableEnvelope } from '../ledger/presentation.js'
-import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
 import { newestPresentationReceipt, obligationSummons } from '../ledger/types.js'
-import { autoReplyCandidateFor, presentationKeyFor } from './batching.js'
 import type { HeldBatchActionableEnvelope } from './held-batch.js'
 import { MAX_PRESENTED_PER_ATTEMPT } from './held-batch.js'
 
@@ -27,15 +25,18 @@ export function isolatedDeliveryBatch(actionable: readonly ActionableEnvelope[])
   return { selected: [hold], deferredCount: actionable.length - 1 }
 }
 
-/** Select the oldest envelope's exact auto-reply counterparty group. */
+/**
+ * One page of what stands, in ledger order.
+ *
+ * T-08093 removed the counterparty partition this used to apply. It existed so
+ * that a completed turn's final text had exactly one addressee to be minted
+ * back to; with the auto-mint retired nothing about a presentation is
+ * attributable to a single sender, and a reader who owes three people answers
+ * each one by envelope id. Oldest-first up to the contract cap is now the whole
+ * rule, and mail from distinct senders no longer serializes across turns.
+ */
 export function presentationBatch(actionable: readonly ActionableEnvelope[]): ActionableEnvelope[] {
-  const first = actionable[0]
-  if (first === undefined) return []
-  const presentationKey = presentationKeyFor(first.envelope)
-  if (presentationKey === undefined) return [first]
-  return actionable
-    .filter((item) => presentationKeyFor(item.envelope) === presentationKey)
-    .slice(0, MAX_PRESENTED_PER_ATTEMPT)
+  return actionable.slice(0, MAX_PRESENTED_PER_ATTEMPT)
 }
 
 /**
@@ -110,30 +111,6 @@ export async function readActionableEnvelopes(
     })
   }
   return actionable
-}
-
-/**
- * The single prompt-composition seam for every kicker presentation.
- *
- * A multi-envelope input without one auto-reply candidate would make the
- * runtime's final text unattributable. Fail before broker submission instead
- * of silently reintroducing cross-counterparty batching.
- */
-export function composePresentation(
-  actionable: readonly ActionableEnvelope[],
-  presentables: readonly PresentableEnvelope[]
-): {
-  prompt: string
-  autoReplyCandidate: ReturnType<typeof autoReplyCandidateFor>
-} {
-  const autoReplyCandidate = autoReplyCandidateFor(actionable.map((item) => item.envelope))
-  if (actionable.length > 1 && autoReplyCandidate === undefined) {
-    throw new Error('multi-envelope kicker presentation has no auto-reply candidate')
-  }
-  return {
-    prompt: formatEnvelopePresentations(presentables),
-    autoReplyCandidate,
-  }
 }
 
 /**

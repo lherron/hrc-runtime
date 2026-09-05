@@ -16,7 +16,6 @@ import type { SubscriberAdmissionRegistry } from './subscriber-admission-account
 
 import type { AcpEventBridge } from './acp-event-bridge.js'
 import type { AppSessionHandlersMethods } from './app-session-handlers.js'
-import type { AutoReplyHandlersMethods } from './auto-reply-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
 import type { BrokerInteractiveHandlersMethods } from './broker-interactive-handlers.js'
@@ -83,7 +82,6 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * type-checked.
  */
 type DecomposedHandlerMethods = AppSessionHandlersMethods &
-  AutoReplyHandlersMethods &
   BridgeSurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &
@@ -197,8 +195,6 @@ type HrcServerInstanceDataForHandlers = {
   firstTurnEvalInFlight: Promise<unknown> | undefined
   readonly mailKicker: MailKicker
   readonly transcriptIndexer: TranscriptIndexer
-  autoReplyReconcileTimer: ReturnType<typeof setInterval> | undefined
-  autoReplyReconcileInFlight: Promise<void> | undefined
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number

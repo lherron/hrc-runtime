@@ -1,0 +1,59 @@
+id: hrc-runtime.collaboration-obligation-discharge
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: who HRC speaks as in the wrkq collaboration ledger, what discharges an obligation, and the one canonical turn-response projection that survives the retired auto-reply
+predicate: >
+  HRC presents envelopes and writes presentation receipts and failure
+  dispositions as agent:hrc; it never authors an envelope as an agent principal.
+  Turn completion discharges no obligation. Discharge is only an explicit reply,
+  a defer, an operator ack, consumed_by_wait, fyi_presented, or an HRC failure
+  disposition. A driven turn that ends without an explicit reply leaves its
+  envelope presented, and the existing reminder and failed:ignored path applies
+  unchanged.
+  One run has one canonical turn-response projection, produced by the shared
+  projectSemanticTurnResponse/finalizeSemanticTurnResponse path. For one run the
+  projection reads turn.message rows in hrc_seq order, drops text-empty rows, and
+  selects the last remaining row marked final=true, or the last remaining row
+  when no row is flagged. It consults the raw runtime buffer only when no
+  non-empty turn.message row exists, then falls back to the run error message,
+  and preserves TURN_TEXT_LIMIT truncation and its marker. Runtime buffers remain
+  raw transport evidence, not canonical response state when a semantic message
+  exists. Response finalization, dispatcher finalOutput, transcript indexing, and
+  response-bearing mail diagnostics consume this one projection without
+  reimplementing it. That body is evidence about what a turn said and is never
+  a reply, an obligation disposition, or reply-body authority.
+  hrcmail_* rows remain local execution, presentation, reminder, failure-notice
+  and recovery bookkeeping; they are not room, envelope, obligation, discharge,
+  or reply-body authority.
+authority: Lance principal ruling 2026-09-05 (context hcs T-07987), spec wrkq:T-08092 D1; supersedes the retired hrc-runtime.collaboration-auto-reply-actuation and the T-07789 auto-reply amendment
+source:
+  - wrkq:T-08092
+  - wrkq:T-08093
+  - wrkq:T-07969
+  - packages/hrc-core/src/final-turn-message.ts
+  - packages/hrc-server/src/event-notification-handlers.ts
+  - packages/hrc-server/src/wrkq/ledger-client.ts
+  - packages/hrc-mail-kicker/src/drive/attempt-lifecycle.ts
+  - packages/hrc-mail-kicker/src/diagnostics/inspect.ts
+  - packages/hrc-mail-kicker/src/diagnostics/stranded.ts
+  - packages/hrc-store-sqlite/src/migrations/schema-migrations.ts
+required_tests:
+  - just architecture-records
+  - a completed driven turn with a non-empty final response mints no envelope, leaves the envelope presented, and arms the reminder
+  - the forward migration drops hrcmail_auto_reply_intents and every hrcmail_drive_attempts.auto_reply_* column, and a legacy store carrying a pending intent row loses it
+  - final-flag selection, unflagged last-non-empty fallback, empty-final fallback, raw-buffer-only fallback, and truncation cases
+  - canonical projection parity across response finalization, dispatcher finalOutput, mail inspect, and transcript indexing
+  - reply-is-ack, defer, operator ack, consumed_by_wait, fyi_presented, failed:ignored and failed:runtime_terminated remain the only dispositions
+last_verified:
+  date: 2026-09-05
+  evidence: T-08093 landed D1 — auto-reply-handlers.ts, the candidate/intent schema and the wrkq.auto_reply.* log surface deleted; migration 0057 drops the table and columns; installed activation smoke on max3 recorded in the T-08093 artifact_dir.
+reopen_when:
+  - HRC gains any path that writes to the collaboration ledger as a principal other than agent:hrc
+  - turn completion, or any other implicit signal, becomes a discharge
+  - the closed set of dispositions changes
+  - the canonical turn-response projection or its truncation semantics change
+  - a second reader of the turn-response body appears instead of consuming this one
+supersedes:
+  - hrc-runtime.collaboration-auto-reply-actuation
+superseded_by: []

@@ -171,9 +171,9 @@ export type StoredAdmissionRequest = {
 /**
  * Join broker manifest submission ids back to their durable admission origins.
  *
- * Both preempt authority and auto-reply discharge depend on this exact join.
- * Keeping it here preserves the source-text invariant around §5 while avoiding
- * two subtly different interpretations of the same stored broker events.
+ * Preempt authority depends on this exact join. Keeping it here preserves the
+ * source-text invariant around §5 while avoiding two subtly different
+ * interpretations of the same stored broker events.
  */
 export function storedAdmissionRequestsForSubmissionIds(
   records: ReadonlyArray<Pick<HrcBrokerInvocationEventRecord, 'type' | 'brokerEventJson'>>,
@@ -203,27 +203,6 @@ export function storedAdmissionRequestsForSubmissionIds(
     })
   }
   return requests
-}
-
-/** Exact envelope origins dispositioned into one stored turn. */
-export function storedManifestEnvelopeIdsForTurn(
-  records: ReadonlyArray<Pick<HrcBrokerInvocationEventRecord, 'type' | 'brokerEventJson'>>,
-  turnId: string
-): { eventsPresent: boolean; envelopeIds: string[] } {
-  const submissionIds = new Set<string>()
-  for (const record of records) {
-    if (record.type !== 'submission.executed' && record.type !== 'submission.absorbed') continue
-    const payload = parseBrokerPayload(record)
-    if (payload['turnId'] === turnId && typeof payload['submissionId'] === 'string') {
-      submissionIds.add(payload['submissionId'])
-    }
-  }
-  if (submissionIds.size === 0) return { eventsPresent: false, envelopeIds: [] }
-  const requests = storedAdmissionRequestsForSubmissionIds(records, submissionIds)
-  return {
-    eventsPresent: requests.length > 0,
-    envelopeIds: [...new Set(requests.flatMap((request) => request.envelopeId ?? []))],
-  }
 }
 
 function submissionDisposition(

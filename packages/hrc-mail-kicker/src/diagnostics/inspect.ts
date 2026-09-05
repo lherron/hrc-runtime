@@ -13,7 +13,7 @@
  * anywhere near it, and it lets the CLI degrade to an HRC-only answer when the
  * ledger cannot be reached rather than failing the command.
  */
-import type { HrcDatabase, HrcMailAutoReplyIntent } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
   HrcMailDriveAttempt,
   HrcMailEnvelopeReminder,
@@ -55,12 +55,12 @@ export type MailInspectAttempt = {
   presentedAt: string
   run?: MailInspectRun | undefined
   runtimeStatus?: string | undefined
-  autoReplyIntent?: HrcMailAutoReplyIntent | undefined
   /**
-   * What this attempt's turn would have replied — the ONE server-owned response
+   * What this attempt's turn actually said — the ONE server-owned response
    * projection, not a second reader (T-07969). Present only when the attempt has
-   * a run that produced text, so an inspection of a stranded obligation shows the
-   * answer that never got minted.
+   * a run that produced text, so an operator inspecting a stranded obligation
+   * can see what the seat was doing instead of answering. It is evidence about
+   * the turn, never a reply: since T-08093 nothing turns a turn's text into one.
    */
   canonicalResponse?: string | undefined
 }
@@ -82,7 +82,6 @@ export type MailInspectVerdictCode =
   | 'awaiting_turn'
   | 'reminder_armed'
   | 'reminder_delivered'
-  | 'auto_reply_pending'
   | 'discharged'
   | 'failed'
   | 'awaiting_delivery'
@@ -191,7 +190,6 @@ function attemptsFor(
         ? undefined
         : (db.runtimes.getByRuntimeId(attempt.runtimeId) ?? undefined)
     const run = runFor(db, attempt.runId)
-    const intent = db.mailDrives.getAutoReplyIntent(attempt.driveAttemptId)
     const response =
       projectTurnResponse === undefined || attempt.runId === undefined
         ? undefined
@@ -201,7 +199,6 @@ function attemptsFor(
       presentedAt: receipt.presentedAt,
       ...(run === undefined ? {} : { run }),
       ...(runtime === undefined ? {} : { runtimeStatus: runtime.status }),
-      ...(intent === undefined ? {} : { autoReplyIntent: intent }),
       ...(response === undefined || response.length === 0 ? {} : { canonicalResponse: response }),
     }
   })
@@ -262,16 +259,6 @@ function buildTimeline(
         detail: `${attempt.driveAttemptId}${
           attempt.terminalEventKind === undefined ? '' : ` via ${attempt.terminalEventKind}`
         }${attempt.lastError === undefined ? '' : ` (${attempt.lastError})`}`,
-      })
-    }
-    if (entry.autoReplyIntent !== undefined) {
-      const intent = entry.autoReplyIntent
-      events.push({
-        at: intent.terminalAt ?? intent.updatedAt,
-        kind: `auto_reply.${intent.state}`,
-        detail: `${intent.driveAttemptId} room=${intent.roomKey} to=${intent.counterpartyRef}${
-          intent.lastError === undefined ? '' : ` (${intent.lastError})`
-        }`,
       })
     }
   }
@@ -403,13 +390,6 @@ function verdictFor(
     }
   }
 
-  const pendingIntent = attempts.find((entry) => entry.autoReplyIntent?.state === 'pending')
-  if (pendingIntent !== undefined) {
-    return {
-      code: 'auto_reply_pending',
-      line: `auto_reply_pending: reply intent for ${pendingIntent.attempt.driveAttemptId} has not minted yet`,
-    }
-  }
   const delivered = reminders.find((reminder) => reminder.deliveredAt !== undefined)
   if (delivered !== undefined) {
     return {

@@ -40,7 +40,7 @@ predicate: >
 authority: Lance HCS T-07989 / Daedalus approval wrkq:T-08015 revision 4, 2026-09-04
 source:
   - wrkq:T-08015
-  - architecture/records/invariants/hrc-runtime.collaboration-auto-reply-actuation.yaml
+  - architecture/records/invariants/hrc-runtime.collaboration-obligation-discharge.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
   - packages/hrc-core/src/broker-lifecycle-policy.ts
   - packages/hrc-server/src/broker/event-mapper.ts

@@ -310,8 +310,9 @@ describe('T-07891 HRC-held busy batches', () => {
     expect(replay.lines.some((line) => line.includes('queue_batch_receipts_replayed'))).toBe(true)
     expect(calls()).toHaveLength(2)
 
-    // The later boundary still owns one exact auto-reply discharge for the
-    // whole same-counterparty fan-out group.
+    // T-08093: the boundary turn ends holding what it was shown. It discharges
+    // nothing — the fan-out group stays presented until its reader answers by
+    // envelope id — and one reminder per member arms instead.
     const boundaryRun = db.runs.getByRunId(boundary?.runId ?? '')
     if (boundaryRun === null) throw new Error('missing boundary run')
     const message = appendHrcEvent(db, 'turn.message', {
@@ -327,17 +328,27 @@ describe('T-07891 HRC-held busy batches', () => {
     })
     serverInternals(server as HrcServer).notifyEvent(message)
     await completeRun(server as HrcServer, boundaryRun.runId)
-    await waitUntil(() => ledger.roomSayRequests.length === 1, 'boundary auto reply')
-    expect(ledger.roomSayRequests[0]).toMatchObject({
-      ref: queued[1]?.roomKey,
-      body: 'one boundary response',
-      to: ['mable@hcs:fixall'],
-      dischargeEnvelopeIds: queued.slice(1).map((item) => item.id),
-    })
-    expect(queued.every((item) => ledger.envelopes.get(item.id)?.state === 'acked')).toBe(true)
+    const boundaryMemberIds = new Set(queued.slice(1).map((item) => item.id))
+    await waitUntil(
+      () =>
+        db.mailDrives
+          .listDueReminders(TARGET, '9999-12-31T23:59:59.999Z')
+          .filter((reminder) => boundaryMemberIds.has(reminder.envelopeId)).length === 2,
+      'one reminder per presented boundary member'
+    )
+    expect(ledger.roomSayRequests).toEqual([])
+    expect(queued.slice(1).every((item) => ledger.envelopes.get(item.id)?.state !== 'acked')).toBe(
+      true
+    )
   })
 
-  it('serializes three held counterparties across three boundary turns', async () => {
+  // T-08093 inverted this from "serializes three held counterparties across
+  // three boundary turns". That serialization was never a delivery policy: it
+  // existed so the completed turn's final text had exactly one addressee the
+  // auto-mint could be attributed to. With the mint retired the premise is
+  // gone, and the cost it was buying — three senders waiting three turns to be
+  // read, the 5.3-minute average that motivated the spec — is pure latency.
+  it('flushes three held counterparties into ONE boundary turn', async () => {
     await startServer()
     await seedObservedSeat({ state: 'idle' })
     const calls = installDispatchCapture()
@@ -356,69 +367,48 @@ describe('T-07891 HRC-held busy batches', () => {
 
     const drivingRunId = ledger.envelopes.get(driving.id)?.presentedTo[0]?.runId
     if (drivingRunId === undefined) throw new Error('foreground receipt has no run')
-    for (let index = 0; index < queued.length; index += 1) {
-      seat = { state: 'idle' }
-      const priorRunId = index === 0 ? drivingRunId : calls()[index]?.runId
-      if (priorRunId === undefined) throw new Error(`boundary ${index} has no prior run`)
-      await completeRun(server as HrcServer, priorRunId)
-      await waitUntil(() => calls().length === index + 2, `boundary dispatch ${index + 1}`)
+    seat = { state: 'idle' }
+    await completeRun(server as HrcServer, drivingRunId)
+    await waitUntil(() => calls().length === 2, 'boundary dispatch')
 
-      const boundary = calls()[index + 1]
-      const selected = queued[index]
-      if (boundary === undefined || selected === undefined) throw new Error('missing boundary')
-      expect(boundary.prompt).toContain(selected.body)
-      for (const other of queued.filter((_, candidateIndex) => candidateIndex !== index)) {
-        expect(boundary.prompt).not.toContain(other.body)
-      }
-      expect(db.mailDrives.getAttemptByRunId(boundary.runId)?.autoReplyCandidate).toMatchObject({
-        sourceRef: selected.id,
-        sourceEnvelopeIds: [selected.id],
-      })
-      expect(ledger.envelopes.get(selected.id)?.presentedTo).toHaveLength(1)
+    const boundary = calls()[1]
+    if (boundary === undefined) throw new Error('missing boundary')
+    for (const envelope of queued) {
+      expect(boundary.prompt).toContain(envelope.body)
+      expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
+      expect(ledger.envelopes.get(envelope.id)?.presentedTo[0]?.runId).toBe(boundary.runId)
     }
-
-    expect(calls()).toHaveLength(4)
+    expect(calls()).toHaveLength(2)
     expect(heldAttempt(db)).toBeUndefined()
   })
 
-  it('presents only the oldest counterparty key on the first idle attempt', async () => {
+  it('presents every actionable sender on the first idle attempt', async () => {
     await startServer()
     await seedObservedSeat({ state: 'idle' })
     const calls = installDispatchCapture()
     const oldestGroupId = 'EN-idle-probe-a'
-    const oldest = say('idle probe a', {
-      fromPrincipalRef: 'agent:probe-a',
-      fromScopeRef: undefined,
-      groupId: oldestGroupId,
-      obligation: 'fyi',
-    })
-    const sameKey = say('idle probe a follow-up', {
-      fromPrincipalRef: 'agent:probe-a',
-      fromScopeRef: undefined,
-      groupId: oldestGroupId,
-    })
-    const deferred = [
+    const presented = [
+      say('idle probe a', {
+        fromPrincipalRef: 'agent:probe-a',
+        fromScopeRef: undefined,
+        groupId: oldestGroupId,
+        obligation: 'fyi',
+      }),
+      say('idle probe a follow-up', {
+        fromPrincipalRef: 'agent:probe-a',
+        fromScopeRef: undefined,
+        groupId: oldestGroupId,
+      }),
       say('idle probe b', { fromPrincipalRef: 'agent:probe-b', fromScopeRef: undefined }),
       say('idle probe c', { fromPrincipalRef: 'agent:probe-c', fromScopeRef: undefined }),
     ]
 
     await drain()
     expect(calls()).toHaveLength(1)
-    expect(calls()[0]?.prompt).toContain(oldest.body)
-    expect(calls()[0]?.prompt).toContain(sameKey.body)
-    for (const envelope of deferred) {
-      expect(calls()[0]?.prompt).not.toContain(envelope.body)
-      expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
+    for (const envelope of presented) {
+      expect(calls()[0]?.prompt).toContain(envelope.body)
+      expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
     }
-    expect(ledger.envelopes.get(oldest.id)?.presentedTo).toHaveLength(1)
-    expect(ledger.envelopes.get(sameKey.id)?.presentedTo).toHaveLength(1)
-    expect(
-      serverInternals(server as HrcServer).db.mailDrives.getAttemptByRunId(calls()[0]?.runId ?? '')
-        ?.autoReplyCandidate
-    ).toMatchObject({
-      sourceRef: oldestGroupId,
-      sourceEnvelopeIds: [oldest.id, sameKey.id],
-    })
   })
 
   it('recognizes a human-typed pane turn without any HRC run row and flushes two at the sweep boundary', async () => {
@@ -522,10 +512,6 @@ describe('T-07891 HRC-held busy batches', () => {
     await waitUntil(
       () => db.mailDrives.listDueReminders(TARGET, '9999-12-31T23:59:59.999Z').length === 1,
       'rotated attempt reminder'
-    )
-    await waitUntil(
-      () => db.mailDrives.getAutoReplyIntent(held.driveAttemptId) !== undefined,
-      'rotated attempt auto-reply intent'
     )
     expect(db.runs.getByRunId(runId)).toMatchObject({
       status: 'completed',

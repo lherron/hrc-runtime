@@ -76,8 +76,7 @@ prior multi-gigabyte observation-ledger growth:
   would make every restart replay the corresponding local message.
 - Every `hrcmail_*` table is durable local execution or recovery state around
   the wrkq-owned collaboration ledger: drive slots and attempts, presentation
-  receipts, reminders, failure notices, auto-reply intents, and legacy
-  idempotency records.
+  receipts, reminders, failure notices, and legacy idempotency records.
 
 None has a TTL or standing delete path. A future deletion policy requires its
 own approved terminality and replay-fence contract; row age alone is not

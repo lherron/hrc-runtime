@@ -12,24 +12,33 @@ predicate: >
   observation rows preserve authority and provenance, while delivered
   replication rows are the durable checkpoint that prevents full replay on
   every restart. hrcmail_* rows preserve local execution, presentation,
-  reminder, failure-notice, automatic-reply, idempotency, and recovery state
-  around the wrkq-owned collaboration ledger; they do not become room,
+  reminder, failure-notice, idempotency, and recovery state around the
+  wrkq-owned collaboration ledger; they do not become room,
   envelope, obligation, discharge, or reply-body authority. No TTL or delete
   path for these classes is introduced without separately approved terminality
   and replay-fence authority.
-authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01
+  Keep-forever bars a standing TTL, an age predicate, and any scheduled deletion
+  path; it does not preserve the bookkeeping of a mechanism that has been
+  retired by principal ruling. Retiring one removes its own tables and columns in
+  an explicit forward migration, so that the mechanism's absence is checkable by
+  schema rather than by reading code. Such a migration may only drop rows that
+  were never collaboration state: presentation receipts, reminders, failure
+  notices and the local execution history around them are not eligible.
+authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01; retirement-migration clause by Lance principal ruling 2026-09-05 (spec wrkq:T-08092 D1)
 source:
   - wrkq:T-07200
+  - wrkq:T-08092
   - packages/hrc-store-sqlite/src/message-repository.ts
   - packages/hrc-store-sqlite/src/collective-history-repository.ts
   - packages/hrc-server/src/federation/collective-history.ts
   - packages/hrc-store-sqlite/src/mail
-  - architecture/records/invariants/hrc-runtime.collaboration-auto-reply-actuation.yaml
+  - architecture/records/invariants/hrc-runtime.collaboration-obligation-discharge.yaml
 required_tests:
   - just architecture-records
   - T-07200 collaboration-retention policy documentation gate
   - existing message dedupe, collective-history restart, and hrcmail recovery gates
+  - the T-08093 retirement migration drops only retired-mechanism bookkeeping and leaves receipts, reminders and failure notices intact
 last_verified: 2026-09-01 design approval; implementation gates pending
-reopen_when: Collaboration state authority, replay semantics, terminality fences, or any standing TTL or deletion path for the named tables changes.
+reopen_when: Collaboration state authority, replay semantics, terminality fences, any standing TTL or deletion path for the named tables, or the scope of what a retirement migration may drop changes.
 supersedes: []
 superseded_by: []

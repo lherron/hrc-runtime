@@ -9,8 +9,8 @@ import { annotateCommand } from './command-metadata.js'
  * It answers about an OBLIGATION, which is why it is not a `monitor` verb —
  * monitor's nouns are runtimes, sessions and turns, and its cursor grammars
  * belong to the event log. This joins the wrkq ledger row to HRC's drive
- * attempts, presentation receipts, reminders, notices and auto-reply intents,
- * and it never writes.
+ * attempts, presentation receipts, reminders and failure notices, and it
+ * never writes.
  */
 export function registerMailCommands(program: Command): void {
   const mail = program

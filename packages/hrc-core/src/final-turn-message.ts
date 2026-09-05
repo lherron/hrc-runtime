@@ -9,7 +9,8 @@ export type FinalTurnMessageCandidate = {
  *
  * Empty text is discarded first. The last explicitly-final segment wins; for
  * legacy transports without finality flags, the last non-empty segment wins.
- * Both auto-reply actuation and transcript indexing use this function.
+ * Response finalization, the dispatcher response, mail diagnostics and
+ * transcript indexing all use this function.
  */
 export function selectFinalTurnMessage<T extends FinalTurnMessageCandidate>(
   candidates: readonly T[]

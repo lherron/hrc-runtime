@@ -69,12 +69,17 @@ function startAttempt(runId: string, hrcSeq: number) {
 }
 
 describe('HrcMailDriveRepository', () => {
-  it('8. migrates legacy held rows with null counterparty refs that count only toward heldCount', () => {
+  // T-08093: the forward migration is the schema half of retiring the auto-mint
+  // — the ONLY thing that makes "no envelope was minted" checkable by absence
+  // rather than by reading the code. A daemon carrying a live intent row across
+  // this cutover must lose it: the reconciler that would have drained it is
+  // gone, so a surviving row would be a pending obligation nothing owns.
+  it('8. drops the auto-reply intent table and every auto-reply column from a legacy store', () => {
     const legacyPath = join(tmpDir, 'legacy.sqlite')
     const raw = new Database(legacyPath)
     raw.exec('CREATE TABLE hrc_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)')
     for (const migration of phase1Migrations) {
-      if (migration.id === '0054_hrcmail_hint_decision') break
+      if (migration.id === '0057_hrcmail_retire_auto_reply') break
       migration.apply(raw)
       raw
         .query('INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)')
@@ -85,8 +90,10 @@ describe('HrcMailDriveRepository', () => {
         `INSERT INTO hrcmail_drive_attempts (
            drive_attempt_id, target_session_ref, run_id, wake_reason, state,
            prompt, presented_count, host_session_id, generation, runtime_id,
-           held_behind_turn_id, claimed_at, updated_at
-         ) VALUES (?, ?, ?, 'insert', 'held', ?, 1, ?, 1, ?, ?, ?, ?)`
+           held_behind_turn_id, auto_reply_source_ref,
+           auto_reply_source_envelope_ids_json, auto_reply_room_key,
+           auto_reply_counterparty_ref, claimed_at, updated_at
+         ) VALUES (?, ?, ?, 'insert', 'held', ?, 1, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         'queued-legacy',
@@ -96,27 +103,67 @@ describe('HrcMailDriveRepository', () => {
         'hsid-legacy',
         'rt-legacy',
         'turn-legacy',
+        'EN-legacy',
+        JSON.stringify(['EN-legacy']),
+        'T-07820',
+        'mable@hcs:T-07904',
         '2026-09-03T00:00:00.000Z',
         '2026-09-03T00:00:00.000Z'
       )
     raw
       .query(
         `INSERT INTO hrcmail_drive_presentations (
-           drive_attempt_id, envelope_id, presented_at
-         ) VALUES (?, ?, ?)`
+           drive_attempt_id, envelope_id, presented_at, counterparty_ref
+         ) VALUES (?, ?, ?, ?)`
       )
-      .run('queued-legacy', 'EN-legacy', '2026-09-03T00:00:00.000Z')
+      .run('queued-legacy', 'EN-legacy', '2026-09-03T00:00:00.000Z', 'mable@hcs:T-07904')
+    raw
+      .query(
+        `INSERT INTO hrcmail_auto_reply_intents (
+           drive_attempt_id, source_ref, source_envelope_ids_json, room_key,
+           counterparty_ref, run_id, target_session_ref, state, attempt_count,
+           say_attempt_count, verification_pending, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, 0, ?, ?)`
+      )
+      .run(
+        'queued-legacy',
+        'EN-legacy',
+        JSON.stringify(['EN-legacy']),
+        'T-07820',
+        'mable@hcs:T-07904',
+        'run-legacy',
+        target,
+        '2026-09-03T00:00:00.000Z',
+        '2026-09-03T00:00:00.000Z'
+      )
     raw.close()
 
     const migrated = openHrcDatabase(legacyPath)
     try {
-      expect(migrated.migrations.applied).toContain('0054_hrcmail_hint_decision')
+      expect(migrated.migrations.applied).toContain('0057_hrcmail_retire_auto_reply')
       expect(
-        migrated.mailDrives.evaluateHeldHint(target, 'rt-legacy', 'mable@hcs:T-07904')
-      ).toMatchObject({
+        migrated.sqlite
+          .query<{ name: string }, []>(
+            `SELECT name FROM sqlite_master WHERE name = 'hrcmail_auto_reply_intents'`
+          )
+          .all()
+      ).toEqual([])
+      const attemptColumns = migrated.sqlite
+        .query<{ name: string }, []>('PRAGMA table_info(hrcmail_drive_attempts)')
+        .all()
+        .map((column) => column.name)
+      expect(attemptColumns.filter((name) => name.startsWith('auto_reply_'))).toEqual([])
+      expect(
+        migrated.sqlite
+          .query<{ name: string }, []>('PRAGMA table_info(hrcmail_drive_presentations)')
+          .all()
+          .map((column) => column.name)
+      ).not.toContain('counterparty_ref')
+      // The held batch and its receipt survive the drop: what is retired is the
+      // actuation bookkeeping, not the delivery it was riding on.
+      expect(migrated.mailDrives.evaluateHeldHint(target, 'rt-legacy')).toMatchObject({
         outcome: 'issued',
         heldCount: 1,
-        fromDrivingParty: 0,
       })
     } finally {
       migrated.close()
@@ -354,67 +401,28 @@ describe('HrcMailDriveRepository', () => {
     expect(db.mailDrives.getSlot(target)?.activeDriveAttemptId).toBeUndefined()
   })
 
-  it('persists the bodyless auto-reply intent inside successful drive completion', () => {
+  // T-08093 replaces "persists the bodyless auto-reply intent inside successful
+  // drive completion". Completion still reports what the turn presented — that
+  // is what arms the reminder — but it establishes no reply obligation of its
+  // own, and there is no longer any table for one to land in.
+  it('records no reply intent of any kind inside a successful drive completion', () => {
     db.mailDrives.claim(target, 'insert', actionable('EN-00021'), {
-      driveAttemptId: 'drive-auto-reply',
-      runId: 'run-auto-reply',
+      driveAttemptId: 'drive-no-mint',
+      runId: 'run-no-mint',
     })
-    db.mailDrives.presentForAttempt('drive-auto-reply', ['EN-00021'])
-    db.mailDrives.recordAutoReplyCandidate('drive-auto-reply', {
-      sourceRef: 'EN-00021',
-      sourceEnvelopeIds: ['EN-00021'],
-      roomKey: 'T-07820',
-      counterpartyRef: 'chief@hcs:T-07789',
-    })
-    startAttempt('run-auto-reply', 121)
+    db.mailDrives.presentForAttempt('drive-no-mint', ['EN-00021'])
+    startAttempt('run-no-mint', 121)
 
-    db.mailDrives.completeStartedAttempt('run-auto-reply', 'turn.completed')
-    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply')).toMatchObject({
-      driveAttemptId: 'drive-auto-reply',
-      sourceRef: 'EN-00021',
-      sourceEnvelopeIds: ['EN-00021'],
-      roomKey: 'T-07820',
-      counterpartyRef: 'chief@hcs:T-07789',
-      runId: 'run-auto-reply',
-      targetSessionRef: target,
-      state: 'pending',
-      attemptCount: 0,
-    })
-
-    // The row, not an in-memory finalizer, is restart authority.
-    db.close()
-    db = openHrcDatabase(dbPath)
-    expect(db.mailDrives.listPendingAutoReplyIntents()).toHaveLength(1)
-    db.mailDrives.recordAutoReplyDischargeOutcome('drive-auto-reply', {
-      source: 'manifest',
-      envelopeIds: ['EN-00021'],
-      refusedEnvelopeId: 'EN-00022',
-      refusalCode: 'WRKQ_VALIDATION',
-    })
-    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply')?.dischargeOutcome).toEqual({
-      source: 'manifest',
-      envelopeIds: ['EN-00021'],
-      refusedEnvelopeId: 'EN-00022',
-      refusalCode: 'WRKQ_VALIDATION',
-    })
-  })
-
-  it('never creates auto-reply intent for an unsuccessful drive completion', () => {
-    db.mailDrives.claim(target, 'insert', actionable('EN-00022'), {
-      driveAttemptId: 'drive-auto-reply-failed',
-      runId: 'run-auto-reply-failed',
-    })
-    db.mailDrives.presentForAttempt('drive-auto-reply-failed', ['EN-00022'])
-    db.mailDrives.recordAutoReplyCandidate('drive-auto-reply-failed', {
-      sourceRef: 'EN-00022',
-      sourceEnvelopeIds: ['EN-00022'],
-      roomKey: 'T-07820',
-      counterpartyRef: 'chief@hcs:T-07789',
-    })
-    startAttempt('run-auto-reply-failed', 122)
-
-    db.mailDrives.completeStartedAttempt('run-auto-reply-failed', 'turn.failed')
-    expect(db.mailDrives.getAutoReplyIntent('drive-auto-reply-failed')).toBeUndefined()
+    const completed = db.mailDrives.completeStartedAttempt('run-no-mint', 'turn.completed')
+    expect(completed?.presentedEnvelopeIds).toEqual(['EN-00021'])
+    expect(completed?.attempt.state).toBe('completed')
+    expect(
+      db.sqlite
+        .query<{ name: string }, []>(
+          `SELECT name FROM sqlite_master WHERE name LIKE 'hrcmail_auto_reply%'`
+        )
+        .all()
+    ).toEqual([])
   })
 
   it('releases a no-op attempt without reporting anything to advance', () => {

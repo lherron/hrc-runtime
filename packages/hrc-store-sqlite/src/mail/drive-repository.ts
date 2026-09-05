@@ -46,7 +46,6 @@ export type HrcMailDriveAttempt = {
   queuedBehindRunId?: string | undefined
   /** The broker-observed turn boundary an HRC-held queue batch is waiting for. */
   heldBehindTurnId?: string | undefined
-  autoReplyCandidate?: HrcMailAutoReplyCandidate | undefined
   hintCount?: number | undefined
   lastHintAt?: string | undefined
   lastHintPresentedCount?: number | undefined
@@ -54,56 +53,6 @@ export type HrcMailDriveAttempt = {
   startedAt?: string | undefined
   completedAt?: string | undefined
   updatedAt: string
-}
-
-/**
- * The one reply a completed drive is eligible to mint (T-07612 rev 6).
- *
- * This is captured before dispatch on the attempt row, while HRC still has the
- * ledger envelopes in hand. It is NOT the durable actuation intent: only the
- * successful `completeStartedAttempt` transaction copies it into the pending
- * intent table.
- */
-export type HrcMailAutoReplyCandidate = {
-  sourceRef: string
-  sourceEnvelopeIds: readonly string[]
-  roomKey: string
-  counterpartyRef: string
-}
-
-export type HrcMailAutoReplyIntentState =
-  | 'pending'
-  | 'minted'
-  | 'already-discharged'
-  | 'empty-response'
-
-export type HrcMailAutoReplyDischargeOutcome = {
-  source: 'manifest' | 'candidate'
-  envelopeIds: string[]
-  refusedEnvelopeId?: string | undefined
-  refusalCode?: string | undefined
-  refusalReason?: string | undefined
-}
-
-export type HrcMailAutoReplyIntent = {
-  driveAttemptId: string
-  sourceRef: string
-  sourceEnvelopeIds: string[]
-  roomKey: string
-  counterpartyRef: string
-  runId: string
-  targetSessionRef: string
-  state: HrcMailAutoReplyIntentState
-  attemptCount: number
-  sayAttemptCount: number
-  verificationPending: boolean
-  /** Last exact-set derivation/refusal, durable across reconciler restarts. */
-  dischargeOutcome?: HrcMailAutoReplyDischargeOutcome | undefined
-  lastAttemptAt?: string | undefined
-  lastError?: string | undefined
-  createdAt: string
-  updatedAt: string
-  terminalAt?: string | undefined
 }
 
 export type HrcMailQueuedAttemptInput = {
@@ -116,15 +65,12 @@ export type HrcMailQueuedAttemptInput = {
   hostSessionId: string
   generation: number
   runtimeId?: string | undefined
-  autoReplyCandidate?: HrcMailAutoReplyCandidate | undefined
 }
 
 export type HrcMailHeldAttemptInput = {
   targetSessionRef: string
   wakeReason: HrcMailDriveWakeReason
   envelopeIds: readonly string[]
-  /** Reply addressee keyed by envelope id, captured while HRC has the ledger row in hand. */
-  counterpartyRefs?: Readonly<Record<string, string>> | undefined
   heldBehindTurnId: string
   hostSessionId: string
   generation: number
@@ -144,7 +90,6 @@ export type HrcMailHintDecision =
       reason: 'first' | 'count_changed' | 'periodic'
       driveAttemptId: string
       heldCount: number
-      fromDrivingParty: number
       hintCount: number
     }
 
@@ -292,33 +237,9 @@ type DriveAttemptRow = {
   updated_at: string
   queued_behind_run_id: string | null
   held_behind_turn_id: string | null
-  auto_reply_source_ref: string | null
-  auto_reply_source_envelope_ids_json: string | null
-  auto_reply_room_key: string | null
-  auto_reply_counterparty_ref: string | null
   hint_count: number | null
   last_hint_at: string | null
   last_hint_presented_count: number | null
-}
-
-type AutoReplyIntentRow = {
-  drive_attempt_id: string
-  source_ref: string
-  source_envelope_ids_json: string
-  room_key: string
-  counterparty_ref: string
-  run_id: string
-  target_session_ref: string
-  state: HrcMailAutoReplyIntentState
-  attempt_count: number
-  say_attempt_count: number
-  verification_pending: number
-  discharge_outcome_json: string | null
-  last_attempt_at: string | null
-  last_error: string | null
-  created_at: string
-  updated_at: string
-  terminal_at: string | null
 }
 
 type DriveSlotRow = {
@@ -333,8 +254,6 @@ const DRIVE_ATTEMPT_COLUMNS = `
   runtime_id, start_hrc_seq, terminal_event_kind, last_error, claimed_at,
   started_at, completed_at, updated_at, queued_behind_run_id,
   held_behind_turn_id,
-  auto_reply_source_ref, auto_reply_source_envelope_ids_json,
-  auto_reply_room_key, auto_reply_counterparty_ref,
   hint_count, last_hint_at, last_hint_presented_count
 `
 
@@ -351,66 +270,6 @@ function qualified(columns: string, alias: string): string {
     .filter((column) => column.length > 0)
     .map((column) => `${alias}.${column}`)
     .join(', ')
-}
-
-const AUTO_REPLY_INTENT_COLUMNS = `
-  drive_attempt_id, source_ref, source_envelope_ids_json, room_key,
-  counterparty_ref, run_id, target_session_ref, state, attempt_count,
-  say_attempt_count, verification_pending, last_attempt_at, last_error,
-  discharge_outcome_json, created_at, updated_at, terminal_at
-`
-
-function parseEnvelopeIds(json: string): string[] {
-  const parsed = JSON.parse(json) as unknown
-  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) {
-    throw new Error('auto-reply source envelope ids must be a JSON string array')
-  }
-  return parsed
-}
-
-function mapAutoReplyCandidate(row: DriveAttemptRow): HrcMailAutoReplyCandidate | undefined {
-  if (
-    row.auto_reply_source_ref === null ||
-    row.auto_reply_source_envelope_ids_json === null ||
-    row.auto_reply_room_key === null ||
-    row.auto_reply_counterparty_ref === null
-  ) {
-    return undefined
-  }
-  return {
-    sourceRef: row.auto_reply_source_ref,
-    sourceEnvelopeIds: parseEnvelopeIds(row.auto_reply_source_envelope_ids_json),
-    roomKey: row.auto_reply_room_key,
-    counterpartyRef: row.auto_reply_counterparty_ref,
-  }
-}
-
-function mapAutoReplyIntent(row: AutoReplyIntentRow): HrcMailAutoReplyIntent {
-  return {
-    driveAttemptId: row.drive_attempt_id,
-    sourceRef: row.source_ref,
-    sourceEnvelopeIds: parseEnvelopeIds(row.source_envelope_ids_json),
-    roomKey: row.room_key,
-    counterpartyRef: row.counterparty_ref,
-    runId: row.run_id,
-    targetSessionRef: row.target_session_ref,
-    state: row.state,
-    attemptCount: row.attempt_count,
-    sayAttemptCount: row.say_attempt_count,
-    verificationPending: row.verification_pending === 1,
-    ...(row.discharge_outcome_json === null
-      ? {}
-      : {
-          dischargeOutcome: JSON.parse(
-            row.discharge_outcome_json
-          ) as HrcMailAutoReplyDischargeOutcome,
-        }),
-    ...(row.last_attempt_at === null ? {} : { lastAttemptAt: row.last_attempt_at }),
-    ...(row.last_error === null ? {} : { lastError: row.last_error }),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    ...(row.terminal_at === null ? {} : { terminalAt: row.terminal_at }),
-  }
 }
 
 function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
@@ -433,10 +292,6 @@ function mapAttempt(row: DriveAttemptRow): HrcMailDriveAttempt {
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
     ...(row.queued_behind_run_id === null ? {} : { queuedBehindRunId: row.queued_behind_run_id }),
     ...(row.held_behind_turn_id === null ? {} : { heldBehindTurnId: row.held_behind_turn_id }),
-    ...(() => {
-      const candidate = mapAutoReplyCandidate(row)
-      return candidate === undefined ? {} : { autoReplyCandidate: candidate }
-    })(),
     ...(row.hint_count === null ? {} : { hintCount: row.hint_count }),
     ...(row.last_hint_at === null ? {} : { lastHintAt: row.last_hint_at }),
     ...(row.last_hint_presented_count === null
@@ -741,10 +596,8 @@ export class HrcMailDriveRepository {
                drive_attempt_id, target_session_ref, run_id, wake_reason, state,
                prompt, presented_count, materialization_intent_json,
                host_session_id, generation, runtime_id, queued_behind_run_id,
-               auto_reply_source_ref, auto_reply_source_envelope_ids_json,
-               auto_reply_room_key, auto_reply_counterparty_ref,
                claimed_at, updated_at
-             ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, NULL, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             driveAttemptId,
@@ -757,12 +610,6 @@ export class HrcMailDriveRepository {
             input.generation,
             input.runtimeId ?? null,
             input.queuedBehindRunId,
-            input.autoReplyCandidate?.sourceRef ?? null,
-            input.autoReplyCandidate === undefined
-              ? null
-              : JSON.stringify(input.autoReplyCandidate.sourceEnvelopeIds),
-            input.autoReplyCandidate?.roomKey ?? null,
-            input.autoReplyCandidate?.counterpartyRef ?? null,
             now,
             now
           )
@@ -836,15 +683,10 @@ export class HrcMailDriveRepository {
           this.db
             .query(
               `INSERT OR IGNORE INTO hrcmail_drive_presentations (
-                 drive_attempt_id, envelope_id, presented_at, counterparty_ref
-               ) VALUES (?, ?, ?, ?)`
+                 drive_attempt_id, envelope_id, presented_at
+               ) VALUES (?, ?, ?)`
             )
-            .run(
-              attempt.driveAttemptId,
-              envelopeId,
-              now,
-              input.counterpartyRefs?.[envelopeId] ?? null
-            )
+            .run(attempt.driveAttemptId, envelopeId, now)
         }
         const count = existing.size + addedEnvelopeIds.length
         this.db
@@ -879,7 +721,6 @@ export class HrcMailDriveRepository {
   evaluateHeldHint(
     targetSessionRef: string,
     runtimeId: string,
-    drivingCounterpartyRef?: string | undefined,
     now: Date = new Date()
   ): HrcMailHintDecision {
     const target = normalizeTarget(targetSessionRef)
@@ -892,24 +733,13 @@ export class HrcMailDriveRepository {
         }
 
         const counts = this.db
-          .query<
-            { held_count: number; from_driving_party: number },
-            [string | null, string | null, string]
-          >(
-            `SELECT COUNT(*) AS held_count,
-                    COALESCE(SUM(
-                      CASE WHEN ? IS NOT NULL AND counterparty_ref = ? THEN 1 ELSE 0 END
-                    ), 0) AS from_driving_party
+          .query<{ held_count: number }, [string]>(
+            `SELECT COUNT(*) AS held_count
                FROM hrcmail_drive_presentations
               WHERE drive_attempt_id = ?`
           )
-          .get(
-            drivingCounterpartyRef ?? null,
-            drivingCounterpartyRef ?? null,
-            attempt.driveAttemptId
-          )
+          .get(attempt.driveAttemptId)
         const heldCount = counts?.held_count ?? 0
-        const fromDrivingParty = counts?.from_driving_party ?? 0
         const nowMs = now.getTime()
         const lastHintMs =
           attempt.lastHintAt === undefined ? Number.NaN : Date.parse(attempt.lastHintAt)
@@ -937,7 +767,6 @@ export class HrcMailDriveRepository {
           reason,
           driveAttemptId: attempt.driveAttemptId,
           heldCount,
-          fromDrivingParty,
           hintCount,
         }
       })
@@ -1018,8 +847,8 @@ export class HrcMailDriveRepository {
             )
           for (const envelopeId of remainingEnvelopeIds) {
             const presentation = this.db
-              .query<{ presented_at: string; counterparty_ref: string | null }, [string, string]>(
-                `SELECT presented_at, counterparty_ref
+              .query<{ presented_at: string }, [string, string]>(
+                `SELECT presented_at
                    FROM hrcmail_drive_presentations
                   WHERE drive_attempt_id = ? AND envelope_id = ?`
               )
@@ -1030,15 +859,10 @@ export class HrcMailDriveRepository {
             this.db
               .query(
                 `INSERT INTO hrcmail_drive_presentations (
-                   drive_attempt_id, envelope_id, presented_at, counterparty_ref
-                 ) VALUES (?, ?, ?, ?)`
+                   drive_attempt_id, envelope_id, presented_at
+                 ) VALUES (?, ?, ?)`
               )
-              .run(
-                successorAttemptId,
-                envelopeId,
-                presentation.presented_at,
-                presentation.counterparty_ref
-              )
+              .run(successorAttemptId, envelopeId, presentation.presented_at)
             this.db
               .query(
                 `DELETE FROM hrcmail_drive_presentations
@@ -1219,36 +1043,6 @@ export class HrcMailDriveRepository {
       .run(prompt, presentedCount, new Date().toISOString(), driveAttemptId)
   }
 
-  /**
-   * Capture eligibility before dispatch without creating actuation intent.
-   *
-   * The completion transaction is the sole writer of the pending intent row;
-   * these columns merely carry the ledger-derived identity to that boundary.
-   */
-  recordAutoReplyCandidate(
-    driveAttemptId: string,
-    candidate: HrcMailAutoReplyCandidate | undefined
-  ): void {
-    this.db
-      .query(
-        `UPDATE hrcmail_drive_attempts
-            SET auto_reply_source_ref = ?,
-                auto_reply_source_envelope_ids_json = ?,
-                auto_reply_room_key = ?,
-                auto_reply_counterparty_ref = ?,
-                updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'claimed'`
-      )
-      .run(
-        candidate?.sourceRef ?? null,
-        candidate === undefined ? null : JSON.stringify(candidate.sourceEnvelopeIds),
-        candidate?.roomKey ?? null,
-        candidate?.counterpartyRef ?? null,
-        new Date().toISOString(),
-        driveAttemptId
-      )
-  }
-
   recordSession(
     driveAttemptId: string,
     input: { hostSessionId: string; generation: number; runtimeId?: string | undefined }
@@ -1425,145 +1219,10 @@ export class HrcMailDriveRepository {
              WHERE drive_attempt_id = ? AND state = 'started'`
           )
           .run(terminalEventKind, now, now, attempt.driveAttemptId)
-        if (
-          (terminalEventKind === 'turn.completed' || terminalEventKind === 'run.completed') &&
-          attempt.autoReplyCandidate !== undefined
-        ) {
-          const candidate = attempt.autoReplyCandidate
-          this.db
-            .query(
-              `INSERT OR IGNORE INTO hrcmail_auto_reply_intents (
-                 drive_attempt_id, source_ref, source_envelope_ids_json,
-                 room_key, counterparty_ref, run_id, target_session_ref,
-                 state, attempt_count, say_attempt_count, verification_pending,
-                 created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, 0, ?, ?)`
-            )
-            .run(
-              attempt.driveAttemptId,
-              candidate.sourceRef,
-              JSON.stringify(candidate.sourceEnvelopeIds),
-              candidate.roomKey,
-              candidate.counterpartyRef,
-              attempt.runId,
-              attempt.targetSessionRef,
-              now,
-              now
-            )
-        }
         this.releaseSlot(attempt.targetSessionRef, attempt.driveAttemptId, now)
         return { attempt: this.requireAttempt(attempt.driveAttemptId), presentedEnvelopeIds }
       })
       .immediate() as CompleteHrcMailDriveResult | undefined
-  }
-
-  getAutoReplyIntent(driveAttemptId: string): HrcMailAutoReplyIntent | undefined {
-    const row = this.db
-      .query<AutoReplyIntentRow, [string]>(
-        `SELECT ${AUTO_REPLY_INTENT_COLUMNS}
-           FROM hrcmail_auto_reply_intents
-          WHERE drive_attempt_id = ?`
-      )
-      .get(driveAttemptId)
-    return row === null ? undefined : mapAutoReplyIntent(row)
-  }
-
-  listPendingAutoReplyIntents(): HrcMailAutoReplyIntent[] {
-    return this.db
-      .query<AutoReplyIntentRow, []>(
-        `SELECT ${AUTO_REPLY_INTENT_COLUMNS}
-           FROM hrcmail_auto_reply_intents
-          WHERE state = 'pending'
-          ORDER BY created_at ASC, drive_attempt_id ASC`
-      )
-      .all()
-      .map(mapAutoReplyIntent)
-  }
-
-  recordAutoReplyAttempt(
-    driveAttemptId: string,
-    error?: string | undefined
-  ): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET attempt_count = attempt_count + 1,
-                last_attempt_at = ?, last_error = ?, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(now, error ?? null, now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
-  }
-
-  recordAutoReplyError(driveAttemptId: string, error: string): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET last_error = ?, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(error, now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
-  }
-
-  recordAutoReplyDischargeOutcome(
-    driveAttemptId: string,
-    outcome: HrcMailAutoReplyDischargeOutcome
-  ): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET discharge_outcome_json = ?, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(JSON.stringify(outcome), now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
-  }
-
-  /** Persist BEFORE plain say so a lost response/crash is verified by read on restart. */
-  markAutoReplySayStarted(driveAttemptId: string): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET say_attempt_count = say_attempt_count + 1,
-                verification_pending = 1, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
-  }
-
-  /** A successful room read proved the prior say did not mint; retry is safe. */
-  clearAutoReplyVerification(driveAttemptId: string): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET verification_pending = 0, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
-  }
-
-  completeAutoReplyIntent(
-    driveAttemptId: string,
-    state: Exclude<HrcMailAutoReplyIntentState, 'pending'>
-  ): HrcMailAutoReplyIntent {
-    const now = new Date().toISOString()
-    this.db
-      .query(
-        `UPDATE hrcmail_auto_reply_intents
-            SET state = ?, verification_pending = 0, last_error = NULL,
-                terminal_at = ?, updated_at = ?
-          WHERE drive_attempt_id = ? AND state = 'pending'`
-      )
-      .run(state, now, now, driveAttemptId)
-    return this.requireAutoReplyIntent(driveAttemptId)
   }
 
   /**
@@ -2108,13 +1767,5 @@ export class HrcMailDriveRepository {
     const attempt = this.getAttempt(driveAttemptId)
     if (attempt === undefined) throw new Error(`unknown mail drive attempt "${driveAttemptId}"`)
     return attempt
-  }
-
-  private requireAutoReplyIntent(driveAttemptId: string): HrcMailAutoReplyIntent {
-    const intent = this.getAutoReplyIntent(driveAttemptId)
-    if (intent === undefined) {
-      throw new Error(`unknown mail auto-reply intent "${driveAttemptId}"`)
-    }
-    return intent
   }
 }

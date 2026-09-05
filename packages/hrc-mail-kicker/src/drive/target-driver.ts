@@ -324,9 +324,8 @@ export async function driveMailTargetOnce(
       .map((id) => byId.get(id))
       .filter((item): item is ActionableEnvelope => item !== undefined)
     const presentables = await recordPresentations(server, ordered, attempt, session, runtimeId)
-    const { prompt, autoReplyCandidate } = composePresentation(ordered, presentables)
+    const prompt = formatEnvelopePresentations(presentables)
     server.db.mailDrives.recordPresentation(attempt.driveAttemptId, prompt, presentables.length)
-    server.db.mailDrives.recordAutoReplyCandidate(attempt.driveAttemptId, autoReplyCandidate)
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
 
     const body = await server.dispatchTurn(
@@ -452,6 +451,7 @@ import type { MailKickerContext } from '../context.js'
 import { logAttemptTerminal } from '../diagnostics/attempt-log.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../internal.js'
 import { WrkqLedgerUnavailableError } from '../ledger/client.js'
+import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import { deliverFailureNotices } from '../terminal/failure-notices.js'
 import { activeRunIdFor, observeAttempt, observeBrokerSeat } from './attempt-lifecycle.js'
 import {
@@ -473,7 +473,6 @@ import type { ActionableEnvelope } from './presentation.js'
 import {
   actionableDirectives,
   commitPresentations,
-  composePresentation,
   isolatedDeliveryBatch,
   presentationBatch,
   readActionableEnvelopes,

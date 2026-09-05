@@ -10,7 +10,6 @@ import type {
   TurnId,
 } from 'spaces-harness-broker-protocol'
 
-import { autoReplyCandidateFor } from 'hrc-mail-kicker'
 import { observeMailDriveLifecycleEvent } from 'hrc-mail-kicker'
 import { executeHeadlessBrokerInputTurn } from '../broker-headless-handlers.js'
 import { executeInteractiveBrokerInputTurn } from '../broker-interactive-handlers.js'
@@ -191,7 +190,7 @@ describe('T-07881 hook-observed mail turn binding', () => {
     await fixture.cleanup()
   })
 
-  it('falls back to broker_submission_id, stamps the run, and mints the auto-reply intent', () => {
+  it('falls back to broker_submission_id, stamps the run, and mints NOTHING', () => {
     const db = fixture.db
     const runtime = db.runtimes.getByRuntimeId(TMUX_RUNTIME_ID) as HrcRuntimeSnapshot
     db.runs.insert({
@@ -220,8 +219,6 @@ describe('T-07881 hook-observed mail turn binding', () => {
       roomKey: ROOM,
       body: 'exercise the hook-observed reply-is-ack path',
     })
-    const candidate = autoReplyCandidateFor([source])
-    expect(candidate).toBeDefined()
     const driveAttemptId = 'drive-t07881'
     db.mailDrives.claim(
       TARGET,
@@ -230,7 +227,6 @@ describe('T-07881 hook-observed mail turn binding', () => {
       { driveAttemptId, runId: RUN_ID }
     )
     db.mailDrives.presentForAttempt(driveAttemptId, [source.id])
-    db.mailDrives.recordAutoReplyCandidate(driveAttemptId, candidate!)
 
     const mapper = new BrokerEventMapper({ db, now: () => ts(100) })
     const observer = {
@@ -284,7 +280,7 @@ describe('T-07881 hook-observed mail turn binding', () => {
       runId: RUN_ID,
       runtimeId: TMUX_RUNTIME_ID,
       transport: 'tmux',
-      payload: { message: { role: 'assistant', content: 'automatic reply from the driven turn' } },
+      payload: { message: { role: 'assistant', content: 'narration from the driven turn' } },
     })
     applyAndObserve(
       brokerEnvelope(
@@ -302,18 +298,20 @@ describe('T-07881 hook-observed mail turn binding', () => {
       completedAt: ts(29),
       status: 'completed',
     })
-    expect(db.mailDrives.getAutoReplyIntent(driveAttemptId)).toMatchObject({
+    // T-08093: the run binding is what the fallback exists for, and it still
+    // works. What it no longer feeds is a reply. The turn produced text and
+    // ended; the envelope is untouched by that, and HRC wrote nothing to the
+    // room on the seat's behalf.
+    expect(db.mailDrives.getAttempt(driveAttemptId)).toMatchObject({
       driveAttemptId,
-      runId: RUN_ID,
-      state: 'pending',
-      sourceEnvelopeIds: [source.id],
+      state: 'completed',
     })
+    expect(ledger.roomSayRequests).toEqual([])
+    expect(ledger.envelopes.get(source.id)?.state).not.toBe('acked')
     expect(
       db.hrcEvents
         .listByRun(RUN_ID, { eventKind: 'turn.message' })
-        .some((event) =>
-          JSON.stringify(event.payload).includes('automatic reply from the driven turn')
-        )
+        .some((event) => JSON.stringify(event.payload).includes('narration from the driven turn'))
     ).toBe(true)
   })
 })

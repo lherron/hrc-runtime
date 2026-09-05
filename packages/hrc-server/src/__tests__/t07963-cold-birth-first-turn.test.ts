@@ -6,7 +6,7 @@
  * `accepted` with a NULL `dispatched_input_id` for the whole first turn. The
  * broker's `turn.started` quotes the initial input's id, `runForInputIdentity`
  * could not resolve it to any run, and the turn was orphaned from its own run —
- * which left the mail drive stuck at `claimed`, armed no auto-reply intent, and
+ * which left the mail drive stuck at `claimed`, armed no reminder, and
  * stranded the sender's obligation with neither reminder nor failure (EN-03687).
  *
  * PROOF BOUNDARY, deliberate. Criterion 4 also asks that the single submission's

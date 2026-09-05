@@ -12,13 +12,14 @@ import type { HrcMailDriveAttempt, HrcMailDriveWakeReason } from 'hrc-store-sqli
 import type { MailKickerContext } from '../context.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../internal.js'
 import type { PresentableEnvelope } from '../ledger/presentation.js'
+import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import type { AttemptObservation } from './attempt-lifecycle.js'
 import { isQueuedAttempt } from './attempt-lifecycle.js'
 import { presentationRuntimeIdFor } from './authority.js'
 import type { ObservedBrokerSeat } from './held-batch-flush.js'
 import { holdQueueForBusyTarget } from './held-batch.js'
 import type { ActionableEnvelope } from './presentation.js'
-import { actionableDirectives, composePresentation, senderGenerationFor } from './presentation.js'
+import { actionableDirectives, senderGenerationFor } from './presentation.js'
 
 type InFlightDeclineRoute = 'active-attempt' | 'claim'
 
@@ -142,7 +143,7 @@ export async function presentHoldIntoBusyTarget(
       ...senderGenerationFor(server, item.envelope),
     })
   }
-  const { prompt, autoReplyCandidate } = composePresentation(envelopes, presentables)
+  const prompt = formatEnvelopePresentations(presentables)
 
   const firstEnvelope = envelopes[0]?.envelope
   const origin = {
@@ -210,7 +211,6 @@ export async function presentHoldIntoBusyTarget(
     hostSessionId: session.hostSessionId,
     generation: session.generation,
     ...(runtimeId === undefined ? {} : { runtimeId }),
-    ...(autoReplyCandidate === undefined ? {} : { autoReplyCandidate }),
   })
   for (const item of envelopes) {
     await server.ledger.present({

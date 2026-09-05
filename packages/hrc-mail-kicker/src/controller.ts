@@ -120,14 +120,6 @@ export class MailKicker implements MailKickerContext {
     return this.dependencies.preemptAuthorized(session, request)
   }
 
-  requestAutoReplyReconcile(): void {
-    this.dependencies.requestAutoReplyReconcile()
-  }
-
-  projectTurnResponse(runId: string): { body: string; truncated: boolean } {
-    return this.dependencies.projectTurnResponse(runId)
-  }
-
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void {
     this.dependencies.log(level, event, detail)
   }
@@ -309,7 +301,7 @@ export function observeMailDriveLifecycleEvent(
   // scope, which is a different question from "did this turn end holding
   // somebody's obligation with no drive left to mint the reply from".
   void reportUnownedTurn(this, event, targetSessionRef).catch((error: unknown) => {
-    this.log('WARN', 'wrkq.auto_reply.unowned_turn_check_failed', {
+    this.log('WARN', 'wrkq.kicker.unowned_turn_check_failed', {
       targetSessionRef,
       ...(event.runtimeId === undefined ? {} : { runtimeId: event.runtimeId }),
       error: errorText(error),

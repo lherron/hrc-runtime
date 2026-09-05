@@ -22,7 +22,7 @@ import { renderMailInspection } from '../mail-inspect.js'
  *
  * The store is seeded with the EN-03687 shape: one drive attempt, one
  * presentation receipt, a run that never dispatched an input, an attempt failed
- * by the stop, and no reminder, no failure notice and no auto-reply intent
+ * by the stop, and no reminder and no failure notice
  * behind it. That combination must render the `stranded` verdict, because it is
  * the one an operator has to be able to reach without reading five tables.
  */

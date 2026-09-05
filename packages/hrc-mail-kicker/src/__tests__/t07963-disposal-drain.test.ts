@@ -214,7 +214,6 @@ beforeEach(async () => {
         withdraw: () => Promise.resolve({ ok: false, error: { message: 'unused' } }),
       },
       preemptAuthorized: () => Promise.resolve(false),
-      requestAutoReplyReconcile: () => {},
       log: (level, event, detail) => logs.push({ level, event, detail }),
     },
     { enabled: true, sweepIntervalMs: 60_000 }

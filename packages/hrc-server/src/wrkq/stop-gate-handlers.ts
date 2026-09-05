@@ -33,11 +33,9 @@ const STOP_REASON_MAX_CHARS = 4_096
 
 const ACTIVE_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
 
-export const MAIL_HINT_TEXT = (heldCount: number, fromDrivingParty: number | undefined): string => {
+export const MAIL_HINT_TEXT = (heldCount: number): string => {
   const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
-  const partyClause =
-    fromDrivingParty === undefined ? '' : `, ${fromDrivingParty} from the party driving this turn`
-  return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat${partyClause}. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender>\` answers it now; anything unanswered presents at turn end.`
+  return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender>\` answers it now; anything unanswered presents at turn end.`
 }
 
 export async function handleMailStopDecision(
@@ -180,35 +178,24 @@ export async function handleMailHintDecision(
     }
 
     const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
-    const drivingCounterpartyRef = this.db.mailDrives.getAttemptByRunId(run.runId)
-      ?.autoReplyCandidate?.counterpartyRef
-    const decision = this.db.mailDrives.evaluateHeldHint(
-      targetSessionRef,
-      runtimeId,
-      drivingCounterpartyRef
-    )
+    const decision = this.db.mailDrives.evaluateHeldHint(targetSessionRef, runtimeId)
     if (decision.outcome === 'suppressed') {
       writeHintSuppressed(runtimeId, decision.reason)
       return json({})
     }
 
-    const hint = MAIL_HINT_TEXT(
-      decision.heldCount,
-      drivingCounterpartyRef === undefined ? undefined : decision.fromDrivingParty
-    )
+    const hint = MAIL_HINT_TEXT(decision.heldCount)
     writeServerLog('INFO', 'wrkq.kicker.hint_issued', {
       runtimeId,
       targetSessionRef,
       driveAttemptId: decision.driveAttemptId,
       heldCount: decision.heldCount,
-      fromDrivingParty: decision.fromDrivingParty,
       hintCount: decision.hintCount,
       reason: decision.reason,
     })
     return json({
       hint,
       heldCount: decision.heldCount,
-      fromDrivingParty: decision.fromDrivingParty,
       driveAttemptId: decision.driveAttemptId,
       reason: decision.reason,
     })

@@ -32,7 +32,6 @@ export type {
 } from './ledger/presentation.js'
 export { targetSessionRefForLedgerScope } from './ledger/scope.js'
 export * from './ledger/types.js'
-export { autoReplyCandidateFor, presentationKeyFor } from './drive/batching.js'
 export {
   dropAckedHeldMember,
   holdQueueForBusyTarget,
