@@ -35,6 +35,12 @@ afterEach(async () => {
 })
 
 describe('broker dispatch observability', () => {
+  function diagnosticEvents(eventKind: string) {
+    return fixture.db.hrcEvents
+      .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+      .filter((event) => event.eventKind === eventKind)
+  }
+
   it('persists seat transitions and warns once for a stuck non-dispatchable seat without input', async () => {
     const fake = new FakeBrokerClient()
     let seat: SeatProbeResponse['seat'] = { state: 'starting' }
@@ -65,10 +71,9 @@ describe('broker dispatch observability', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     expect(warnings.filter((entry) => entry.event === 'broker.seat.stalled')).toHaveLength(1)
-    const stalled = fixture.db.events
-      .listFromSeq(1, { runtimeId: 'runtime_w2' })
-      .filter((event) => event.eventKind === 'broker.seat.stalled')
+    const stalled = diagnosticEvents('broker.seat.stalled')
     expect(stalled).toHaveLength(1)
+    expect(diagnosticEvents('broker.seat.transition')).toHaveLength(1)
 
     seat = { state: 'idle' }
     now = '2026-05-27T12:34:59.000Z'
@@ -139,6 +144,14 @@ describe('broker dispatch observability', () => {
       origin: 'hrc-dispatched',
       runId: 'run_w2',
     })
+    expect(diagnosticEvents('broker.submission.milestone').map((event) => event.category)).toEqual([
+      'input',
+      'input',
+      'input',
+    ])
+    expect(diagnosticEvents('broker.turn.origin')).toMatchObject([
+      { category: 'turn', runId: 'run_w2' },
+    ])
 
     const interactiveRuntime = fixture.db.runtimes.getByRuntimeId('runtime_w2')!
     fixture.db.runtimes.update('runtime_w2', {
@@ -241,11 +254,7 @@ describe('broker dispatch observability', () => {
     await controller.seatProbe('runtime_w2')
 
     expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
-    expect(
-      fixture.db.events
-        .listFromSeq(1, { runtimeId: 'runtime_w2' })
-        .filter((event) => event.eventKind === 'broker.submission.stalled')
-    ).toHaveLength(1)
+    expect(diagnosticEvents('broker.submission.stalled')).toHaveLength(1)
     expect(
       getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.at(-1)
     ).toMatchObject({ lastMilestone: 'accepted', stalledWarnedAt: '2026-05-27T12:34:58.000Z' })
@@ -358,5 +367,20 @@ describe('broker dispatch observability', () => {
     expect(Buffer.byteLength(abrupt.output.tail ?? '', 'utf8')).toBeLessThanOrEqual(
       BROKER_CLOSE_OUTPUT_TAIL_BYTES
     )
+
+    fake.emitClose(new Error('Broker socket closed unexpectedly'))
+    await tick()
+    expect(diagnosticEvents('broker.socket.closed_unexpectedly')).toMatchObject([
+      {
+        category: 'runtime',
+        payload: {
+          invocationPhaseAtClose: 'ready',
+          brokerPid: 4242,
+          childPid: null,
+          exitCode: null,
+          signal: null,
+        },
+      },
+    ])
   })
 })

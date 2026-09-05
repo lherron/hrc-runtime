@@ -5,6 +5,7 @@ import type { BrokerDispatchInspectView } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope, SeatProbeResponse } from 'spaces-harness-broker-protocol'
 
+import { appendHrcEvent } from '../hrc-event-helper'
 import type { BrokerControllerLogger } from './controller/types'
 import { canOperatorAttach } from './runtime-hosting'
 
@@ -114,7 +115,7 @@ function appendDurableDiagnostic(
 ): void {
   const runtime = db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) return
-  db.events.append({
+  appendHrcEvent(db, eventKind, {
     ts,
     hostSessionId: runtime.hostSessionId,
     scopeRef: runtime.scopeRef,
@@ -122,9 +123,7 @@ function appendDurableDiagnostic(
     generation: runtime.generation,
     runtimeId,
     ...(runId !== undefined ? { runId } : {}),
-    source: 'broker',
-    eventKind,
-    eventJson,
+    payload: eventJson,
   })
 }
 
