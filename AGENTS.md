@@ -22,6 +22,13 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
   of `wrong # of entries in index` lines that say nothing about the real store.
   Snapshot with `sqlite3 -readonly <db> "VACUUM INTO '<snap>'"`, which is
   consistent and answers `ok`. Use the snapshot for migration dry runs too.
+- **A piped `git push` tells you nothing about whether it worked.** `git push |
+  tail -3` reports the exit code of `tail`, so a `! [remote rejected] … cannot
+  lock ref` scrolls past and any `&& echo PUSHED` still fires. This repo is a
+  SHARED worktree with several agents landing at once, so a lost push race is
+  routine, not exotic. Capture the status: `git push > /tmp/push.log 2>&1; echo
+  $?`, and confirm with `git status -sb` showing no `ahead` — an unpushed commit
+  does not exist for anyone else.
 
 ## Dependency Pins
 
