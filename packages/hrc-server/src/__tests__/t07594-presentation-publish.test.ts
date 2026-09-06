@@ -8,11 +8,12 @@
  *  - `operatorAttachPending` is invocation-local. It rides on the event and is
  *    NEVER persisted — asserted against the raw sqlite column, not just the
  *    mapped snapshot, because a mapper could hide a stray key.
- *  - `viewerRequested` is the cumulative consequence and is MONOTONE within a
- *    generation: false → true on the first non-suppressed invocation, and a
- *    LATER suppressed invocation must not clear it. That is what makes an
- *    `hrc run` runtime later reused by a detached `hrc start` gain a pane, and
- *    what lets a reconcile reproduce the event path's cumulative outcome.
+ *  - `viewerRequested` is normally MONOTONE within a generation: false → true
+ *    on the first non-suppressed invocation, and a LATER operator-attach
+ *    suppression must not clear it. An explicit birth-time `viewer = "none"`
+ *    is different authority and keeps the generation unrequested. That is what
+ *    makes an `hrc run` runtime later reused by a detached `hrc start` gain a
+ *    pane while an explicitly unwatched seat never does.
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -109,7 +110,8 @@ function seedRuntime(presentationKind: 'tmux-tui' | 'none'): HrcRuntimeSnapshot 
   })
 }
 
-function seedSession(viewerWindow?: string): void {
+function seedSession(options: { viewerWindow?: string; viewer?: string } = {}): void {
+  const { viewerWindow, viewer } = options
   fixture.db.sessions.insert({
     hostSessionId: HOST_SESSION_ID,
     scopeRef: SCOPE_REF,
@@ -119,12 +121,13 @@ function seedSession(viewerWindow?: string): void {
     createdAt: PAST,
     updatedAt: PAST,
     ancestorScopeRefs: [],
-    ...(viewerWindow === undefined
+    ...(viewerWindow === undefined && viewer === undefined
       ? {}
       : {
           lastAppliedIntentJson: {
             harness: { id: 'claude-code', provider: 'anthropic' },
-            presentation: { viewerWindow },
+            ...(viewerWindow === undefined ? {} : { presentation: { viewerWindow } }),
+            ...(viewer === undefined ? {} : { provision: { viewer } }),
           } as never,
         }),
   })
@@ -187,7 +190,7 @@ afterEach(async () => {
 
 describe('publishPresentation — persisted record (§5.1)', () => {
   it('a non-suppressed, non-cancelled invocation records attachable + requested and the window key', async () => {
-    seedSession('headless-sessions')
+    seedSession({ viewerWindow: 'headless-sessions' })
     const runtime = seedRuntime('tmux-tui')
     const controller = new AbortController()
 
@@ -253,6 +256,31 @@ describe('publishPresentation — persisted record (§5.1)', () => {
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.presentation?.viewerRequested).toBe(true)
   })
 
+  it('explicit viewer=none overrides a prior viewer request for the generation', async () => {
+    seedSession({ viewer: 'none' })
+    const runtime = seedRuntime('tmux-tui')
+    fixture.db.runtimes.update(RUNTIME_ID, {
+      presentation: { operatorAttachable: true, viewerRequested: true },
+      updatedAt: PAST,
+    })
+
+    await publishPresentation.call(fixture.server, runtime, { operatorAttachPending: false })
+
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.presentation).toEqual({
+      operatorAttachable: true,
+      viewerRequested: false,
+    })
+  })
+
+  it('viewer=auto follows the legacy monotone request path', async () => {
+    seedSession({ viewer: 'auto' })
+    const runtime = seedRuntime('tmux-tui')
+
+    await publishPresentation.call(fixture.server, runtime, { operatorAttachPending: false })
+
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.presentation?.viewerRequested).toBe(true)
+  })
+
   it('records operatorAttachable=false for a presentation-less runtime', async () => {
     seedSession()
     const runtime = seedRuntime('none')
@@ -280,7 +308,7 @@ describe('publishPresentation — persisted record (§5.1)', () => {
 
 describe('publishPresentation — runtime.presentation event (§5.2)', () => {
   it('carries the invocation predicate, the record, and tmux coordinates', async () => {
-    seedSession('headless-sessions')
+    seedSession({ viewerWindow: 'headless-sessions' })
     const runtime = seedRuntime('tmux-tui')
     fixture.db.sessionTitles.upsert({
       hostSessionId: HOST_SESSION_ID,

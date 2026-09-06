@@ -6,9 +6,10 @@
  * presentation decision. It does two things, in order:
  *
  *  1. folds this invocation into the runtime row's DURABLE presentation record
- *     — `operatorAttachable` from the hosting state, and monotone
+ *     — `operatorAttachable` from the hosting state, and normally-monotone
  *     `viewerRequested` which flips false → true on the first non-suppressed
- *     invocation of the generation and is never cleared;
+ *     invocation of the generation. An explicit birth-time `viewer = "none"`
+ *     overrides that monotonicity because it declares the seat unwatched;
  *  2. appends + notifies `runtime.presentation`, carrying the invocation-local
  *     `operatorAttachPending` (which is deliberately NEVER persisted) plus the
  *     tmux coordinates a consumer would otherwise have to obtain from an
@@ -40,22 +41,29 @@ export type PublishPresentationOptions = {
 }
 
 /**
- * Fold this invocation into the persisted record. Monotone in `viewerRequested`
- * and latest-wins in `viewerWindow`; `operatorAttachable` always reflects the
- * hosting state as of this invocation.
+ * Fold this invocation into the persisted record. Normally monotone in
+ * `viewerRequested` and latest-wins in `viewerWindow`; `operatorAttachable`
+ * always reflects the hosting state as of this invocation. An explicit
+ * birth-time `viewer = "none"` overrides a prior request: monotonicity prevents
+ * panes that should exist from being un-requested, while this declaration says
+ * the seat is not watched and no pane should exist at all.
  */
 export function foldPresentationRecord(
   previous: HrcRuntimePresentationRecord | undefined,
   invocation: {
     operatorAttachable: boolean
     operatorAttachPending: boolean
+    viewer: string | undefined
     viewerWindow: string | undefined
   }
 ): HrcRuntimePresentationRecord {
   const viewerWindow = invocation.viewerWindow ?? previous?.viewerWindow
   return {
     operatorAttachable: invocation.operatorAttachable,
-    viewerRequested: previous?.viewerRequested === true || !invocation.operatorAttachPending,
+    viewerRequested:
+      invocation.viewer === 'none'
+        ? false
+        : previous?.viewerRequested === true || !invocation.operatorAttachPending,
     ...(viewerWindow !== undefined ? { viewerWindow } : {}),
   }
 }
@@ -83,6 +91,7 @@ export async function publishPresentation(
     const record = foldPresentationRecord(current.presentation, {
       operatorAttachable,
       operatorAttachPending,
+      viewer: session?.lastAppliedIntentJson?.provision?.viewer,
       viewerWindow: session?.lastAppliedIntentJson?.presentation?.viewerWindow,
     })
 

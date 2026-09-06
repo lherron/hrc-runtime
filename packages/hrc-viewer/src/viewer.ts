@@ -321,7 +321,7 @@ export class HrcViewer {
       })
       return
     }
-    if (presentation['operatorAttachable'] !== true) {
+    if (presentation['viewerRequested'] !== true || presentation['operatorAttachable'] !== true) {
       this.log('INFO', 'broker_headless_viewer.skipped_no_presentation', {
         runtimeId: event.runtimeId,
         scopeRef: event.scopeRef,

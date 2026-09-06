@@ -145,6 +145,20 @@ describe('HrcViewer event reactions (§4.3)', () => {
     expect(harness.ensureCalls[0]?.['attachCommand']).toContain("attach-session -t 'viewer:tui'")
   })
 
+  test('viewerRequested=false suppresses the live event path for a detached attachable runtime', async () => {
+    const harness = makeHarness()
+    await harness.viewer.handleEvent(
+      event('runtime.presentation', {
+        payload: {
+          invocation: { operatorAttachPending: false },
+          presentation: { operatorAttachable: true, viewerRequested: false },
+          tmux: { socketPath: '/tmp/viewer.sock', attachTarget: 'viewer:tui' },
+        },
+      })
+    )
+    expect(harness.ensureCalls).toHaveLength(0)
+  })
+
   test('session.retitled targets by host session and null restores the default title', async () => {
     const harness = makeHarness({
       panes: [{ surfaceId: 'surface-1', windowKey: 'default', hostSessionId: 'hs-1' }],
