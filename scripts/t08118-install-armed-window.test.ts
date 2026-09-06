@@ -51,11 +51,12 @@ describe('T-08118 just install armed-window warning', () => {
     expect(lines).toContain('hrc server restart')
     for (const command of [
       'hrc mail inspect',
-      'hrc worktree prune',
+      'hrc admin worktrees prune',
       'hrc monitor show',
       'hrc monitor watch',
       'hrc monitor wait',
-      'hrc run invocation',
+      'hrc run export',
+      'hrc run annotate',
     ]) {
       expect(lines).toContain(command)
     }

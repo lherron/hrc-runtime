@@ -12,8 +12,15 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import type { Command } from 'commander'
 import { HrcClient } from 'hrc-sdk'
-import { HrcStoreSchemaBehindError, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  DIRECT_STORE_OPEN_COMMANDS,
+  HrcStoreSchemaBehindError,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
+
+import { buildProgram } from '../cli/build-program'
 
 import { type ServerRuntimeStatus, formatServerRuntimeStatus } from '../cli-runtime/server-status'
 import { cmdEventsDrain } from '../events-drain'
@@ -329,5 +336,29 @@ describe('T-08118 hrc admin events drain refuses the live store', () => {
       /refusing to drain the live HRC store/
     )
     expect(storeMigrationIds(dbPath)).not.toContain(REPLAYABLE_MIGRATION)
+  })
+})
+
+describe('T-08118 the refusing-commands list names real commands', () => {
+  it('resolves every DIRECT_STORE_OPEN_COMMANDS entry against the CLI registry', () => {
+    const program = buildProgram()
+    const unresolved: string[] = []
+    for (const entry of DIRECT_STORE_OPEN_COMMANDS) {
+      const [bin, ...path] = entry.split(' ')
+      expect(bin).toBe('hrc')
+      let node: Command | undefined = program
+      for (const segment of path) {
+        node = node?.commands.find(
+          (candidate) => candidate.name() === segment || candidate.aliases().includes(segment)
+        )
+        if (!node) break
+      }
+      if (!node) unresolved.push(entry)
+    }
+    // `just install` prints this list to an operator. An entry that is not a
+    // real command path is worse than no list: it sends them to
+    // "hrc: unknown command".
+    expect(unresolved).toEqual([])
+    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBeGreaterThanOrEqual(7)
   })
 })

@@ -8,14 +8,23 @@ import {
   storeSchemaVersion,
 } from './migrations.js'
 
-/** The six direct-open commands named in T-08118, for operator-facing warnings. */
+/**
+ * Every command that opens the store directly instead of going over the socket,
+ * and therefore refuses while the store is behind (T-08118).
+ *
+ * These are copy-pasteable command paths, not the informal names the task used:
+ * an operator who reads this list in a `just install` warning and types
+ * `hrc worktree prune` gets "unknown command". `packages/hrc-cli` has a test
+ * that resolves every entry against the real command registry.
+ */
 export const DIRECT_STORE_OPEN_COMMANDS = [
   'hrc mail inspect',
-  'hrc worktree prune',
+  'hrc admin worktrees prune',
   'hrc monitor show',
   'hrc monitor watch',
   'hrc monitor wait',
-  'hrc run invocation',
+  'hrc run export',
+  'hrc run annotate',
 ] as const
 
 /**
