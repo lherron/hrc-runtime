@@ -75,9 +75,10 @@
  *
  *   Step 2 — given a resolved driver, consult latestRuntime:
  *     · live (status not terminated/dead/stale) AND controllerKind ===
- *       'harness-broker' AND transport === 'tmux' AND provider matches AND
- *       brokerDriver === resolved driver → 'broker-reuse'.
- *     · live but controllerKind !== 'harness-broker' OR brokerDriver mismatch
+ *       'harness-broker' AND transport === 'tmux' AND provider matches AND input
+ *       is dispatchable → 'broker-reuse', including a healthy driver selected
+ *       before the current routing policy.
+ *     · live but controllerKind !== 'harness-broker'
  *       → 'stale-and-reprovision'  [T-01756: never reuse a non-broker runtime].
  *     · none / unavailable status → 'broker-start'.
  *
@@ -109,6 +110,7 @@ type LatestRuntimeAdmissionView = {
   status: string
   provider: 'anthropic' | 'openai'
   brokerDriver: InteractiveTmuxBrokerDriver | undefined
+  inputDispatchable: boolean
 } | null
 
 type InteractiveBrokerAdmissionDecision =
@@ -367,18 +369,20 @@ describe('decideInteractiveBrokerAdmission — T-01756: non-broker live runtime 
     })
   }
 
-  it('live broker runtime but WRONG driver → stale-and-reprovision (reprovision the correct driver)', () => {
+  it('T-08139: healthy codex-cli-tmux seat remains reusable after routing changes to codex-app-server', () => {
     const live = runtimeView({
       controllerKind: 'harness-broker',
-      provider: 'anthropic',
+      status: 'ready',
+      provider: 'openai',
       brokerDriver: 'codex-cli-tmux',
+      inputDispatchable: true,
     })
-    const decision = decideInteractiveBrokerAdmission!(claudeInteractive, live, BOTH_FLAGS_ON)
+    const decision = decideInteractiveBrokerAdmission!(codexInteractive, live, BOTH_FLAGS_ON)
     expect(decision).toEqual({
-      decision: 'stale-and-reprovision',
-      flagEnvName: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED,
-      allowedBrokerDriver: 'claude-code-tmux',
+      decision: 'broker-reuse',
+      allowedBrokerDriver: 'codex-cli-tmux',
     })
+    expect(decision.decision).not.toBe('stale-and-reprovision')
   })
 })
 

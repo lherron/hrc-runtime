@@ -38,8 +38,6 @@
  * A ledger or registry failure yields the candidates it could resolve and logs;
  * it never takes the ordinary sweep down with it.
  */
-import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
-
 import type { MailKickerContext } from '../context.js'
 import type { KickerRegistryConsultResult } from '../contracts.js'
 import { kickerScopeRefFor } from '../drive/authority.js'
@@ -61,9 +59,10 @@ export async function unbornBirthWakeCandidates(
     if (!seatedSet.has(targetSessionRef)) candidates.add(targetSessionRef)
   }
 
-  // A scope that has left the candidate set has been born (or bound elsewhere),
-  // so its retry bound is spent state. Pruned here rather than on the birth
-  // itself because this is the one place that sees the whole set.
+  // A scope that has left the candidate set has a live seat or its refusal was
+  // resolved/deferred, so its retry bound is spent state. Pruned here rather
+  // than on the birth itself because this is the one place that sees the whole
+  // set.
   for (const targetSessionRef of server.mailKickerBirthSweepBackoff.keys()) {
     if (!candidates.has(targetSessionRef)) {
       server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
@@ -104,19 +103,18 @@ async function designatedUnbornTargets(server: MailKickerContext): Promise<strin
 /**
  * Scopes this node refused a birth for, from its own birth-refusal rows.
  *
- * Filtered against the two records that say the scope is no longer this node's
- * to birth: a local placement-ledger row (it was established, here or by a
- * rebind onto here) and a birth deferral this node has already announced (the
+ * A placement binding is deliberately NOT a filter. T-08139's stranded shape
+ * already has a session and a local binding, but its delivery-driven
+ * replacement died at broker start and `seated` proves no live runtime remains.
+ * A birth deferral this node already announced is still excluded: the
  * collective designated it elsewhere, and re-driving it would buy one more
- * refusal per sweep and nothing else).
+ * refusal per sweep and nothing else.
  */
 function refusedBirthTargets(server: MailKickerContext): string[] {
-  const ledger = createPlacementLedgerRepository(server.db.sqlite)
   const targets: string[] = []
   for (const targetSessionRef of server.db.mailDelivery.listRefusedBirthTargets()) {
     const scopeRef = kickerScopeRefFor(targetSessionRef)
     if (scopeRef === undefined) continue
-    if (ledger.get(scopeRef) !== undefined) continue
     if (server.mailKickerBirthDeferredAnnounced.has(scopeRef)) continue
     targets.push(targetSessionRef)
   }

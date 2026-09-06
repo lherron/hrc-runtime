@@ -415,7 +415,12 @@ export function decideInteractiveBrokerAdmission(
     latestRuntime.controllerKind === 'harness-broker' &&
     latestRuntime.transport === 'tmux' &&
     latestRuntime.provider === intent.harness.provider &&
-    latestRuntime.brokerDriver === resolved.allowedBrokerDriver &&
+    // T-08139: routing policy selects the driver for the NEXT seat, not a
+    // license to kill this one. A healthy broker remains the scope's writer
+    // until natural rotation even when today's policy would provision a
+    // different driver. Reprovisioning it in-place leaves the old broker alive
+    // with the continuation's writer lock, so the replacement cannot start.
+    latestRuntime.brokerDriver !== undefined &&
     // T-05358: never broker-REUSE a runtime whose broker invocation is
     // transitioning (starting/stopping). It matches on driver/provider but
     // cannot accept input right now; fall through to stale-and-reprovision so a
@@ -445,7 +450,10 @@ export function decideInteractiveBrokerAdmission(
     }
     return {
       decision: 'broker-reuse',
-      allowedBrokerDriver: resolved.allowedBrokerDriver,
+      // This field drives existing-driver behavior at the call site (notably
+      // the non-blocking codex-cli/pi paths), so report the driver actually
+      // being reused rather than the policy's next-rotation selection.
+      allowedBrokerDriver: latestRuntime.brokerDriver,
     }
   }
 

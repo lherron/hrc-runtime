@@ -18,6 +18,7 @@ import type {
   MailKickerDependencies,
   MailKickerOptions,
 } from './contracts.js'
+import { kickerScopeRefFor } from './drive/authority.js'
 import { commitLanding, observeBrokerLanding } from './drive/landing.js'
 import { reconcileOpenIntents } from './drive/reconcile.js'
 import { driveMailTargetOnce } from './drive/target-driver.js'
@@ -294,6 +295,9 @@ export function observeMailDriveLifecycleEvent(
     }
     return
   }
+  if (event.eventKind === 'turn.failed') {
+    recordDeliveryBrokerStartRefusal(this, event)
+  }
   if (RUNTIME_TERMINAL_EVENTS.has(event.eventKind)) {
     if (runtimeId === undefined || this.mailKickerLapsedRuntimes.has(runtimeId)) return
     const runtime = this.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
@@ -337,6 +341,54 @@ export function observeMailDriveLifecycleEvent(
     })
   }
   this.wake(targetSessionRef, 'turn_completion')
+}
+
+/**
+ * T-08139 — preserve a wake source when a delivery-triggered broker birth dies
+ * before it can mint a submission or start its launch-carried turn.
+ *
+ * The write-ahead delivery intent is deliberately inspected in this lifecycle
+ * observer: broker start appends/notifies `turn.failed` synchronously, before
+ * the dispatch promise rejects and the delivery path clears that intent. The
+ * newest exact-target intent is therefore the causal delivery. Recording the
+ * refusal here survives that clear and returns the now-unseated target to the
+ * existing periodic birth-retry candidate source.
+ */
+function recordDeliveryBrokerStartRefusal(
+  server: MailKickerContext,
+  event: HrcLifecycleEvent
+): void {
+  if (event.eventKind !== 'turn.failed') return
+  const payload =
+    event.payload !== null && typeof event.payload === 'object'
+      ? (event.payload as Record<string, unknown>)
+      : undefined
+  if (payload?.['phase'] !== 'broker-invocation-start') return
+
+  const targetSessionRef = formatSessionRef(event.scopeRef, event.laneRef)
+  const intent = server.db.mailDelivery
+    .listOpenIntents(targetSessionRef)
+    .filter((candidate) => candidate.submittedHrcSeq <= event.hrcSeq)
+    .at(-1)
+  const scopeRef = kickerScopeRefFor(targetSessionRef)
+  if (intent === undefined || scopeRef === undefined) return
+
+  const failure =
+    typeof payload['message'] === 'string'
+      ? payload['message']
+      : typeof payload['code'] === 'string'
+        ? payload['code']
+        : 'broker start failed'
+  const reason = `${intent.envelopeId}: broker-invocation-start: ${failure}`
+  server.db.mailDelivery.recordBirthRefusal({ targetSessionRef, scopeRef, reason })
+  server.log('WARN', 'wrkq.kicker.delivery_birth_refused', {
+    targetSessionRef,
+    envelope: intent.envelopeId,
+    ...(event.runtimeId === undefined ? {} : { runtimeId: event.runtimeId }),
+    reason: 'broker-invocation-start',
+    error: failure,
+    hrcSeq: event.hrcSeq,
+  })
 }
 
 export function createMailKicker(
