@@ -145,6 +145,28 @@ describe('HrcViewer event reactions (§4.3)', () => {
     expect(harness.ensureCalls[0]?.['attachCommand']).toContain("attach-session -t 'viewer:tui'")
   })
 
+  test('T-08115: the pane outlives the reaper deadline so the reaper decides the race', async () => {
+    // The pane's own `session-report --wait-timeout N; exit` and scheduleReap's
+    // timer both count from the same terminal event. Given the same N they are
+    // one deadline separated by startup jitter, and whichever won decided
+    // whether the log said `reaped` or reported a gone pane as a skip. The
+    // pane's timeout must therefore be STRICTLY GREATER than the linger.
+    const harness = makeHarness({ lingerSeconds: 300 })
+    await harness.viewer.handleEvent(
+      event('runtime.presentation', {
+        payload: {
+          invocation: { operatorAttachPending: false },
+          presentation: { operatorAttachable: true, viewerRequested: true },
+          tmux: { socketPath: '/tmp/viewer.sock', attachTarget: 'viewer:tui' },
+        },
+      })
+    )
+    const attachCommand = String(harness.ensureCalls[0]?.['attachCommand'] ?? '')
+    const waitTimeout = Number(/--wait-timeout (\d+)/.exec(attachCommand)?.[1])
+    expect(Number.isFinite(waitTimeout)).toBe(true)
+    expect(waitTimeout).toBeGreaterThan(300)
+  })
+
   test('viewerRequested=false suppresses the live event path for a detached attachable runtime', async () => {
     const harness = makeHarness()
     await harness.viewer.handleEvent(

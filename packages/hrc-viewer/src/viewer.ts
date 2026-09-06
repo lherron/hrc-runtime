@@ -87,6 +87,22 @@ export type HrcViewerOptions = {
 }
 
 const DEFAULT_LINGER_SECONDS = 300
+/**
+ * How much longer the pane waits before closing itself than the reaper waits
+ * before closing it (T-08115).
+ *
+ * The pane's own command ends `session-report --wait-timeout <linger>; exit`,
+ * and `scheduleReap` fires at `terminalAt + <linger>`. Given the same number,
+ * those are the SAME deadline: the pane's clock starts when `tmux attach`
+ * returns, which is the terminal event the reaper is also counting from. The
+ * two were separated only by process-startup jitter, so which one closed the
+ * pane was a coin flip — measured on 2026-09-06, the reaper won by 0.6s for
+ * rt-49e5932f and lost five other races the same hour. Losing cost the fenced
+ * reap its tab-collapse bookkeeping and logged a skip for a pane that had in
+ * fact gone. A margin makes the reaper authoritative and leaves the pane's own
+ * exit as the backstop for when the viewer is not running at all.
+ */
+const REAP_HANDOFF_MARGIN_SECONDS = 15
 const DEFAULT_RECONCILE_INTERVAL_MS = 5 * 60 * 1_000
 const DEFAULT_RECONNECT_DELAYS_MS = [0, 500, 1_000, 2_000, 4_000] as const
 const TERMINAL_EVENT_KINDS = new Set([
@@ -126,7 +142,7 @@ function attachCommandFor(row: PresentationRuntimeRow, lingerSeconds: number): s
   if (row.tmux === undefined) return null
   return [
     `tmux -S ${shellQuote(row.tmux.socketPath)} attach-session -t ${shellQuote(row.tmux.attachTarget)}`,
-    `hrc monitor session-report --runtime ${shellQuote(row.runtimeId)} --scope ${shellQuote(row.scopeRef)} --wait-key --wait-timeout ${lingerSeconds}`,
+    `hrc monitor session-report --runtime ${shellQuote(row.runtimeId)} --scope ${shellQuote(row.scopeRef)} --wait-key --wait-timeout ${lingerSeconds + REAP_HANDOFF_MARGIN_SECONDS}`,
     'exit',
   ].join('; ')
 }
