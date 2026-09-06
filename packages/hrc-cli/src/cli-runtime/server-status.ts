@@ -2,7 +2,9 @@ import { existsSync, openSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
 import type { FederationPeerHealthObservation, HrcReleaseStatus, HrcStatusResponse } from 'hrc-core'
+import { resolveDatabasePath } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
+import { type StoreSchemaState, readStoreSchemaState, releaseSchemaVersion } from 'hrc-store-sqlite'
 
 import { fatalExit, hasFlag } from '../runtime-args.js'
 import {
@@ -30,6 +32,13 @@ export type ServerRuntimeStatus = {
   binaryPath?: string | undefined
   packagePath?: string | undefined
   release?: HrcReleaseStatus | undefined
+  /**
+   * Where the store's schema sits relative to the schema THIS CLI's release
+   * carries. `schemaAhead: true` is the armed install→restart window: the
+   * installed release has migrations the running daemon's store has not applied,
+   * and the direct-open CLI commands refuse until `hrc server restart` (T-08118).
+   */
+  schema: StoreSchemaState
   pid?: number | undefined
   pidAlive: boolean
   pidPath: string
@@ -377,12 +386,17 @@ export async function collectServerRuntimeStatus(
     const degraded = socketResponsive || pidAlive || pidFileExists
     const status = running ? 'healthy' : degraded ? 'degraded' : 'not-running'
     const exitCode = status === 'healthy' ? 0 : status === 'not-running' ? 1 : 2
+    // Read the store's schema position WITHOUT opening it through
+    // openHrcDatabase: status must be able to report the armed window without
+    // being the process that closes it.
+    const schema = readStoreSchemaState(api?.dbPath ?? resolveDatabasePath())
 
     return {
       ok: status === 'healthy',
       status,
       exitCode,
       running,
+      schema,
       runtimeRoot: paths.runtimeRoot,
       stateRoot: paths.stateRoot,
       ...(api
@@ -431,6 +445,13 @@ export async function collectServerRuntimeStatus(
       status: 'probe-failed',
       exitCode: 3,
       running: false,
+      schema: {
+        readable: false,
+        releaseVersion: releaseSchemaVersion(),
+        pending: [],
+        schemaAhead: false,
+        error: 'status diagnostic failed',
+      },
       runtimeRoot: paths?.runtimeRoot ?? '',
       stateRoot: paths?.stateRoot ?? '',
       pidAlive: false,
@@ -497,6 +518,19 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     }`,
     `  tmux socket:  ${status.tmuxSocketPath}`,
   ]
+
+  // Rendered inline, branch by branch, deliberately: the source-contract
+  // checker derives this label's documented JSON paths from the member accesses
+  // in `formatServerRuntimeStatus` itself, so a helper would hide them.
+  if (!status.schema.readable) {
+    lines.push(`  store schema: unknown (${status.schema.error ?? 'store unreadable'})`)
+  } else if (status.schema.schemaAhead) {
+    lines.push(
+      `  store schema: ${status.schema.storeVersion ?? '(none)'} — schemaAhead: this release carries ${status.schema.releaseVersion} (${status.schema.pending.length} pending); run \`hrc server restart\` to apply it`
+    )
+  } else {
+    lines.push(`  store schema: ${status.schema.storeVersion ?? '(none)'} (matches this release)`)
+  }
 
   if (status.cwd) lines.push(`  cwd:          ${status.cwd}`)
   if (status.binaryPath) lines.push(`  binary:       ${status.binaryPath}`)

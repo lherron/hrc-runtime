@@ -129,6 +129,19 @@ export const SERVER_STATUS_CONTRACT: readonly ServerStatusContractEntry[] = [
     paths: ['api.apiVersion', 'serverStatus.apiVersion'],
     optional: ['api.apiVersion', 'serverStatus.apiVersion'],
   },
+  {
+    label: 'store schema',
+    paths: [
+      'schema.storeVersion',
+      'schema.releaseVersion',
+      'schema.pending.length',
+      'schema.error',
+    ],
+    // The release version and the pending count are printed only in the armed
+    // window; the store version is absent when the store could not be read.
+    summarized: ['schema.releaseVersion', 'schema.pending.length'],
+    optional: ['schema.storeVersion', 'schema.error'],
+  },
   { label: 'error', paths: ['error'] },
 ]
 
@@ -168,6 +181,10 @@ export const ACTIVATION_CONTRACT: readonly ActivationContractPath[] = [
   {
     path: 'release.runningEqualsInstalled',
     summary: 'true when running == installed release',
+  },
+  {
+    path: 'schema.schemaAhead',
+    summary: 'true in the install→restart window: the store lacks migrations this release carries',
   },
 ]
 

@@ -30,6 +30,15 @@ const federatedAtomicStatus: ServerRuntimeStatus = {
   status: 'healthy',
   exitCode: 0,
   running: true,
+  // The armed install→restart window (T-08118): the CLI carries a migration the
+  // running daemon's store has not applied.
+  schema: {
+    readable: true,
+    storeVersion: '0060_hrcmail_refusal_window',
+    releaseVersion: '0061_store_migration_attribution',
+    pending: ['0061_store_migration_attribution'],
+    schemaAhead: true,
+  },
   runtimeRoot: '/var/run/hrc',
   stateRoot: '/var/state/hrc',
   cwd: '/Users/lherron/praesidium',
@@ -144,6 +153,13 @@ const probeFailedStatus: ServerRuntimeStatus = {
   status: 'probe-failed',
   exitCode: 3,
   running: false,
+  schema: {
+    readable: false,
+    releaseVersion: '0061_store_migration_attribution',
+    pending: [],
+    schemaAhead: false,
+    error: 'status diagnostic failed',
+  },
   runtimeRoot: '',
   stateRoot: '',
   pidAlive: false,
@@ -258,10 +274,15 @@ describe('hrc server status --json / human parity (T-07646)', () => {
 describe('the activation contract published by hrc info (T-07646)', () => {
   it('documents only paths the contract table actually names', () => {
     const known = new Set(SERVER_STATUS_CONTRACT.flatMap((entry) => entry.paths))
-    // release.processStartedAt is carried by the JSON but summarized by the
-    // human "release:" line, so it is documented without being a rendered path.
+    // Two paths are carried by the JSON but not printed verbatim by any line:
+    // release.processStartedAt is summarized by the human "release:" line, and
+    // schema.schemaAhead is the discriminator the "store schema:" line branches
+    // on rather than a value it prints. Both are documented for activation
+    // scripts without being rendered paths — the same list
+    // check-server-status-source-contract.ts exempts.
+    const activationOnly = new Set(['release.processStartedAt', 'schema.schemaAhead'])
     const rendered = ACTIVATION_CONTRACT.map((entry) => entry.path).filter(
-      (path) => path !== 'release.processStartedAt'
+      (path) => !activationOnly.has(path)
     )
     for (const path of rendered) expect(known).toContain(path)
   })

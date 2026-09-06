@@ -378,7 +378,7 @@ export async function createLiveMonitorStateSource(
   const status = await client.getStatus({ includeSessions: false })
   signal?.throwIfAborted()
 
-  const db = openHrcDatabase(status.dbPath)
+  const db = openHrcDatabase(status.dbPath, { migrate: false })
   let state: HrcMonitorState
   let filters: HrcLifecycleMonitorFilters[]
   let targetMessages: HrcMonitorMessageState[]
@@ -444,7 +444,7 @@ export async function createLiveMonitorStateSource(
   let pendingRefresh = Promise.resolve(state)
   const refresh = async (refreshSignal?: AbortSignal | undefined): Promise<HrcMonitorState> => {
     refreshSignal?.throwIfAborted()
-    const refreshDb = openHrcDatabase(status.dbPath)
+    const refreshDb = openHrcDatabase(status.dbPath, { migrate: false })
     try {
       const eventGlobalHighWaterSeq = refreshDb.hrcEvents.maxHrcSeq()
       const messageGlobalHighWaterSeq = refreshDb.messages.maxMessageSeq()
@@ -514,7 +514,7 @@ function initialEventFromSeq(
 
   const cutoff = new Date(Date.now() - parseDuration(since)).toISOString()
   if (dbPath === undefined) return Math.max(1, highWater)
-  const db = openHrcDatabase(dbPath)
+  const db = openHrcDatabase(dbPath, { migrate: false })
   try {
     const row = db.sqlite
       .query<{ hrc_seq: number }, [string, number]>(

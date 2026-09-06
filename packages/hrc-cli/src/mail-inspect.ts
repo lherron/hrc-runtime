@@ -130,7 +130,7 @@ export async function cmdMailInspect(target: string, flags: MailInspectFlags): P
   } catch (error) {
     throw new CliUsageError(error instanceof Error ? error.message : String(error))
   }
-  const db = openHrcDatabase(resolveDatabasePath())
+  const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
     const envelopeIds = mailInspectEnvelopeIds(db, query)
     const ledgerRows = await readLedgerRows(envelopeIds)

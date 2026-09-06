@@ -55,7 +55,7 @@ export async function cmdRunExport(args: string[]): Promise<void> {
     )
   }
 
-  const db = openHrcDatabase(resolveDatabasePath())
+  const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
     const run = resolveRun(db, options.target)
     const cursors = eventCursors(db, run.runId)
@@ -121,7 +121,7 @@ export async function cmdRunAnnotate(args: string[]): Promise<void> {
   }
   const incoming = parseCorrelationJson(options.correlation)
 
-  const db = openHrcDatabase(resolveDatabasePath())
+  const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
     const run = resolveRun(db, options.target)
     const existing = readCorrelation(db, run.runId)

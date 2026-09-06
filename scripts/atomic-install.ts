@@ -19,7 +19,9 @@ import {
   type PraesidiumBuild,
   type PraesidiumReleaseManifest,
   environmentWithoutGitOverrides,
+  resolveDatabasePath,
 } from 'hrc-core'
+import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqlite'
 
 import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
 import { readCoherentInstalledAspBuild, readPublishedHrcBuild } from './lib/praesidium-build'
@@ -539,6 +541,35 @@ async function main(): Promise<void> {
     prepareRelease: (path) => prepareProductionRelease(path, options, publicationSource),
   })
   console.log(`[install] atomic HRC CLI cutover complete: ${releasePath}`)
+  warnIfSchemaAhead()
+}
+
+/**
+ * The install→restart armed window (T-08118). The CLI surface is now this
+ * release; the daemon still runs the previous one against a store at the
+ * previous schema. The direct-open commands below refuse until the restart, so
+ * say so here rather than letting the operator meet the refusal cold.
+ */
+function warnIfSchemaAhead(): void {
+  const dbPath = resolveDatabasePath()
+  const schema = readStoreSchemaState(dbPath)
+  if (!schema.readable) {
+    console.log(`[install] store schema: unreadable (${schema.error ?? 'unknown'})`)
+    return
+  }
+  if (!schema.schemaAhead) {
+    console.log(`[install] store schema: ${schema.storeVersion ?? '(none)'} matches running`)
+    return
+  }
+  console.log(
+    `[install] store schema: ${schema.storeVersion ?? '(none)'} differs from running — ` +
+      `this release carries ${schema.pending.length} unapplied migration(s) ` +
+      `(through ${schema.releaseVersion}).`
+  )
+  console.log('[install] run `hrc server restart` to apply them. Until then these refuse:')
+  for (const command of DIRECT_STORE_OPEN_COMMANDS) {
+    console.log(`[install]   ${command}`)
+  }
 }
 
 if (import.meta.main) {

@@ -15,7 +15,7 @@ import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
 import { HrcMailFederatedOriginRepository } from './mail/federated-origin-repository.js'
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
-import { listAppliedMigrations, runMigrations } from './migrations.js'
+import { appliedMigrationIds, listAppliedMigrations, runMigrations } from './migrations.js'
 import { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 import {
   ActiveInputDeliveryRepository,
@@ -51,6 +51,7 @@ import {
   ToolResultBlobRepository,
 } from './repositories/tool-result-blob-repository.js'
 import { RosterClaimRepository } from './roster-claim-repository.js'
+import { assertStoreSchemaCurrent } from './schema-guard.js'
 import { SessionIndexRepository } from './session-index-repository.js'
 import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 import { SessionTitleRepository } from './session-title-repository.js'
@@ -59,6 +60,18 @@ import { TranscriptIndexRepository } from './transcript-index-repository.js'
 import { WrkqLedgerCursorRepository } from './wrkq/ledger-cursor-repository.js'
 
 export type OpenHrcDatabaseOptions = {
+  /**
+   * Who owns the schema on this open. The daemon owns the live store and opens
+   * with `true`; every other direct open — the CLI commands that read the store
+   * instead of going over the socket — must pass `false`, which refuses with
+   * {@link HrcStoreSchemaBehindError} rather than applying this release's
+   * migrations under a daemon still running the previous one (T-08118).
+   *
+   * Defaults to `true` so that store *creation* (tests, fixtures, first boot)
+   * keeps working; `packages/hrc-cli` has a conformance test that fails the
+   * build if a CLI source file opens the store without `migrate: false`.
+   */
+  migrate?: boolean | undefined
   busyTimeoutMs?: number | undefined
   slowStatementThresholdMs?: number | undefined
   onSlowStatement?: ((statement: SqliteSlowStatement) => void) | undefined
@@ -154,7 +167,22 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
           slowStatementThresholdMs: options.slowStatementThresholdMs ?? 250,
           onSlowStatement: options.onSlowStatement,
         })
-  runMigrations(sqlite)
+  try {
+    // An ephemeral store (`:memory:`, '') is private to this process by
+    // construction: there is no running daemon holding an older schema against
+    // it, so there is nothing for a non-owning open to protect. It must be
+    // initialized to be usable at all.
+    if (options.migrate === false && !isEphemeralPath(dbPath)) {
+      assertStoreSchemaCurrent(sqlite)
+    } else {
+      runMigrations(sqlite)
+    }
+  } catch (error) {
+    // A refused open owns no handle: leaking the sqlite connection would hold a
+    // WAL reader open for the lifetime of the process that was told to stop.
+    sqlite.close()
+    throw error
+  }
   const toolResultBlobs = new ToolResultBlobRepository(sqlite, options.onLedgerBlobMiss)
 
   return {
@@ -163,7 +191,11 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
       sqlite.close()
     },
     migrations: {
-      applied: listAppliedMigrations(sqlite),
+      // A non-migrating open reads the applied set without the
+      // `CREATE TABLE IF NOT EXISTS` that `listAppliedMigrations` performs: it
+      // must not write DDL into a store it does not own.
+      applied:
+        options.migrate === false ? appliedMigrationIds(sqlite) : listAppliedMigrations(sqlite),
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),

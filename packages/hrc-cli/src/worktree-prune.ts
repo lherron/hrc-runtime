@@ -270,7 +270,7 @@ function projectionCwd(value: string | undefined): string | undefined {
 }
 
 function defaultLiveRuntimeOccupancies(): LiveRuntimeOccupancy[] {
-  const db = openHrcDatabase(resolveDatabasePath())
+  const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   try {
     return db.runtimes
       .listAll()

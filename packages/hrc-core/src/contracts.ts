@@ -62,6 +62,8 @@ export type HrcEventCategory =
   | 'bridge'
   | 'context'
   | 'app_session'
+  /** The store itself, not any seat: `store.migrated` attribution rows (T-08118). */
+  | 'store'
 
 export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
 

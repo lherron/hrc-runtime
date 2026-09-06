@@ -66,6 +66,13 @@ const coincidentPidStatus = {
     sessionCount: 0,
     sessions: [],
   },
+  schema: {
+    readable: true,
+    storeVersion: '0060_hrcmail_refusal_window',
+    releaseVersion: '0060_hrcmail_refusal_window',
+    pending: [],
+    schemaAhead: false,
+  },
 } satisfies ServerRuntimeStatus
 
 describe('server-status source-derived contract guard (T-07652)', () => {
@@ -102,7 +109,7 @@ describe('server-status source-derived contract guard (T-07652)', () => {
   it('keeps render metadata and the activation-only path explicitly hand-authored', () => {
     expect(SERVER_STATUS_SOURCE_CONTRACT_EXEMPTIONS).toEqual({
       entryFields: ['multiline', 'summarized', 'optional'],
-      activationOnlyPaths: ['release.processStartedAt'],
+      activationOnlyPaths: ['release.processStartedAt', 'schema.schemaAhead'],
     })
     const renderedPaths = new Set(SERVER_STATUS_CONTRACT.flatMap((entry) => entry.paths))
     expect(

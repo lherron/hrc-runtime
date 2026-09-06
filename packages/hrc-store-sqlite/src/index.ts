@@ -1,5 +1,20 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase, OpenHrcDatabaseOptions } from './database.js'
+export {
+  DIRECT_STORE_OPEN_COMMANDS,
+  HrcStoreSchemaBehindError,
+  assertStoreSchemaCurrent,
+  readStoreSchemaState,
+} from './schema-guard.js'
+export type { StoreSchemaState } from './schema-guard.js'
+export {
+  appliedMigrationIds,
+  pendingMigrationIds,
+  releaseSchemaVersion,
+  resolveMigrationActor,
+  resolveReleaseId,
+  storeSchemaVersion,
+} from './migrations.js'
 export { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
 export type {
   ExternalRegistrationGrant,

@@ -898,7 +898,8 @@ export async function drainEventDatabase(options: {
   sourceRef: string
   socketPath?: string
 }): Promise<{ forwarded: number; cursors: ForwardCursors }> {
-  const db = openHrcDatabase(options.dbPath)
+  // Daemon-side drain of a runtime-local event database it owns outright.
+  const db = openHrcDatabase(options.dbPath, { migrate: true })
   const cursorPath = join(dirname(options.dbPath), CURSOR_FILE)
   let forwarded = 0
   try {

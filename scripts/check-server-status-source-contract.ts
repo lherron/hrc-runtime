@@ -20,7 +20,10 @@ const FORMATTER_PATH = join(
 
 export const SERVER_STATUS_SOURCE_CONTRACT_EXEMPTIONS = {
   entryFields: ['multiline', 'summarized', 'optional'],
-  activationOnlyPaths: ['release.processStartedAt'],
+  // `schema.schemaAhead` is the branch discriminator, not a printed value: the
+  // human line renders the store/release versions it selects between, so the
+  // boolean is published for activation scripts without appearing in a line.
+  activationOnlyPaths: ['release.processStartedAt', 'schema.schemaAhead'],
 } as const
 
 type ContractPathEntry = Pick<ServerStatusContractEntry, 'label' | 'paths'>

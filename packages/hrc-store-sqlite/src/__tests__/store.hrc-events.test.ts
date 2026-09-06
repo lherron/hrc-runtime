@@ -540,7 +540,13 @@ describe('0009_backfill_legacy_hrc_events', () => {
       expect(rawEvents).toHaveLength(1)
       expect(rawEvents[0]?.source).toBe('hook')
 
-      const typedEvents = db.hrcEvents.listFromHrcSeq(1)
+      // Upgrading an existing store also appends its own `store.migrated`
+      // attribution row (T-08118). It is not part of the backfill under test,
+      // so the backfill assertions read the rows the backfill produced — and the
+      // attribution row is asserted separately, right below.
+      const allEvents = db.hrcEvents.listFromHrcSeq(1)
+      const typedEvents = allEvents.filter((event) => event.eventKind !== 'store.migrated')
+      expect(allEvents.filter((event) => event.eventKind === 'store.migrated')).toHaveLength(1)
       expect(typedEvents.map((event) => event.eventKind)).toEqual([
         'turn.completed',
         'app-session.literal-input',
@@ -575,10 +581,11 @@ describe('0009_backfill_legacy_hrc_events', () => {
         enter: true,
       })
 
+      // 2 backfilled rows + 1 attribution row: the cursor sits one past the head.
       const cursor = db.sqlite
         .query<{ next_seq: number }, []>('SELECT next_seq FROM event_stream_cursor WHERE id = 1')
         .get()
-      expect(cursor?.next_seq).toBe(4)
+      expect(cursor?.next_seq).toBe(5)
     } finally {
       db.close()
     }
@@ -630,7 +637,9 @@ describe('0009_backfill_legacy_hrc_events', () => {
     try {
       expect(db.events.listFromSeq(1)).toHaveLength(0)
 
-      const typedEvents = db.hrcEvents.listFromHrcSeq(1)
+      const typedEvents = db.hrcEvents
+        .listFromHrcSeq(1)
+        .filter((event) => event.eventKind !== 'store.migrated')
       expect(typedEvents).toHaveLength(1)
       expect(typedEvents[0]).toMatchObject({
         hrcSeq: 1,
@@ -640,10 +649,11 @@ describe('0009_backfill_legacy_hrc_events', () => {
       })
       expect(typedEvents[0]?.payload).toEqual({ created: true })
 
+      // 1 backfilled row at 9 + the T-08118 attribution row at 10.
       const cursor = db.sqlite
         .query<{ next_seq: number }, []>('SELECT next_seq FROM event_stream_cursor WHERE id = 1')
         .get()
-      expect(cursor?.next_seq).toBe(10)
+      expect(cursor?.next_seq).toBe(11)
     } finally {
       db.close()
     }
@@ -704,7 +714,9 @@ describe('federated observed event migration', () => {
         payload: { toolName: 'AskUserQuestion' },
       })
       expect(projected.hostSessionId).toBe('hsid-peer-owned')
-      expect(projected.streamSeq).toBe(2)
+      // stream_seq 2 went to the store's own `store.migrated` attribution row
+      // for this upgrade (T-08118); the appended peer event follows it.
+      expect(projected.streamSeq).toBe(3)
     } finally {
       db.close()
     }

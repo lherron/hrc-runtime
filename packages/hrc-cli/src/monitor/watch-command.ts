@@ -21,7 +21,11 @@ import {
   resolveDatabasePath,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
-import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  type HrcLifecycleMonitorFilters,
+  HrcStoreSchemaBehindError,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
 import { splitCsv } from '../cli/argv.js'
 import { matchStringFlag, parseNonNegativeInteger, parsePositiveInteger } from '../monitor-args.js'
 import { numberField, stringField } from '../monitor-fields.js'
@@ -240,6 +244,9 @@ async function runWatch(
       deadlineAt
     )
   } catch (error) {
+    // Same reasoning as `hrc monitor show`: the schema refusal is an operator
+    // instruction, not a read failure, so it propagates verbatim (T-08118).
+    if (error instanceof HrcStoreSchemaBehindError) throw error
     io.stderr.write(
       `monitor initial read failed: ${error instanceof Error ? error.message : String(error)}\n`
     )
@@ -437,7 +444,7 @@ async function buildLiveMonitorState(
   // Load events from database. When filters are active (T-04232) the query layer
   // narrows the firehose server-side so the CLI never materializes it; the global
   // high-water is captured separately so the follow cursor stays global.
-  const db = openHrcDatabase(resolveDatabasePath())
+  const db = openHrcDatabase(resolveDatabasePath(), { migrate: false })
   let events: HrcMonitorEvent[]
   let eventGlobalHighWaterSeq: number | undefined
   try {

@@ -18,7 +18,7 @@ import {
   monitorSessionMatchKind,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { HrcStoreSchemaBehindError, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
@@ -126,6 +126,12 @@ export async function cmdMonitorShow(args: string[]): Promise<void> {
     if (error instanceof CliUsageError) {
       throw error
     }
+    // The schema refusal is a typed operator instruction, not a read failure:
+    // wrapping it as "snapshot read failed" would bury the one sentence that
+    // says what to do (`hrc server restart`). Let it render verbatim (T-08118).
+    if (error instanceof HrcStoreSchemaBehindError) {
+      throw error
+    }
     const message = error instanceof Error ? error.message : String(error)
     const infrastructureError =
       error instanceof MonitorInfrastructureError
@@ -183,7 +189,7 @@ async function buildMonitorState(
   client: HrcClient,
   selector?: HrcSelector | undefined
 ): Promise<HrcMonitorState> {
-  const db = openHrcDatabase(status.dbPath)
+  const db = openHrcDatabase(status.dbPath, { migrate: false })
   try {
     const selected = selector
       ? await readSelectorState(selector, status, client, db)
