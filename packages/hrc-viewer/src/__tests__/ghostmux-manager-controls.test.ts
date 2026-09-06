@@ -48,8 +48,12 @@ function makeFakeGhostmux() {
     }
     if (args[0] === 'metadata' && args[1] === 'get') {
       const s = surfaces.get(args[3] ?? '')
-      const meta = args.includes('--window') ? s?.windowMeta : s?.surfaceMeta
-      return { stdout: JSON.stringify({ data: meta ?? {} }), stderr: '' }
+      // Model the REAL binary (T-08115): a target ghostmux cannot resolve is an
+      // exit-1 error, not empty metadata. A fake that answered `{}` here made
+      // "the pane is gone" indistinguishable from "the pane is not ours".
+      if (s === undefined) throw new Error(`error: can't find terminal: ${args[3] ?? ''}`)
+      const meta = args.includes('--window') ? s.windowMeta : s.surfaceMeta
+      return { stdout: JSON.stringify({ data: meta }), stderr: '' }
     }
     if (args[0] === 'metadata' && args[1] === 'set') {
       const s = surfaces.get(args[3] ?? '')
@@ -134,7 +138,12 @@ describe('GhostmuxManager.reapHeadlessAgentPane (runtime-fenced, daedalus C4)', 
 
     // A stale terminal event for rt-1 must NOT kill the pane.
     const result = await manager.reapHeadlessAgentPane(paneId, 'rt-1')
-    expect(result).toEqual({ status: 'skipped', reason: 'runtime_rebound' })
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'runtime_rebound',
+      observedRuntimeId: 'rt-2',
+      requiredRuntimeId: 'rt-1',
+    })
     expect(fake.liveIds()).toContain(paneId)
   })
 
@@ -145,7 +154,12 @@ describe('GhostmuxManager.reapHeadlessAgentPane (runtime-fenced, daedalus C4)', 
     const anchorId = fake.anchors()[0]?.[0] ?? ''
 
     const result = await manager.reapHeadlessAgentPane(anchorId, 'rt-1')
-    expect(result).toEqual({ status: 'skipped', reason: 'not_agent_pane' })
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'not_agent_pane',
+      observedRole: 'headless-window-anchor',
+      requiredRole: 'headless-agent-pane',
+    })
     expect(fake.liveIds()).toContain(anchorId)
   })
 })

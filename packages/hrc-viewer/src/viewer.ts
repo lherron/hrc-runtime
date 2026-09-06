@@ -557,7 +557,22 @@ export class HrcViewer {
           scopeRef,
           surfaceId,
           ...(result.status === 'reaped' ? { tabCollapsed: result.tabCollapsed } : {}),
-          ...(result.status === 'skipped' ? { reason: result.reason } : {}),
+          // T-08115: a skip must say what it observed against what it required,
+          // so the NEXT occurrence is self-diagnosing from the log alone.
+          ...(result.status === 'skipped'
+            ? {
+                reason: result.reason,
+                ...(result.observedRole !== undefined ? { observedRole: result.observedRole } : {}),
+                ...(result.requiredRole !== undefined ? { requiredRole: result.requiredRole } : {}),
+                ...(result.observedRuntimeId !== undefined
+                  ? { observedRuntimeId: result.observedRuntimeId }
+                  : {}),
+                ...(result.requiredRuntimeId !== undefined
+                  ? { requiredRuntimeId: result.requiredRuntimeId }
+                  : {}),
+                ...(result.probeError !== undefined ? { probeError: result.probeError } : {}),
+              }
+            : {}),
           ...(result.status === 'failed' ? { error: result.error } : {}),
         }
       )

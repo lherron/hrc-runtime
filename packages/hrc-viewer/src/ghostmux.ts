@@ -396,10 +396,39 @@ type HeadlessWindowTarget =
   | { kind: 'managed'; windowId: string }
   | { kind: 'anchor'; anchor: GhostmuxSurfaceState }
 
+/**
+ * Why a reap declined to remove the pane (T-08115). These were all reported as
+ * `not_agent_pane` before, which conflated "the pane is somebody else's, refuse"
+ * with "the pane is already gone" and with "we could not ask". A reader could
+ * not tell a correct refusal from a lost probe, so the skip line has to say what
+ * it OBSERVED against what it REQUIRED.
+ */
+export type HeadlessReapSkipReason =
+  /** ghostmux resolved the surface and its role is not ours — the real refusal. */
+  | 'not_agent_pane'
+  /** Live metadata maps the pane to a NEWER runtime — the runtime fence. */
+  | 'runtime_rebound'
+  /** The surface no longer exists: the pane closed before the reap timer fired. */
+  | 'surface_missing'
+  /** The probe itself failed (timeout, malformed answer) — nothing was observed. */
+  | 'probe_failed'
+
+/** What the reap saw on the pane, against what it required (T-08115). */
+export type HeadlessReapObservation = {
+  /** `hrc_role` as read, `null` when metadata existed without one. */
+  observedRole?: string | null | undefined
+  requiredRole?: string | undefined
+  /** `hrc_runtime_id` as read, `null` when metadata existed without one. */
+  observedRuntimeId?: string | null | undefined
+  requiredRuntimeId?: string | undefined
+  /** Raw ghostmux failure for `surface_missing` / `probe_failed`. */
+  probeError?: string | undefined
+}
+
 /** Outcome of a runtime-fenced agent-pane reap (T-05237, daedalus C4). */
 export type HeadlessReapResult =
   | { status: 'reaped'; surfaceId: string; tabCollapsed: boolean }
-  | { status: 'skipped'; reason: string }
+  | ({ status: 'skipped'; reason: HeadlessReapSkipReason } & HeadlessReapObservation)
   | { status: 'failed'; error: string }
 
 /**
@@ -849,13 +878,52 @@ export class GhostmuxManager {
    */
   async reapHeadlessAgentPane(surfaceId: string, runtimeId: string): Promise<HeadlessReapResult> {
     try {
-      const metadata = await this.getMetadata(surfaceId, false).catch(() => undefined)
-      if (!isRecord(metadata) || metadata['hrc_role'] !== HEADLESS_AGENT_PANE_ROLE) {
-        return { status: 'skipped', reason: 'not_agent_pane' }
+      // T-08115: the probe is fallible in three different ways and only ONE of
+      // them is a refusal. Swallowing all of them into `not_agent_pane` made a
+      // pane that had already closed itself look like a pane we declined to
+      // remove, so separate them before classifying.
+      let metadata: unknown
+      try {
+        metadata = await this.getMetadata(surfaceId, false)
+      } catch (error) {
+        const probeError = error instanceof Error ? error.message : String(error)
+        const present = await this.surfaceExists(surfaceId)
+        return {
+          status: 'skipped',
+          // `present === undefined` means the confirming probe ALSO failed, so
+          // we do not know — say `probe_failed` rather than claim it was gone.
+          reason: present === false ? 'surface_missing' : 'probe_failed',
+          probeError,
+        }
       }
-      if (metadata['hrc_runtime_id'] !== runtimeId) {
+      if (!isRecord(metadata)) {
+        return {
+          status: 'skipped',
+          reason: 'probe_failed',
+          probeError: 'ghostmux answered metadata that is not an object',
+        }
+      }
+      const observedRole = typeof metadata['hrc_role'] === 'string' ? metadata['hrc_role'] : null
+      const observedRuntimeId =
+        typeof metadata['hrc_runtime_id'] === 'string' ? metadata['hrc_runtime_id'] : null
+      if (observedRole !== HEADLESS_AGENT_PANE_ROLE) {
+        // The pane resolved and is genuinely not ours. This is the skip path
+        // doing its job: never terminate a surface we do not own.
+        return {
+          status: 'skipped',
+          reason: 'not_agent_pane',
+          observedRole,
+          requiredRole: HEADLESS_AGENT_PANE_ROLE,
+        }
+      }
+      if (observedRuntimeId !== runtimeId) {
         // Rebound to a newer runtime — the fence: do NOT reap.
-        return { status: 'skipped', reason: 'runtime_rebound' }
+        return {
+          status: 'skipped',
+          reason: 'runtime_rebound',
+          observedRuntimeId,
+          requiredRuntimeId: runtimeId,
+        }
       }
       const tabKey =
         typeof metadata['hrc_tab_key'] === 'string' ? metadata['hrc_tab_key'] : undefined
@@ -870,6 +938,25 @@ export class GhostmuxManager {
       return { status: 'reaped', surfaceId, tabCollapsed }
     } catch (error) {
       return { status: 'failed', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /**
+   * Does Ghostty still hold this surface? The confirming probe behind the
+   * `surface_missing` / `probe_failed` split (T-08115). Asks the surface list
+   * rather than pattern-matching ghostmux's human-readable `can't find terminal`
+   * text, which is a rendering and not a contract. Answers `undefined` when the
+   * confirming probe ALSO fails — an unanswerable question, never a "gone".
+   */
+  private async surfaceExists(surfaceId: string): Promise<boolean | undefined> {
+    try {
+      const surfaces = parseGhostmuxSurfaceList(
+        (await this.exec(['list-surfaces', '--json'])).stdout
+      )
+      const wanted = surfaceId.toLowerCase()
+      return surfaces.some((surface) => surface.surfaceId.toLowerCase() === wanted)
+    } catch {
+      return undefined
     }
   }
 
