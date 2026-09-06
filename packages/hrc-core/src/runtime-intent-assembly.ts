@@ -144,22 +144,17 @@ export function resolveAgentHarness(args: {
       projectTarget,
       'task'
     )
-    // `node` is the one top-level scalar the merge does not project (it is
-    // placement policy, not a harness setting), so take it from the same two
-    // sources in the same order the merge uses.
-    const node = projectTarget?.provisioning?.node ?? profile.provisioning?.node
     return {
       provider: resolveProviderForHarness(effective.harness),
       harness: effective.harness,
+      // The merge's canonical bag is the single authority for provisioning
+      // scalars, including target-over-profile precedence. `harness` is the one
+      // deliberate asymmetry: the bag preserves absence, while the legacy
+      // effective field applies the load-bearing `claude-code` default that HRC
+      // has always published on the intent.
       provision: scalarsOnly({
+        ...effective.provisioning,
         harness: effective.harness,
-        model: effective.model,
-        reasoning: effective.reasoning,
-        approval: effective.approval,
-        sandbox: effective.sandbox,
-        yolo: effective.yolo,
-        remote: effective.remoteControl,
-        node,
       }),
     }
   } catch {

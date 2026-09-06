@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { PROVISIONING_SCALAR_KEYS } from 'agent-scope'
 import { buildHrcRuntimeIntent, resolveAgentHarness } from './runtime-intent-assembly.js'
 
 const tempRoots: string[] = []
@@ -54,6 +55,24 @@ describe('resolveAgentHarness — provider/harness derived from the agent profil
     expect(resolveAgentHarness({ agentRoot: root, agentId: 'x' })).toMatchObject({
       provider: 'anthropic',
       harness: undefined,
+    })
+  })
+
+  test('missing profile keeps the target-only provisioning branch structural', () => {
+    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-target-only-agent-'))
+    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-target-only-project-'))
+    tempRoots.push(agentRoot, projectRoot)
+    writeFileSync(
+      join(projectRoot, 'asp-targets.toml'),
+      ['schema = 1', '', '[targets.x]', '', '[targets.x.provisioning]', 'node = "svc"', ''].join(
+        '\n'
+      )
+    )
+
+    expect(resolveAgentHarness({ agentRoot, agentId: 'x', projectRoot })).toMatchObject({
+      provider: 'anthropic',
+      harness: undefined,
+      provision: { node: 'svc' },
     })
   })
 })
@@ -164,6 +183,7 @@ describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () 
       join(root, 'agent-profile.toml'),
       [
         'version = 3',
+        'priming = "private system prompt"',
         '',
         '[provisioning]',
         'harness = "claude-code"',
@@ -171,10 +191,19 @@ describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () 
         'reasoning = "high"',
         'approval = "never"',
         'remote = true',
+        'node = "agent-node"',
+        'viewer = "none"',
         '',
       ].join('\n')
     )
     return { agentRoot: root, agentId: 'fixture-agent' }
+  }
+
+  function makeProjectTarget(source: string): string {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-project-'))
+    tempRoots.push(root)
+    writeFileSync(join(root, 'asp-targets.toml'), source)
+    return root
   }
 
   test('directives overlay the merged profile baseline and re-resolve the harness', () => {
@@ -193,7 +222,14 @@ describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () 
       reasoning: 'high',
       approval: 'never',
       remote: true,
+      node: 'agent-node',
+      viewer: 'none',
     })
+    expect(
+      Object.keys(baseline.provision ?? {}).filter(
+        (key) => !(PROVISIONING_SCALAR_KEYS as readonly string[]).includes(key)
+      )
+    ).toEqual([])
 
     // Directives applied LAST: they win over the merge, and the harness id and
     // provider follow the overlaid harness rather than the profile's.
@@ -211,7 +247,54 @@ describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () 
       // Untouched keys survive the overlay.
       approval: 'never',
       remote: true,
+      node: 'agent-node',
+      viewer: 'none',
     })
     expect(directed.harness).toMatchObject({ provider: 'openai', id: 'codex-cli' })
+  })
+
+  test('canonical merge bag preserves target precedence for node and remote', () => {
+    const { agentRoot, agentId } = makeProvisioningAgentDir()
+    const projectRoot = makeProjectTarget(
+      [
+        'schema = 1',
+        '',
+        '[targets.fixture-agent]',
+        'description = "must not become a provisioning scalar"',
+        '',
+        '[targets.fixture-agent.provisioning]',
+        'node = "target-node"',
+        'remote = false',
+        '',
+      ].join('\n')
+    )
+
+    const intent = buildHrcRuntimeIntent({ agentId, agentRoot, projectRoot })
+
+    expect(intent.provision).toMatchObject({
+      harness: 'claude-code',
+      node: 'target-node',
+      remote: false,
+      viewer: 'none',
+    })
+    expect(
+      Object.keys(intent.provision ?? {}).filter(
+        (key) => !(PROVISIONING_SCALAR_KEYS as readonly string[]).includes(key)
+      )
+    ).toEqual([])
+  })
+
+  test('undeclared harness keeps its default while remote keeps its false default', () => {
+    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-sdk-provision-defaults-'))
+    tempRoots.push(agentRoot)
+    writeFileSync(join(agentRoot, 'agent-profile.toml'), 'version = 3\n')
+
+    const intent = buildHrcRuntimeIntent({ agentId: 'fixture-agent', agentRoot })
+
+    expect(intent.provision).toEqual({
+      remote: false,
+      harness: 'claude-code',
+    })
+    expect(Object.hasOwn(intent.provision ?? {}, 'viewer')).toBe(false)
   })
 })
