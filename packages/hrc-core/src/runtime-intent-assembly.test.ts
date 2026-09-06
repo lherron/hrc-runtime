@@ -298,3 +298,185 @@ describe('T-07398 buildHrcRuntimeIntent — provisioning directive overlay', () 
     expect(Object.hasOwn(intent.provision ?? {}, 'viewer')).toBe(false)
   })
 })
+
+/**
+ * T-08128. A profile that exists but cannot be parsed degrades to the SAME
+ * value an absent profile degrades to, so the returned object cannot carry the
+ * proof — these tests assert on the emission, which is the only place the two
+ * states are still distinguishable.
+ *
+ * The must-not-fire half is load-bearing. A change that warns on both states is
+ * indistinguishable from one that warns on neither to anyone reading a busy
+ * log, so "absent stays silent" is pinned as hard as "broken speaks up".
+ */
+function captureStderr(run: () => void): { warnings: string[] } {
+  const original = console.error
+  const warnings: string[] = []
+  console.error = (...parts: unknown[]) => {
+    warnings.push(parts.map((part) => String(part)).join(' '))
+  }
+  try {
+    run()
+  } finally {
+    console.error = original
+  }
+  return { warnings }
+}
+
+function makeAgentDirWithProfile(source: string, label: string): string {
+  const root = mkdtempSync(join(tmpdir(), `hrc-core-profile-${label}-`))
+  tempRoots.push(root)
+  writeFileSync(join(root, 'agent-profile.toml'), source)
+  return root
+}
+
+const BROKEN_PROFILE = 'version = 3\n\n[provisioning\nharness = "claude-code"\nmodel = "sonnet"\n'
+const VALID_PROFILE = 'version = 3\n\n[provisioning]\nharness = "claude-code"\nmodel = "sonnet"\n'
+
+describe('resolveAgentHarness — an unparseable profile degrades LOUDLY (T-08128)', () => {
+  test('a profile with a syntax error warns, naming agent, path and error', () => {
+    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'broken')
+    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
+    const { warnings } = captureStderr(() => {
+      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+    })
+
+    expect(warnings).toHaveLength(1)
+    const line = warnings[0] ?? ''
+    expect(line).toContain('agent.provisioning.stripped')
+    expect(line).toContain('slugger')
+    expect(line).toContain(join(agentRoot, 'agent-profile.toml'))
+    // The error itself has to travel: without it the reader knows an edit broke
+    // the profile but not which edit.
+    expect(line).toMatch(/error=\S/)
+
+    // The birth still proceeds — degrading, not failing closed.
+    expect(resolved).toMatchObject({ provider: 'anthropic', harness: undefined, provision: {} })
+  })
+
+  test('the warning names the CONSEQUENCE, not just the cause', () => {
+    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'consequence')
+    const { warnings } = captureStderr(() => {
+      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+    })
+
+    // "failed to parse profile" reads as recoverable and gets skimmed past. The
+    // line has to say what the reader actually lost.
+    const line = warnings[0] ?? ''
+    expect(line).toContain('NO provisioning')
+    expect(line).toContain('no model pin')
+  })
+
+  test('a broken profile with a project target reports what SURVIVED, not a blanket nothing', () => {
+    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'partial')
+    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-partial-project-'))
+    tempRoots.push(projectRoot)
+    writeFileSync(
+      join(projectRoot, 'asp-targets.toml'),
+      [
+        'schema = 1',
+        '',
+        '[targets.slugger]',
+        '',
+        '[targets.slugger.provisioning]',
+        'node = "svc"',
+        '',
+      ].join('\n')
+    )
+
+    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
+    const { warnings } = captureStderr(() => {
+      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger', projectRoot })
+    })
+
+    const line = warnings[0] ?? ''
+    expect(line).toContain('WITHOUT')
+    expect(line).toContain('node')
+    // A verdict that read "NO provisioning at all" here would be false: the
+    // target's pins are still on the agent.
+    expect(line).not.toContain('NO provisioning at all')
+    expect(resolved).toMatchObject({ provision: { node: 'svc' } })
+  })
+
+  test('an ABSENT profile stays silent — the quiet path is preserved', () => {
+    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-'))
+    tempRoots.push(agentRoot)
+
+    const { warnings } = captureStderr(() => {
+      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+    })
+
+    expect(warnings).toEqual([])
+  })
+
+  test('an absent profile stays silent even with a project target supplying provisioning', () => {
+    const agentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-target-'))
+    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-absent-target-project-'))
+    tempRoots.push(agentRoot, projectRoot)
+    writeFileSync(
+      join(projectRoot, 'asp-targets.toml'),
+      [
+        'schema = 1',
+        '',
+        '[targets.slugger]',
+        '',
+        '[targets.slugger.provisioning]',
+        'node = "svc"',
+        '',
+      ].join('\n')
+    )
+
+    const { warnings } = captureStderr(() => {
+      resolveAgentHarness({ agentRoot, agentId: 'slugger', projectRoot })
+    })
+
+    expect(warnings).toEqual([])
+  })
+
+  test('a profile that parses cleanly stays silent', () => {
+    const agentRoot = makeAgentDirWithProfile(VALID_PROFILE, 'valid')
+
+    let resolved: ReturnType<typeof resolveAgentHarness> | undefined
+    const { warnings } = captureStderr(() => {
+      resolved = resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+    })
+
+    expect(warnings).toEqual([])
+    expect(resolved).toMatchObject({ harness: 'claude-code', provision: { model: 'sonnet' } })
+  })
+
+  test('the emission is what separates the two states — the return value does not', () => {
+    const brokenRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'twin-broken')
+    const absentRoot = mkdtempSync(join(tmpdir(), 'hrc-core-profile-twin-absent-'))
+    tempRoots.push(absentRoot)
+
+    let broken: ReturnType<typeof resolveAgentHarness> | undefined
+    let absent: ReturnType<typeof resolveAgentHarness> | undefined
+    const { warnings } = captureStderr(() => {
+      broken = resolveAgentHarness({ agentRoot: brokenRoot, agentId: 'slugger' })
+      absent = resolveAgentHarness({ agentRoot: absentRoot, agentId: 'slugger' })
+    })
+
+    // This is the defect in one assertion: the two situations are byte-identical
+    // downstream, which is why no caller could ever have caught this.
+    expect(JSON.stringify(broken)).toEqual(JSON.stringify(absent))
+    // ...and exactly one of them speaks.
+    expect(warnings).toHaveLength(1)
+  })
+})
+
+describe('the T-08128 warning stays readable in a busy log', () => {
+  test('a multi-line parse error is collapsed onto ONE line', () => {
+    // TOML parse errors carry an embedded source excerpt across several lines.
+    // Emitted raw, the WARN greps as one hit plus orphaned noise.
+    const agentRoot = makeAgentDirWithProfile(BROKEN_PROFILE, 'oneline')
+    const { warnings } = captureStderr(() => {
+      resolveAgentHarness({ agentRoot, agentId: 'slugger' })
+    })
+
+    const line = warnings[0] ?? ''
+    expect(line).not.toContain('\n')
+    // The error text still has to survive the collapsing.
+    expect(line).toContain('TOML')
+  })
+})

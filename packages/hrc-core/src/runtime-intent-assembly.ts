@@ -108,7 +108,12 @@ function targetHarness(target: TargetDefinition | undefined): string | undefined
  * Resolve the effective provider + harness frontend for an agent from its
  * `agent-profile.toml`, overlaid with any matching `asp-targets.toml` entry.
  * Falls back to the project-target harness (or anthropic) when no profile is
- * present or parsing fails — mirrors the prior hrcchat-cli behavior verbatim.
+ * present or parsing fails. The fallback VALUE still mirrors the prior
+ * hrcchat-cli behavior verbatim; since T-08128 the parse-failure branch also
+ * reports itself, which the original did not.
+ *
+ * Both fallbacks return the same value; only one of them is ordinary. See
+ * {@link warnProfileProvisioningStripped} for why the other one now says so.
  */
 export function resolveAgentHarness(args: {
   agentRoot: string
@@ -130,6 +135,10 @@ export function resolveAgentHarness(args: {
     }
   }
   if (!existsSync(profilePath)) {
+    // An agent with no profile is a legitimate, ordinary state: its provisioning
+    // is simply whatever the project target declares. Silent by design — a line
+    // here would print on ordinary births too, and a warning that fires in every
+    // state teaches its readers to skim past the one state that matters.
     return targetOnly()
   }
   try {
@@ -157,9 +166,67 @@ export function resolveAgentHarness(args: {
         harness: effective.harness,
       }),
     }
-  } catch {
-    return targetOnly()
+  } catch (error) {
+    const fallback = targetOnly()
+    warnProfileProvisioningStripped(agentId, profilePath, error, fallback)
+    return fallback
   }
+}
+
+/**
+ * T-08128 — report a profile that EXISTS but could not be turned into
+ * provisioning.
+ *
+ * Read, parse and merge failures all land in one `catch` because they all have
+ * one consequence: the profile contributes nothing and the agent is born on the
+ * project target alone. That fallback is identical, byte for byte, to the one an
+ * ABSENT profile takes — so no caller downstream can tell the two apart, and
+ * this is the only point in the system where the difference still exists.
+ *
+ * Deliberately a WARN and not a throw: failing closed here would let a single
+ * bad edit refuse births fleet-wide, which is a worse failure than an unpinned
+ * model. The birth proceeds exactly as before. It just stops being silent.
+ *
+ * The line leads with the CONSEQUENCE. "failed to parse agent-profile.toml"
+ * reads as recoverable and gets skimmed; "born with NO provisioning" does not.
+ * When this fired unannounced on 2026-09-06 a config edit silently unpinned an
+ * agent's model, the agent kept working and produced correct output, and it
+ * took two agents about twenty minutes and four probes to find — only because
+ * the edit happened to be under scrutiny at the time.
+ *
+ * Not deduplicated and not rate-limited: each degraded birth is its own lost
+ * pin, and an unattended broken profile that keeps stripping provisioning
+ * should keep saying so rather than announcing it once and going quiet.
+ */
+function warnProfileProvisioningStripped(
+  agentId: string,
+  profilePath: string,
+  error: unknown,
+  fallback: ResolvedAgentHarness
+): void {
+  const survived = Object.keys(fallback.provision)
+  // Two different facts, so two different sentences: with a matching project
+  // target the agent keeps that target's pins and loses only the profile's;
+  // with none it is born with nothing at all.
+  const consequence =
+    survived.length === 0
+      ? 'is being born with NO provisioning at all: no model pin, no harness pin, no yolo, no node'
+      : `is being born WITHOUT its profile's provisioning (no model pin, no harness pin from the profile); only the project target's ${JSON.stringify(survived)} survives`
+  // Collapsed to a single line on purpose. A TOML parse error arrives with an
+  // embedded source excerpt spanning several lines, and a multi-line WARN in a
+  // busy daemon log greps as one hit plus a few lines of orphaned noise — which
+  // is most of the way back to being unreadable.
+  const rendered = (error instanceof Error ? error.message : String(error))
+    .replace(/\s+/g, ' ')
+    .trim()
+  const detail = rendered.length > 300 ? `${rendered.slice(0, 297)}...` : rendered
+  console.error(
+    [
+      `[hrc-core] WARN agent.provisioning.stripped — agent "${agentId}" ${consequence}.`,
+      'Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing.',
+      `profile=${profilePath} error=${detail}`,
+    ].join(' ')
+  )
 }
 
 /**
