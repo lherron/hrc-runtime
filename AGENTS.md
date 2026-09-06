@@ -16,6 +16,31 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
 - Isolated-daemon smoke: [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md).
 - Enablement lessons: [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
 - Standalone HTML specs go in `docs/html/` (`just serve-docs`).
+### Commands that answer confidently while checking nothing
+
+The failure below has four shapes and they all read as a clean result. A probe
+that cannot fail is worse than no probe, because it manufactures confidence: on
+2026-09-06 all four turned up in a single day's work, twice producing a
+"finding" that did not exist and once nearly stranding a landing. Before citing
+any verification, ask what output it would produce if the thing being checked
+were absent — if that output is indistinguishable from success, the check is not
+one.
+
+- **A missing key is not a null value.** `hrc server status --json` has no
+  top-level `runningEqualsInstalled`; it lives at `.release.runningEqualsInstalled`
+  and `.api.release.runningEqualsInstalled`. Querying the top level returns
+  empty, which reads exactly like the daemon answering `null` — and got reported
+  as a health-field bug that did not exist. Name the full path, and treat an
+  empty answer as "wrong path" until you have proved the path is right.
+- **`_` is a wildcard in SQL `LIKE`.** `LIKE '%submission_…_50%'` matched
+  essentially every event on the runtime and returned 110 KB of noise that looked
+  like data. Use `json_extract(col, '$.id') = '<literal>'` for an id.
+- **A dirty-tree list is a snapshot of a tree several agents are mutating.**
+  `just install`'s refusal is the authoritative read AT THE INSTANT IT RAN, and
+  the tree moves underneath it — a reverted edit leaves no commit, so
+  `git log -1 -- <path>` afterwards cannot see that the file was ever dirty and
+  will contradict a correct report. Re-read when you act; never carry a snapshot
+  into an attribution about who is holding what.
 - **Never integrity-check a `cp` of the live state DB.** `state.sqlite` is
   WAL-mode and the daemon writes continuously, so a plain `cp` (even with the
   `-wal` sidecar) is a TORN copy: `PRAGMA integrity_check` on it returns dozens
