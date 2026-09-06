@@ -693,18 +693,24 @@ export class HrcMailDeliveryRepository {
     )
   }
 
-  // ── TTL expiry accounting ──────────────────────────────────────────────────
+  // ── Non-landing accounting ─────────────────────────────────────────────────
+  //
+  // The table is 0059's `hrcmail_delivery_expiries` and its columns still say
+  // "expiry", because 0059 bounded only the TTL arm. Chief's ruling widened the
+  // rule without widening the storage: what is counted is a NON-LANDING
+  // OUTCOME, of which a TTL expiry is one kind and a post-write refusal is
+  // another. The names below say what is counted; the column names are history.
 
   /**
-   * Count one TTL expiry for this envelope on this runtime, and say how many
-   * consecutive ones it has now had.
+   * Count one non-landing outcome for this envelope on this runtime, and say
+   * how many consecutive ones it has now had.
    *
    * Keyed by (envelope, runtime) so a rotation or restart resets the count
    * structurally: a different runtime is a different row, and the next seat gets
    * its full allowance. Cleared on a successful landing, so an intermittent seat
    * never accumulates toward the bound.
    */
-  recordIntentExpiry(envelopeId: string, runtimeId: string): number {
+  recordNonLandingStrike(envelopeId: string, runtimeId: string): number {
     const now = new Date().toISOString()
     this.db
       .query(
@@ -716,22 +722,15 @@ export class HrcMailDeliveryRepository {
            last_expired_at = excluded.last_expired_at`
       )
       .run(envelopeId, runtimeId, now, now)
-    return (
-      this.db
-        .query<{ expiries: number }, [string, string]>(
-          `SELECT expiries FROM hrcmail_delivery_expiries
-            WHERE envelope_id = ? AND runtime_id = ?`
-        )
-        .get(envelopeId, runtimeId)?.expiries ?? 0
-    )
+    return this.nonLandingStrikes(envelopeId, runtimeId)
   }
 
   /** A landing means the seat can take deliveries after all; the count goes. */
-  clearIntentExpiries(envelopeId: string): void {
+  clearNonLandingStrikes(envelopeId: string): void {
     this.db.query('DELETE FROM hrcmail_delivery_expiries WHERE envelope_id = ?').run(envelopeId)
   }
 
-  intentExpiries(envelopeId: string, runtimeId: string): number {
+  nonLandingStrikes(envelopeId: string, runtimeId: string): number {
     return (
       this.db
         .query<{ expiries: number }, [string, string]>(
@@ -740,6 +739,52 @@ export class HrcMailDeliveryRepository {
         )
         .get(envelopeId, runtimeId)?.expiries ?? 0
     )
+  }
+
+  /**
+   * Open the continuous-refusal window if it is not already open, and say when
+   * it opened.
+   *
+   * A pre-write refusal clears the intent, so the intent row cannot carry this:
+   * without it a seat that refuses every attempt before writing would back off
+   * forever and strike never. Opening is idempotent — the window belongs to the
+   * RUN of refusals, not to any one of them — and `closeRefusalWindow` is what
+   * a strike or a landing calls to start the next one from scratch.
+   */
+  openRefusalWindow(envelopeId: string, runtimeId: string, at = new Date().toISOString()): string {
+    this.db
+      .query(
+        `INSERT INTO hrcmail_delivery_expiries (
+           envelope_id, runtime_id, expiries, first_expired_at, last_expired_at,
+           refusal_window_opened_at
+         ) VALUES (?, ?, 0, ?, ?, ?)
+         ON CONFLICT(envelope_id, runtime_id) DO UPDATE SET
+           refusal_window_opened_at =
+             COALESCE(hrcmail_delivery_expiries.refusal_window_opened_at, excluded.refusal_window_opened_at)`
+      )
+      .run(envelopeId, runtimeId, at, at, at)
+    return this.refusalWindowOpenedAt(envelopeId, runtimeId) ?? at
+  }
+
+  refusalWindowOpenedAt(envelopeId: string, runtimeId: string): string | undefined {
+    return (
+      this.db
+        .query<{ refusal_window_opened_at: string | null }, [string, string]>(
+          `SELECT refusal_window_opened_at FROM hrcmail_delivery_expiries
+            WHERE envelope_id = ? AND runtime_id = ?`
+        )
+        .get(envelopeId, runtimeId)?.refusal_window_opened_at ?? undefined
+    )
+  }
+
+  /** End the current run of refusals; the next pre-write refusal opens a new one. */
+  closeRefusalWindow(envelopeId: string, runtimeId: string): void {
+    this.db
+      .query(
+        `UPDATE hrcmail_delivery_expiries SET refusal_window_opened_at = NULL
+          WHERE envelope_id = ? AND runtime_id = ?`
+      )
+      .run(envelopeId, runtimeId)
   }
 
   // ── Birth refusals ─────────────────────────────────────────────────────────

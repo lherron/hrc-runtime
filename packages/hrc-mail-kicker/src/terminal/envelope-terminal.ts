@@ -9,7 +9,7 @@ import type { WrkqEnvelope, WrkqEnvelopeFailureReason } from '../ledger/types.js
 export type EnvelopeFailCallSite =
   | 'birth_refusals_exhausted'
   | 'dispose_runtime_obligations'
-  | 'intent_expiries_exhausted'
+  | 'non_landing_strikes_exhausted'
   | 'lapsed_obligations'
 
 type EnvelopeFailInput = {
@@ -95,10 +95,10 @@ export async function failEnvelopeWithAudit(
   const actor = terminalActorIdentity(server)
   // The live-target suppression exists for the BIRTH bound: candidate discovery
   // and the RPC are asynchronous, a scope can be born in between, and D7 has no
-  // authority to fail mail once it has. `intent_expiries_exhausted` is the
+  // authority to fail mail once it has. `non_landing_strikes_exhausted` is the
   // opposite evidence — the seat is live and is precisely why nothing lands, so
   // suppressing on liveness would suppress the only case the bound exists for.
-  if (input.reason === 'undeliverable' && input.callSite !== 'intent_expiries_exhausted') {
+  if (input.reason === 'undeliverable' && input.callSite !== 'non_landing_strikes_exhausted') {
     const live = liveRuntimeForTarget(server, input.targetSessionRef)
     if (live !== undefined) {
       server.log('WARN', 'wrkq.kicker.envelope_terminal_suppressed', {

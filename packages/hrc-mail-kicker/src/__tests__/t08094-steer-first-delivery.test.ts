@@ -1,30 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import type { HrcSessionRecord } from 'hrc-core'
-import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-
 import type { MailKickerContext } from '../context.js'
-import type { KickerDispatchOptions, KickerDispatchResult } from '../contracts.js'
+import type { KickerDispatchOptions } from '../contracts.js'
 import { confirmStranded } from '../diagnostics/stranded.js'
-import { deliverToSeat } from '../drive/delivery.js'
 import { observeBrokerLanding } from '../drive/landing.js'
 import { readActionableEnvelopes } from '../drive/presentation.js'
 import { reconcileOpenIntents } from '../drive/reconcile.js'
-import type { ObservedBrokerSeat } from '../drive/seat.js'
 import { observeBrokerSeat, runtimeAdvertisesSteer } from '../drive/seat.js'
+import type { ObservedBrokerSeat } from '../drive/seat.js'
 import { driveMailTargetOnce } from '../drive/target-driver.js'
 import { KICKER_SUBMISSION_TTL_MS } from '../internal.js'
-import type {
-  WrkqEnvelope,
-  WrkqEnvelopePendingView,
-  WrkqEnvelopePresentParams,
-  WrkqEnvelopePresentResult,
-} from '../ledger/types.js'
+import type { WrkqEnvelope } from '../ledger/types.js'
 import { disposeRuntimeObligations } from '../terminal/disposal.js'
+import type { FakeLedger, Recorded, T08094Harness } from './t08094-harness.js'
+import {
+  RUNTIME_ID as RUNTIME,
+  TARGET_REF as TARGET,
+  brokerRecord,
+  createT08094Harness,
+  deliverOneTo,
+  destroyT08094Harness,
+  seatIn,
+} from './t08094-harness.js'
 
 /**
  * T-08094 / spec T-08092 rev 4 — the four laws D2 and D3 add, in unit form.
@@ -43,259 +42,26 @@ import { disposeRuntimeObligations } from '../terminal/disposal.js'
  *     no run or turn identity anywhere in the decision.
  */
 
-const SCOPE = 'agent:clod:project:hrc-runtime:task:T-08094'
-const TARGET = `${SCOPE}/lane:main`
-const RUNTIME = 'rt-t08094'
-const HOST_SESSION = 'hsid-t08094'
-
-type Recorded = { level: string; event: string; detail: Record<string, unknown> }
-
-class FakeLedger {
-  readonly envelopes = new Map<string, WrkqEnvelope>()
-  readonly presentRequests: WrkqEnvelopePresentParams[] = []
-  readonly failRequests: Array<{ envelope: string; reason: string }> = []
-  private seq = 0
-
-  say(overrides: Partial<WrkqEnvelope> = {}): WrkqEnvelope {
-    this.seq += 1
-    const id = `EN-${String(this.seq).padStart(5, '0')}`
-    const now = new Date().toISOString()
-    const envelope: WrkqEnvelope = {
-      uuid: `uuid-${id}`,
-      id,
-      roomUuid: 'room-T-08094',
-      roomKey: 'T-08094',
-      roomKind: 'task',
-      from: { principalRef: 'agent:chief', scopeRef: 'chief@hcs:T-07987' },
-      to: { principalRef: 'agent:clod', scopeRef: SCOPE },
-      obligation: 'reply_required',
-      delivery: 'queue',
-      body: 'the body',
-      state: 'pending',
-      terminal: false,
-      presentedTo: [],
-      createdAt: now,
-      updatedAt: now,
-      ...overrides,
-    }
-    this.envelopes.set(id, envelope)
-    return envelope
-  }
-
-  pendingView(): Promise<WrkqEnvelopePendingView> {
-    const items = [...this.envelopes.values()].filter((envelope) => !envelope.terminal)
-    return Promise.resolve({
-      items,
-      blocking: items.filter((item) => item.state === 'presented').map((item) => item.id),
-      repended: 0,
-    })
-  }
-
-  present(params: WrkqEnvelopePresentParams): Promise<WrkqEnvelopePresentResult> {
-    const envelope = this.envelopes.get(params.envelope)
-    if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
-    this.presentRequests.push(params)
-    // wrkq refuses a presentation onto a discharged row, and the exact wire
-    // error is what HRC keys the disposed-before-landing branch on.
-    if (params.preview !== true && envelope.terminal) {
-      throw new Error('wrong_state: envelope is terminal')
-    }
-    if (params.preview === true) {
-      return Promise.resolve({ envelope, recorded: false, historyHint: false, messageCount: 1 })
-    }
-    // Exactly-once per presentation id, which is what makes a replayed landing
-    // idempotent on the wrkq side.
-    const already = envelope.presentedTo.some(
-      (receipt) => receipt.driveAttemptId === params.driveAttemptId
-    )
-    if (!already) {
-      envelope.presentedTo.push({
-        memberRef: SCOPE,
-        ...(params.runtimeId === undefined ? {} : { runtimeId: params.runtimeId }),
-        ...(params.inputId === undefined ? {} : { inputId: params.inputId }),
-        ...(params.driveAttemptId === undefined ? {} : { driveAttemptId: params.driveAttemptId }),
-        ...(params.deliveryOutcome === undefined
-          ? {}
-          : { deliveryOutcome: params.deliveryOutcome }),
-        presentedAt: new Date().toISOString(),
-      })
-      envelope.state = 'presented'
-    }
-    return Promise.resolve({
-      envelope,
-      recorded: !already,
-      historyHint: false,
-      messageCount: 1,
-    })
-  }
-
-  fail(params: { envelope: string; reason: string }): Promise<WrkqEnvelope> {
-    const envelope = this.envelopes.get(params.envelope)
-    if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
-    this.failRequests.push({ envelope: params.envelope, reason: params.reason })
-    envelope.state = 'failed'
-    envelope.terminal = true
-    envelope.failureReason = params.reason as WrkqEnvelope['failureReason']
-    return Promise.resolve(envelope)
-  }
-
-  envelopeShow(params: { envelope: string }): Promise<WrkqEnvelope> {
-    const envelope = this.envelopes.get(params.envelope)
-    if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
-    return Promise.resolve(envelope)
-  }
-
-  eventsView(): Promise<{ items: never[]; highWater: number }> {
-    return Promise.resolve({ items: [], highWater: 0 })
-  }
-}
-
-let dir: string
+let harness: T08094Harness
 let db: HrcDatabase
 let ledger: FakeLedger
 let logs: Recorded[]
 let wakes: string[]
 let dispatches: KickerDispatchOptions[]
-let dispatchResult: () => KickerDispatchResult
 let context: MailKickerContext
 let session: HrcSessionRecord
 
-function seatIn(
-  state: 'turn-active' | 'idle' | 'turn-observed',
-  steerCapable = true
-): ObservedBrokerSeat {
-  if (state === 'turn-active') {
-    return { state, runtimeId: RUNTIME, turnId: 'turn-1', steerCapable }
-  }
-  if (state === 'turn-observed') return { state, runtimeId: RUNTIME, turnId: 'turn-1' }
-  return { state, runtimeId: RUNTIME }
-}
-
-function brokerRecord(type: string, payload: Record<string, unknown>) {
-  return {
-    invocationId: 'inv-t08094',
-    seq: 1,
-    time: new Date().toISOString(),
-    type,
-    runtimeId: RUNTIME,
-    brokerEventJson: JSON.stringify(payload),
-    projectionStatus: 'projected',
-    createdAt: new Date().toISOString(),
-  }
-}
-
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 't08094-kicker-'))
-  db = openHrcDatabase(join(dir, 'state.sqlite'))
-  ledger = new FakeLedger()
-  logs = []
-  wakes = []
-  dispatches = []
-  dispatchResult = () =>
-    ({
-      submissionId: 'sub-1',
-      admission: 'admitted',
-      runId: 'run-ignored',
-      hostSessionId: HOST_SESSION,
-      generation: 1,
-      runtimeId: RUNTIME,
-      transport: 'headless',
-      stage: 'accepted',
-      status: 'started',
-      replayed: false,
-      supportsInFlightInput: false,
-      observation: {
-        lifecycle: { selector: { runId: 'run-ignored', generation: 1 }, fromSeq: 0 },
-      },
-    }) as KickerDispatchResult
-
-  const now = new Date().toISOString()
-  db.sessions.insert({
-    hostSessionId: HOST_SESSION,
-    scopeRef: SCOPE,
-    laneRef: 'main',
-    generation: 1,
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-    ancestorScopeRefs: [],
-  })
-  db.runtimes.insert({
-    runtimeId: RUNTIME,
-    hostSessionId: HOST_SESSION,
-    scopeRef: SCOPE,
-    laneRef: 'main',
-    generation: 1,
-    transport: 'tmux',
-    harness: 'claude-code',
-    provider: 'anthropic',
-    status: 'busy',
-    supportsInflightInput: true,
-    adopted: false,
-    createdAt: now,
-    updatedAt: now,
-  })
-  const stored = db.sessions.getByHostSessionId(HOST_SESSION)
-  if (stored === null) throw new Error('fixture session missing')
-  session = stored
-
-  context = {
-    db,
-    ledger: ledger as unknown as MailKickerContext['ledger'],
-    nodeId: 'max3',
-    registry: undefined,
-    foreignHomeMemo: new Map(),
-    broker: {
-      seatProbe: async () => ({ ok: false, error: { message: 'not used' } }),
-      withdraw: async () => ({ ok: false, error: { message: 'not used' } }),
-    },
-    enabled: true,
-    sweepIntervalMs: 60_000,
-    stopping: false,
-    mailKickerSweepTimer: undefined,
-    mailKickerSweepInFlight: undefined,
-    wrkqLedgerTailInFlight: undefined,
-    mailKickerColdStartCatchupPending: false,
-    mailKickerPendingTargets: new Map(),
-    mailKickerTargetOperations: new Map(),
-    mailKickerForeignHomeAnnounced: new Map(),
-    mailKickerBirthDeferredAnnounced: new Map(),
-    mailKickerBirthSweepBackoff: new Map(),
-    mailKickerLapsedRuntimes: new Set(),
-    mailKickerDisposalsPending: new Set(),
-    mailKickerBootReconcilePending: false,
-    mailKickerStalledDeliveryAnnounced: new Set(),
-    mailKickerSteerRefused: new Set(),
-    mailKickerDeliveryBackoff: new Map(),
-    resolveForeignHome: async () => undefined,
-    resolveRuntimeIntent: () => ({}) as never,
-    findTargetSession: () => session,
-    ensureTargetSession: async () => session,
-    dispatchTurn: async (_session, _intent, _prompt, options) => {
-      dispatches.push(options)
-      return dispatchResult()
-    },
-    preemptAuthorized: async () => false,
-    log: (level, event, detail) => logs.push({ level, event, detail }),
-    wake: (target) => wakes.push(target),
-    drainTarget: async () => undefined,
-    runSweepOnce: async () => undefined,
-    runTailOnce: async () => undefined,
-    observeLifecycleEvent: () => undefined,
-    observeBrokerEvent: () => undefined,
-  }
+  harness = await createT08094Harness()
+  ;({ db, ledger, logs, wakes, dispatches, context, session } = harness)
 })
 
 afterEach(async () => {
-  db.close()
-  await rm(dir, { recursive: true, force: true })
+  await destroyT08094Harness(harness)
 })
 
 async function deliverOne(seat: ObservedBrokerSeat, envelope: WrkqEnvelope) {
-  const actionable = await readActionableEnvelopes(context, TARGET)
-  const item = actionable.find((candidate) => candidate.envelope.id === envelope.id)
-  if (item === undefined) throw new Error(`${envelope.id} was not actionable`)
-  return deliverToSeat(context, TARGET, session, seat, item, 'insert')
+  return deliverOneTo(harness, seat, envelope)
 }
 
 describe('D2 — steer first, and the door is chosen by what the seat is doing', () => {
@@ -538,8 +304,10 @@ describe('D2 — a refused submission is not a failed envelope', () => {
 
   it('paces a door that THREW on the same backoff, so no refusal path is unpaced', async () => {
     const envelope = ledger.say()
-    const realDispatch = context.dispatchTurn
-    context = {
+    // Swap the door on the HARNESS, not on a local copy: `deliverOne` drives
+    // the harness's context, so a shadowed local would leave the real door in
+    // place and the test would assert nothing.
+    harness.context = {
       ...context,
       dispatchTurn: async () => {
         throw new Error('server turn admission is closed for a drained restart')
@@ -551,7 +319,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
     const failed = logs.find((entry) => entry.event === 'wrkq.kicker.delivery_failed')
     expect(failed?.detail).toMatchObject({ retryInMs: 2_000 })
-    context = { ...context, dispatchTurn: realDispatch }
+    harness.context = context
   })
 
   it('doubles the transient backoff to a ceiling, and clears it on a landing', async () => {
@@ -708,62 +476,6 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
   })
-
-  /**
-   * The redelivery loop is BOUNDED (chief ruling 2026-09-06, addendum to
-   * T-08092 §D2 step 5). A seat that cannot land is not a slow seat, and
-   * retrying it every TTL forever tells the sender nothing while the envelope
-   * sits pending — the observed case ran over twelve hours that way.
-   */
-  it('fails the envelope undeliverable after three TTL expiries on one runtime', async () => {
-    const envelope = ledger.say()
-    const age = () =>
-      db.sqlite
-        .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
-        .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
-
-    for (const strike of [1, 2]) {
-      await deliverOne(seatIn('turn-active'), envelope)
-      age()
-      expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
-        expired: 1,
-      })
-      expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(strike)
-      // Still pending and still deliverable: two strikes is not a verdict.
-      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-      expect(ledger.failRequests).toEqual([])
-    }
-
-    await deliverOne(seatIn('turn-active'), envelope)
-    age()
-    await reconcileOpenIntents(context, { reason: 'periodic' })
-    expect(ledger.failRequests).toEqual([{ envelope: envelope.id, reason: 'undeliverable' }])
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
-    expect(logs.some((e) => e.event === 'wrkq.kicker.intent_expiries_exhausted')).toBe(true)
-  })
-
-  it('resets the expiry count on a NEW runtime, and on a successful landing', async () => {
-    const envelope = ledger.say()
-    await deliverOne(seatIn('turn-active'), envelope)
-    db.sqlite
-      .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
-      .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
-    await reconcileOpenIntents(context, { reason: 'periodic' })
-    expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(1)
-
-    // A different runtime is a different row: rotation and restart give the next
-    // seat its full allowance without anyone having to remember a reset rule.
-    expect(db.mailDelivery.intentExpiries(envelope.id, 'rt-rotated')).toBe(0)
-
-    // And a landing means the seat CAN take deliveries, so the count goes.
-    await deliverOne(seatIn('turn-active'), envelope)
-    await observeBrokerLanding(
-      context,
-      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
-    )
-    expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(0)
-  })
-
   it('clears an intent bound to a runtime that terminated before landing', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)

@@ -2873,6 +2873,38 @@ const hrcmailDeliveryExpiryMigration: HrcMigration = {
   },
 }
 
+/**
+ * 0060: the refusal window, so the bound counts NON-LANDING OUTCOMES.
+ *
+ * 0059 bounded one kind of non-landing outcome, the TTL expiry. It did not
+ * bound the other: a refusal. A broker that settles every submission
+ * `merged-into-foreign-turn` refuses one delivery per turn, forever, and the
+ * observed case presented one envelope to a reader three times in three
+ * minutes while the ledger still said `pending` (T-08094 finding 5).
+ *
+ * Chief's ruling makes the counter one rule rather than two. A refusal that
+ * arrives AFTER the body reached the pane is a full strike, because the reader
+ * has already read it. A refusal BEFORE any write strikes nothing per event —
+ * it keeps the paced backoff — but an intent continuously refused for one TTL
+ * window earns one strike, so a seat that never accepts still converges in the
+ * same three windows instead of backing off forever.
+ *
+ * That second rule is the only thing needing storage: a pre-write refusal
+ * clears the intent, so without this column nothing survives to say when the
+ * continuous-refusal window opened. One ALTER, keyed by the (envelope, runtime)
+ * pair 0059 already established.
+ */
+const hrcmailRefusalWindowMigration: HrcMigration = {
+  id: '0060_hrcmail_refusal_window',
+  apply(db) {
+    const columns = db
+      .query<{ name: string }, []>('PRAGMA table_info(hrcmail_delivery_expiries)')
+      .all()
+    if (columns.some((column) => column.name === 'refusal_window_opened_at')) return
+    db.exec('ALTER TABLE hrcmail_delivery_expiries ADD COLUMN refusal_window_opened_at TEXT')
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2928,4 +2960,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailRetireAutoReplyMigration,
   hrcmailSteerFirstDeliveryMigration,
   hrcmailDeliveryExpiryMigration,
+  hrcmailRefusalWindowMigration,
 ]

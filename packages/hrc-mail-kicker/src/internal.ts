@@ -41,7 +41,7 @@ export const STEER_RETRY_MAX_MS = 30_000
  * envelope `undeliverable` with the existing sender notice; a new runtime is a
  * new row and gets its own three.
  */
-export const KICKER_MAX_INTENT_EXPIRIES = 3
+export const KICKER_MAX_NON_LANDING_STRIKES = 3
 export const KICKER_SUBMISSION_TTL_MS = 30 * 60_000
 export const LEDGER_TAIL_PAGE_LIMIT = 500
 export const LEDGER_SWEEP_SCOPE_BATCH = 100

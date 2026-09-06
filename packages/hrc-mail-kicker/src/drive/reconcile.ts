@@ -9,13 +9,19 @@
  * termination, and on the periodic sweep, and it asks the MIRRORED STREAM what
  * happened rather than HRC's memory, which by construction is gone.
  *
- * Four verdicts, and the last one is the accepted risk:
+ * The verdicts, and the one that is the accepted risk:
  *
  *  - LANDED — write the receipt with the intent's own presentation id, which
  *    wrkq's unique index dedupes, so this is idempotent with the live path.
+ *  - DISPOSED — the reader discharged the envelope before the landing committed.
+ *    Nothing to record, nothing to retry; not a landing and not a fault.
  *  - REFUSED — clear, re-wake, deliver again under the same policy next pass.
  *  - RUNTIME GONE — clear, re-wake. The envelope stays `pending`: it was never
  *    presented, so nothing about it is failed.
+ *  - UNDELIVERABLE — the bound is spent. Three non-landing outcomes for one
+ *    envelope on ONE runtime, of any mix of kinds, and the sender is told rather
+ *    than left watching a `pending` row while the reader is shown the same body
+ *    once a turn forever.
  *  - NOTHING FOUND AFTER TTL — clear and re-wake. This is the one window where
  *    HRC redelivers a body the reader may already have seen: the broker applies
  *    a body BEFORE it emits the landing fact, so a broker failure inside that
@@ -26,10 +32,15 @@
 import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import { KICKER_MAX_INTENT_EXPIRIES, KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
-import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
+import { KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
 import { isRuntimeTerminal } from '../terminal/runtime-status.js'
-import { clearRefusedIntent, commitLanding, landLaunchIfStarted, refuseIntent } from './landing.js'
+import {
+  chargeNonLandingOutcome,
+  clearRefusedIntent,
+  commitLanding,
+  landLaunchIfStarted,
+  refuseIntent,
+} from './landing.js'
 
 const LANDED_EVENT_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 
@@ -39,6 +50,7 @@ export type IntentReconcileVerdict =
   | 'refused'
   | 'runtime_gone'
   | 'expired'
+  | 'undeliverable'
   | 'open'
 
 /**
@@ -78,8 +90,7 @@ export async function reconcileIntent(
         return commit === 'committed' ? 'landed' : commit === 'disposed' ? 'disposed' : 'open'
       }
       if (disposition !== undefined) {
-        refuseIntent(server, intent, disposition.reason ?? disposition.type)
-        return 'refused'
+        return await refuseIntent(server, intent, disposition.reason ?? disposition.type)
       }
     } else if (intent.door === 'launch') {
       // The launch-carried body has no submission by construction. Its landing
@@ -98,42 +109,13 @@ export async function reconcileIntent(
 
   const age = now - Date.parse(intent.submittedAt)
   if (Number.isFinite(age) && age >= KICKER_SUBMISSION_TTL_MS) {
-    // The redelivery loop is BOUNDED per runtime. Three consecutive expiries on
-    // one seat is not a slow seat, it is a seat that cannot land; retrying it
-    // forever tells the sender nothing while the envelope sits pending.
+    // A TTL expiry is ONE KIND of non-landing outcome, charged against the same
+    // per-(envelope, runtime) counter as a post-write refusal. Counting the two
+    // separately would let a seat that alternates between them evade both.
     const runtimeId = intent.runtimeId
-    const expiries =
-      runtimeId === undefined
-        ? 0
-        : server.db.mailDelivery.recordIntentExpiry(intent.envelopeId, runtimeId)
-    if (runtimeId !== undefined && expiries >= KICKER_MAX_INTENT_EXPIRIES) {
-      server.db.mailDelivery.clearIntent(intent.envelopeId)
-      server.log('WARN', 'wrkq.kicker.intent_expiries_exhausted', {
-        targetSessionRef: intent.targetSessionRef,
-        envelope: intent.envelopeId,
-        runtimeId,
-        door: intent.door,
-        expiries,
-        ttlMs: KICKER_SUBMISSION_TTL_MS,
-      })
-      try {
-        await failEnvelopeWithAudit(server, {
-          envelope: intent.envelopeId,
-          reason: 'undeliverable',
-          targetSessionRef: intent.targetSessionRef,
-          presentationId: intent.presentationId,
-          callSite: 'intent_expiries_exhausted',
-        })
-      } catch (error) {
-        // Not failing it leaves the obligation alive, which is the safe
-        // direction; the count stands and the next expiry tries again.
-        server.log('WARN', 'wrkq.kicker.intent_expiry_fail_failed', {
-          targetSessionRef: intent.targetSessionRef,
-          envelope: intent.envelopeId,
-          error: errorText(error),
-        })
-      }
-      return 'expired'
+    if (runtimeId !== undefined) {
+      const charge = await chargeNonLandingOutcome(server, intent, runtimeId, 'ttl_without_landing')
+      if (charge === 'exhausted') return 'undeliverable'
     }
     clearRefusedIntent(server, intent, 'ttl_without_landing')
     return 'expired'
@@ -159,6 +141,7 @@ export async function reconcileOpenIntents(
     refused: 0,
     runtime_gone: 0,
     expired: 0,
+    undeliverable: 0,
     open: 0,
   }
   const intents = server.db.mailDelivery
@@ -184,7 +167,14 @@ export async function reconcileOpenIntents(
       })
     }
   }
-  if (counts.landed + counts.disposed + counts.refused + counts.runtime_gone + counts.expired > 0) {
+  const resolved =
+    counts.landed +
+    counts.disposed +
+    counts.refused +
+    counts.runtime_gone +
+    counts.expired +
+    counts.undeliverable
+  if (resolved > 0) {
     server.log('INFO', 'wrkq.kicker.intent_reconciled', {
       nodeId: server.nodeId,
       reason: options.reason,

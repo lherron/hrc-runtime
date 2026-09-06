@@ -11,10 +11,15 @@
  *    rode `spec.launch.initialPrompt` and therefore has no submission at all.
  *
  * Anything else a submission can end as — rejected, lost, expired, cancelled,
- * withdrawn — CLEARS the intent and re-wakes the target. No envelope is ever
- * failed for a refused or lost submission: the next pass re-delivers it under
- * the same policy, so a refused steer becomes an enqueue while the seat is busy
- * and a drive when it is idle.
+ * withdrawn — CLEARS the intent and re-wakes the target: the next pass
+ * re-delivers it under the same policy, so a refused steer becomes an enqueue
+ * while the seat is busy and a drive when it is idle.
+ *
+ * That redelivery is BOUNDED, because unbounded it is a loop that costs the
+ * reader a turn per cycle forever (T-08094 finding 5, live). The bound counts
+ * NON-LANDING OUTCOMES per (envelope, runtime) and a TTL expiry is only one
+ * kind of them; see `refuseIntent` for the post-write / pre-write split that
+ * decides when a refusal is one.
  *
  * The receipt is written with the intent's own presentation id, minted before
  * the door was called. wrkq's unique index on that id is the dedupe, so a
@@ -25,7 +30,15 @@ import type { HrcBrokerInvocationEventRecord } from 'hrc-core'
 import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import { STEER_RETRY_BASE_MS, STEER_RETRY_MAX_MS, errorText, isRecord } from '../internal.js'
+import {
+  KICKER_MAX_NON_LANDING_STRIKES,
+  KICKER_SUBMISSION_TTL_MS,
+  STEER_RETRY_BASE_MS,
+  STEER_RETRY_MAX_MS,
+  errorText,
+  isRecord,
+} from '../internal.js'
+import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
 
 const LANDED_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 const REFUSED_TYPES = new Set([
@@ -137,7 +150,7 @@ export async function commitLanding(
     // record than none.
     if (isDisposedBeforeLanding(error)) {
       server.db.mailDelivery.clearIntent(intent.envelopeId)
-      server.db.mailDelivery.clearIntentExpiries(intent.envelopeId)
+      server.db.mailDelivery.clearNonLandingStrikes(intent.envelopeId)
       server.log('INFO', 'wrkq.kicker.disposed_before_landing', {
         targetSessionRef: intent.targetSessionRef,
         envelope: intent.envelopeId,
@@ -165,7 +178,7 @@ export async function commitLanding(
   server.mailKickerDeliveryBackoff.delete(input.runtimeId)
   // The seat took a body, so it is not the seat that cannot land: the TTL bound
   // starts over rather than carrying a stale near-miss into the next delivery.
-  server.db.mailDelivery.clearIntentExpiries(intent.envelopeId)
+  server.db.mailDelivery.clearNonLandingStrikes(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.presented', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -294,34 +307,147 @@ export function clearRefusedIntent(
 }
 
 /**
- * Refuse ONE intent, classifying a steer refusal before deciding what happens
- * next (T-08094, chief's ruling on the flag).
+ * Did the body reach the pane BEFORE this refusal?
  *
- * A PERMANENT refusal memoizes the runtime, so the next pass takes the enqueue
- * door — the spec's "a refused steer becomes an enqueue". A TRANSIENT one
- * memoizes nothing and re-wakes on a bounded backoff, so the next pass takes
- * the STEER door again: the door that will work in a moment is the right door.
+ * This is chief's discriminator and the whole weight of the bound rests on it.
+ * The broker emits `input.accepted` when it has written a submission to the
+ * harness; a refusal that arrives after one means the reader HAS READ THE BODY,
+ * whatever the broker later decided about attributing it. `merged-into-foreign-turn`
+ * is the specimen: the body landed in the pane, drove a turn, and was then
+ * settled as belonging to somebody else.
+ *
+ * A refusal with no `input.accepted` — `pane_not_quiescent`, a busy seat, an
+ * admission refused on state or policy — wrote nothing, so redelivering it
+ * costs the reader nothing and must not be charged as if it had.
  */
-export function refuseIntent(
+function refusalFollowedAWrite(
+  server: MailKickerContext,
+  runtimeId: string,
+  submissionId: string | undefined
+): boolean {
+  if (submissionId === undefined) return false
+  return server.db.brokerInvocationEvents.hasInputAccepted(runtimeId, submissionId)
+}
+
+/**
+ * Charge ONE non-landing outcome against this (envelope, runtime), and fail the
+ * envelope when the bound is spent.
+ *
+ * One counter, one rule. A TTL expiry and a post-write refusal are both "this
+ * delivery did not land", and counting them separately would let a seat that
+ * alternates between the two evade both bounds forever. Three strikes on one
+ * runtime is not a slow seat — it is a seat that cannot land — and the sender
+ * learns `undeliverable` instead of watching a `pending` row for eternity.
+ *
+ * A rotation resets it structurally: a different runtime is a different row.
+ */
+export async function chargeNonLandingOutcome(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent,
-  reason: string
-): void {
-  const runtimeId = intent.runtimeId
-  if (intent.door !== 'steer' || runtimeId === undefined) {
-    clearRefusedIntent(server, intent, reason)
-    return
+  runtimeId: string,
+  cause: string
+): Promise<'struck' | 'exhausted'> {
+  const strikes = server.db.mailDelivery.recordNonLandingStrike(intent.envelopeId, runtimeId)
+  // The window belongs to the RUN of refusals a strike ends, so the next
+  // continuous run is measured from scratch rather than from the first refusal
+  // this envelope ever had on this seat.
+  server.db.mailDelivery.closeRefusalWindow(intent.envelopeId, runtimeId)
+  if (strikes < KICKER_MAX_NON_LANDING_STRIKES) return 'struck'
+
+  server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.log('WARN', 'wrkq.kicker.non_landing_strikes_exhausted', {
+    targetSessionRef: intent.targetSessionRef,
+    envelope: intent.envelopeId,
+    runtimeId,
+    door: intent.door,
+    strikes,
+    cause,
+    ttlMs: KICKER_SUBMISSION_TTL_MS,
+  })
+  try {
+    await failEnvelopeWithAudit(server, {
+      envelope: intent.envelopeId,
+      reason: 'undeliverable',
+      targetSessionRef: intent.targetSessionRef,
+      presentationId: intent.presentationId,
+      callSite: 'non_landing_strikes_exhausted',
+    })
+  } catch (error) {
+    // Not failing it leaves the obligation alive, which is the safe direction;
+    // the count stands and the next non-landing outcome tries again.
+    server.log('WARN', 'wrkq.kicker.non_landing_fail_failed', {
+      targetSessionRef: intent.targetSessionRef,
+      envelope: intent.envelopeId,
+      error: errorText(error),
+    })
   }
-  if (steerRefusalIsPermanent(server, runtimeId, intent.submissionId, reason)) {
+  return 'exhausted'
+}
+
+/**
+ * Refuse ONE intent: charge it if the reader already read it, pace it if not.
+ *
+ * POST-WRITE refusal → a full strike. The body reached the pane; redelivering
+ * it shows the reader the same message twice, so the third one is where HRC
+ * stops rather than where it tries harder.
+ *
+ * PRE-WRITE refusal → no strike per event, and the classification below still
+ * decides the door. A PERMANENT steer refusal memoizes the runtime so the next
+ * pass enqueues — the spec's "a refused steer becomes an enqueue". A TRANSIENT
+ * one memoizes nothing and re-wakes on a bounded backoff, so the next pass
+ * steers again: the door that will work in a moment is the right door.
+ *
+ * But a seat that refuses BEFORE writing, every time, would back off forever
+ * and strike never — so a run of pre-write refusals spanning one TTL window
+ * earns exactly one strike. Both kinds of seat converge in three windows.
+ */
+export async function refuseIntent(
+  server: MailKickerContext,
+  intent: HrcMailDeliveryIntent,
+  reason: string,
+  now = Date.now()
+): Promise<'refused' | 'undeliverable'> {
+  const runtimeId = intent.runtimeId
+  if (runtimeId === undefined) {
+    // No runtime is no (envelope, runtime) pair to charge. Nothing to bound.
+    clearRefusedIntent(server, intent, reason)
+    return 'refused'
+  }
+
+  if (refusalFollowedAWrite(server, runtimeId, intent.submissionId)) {
+    if ((await chargeNonLandingOutcome(server, intent, runtimeId, reason)) === 'exhausted') {
+      return 'undeliverable'
+    }
+    clearRefusedIntent(server, intent, reason, { refusalClass: 'post_write' })
+    return 'refused'
+  }
+
+  const openedAt = server.db.mailDelivery.openRefusalWindow(
+    intent.envelopeId,
+    runtimeId,
+    new Date(now).toISOString()
+  )
+  const openFor = now - Date.parse(openedAt)
+  if (Number.isFinite(openFor) && openFor >= KICKER_SUBMISSION_TTL_MS) {
+    if ((await chargeNonLandingOutcome(server, intent, runtimeId, reason)) === 'exhausted') {
+      return 'undeliverable'
+    }
+  }
+
+  if (
+    intent.door === 'steer' &&
+    steerRefusalIsPermanent(server, runtimeId, intent.submissionId, reason)
+  ) {
     server.mailKickerSteerRefused.add(runtimeId)
     server.mailKickerDeliveryBackoff.delete(runtimeId)
     clearRefusedIntent(server, intent, reason, { refusalClass: 'permanent' })
-    return
+    return 'refused'
   }
   clearRefusedIntent(server, intent, reason, {
     refusalClass: 'transient',
     retryInMs: nextDeliveryBackoffMs(server, runtimeId),
   })
+  return 'refused'
 }
 
 /**
@@ -362,5 +488,5 @@ export async function observeBrokerLanding(
     return
   }
   const reason = typeof payload?.['reason'] === 'string' ? payload['reason'] : record.type
-  refuseIntent(server, intent, reason)
+  await refuseIntent(server, intent, reason)
 }
