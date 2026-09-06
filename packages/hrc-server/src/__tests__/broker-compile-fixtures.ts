@@ -158,7 +158,7 @@ export function makeBrokerProfile(
 
 /** Options for shaping the interactive tmux fixture's launch / initialInput shape. */
 export type InteractiveTmuxFixtureOpts = {
-  brokerDriver?: 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
+  brokerDriver?: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux' | 'pi-tui-tmux'
   /**
    * When set, attach `spec.launch.initialPrompt` (the launch-argv priming shape).
    * Included in spec hashing, so the priming is hash-bound and invocationId-bound.
@@ -188,20 +188,20 @@ export function makeInteractiveTmuxProfile(
   const frontend =
     brokerDriver === 'claude-code-tmux'
       ? 'claude'
-      : brokerDriver === 'codex-cli-tmux'
+      : brokerDriver === 'codex-cli-tmux' || brokerDriver === 'codex-app-server'
         ? 'codex-cli'
         : 'pi-cli'
   const provider = brokerDriver === 'claude-code-tmux' ? 'anthropic' : 'openai'
   const command =
     brokerDriver === 'claude-code-tmux'
       ? 'claude'
-      : brokerDriver === 'codex-cli-tmux'
+      : brokerDriver === 'codex-cli-tmux' || brokerDriver === 'codex-app-server'
         ? 'codex'
         : 'pi'
   const lockedEnv =
     brokerDriver === 'claude-code-tmux'
       ? { CLAUDE_CONFIG_DIR: '/tmp/work/.claude' }
-      : brokerDriver === 'codex-cli-tmux'
+      : brokerDriver === 'codex-cli-tmux' || brokerDriver === 'codex-app-server'
         ? { CODEX_HOME: '/tmp/work/.codex' }
         : { PI_CODING_AGENT_DIR: '/tmp/work/.pi-agent' }
   const spec: HarnessInvocationSpec = {

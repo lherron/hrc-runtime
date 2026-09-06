@@ -41,6 +41,79 @@ describe('broker dispatch observability', () => {
       .filter((event) => event.eventKind === eventKind)
   }
 
+  it('maps invoke to queue when the runtime lacks exclusive and records both facts', async () => {
+    const fake = new FakeBrokerClient()
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+    const invocation = fixture.db.brokerInvocations.getByInvocationId('invocation_w2')!
+    const capabilities = JSON.parse(invocation.capabilitiesJson) as {
+      admission: { classes: string[] }
+    }
+    capabilities.admission.classes = ['steer', 'queue']
+    fixture.db.brokerInvocations.update('invocation_w2', {
+      capabilitiesJson: JSON.stringify(capabilities),
+      updatedAt: NOW,
+    })
+
+    const result = await controller.invoke({
+      runtimeId: 'runtime_w2',
+      runId: 'run_w2',
+      submissionDoor: 'invoke',
+      origin: { principalRef: 'agent:cody' },
+      body: 'wait behind the current turn',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: { submissionId: 'submission_enqueue', admission: 'admitted' },
+    })
+    expect(fake.callOrder).toContain('enqueue')
+    expect(fake.callOrder).not.toContain('invoke')
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.at(-1)
+    ).toMatchObject({
+      submissionId: 'submission_enqueue',
+      door: 'invoke',
+      admissionClass: 'queue',
+    })
+  })
+
+  it('keeps invoke on exclusive when the runtime advertises it', async () => {
+    const fake = new FakeBrokerClient()
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+
+    const result = await controller.invoke({
+      runtimeId: 'runtime_w2',
+      runId: 'run_w2',
+      submissionDoor: 'invoke',
+      origin: { principalRef: 'agent:cody' },
+      body: 'start immediately',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: { submissionId: 'submission_invoke', admission: 'admitted' },
+    })
+    expect(fake.callOrder).toContain('invoke')
+    expect(fake.callOrder).not.toContain('enqueue')
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.at(-1)
+    ).toMatchObject({
+      submissionId: 'submission_invoke',
+      door: 'invoke',
+      admissionClass: 'exclusive',
+    })
+  })
+
   it('persists seat transitions and warns once for a stuck non-dispatchable seat without input', async () => {
     const fake = new FakeBrokerClient()
     let seat: SeatProbeResponse['seat'] = { state: 'starting' }
@@ -84,6 +157,35 @@ describe('broker dispatch observability', () => {
       'idle',
     ])
     expect(diagnostics?.liveSeatProbe).toMatchObject({ availability: 'current', state: 'idle' })
+  })
+
+  it('accepts and records a turn-observed seat with its provider turn id', async () => {
+    const fake = new FakeBrokerClient()
+    fake.seatProbe = async (request: SeatProbeRequest) => ({
+      invocationId: request.invocationId,
+      seat: { state: 'turn-observed', turnId: turnId('turn-awaiting-attribution') },
+      brokerHeldDepth: 1,
+    })
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+
+    const response = await controller.seatProbe('runtime_w2')
+
+    expect(response).toMatchObject({
+      ok: true,
+      response: {
+        seat: { state: 'turn-observed', turnId: 'turn-awaiting-attribution' },
+        brokerHeldDepth: 1,
+      },
+    })
+    expect(getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.liveSeatProbe).toMatchObject({
+      state: 'turn-observed',
+      turnId: 'turn-awaiting-attribution',
+    })
   })
 
   it('records accepted, harness handoff, turn start, and explicit turn origins', async () => {

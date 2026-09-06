@@ -118,7 +118,12 @@ export async function driveMailTargetOnce(
   }
 
   const seat = await observeBrokerSeat(server, session)
-  if (seat.state === 'unavailable' || seat.state === 'starting' || seat.state === 'stopping') {
+  if (
+    seat.state === 'unavailable' ||
+    seat.state === 'starting' ||
+    seat.state === 'stopping' ||
+    seat.state === 'turn-observed'
+  ) {
     server.log('INFO', 'wrkq.kicker.seat_not_ready', {
       targetSessionRef,
       wakeReason,

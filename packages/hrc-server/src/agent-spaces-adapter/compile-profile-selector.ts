@@ -120,6 +120,7 @@ export function isInteractiveTmuxBrokerProfile(
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     typeof profile.brokerDriver === 'string' &&
     (profile.brokerDriver === 'claude-code-tmux' ||
+      profile.brokerDriver === 'codex-app-server' ||
       profile.brokerDriver === 'codex-cli-tmux' ||
       profile.brokerDriver === 'pi-tui-tmux') &&
     profile.brokerTerminal?.host === 'tmux'

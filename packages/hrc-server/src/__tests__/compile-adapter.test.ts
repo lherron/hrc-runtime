@@ -485,6 +485,76 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     })
   })
 
+  it('selects codex-app-server for an interactive codex compile request', async () => {
+    const captured: { request?: RuntimeCompileRequest; profileSelector?: unknown } = {}
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+      profileSelector?: unknown
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.request = request.compileRequest
+      captured.profileSelector = request.profileSelector
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      const { profile } = makeInteractiveTmuxProfile(identity, {
+        brokerDriver: 'codex-app-server',
+      })
+      return makeAspcCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({
+          harness: { provider: 'openai', interactive: true, id: 'codex-cli' },
+          initialPrompt: 'hello codex',
+        }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(captured.profileSelector).toEqual({
+      brokerDriver: 'codex-app-server',
+    })
+    expect(result.admitted).toBe(true)
+    if (!result.admitted) return
+    expect(result.profile.brokerDriver).toBe('codex-app-server')
+  })
+
+  it('passes an admitted interactive Codex session UUID to the compiler unchanged', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const continuation = {
+      provider: 'openai' as const,
+      kind: 'session' as const,
+      key: sessionId,
+    }
+    const captured: { request?: RuntimeCompileRequest } = {}
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.request = request.compileRequest
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      const { profile } = makeInteractiveTmuxProfile(identity, {
+        brokerDriver: 'codex-app-server',
+      })
+      return makeAspcCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({
+          harness: { provider: 'openai', interactive: true, id: 'codex-cli' },
+        }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+        continuation,
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(result.admitted).toBe(true)
+    expect(captured.request?.continuation).toEqual(continuation)
+  })
+
   it('preserves dispatchEnv as a dispatch-only channel: on placement, on the result, NEVER in hashed material', async () => {
     const { compileHarnessInvocation, captured } = makeCapturingCompile()
     const dispatchEnv = { DISCORD_CHANNEL_ID: '1234567890', ASP_DISPATCH_TOKEN: 'sekret-token' }

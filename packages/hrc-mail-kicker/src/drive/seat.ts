@@ -22,6 +22,7 @@ export type ObservedBrokerSeat =
   | { state: 'unavailable'; runtimeId: string }
   | { state: 'idle'; runtimeId: string }
   | { state: 'turn-active'; runtimeId: string; turnId: string; steerCapable: boolean }
+  | { state: 'turn-observed'; runtimeId: string; turnId: string }
   | { state: 'starting' | 'stopping' | 'terminal'; runtimeId: string }
 
 export function seatCanDispatch(seat: ObservedBrokerSeat): boolean {
@@ -69,5 +70,11 @@ export async function observeBrokerSeat(
         turnId: String(seat.turnId),
         steerCapable: runtimeAdvertisesSteer(server, runtime.runtimeId),
       }
-    : { state: seat.state, runtimeId: runtime.runtimeId }
+    : seat.state === 'turn-observed'
+      ? {
+          state: 'turn-observed',
+          runtimeId: runtime.runtimeId,
+          turnId: String(seat.turnId),
+        }
+      : { state: seat.state, runtimeId: runtime.runtimeId }
 }

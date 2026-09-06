@@ -45,6 +45,7 @@ import type {
   TurnManifestRequest,
   TurnManifestResponse,
 } from 'spaces-harness-broker-protocol'
+import { CONSERVATIVE_LIFECYCLE_CAPABILITIES } from 'spaces-harness-broker-protocol'
 import type {
   BrokerExecutionProfile,
   CapabilityRequirements,
@@ -369,6 +370,12 @@ export function makeStartInput(): {
 
 export function invocationCapabilities(): InvocationCapabilities {
   return {
+    admission: { classes: ['steer', 'queue', 'exclusive', 'preempt'] },
+    bracketMintingMode: 'delivery-acknowledged',
+    queue: { cancelHarnessLocal: true },
+    preempt: { mode: 'quiescence' },
+    steer: { landingEvidence: 'ack' },
+    interrupt: { landingEvidence: 'ack' },
     input: {
       user: true,
       steer: true,
@@ -389,6 +396,7 @@ export function invocationCapabilities(): InvocationCapabilities {
     },
     control: { stop: true, dispose: true, status: true, attach: false },
     permissions: { brokerToClientRequests: true, eventAudit: true },
+    lifecycle: CONSERVATIVE_LIFECYCLE_CAPABILITIES,
   }
 }
 

@@ -98,6 +98,23 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.startRequest).toBe(startRequest)
   })
 
+  it('admits an interactive codex-app-server broker profile with a tmux terminal', () => {
+    const identity = makeIdentity()
+    const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
+      brokerDriver: 'codex-app-server',
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.profile.brokerDriver).toBe('codex-app-server')
+    expect(selection.profile.brokerTerminal).toEqual({ host: 'tmux' })
+    expect(selection.startRequest).toBe(startRequest)
+  })
+
   it('admits a nonInteractive pi-sdk broker profile without a terminal', () => {
     const identity = makeIdentity()
     const { profile, startRequest } = makeBrokerProfile(identity, {
@@ -129,7 +146,7 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('no-matching-profile')
   })
 
-  it('REJECTS an interactive codex broker profile (headless-only for W2)', () => {
+  it('REJECTS an interactive codex broker profile without a tmux terminal', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { interactionMode: 'interactive' })
     const selection = selectBrokerExecutionProfile(

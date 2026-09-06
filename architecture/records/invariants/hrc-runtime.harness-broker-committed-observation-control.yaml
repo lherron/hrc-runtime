@@ -10,7 +10,13 @@ predicate: >
   runtime run buffer continuation surface and permission state, appends canonical
   hrc_events, and advances a contiguous projection cursor or records a typed
   fenced disposition. The cursor advances across intentionally non-mirrored
-  high-volume deltas without treating mirror retention as a source gap. Only
+  high-volume deltas without treating mirror retention as a source gap. An
+  invocation whose bracket minting mode is observed resolves turn-scoped rows
+  only from explicit input identity or a durable per-invocation turn attribution.
+  Own attribution joins the named input's run; foreign, unknown, absent, and
+  not-yet-attributed turns resolve to no run and never borrow the nearest
+  accepted input. Attribution sequence is part of the lookup so replay cannot
+  let a future attribution retroactively change an earlier row. Only
   after that transaction commits may HRC acknowledge the broker sequence, notify
   followers, or evaluate a control policy that depends on the fact. HRC is the
   sole broker-ledger retention-bearing consumer: its fenced control connection
@@ -27,15 +33,17 @@ predicate: >
   permission decisions are HRC-owned and persist before permission.respond on
   the fenced control connection. A deadline fallback is broker-owned; HRC later
   projects its already committed permission.resolved timeout fact.
-authority: Lance HCS T-07827 / Daedalus approval wrkq:T-07853, 2026-09-01
+authority: Lance HCS T-07827 / Daedalus approvals wrkq:T-07853 and companion design wrkq:T-08098
 source:
   - wrkq:T-07853
   - wrkq:T-07827
+  - wrkq:T-08098
   - commit:6d04d5de
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
   - packages/hrc-server/src/broker/controller.ts
   - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-store-sqlite/src/migrations/broker-migrations.ts
 required_tests:
   - normalized broker append failure publishes nothing to HRC
   - projection commit rollback idempotent replay conflict and contiguous-cursor gates cover mirrored and intentionally non-mirrored envelopes
@@ -45,15 +53,17 @@ required_tests:
   - kicker actuation requires committed terminal truth pending wrkq obligation truth no superseding input or turn and exactly one reminder
   - explicit permission decisions persist before fenced response while disconnected timeout fallback projects only from the broker's committed fact
   - control RPC acceptance remains distinct from committed input turn permission and effect observations
+  - T-08098 observed-mode replay proves foreign and unknown turn rows never resolve to a pending run, later own rows do, terminals affect only the own run, and replay preserves every resolution
 last_verified:
-  date: 2026-09-01
-  evidence: Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws; implementation gates pending.
+  date: 2026-09-06
+  evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws.
 reopen_when:
   - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter
   - projection transaction cursor acknowledgement or post-commit ordering changes
   - another broker-ledger retention-bearing consumer is introduced
   - HRC projected ledger retention changes
   - observation and mutation fencing or effect-proof semantics change
+  - observed turn attribution persistence no-run ownership rules or replay sequence bounds change
   - kicker trigger obligation authority or reminder bound changes
   - explicit-versus-timeout permission decision ownership changes
 supersedes: []

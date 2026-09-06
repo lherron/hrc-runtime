@@ -62,6 +62,7 @@ import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
 import { parseBrokerRuntimeHostingState } from './runtime-hosting'
 
+import { type BrokerAdmissionClass, brokerCapabilitiesSupportAdmissionClass } from './capabilities'
 import type { AllocationContext } from './controller/allocation'
 import {
   type DispatchContext,
@@ -744,7 +745,7 @@ export class HarnessBrokerController {
           ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
         })
     )
-    this.recordAcceptedSubmission(input, result, 'steer')
+    this.recordAcceptedSubmission(input, result, 'steer', 'steer')
     return result
   }
 
@@ -769,13 +770,14 @@ export class HarnessBrokerController {
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
     )
-    this.recordAcceptedSubmission(input, result, 'enqueue')
+    this.recordAcceptedSubmission(input, result, 'enqueue', 'queue')
     return result
   }
 
   async invoke(
     input: BrokerControllerInvokeInput
   ): Promise<BrokerControllerRpcResult<SubmissionResponse>> {
+    let admittedClass: BrokerAdmissionClass = 'exclusive'
     const result = await this.withActive(
       input.runtimeId,
       {
@@ -783,17 +785,28 @@ export class HarnessBrokerController {
         timeoutCode: 'broker_invoke_timeout',
         retireOnTimeout: true,
       },
-      (active) =>
-        active.client.invoke({
+      (active) => {
+        const invocation = this.db.brokerInvocations.getByInvocationId(active.invocationId)
+        const request = {
           invocationId: active.invocationId as InvocationId,
           origin: input.origin,
           body: input.body,
           ...(input.responseFormat !== undefined ? { responseFormat: input.responseFormat } : {}),
           ...(input.freshContext !== undefined ? { freshContext: input.freshContext } : {}),
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
-        })
+        }
+        // An invoke door promises an own turn, but a multi-origin seat cannot
+        // truthfully offer the broker's exclusive class. Preserve the public
+        // door for HRC observability while admitting it through the driver's
+        // queue class; the broker's admission.requested row records `queue`.
+        if (brokerCapabilitiesSupportAdmissionClass(invocation?.capabilitiesJson, 'exclusive')) {
+          return active.client.invoke(request)
+        }
+        admittedClass = 'queue'
+        return active.client.enqueue(request)
+      }
     )
-    this.recordAcceptedSubmission(input, result, 'invoke')
+    this.recordAcceptedSubmission(input, result, 'invoke', admittedClass)
     return result
   }
 
@@ -818,7 +831,7 @@ export class HarnessBrokerController {
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
     )
-    this.recordAcceptedSubmission(input, result, 'preempt')
+    this.recordAcceptedSubmission(input, result, 'preempt', 'preempt')
     return result
   }
 
@@ -872,7 +885,8 @@ export class HarnessBrokerController {
       | BrokerControllerInvokeInput
       | BrokerControllerPreemptInput,
     result: BrokerControllerRpcResult<SubmissionResponse>,
-    door: 'steer' | 'enqueue' | 'invoke' | 'preempt'
+    door: 'steer' | 'enqueue' | 'invoke' | 'preempt',
+    admissionClass: BrokerAdmissionClass
   ): void {
     if (!result.ok || result.response.admission !== 'admitted') return
     const active = this.active.get(input.runtimeId)
@@ -885,6 +899,7 @@ export class HarnessBrokerController {
         submissionId: result.response.submissionId,
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         door: input.submissionDoor ?? door,
+        admissionClass,
         observedAt: this.now(),
       })
     } catch (error) {

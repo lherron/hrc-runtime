@@ -14,7 +14,8 @@ import { observeBrokerLanding } from '../drive/landing.js'
 import { readActionableEnvelopes } from '../drive/presentation.js'
 import { reconcileOpenIntents } from '../drive/reconcile.js'
 import type { ObservedBrokerSeat } from '../drive/seat.js'
-import { runtimeAdvertisesSteer } from '../drive/seat.js'
+import { observeBrokerSeat, runtimeAdvertisesSteer } from '../drive/seat.js'
+import { driveMailTargetOnce } from '../drive/target-driver.js'
 import { KICKER_SUBMISSION_TTL_MS } from '../internal.js'
 import type {
   WrkqEnvelope,
@@ -286,6 +287,59 @@ async function deliverOne(seat: ObservedBrokerSeat, envelope: WrkqEnvelope) {
 }
 
 describe('D2 — steer first, and the door is chosen by what the seat is doing', () => {
+  it('holds mail while an observed Codex turn awaits ownership attribution', async () => {
+    const envelope = ledger.say()
+    const now = new Date().toISOString()
+    db.brokerInvocations.insert({
+      invocationId: 'inv-observed',
+      operationId: 'op-observed',
+      runtimeId: RUNTIME,
+      brokerProtocol: 'harness-broker/0.2',
+      brokerDriver: 'codex-app-server',
+      invocationState: 'turn_active',
+      capabilitiesJson: JSON.stringify({ bracketMintingMode: 'observed' }),
+      specHash: 'spec-observed',
+      startRequestHash: 'request-observed',
+      selectedProfileHash: 'profile-observed',
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.runtimes.update(RUNTIME, {
+      controllerKind: 'harness-broker',
+      activeInvocationId: 'inv-observed',
+      updatedAt: now,
+    })
+    context = {
+      ...context,
+      broker: {
+        ...context.broker,
+        seatProbe: async () => ({
+          ok: true,
+          response: {
+            invocationId: 'inv-observed' as never,
+            seat: { state: 'turn-observed', turnId: 'turn-human' as never },
+            brokerHeldDepth: 0,
+          },
+        }),
+      },
+    }
+
+    expect(await observeBrokerSeat(context, session)).toEqual({
+      state: 'turn-observed',
+      runtimeId: RUNTIME,
+      turnId: 'turn-human',
+    })
+    await driveMailTargetOnce(context, TARGET, 'insert')
+
+    expect(dispatches).toEqual([])
+    expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(logs.at(-1)).toMatchObject({
+      event: 'wrkq.kicker.seat_not_ready',
+      detail: { observedSeatState: 'turn-observed' },
+    })
+  })
+
   it('steers into a turn-active seat whose driver advertises the class', async () => {
     const envelope = ledger.say()
     expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')

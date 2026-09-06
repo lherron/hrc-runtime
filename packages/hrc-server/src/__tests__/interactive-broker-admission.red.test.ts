@@ -22,7 +22,7 @@
  *
  * ── Seam contract larry must implement in ../index (exported, pure, no live deps):
  *
- *   export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux'
+ *   export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux'
  *
  *   // The (controllerKind / transport / status) view of the latest runtime the
  *   // decision consults, plus the two fields needed to match it to a driver.
@@ -60,8 +60,8 @@
  *     · provider 'anthropic' AND harness.id ∈ {undefined, 'claude-code'} AND
  *       claudeCodeTmuxBrokerEnabled → 'claude-code-tmux'.
  *     · provider 'openai' AND harness.id ∈ {undefined, 'codex-cli'} AND
- *       codexCliTmuxBrokerEnabled → 'codex-cli-tmux'  [shape 4: openai id-less is
- *       admissible HERE; the "only if it resolves to codex-cli-tmux, else
+ *       codexCliTmuxBrokerEnabled → 'codex-app-server' [shape 4: openai id-less is
+ *       admissible HERE; the "only if it resolves to codex-app-server, else
  *       RUNTIME_UNAVAILABLE" guarantee is enforced DOWNSTREAM by the broker
  *       compile/admission fail-close — see runInteractiveTmuxRoute('broker') in
  *       headless-execution-route.test.ts].
@@ -98,6 +98,7 @@ import * as hrc from '../index'
 type Harness = HrcRuntimeIntent['harness']
 type InteractiveTmuxBrokerDriver =
   | 'claude-code-tmux'
+  | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
   | 'agent-harness-tmux'
@@ -202,11 +203,11 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
     })
   })
 
-  it('interactive codex-cli → broker-start (codex-cli-tmux)', () => {
+  it('interactive codex-cli → broker-start (codex-app-server)', () => {
     expect(decideInteractiveBrokerAdmission!(codexInteractive, null, BOTH_FLAGS_ON)).toEqual({
       decision: 'broker-start',
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED,
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     })
   })
 
@@ -256,7 +257,7 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
     expect(decideInteractiveBrokerAdmission!(idless, null, BOTH_FLAGS_ON)).toEqual({
       decision: 'broker-start',
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED,
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     })
   })
 })
@@ -315,15 +316,15 @@ describe('decideInteractiveBrokerAdmission — live broker runtime → broker-re
     })
   })
 
-  it('matching live codex-cli-tmux broker runtime → broker-reuse', () => {
+  it('matching live codex-app-server broker runtime → broker-reuse', () => {
     const live = runtimeView({
       controllerKind: 'harness-broker',
       provider: 'openai',
-      brokerDriver: 'codex-cli-tmux',
+      brokerDriver: 'codex-app-server',
     })
     expect(decideInteractiveBrokerAdmission!(codexInteractive, live, BOTH_FLAGS_ON)).toEqual({
       decision: 'broker-reuse',
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     })
   })
 
@@ -387,15 +388,15 @@ describe('decideInteractiveBrokerAdmission — shape 3: SDK/noninteractive fallt
   // a non-broker runtime; it reuses ONLY a matching broker runtime.
   const sdkShapedOpenai = intent({ provider: 'openai', interactive: false }, 'nonInteractive')
 
-  it('live matching broker (codex-cli-tmux) → broker-reuse', () => {
+  it('live matching broker (codex-app-server) → broker-reuse', () => {
     const live = runtimeView({
       controllerKind: 'harness-broker',
       provider: 'openai',
-      brokerDriver: 'codex-cli-tmux',
+      brokerDriver: 'codex-app-server',
     })
     expect(decideInteractiveBrokerAdmission!(sdkShapedOpenai, live, BOTH_FLAGS_ON)).toEqual({
       decision: 'broker-reuse',
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     })
   })
 

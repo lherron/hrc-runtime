@@ -14,7 +14,13 @@ export const DEFAULT_BROKER_DISPATCH_STALL_THRESHOLD_MS = 60_000
 export const BROKER_CLOSE_OUTPUT_TAIL_BYTES = 8 * 1024
 const RECENT_DIAGNOSTIC_LIMIT = 32
 
-export type BrokerSeatStateName = 'idle' | 'turn-active' | 'starting' | 'stopping' | 'terminal'
+export type BrokerSeatStateName =
+  | 'idle'
+  | 'turn-active'
+  | 'turn-observed'
+  | 'starting'
+  | 'stopping'
+  | 'terminal'
 
 export type BrokerSeatObservation = {
   availability: 'current' | 'stale' | 'unavailable'
@@ -44,6 +50,7 @@ export type BrokerSubmissionMilestone = {
   submissionId: string
   runId: string | null
   door: string | null
+  admissionClass: string | null
   acceptedAt: string | null
   handedToHarnessAt: string | null
   turnStartedAt: string | null
@@ -168,7 +175,7 @@ export function recordSeatProbe(input: {
     observedAt: input.observedAt,
     invocationId: input.invocationId,
     brokerHeldDepth: input.response.brokerHeldDepth,
-    ...(input.response.seat.state === 'turn-active'
+    ...(input.response.seat.state === 'turn-active' || input.response.seat.state === 'turn-observed'
       ? { turnId: String(input.response.seat.turnId) }
       : {}),
     cause: input.cause,
@@ -183,7 +190,8 @@ export function recordSeatProbe(input: {
       transitionedAt: input.observedAt,
       cause: input.cause,
       brokerHeldDepth: input.response.brokerHeldDepth,
-      ...(input.response.seat.state === 'turn-active'
+      ...(input.response.seat.state === 'turn-active' ||
+      input.response.seat.state === 'turn-observed'
         ? { turnId: String(input.response.seat.turnId) }
         : {}),
     }
@@ -276,9 +284,11 @@ export function recordSubmissionAccepted(input: {
   submissionId: string
   runId?: string | undefined
   door: string
+  admissionClass: string
   observedAt: string
 }): void {
   updateSubmission(input, {
+    admissionClass: input.admissionClass,
     acceptedAt: input.observedAt,
     lastMilestone: 'accepted',
   })
@@ -368,6 +378,7 @@ function updateSubmission(
     submissionId: string
     runId?: string | undefined
     door: string
+    admissionClass?: string | undefined
     observedAt: string
   },
   patch: Partial<BrokerSubmissionMilestone> & {
@@ -389,6 +400,7 @@ function updateSubmission(
       submissionId: input.submissionId,
       runId: input.runId ?? previous?.runId ?? null,
       door: input.door === 'unknown' ? (previous?.door ?? null) : input.door,
+      admissionClass: input.admissionClass ?? previous?.admissionClass ?? null,
       acceptedAt: previous?.acceptedAt ?? null,
       handedToHarnessAt: previous?.handedToHarnessAt ?? null,
       turnStartedAt: previous?.turnStartedAt ?? null,
@@ -407,6 +419,7 @@ function updateSubmission(
     submissionId: input.submissionId,
     runId: milestone.runId,
     door: milestone.door,
+    admissionClass: milestone.admissionClass,
     milestone: patch.lastMilestone,
     observedAt: input.observedAt,
   }

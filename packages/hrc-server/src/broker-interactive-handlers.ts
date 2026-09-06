@@ -1373,8 +1373,10 @@ export async function startInteractiveTmuxBrokerRuntime(
               // TUI on a "choose working directory to resume" picker (commit 120eb7a).
               // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
               //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
-              //   - codex-cli-tmux + an openai/kind:session/UUID continuation ⇒
-              //     `codex resume <uuid>` (explicit-id form; NOT no-arg picker resume).
+              //   - codex-app-server + an openai/kind:session/UUID continuation ⇒
+              //     compiler-owned `resumeThreadId` (no `codex resume` argv).
+              // The deprecated codex-cli-tmux path retains its explicit-id
+              // resume support until that driver is removed.
               // decideInteractiveTmuxBrokerContinuation enforces those gates; all other
               // cases (incl. pi-tui-tmux, non-UUID/non-session codex keys) stay undefined.
               continuation: toRuntimeContinuationRef(

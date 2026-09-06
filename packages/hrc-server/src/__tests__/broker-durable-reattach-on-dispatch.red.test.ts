@@ -300,6 +300,7 @@ function emptySnapshot(overrides: Partial<InvocationSnapshot> = {}): InvocationS
     invocationId: INVOCATION_ID,
     state: 'ready',
     capabilities: {
+      admission: { classes: ['steer', 'queue', 'exclusive', 'preempt'] },
       input: {
         user: true,
         steer: true,

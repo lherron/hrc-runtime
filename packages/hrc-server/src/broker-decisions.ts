@@ -227,6 +227,7 @@ export function decideCodexAppServerPresentation(input: {
 
 export type InteractiveTmuxBrokerDriver =
   | 'claude-code-tmux'
+  | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
   | 'agent-harness-tmux'
@@ -487,7 +488,7 @@ export function resolveInteractiveBrokerAdmissionDriver(
   ) {
     return {
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     }
   }
 
@@ -537,7 +538,7 @@ export function decideInteractiveTmuxBrokerStartRoute(
     return {
       route: 'broker',
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     }
   }
 
@@ -692,7 +693,7 @@ export function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeInt
  * All must move to the interactive claude-code-tmux broker. We key on
  * deriveInteractiveHarness resolving to 'claude-code' (the normalize target) so
  * openai/codex intents (incl. openai pi-sdk → codex-cli) are NOT captured here —
- * those keep the headless-codex / codex-cli-tmux routes. The second clause
+ * those keep the headless-codex / Codex broker routes. The second clause
  * restricts to the SDK-shaped / claude-code id set so an interactive `pi`/`pi-cli`
  * intent is left untouched.
  */
@@ -760,14 +761,13 @@ export function shouldBlockForBrokerTurnCompletion(
  * --resume case: strictly gated on (a) the claude-code-tmux driver and (b) a
  * captured session id key.
  *
- * T-04836 Part B: extend the same safe explicit-id recreate resume to Codex
- * (codex-cli-tmux). `codex resume <SESSION_ID>` resumes by id with no cwd
- * picker — the picker is only the no-arg default. To guarantee the launch is
- * the explicit-id form (and never a rollout-file/transcript-replay/picker
- * resume), Codex is admitted ONLY when the captured continuation is provider
- * 'openai', kind 'session', and the key is a syntactic UUID (the Codex hook
- * `session_id`). Pi stays blocked. Claude keeps its existing behavior and, when
- * a provider is present on the stored ref, requires 'anthropic'.
+ * T-04836 Part B: Codex is admitted ONLY when the captured continuation is
+ * provider 'openai', kind 'session', and the key is the syntactic UUID reported
+ * by its session hook. The codex-app-server compiler turns that key into
+ * resumeThreadId without constructing CLI resume argv. The deprecated
+ * codex-cli-tmux driver retains its safe explicit-id `codex resume <SESSION_ID>`
+ * path until removal. Pi stays blocked. Claude keeps its existing behavior and,
+ * when a provider is present on the stored ref, requires 'anthropic'.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -790,8 +790,13 @@ export function decideInteractiveTmuxBrokerContinuation(options: {
     return continuation
   }
 
-  if (options.allowedBrokerDriver === 'codex-cli-tmux') {
-    // Codex: only explicit session-UUID resume (`codex resume <uuid>`) is safe.
+  if (
+    options.allowedBrokerDriver === 'codex-app-server' ||
+    options.allowedBrokerDriver === 'codex-cli-tmux'
+  ) {
+    // Codex: only an observed OpenAI session UUID is safe. The deprecated tmux
+    // driver compiles it to `codex resume <uuid>`; codex-app-server compiles the
+    // same continuation key to driver.resumeThreadId without a resume argv.
     if (continuation.provider !== 'openai') {
       return undefined
     }
@@ -837,6 +842,7 @@ export function isInteractiveTmuxBrokerDriver(
 ): brokerDriver is InteractiveTmuxBrokerDriver {
   return (
     brokerDriver === 'claude-code-tmux' ||
+    brokerDriver === 'codex-app-server' ||
     brokerDriver === 'codex-cli-tmux' ||
     brokerDriver === 'pi-tui-tmux' ||
     brokerDriver === 'agent-harness-tmux'

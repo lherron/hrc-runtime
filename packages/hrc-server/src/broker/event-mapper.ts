@@ -72,6 +72,7 @@ import type {
   ToolCallCompletedPayload,
   ToolCallFailedPayload,
   ToolCallStartedPayload,
+  TurnAttributedPayload,
   TurnFailedPayload,
   TurnRetryPayload,
 } from 'spaces-harness-broker-protocol'
@@ -720,6 +721,7 @@ export class BrokerEventMapper {
     runtime: HrcRuntimeSnapshot
   ): string | undefined {
     const fallbackRunId = invocation.runId
+    const bracketMintingMode = this.bracketMintingMode(invocation)
     const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
     if (submissionId !== undefined) {
       const run = this.db.runs.getByBrokerSubmissionId(submissionId)
@@ -727,6 +729,27 @@ export class BrokerEventMapper {
     }
 
     const turnId = this.extractTurnId(envelope)
+    const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
+
+    // Observed brackets open before ownership is known. Only explicit broker
+    // input identity or the durable turn.attributed table can join a row to an
+    // HRC run; absence, foreign, and unknown are authoritative no-run answers.
+    // In particular, never fall through to nearest input.accepted borrowing.
+    if (bracketMintingMode === 'observed') {
+      if (envelopeInputId !== undefined) {
+        return this.runForInputIdentity(envelopeInputId)?.runId
+      }
+      if (turnId !== undefined) {
+        const attribution = this.findObservedTurnAttribution(String(envelope.invocationId), turnId)
+        return attribution?.ownership === 'own' &&
+          attribution.inputId !== null &&
+          attribution.attributedSeq <= envelope.seq
+          ? this.runForInputIdentity(attribution.inputId)?.runId
+          : undefined
+      }
+      return undefined
+    }
+
     if (turnId !== undefined) {
       const run = this.findRunByDispositionTurnId(String(envelope.invocationId), turnId)
       if (run !== undefined) return run
@@ -735,7 +758,6 @@ export class BrokerEventMapper {
     // Prefer envelope.inputId when the broker sets it: input.accepted /
     // input.queued / input.rejected always carry it (contract), and
     // input.queued specifically refers to the QUEUED input.
-    const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
     if (envelopeInputId !== undefined) {
       const run = this.runForInputIdentity(envelopeInputId)
       if (run?.runId) return run.runId
@@ -752,7 +774,7 @@ export class BrokerEventMapper {
       // its argv priming prompt. Delivery-acknowledged/asserted drivers retain
       // the historical nearest-input fallback below.
       if (
-        this.bracketMintingMode(invocation) === 'harness-evidence' &&
+        bracketMintingMode === 'harness-evidence' &&
         this.turnStartedInputId(envelope, openTurnStartedSeq) === undefined
       ) {
         // T-07920: a summons that births a launch-primed seat deliberately has
@@ -902,6 +924,64 @@ export class BrokerEventMapper {
     return (
       this.db.runs.getByDispatchedInputId(inputId) ?? this.db.runs.getByBrokerSubmissionId(inputId)
     )
+  }
+
+  private findObservedTurnAttribution(
+    invocationId: string,
+    turnId: string
+  ):
+    | {
+        ownership: 'own' | 'foreign' | 'unknown'
+        inputId: string | null
+        attributedSeq: number
+      }
+    | undefined {
+    return (
+      this.db.sqlite
+        .query<
+          {
+            ownership: 'own' | 'foreign' | 'unknown'
+            inputId: string | null
+            attributedSeq: number
+          },
+          [string, string]
+        >(
+          `SELECT ownership, input_id AS inputId, attributed_seq AS attributedSeq
+             FROM broker_turn_attributions
+            WHERE invocation_id = ? AND turn_id = ?`
+        )
+        .get(invocationId, turnId) ?? undefined
+    )
+  }
+
+  private persistObservedTurnAttribution(
+    envelope: InvocationEventEnvelope,
+    payload: TurnAttributedPayload,
+    now: string
+  ): void {
+    const invocationId = String(envelope.invocationId)
+    const turnId = String(payload.turnId)
+    const inputId = payload.inputId === undefined ? null : String(payload.inputId)
+    const existing = this.findObservedTurnAttribution(invocationId, turnId)
+    if (existing !== undefined) {
+      if (
+        existing.ownership !== payload.ownership ||
+        existing.inputId !== inputId ||
+        existing.attributedSeq !== envelope.seq
+      ) {
+        throw new Error(
+          `conflicting observed turn attribution for ${invocationId}/${turnId}: refusing to overwrite`
+        )
+      }
+      return
+    }
+    this.db.sqlite
+      .query(
+        `INSERT INTO broker_turn_attributions (
+           invocation_id, turn_id, ownership, input_id, attributed_seq, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(invocationId, turnId, payload.ownership, inputId, envelope.seq, envelope.time ?? now)
   }
 
   private static readonly NONTERMINAL_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
@@ -1101,6 +1181,7 @@ export class BrokerEventMapper {
       case 'submission.cancelled':
       case 'submission.lost':
       case 'turn.started':
+      case 'turn.attributed':
       case 'turn.completed':
       case 'turn.failed':
       case 'turn.interrupted':
@@ -1435,6 +1516,14 @@ export class BrokerEventMapper {
           invocationState: 'turn_active',
           updatedAt: now,
         })
+        break
+      }
+      case 'turn.attributed': {
+        this.persistObservedTurnAttribution(
+          envelope,
+          envelope.payload as TurnAttributedPayload,
+          now
+        )
         break
       }
       case 'turn.completed': {

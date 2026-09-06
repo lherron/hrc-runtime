@@ -20,9 +20,9 @@
  *     terminal state and surfaces failures.
  *
  *   D (resume): decideInteractiveTmuxBrokerContinuation returns the captured
- *     session continuation for safe explicit-id TUI resume. Claude accepts an
- *     Anthropic key; Codex accepts only openai + kind:session + UUID, so the
- *     adapter can emit `codex resume <uuid>` and never no-arg picker resume.
+ *     session continuation for safe explicit-id resume. Claude accepts an
+ *     Anthropic key; Codex accepts only openai + kind:session + UUID. The
+ *     app-server compiler receives that key as resumeThreadId without argv.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -52,7 +52,7 @@ const api = hrc as unknown as {
   normalizeClaudeInteractiveBrokerIntent?: (intent: HrcRuntimeIntent) => HrcRuntimeIntent
   shouldBlockForBrokerTurnCompletion?: (waitForCompletion: boolean | undefined) => boolean
   decideInteractiveTmuxBrokerContinuation?: (options: {
-    allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
+    allowedBrokerDriver: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux' | 'pi-tui-tmux'
     sessionContinuation: HrcContinuationRef | undefined
   }) => HrcContinuationRef | undefined
   // Reused existing predicates (now exported) to prove post-normalization routing.
@@ -240,6 +240,15 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
     ).toEqual(codexCaptured)
   })
 
+  it('codex-app-server + openai session UUID => compiler continuation key', () => {
+    expect(
+      api.decideInteractiveTmuxBrokerContinuation!({
+        allowedBrokerDriver: 'codex-app-server',
+        sessionContinuation: codexCaptured,
+      })
+    ).toEqual(codexCaptured)
+  })
+
   it('codex-cli-tmux rejects non-session or non-UUID continuations so no-arg picker resume is unreachable', () => {
     const badContinuations = [
       { provider: 'openai', key: codexSessionUuid },
@@ -252,6 +261,24 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
       expect(
         api.decideInteractiveTmuxBrokerContinuation!({
           allowedBrokerDriver: 'codex-cli-tmux',
+          sessionContinuation,
+        })
+      ).toBeUndefined()
+    }
+  })
+
+  it('codex-app-server refuses non-session and non-UUID continuation keys', () => {
+    const badContinuations = [
+      { provider: 'openai', key: codexSessionUuid },
+      { provider: 'openai', kind: 'thread', key: codexSessionUuid },
+      { provider: 'openai', kind: 'session', key: 'not-a-thread-uuid' },
+      { provider: 'anthropic', kind: 'session', key: codexSessionUuid },
+    ] as Array<HrcContinuationRef & { kind?: string }>
+
+    for (const sessionContinuation of badContinuations) {
+      expect(
+        api.decideInteractiveTmuxBrokerContinuation!({
+          allowedBrokerDriver: 'codex-app-server',
           sessionContinuation,
         })
       ).toBeUndefined()

@@ -225,7 +225,7 @@ function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | unde
       return { brokerDriver: 'claude-code-tmux' }
     }
     if (runtime === 'codex-cli') {
-      return { brokerDriver: 'codex-cli-tmux' }
+      return { brokerDriver: 'codex-app-server' }
     }
     if (runtime === 'pi-cli') {
       return { brokerDriver: 'pi-tui-tmux' }

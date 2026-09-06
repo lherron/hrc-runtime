@@ -890,6 +890,33 @@ const transcriptTurnIndexMigration: HrcMigration = {
   },
 }
 
+/** T-08098 — durable ownership evidence for observed Codex turn brackets. */
+const brokerTurnAttributionMigration: HrcMigration = {
+  id: '0054_broker_turn_attributions',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS broker_turn_attributions (
+        invocation_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        ownership TEXT NOT NULL CHECK (ownership IN ('own', 'foreign', 'unknown')),
+        input_id TEXT,
+        attributed_seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (invocation_id, turn_id),
+        FOREIGN KEY (invocation_id) REFERENCES broker_invocations(invocation_id) ON DELETE CASCADE,
+        CHECK (
+          (ownership = 'own' AND input_id IS NOT NULL)
+          OR (ownership IN ('foreign', 'unknown') AND input_id IS NULL)
+        )
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_broker_turn_attributions_input
+        ON broker_turn_attributions(input_id)
+        WHERE input_id IS NOT NULL;
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -910,4 +937,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   brokerCommittedProjectionCursorMigration,
   runBrokerSubmissionIdMigration,
   transcriptTurnIndexMigration,
+  brokerTurnAttributionMigration,
 ]

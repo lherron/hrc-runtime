@@ -63,6 +63,7 @@ type InteractiveTmuxBrokerStartRoute =
       flagEnvName: string
       allowedBrokerDriver:
         | 'claude-code-tmux'
+        | 'codex-app-server'
         | 'codex-cli-tmux'
         | 'pi-tui-tmux'
         | 'agent-harness-tmux'
@@ -107,7 +108,7 @@ const decideInteractiveTmuxExecutionRoute = (
       profile: BrokerExecutionProfile,
       options: {
         brokerFlagEnabled: boolean
-        allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux'
+        allowedBrokerDriver: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux'
       }
     ) => InteractiveTmuxExecutionRoute
   }
@@ -577,7 +578,7 @@ describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts
     })
   })
 
-  it('selects the Codex CLI tmux broker when the Codex flag is enabled', () => {
+  it('selects the Codex app-server broker with tmux presentation when the Codex flag is enabled', () => {
     expect(
       decideInteractiveTmuxBrokerStartRoute!(
         intent({ provider: 'openai', interactive: true, id: 'codex-cli' }, 'interactive'),
@@ -589,7 +590,7 @@ describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts
     ).toEqual({
       route: 'broker',
       flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
-      allowedBrokerDriver: 'codex-cli-tmux',
+      allowedBrokerDriver: 'codex-app-server',
     })
   })
 

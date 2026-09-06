@@ -271,6 +271,7 @@ function emptySnapshot(over: Partial<InvocationSnapshot> = {}): InvocationSnapsh
     invocationId: INVOCATION_ID,
     state: 'ready',
     capabilities: {
+      admission: { classes: ['steer', 'queue', 'exclusive', 'preempt'] },
       input: {
         user: true,
         steer: true,

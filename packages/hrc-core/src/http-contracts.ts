@@ -744,7 +744,7 @@ export type InspectRuntimeRequest = {
 
 export type BrokerDispatchSeatObservation = {
   availability: 'current' | 'stale' | 'unavailable'
-  state: 'idle' | 'turn-active' | 'starting' | 'stopping' | 'terminal' | null
+  state: 'idle' | 'turn-active' | 'turn-observed' | 'starting' | 'stopping' | 'terminal' | null
   observedAt: string
   attemptedAt?: string | undefined
   invocationId: string | null
