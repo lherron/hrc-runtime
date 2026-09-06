@@ -390,6 +390,60 @@ describe('RunRepository', () => {
     }
   })
 
+  /**
+   * T-08108 / T-08107 cross-check (cody): HRC disposes a STEER's run at ack,
+   * because a steer has no turn of its own to complete. The constraint cody
+   * named is that disposal must not cost the durable broker-submission
+   * correlation — a later `submission.absorbed`/`executed`/`lost` has to remain
+   * classifiable to the envelope that caused it. `markCompleted` writes only
+   * status, timestamps and error columns, and this is what says so.
+   */
+  it('preserves the broker-submission correlation when a run is completed', () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const now = ts()
+      db.sessions.insert({
+        hostSessionId: 'hsid-run-steer',
+        scopeRef: testScopeRef('scope-run-steer'),
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runs.insert({
+        runId: 'run-steer-1',
+        hostSessionId: 'hsid-run-steer',
+        scopeRef: testScopeRef('scope-run-steer'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        status: 'accepted',
+        updatedAt: now,
+      })
+      db.runs.update('run-steer-1', {
+        brokerSubmissionId: 'submission_inv-abc_7',
+        dispatchedInputId: 'submission_inv-abc_7',
+        updatedAt: ts(),
+      })
+
+      const completed = db.runs.markCompleted('run-steer-1', {
+        status: 'completed',
+        completedAt: ts(),
+        updatedAt: ts(),
+      })
+      expect(completed).not.toBeNull()
+      expect(completed!.status).toBe('completed')
+      // The correlation, still there after disposal.
+      expect(completed!.brokerSubmissionId).toBe('submission_inv-abc_7')
+      expect(completed!.dispatchedInputId).toBe('submission_inv-abc_7')
+      expect(db.runs.getByRunId('run-steer-1')!.brokerSubmissionId).toBe('submission_inv-abc_7')
+    } finally {
+      db.close()
+    }
+  })
+
   it('lists latest runs for a host session with generation and limit filters', () => {
     const db = openHrcDatabase(fixture.dbPath)
     try {

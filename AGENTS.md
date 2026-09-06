@@ -16,6 +16,12 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
 - Isolated-daemon smoke: [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md).
 - Enablement lessons: [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
 - Standalone HTML specs go in `docs/html/` (`just serve-docs`).
+- **Never integrity-check a `cp` of the live state DB.** `state.sqlite` is
+  WAL-mode and the daemon writes continuously, so a plain `cp` (even with the
+  `-wal` sidecar) is a TORN copy: `PRAGMA integrity_check` on it returns dozens
+  of `wrong # of entries in index` lines that say nothing about the real store.
+  Snapshot with `sqlite3 -readonly <db> "VACUUM INTO '<snap>'"`, which is
+  consistent and answers `ok`. Use the snapshot for migration dry runs too.
 
 ## Dependency Pins
 

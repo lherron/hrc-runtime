@@ -50,7 +50,10 @@ function intent(
 const api = hrc as unknown as {
   shouldRedirectClaudeToInteractiveBroker?: (intent: HrcRuntimeIntent) => boolean
   normalizeClaudeInteractiveBrokerIntent?: (intent: HrcRuntimeIntent) => HrcRuntimeIntent
-  shouldBlockForBrokerTurnCompletion?: (waitForCompletion: boolean | undefined) => boolean
+  shouldBlockForBrokerTurnCompletion?: (
+    waitForCompletion: boolean | undefined,
+    submissionDoor?: string | undefined
+  ) => boolean
   decideInteractiveTmuxBrokerContinuation?: (options: {
     allowedBrokerDriver: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux' | 'pi-tui-tmux'
     sessionContinuation: HrcContinuationRef | undefined
@@ -192,6 +195,30 @@ describe('Phase C — shouldBlockForBrokerTurnCompletion convention (headless pa
   })
   it('returns started (does not block) when waitForCompletion is false', () => {
     expect(api.shouldBlockForBrokerTurnCompletion!(false)).toBe(false)
+  })
+
+  /**
+   * T-08108. A steer joins a turn already running and originates none of its
+   * own, so there is no completion to wait for: its run stays `accepted`, the
+   * caller blocks to the 10-minute deadline and then fails
+   * `interactive broker turn timed out` on a delivery that WORKED. Observed on
+   * max3 2026-09-06 (run-63fe3229): the pane got the text, the turn completed,
+   * the CLI never returned.
+   */
+  it('never blocks on the steer door, whatever the caller asked for', () => {
+    expect(api.shouldBlockForBrokerTurnCompletion!(undefined, 'steer')).toBe(false)
+    // The forcing IS the claim: an explicit true must not re-enable it. The CLI
+    // already rejects `--steer --wait`, so no legitimate caller holds a blocking
+    // intent here; this puts the rule where a new caller cannot re-break it.
+    expect(api.shouldBlockForBrokerTurnCompletion!(true, 'steer')).toBe(false)
+  })
+
+  it('leaves every other door on the headless-parity convention', () => {
+    for (const door of ['enqueue', 'invoke', 'preempt']) {
+      expect(api.shouldBlockForBrokerTurnCompletion!(undefined, door)).toBe(true)
+      expect(api.shouldBlockForBrokerTurnCompletion!(true, door)).toBe(true)
+      expect(api.shouldBlockForBrokerTurnCompletion!(false, door)).toBe(false)
+    }
   })
 })
 

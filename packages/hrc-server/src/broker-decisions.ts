@@ -742,10 +742,27 @@ export function normalizeClaudeInteractiveBrokerIntent(intent: HrcRuntimeIntent)
  * blocks the synchronous caller: undefined/true => block until the run reaches a
  * terminal state; false => return status:'started' immediately (the async reply
  * bridge / a polling caller finalizes the turn).
+ *
+ * THE STEER DOOR IS EXEMPT, AND NOT AS A CONVENIENCE (T-08108). A steer joins a
+ * turn that is already running and originates none of its own, so its run has no
+ * completion to wait for: it stays `accepted` forever and the caller blocks
+ * until the 10-minute deadline, then fails `interactive broker turn timed out`
+ * on a delivery that actually worked. Observed on max3 2026-09-06, run
+ * `run-63fe3229`: the pane got the text, the turn completed, the CLI never
+ * returned.
+ *
+ * The exemption ignores the caller's flag on purpose. `hrcchat-cli` already
+ * rejects `--steer --wait` with "steer has no turn of its own", so no
+ * legitimate caller can hold a blocking intent on this door; forcing it here
+ * makes the server agree with the contract the edge was enforcing alone, and
+ * puts the rule where it cannot be re-broken by a new caller that simply omits
+ * the flag.
  */
 export function shouldBlockForBrokerTurnCompletion(
-  waitForCompletion: boolean | undefined
+  waitForCompletion: boolean | undefined,
+  submissionDoor?: string | undefined
 ): boolean {
+  if (submissionDoor === 'steer') return false
   return waitForCompletion !== false
 }
 

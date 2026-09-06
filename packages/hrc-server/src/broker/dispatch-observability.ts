@@ -455,6 +455,13 @@ export function warnStalledSubmissions(input: {
     ) {
       continue
     }
+    // A STEER's last milestone IS `handed_to_harness` (T-08108). It joins a turn
+    // that is already running and originates none of its own, so it will never
+    // report a `turn.started` of its own and this detector would warn about
+    // every healthy steer at the threshold — as it did on max3, 60 s after a
+    // delivery that had already reached the pane. Only a steer that never
+    // reached the harness is actually stalled.
+    if (submission.door === 'steer' && submission.handedToHarnessAt !== null) continue
     const durationMs = nowMs - Date.parse(submission.acceptedAt)
     if (!Number.isFinite(durationMs) || durationMs < input.thresholdMs) continue
     updateDiagnostics(input.db, input.runtimeId, input.observedAt, (latest) => ({

@@ -1133,10 +1133,28 @@ export async function executeInteractiveBrokerInputTurn(
     })
   }
 
+  // A STEER's landing fact is the ack, not a run completion (T-08108). Dispose
+  // its run here so it is neither an active run nor a stall candidate — an
+  // undisposed steer run tripped `broker.submission.stalled` at 60 s on a
+  // perfectly healthy delivery. The broker-submission correlation written above
+  // (`brokerSubmissionId` / `dispatchedInputId`) is deliberately NOT touched:
+  // `markCompleted` writes only status and timestamps, so a later
+  // absorbed/executed/lost event can still be correlated back to this
+  // submission after the run is closed (cody, T-08107 cross-check).
+  if (options.submissionDoor === 'steer' && result.ok) {
+    const ackedAt = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: 'completed',
+      completedAt: ackedAt,
+      updatedAt: ackedAt,
+    })
+  }
+
   // T-01770 Phase C: a synchronous caller (ACP/Discord round-trip via
   // dispatchTurnForSession) blocks until the Claude turn completes; the async
   // reply-bridge callers pass waitForCompletion:false and get status:'started'.
-  if (!shouldBlockForBrokerTurnCompletion(options.waitForCompletion)) {
+  // A steer never blocks, whatever the caller asked for.
+  if (!shouldBlockForBrokerTurnCompletion(options.waitForCompletion, options.submissionDoor)) {
     return json({
       runId,
       hostSessionId: session.hostSessionId,

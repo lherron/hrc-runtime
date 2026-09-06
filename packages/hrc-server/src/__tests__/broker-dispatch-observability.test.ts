@@ -362,6 +362,70 @@ describe('broker dispatch observability', () => {
     ).toMatchObject({ lastMilestone: 'accepted', stalledWarnedAt: '2026-05-27T12:34:58.000Z' })
   })
 
+  /**
+   * T-08108: a steer's last milestone IS `handed_to_harness`.
+   *
+   * It joins a turn already running and originates none of its own, so it can
+   * never report a `turn.started` of its own. Before this, the detector warned
+   * about every healthy steer at the threshold — observed on max3, 60 s after a
+   * delivery that had already reached the pane and been read.
+   */
+  async function steerAndProbe(options: { handToHarness: boolean }): Promise<string[]> {
+    const fake = new FakeBrokerClient()
+    fake.seatProbe = async (request: SeatProbeRequest) => ({
+      invocationId: request.invocationId,
+      seat: { state: 'turn-active', turnId: turnId('turn-live') },
+      brokerHeldDepth: 0,
+    })
+    let now = NOW
+    const warnings: string[] = []
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerDispatchStallThresholdMs: 1_000,
+      now: () => now,
+      logger: { warn: (event) => warnings.push(event) },
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+    const steered = await controller.steer({
+      runtimeId: 'runtime_w2',
+      runId: 'run_steer',
+      origin: { principalRef: 'agent:clod' },
+      body: 'steered into a live turn',
+    })
+    if (options.handToHarness && steered.ok) {
+      recordBrokerEventMilestones({
+        db: fixture.db,
+        logger: {},
+        runtimeId: 'runtime_w2',
+        envelope: envelope(
+          'input.accepted',
+          5,
+          { inputId: inputId(steered.response.submissionId) },
+          { invocationId: 'invocation_w2' as never }
+        ),
+        observedAt: NOW,
+      })
+    }
+    now = '2026-05-27T12:34:58.000Z'
+    await controller.seatProbe('runtime_w2')
+    await controller.seatProbe('runtime_w2')
+    return warnings
+  }
+
+  it('never calls a steer stalled once it reached the harness', async () => {
+    const warnings = await steerAndProbe({ handToHarness: true })
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toEqual([])
+    expect(diagnosticEvents('broker.submission.stalled')).toHaveLength(0)
+  })
+
+  it('still calls a steer stalled when it never reached the harness', async () => {
+    // The exemption is for a steer that LANDED, not for the door. A steer stuck
+    // at `accepted` is the case this detector exists for.
+    const warnings = await steerAndProbe({ handToHarness: false })
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
+  })
+
   it('projects matching, divergent, stale, and unavailable inspect states', () => {
     const base = {
       runtimeProjection: 'ready',
