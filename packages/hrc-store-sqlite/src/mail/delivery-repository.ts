@@ -693,6 +693,55 @@ export class HrcMailDeliveryRepository {
     )
   }
 
+  // ── TTL expiry accounting ──────────────────────────────────────────────────
+
+  /**
+   * Count one TTL expiry for this envelope on this runtime, and say how many
+   * consecutive ones it has now had.
+   *
+   * Keyed by (envelope, runtime) so a rotation or restart resets the count
+   * structurally: a different runtime is a different row, and the next seat gets
+   * its full allowance. Cleared on a successful landing, so an intermittent seat
+   * never accumulates toward the bound.
+   */
+  recordIntentExpiry(envelopeId: string, runtimeId: string): number {
+    const now = new Date().toISOString()
+    this.db
+      .query(
+        `INSERT INTO hrcmail_delivery_expiries (
+           envelope_id, runtime_id, expiries, first_expired_at, last_expired_at
+         ) VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(envelope_id, runtime_id) DO UPDATE SET
+           expiries = hrcmail_delivery_expiries.expiries + 1,
+           last_expired_at = excluded.last_expired_at`
+      )
+      .run(envelopeId, runtimeId, now, now)
+    return (
+      this.db
+        .query<{ expiries: number }, [string, string]>(
+          `SELECT expiries FROM hrcmail_delivery_expiries
+            WHERE envelope_id = ? AND runtime_id = ?`
+        )
+        .get(envelopeId, runtimeId)?.expiries ?? 0
+    )
+  }
+
+  /** A landing means the seat can take deliveries after all; the count goes. */
+  clearIntentExpiries(envelopeId: string): void {
+    this.db.query('DELETE FROM hrcmail_delivery_expiries WHERE envelope_id = ?').run(envelopeId)
+  }
+
+  intentExpiries(envelopeId: string, runtimeId: string): number {
+    return (
+      this.db
+        .query<{ expiries: number }, [string, string]>(
+          `SELECT expiries FROM hrcmail_delivery_expiries
+            WHERE envelope_id = ? AND runtime_id = ?`
+        )
+        .get(envelopeId, runtimeId)?.expiries ?? 0
+    )
+  }
+
   // ── Birth refusals ─────────────────────────────────────────────────────────
 
   /** Record that this node attempted a birth for a target and was refused. */

@@ -68,14 +68,16 @@ export type MailKickerContext = {
    */
   readonly mailKickerSteerRefused: Set<string>
   /**
-   * Per-runtime backoff for a TRANSIENT steer refusal: the next pass retries
-   * the steer door rather than falling to enqueue, after a short wait.
+   * Per-runtime backoff for a refusal that is about the MOMENT rather than the
+   * seat: a transient steer refusal, or a door that threw.
    *
-   * Bounded and doubling so a pane somebody is typing into steadily is not
-   * hammered, and cleared on a successful landing so a seat that starts
-   * accepting steers again pays nothing for the interval it did not.
+   * Bounded and doubling so a pane somebody is typing into steadily — or a
+   * daemon draining for restart — is not hammered, and cleared on a successful
+   * landing so a seat that starts accepting deliveries again pays nothing for
+   * the interval it did not. Every refusal path is paced through this one map;
+   * the drain window that spun five times in a second is what it is for.
    */
-  readonly mailKickerSteerBackoff: Map<string, number>
+  readonly mailKickerDeliveryBackoff: Map<string, number>
 
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(

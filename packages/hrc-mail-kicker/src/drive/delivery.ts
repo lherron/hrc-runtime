@@ -26,7 +26,7 @@ import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../interna
 import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import type { PresentableEnvelope } from '../ledger/presentation.js'
 import { presentationRuntimeIdFor } from './authority.js'
-import { landLaunchIfStarted } from './landing.js'
+import { landLaunchIfStarted, nextDeliveryBackoffMs } from './landing.js'
 import type { ActionableEnvelope } from './presentation.js'
 import { actionableDirectives, senderGenerationFor } from './presentation.js'
 import type { ObservedBrokerSeat } from './seat.js'
@@ -214,14 +214,27 @@ export async function deliverToSeat(
   } catch (error) {
     // Nothing honest can be claimed. The intent is cleared so the envelope is
     // actionable again on the next pass; it was never presented.
+    //
+    // PACED, on the same per-runtime backoff every other refusal uses. A door
+    // that throws is a refusal about the moment — a daemon draining for restart
+    // answers this way — and an unpaced retry span five submissions inside one
+    // drain window (chief, 2026-09-06).
     server.db.mailDelivery.clearIntent(item.envelope.id)
+    const retryInMs = runtimeId === undefined ? undefined : nextDeliveryBackoffMs(server, runtimeId)
     server.log('WARN', 'wrkq.kicker.delivery_failed', {
       targetSessionRef,
       wakeReason,
       envelope: item.envelope.id,
       door,
+      ...(retryInMs === undefined ? {} : { retryInMs }),
       error: errorText(error),
     })
+    if (retryInMs !== undefined) {
+      const timer = setTimeout(() => {
+        if (!server.stopping) server.wake(targetSessionRef, 'insert')
+      }, retryInMs)
+      timer.unref?.()
+    }
     return 'refused'
   }
 

@@ -2838,6 +2838,41 @@ const hrcmailSteerFirstDeliveryMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08094 — never retry forever into a seat that cannot land (chief ruling,
+ * 2026-09-06; addendum to spec T-08092 §D2 step 5).
+ *
+ * D2 step 5 clears an intent whose landing never arrives and re-wakes the
+ * target, which redelivers under policy. On a genuinely wedged seat that loop
+ * never converges: the observed case had a claude-code seat wedged since
+ * 2026-09-05T00:39 re-submitting one steer every TTL, forever, into a broker
+ * that could not land it. The sender learned nothing the whole time.
+ *
+ * So the loop gets a bound. Three consecutive TTL expiries for one envelope on
+ * ONE runtime fail it `undeliverable` with the existing sender notice — a
+ * disposition trigger inside the approved contract, not a new mechanism.
+ *
+ * Keyed by (envelope, runtime), which is what makes "a new runtime resets the
+ * count" true by construction rather than by a rule someone has to remember: a
+ * rotation or a restart produces a different runtime id and therefore a fresh
+ * row, and the next seat gets its full three attempts.
+ */
+const hrcmailDeliveryExpiryMigration: HrcMigration = {
+  id: '0059_hrcmail_delivery_expiries',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_delivery_expiries (
+        envelope_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        expiries INTEGER NOT NULL DEFAULT 0 CHECK (expiries >= 0),
+        first_expired_at TEXT NOT NULL,
+        last_expired_at TEXT NOT NULL,
+        PRIMARY KEY (envelope_id, runtime_id)
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2892,4 +2927,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailPreMigrationDispositionMigration,
   hrcmailRetireAutoReplyMigration,
   hrcmailSteerFirstDeliveryMigration,
+  hrcmailDeliveryExpiryMigration,
 ]

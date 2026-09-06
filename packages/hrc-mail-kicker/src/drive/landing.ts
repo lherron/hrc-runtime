@@ -128,7 +128,10 @@ export async function commitLanding(
   }
 
   server.db.mailDelivery.clearIntent(intent.envelopeId)
-  server.mailKickerSteerBackoff.delete(input.runtimeId)
+  server.mailKickerDeliveryBackoff.delete(input.runtimeId)
+  // The seat took a body, so it is not the seat that cannot land: the TTL bound
+  // starts over rather than carrying a stale near-miss into the next delivery.
+  server.db.mailDelivery.clearIntentExpiries(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.presented', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -200,12 +203,16 @@ export function steerRefusalIsPermanent(
   return rejection?.layer === 'capability'
 }
 
-/** The next transient-refusal wait for this runtime, doubling to the ceiling. */
-function nextSteerBackoffMs(server: MailKickerContext, runtimeId: string): number {
-  const previous = server.mailKickerSteerBackoff.get(runtimeId)
+/**
+ * The next wait for a refusal about the MOMENT on this runtime, doubling to the
+ * ceiling. Shared by the transient-steer path and the door-threw path, so no
+ * refusal path is unpaced (chief, 2026-09-06).
+ */
+export function nextDeliveryBackoffMs(server: MailKickerContext, runtimeId: string): number {
+  const previous = server.mailKickerDeliveryBackoff.get(runtimeId)
   const next =
     previous === undefined ? STEER_RETRY_BASE_MS : Math.min(previous * 2, STEER_RETRY_MAX_MS)
-  server.mailKickerSteerBackoff.set(runtimeId, next)
+  server.mailKickerDeliveryBackoff.set(runtimeId, next)
   return next
 }
 
@@ -261,13 +268,13 @@ export function refuseIntent(
   }
   if (steerRefusalIsPermanent(server, runtimeId, intent.submissionId, reason)) {
     server.mailKickerSteerRefused.add(runtimeId)
-    server.mailKickerSteerBackoff.delete(runtimeId)
+    server.mailKickerDeliveryBackoff.delete(runtimeId)
     clearRefusedIntent(server, intent, reason, { refusalClass: 'permanent' })
     return
   }
   clearRefusedIntent(server, intent, reason, {
     refusalClass: 'transient',
-    retryInMs: nextSteerBackoffMs(server, runtimeId),
+    retryInMs: nextDeliveryBackoffMs(server, runtimeId),
   })
 }
 

@@ -9,6 +9,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
 import type { KickerDispatchOptions, KickerDispatchResult } from '../contracts.js'
+import { confirmStranded } from '../diagnostics/stranded.js'
 import { deliverToSeat } from '../drive/delivery.js'
 import { observeBrokerLanding } from '../drive/landing.js'
 import { readActionableEnvelopes } from '../drive/presentation.js'
@@ -154,10 +155,15 @@ let dispatchResult: () => KickerDispatchResult
 let context: MailKickerContext
 let session: HrcSessionRecord
 
-function seatIn(state: 'turn-active' | 'idle', steerCapable = true): ObservedBrokerSeat {
-  return state === 'turn-active'
-    ? { state, runtimeId: RUNTIME, turnId: 'turn-1', steerCapable }
-    : { state, runtimeId: RUNTIME }
+function seatIn(
+  state: 'turn-active' | 'idle' | 'turn-observed',
+  steerCapable = true
+): ObservedBrokerSeat {
+  if (state === 'turn-active') {
+    return { state, runtimeId: RUNTIME, turnId: 'turn-1', steerCapable }
+  }
+  if (state === 'turn-observed') return { state, runtimeId: RUNTIME, turnId: 'turn-1' }
+  return { state, runtimeId: RUNTIME }
 }
 
 function brokerRecord(type: string, payload: Record<string, unknown>) {
@@ -255,7 +261,7 @@ beforeEach(async () => {
     mailKickerBootReconcilePending: false,
     mailKickerStalledDeliveryAnnounced: new Set(),
     mailKickerSteerRefused: new Set(),
-    mailKickerSteerBackoff: new Map(),
+    mailKickerDeliveryBackoff: new Map(),
     resolveForeignHome: async () => undefined,
     resolveRuntimeIntent: () => ({}) as never,
     findTargetSession: () => session,
@@ -516,7 +522,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     await refuseSteer(envelope, { reason: 'pane_not_quiescent' })
 
     expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
-    expect(context.mailKickerSteerBackoff.get(RUNTIME)).toBe(2_000)
+    expect(context.mailKickerDeliveryBackoff.get(RUNTIME)).toBe(2_000)
     const refused = logs.find((entry) => entry.event === 'wrkq.kicker.landing_refused')
     expect(refused?.detail).toMatchObject({ refusalClass: 'transient', retryInMs: 2_000 })
 
@@ -525,12 +531,30 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(dispatches[0]?.submissionDoor).toBe('steer')
   })
 
+  it('paces a door that THREW on the same backoff, so no refusal path is unpaced', async () => {
+    const envelope = ledger.say()
+    const realDispatch = context.dispatchTurn
+    context = {
+      ...context,
+      dispatchTurn: async () => {
+        throw new Error('server turn admission is closed for a drained restart')
+      },
+    }
+    expect(await deliverOne(seatIn('turn-active'), envelope)).toBe('refused')
+    // The drain window spun five submissions in a second without this.
+    expect(context.mailKickerDeliveryBackoff.get(RUNTIME)).toBe(2_000)
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    const failed = logs.find((entry) => entry.event === 'wrkq.kicker.delivery_failed')
+    expect(failed?.detail).toMatchObject({ retryInMs: 2_000 })
+    context = { ...context, dispatchTurn: realDispatch }
+  })
+
   it('doubles the transient backoff to a ceiling, and clears it on a landing', async () => {
     const envelope = ledger.say()
     for (const expected of [2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
       await deliverOne(seatIn('turn-active', true), envelope)
       await refuseSteer(envelope, { reason: 'pane_not_quiescent' })
-      expect(context.mailKickerSteerBackoff.get(RUNTIME)).toBe(expected)
+      expect(context.mailKickerDeliveryBackoff.get(RUNTIME)).toBe(expected)
     }
 
     // A seat that starts accepting steers again pays nothing for the interval
@@ -540,7 +564,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       context,
       brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
     )
-    expect(context.mailKickerSteerBackoff.has(RUNTIME)).toBe(false)
+    expect(context.mailKickerDeliveryBackoff.has(RUNTIME)).toBe(false)
   })
 
   it('falls to ENQUEUE only when the refusal is a capability fact', async () => {
@@ -549,7 +573,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     await refuseSteer(envelope, { reason: 'steer_not_supported' })
 
     expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(true)
-    expect(context.mailKickerSteerBackoff.has(RUNTIME)).toBe(false)
+    expect(context.mailKickerDeliveryBackoff.has(RUNTIME)).toBe(false)
     expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
     expect(dispatches[0]?.submissionDoor).toBe('enqueue')
   })
@@ -616,6 +640,61 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     })
     expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
+  })
+
+  /**
+   * The redelivery loop is BOUNDED (chief ruling 2026-09-06, addendum to
+   * T-08092 §D2 step 5). A seat that cannot land is not a slow seat, and
+   * retrying it every TTL forever tells the sender nothing while the envelope
+   * sits pending — the observed case ran over twelve hours that way.
+   */
+  it('fails the envelope undeliverable after three TTL expiries on one runtime', async () => {
+    const envelope = ledger.say()
+    const age = () =>
+      db.sqlite
+        .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
+        .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
+
+    for (const strike of [1, 2]) {
+      await deliverOne(seatIn('turn-active'), envelope)
+      age()
+      expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
+        expired: 1,
+      })
+      expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(strike)
+      // Still pending and still deliverable: two strikes is not a verdict.
+      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
+      expect(ledger.failRequests).toEqual([])
+    }
+
+    await deliverOne(seatIn('turn-active'), envelope)
+    age()
+    await reconcileOpenIntents(context, { reason: 'periodic' })
+    expect(ledger.failRequests).toEqual([{ envelope: envelope.id, reason: 'undeliverable' }])
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(logs.some((e) => e.event === 'wrkq.kicker.intent_expiries_exhausted')).toBe(true)
+  })
+
+  it('resets the expiry count on a NEW runtime, and on a successful landing', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+    db.sqlite
+      .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
+      .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
+    await reconcileOpenIntents(context, { reason: 'periodic' })
+    expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(1)
+
+    // A different runtime is a different row: rotation and restart give the next
+    // seat its full allowance without anyone having to remember a reset rule.
+    expect(db.mailDelivery.intentExpiries(envelope.id, 'rt-rotated')).toBe(0)
+
+    // And a landing means the seat CAN take deliveries, so the count goes.
+    await deliverOne(seatIn('turn-active'), envelope)
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+    expect(db.mailDelivery.intentExpiries(envelope.id, RUNTIME)).toBe(0)
   })
 
   it('clears an intent bound to a runtime that terminated before landing', async () => {
@@ -728,6 +807,30 @@ describe('D3 — disposal is keyed by runtime and ledger sequence', () => {
     // And the decision it reached is DURABLE, so a stop that still beat the
     // drain would leave the reconcile a candidate rather than silence.
     expect(db.mailDelivery.getPresentation(envelope.id, RUNTIME)?.reminderArmedAt).toBeDefined()
+  })
+
+  /**
+   * The boot report must not call a healthy in-flight obligation stranded.
+   *
+   * Found live by chief on the first minute of the activated daemon: the very
+   * envelope that DROVE the running turn was reported `stranded` while its
+   * runtime was `busy`. It is in that state for the whole turn by design, and an
+   * alarm that fires on the healthy case is one its reader learns to skip.
+   */
+  it('reports a presented obligation on a LIVE runtime as awaiting disposal, not stranded', async () => {
+    const envelope = await landOne()
+
+    const live = await confirmStranded(context, db.mailDelivery.listUndisposedPresentations())
+    expect(live.stranded).toEqual([])
+    expect(live.awaitingDisposal.map((item) => item.envelope)).toEqual([envelope.id])
+    expect(live.awaitingDisposal[0]?.runtimeStatus).toBe('busy')
+
+    // The same record on a runtime that has GONE is the real strand: nothing is
+    // going to reach a turn terminal on it, so nothing will dispose it.
+    db.runtimes.updateStatus(RUNTIME, 'terminated', new Date().toISOString())
+    const gone = await confirmStranded(context, db.mailDelivery.listUndisposedPresentations())
+    expect(gone.awaitingDisposal).toEqual([])
+    expect(gone.stranded.map((item) => item.envelope)).toEqual([envelope.id])
   })
 
   it('surfaces a due reminder in POINTER form, bound to the runtime that holds it', async () => {

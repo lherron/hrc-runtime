@@ -30,6 +30,18 @@ export const REMINDER_HOLD_MS = 60_000
  */
 export const STEER_RETRY_BASE_MS = 2_000
 export const STEER_RETRY_MAX_MS = 30_000
+/**
+ * How many consecutive TTL expiries on ONE runtime end the redelivery loop
+ * (chief ruling 2026-09-06, addendum to spec T-08092 §D2 step 5).
+ *
+ * D2 step 5 clears an expired intent and re-wakes, which redelivers under
+ * policy. Into a genuinely wedged seat that never converges — the case that
+ * produced this bound re-submitted one steer every TTL for over twelve hours
+ * while its sender was told nothing. Three strikes on one runtime fails the
+ * envelope `undeliverable` with the existing sender notice; a new runtime is a
+ * new row and gets its own three.
+ */
+export const KICKER_MAX_INTENT_EXPIRIES = 3
 export const KICKER_SUBMISSION_TTL_MS = 30 * 60_000
 export const LEDGER_TAIL_PAGE_LIMIT = 500
 export const LEDGER_SWEEP_SCOPE_BATCH = 100

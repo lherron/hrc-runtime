@@ -26,7 +26,8 @@
 import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import { KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
+import { KICKER_MAX_INTENT_EXPIRIES, KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
+import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
 import { isRuntimeTerminal } from '../terminal/runtime-status.js'
 import { clearRefusedIntent, commitLanding, landLaunchIfStarted, refuseIntent } from './landing.js'
 
@@ -88,6 +89,43 @@ export async function reconcileIntent(
 
   const age = now - Date.parse(intent.submittedAt)
   if (Number.isFinite(age) && age >= KICKER_SUBMISSION_TTL_MS) {
+    // The redelivery loop is BOUNDED per runtime. Three consecutive expiries on
+    // one seat is not a slow seat, it is a seat that cannot land; retrying it
+    // forever tells the sender nothing while the envelope sits pending.
+    const runtimeId = intent.runtimeId
+    const expiries =
+      runtimeId === undefined
+        ? 0
+        : server.db.mailDelivery.recordIntentExpiry(intent.envelopeId, runtimeId)
+    if (runtimeId !== undefined && expiries >= KICKER_MAX_INTENT_EXPIRIES) {
+      server.db.mailDelivery.clearIntent(intent.envelopeId)
+      server.log('WARN', 'wrkq.kicker.intent_expiries_exhausted', {
+        targetSessionRef: intent.targetSessionRef,
+        envelope: intent.envelopeId,
+        runtimeId,
+        door: intent.door,
+        expiries,
+        ttlMs: KICKER_SUBMISSION_TTL_MS,
+      })
+      try {
+        await failEnvelopeWithAudit(server, {
+          envelope: intent.envelopeId,
+          reason: 'undeliverable',
+          targetSessionRef: intent.targetSessionRef,
+          presentationId: intent.presentationId,
+          callSite: 'intent_expiries_exhausted',
+        })
+      } catch (error) {
+        // Not failing it leaves the obligation alive, which is the safe
+        // direction; the count stands and the next expiry tries again.
+        server.log('WARN', 'wrkq.kicker.intent_expiry_fail_failed', {
+          targetSessionRef: intent.targetSessionRef,
+          envelope: intent.envelopeId,
+          error: errorText(error),
+        })
+      }
+      return 'expired'
+    }
     clearRefusedIntent(server, intent, 'ttl_without_landing')
     return 'expired'
   }

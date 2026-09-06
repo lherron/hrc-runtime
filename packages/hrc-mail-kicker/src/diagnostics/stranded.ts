@@ -27,6 +27,7 @@ import type { HrcMailPresentation } from 'hrc-store-sqlite'
 import type { MailKickerContext } from '../context.js'
 import { STALLED_DELIVERY_THRESHOLD_MS, errorText } from '../internal.js'
 import { newestPresentationReceipt } from '../ledger/types.js'
+import { isRuntimeTerminal } from '../terminal/runtime-status.js'
 
 /** How many ledger reads one report may spend before it stops asking. */
 const STRANDED_LEDGER_READ_CAP = 25
@@ -45,19 +46,36 @@ export type StrandedPresentation = {
 }
 
 /**
- * Ask the ledger which of these records still name an outstanding obligation.
+ * Ask the ledger which of these records still name an outstanding obligation,
+ * and split them by whether anything is still going to dispose them.
  *
  * "Outstanding" is two facts, not one: the envelope is still `presented`, AND
  * the receipt this record holds is still the NEWEST one. A later delivery that
  * re-presented the same envelope owns it now, and reporting it against the
  * older record would name the wrong runtime in the verdict.
+ *
+ * The THIRD fact decides which population it lands in, and it is the one this
+ * reader was missing (chief, 2026-09-06). A presented obligation on a LIVE
+ * runtime is not stranded: D3 disposes it at that runtime's next turn terminal,
+ * and the very envelope that DROVE the current turn is in that state for the
+ * whole turn. Reporting it as stranded fires the alarm on the healthy case —
+ * and a detector that is true while nothing is wrong teaches its reader to skip
+ * the line, which costs the real strand its only signal. `awaitingDisposal` is
+ * that population, counted and named but never inside `stranded`.
+ *
+ * The `inspect` verdict already drew this line; these two readers now agree.
  */
 export async function confirmStranded(
   server: MailKickerContext,
   candidates: readonly HrcMailPresentation[],
   cap: number = STRANDED_LEDGER_READ_CAP
-): Promise<{ stranded: StrandedPresentation[]; ledgerErrors: number }> {
+): Promise<{
+  stranded: StrandedPresentation[]
+  awaitingDisposal: StrandedPresentation[]
+  ledgerErrors: number
+}> {
   const stranded: StrandedPresentation[] = []
+  const awaitingDisposal: StrandedPresentation[] = []
   let ledgerErrors = 0
   for (const candidate of candidates.slice(0, cap)) {
     try {
@@ -65,23 +83,29 @@ export async function confirmStranded(
       if (row.state !== 'presented') continue
       const newest = newestPresentationReceipt(row)
       if (newest?.runtimeId !== candidate.runtimeId) continue
-      stranded.push({
+      const runtime = server.db.runtimes.getByRuntimeId(candidate.runtimeId) ?? undefined
+      const entry: StrandedPresentation = {
         envelope: candidate.envelopeId,
         presentationId: candidate.presentationId,
         targetSessionRef: candidate.targetSessionRef,
         runtimeId: candidate.runtimeId,
-        runtimeStatus: server.db.runtimes.getByRuntimeId(candidate.runtimeId)?.status ?? 'absent',
+        runtimeStatus: runtime?.status ?? 'absent',
         deliveryOutcome: candidate.deliveryOutcome,
         landedAt: candidate.landedAt,
         ...(candidate.reminderArmedAt === undefined
           ? {}
           : { reminderArmedAt: candidate.reminderArmedAt }),
-      })
+      }
+      if (runtime !== undefined && !isRuntimeTerminal(runtime.status)) {
+        awaitingDisposal.push(entry)
+        continue
+      }
+      stranded.push(entry)
     } catch {
       ledgerErrors += 1
     }
   }
-  return { stranded, ledgerErrors }
+  return { stranded, awaitingDisposal, ledgerErrors }
 }
 
 export type StalledDelivery = {
@@ -161,7 +185,7 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
   const candidates = server.db.mailDelivery.listUndisposedPresentations(
     BOOT_RECONCILE_CANDIDATE_LIMIT
   )
-  const { stranded, ledgerErrors } = await confirmStranded(server, candidates)
+  const { stranded, awaitingDisposal, ledgerErrors } = await confirmStranded(server, candidates)
   const stalled = findStalledDeliveries(server)
   const openIntents = server.db.mailDelivery.listOpenIntents().length
 
@@ -174,6 +198,11 @@ export async function reportBootReconcile(server: MailKickerContext): Promise<vo
       candidatesFound: candidates.length,
       strandedCount: stranded.length,
       stranded,
+      // Presented, undisposed, and on a runtime that is still alive: D3 owns
+      // these at that runtime's next turn terminal. Counted so the line is
+      // complete, kept OUT of `stranded` so the alarm stays meaningful.
+      awaitingDisposalCount: awaitingDisposal.length,
+      awaitingDisposal,
       // T-07963: its own labelled count, never inside `stranded`. These rows
       // predate local disposition tracking, are excluded from the actionable
       // set, and can never empty — inside the stranded array they would be a
