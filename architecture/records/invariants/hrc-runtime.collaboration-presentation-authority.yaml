@@ -19,7 +19,12 @@ predicate: >
   failed:ignored follow turn terminals observed for the presented runtime, run
   or no run, and failed:runtime_terminated follows that runtime's termination.
   A refused or lost submission clears HRC's outstanding record and re-delivers
-  under policy; it never fails an envelope.
+  under policy; it never fails an envelope. A refused STEER re-delivers by
+  refusal CLASS, read from the broker's own admission layer: a capability-layer
+  refusal is a fact about the driver and the next delivery takes the enqueue
+  door, while a state-, policy-, authority- or execution-layer refusal is a fact
+  about the instant and the next delivery retries the steer door after a bounded
+  backoff. HRC never treats a transient refusal as a capability verdict.
   Delivery intent is durable in HRC's store before any submission is made, one
   envelope per submission, correlated by origin.envelopeId, and reconciled
   against committed broker evidence at daemon start, at runtime termination, and
@@ -71,6 +76,7 @@ required_tests:
   - the delivery intent is committed before any door is called, is unique per envelope, and makes that envelope unactionable until it lands or is cleared
   - a receipt is written only on submission.absorbed, submission.executed, or the launch-produced runtime's first turn.started, and carries no run id
   - a rejected, lost or TTL-expired submission clears the intent, re-wakes the target, and leaves the envelope pending with no failure
+  - a capability-layer steer refusal falls to enqueue; a transient one (pane_not_quiescent, busy, guarded) retries steer on a bounded backoff and memoizes nothing
   - reconcile at daemon start, at runtime termination and on the sweep writes exactly one receipt for a landing HRC never observed live
   - a turn terminal on the presented runtime arms one reminder; a terminal after the reminder landed fails the envelope ignored; both with no run row present
   - final-flag selection, unflagged last-non-empty fallback, empty-final fallback, raw-buffer-only fallback, and truncation cases
@@ -87,6 +93,7 @@ reopen_when:
   - a second reader of the turn-response body appears instead of consuming this one
   - presentation stops being a landing fact, or a run or turn identity re-enters presentation, discharge or disposal
   - delivery stops being write-ahead, or a submission carries more than one envelope
+  - the steer refusal classes stop being read from the broker's admission layer
   - the at-least-once guarantee or its bounded broker window changes
 supersedes:
   - hrc-runtime.collaboration-auto-reply-actuation

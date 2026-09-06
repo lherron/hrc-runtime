@@ -51,15 +51,31 @@ export type MailKickerContext = {
   /** Envelopes already named by a stalled-delivery line; one per envelope per process. */
   readonly mailKickerStalledDeliveryAnnounced: Set<string>
   /**
-   * Runtimes whose broker advertised `steer` and then refused one.
+   * Runtimes whose broker advertised `steer` and then refused one AT THE
+   * CAPABILITY LAYER — the driver cannot actually do it.
    *
-   * D2 says a refused steer becomes an enqueue while the seat is busy. Without
-   * a memo the next pass reads the same advertised capability, takes the same
-   * door and is refused again — a spin, not a fallback. Process-local because
-   * the capability projection is frozen per invocation: a new broker for the
-   * seat is a new runtime id and starts trusted again.
+   * D2's "a refused steer becomes an enqueue" is about exactly that case, and
+   * only that case. Without the memo the next pass reads the same advertised
+   * capability, takes the same door and is refused again — a spin, not a
+   * fallback. Process-local because the capability projection is frozen per
+   * invocation: a new broker for the seat is a new runtime id and starts
+   * trusted again.
+   *
+   * A TRANSIENT refusal never lands here. `pane_not_quiescent` fires whenever a
+   * human is mid-word in the pane, which is routine on a tab seat; memoizing it
+   * would degrade that runtime to enqueue for the life of the daemon and defeat
+   * steer-first on precisely the seats a person is sitting at.
    */
   readonly mailKickerSteerRefused: Set<string>
+  /**
+   * Per-runtime backoff for a TRANSIENT steer refusal: the next pass retries
+   * the steer door rather than falling to enqueue, after a short wait.
+   *
+   * Bounded and doubling so a pane somebody is typing into steadily is not
+   * hammered, and cleared on a successful landing so a seat that starts
+   * accepting steers again pays nothing for the interval it did not.
+   */
+  readonly mailKickerSteerBackoff: Map<string, number>
 
   resolveForeignHome(scopeRef: string): Promise<ForeignHome | undefined>
   resolveRuntimeIntent(

@@ -25,7 +25,7 @@ import type { HrcBrokerInvocationEventRecord } from 'hrc-core'
 import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
-import { errorText, isRecord } from '../internal.js'
+import { STEER_RETRY_BASE_MS, STEER_RETRY_MAX_MS, errorText, isRecord } from '../internal.js'
 
 const LANDED_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 const REFUSED_TYPES = new Set([
@@ -128,6 +128,7 @@ export async function commitLanding(
   }
 
   server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.mailKickerSteerBackoff.delete(input.runtimeId)
   server.log('INFO', 'wrkq.kicker.presented', {
     targetSessionRef: intent.targetSessionRef,
     envelope: intent.envelopeId,
@@ -169,11 +170,51 @@ export async function landLaunchIfStarted(
   })
 }
 
+/**
+ * Was this steer refused because the seat CANNOT steer, or because it could not
+ * right then?
+ *
+ * The broker emits `admission.rejected` alongside `submission.rejected` for
+ * anything refused at admission, and it carries the LAYER. `capability` is a
+ * fact about the driver and is permanent for this invocation; `state`, `policy`
+ * and `authority` are facts about the instant. A submission that was ADMITTED
+ * and then failed in execution — `pane_not_quiescent`, a transport error —
+ * emits no `admission.rejected` at all, so the reason string is read directly,
+ * and anything that is not a named capability refusal is transient.
+ *
+ * The default matters and is deliberately TRANSIENT. Getting this wrong in the
+ * permanent direction costs the seat steer-first for the life of the daemon;
+ * getting it wrong in the transient direction costs one bounded retry.
+ */
+const CAPABILITY_REFUSALS = new Set(['steer_not_supported', 'unsupported:steer'])
+
+export function steerRefusalIsPermanent(
+  server: MailKickerContext,
+  runtimeId: string,
+  submissionId: string | undefined,
+  reason: string
+): boolean {
+  if (CAPABILITY_REFUSALS.has(reason)) return true
+  if (submissionId === undefined) return false
+  const rejection = server.db.brokerInvocationEvents.findAdmissionRejection(runtimeId, submissionId)
+  return rejection?.layer === 'capability'
+}
+
+/** The next transient-refusal wait for this runtime, doubling to the ceiling. */
+function nextSteerBackoffMs(server: MailKickerContext, runtimeId: string): number {
+  const previous = server.mailKickerSteerBackoff.get(runtimeId)
+  const next =
+    previous === undefined ? STEER_RETRY_BASE_MS : Math.min(previous * 2, STEER_RETRY_MAX_MS)
+  server.mailKickerSteerBackoff.set(runtimeId, next)
+  return next
+}
+
 /** A refused or lost submission: clear, say so, and let the next pass decide. */
 export function clearRefusedIntent(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent,
-  reason: string
+  reason: string,
+  options: { retryInMs?: number | undefined; refusalClass?: string | undefined } = {}
 ): void {
   server.db.mailDelivery.clearIntent(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.landing_refused', {
@@ -183,8 +224,51 @@ export function clearRefusedIntent(
     ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
     ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
     reason,
+    ...(options.refusalClass === undefined ? {} : { refusalClass: options.refusalClass }),
+    ...(options.retryInMs === undefined ? {} : { retryInMs: options.retryInMs }),
   })
-  server.wake(intent.targetSessionRef, 'insert')
+  if (options.retryInMs === undefined) {
+    server.wake(intent.targetSessionRef, 'insert')
+    return
+  }
+  // Deferred, not dropped. The sweep would find this target within a tick
+  // regardless; the wait exists so the retry lands after the pane has gone
+  // quiet rather than into the same instant that refused it.
+  const timer = setTimeout(() => {
+    if (!server.stopping) server.wake(intent.targetSessionRef, 'insert')
+  }, options.retryInMs)
+  timer.unref?.()
+}
+
+/**
+ * Refuse ONE intent, classifying a steer refusal before deciding what happens
+ * next (T-08094, chief's ruling on the flag).
+ *
+ * A PERMANENT refusal memoizes the runtime, so the next pass takes the enqueue
+ * door — the spec's "a refused steer becomes an enqueue". A TRANSIENT one
+ * memoizes nothing and re-wakes on a bounded backoff, so the next pass takes
+ * the STEER door again: the door that will work in a moment is the right door.
+ */
+export function refuseIntent(
+  server: MailKickerContext,
+  intent: HrcMailDeliveryIntent,
+  reason: string
+): void {
+  const runtimeId = intent.runtimeId
+  if (intent.door !== 'steer' || runtimeId === undefined) {
+    clearRefusedIntent(server, intent, reason)
+    return
+  }
+  if (steerRefusalIsPermanent(server, runtimeId, intent.submissionId, reason)) {
+    server.mailKickerSteerRefused.add(runtimeId)
+    server.mailKickerSteerBackoff.delete(runtimeId)
+    clearRefusedIntent(server, intent, reason, { refusalClass: 'permanent' })
+    return
+  }
+  clearRefusedIntent(server, intent, reason, {
+    refusalClass: 'transient',
+    retryInMs: nextSteerBackoffMs(server, runtimeId),
+  })
 }
 
 /**
@@ -225,11 +309,5 @@ export async function observeBrokerLanding(
     return
   }
   const reason = typeof payload?.['reason'] === 'string' ? payload['reason'] : record.type
-  // D2: a refused steer becomes an enqueue while the seat is busy. The next
-  // pass reads the same advertised capability, so the refusal has to be
-  // remembered or the pair takes the same door again and spins.
-  if (intent.door === 'steer' && intent.runtimeId !== undefined) {
-    server.mailKickerSteerRefused.add(intent.runtimeId)
-  }
-  clearRefusedIntent(server, intent, reason)
+  refuseIntent(server, intent, reason)
 }

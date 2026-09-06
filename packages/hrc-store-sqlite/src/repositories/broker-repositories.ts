@@ -1001,6 +1001,41 @@ export class BrokerInvocationEventRepository {
   }
 
   /**
+   * The ADMISSION LAYER a rejected submission was refused at (T-08094).
+   *
+   * `submission.rejected` carries only a reason string; the `admission.rejected`
+   * the broker emits alongside it carries the layer, and the layer is the honest
+   * discriminator between "this seat cannot do that" and "not at this instant".
+   * `capability` is a fact about the driver; `state`, `policy` and `authority`
+   * are facts about the moment — a pane the human is mid-word in, a guarded
+   * turn, a seat between states — and every one of them is true again a second
+   * later.
+   *
+   * Absent for a submission that was ADMITTED and then failed in execution: the
+   * broker emits no `admission.rejected` for those, so the caller falls back to
+   * reading the reason itself.
+   */
+  findAdmissionRejection(
+    runtimeId: string,
+    submissionId: string
+  ): { layer: string; reason: string } | undefined {
+    const row = this.db
+      .query<{ layer: string | null; reason: string | null }, [string, string]>(
+        `SELECT json_extract(broker_event_json, '$.layer') AS layer,
+                json_extract(broker_event_json, '$.reason') AS reason
+           FROM broker_invocation_events
+          WHERE runtime_id = ?
+            AND type = 'admission.rejected'
+            AND json_extract(broker_event_json, '$.submissionId') = ?
+          ORDER BY time DESC, seq DESC
+          LIMIT 1`
+      )
+      .get(runtimeId, submissionId)
+    if (row?.layer === null || row?.layer === undefined) return undefined
+    return { layer: row.layer, reason: row.reason ?? '' }
+  }
+
+  /**
    * The submission a mail envelope's admission request minted on this runtime.
    *
    * `origin.envelopeId` is carried into the broker's own admission record by

@@ -17,6 +17,19 @@ export const MAIL_DRIVE_TERMINAL_EVENTS = new Set([
 ])
 
 export const REMINDER_HOLD_MS = 60_000
+/**
+ * How long to wait before retrying the STEER door after a transient refusal,
+ * and the ceiling that wait doubles to (T-08094).
+ *
+ * A transient refusal — `pane_not_quiescent` while a human is mid-word, a seat
+ * momentarily between states, a guarded turn — is true about the instant and
+ * false a moment later. Falling to enqueue on one would hand the body to the
+ * boundary when steering would have worked within seconds; retrying it with no
+ * wait would hammer a pane somebody is typing into. Doubling to a ceiling is
+ * the shape that is neither.
+ */
+export const STEER_RETRY_BASE_MS = 2_000
+export const STEER_RETRY_MAX_MS = 30_000
 export const KICKER_SUBMISSION_TTL_MS = 30 * 60_000
 export const LEDGER_TAIL_PAGE_LIMIT = 500
 export const LEDGER_SWEEP_SCOPE_BATCH = 100

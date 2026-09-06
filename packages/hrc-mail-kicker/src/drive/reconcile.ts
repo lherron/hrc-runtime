@@ -28,7 +28,7 @@ import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 import type { MailKickerContext } from '../context.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
 import { isRuntimeTerminal } from '../terminal/runtime-status.js'
-import { clearRefusedIntent, commitLanding, landLaunchIfStarted } from './landing.js'
+import { clearRefusedIntent, commitLanding, landLaunchIfStarted, refuseIntent } from './landing.js'
 
 const LANDED_EVENT_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 
@@ -70,7 +70,7 @@ export async function reconcileIntent(
         return 'landed'
       }
       if (disposition !== undefined) {
-        clearRefusedIntent(server, intent, disposition.reason ?? disposition.type)
+        refuseIntent(server, intent, disposition.reason ?? disposition.type)
         return 'refused'
       }
     } else if (intent.door === 'launch') {

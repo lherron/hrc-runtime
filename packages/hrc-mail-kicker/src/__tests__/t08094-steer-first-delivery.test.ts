@@ -255,6 +255,7 @@ beforeEach(async () => {
     mailKickerBootReconcilePending: false,
     mailKickerStalledDeliveryAnnounced: new Set(),
     mailKickerSteerRefused: new Set(),
+    mailKickerSteerBackoff: new Map(),
     resolveForeignHome: async () => undefined,
     resolveRuntimeIntent: () => ({}) as never,
     findTargetSession: () => session,
@@ -456,22 +457,125 @@ describe('D2 — a refused submission is not a failed envelope', () => {
 
     await observeBrokerLanding(
       context,
-      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'steer-unsupported' })
+      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'steer_not_supported' })
     )
 
     expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
     expect(ledger.failRequests).toEqual([])
+    // A capability refusal re-wakes immediately; the next pass takes enqueue.
+    // (A TRANSIENT refusal re-wakes on a backoff instead — its own tests below.)
     expect(wakes).toEqual([TARGET])
     expect(logs.some((entry) => entry.event === 'wrkq.kicker.landing_refused')).toBe(true)
-    // Actionable again, so the next pass re-delivers under the same policy —
-    // a refused steer becomes an ENQUEUE while the seat is still busy, rather
-    // than the same refused door again.
+    // Actionable again, so the next pass re-delivers under the same policy.
+    const actionable = await readActionableEnvelopes(context, TARGET)
+    expect(actionable.map((item) => item.envelope.id)).toContain(envelope.id)
+  })
+
+  /**
+   * The refusal CLASS decides the next door, and the default is transient.
+   *
+   * `pane_not_quiescent` fires whenever a human is mid-word in the pane — the
+   * routine case on a tab seat somebody is sitting at. Treating it as a fact
+   * about the seat's capability would degrade that runtime to enqueue for the
+   * life of the daemon and defeat steer-first on exactly those seats.
+   */
+  async function refuseSteer(
+    envelope: WrkqEnvelope,
+    input: { reason: string; layer?: string | undefined }
+  ): Promise<void> {
+    if (input.layer !== undefined) {
+      db.brokerInvocationEvents.appendEvent({
+        invocationId: 'inv-t08094',
+        seq: 100,
+        time: new Date().toISOString(),
+        type: 'admission.rejected',
+        runtimeId: RUNTIME,
+        payload: {
+          submissionId: 'sub-1',
+          class: 'steer',
+          layer: input.layer,
+          reason: input.reason,
+        },
+      })
+    }
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: input.reason })
+    )
+    // The envelope must be deliverable again either way; what differs is the
+    // DOOR the next pass takes.
     const actionable = await readActionableEnvelopes(context, TARGET)
     expect(actionable.map((item) => item.envelope.id)).toContain(envelope.id)
     dispatches.length = 0
+  }
+
+  it('retries STEER after a transient refusal, on a bounded backoff', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active', true), envelope)
+    await refuseSteer(envelope, { reason: 'pane_not_quiescent' })
+
+    expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
+    expect(context.mailKickerSteerBackoff.get(RUNTIME)).toBe(2_000)
+    const refused = logs.find((entry) => entry.event === 'wrkq.kicker.landing_refused')
+    expect(refused?.detail).toMatchObject({ refusalClass: 'transient', retryInMs: 2_000 })
+
+    // The door that will work in a moment is the right door.
+    expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('steer')
+  })
+
+  it('doubles the transient backoff to a ceiling, and clears it on a landing', async () => {
+    const envelope = ledger.say()
+    for (const expected of [2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      await deliverOne(seatIn('turn-active', true), envelope)
+      await refuseSteer(envelope, { reason: 'pane_not_quiescent' })
+      expect(context.mailKickerSteerBackoff.get(RUNTIME)).toBe(expected)
+    }
+
+    // A seat that starts accepting steers again pays nothing for the interval
+    // it did not.
+    await deliverOne(seatIn('turn-active', true), envelope)
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+    expect(context.mailKickerSteerBackoff.has(RUNTIME)).toBe(false)
+  })
+
+  it('falls to ENQUEUE only when the refusal is a capability fact', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active', true), envelope)
+    await refuseSteer(envelope, { reason: 'steer_not_supported' })
+
+    expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(true)
+    expect(context.mailKickerSteerBackoff.has(RUNTIME)).toBe(false)
     expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
     expect(dispatches[0]?.submissionDoor).toBe('enqueue')
+  })
+
+  it('reads the capability verdict off the admission LAYER, not the reason text', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active', true), envelope)
+    // A reason string this code has never seen, refused at the capability
+    // layer. The layer is the fact; the vocabulary is the broker's to change.
+    await refuseSteer(envelope, { reason: 'driver-said-no', layer: 'capability' })
+
+    expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(true)
+    expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('enqueue')
+  })
+
+  it('treats a state-layer refusal as the transient moment it is', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active', true), envelope)
+    // `busy`, `invalid-state:*`, `guarded` — all true about the instant and
+    // false a second later.
+    await refuseSteer(envelope, { reason: 'busy', layer: 'state' })
+
+    expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
+    expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('steer')
   })
 
   it('reconciles a landing it never observed into exactly one receipt', async () => {
