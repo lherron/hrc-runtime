@@ -33,7 +33,13 @@ import { clearRefusedIntent, commitLanding, landLaunchIfStarted, refuseIntent } 
 
 const LANDED_EVENT_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 
-export type IntentReconcileVerdict = 'landed' | 'refused' | 'runtime_gone' | 'expired' | 'open'
+export type IntentReconcileVerdict =
+  | 'landed'
+  | 'disposed'
+  | 'refused'
+  | 'runtime_gone'
+  | 'expired'
+  | 'open'
 
 /**
  * One intent, resolved or left alone.
@@ -63,12 +69,13 @@ export async function reconcileIntent(
       )
       if (disposition !== undefined && LANDED_EVENT_TYPES.has(disposition.type)) {
         const current = server.db.mailDelivery.getIntent(intent.envelopeId) ?? intent
-        await commitLanding(server, current, {
+        const commit = await commitLanding(server, current, {
           runtimeId,
           eventType: disposition.type,
           landingHrcSeq: server.db.hrcEvents.maxHrcSeq(),
         })
-        return 'landed'
+        // A commit that hit an already-discharged envelope is NOT a landing.
+        return commit === 'committed' ? 'landed' : commit === 'disposed' ? 'disposed' : 'open'
       }
       if (disposition !== undefined) {
         refuseIntent(server, intent, disposition.reason ?? disposition.type)
@@ -77,7 +84,9 @@ export async function reconcileIntent(
     } else if (intent.door === 'launch') {
       // The launch-carried body has no submission by construction. Its landing
       // fact is the first turn the runtime that launch produced started.
-      if (await landLaunchIfStarted(server, intent)) return 'landed'
+      const commit = await landLaunchIfStarted(server, intent)
+      if (commit === 'committed') return 'landed'
+      if (commit === 'disposed') return 'disposed'
     }
 
     const runtime = server.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
@@ -146,6 +155,7 @@ export async function reconcileOpenIntents(
 ): Promise<Record<IntentReconcileVerdict, number>> {
   const counts: Record<IntentReconcileVerdict, number> = {
     landed: 0,
+    disposed: 0,
     refused: 0,
     runtime_gone: 0,
     expired: 0,
@@ -174,7 +184,7 @@ export async function reconcileOpenIntents(
       })
     }
   }
-  if (counts.landed + counts.refused + counts.runtime_gone + counts.expired > 0) {
+  if (counts.landed + counts.disposed + counts.refused + counts.runtime_gone + counts.expired > 0) {
     server.log('INFO', 'wrkq.kicker.intent_reconciled', {
       nodeId: server.nodeId,
       reason: options.reason,

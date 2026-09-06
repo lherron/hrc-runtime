@@ -95,6 +95,11 @@ class FakeLedger {
     const envelope = this.envelopes.get(params.envelope)
     if (envelope === undefined) throw new Error(`unknown envelope ${params.envelope}`)
     this.presentRequests.push(params)
+    // wrkq refuses a presentation onto a discharged row, and the exact wire
+    // error is what HRC keys the disposed-before-landing branch on.
+    if (params.preview !== true && envelope.terminal) {
+      throw new Error('wrong_state: envelope is terminal')
+    }
     if (params.preview === true) {
       return Promise.resolve({ envelope, recorded: false, historyHint: false, messageCount: 1 })
     }
@@ -600,6 +605,68 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
     expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
     expect(dispatches[0]?.submissionDoor).toBe('steer')
+  })
+
+  /**
+   * The reader answered FASTER than the landing was committed.
+   *
+   * Found live by chief on the activated daemon: three envelopes `acked` in
+   * wrkq with no receipt, whose intents stayed open and retried the commit once
+   * per sweep — 54 `wrong_state` lines before anyone looked. The delivery
+   * happened and the obligation is already discharged, so there is nothing to
+   * record and nothing to retry.
+   */
+  it('closes the intent when the envelope was discharged before the landing committed', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+
+    // The reader replies mid-turn; wrkq terminalises the row.
+    const row = ledger.envelopes.get(envelope.id)
+    if (row === undefined) throw new Error('missing row')
+    row.state = 'acked'
+    row.terminal = true
+
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
+    const line = logs.find((entry) => entry.event === 'wrkq.kicker.disposed_before_landing')
+    expect(line?.level).toBe('INFO')
+    expect(logs.some((e) => e.event === 'wrkq.kicker.presentation_commit_failed')).toBe(false)
+
+    // And it does not retry: a second reconcile has nothing left to do.
+    expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
+      landed: 0,
+      disposed: 0,
+      open: 0,
+    })
+  })
+
+  it('counts a disposed-before-landing commit as disposed, never as landed', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+    const row = ledger.envelopes.get(envelope.id)
+    if (row === undefined) throw new Error('missing row')
+    row.state = 'acked'
+    row.terminal = true
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-t08094',
+      seq: 200,
+      time: new Date().toISOString(),
+      type: 'submission.absorbed',
+      runtimeId: RUNTIME,
+      payload: { submissionId: 'sub-1', turnId: 'turn-1' },
+    })
+
+    // A counter that says `landed` about an envelope that got no receipt is a
+    // counter that lies; the reconcile summary has to be readable as evidence.
+    expect(await reconcileOpenIntents(context, { reason: 'daemon_start' })).toMatchObject({
+      landed: 0,
+      disposed: 1,
+    })
   })
 
   it('reconciles a landing it never observed into exactly one receipt', async () => {

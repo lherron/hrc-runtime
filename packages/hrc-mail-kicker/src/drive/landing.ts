@@ -62,6 +62,16 @@ function deliveryOutcomeFor(intent: HrcMailDeliveryIntent, eventType: string): s
 }
 
 /**
+ * What a landing commit did, so callers can COUNT it honestly.
+ *
+ * `disposed` is not `committed` and it is not a failure: the body landed and
+ * the obligation was already discharged. Reporting it as landed made the
+ * reconcile's own summary line say `landed:3` about three envelopes that got no
+ * receipt (chief, finding 4) — a counter that lies is worse than no counter.
+ */
+export type LandingCommit = 'committed' | 'disposed' | 'failed'
+
+/**
  * Commit one landing: local record first, then the ledger.
  *
  * The ordering is the T-07615 one and survives a kill in between — the local
@@ -72,7 +82,7 @@ export async function commitLanding(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent,
   input: { runtimeId: string; eventType: string; landingHrcSeq: number }
-): Promise<boolean> {
+): Promise<LandingCommit> {
   const outcome = deliveryOutcomeFor(intent, input.eventType)
   // A reminder lands ON the record it is reminding about — unless the seat
   // rotated between arming and firing, in which case the body reached a runtime
@@ -115,8 +125,32 @@ export async function commitLanding(
       deliveryOutcome: outcome,
     })
   } catch (error) {
-    // The local record stands and the intent stays open, so reconcile replays
-    // this against the same presentation id rather than delivering again.
+    // `wrong_state` is wrkq refusing a receipt on a TERMINAL envelope: the
+    // reader replied (or the sender withdrew) between the body landing and this
+    // commit. The delivery HAPPENED and the obligation is already discharged —
+    // there is nothing left to record and nothing to retry. Retrying is what
+    // this branch used to do, once per sweep per envelope until the TTL, and it
+    // left the intent open the whole time (chief, finding 4).
+    //
+    // The receipt is lost, and that loss is accepted: wrkq will not take a
+    // presentation onto a discharged row, and forging one would be a worse
+    // record than none.
+    if (isDisposedBeforeLanding(error)) {
+      server.db.mailDelivery.clearIntent(intent.envelopeId)
+      server.db.mailDelivery.clearIntentExpiries(intent.envelopeId)
+      server.log('INFO', 'wrkq.kicker.disposed_before_landing', {
+        targetSessionRef: intent.targetSessionRef,
+        envelope: intent.envelopeId,
+        runtimeId: input.runtimeId,
+        presentationId: intent.presentationId,
+        door: intent.door,
+        note: 'body landed after the envelope was discharged; no receipt is possible',
+      })
+      return 'disposed'
+    }
+    // Anything else is a transport or ledger fault: the local record stands and
+    // the intent stays open, so reconcile replays this against the same
+    // presentation id rather than delivering again.
     server.log('WARN', 'wrkq.kicker.presentation_commit_failed', {
       targetSessionRef: intent.targetSessionRef,
       envelope: intent.envelopeId,
@@ -124,7 +158,7 @@ export async function commitLanding(
       presentationId: intent.presentationId,
       error: errorText(error),
     })
-    return false
+    return 'failed'
   }
 
   server.db.mailDelivery.clearIntent(intent.envelopeId)
@@ -144,7 +178,19 @@ export async function commitLanding(
     landingHrcSeq: input.landingHrcSeq,
     landedOn: input.eventType,
   })
-  return true
+  return 'committed'
+}
+
+/**
+ * Did wrkq refuse this receipt because the envelope is already disposed?
+ *
+ * The ledger answers `wrong_state` for a presentation onto a terminal row. That
+ * is not a fault to retry: it is the at-least-once world working as designed,
+ * where the reader answered faster than the landing was committed.
+ */
+function isDisposedBeforeLanding(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('wrong_state')
 }
 
 /**
@@ -161,11 +207,11 @@ export async function commitLanding(
 export async function landLaunchIfStarted(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent
-): Promise<boolean> {
+): Promise<LandingCommit | undefined> {
   const runtimeId = intent.runtimeId
-  if (runtimeId === undefined || intent.door !== 'launch') return false
+  if (runtimeId === undefined || intent.door !== 'launch') return undefined
   const started = server.db.hrcEvents.listByKind('turn.started', { runtimeId, limit: 1 })[0]
-  if (started === undefined) return false
+  if (started === undefined) return undefined
   return await commitLanding(server, intent, {
     runtimeId,
     eventType: 'turn.started',
