@@ -541,35 +541,32 @@ async function main(): Promise<void> {
     prepareRelease: (path) => prepareProductionRelease(path, options, publicationSource),
   })
   console.log(`[install] atomic HRC CLI cutover complete: ${releasePath}`)
-  warnIfSchemaAhead()
+  for (const line of schemaArmedWindowLines()) console.log(line)
 }
 
 /**
  * The install→restart armed window (T-08118). The CLI surface is now this
  * release; the daemon still runs the previous one against a store at the
- * previous schema. The direct-open commands below refuse until the restart, so
- * say so here rather than letting the operator meet the refusal cold.
+ * previous schema. The direct-open commands refuse until the restart, so say so
+ * here rather than letting the operator meet the refusal cold.
+ *
+ * Returns lines rather than printing them so both states — armed and quiet —
+ * are assertable. A warning that is emitted in every state teaches the reader
+ * to skip it.
  */
-function warnIfSchemaAhead(): void {
-  const dbPath = resolveDatabasePath()
+export function schemaArmedWindowLines(dbPath: string = resolveDatabasePath()): string[] {
   const schema = readStoreSchemaState(dbPath)
   if (!schema.readable) {
-    console.log(`[install] store schema: unreadable (${schema.error ?? 'unknown'})`)
-    return
+    return [`[install] store schema: unreadable (${schema.error ?? 'unknown'})`]
   }
   if (!schema.schemaAhead) {
-    console.log(`[install] store schema: ${schema.storeVersion ?? '(none)'} matches running`)
-    return
+    return [`[install] store schema: ${schema.storeVersion ?? '(none)'} matches running`]
   }
-  console.log(
-    `[install] store schema: ${schema.storeVersion ?? '(none)'} differs from running — ` +
-      `this release carries ${schema.pending.length} unapplied migration(s) ` +
-      `(through ${schema.releaseVersion}).`
-  )
-  console.log('[install] run `hrc server restart` to apply them. Until then these refuse:')
-  for (const command of DIRECT_STORE_OPEN_COMMANDS) {
-    console.log(`[install]   ${command}`)
-  }
+  return [
+    `[install] store schema: ${schema.storeVersion ?? '(none)'} differs from running — this release carries ${schema.pending.length} unapplied migration(s) (through ${schema.releaseVersion}).`,
+    '[install] run `hrc server restart` to apply them. Until then these refuse:',
+    ...DIRECT_STORE_OPEN_COMMANDS.map((command) => `[install]   ${command}`),
+  ]
 }
 
 if (import.meta.main) {
