@@ -9,6 +9,7 @@ import {
   appliedMigrationIds,
   pendingMigrationIds,
   releaseSchemaVersion,
+  resolveMigrationActor,
   resolveReleaseId,
   runMigrations,
 } from '../migrations'
@@ -166,6 +167,7 @@ describe('T-08118 migration attribution', () => {
       applied: [REPLAYABLE_MIGRATION],
       pid: process.pid,
       argv0: process.argv[1] ?? process.argv0,
+      command: resolveMigrationActor().command,
       release: resolveReleaseId(),
       uid: typeof process.getuid === 'function' ? process.getuid() : -1,
     })
@@ -226,5 +228,29 @@ describe('T-08118 release attribution', () => {
     expect(resolveReleaseId('/Users/dev/praesidium/hrc-runtime/packages/hrc-cli/src')).toBe(
       'unmanaged'
     )
+  })
+})
+
+describe('T-08118 migration actor identity', () => {
+  it('names the subcommand, because every hrc process shares one entry script', () => {
+    const argv = process.argv
+    try {
+      process.argv = ['bun', '/releases/r/packages/hrc-cli/src/cli.ts', 'server', 'serve', '--json']
+      const actor = resolveMigrationActor()
+      expect(actor.argv0).toBe('/releases/r/packages/hrc-cli/src/cli.ts')
+      expect(actor.command).toBe('server serve')
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it('keeps only leading non-flag tokens, so a prompt body never reaches the ledger', () => {
+    const argv = process.argv
+    try {
+      process.argv = ['bun', '/x/cli.ts', 'turn', 'clod@p:primary', '--message', 'secret body']
+      expect(resolveMigrationActor().command).toBe('turn clod@p:primary')
+    } finally {
+      process.argv = argv
+    }
   })
 })

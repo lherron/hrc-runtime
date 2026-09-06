@@ -87,20 +87,30 @@ export function storeSchemaVersion(db: Database): string | undefined {
 export type MigrationActor = {
   pid: number
   argv0: string
+  command: string
   release: string
   uid: number
 }
 
 /**
  * Identify the process applying a migration. `process.argv0` is always the
- * interpreter (`bun`), which names nobody; the entry script is what separates
- * `hrc-server` from a CLI, so that is what `argv0` carries when it is known.
+ * interpreter (`bun`), which names nobody, so `argv0` carries the entry script.
+ * That is still not enough on its own — `hrc server serve` and every CLI command
+ * share one entry — so `command` carries the subcommand path beside it.
+ *
+ * `command` deliberately keeps only the leading non-flag tokens: the rest of an
+ * hrc argv can carry a prompt or message body, and this row is durable ledger.
  */
 export function resolveMigrationActor(): MigrationActor {
   const entry = process.argv[1]
   return {
     pid: process.pid,
     argv0: entry !== undefined && entry !== '' ? entry : process.argv0,
+    command: process.argv
+      .slice(2)
+      .filter((arg) => !arg.startsWith('-'))
+      .slice(0, 2)
+      .join(' '),
     release: resolveReleaseId(),
     uid: typeof process.getuid === 'function' ? process.getuid() : -1,
   }
@@ -182,6 +192,7 @@ function recordMigrationApplication(db: Database, appliedIds: readonly string[])
       applied: [...appliedIds],
       pid: actor.pid,
       argv0: actor.argv0,
+      command: actor.command,
       release: actor.release,
       uid: actor.uid,
     })
@@ -236,7 +247,8 @@ export function runMigrations(db: Database): void {
     const actor = resolveMigrationActor()
     process.stderr.write(
       `hrc-store: store.migrated applied=${pending.length} version=${pending.at(-1)?.id ?? ''} ` +
-        `pid=${actor.pid} argv0=${actor.argv0} release=${actor.release} uid=${actor.uid}\n`
+        `pid=${actor.pid} argv0=${actor.argv0} command="${actor.command}" ` +
+        `release=${actor.release} uid=${actor.uid}\n`
     )
   }
 }
