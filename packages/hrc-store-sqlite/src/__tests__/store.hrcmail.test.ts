@@ -12,6 +12,7 @@ import {
 
 import { HrcMailRepositoryError, openHrcDatabase } from '../index.js'
 import type { HrcDatabase } from '../index.js'
+import { HrcMailDeliveryRepository } from '../mail/delivery-repository.js'
 import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const target = 'agent:cody:project:hrc-runtime:task:T-06810/lane:main'
@@ -104,6 +105,14 @@ describe('HrcMailEnvelopeRepository', () => {
           'present-snapshot', 'rt-snapshot', NULL, NULL, NULL, NULL, 1,
           '2026-09-07T00:00:00.000Z', '2026-09-07T00:00:00.000Z'
         );
+        INSERT INTO hrcmail_presentations (
+          envelope_id, runtime_id, target_session_ref, presentation_id,
+          delivery_outcome, landing_hrc_seq, landed_at, reminder_due_at
+        ) VALUES
+          ('EN-snapshot', 'rt-snapshot', 'agent:test:project:hrc-runtime:primary',
+           'present-snapshot', 'steered', 1, '2026-09-07T00:00:00.000Z', '2026-09-07T00:00:00.000Z'),
+          ('EN-historical', 'rt-historical', 'agent:test:project:hrc-runtime:primary',
+           'present-historical', 'steered', 2, '2026-09-07T00:00:00.000Z', '2026-09-07T00:00:00.000Z');
       `)
       const migration = schemaMigrations.find(
         (candidate) => candidate.id === '0061_hrcmail_uncertain_delivery'
@@ -139,6 +148,29 @@ describe('HrcMailEnvelopeRepository', () => {
           .all()
           .map((column) => column.name)
       ).toContain('receipt_committed_at')
+      const deliveries = new HrcMailDeliveryRepository(snapshot)
+      // Same (envelope, presentationId) intent proves the old local row may
+      // only be a lost receipt response. It stays out of D3 and reminders.
+      expect(
+        deliveries.getPresentation('EN-snapshot', 'rt-snapshot')?.receiptCommittedAt
+      ).toBeUndefined()
+      expect(deliveries.listUndisposedForRuntime('rt-snapshot')).toEqual([])
+      expect(
+        deliveries
+          .listDueReminders('agent:test:project:hrc-runtime:primary', '2026-09-07T00:01:00.000Z')
+          .map((presentation) => presentation.envelopeId)
+      ).not.toContain('EN-snapshot')
+      // The same durable receipt identity can be replayed and only then gains
+      // D3 authority. Unrelated historical rows preserve their prior success.
+      expect(deliveries.markReceiptCommitted('EN-snapshot', 'rt-snapshot')).toBe(true)
+      expect(deliveries.getPresentation('EN-snapshot', 'rt-snapshot')).toMatchObject({
+        presentationId: 'present-snapshot',
+        receiptCommittedAt: expect.any(String),
+      })
+      expect(deliveries.listUndisposedForRuntime('rt-snapshot')).toHaveLength(1)
+      expect(
+        deliveries.getPresentation('EN-historical', 'rt-historical')?.receiptCommittedAt
+      ).toBeDefined()
       expect(
         snapshot
           .query<{ envelope_id: string }, []>(

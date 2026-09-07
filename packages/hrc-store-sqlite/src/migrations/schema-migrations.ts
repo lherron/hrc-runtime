@@ -2944,11 +2944,20 @@ const hrcmailReceiptCommitMigration: HrcMigration = {
     )
     if (!columns.has('receipt_committed_at')) {
       db.exec('ALTER TABLE hrcmail_presentations ADD COLUMN receipt_committed_at TEXT')
-      // Rows predate the gate and were recorded under the prior committed-only
-      // contract. Preserve their existing D3 authority rather than retroactively
-      // stranding them.
+      // Before this migration receipt success cleared the matching write-ahead
+      // intent. A retained intent with the SAME presentation id is therefore
+      // the durable lost-response shape and must remain receipt-pending. An
+      // absent or differently-identified intent is historical success.
       db.exec(
-        'UPDATE hrcmail_presentations SET receipt_committed_at = landed_at WHERE receipt_committed_at IS NULL'
+        `UPDATE hrcmail_presentations AS presentation
+            SET receipt_committed_at = landed_at
+          WHERE receipt_committed_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+                FROM hrcmail_delivery_intents AS intent
+               WHERE intent.envelope_id = presentation.envelope_id
+                 AND intent.presentation_id = presentation.presentation_id
+            )`
       )
     }
   },
