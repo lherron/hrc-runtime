@@ -4,6 +4,7 @@ import { type Command, CommanderError } from 'commander'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 import { MonitorWaitExit } from '../monitor-wait.js'
+import { TurnExitError } from '../turn/commands/turn.js'
 import { buildProgram } from './build-program.js'
 import { normalizeCommanderError, validateCommandPathBeforeHelp } from './command-errors.js'
 import { renderRootHelp, resolveHelpView } from './help.js'
@@ -37,7 +38,16 @@ export function formatHrcDomainError(err: HrcDomainError): string {
 
 export function handleCliError(err: unknown, program: Command): never {
   const rootOptions = program.opts<{ json?: boolean | undefined; output?: string | undefined }>()
-  const json = rootOptions.json === true || rootOptions.output === 'json'
+  const turn = program.commands.find((command) => command.name() === 'turn')
+  const json =
+    rootOptions.json === true || rootOptions.output === 'json' || turn?.opts()['json'] === true
+
+  if (err instanceof TurnExitError) {
+    if (!json) {
+      process.stderr.write(`hrc: ${err.message}\n`)
+    }
+    process.exit(err.exitCode)
+  }
 
   if (err instanceof CommanderError) {
     if (

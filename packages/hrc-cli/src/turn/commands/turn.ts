@@ -12,9 +12,9 @@ import type {
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
+import { printJson, printJsonLine } from '../../print.js'
 import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
 import { type resolveScope, resolveSenderAddress } from '../normalize.js'
-import { printJson, printJsonLine } from '../print.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
@@ -313,9 +313,9 @@ function assertProjectResolved(
       'A turn must target an agent within a project, but none was found: the',
       'target has no @<project> qualifier, ASP_PROJECT is unset, and the current',
       'directory maps to no known project. Fix one of:',
-      `  • qualify the target:  hrcchat turn ${targetInput}@<project> "…"`,
-      `  • set the env:         ASP_PROJECT=<project> hrcchat turn ${targetInput} "…"`,
-      `  • run from a project:  cd ~/praesidium/<project> && hrcchat turn ${targetInput} "…"`,
+      `  • qualify the target:  hrc turn ${targetInput}@<project> "…"`,
+      `  • set the env:         ASP_PROJECT=<project> hrc turn ${targetInput} "…"`,
+      `  • run from a project:  cd ~/praesidium/<project> && hrc turn ${targetInput} "…"`,
     ].join('\n')
   )
 }
@@ -509,7 +509,7 @@ export async function cmdTurn(
 
   const manager =
     stackedWindowMs === undefined
-      ? new SessionEventsManager('hrcchat-turn', (_sessionRef, _projectId, _runId, frame) => {
+      ? new SessionEventsManager('hrc-turn', (_sessionRef, _projectId, _runId, frame) => {
           lastPhase = frame.phase
           if (terminalRenderer) {
             terminalRenderer.write(frame)

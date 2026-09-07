@@ -185,8 +185,8 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     )
     expect(ensureResult.exitCode).toBe(0)
 
-    // `hrc turn` now re-execs `hrcchat turn`; provider comes from the target
-    // intent set up by `runtime ensure --provider openai` above.
+    // The native `hrc turn` provider comes from the target intent set up by
+    // `runtime ensure --provider openai` above.
     const sendResult = await runCli(['turn', scope, 'log codex launch'], env)
     expect(sendResult.exitCode).toBe(0)
 

@@ -1,5 +1,5 @@
 /**
- * Address normalization and resolution for hrcchat CLI.
+ * Turn address normalization; overlaps with cli/scope.ts intentionally until a later refactor.
  */
 import { formatSessionHandle } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
@@ -56,7 +56,7 @@ export function resolveMessagingScope(
   options?: { withCallerTaskId?: boolean }
 ): ProfileAwareResolvedScopeInput {
   const resolved = resolveScope(input, { ...options, worktreeAssociation: 'advisory' })
-  writePlacementWarnings('hrcchat', resolved.placement.warnings)
+  writePlacementWarnings('hrc', resolved.placement.warnings)
   return resolved
 }
 

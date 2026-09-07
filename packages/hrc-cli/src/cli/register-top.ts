@@ -4,6 +4,7 @@ import { cmdAdminReleaseSweep } from '../release-gc-sweep.js'
 import { cmdAdminReleaseGc } from '../release-gc.js'
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
+import { cmdTurn } from '../turn/commands/turn.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import {
   assertNoUnknownOptions,
@@ -22,7 +23,6 @@ import {
   cmdSurfaceBind,
   cmdSurfaceList,
   cmdSurfaceUnbind,
-  execHrcchatTurn,
 } from './handlers-control.js'
 import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
@@ -427,20 +427,42 @@ The output always names the resolved kind and the concrete ID(s).
       await cmdLs(noun, rest)
     })
 
-  // -- turn (alias for `hrcchat turn`) -----------------------------------------
-  // All arguments are forwarded verbatim to `hrcchat turn`. This keeps `hrc turn`
-  // in lockstep with `hrcchat turn` without duplicating its flag surface.
+  // -- turn --------------------------------------------------------------------
 
   program
     .command('turn')
     .description('dispatch tracked work to an agent and stream its progress')
-    .helpOption(false)
-    .allowUnknownOption(true)
-    .allowExcessArguments(true)
-    .argument('[args...]', 'forwarded verbatim to `hrcchat turn`')
-    .action(async (_args, _opts, cmd: Command) => {
-      const forwarded = rawArgvForVerb(cmd, 'turn', { offset: 1, fallback: [] })
-      await execHrcchatTurn(forwarded)
+    .argument('<target>', 'target handle or scopeRef')
+    .argument('[prompt]', 'prompt text (use - for stdin)')
+    .option('--as <principal>', 'explicit sender principal')
+    .option('--fresh-context, --new', 'clear context before dispatching (clean slate)')
+    .option('--dry-run', 'resolve and print the dispatch plan without dispatching')
+    .option('--format <format>', 'output format: tree, compact, ndjson, json')
+    .option('--pretty', 'force the human-facing terminal render even on non-TTY')
+    .option('--stall-after <duration>', 'abort if idle for this long', '1h')
+    .option('--stacked <duration>', 'emit bounded turn_stacked ndjson progress')
+    .option('--follow <duration>', 'alias for --stacked')
+    .option('--wait <mode>', 'block quietly until terminal, then emit one JSON object')
+    .option('--timeout <duration>', 'wait budget for --wait final (default 45m)')
+    .option('--quiet', 'suppress all progress output while --wait blocks')
+    .option('--reply-to <id>', 'reply to a specific message ID')
+    .option('--cross-scope-reply', 'allow --reply-to to thread across conversation scopes')
+    .option('--steer', 'STRICT steer: deliver into the active turn or fail typed')
+    .option('--preempt', 'interrupt the active turn and start this submission (operator only)')
+    .option('--ttl <duration>', 'admission lifetime for enqueue or preempt')
+    .option('--file <path>', 'read prompt from file')
+    .option(
+      '--response-format-json-schema <schema>',
+      'request JSON Schema constrained final response (inline JSON object or file path)'
+    )
+    // `hrcchat` exposed --json globally, so it was accepted by the old forwarding
+    // path without appearing in turn help. Preserve that exact surface here.
+    .addOption(new Option('--json', 'suppress human error text').hideHelp())
+    .action(async (target, prompt, opts) => {
+      await cmdTurn(createClient(), { ...opts }, [
+        target,
+        ...(prompt !== undefined ? [prompt] : []),
+      ])
     })
 
   // -- live-runtime verbs absorbed from hrcchat (T-07612 §9.2) ----------------

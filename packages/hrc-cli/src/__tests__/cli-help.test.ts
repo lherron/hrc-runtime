@@ -335,14 +335,21 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stderr).toContain('hrc ls launches')
   })
 
-  // -- turn (alias for `hrcchat turn`) --
-  it('hrc turn --help forwards to hrcchat turn and exits 0', async () => {
+  // -- turn --
+  it('hrc turn --help exposes the native turn surface and exits 0', async () => {
     const result = await runCli(['turn', '--help'])
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
-    // hrcchat turn-specific flag — proves we re-execed, not echoed our own help
+    expect(output).toContain('hrc turn [options] <target> [prompt]')
     expect(output).toContain('--stacked')
+  })
+
+  it('hrc turn with no args exits 2 with a usage error, not a spawn error', async () => {
+    const result = await runCli(['turn'])
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('missing required argument')
+    expect(result.stderr).not.toMatch(/spawn|ENOENT|hrcchat/i)
   })
 
   // -- runtime send --

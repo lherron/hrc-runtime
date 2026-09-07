@@ -322,23 +322,25 @@ hrc monitor stats <runtimeId|invocationId|scope> --json
 
 A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest live runtime or `--previous [n]` to select terminated history newest-first. Human event and transcript output clips large payloads with an explicit marker. `monitor events --ndjson` and `monitor transcript --full` preserve complete content.
 
-### `hrcchat dm` (and the hrcchat surface)
+### `hrc turn`
 
 ```bash
-# Fire-and-record a durable DM:
-hrcchat dm cody@agent-spaces "Review the repo."
-hrcchat dm cody@agent-spaces -            # body from stdin
+# Preview local target and intent resolution without dispatching:
+hrc turn --dry-run cody@agent-spaces "Review the repo."
 
-# Capture the dispatch envelope as JSON (for the wait flow, below):
-hrcchat dm --json cody@agent-spaces -
-
-# Dispatch as a tracked turn and stream ndjson progress on an interval:
-hrcchat dm cody@agent-spaces --follow 30s "Long task."
+# Dispatch tracked work and emit bounded NDJSON progress:
+hrc turn --stacked 30s cody@agent-spaces "Long task."
 ```
 
-`dm` args: `<target>` (a handle, `"human"`, or `"system"`), `[message]` (use `-` for stdin). Options: `--json`, `--respond-to <human|agent|system>`, `--reply-to <id>`, `--mode <auto|headless|nonInteractive>`, `--file <path>`, `--follow <duration>`. The `--json` envelope exposes `messageId`, `seq`, `to`, `sessionRef`, `runtimeId`, `turnId`, and a `request.execution` block.
+`turn` args are `<target> [prompt]`; use `-` for stdin or `--file <path>`.
+Its native options are `--as`, `--fresh-context` / `--new`, `--dry-run`,
+`--format`, `--pretty`, `--stall-after` (default `1h`), `--stacked`,
+`--follow`, `--wait`, `--timeout`, `--quiet`, `--reply-to`,
+`--cross-scope-reply`, `--steer`, `--preempt`, `--ttl`, `--file`, and
+`--response-format-json-schema`.
 
-Other hrcchat commands: `turn` (dispatch tracked work + stream progress; `hrc turn` is a verbatim alias), `messages`, `show <seq-or-id>`, `send` (raw keystrokes into a live tmux runtime — not a turn), `peek`, `who`, `summon`, `info`, `doctor`.
+`hrc turn` is registered and executed by `hrc-cli`; it does not spawn
+`hrcchat`. The retained `hrcchat` binary is a redirect-only compatibility shim.
 
 ---
 
@@ -418,9 +420,9 @@ Usage/selector rejection exits 2 before arm and emits no terminal event.
 - `2` — CLI usage error (unknown command/option, bad argument, validation failure); also emitted for `unknown command: <x>` / `unknown option '--x'` on removed surfaces.
 - `0` — success / help displayed.
 
-### `hrcchat turn`
+### `hrc turn`
 
-`hrcchat turn` uses intentional turn exit codes (`1`, `3`, `4`, `5`, `130`) for dispatch/turn outcomes; see `hrcchat turn --help` for the per-code semantics.
+`hrc turn` uses intentional turn exit codes (`1`, `3`, `4`, `5`, `130`) for dispatch/turn outcomes; see `hrc turn --help` for the full native surface.
 
 ---
 

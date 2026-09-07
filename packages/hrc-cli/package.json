@@ -17,6 +17,8 @@
     "test": "bun test --timeout 10000"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.73.0",
+    "agent-action-render": "*",
     "agent-scope": "latest",
     "chalk": "^5.6.2",
     "cli-kit": "latest",
@@ -24,6 +26,7 @@
     "hrc-capture-verifier": "*",
     "hrc-core": "*",
     "hrc-events": "*",
+    "hrc-frame-render": "*",
     "hrc-mail-kicker": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",

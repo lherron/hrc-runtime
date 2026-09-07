@@ -1,5 +1,7 @@
 # hrcchat — Canonical Spec
 
+> T-08198: the turn engine and `turn` command moved to `hrc-cli`; `hrcchat` is retained only as a redirect-only compatibility shim.
+
 **Date:** 2026-06-07
 **Status:** CANONICAL
 **Repo:** `/Users/lherron/praesidium/hrc-runtime`

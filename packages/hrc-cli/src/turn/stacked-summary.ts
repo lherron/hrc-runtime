@@ -108,7 +108,7 @@ class StackedSummarizer implements Summarizer {
     const kvGet = this.options.consulKvGet ?? defaultConsulKvGet
     const apiKey = await kvGet(key)
     if (apiKey === undefined) {
-      this.warnOnce(`hrcchat: stacked summaries disabled; Consul key unavailable: ${key}\n`)
+      this.warnOnce(`hrc: stacked summaries disabled; Consul key unavailable: ${key}\n`)
     }
     return apiKey
   }

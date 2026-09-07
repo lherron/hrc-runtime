@@ -167,7 +167,7 @@ describe('T-07013 entry-path validation', () => {
     expect(result.stderr).toContain('unknown option:')
   })
 
-  test('turn forwards typoed flags to hrcchat, which rejects them', async () => {
+  test('native turn rejects typoed flags', async () => {
     const result = await runCli(['turn', '--definitely-not-a-real-flag'])
     expect(result.exitCode).toBe(2)
     expect(result.stderr).toMatch(/unknown option/)

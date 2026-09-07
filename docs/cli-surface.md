@@ -65,6 +65,17 @@ A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.
 
+## `turn` — tracked agent work
+
+`hrc turn <target> [prompt]` is a native `hrc-cli` command. It resolves the
+target, dispatches tracked work, and streams rendered frames without spawning
+the retired `hrcchat` shim. Use `-` for stdin or `--file <path>`.
+
+Options: `--as`, `--fresh-context` / `--new`, `--dry-run`, `--format`,
+`--pretty`, `--stall-after` (default `1h`), `--stacked`, `--follow`, `--wait`,
+`--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--steer`,
+`--preempt`, `--ttl`, `--file`, and `--response-format-json-schema`.
+
 Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`,
 operator-only `hrc admin registrations gc [<exact-scope>... --yes]` (no scopes
 is a read-only candidate projection; retirement is never automated), and

@@ -1,10 +1,11 @@
 /**
  * Resolve a target handle to an HrcRuntimeIntent.
+ * Overlaps with target/resolve.ts intentionally until a later refactor.
  *
  * The harness→intent assembly is owned by hrc-sdk's `buildHrcRuntimeIntent`
  * (the single authority shared with hrc-cli and agent-loop). This module only
- * does the hrcchat-specific bit: parse the target string and resolve its
- * placement paths, then hand them to the shared assembler with hrcchat's
+ * does the turn-specific bit: parse the target string and resolve its
+ * placement paths, then hand them to the shared assembler with hrc's
  * non-interactive turn semantics.
  */
 import type { ProvisioningScalars } from 'agent-scope'
@@ -30,7 +31,7 @@ function buildRuntimeIntentForResolvedScope(
   const scope = resolved.parsed
 
   const paths = resolved.placement
-  writePlacementWarnings('hrcchat', paths.warnings)
+  writePlacementWarnings('hrc', paths.warnings)
   const agentRoot = paths.agentRoot
   if (!agentRoot) {
     throw new CliUsageError(formatAgentNotFound(scope.agentId, paths.searchedAgentRoots))
@@ -75,7 +76,7 @@ export function directiveOnlyRuntimeIntent(
   return { provision: directives }
 }
 
-/** Resolve an hrcchat messaging target once, with association drift advisory. */
+/** Resolve a messaging target once, with association drift advisory. */
 export function resolveMessagingTarget(
   targetInput: string,
   options?: { withCallerTaskId?: boolean }

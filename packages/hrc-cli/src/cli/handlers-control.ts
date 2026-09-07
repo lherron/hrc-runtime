@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process'
-
 import { printJson } from '../print.js'
 import { resolveRuntimeArg, resolveSessionArg } from '../selector-resolve.js'
 import {
@@ -36,28 +34,6 @@ export async function cmdRuntimeEnsure(args: string[]): Promise<void> {
     ...(restartStyle ? { restartStyle } : {}),
   })
   printJson(result)
-}
-
-export async function execHrcchatTurn(forwarded: string[]): Promise<never> {
-  // HRC_TURN_FORWARDED suppresses hrcchat's "this verb is internal" notice:
-  // `hrc turn` IS the public spelling, so its users must not be told off for
-  // using it. Wave 5 (T-07617) absorbs the implementation and drops the spawn.
-  const child = spawn('hrcchat', ['turn', ...forwarded], {
-    stdio: 'inherit',
-    env: { ...process.env, HRC_TURN_FORWARDED: '1' },
-  })
-  return await new Promise<never>((_resolve, reject) => {
-    child.on('error', (err) => {
-      reject(err)
-    })
-    child.on('exit', (code, signal) => {
-      if (signal) {
-        process.kill(process.pid, signal as NodeJS.Signals)
-        return
-      }
-      process.exit(code ?? 0)
-    })
-  })
 }
 
 export async function cmdInflightSend(args: string[]): Promise<void> {

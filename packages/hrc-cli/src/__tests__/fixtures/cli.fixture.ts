@@ -76,8 +76,7 @@ export function shouldUseSubprocess(args: string[]): boolean {
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
     case 'turn':
-      // turn re-execs `hrcchat turn` with inherited stdio; must run as
-      // subprocess so the grandchild's output flows through pipes to the test
+      // Turn may map typed outcomes with process.exit; keep it in a subprocess.
       return true
     default:
       return false
