@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import type { DispatchTurnResponse } from 'hrc-core'
+
 import { waitForCompilerPrimingTerminal } from '../broker-headless-handlers.js'
-import { waitForSubmissionTerminal } from '../turn-dispatch-handlers.js'
+import { waitForPublicDispatchStage, waitForSubmissionTerminal } from '../turn-dispatch-handlers.js'
 import {
+  GENERATION,
+  LANE_REF,
+  Q_HOST_SESSION_ID,
   Q_INVOCATION_ID,
   Q_RUNTIME_ID,
   Q_RUN_B_ID,
+  Q_SCOPE_REF,
   type SeededFixture,
   makeQueuedFixture,
 } from './broker-event-mapper-fixtures.js'
@@ -50,6 +56,58 @@ function wait(submissionId: string) {
 }
 
 describe('broker submission wait follows the disposition ledger', () => {
+  it('projects a warm invoke that is already terminal before the waiter attaches', async () => {
+    const submissionId = 'sub-warm-terminal'
+    const turnId = 'turn-warm-terminal'
+    const finalMessage = 'Warm seat summary.'
+    append(20, 'submission.executed', { submissionId, turnId })
+    append(21, 'turn.completed', { turnId, status: 'completed' })
+    fixture.db.hrcEvents.append({
+      ts: new Date().toISOString(),
+      hostSessionId: Q_HOST_SESSION_ID,
+      scopeRef: Q_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runId: Q_RUN_B_ID,
+      runtimeId: Q_RUNTIME_ID,
+      category: 'turn',
+      eventKind: 'turn.message',
+      transport: 'tmux',
+      payload: {
+        type: 'message_end',
+        message: { role: 'assistant', content: finalMessage },
+        final: true,
+      },
+    })
+
+    const response = await waitForPublicDispatchStage(
+      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      terminalBase({ submissionId, invocationId: Q_INVOCATION_ID }),
+      'terminal',
+      false
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      disposition: { type: 'executed', turnId },
+      terminal: { turnId, status: 'completed', finalMessage },
+    })
+  })
+
+  it('keeps a legacy already-terminal response without broker identity projection-less', async () => {
+    const response = await waitForPublicDispatchStage(
+      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      terminalBase({}),
+      'terminal',
+      false
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).not.toHaveProperty('disposition')
+    expect(body).not.toHaveProperty('terminal')
+  })
+
   it('holds a cold caller invoke until compiler priming reaches terminal on the event projection', async () => {
     const planHash = 'plan-compiler-priming'
     const profileHash = 'profile-compiler-priming'
@@ -180,3 +238,47 @@ describe('broker submission wait follows the disposition ledger', () => {
     ).resolves.toBeUndefined()
   })
 })
+
+function terminalBase(input: {
+  submissionId?: string
+  invocationId?: string
+}): DispatchTurnResponse {
+  return {
+    runId: Q_RUN_B_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    generation: GENERATION,
+    runtimeId: Q_RUNTIME_ID,
+    transport: 'tmux',
+    status: 'completed',
+    supportsInFlightInput: true,
+    stage: 'terminal',
+    outcome: 'completed',
+    replayed: false,
+    ...(input.submissionId !== undefined
+      ? { submissionId: input.submissionId, admission: 'admitted' as const }
+      : {}),
+    observation: {
+      lifecycle: {
+        selector: {
+          runId: Q_RUN_B_ID,
+          runtimeId: Q_RUNTIME_ID,
+          generation: GENERATION,
+        },
+        fromSeq: 1,
+      },
+      ...(input.invocationId !== undefined
+        ? {
+            broker: {
+              selector: {
+                invocationId: input.invocationId,
+                runId: Q_RUN_B_ID,
+                runtimeId: Q_RUNTIME_ID,
+                generation: GENERATION,
+              },
+              afterSeq: 0,
+            },
+          }
+        : {}),
+    },
+  }
+}

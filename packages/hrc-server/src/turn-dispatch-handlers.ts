@@ -592,7 +592,7 @@ function replayDispatchBody(
   })
 }
 
-async function waitForPublicDispatchStage(
+export async function waitForPublicDispatchStage(
   server: HrcServerInstanceForHandlers,
   base: DispatchTurnResponse,
   requested: PublicDispatchWaitStage,
@@ -600,7 +600,14 @@ async function waitForPublicDispatchStage(
   signal: AbortSignal = new AbortController().signal,
   requireSubmissionIdentity = false
 ): Promise<Response> {
-  if (requested === 'accepted' || base.stage === 'terminal') {
+  const invocationId = base.observation?.broker?.selector.invocationId
+  // Legacy drivers can report terminal without broker identity. Preserve their
+  // projection-less success; identified submissions can be projected from the
+  // durable ledger even when completion won the race with waiter attachment.
+  if (
+    requested === 'accepted' ||
+    (base.stage === 'terminal' && (base.submissionId === undefined || invocationId === undefined))
+  ) {
     const dispatch = { ...base, replayed }
     return json(
       projectSubmissionResponse(dispatch, {}, requireSubmissionIdentity),
@@ -608,7 +615,6 @@ async function waitForPublicDispatchStage(
     )
   }
 
-  const invocationId = base.observation?.broker?.selector.invocationId
   if (base.submissionId === undefined || invocationId === undefined) {
     throw new HrcRuntimeUnavailableError('dispatch wait requires broker submission identity', {
       runId: base.runId,
