@@ -677,7 +677,7 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
     await waitUntil(() => deterministic.calls() === 1, 'first delivery is immediate')
   })
 
-  it('does not commit when dispatch throws after preview', async () => {
+  it('retains an uncertain intent when dispatch throws after preview', async () => {
     await startServer()
     const resolved = await fixture.resolveSession(SCOPE)
     const db = (server as any).db as HrcDatabase
@@ -714,10 +714,19 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       terminal: false,
     })
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
-    // T-08094: a door that throws CLEARS the intent, so the envelope is
-    // actionable again on the next pass. A stuck intent would make it
-    // permanently undeliverable — the failure the drive slot used to have.
-    expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(0)
+    // T-08205 rev2: a thrown dispatch is possible-write ambiguity. It retains
+    // the write-ahead fence, makes the body non-actionable, and forbids a
+    // second submission until positive no-write/removal evidence arrives.
+    expect(db.mailDelivery.getIntent(envelope.id)).toMatchObject({
+      uncertainCause: 'dispatch_error',
+      lastEvidenceKind: 'dispatch_error',
+    })
+    kicker().wake(TARGET, 'periodic')
+    await kicker().drainTarget(TARGET)
+    expect(
+      ledger.presentRequests.filter((request) => request.envelope === envelope.id)
+    ).toHaveLength(1)
+    expect(db.mailDelivery.listOpenIntents(TARGET)).toHaveLength(1)
   })
 
   it('never treats a run row alone as observed busy-seat state', async () => {

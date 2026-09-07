@@ -131,6 +131,9 @@ beforeEach(async () => {
     deliveryOutcome: 'executed',
     landingHrcSeq: 4,
   })
+  // This fixture represents a receipt the ledger already accepted, rather
+  // than the local-only row left behind by a lost receipt response.
+  expect(db.mailDelivery.markReceiptCommitted(ENVELOPE, RUNTIME)).toBe(true)
 })
 
 afterEach(async () => {
@@ -215,6 +218,32 @@ describe('hrc mail inspect (T-07964 §6)', () => {
 
   it('yields to the ledger once the obligation is discharged', () => {
     expect(inspect(ledgerRow('acked')).envelopes[0]?.verdict.code).toBe('discharged')
+  })
+
+  it('excludes a local-only presentation from reminder authority', () => {
+    const localOnlyEnvelope = 'EN-local-only'
+    db.mailDelivery.recordPresentation({
+      envelopeId: localOnlyEnvelope,
+      runtimeId: RUNTIME,
+      targetSessionRef: TARGET,
+      generation: 1,
+      presentationId: 'present-local-only',
+      inputId: 'sub-local-only',
+      deliveryOutcome: 'executed',
+      landingHrcSeq: 5,
+    })
+
+    expect(
+      db.mailDelivery.getPresentation(localOnlyEnvelope, RUNTIME)?.receiptCommittedAt
+    ).toBeUndefined()
+    expect(
+      db.mailDelivery.armReminder({
+        envelopeId: localOnlyEnvelope,
+        runtimeId: RUNTIME,
+        turnEndedAt: '2026-09-03T23:47:33Z',
+        remindAt: '2026-09-03T23:48:33Z',
+      })
+    ).toBe(false)
   })
 
   it('reports an armed reminder rather than a strand', () => {
