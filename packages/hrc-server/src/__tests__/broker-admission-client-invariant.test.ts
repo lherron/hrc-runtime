@@ -57,7 +57,8 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
       'packages/hrc-core/src/hrcchat-contracts.ts',
       'packages/hrc-server/src/messages.ts',
       'packages/hrc-server/src/turn-dispatch-handlers.ts',
-      'packages/hrcchat-cli/src/commands/turn.ts',
+      'packages/hrc-cli/src/cli/register-top.ts',
+      'packages/hrc-cli/src/turn/commands/turn.ts',
     ]
     for (const file of files) {
       const source = readRepo(file)

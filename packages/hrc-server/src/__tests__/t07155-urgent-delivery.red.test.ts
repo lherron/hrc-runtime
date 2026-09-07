@@ -39,8 +39,11 @@ describe('T-07155 delivery claims in the four-door vocabulary', () => {
   })
 
   it('the retired urgent alias has no CLI path; explicit steer and preempt select distinct doors', () => {
-    const command = source('packages/hrcchat-cli/src/commands/turn.ts')
-    expect(command).not.toContain('--' + 'urgent')
+    const registration = source('packages/hrc-cli/src/cli/register-top.ts')
+    const command = source('packages/hrc-cli/src/turn/commands/turn.ts')
+    expect(`${registration}\n${command}`).not.toContain('--' + 'urgent')
+    expect(registration).toContain(".option('--steer'")
+    expect(registration).toContain(".option('--preempt'")
     expect(command).toContain('client.steer(')
     expect(command).toContain('client.preempt(')
   })
