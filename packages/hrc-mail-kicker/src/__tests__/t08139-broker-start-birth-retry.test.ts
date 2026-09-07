@@ -5,6 +5,8 @@ import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from '../context.js'
 import { observeMailDriveLifecycleEvent } from '../controller.js'
+import { readActionableEnvelopes } from '../drive/presentation.js'
+import { reconcileOpenIntents } from '../drive/reconcile.js'
 import { unbornBirthWakeCandidates } from '../wake/birth-retry.js'
 import { runMailKickerSweep } from '../wake/sweep.js'
 import type { Recorded, T08094Harness } from './t08094-harness.js'
@@ -23,7 +25,9 @@ import {
  * remain visible to the periodic sweep even though the scope has a session and
  * a placement binding. The write-ahead intent is the causation record: it is
  * still open when the synchronous `turn.failed` lifecycle event is observed,
- * then the failed door clears it as an ordinary refusal.
+ * then the failed door retains it as a possible-write fence. A broker-start
+ * failure has no correlated `not_written` proof, so its periodic wake may
+ * recover the seat but must never submit the body a second time.
  */
 
 const FAILED_RUNTIME = 'rt-t08139-failed-replacement'
@@ -65,7 +69,7 @@ function brokerStartFailedEvent(): HrcLifecycleEvent {
 }
 
 describe('T-08139 D2 — broker-start failure returns a seated target to the sweep', () => {
-  it('records the refused delivery and drives it with wakeReason periodic on the next sweep', async () => {
+  it('retains uncertain delivery while driving broker-birth recovery periodically', async () => {
     // This is an already-established scope, not a virgin birth. The old
     // candidate filter treated this binding as proof that no retry was owed,
     // even after the runtime itself was gone.
@@ -76,9 +80,11 @@ describe('T-08139 D2 — broker-start failure returns a seated target to the swe
     })
 
     const envelope = harness.ledger.say({ body: 'delivery that triggers reprovision' })
+    let dispatches = 0
     context = {
       ...context,
       dispatchTurn: async () => {
+        dispatches += 1
         const now = new Date().toISOString()
         harness.db.runtimes.update(OLD_RUNTIME, {
           status: 'stale',
@@ -107,7 +113,17 @@ describe('T-08139 D2 — broker-start failure returns a seated target to the swe
     harness.context = context
 
     expect(await deliverOneTo(harness, seatIn('idle'), envelope)).toBe('refused')
-    expect(harness.db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(harness.db.mailDelivery.getIntent(envelope.id)).toMatchObject({
+      uncertainCause: 'dispatch_error',
+      lastEvidenceKind: 'dispatch_error',
+    })
+    expect(
+      (await readActionableEnvelopes(context, TARGET)).map((item) => item.envelope.id)
+    ).not.toContain(envelope.id)
+    expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({ open: 1 })
+    // The body has no actionable item for a second door call. Recovery can
+    // continue, but this body is never reinjected.
+    expect(dispatches).toBe(1)
     expect(harness.db.runtimes.listLiveSessionRefs()).not.toContain(TARGET)
 
     const refusal = harness.db.mailDelivery.getBirthRefusal(TARGET)
