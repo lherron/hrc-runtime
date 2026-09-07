@@ -70,7 +70,8 @@ source:
   - wrkq:T-08098
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
-  - packages/hrcchat-cli/src/commands/turn.ts
+  - packages/hrc-cli/src/cli/register-top.ts
+  - packages/hrc-cli/src/turn/commands/turn.ts
   - packages/hrc-mail-kicker/src/controller.ts
   - packages/hrc-mail-kicker/src/drive/delivery.ts
   - packages/hrc-mail-kicker/src/drive/seat.ts
