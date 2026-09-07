@@ -431,9 +431,10 @@ The output always names the resolved kind and the concrete ID(s).
 
   program
     .command('turn')
-    .description('dispatch tracked work to an agent and stream its progress')
+    .description('dispatch tracked work or attach to an admitted turn and stream its progress')
     .argument('<target>', 'target handle or scopeRef')
     .argument('[prompt]', 'prompt text (use - for stdin)')
+    .option('--attach', "observe the target's admitted turn without dispatching")
     .option('--as <principal>', 'explicit sender principal')
     .option('--fresh-context, --new', 'clear context before dispatching (clean slate)')
     .option('--dry-run', 'resolve and print the dispatch plan without dispatching')

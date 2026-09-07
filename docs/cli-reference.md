@@ -330,14 +330,28 @@ hrc turn --dry-run cody@agent-spaces "Review the repo."
 
 # Dispatch tracked work and emit bounded NDJSON progress:
 hrc turn --stacked 30s cody@agent-spaces "Long task."
+
+# Observe the admitted turn already running on a seat (dispatches nothing):
+hrc turn --attach cody@hrc-runtime:T-08200/smoke --stacked 20s
 ```
 
 `turn` args are `<target> [prompt]`; use `-` for stdin or `--file <path>`.
-Its native options are `--as`, `--fresh-context` / `--new`, `--dry-run`,
+Its native options are `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`,
 `--format`, `--pretty`, `--stall-after` (default `1h`), `--stacked`,
 `--follow`, `--wait`, `--timeout`, `--quiet`, `--reply-to`,
 `--cross-scope-reply`, `--steer`, `--preempt`, `--ttl`, `--file`, and
 `--response-format-json-schema`.
+
+`--attach` is observe-only: it resolves the target with messaging placement
+semantics, finds exactly one admitted active run from live session/runtime
+state, replays that run's ledger, and then follows it through the ordinary turn
+renderer. With `--stacked`, the first line is either `flush:"attach"` covering
+the complete replay boundary or the run's terminal line if it ended while the
+observer subscribed. Catch-up has a fixed 30-second infrastructure deadline;
+`--stall-after` begins only after catch-up completes. Exit 6 means there was no
+single admitted run to observe and emits no frame. A prompt, `-`, `--file`, or
+any dispatch/sender option is invalid with `--attach`. `messageId` is omitted
+from `turn_stacked` when the originating input identity is unavailable.
 
 `hrc turn` is registered and executed by `hrc-cli`; it does not spawn
 `hrcchat`. The retained `hrcchat` binary is a redirect-only compatibility shim.

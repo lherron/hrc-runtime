@@ -2,6 +2,7 @@ import type { HrcLifecycleEvent, SemanticTurnHandoffStartedResponse } from 'hrc-
 import type { RenderAction } from 'hrc-frame-render'
 
 export enum FlushReason {
+  Attach = 'attach',
   Interval = 'interval',
   Phase = 'phase',
   Final = 'final',
@@ -84,7 +85,7 @@ export type TurnStackedEvent = {
   window: StackedWindow
   taskId?: string | undefined
   scope: string
-  messageId: string
+  messageId?: string | undefined
   sessionRef: string
   scopeRef: string
   laneRef: string
@@ -105,4 +106,7 @@ export interface Summarizer {
   summarize(input: SummarizerInput): Promise<string>
 }
 
-export type StackedHandoff = SemanticTurnHandoffStartedResponse
+export type StackedHandoff = Omit<SemanticTurnHandoffStartedResponse, 'messageId'> & {
+  /** Attach observers may not be able to recover the originating input id. */
+  messageId?: string | undefined
+}

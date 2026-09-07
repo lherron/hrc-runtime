@@ -14,6 +14,7 @@ type StackedLine = {
   taskState?: string | null
   permission?: { requestId: string; toolUseId: string; toolName: string }
   hrcSeqRange?: { from: number; to: number }
+  messageId?: string
 }
 
 type TimerHandle = number
@@ -109,6 +110,7 @@ function makeHarness(
   options: {
     windowMs?: number
     stallAfterMs?: number
+    catchUpThroughSeq?: number
     targetScope?: string
     readTaskState?: (taskId: string) => Promise<string | null>
   } = {}
@@ -135,6 +137,9 @@ function makeHarness(
       const aggregator = createStackedAggregator({
         windowMs: options.windowMs ?? 1_000,
         stallAfterMs: options.stallAfterMs ?? 3_000,
+        ...(options.catchUpThroughSeq !== undefined
+          ? { catchUpThroughSeq: options.catchUpThroughSeq }
+          : {}),
         targetScope: options.targetScope ?? 'larry@agent-spaces:T-01449',
         handoff: makeHandoff(),
         summarizer,
@@ -414,6 +419,127 @@ describe('stacked turn aggregator', () => {
     await aggregator.finish({ exitCode: 1, result: 'stall' })
 
     expect(order).toEqual(['write', 'exit'])
+  })
+
+  it('holds all timers and frames until attach catch-up reaches its inclusive boundary', async () => {
+    const harness = makeHarness({
+      windowMs: 1_000,
+      stallAfterMs: 1_000,
+      catchUpThroughSeq: 42,
+    })
+    const aggregator = await harness.create()
+
+    for (let seq = 10; seq <= 20; seq += 1) {
+      await aggregator.receive(event(seq, seq === 10 ? 'run_queued' : 'turn.tool_call'))
+    }
+    await harness.clock.advance(2_000)
+    expect(harness.lines).toHaveLength(0)
+
+    for (let seq = 21; seq <= 42; seq += 1) {
+      await aggregator.receive(event(seq, 'turn.tool_call'))
+    }
+    expect(harness.lines).toHaveLength(1)
+    expect(harness.lines[0]).toMatchObject({
+      flush: 'attach',
+      phase: 'progress',
+      events: 33,
+      hrcSeqRange: { from: 10, to: 42 },
+    })
+
+    await harness.clock.advance(1_000)
+    expect(harness.lines.map((line) => line.flush)).toEqual(['attach', 'interval'])
+    await harness.clock.advance(2)
+    await Promise.resolve()
+    expect(harness.lines.map((line) => line.flush)).toEqual(['attach', 'interval', 'stall'])
+  })
+
+  it('does not force-flush answered historical permission requests during catch-up', async () => {
+    const harness = makeHarness({ catchUpThroughSeq: 42 })
+    const aggregator = await harness.create()
+
+    for (let seq = 10; seq <= 42; seq += 1) {
+      const kind = seq === 20 ? 'permission_request' : 'turn.tool_call'
+      await aggregator.receive(
+        event(seq, kind, seq === 20 ? { requestId: 'perm-old', toolName: 'Bash' } : {})
+      )
+    }
+
+    expect(harness.lines).toHaveLength(1)
+    expect(harness.lines[0]).toMatchObject({
+      flush: 'attach',
+      phase: 'progress',
+      hrcSeqRange: { from: 10, to: 42 },
+    })
+    expect(harness.lines[0]).not.toHaveProperty('permission')
+
+    await aggregator.receive(
+      event(43, 'permission_request', { requestId: 'perm-old', toolName: 'Bash' })
+    )
+    expect(harness.lines).toHaveLength(1)
+  })
+
+  it('reports an unanswered permission as the attach phase without a permission flush', async () => {
+    const harness = makeHarness({ catchUpThroughSeq: 20 })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(10, 'run_queued'))
+    await aggregator.receive(
+      event(20, 'permission_request', {
+        requestId: 'perm-pending',
+        toolUseId: 'tool-pending',
+        toolName: 'Bash',
+      })
+    )
+
+    expect(harness.lines).toHaveLength(1)
+    expect(harness.lines[0]).toMatchObject({
+      flush: 'attach',
+      phase: 'permission',
+      permission: { requestId: 'perm-pending' },
+      hrcSeqRange: { from: 10, to: 20 },
+    })
+  })
+
+  it('emits one terminal frame when the replay contains turn.completed', async () => {
+    const harness = makeHarness({ catchUpThroughSeq: 42 })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(10, 'run_queued'))
+    await aggregator.receive(event(20, 'turn.tool_call'))
+    await aggregator.receive(event(42, 'turn.completed', { body: 'finished while attaching' }))
+
+    expect(harness.lines).toHaveLength(1)
+    expect(harness.lines[0]).toMatchObject({
+      flush: 'final',
+      phase: 'final',
+      result: 'success',
+      hrcSeqRange: { from: 10, to: 42 },
+    })
+  })
+
+  it('omits messageId when an attached run has no originating input identity', async () => {
+    const clock = new FakeClock()
+    const lines: StackedLine[] = []
+    const { createStackedAggregator } = await loadAggregatorModule()
+    const aggregator = createStackedAggregator({
+      windowMs: 1_000,
+      catchUpThroughSeq: 10,
+      targetScope: 'larry@agent-spaces:T-01449',
+      handoff: makeHandoff({ messageId: undefined }),
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      summarizer: { summarize: async () => 'catch-up' },
+      writeLine(line: StackedLine) {
+        lines.push(line)
+      },
+    })
+
+    aggregator.start()
+    await aggregator.receive(event(10, 'turn.tool_call'))
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).not.toHaveProperty('messageId')
   })
 
   // --- adversarial additions (smokey) ---

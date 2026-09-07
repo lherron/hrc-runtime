@@ -3,18 +3,16 @@ import { readFileSync } from 'node:fs'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
-  HrcMessageAddress,
   HrcTurnResponseFormat,
   SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffResponse,
-  SemanticTurnHandoffStartedResponse,
 } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
 import { printJson, printJsonLine } from '../../print.js'
 import { writeDeliveryOutcome, writeDeliveryWarnings } from '../delivery-warning.js'
-import { type resolveScope, resolveSenderAddress } from '../normalize.js'
+import { resolveMessagingScope, type resolveScope, resolveSenderAddress } from '../normalize.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
@@ -25,9 +23,11 @@ import { resolveLaunchTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
 import { isRecord } from '../stacked-shared.js'
 import { type StackedSeatSummarizer, createStackedSummarizer } from '../stacked-summary.js'
-import { FlushReason, Phase, Result } from '../stacked-types.js'
+import { FlushReason, Phase, Result, type StackedHandoff } from '../stacked-types.js'
 
 export type TurnOptions = {
+  /** Observe an admitted run without dispatching input. */
+  attach?: boolean | undefined
   /** Explicit sender principal ("human" or an agent handle); wins over the envelope. */
   as?: string | undefined
   new?: boolean | undefined
@@ -61,9 +61,14 @@ export type TurnOptions = {
 
 export type TurnCommandDependencies = {
   createStackedSummarizer?: typeof createStackedSummarizer
+  resolveMessagingScope?: typeof resolveMessagingScope
+  resolveLaunchTarget?: typeof resolveLaunchTarget
+  /** Test-only clock compression; production always uses the exported constant. */
+  attachCatchUpDeadlineMs?: number | undefined
 }
 
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
+export const ATTACH_CATCH_UP_DEADLINE_MS = 30_000
 
 function isPendingSemanticTurnHandoff(
   response: SemanticTurnHandoffResponse
@@ -115,6 +120,7 @@ function parseResponseFormatOption(opts: TurnOptions): HrcTurnResponseFormat | u
  *   3 — infra failure (socket, daemon)
  *   4 — runtime dead before turn completed
  *   5 — permission-blocked
+ *   6 — no admitted run to attach to
  * 130 — SIGINT
  */
 export class TurnExitError extends Error {
@@ -130,6 +136,7 @@ export const TURN_EXIT_STALL = 1
 export const TURN_EXIT_INFRA = 3
 export const TURN_EXIT_RUNTIME_DEAD = 4
 export const TURN_EXIT_PERMISSION_BLOCKED = 5
+export const TURN_EXIT_NOTHING_TO_ATTACH = 6
 export const TURN_EXIT_SIGINT = 130
 
 /**
@@ -221,6 +228,13 @@ function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyIn
   }
 
   const bodyPositional = positionals[1]
+  if (opts.attach === true) {
+    if (bodyPositional !== undefined || opts.file !== undefined) {
+      throw new CliUsageError('--attach cannot be combined with a prompt, -, or --file')
+    }
+    return { targetInput, body: '', bodyFromFile: false, bodyFromStdin: false }
+  }
+
   const bodyFromStdin = bodyPositional === '-'
   const bodyFromFile = opts.file !== undefined
 
@@ -247,6 +261,138 @@ function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyIn
   }
 
   return { targetInput, body, bodyFromFile, bodyFromStdin }
+}
+
+function assertAttachOptionCompatibility(opts: TurnOptions): void {
+  if (opts.attach !== true) {
+    return
+  }
+  const incompatible: Array<[boolean, string]> = [
+    [opts.new === true, '--new'],
+    [opts.dryRun === true, '--dry-run'],
+    [opts.steer === true, '--steer'],
+    [opts.preempt === true, '--preempt'],
+    [opts.wait !== undefined, '--wait'],
+    [opts.ttl !== undefined, '--ttl'],
+    [opts.replyTo !== undefined, '--reply-to'],
+    [opts.crossScopeReply === true, '--cross-scope-reply'],
+    [opts.responseFormatJsonSchema !== undefined, '--response-format-json-schema'],
+    [opts.as !== undefined, '--as'],
+    [opts.quiet === true, '--quiet'],
+  ]
+  const conflict = incompatible.find(([present]) => present)
+  if (conflict !== undefined) {
+    throw new CliUsageError(`--attach cannot be combined with ${conflict[1]}`)
+  }
+}
+
+function nothingToAttach(targetInput: string, reason: string): never {
+  throw new TurnExitError(
+    TURN_EXIT_NOTHING_TO_ATTACH,
+    `turn: no active turn on ${targetInput} (${reason})`
+  )
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined
+  const field = value[key]
+  return typeof field === 'string' && field.length > 0 ? field : undefined
+}
+
+function originatingMessageId(
+  events: HrcLifecycleEvent[],
+  dispatchedInputId: string | undefined
+): string | undefined {
+  for (const event of events) {
+    if (event.eventKind !== 'turn.started' && event.eventKind !== 'turn.attributed') continue
+    const inputId = stringField(event.payload, 'inputId')
+    if (inputId !== undefined) return inputId
+  }
+  return dispatchedInputId
+}
+
+const ATTACHABLE_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
+
+async function resolveAttachObservation(
+  client: HrcClient,
+  targetInput: string,
+  sessionRef: string
+): Promise<{
+  handoff: StackedHandoff
+  firstSeq: number
+  catchUpThroughSeq: number
+}> {
+  const session = await client.resolveSession({ sessionRef })
+  if (!session.found) {
+    nothingToAttach(targetInput, 'session not found')
+  }
+
+  const runtimes = await client.listRuntimes({ hostSessionId: session.hostSessionId })
+  if (runtimes.length === 0) {
+    nothingToAttach(targetInput, 'session has no runtime')
+  }
+  const inspected = await Promise.all(
+    runtimes.map((runtime) => client.inspectRuntime({ runtimeId: runtime.runtimeId }))
+  )
+  const candidates = inspected.filter((runtime) => runtime.activeRunId !== null)
+  if (candidates.length === 0) {
+    nothingToAttach(targetInput, 'no runtime has an active run')
+  }
+  if (candidates.length > 1) {
+    nothingToAttach(targetInput, `${candidates.length} runtimes have active runs`)
+  }
+
+  const runtime = candidates[0]
+  if (runtime === undefined || runtime.activeRunId === null) {
+    nothingToAttach(targetInput, 'no runtime has an active run')
+  }
+  const runId = runtime.activeRunId
+  const run = await client.getRun(runId)
+  if (run === null) {
+    nothingToAttach(targetInput, `active run ${runId} was not found`)
+  }
+  if (!ATTACHABLE_RUN_STATUSES.has(run.status)) {
+    nothingToAttach(targetInput, `active run ${runId} has status ${run.status}`)
+  }
+
+  const replay: HrcLifecycleEvent[] = []
+  for await (const event of client.watch({
+    runId,
+    generation: runtime.generation,
+    scopeRef: runtime.scopeRef,
+    laneRef: runtime.laneRef,
+    fromSeq: 1,
+    follow: false,
+  })) {
+    replay.push(event)
+  }
+  if (replay.length === 0) {
+    nothingToAttach(targetInput, 'run has no ledger events')
+  }
+
+  const firstEvent = replay[0]
+  const lastEvent = replay.at(-1)
+  if (firstEvent === undefined || lastEvent === undefined) {
+    nothingToAttach(targetInput, 'run has no ledger events')
+  }
+  const firstSeq = firstEvent.hrcSeq
+  const catchUpThroughSeq = lastEvent.hrcSeq
+  const messageId = originatingMessageId(replay, run.dispatchedInputId)
+  return {
+    handoff: {
+      ...(messageId !== undefined ? { messageId } : {}),
+      sessionRef,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      hostSessionId: runtime.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      runId,
+      generation: runtime.generation,
+      fromSeq: firstSeq,
+    },
+    firstSeq,
+    catchUpThroughSeq,
+  }
 }
 
 function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
@@ -324,27 +470,26 @@ function assertProjectResolved(
   )
 }
 
-export async function cmdTurn(
+type PreparedTurnObservation = {
+  resolved: ReturnType<typeof resolveScope>
+  handoff: StackedHandoff
+  catchUpThroughSeq?: number | undefined
+}
+
+async function prepareDispatchedTurn(
   client: HrcClient,
   opts: TurnOptions,
-  positionals: string[],
-  dependencies: TurnCommandDependencies = {}
-): Promise<void> {
-  const { targetInput, body, bodyFromFile, bodyFromStdin } = readTurnBodyInput(opts, positionals)
-  const responseFormat = parseResponseFormatOption(opts)
+  input: TurnBodyInput,
+  output: TurnOutputOptions,
+  stallAfterMs: number,
+  responseFormat: HrcTurnResponseFormat | undefined,
+  dependencies: TurnCommandDependencies
+): Promise<PreparedTurnObservation | undefined> {
+  const { targetInput, body, bodyFromFile, bodyFromStdin } = input
+  const { waitMode, stackedWindowMs } = output
+  const resolveLaunch = dependencies.resolveLaunchTarget ?? resolveLaunchTarget
+  const { resolved, sessionRef, runtimeIntent } = resolveLaunch(targetInput)
 
-  const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
-
-  // ── Final-only Codex wait mode (mutex with all streaming options) ──
-  const { waitMode, stackedWindowMs } = resolveTurnOutputOptions(opts)
-
-  // ── Resolve scope ──
-  const target = resolveLaunchTarget(targetInput)
-  const { resolved, sessionRef, runtimeIntent } = target
-
-  // ── --dry-run: print the resolved dispatch plan and exit ──
-  // Purely local resolution — consults no server state, mutates nothing
-  // (no clearContext), and dispatches no turn.
   if (opts.dryRun) {
     printJson({
       command: 'turn',
@@ -369,22 +514,10 @@ export async function cmdTurn(
       },
       runtimeIntent,
     })
-    return
+    return undefined
   }
 
-  // ── Require a resolvable project before dispatching ──
-  // A turn places an agent within a project. When the target carries no
-  // @<project> qualifier, ASP_PROJECT is unset, and the cwd maps to no known
-  // project, resolution yields a degenerate project-less scope (agent:<name>).
-  // Dispatching there produces no runnable turn and no rendered frames, so the
-  // operator is left with no reply, no confirmation, and — worst of all — no
-  // error. Fail loud with actionable guidance instead. (--dry-run is exempt
-  // above: it intentionally prints the degenerate plan so the gap is visible.)
   assertProjectResolved(targetInput, resolved)
-
-  // ── Dispatch turn via semanticTurnHandoff ──
-  // Freshness is part of this atomic destination-side handoff. A separate
-  // origin-side clear cannot enforce context rotation for federated targets.
   const sender = resolveSenderAddress(opts.as)
   if (sender.source === 'human-fallback') {
     if (!process.stdout.isTTY) {
@@ -396,7 +529,6 @@ export async function cmdTurn(
   }
   const from = sender.address
   const to = { kind: 'session' as const, sessionRef }
-
   const principalRef =
     from.kind === 'session'
       ? (from.sessionRef.split('/lane:')[0] ?? from.sessionRef)
@@ -416,7 +548,7 @@ export async function cmdTurn(
   }
   if (opts.steer === true) {
     printJsonLine(await client.steer(submissionRequest))
-    return
+    return undefined
   }
   if (opts.preempt === true) {
     printJsonLine(
@@ -426,7 +558,7 @@ export async function cmdTurn(
         ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
       })
     )
-    return
+    return undefined
   }
   if (waitMode === 'final' || ttlMs !== undefined) {
     printJsonLine(
@@ -436,9 +568,9 @@ export async function cmdTurn(
         ...(waitMode === 'final' ? { wait: true, turnPolicy: 'guarded' as const } : {}),
       })
     )
-    return
+    return undefined
   }
-  const handoff = await client.semanticTurnHandoff({
+  const dispatch = await client.semanticTurnHandoff({
     from,
     to,
     body,
@@ -449,16 +581,61 @@ export async function cmdTurn(
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
   })
-  if (isPendingSemanticTurnHandoff(handoff)) {
-    printJsonLine(handoff)
-    return
+  if (isPendingSemanticTurnHandoff(dispatch)) {
+    printJsonLine(dispatch)
+    return undefined
   }
   const quiet = waitMode !== undefined ? opts.quiet !== false : opts.quiet === true
   if (!quiet) {
-    writeDeliveryWarnings(handoff.warnings)
-    writeDeliveryOutcome(handoff.delivery)
+    writeDeliveryWarnings(dispatch.warnings)
+    writeDeliveryOutcome(dispatch.delivery)
   }
-  const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
+  return { resolved, handoff: dispatch }
+}
+
+export async function cmdTurn(
+  client: HrcClient,
+  opts: TurnOptions,
+  positionals: string[],
+  dependencies: TurnCommandDependencies = {}
+): Promise<void> {
+  assertAttachOptionCompatibility(opts)
+  const { targetInput, body, bodyFromFile, bodyFromStdin } = readTurnBodyInput(opts, positionals)
+  const responseFormat = opts.attach === true ? undefined : parseResponseFormatOption(opts)
+
+  const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
+  const output = resolveTurnOutputOptions(opts)
+  const { stackedWindowMs } = output
+
+  let prepared: PreparedTurnObservation | undefined
+  if (opts.attach === true) {
+    // Observe-only resolution intentionally uses the messaging seam: task
+    // worktree drift warns, but never becomes a launch-eligibility check.
+    const resolveMessaging = dependencies.resolveMessagingScope ?? resolveMessagingScope
+    const resolved = resolveMessaging(targetInput, { withCallerTaskId: true })
+    const sessionRef = `${resolved.scopeRef}/lane:${resolved.laneId}`
+    assertProjectResolved(targetInput, resolved)
+    const observation = await resolveAttachObservation(client, targetInput, sessionRef)
+    prepared = {
+      resolved,
+      handoff: observation.handoff,
+      catchUpThroughSeq: observation.catchUpThroughSeq,
+    }
+  } else {
+    prepared = await prepareDispatchedTurn(
+      client,
+      opts,
+      { targetInput, body, bodyFromFile, bodyFromStdin },
+      output,
+      stallAfterMs,
+      responseFormat,
+      dependencies
+    )
+  }
+  if (prepared === undefined) {
+    return
+  }
+  const { resolved, handoff, catchUpThroughSeq } = prepared
 
   // ── Resolve sink format ──
   // --pretty forces terminal/tree format regardless of TTY detection, so
@@ -492,15 +669,21 @@ export async function cmdTurn(
   }
   process.on('SIGINT', sigintHandler)
 
-  // Stall timer
+  // Dispatch mode arms stall immediately. Attach mode arms it only after the
+  // fixed replay boundary has been consumed, so --stall-after measures live
+  // silence rather than local ledger catch-up.
   let stallFired = false
-  const stallTimer =
-    stackedWindowMs === undefined
-      ? setTimeout(() => {
-          stallFired = true
-          abortController.abort()
-        }, stallAfterMs)
-      : undefined
+  let stallTimer: ReturnType<typeof setTimeout> | undefined
+  const armNonStackedStall = () => {
+    if (stackedWindowMs !== undefined || stallTimer !== undefined) return
+    stallTimer = setTimeout(() => {
+      stallFired = true
+      abortController.abort()
+    }, stallAfterMs)
+  }
+  if (opts.attach !== true) {
+    armNonStackedStall()
+  }
 
   // For --pretty in headless mode we still want in-place redraw rather than
   // stamped scrollback. opts.pretty implies inPlace=true; otherwise honor TTY.
@@ -508,7 +691,7 @@ export async function cmdTurn(
     stackedWindowMs === undefined && sinkFormat === 'terminal'
       ? createTerminalFrameRenderer({
           scopeHandle: targetInput,
-          titleFallback: body,
+          titleFallback: body || 'Attached turn',
           ...(opts.pretty ? { inPlace: true, color: true } : {}),
         })
       : undefined
@@ -541,6 +724,7 @@ export async function cmdTurn(
       targetScope: targetInput,
       handoff,
       summarizer: stackedSummarizer,
+      ...(catchUpThroughSeq !== undefined ? { catchUpThroughSeq } : {}),
       writeLine(line) {
         process.stdout.write(`${JSON.stringify(line)}\n`)
       },
@@ -550,6 +734,18 @@ export async function cmdTurn(
       },
     })
     stackedAggregator.start()
+  }
+
+  let attachCatchUpComplete = catchUpThroughSeq === undefined
+  let attachCatchUpDeadlineFired = false
+  let lastAttachSeq = handoff.fromSeq - 1
+  const pendingNonStackedCatchUp: HrcLifecycleEvent[] = []
+  let attachCatchUpDeadlineTimer: ReturnType<typeof setTimeout> | undefined
+  if (!attachCatchUpComplete) {
+    attachCatchUpDeadlineTimer = setTimeout(() => {
+      attachCatchUpDeadlineFired = true
+      abortController.abort()
+    }, dependencies.attachCatchUpDeadlineMs ?? ATTACH_CATCH_UP_DEADLINE_MS)
   }
 
   try {
@@ -563,21 +759,42 @@ export async function cmdTurn(
         follow: true,
         signal: abortController.signal,
       })) {
+        lastAttachSeq = event.hrcSeq
         const stackedEvent =
           stackedAggregator && isWatchLoopTurnTerminal(event)
-            ? await enrichFinalEvent(client, handoff, event, {
-                expectedResponder,
-                expectedRecipient: from,
-              })
+            ? await enrichFinalEvent(event)
             : event
         if (stackedAggregator) {
           lastPhase = deriveStackedPhase(stackedEvent, lastPhase)
           await stackedAggregator.receive(stackedEvent)
         } else {
-          const envelope = adaptHrcLifecycleEvent(event)
-          if (envelope) {
-            manager?.receive(envelope)
+          let eventsToRender = [event]
+          if (!attachCatchUpComplete) {
+            pendingNonStackedCatchUp.push(event)
+            eventsToRender =
+              catchUpThroughSeq !== undefined && event.hrcSeq >= catchUpThroughSeq
+                ? pendingNonStackedCatchUp.splice(0)
+                : []
           }
+          for (const eventToRender of eventsToRender) {
+            const envelope = adaptHrcLifecycleEvent(eventToRender)
+            if (envelope) {
+              manager?.receive(envelope)
+            }
+          }
+        }
+
+        if (
+          !attachCatchUpComplete &&
+          catchUpThroughSeq !== undefined &&
+          event.hrcSeq >= catchUpThroughSeq
+        ) {
+          attachCatchUpComplete = true
+          if (attachCatchUpDeadlineTimer !== undefined) {
+            clearTimeout(attachCatchUpDeadlineTimer)
+            attachCatchUpDeadlineTimer = undefined
+          }
+          armNonStackedStall()
         }
 
         // Check for terminal events
@@ -600,6 +817,12 @@ export async function cmdTurn(
       // fall through to exit-code determination below.
       if (!turnCompleted) {
         if (abortController.signal.aborted) {
+          if (attachCatchUpDeadlineFired) {
+            throw new TurnExitError(
+              TURN_EXIT_INFRA,
+              `turn: attach did not complete catch-up (received through seq ${lastAttachSeq} of ${catchUpThroughSeq})`
+            )
+          }
           // AbortError from stall timer or SIGINT
           if (stallFired) {
             throw new TurnExitError(TURN_EXIT_STALL, 'stall-after timeout reached')
@@ -609,6 +832,13 @@ export async function cmdTurn(
         }
         throw err
       }
+    }
+
+    if (!attachCatchUpComplete) {
+      throw new TurnExitError(
+        TURN_EXIT_INFRA,
+        `turn: attach did not complete catch-up (received through seq ${lastAttachSeq} of ${catchUpThroughSeq})`
+      )
     }
 
     // ── Determine exit code from final state ──
@@ -626,6 +856,9 @@ export async function cmdTurn(
   } finally {
     if (stallTimer !== undefined) {
       clearTimeout(stallTimer)
+    }
+    if (attachCatchUpDeadlineTimer !== undefined) {
+      clearTimeout(attachCatchUpDeadlineTimer)
     }
     process.removeListener('SIGINT', sigintHandler)
     try {
@@ -677,14 +910,6 @@ function deriveStackedPhase(
   return prior === 'permission' || prior === 'error' ? prior : 'progress'
 }
 
-async function enrichFinalEvent(
-  _client: HrcClient,
-  _handoff: SemanticTurnHandoffStartedResponse,
-  event: HrcLifecycleEvent,
-  _correlation: {
-    expectedResponder: HrcMessageAddress
-    expectedRecipient: HrcMessageAddress
-  }
-): Promise<HrcLifecycleEvent> {
+async function enrichFinalEvent(event: HrcLifecycleEvent): Promise<HrcLifecycleEvent> {
   return event
 }

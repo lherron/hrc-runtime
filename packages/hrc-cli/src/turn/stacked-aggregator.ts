@@ -47,6 +47,8 @@ type FlushJob = FlushExtras & {
 export type StackedAggregatorOptions = {
   windowMs: number
   stallAfterMs?: number | undefined
+  /** Inclusive replay boundary for observe-only attach mode. */
+  catchUpThroughSeq?: number | undefined
   targetScope: string
   handoff: StackedHandoff
   summarizer: Summarizer
@@ -96,6 +98,8 @@ export class StackedAggregator {
   private lastPermission: StackedPermission | undefined
   private finalBody: string | undefined
   private replyMessageId: string | undefined
+  private catchUpActive: boolean
+  private lastCatchUpEvent: HrcLifecycleEvent | undefined
 
   constructor(options: StackedAggregatorOptions) {
     this.options = options
@@ -105,6 +109,7 @@ export class StackedAggregator {
       options.clearTimeout ??
       ((handle: TimerHandle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
     this.windowStartedMs = this.now()
+    this.catchUpActive = options.catchUpThroughSeq !== undefined
   }
 
   start(): void {
@@ -112,6 +117,9 @@ export class StackedAggregator {
       return
     }
     this.windowStartedMs = this.now()
+    if (this.catchUpActive) {
+      return
+    }
     this.scheduleInterval()
     this.scheduleStall()
   }
@@ -121,12 +129,24 @@ export class StackedAggregator {
       return
     }
 
+    const catchUpThroughSeq = this.options.catchUpThroughSeq
+    if (this.catchUpActive && catchUpThroughSeq !== undefined && event.hrcSeq > catchUpThroughSeq) {
+      await this.completeCatchUp()
+      await this.receive(event)
+      return
+    }
+
     this.windowEvents.push(event)
     this.wholeTurnEvents.push(event)
-    this.scheduleStall()
+    if (this.catchUpActive) {
+      this.lastCatchUpEvent = event
+    } else {
+      this.scheduleStall()
+    }
 
     if (event.eventKind === 'run_queued') {
       this.phase = Phase.Queued
+      await this.completeCatchUpAtBoundary(event)
       return
     }
 
@@ -135,6 +155,7 @@ export class StackedAggregator {
       const requestId = permission?.requestId
       if (requestId !== undefined && this.seenPermissionRequestIds.has(requestId)) {
         this.phase = Phase.Permission
+        await this.completeCatchUpAtBoundary(event)
         return
       }
       if (requestId !== undefined) {
@@ -142,6 +163,10 @@ export class StackedAggregator {
       }
       this.phase = Phase.Permission
       this.lastPermission = permission
+      if (this.catchUpActive) {
+        await this.completeCatchUpAtBoundary(event)
+        return
+      }
       await this.forceFlush(FlushReason.Permission, { permission })
       return
     }
@@ -175,6 +200,37 @@ export class StackedAggregator {
     if (this.phase === Phase.Queued) {
       this.phase = Phase.Progress
     }
+    await this.completeCatchUpAtBoundary(event)
+  }
+
+  private async completeCatchUpAtBoundary(event: HrcLifecycleEvent): Promise<void> {
+    if (
+      this.catchUpActive &&
+      this.options.catchUpThroughSeq !== undefined &&
+      event.hrcSeq >= this.options.catchUpThroughSeq
+    ) {
+      await this.completeCatchUp()
+    }
+  }
+
+  private async completeCatchUp(): Promise<void> {
+    if (!this.catchUpActive || this.closed) {
+      return
+    }
+    this.catchUpActive = false
+    this.phase =
+      this.lastCatchUpEvent?.eventKind === 'permission_request'
+        ? Phase.Permission
+        : this.lastCatchUpEvent?.eventKind === 'run_queued'
+          ? Phase.Queued
+          : Phase.Progress
+    await this.enqueueFlush(FlushReason.Attach, {
+      ...(this.phase === Phase.Permission && this.lastPermission !== undefined
+        ? { permission: this.lastPermission }
+        : {}),
+    })
+    this.scheduleStall()
+    this.scheduleInterval()
   }
 
   async finish(input: FinishInput): Promise<void> {
@@ -343,6 +399,9 @@ export class StackedAggregator {
     if (flush === FlushReason.Permission) {
       return Phase.Permission
     }
+    if (flush === FlushReason.Attach) {
+      return this.phase
+    }
     return this.phase === Phase.Queued ? Phase.Progress : this.phase
   }
 
@@ -428,7 +487,9 @@ export class StackedAggregator {
       },
       ...(taskId !== undefined ? { taskId } : {}),
       scope: this.options.targetScope,
-      messageId: this.options.handoff.messageId,
+      ...(this.options.handoff.messageId !== undefined
+        ? { messageId: this.options.handoff.messageId }
+        : {}),
       sessionRef: this.options.handoff.sessionRef,
       scopeRef: this.options.handoff.scopeRef,
       laneRef: this.options.handoff.laneRef,
