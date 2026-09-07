@@ -96,7 +96,14 @@ afterEach(async () => {
 /** Apply the A-side interleave sequence: A accepted → A started → B queued → A mid-turn events */
 function applyAMidTurnSequence() {
   mapper.apply(qEnv('input.accepted', 1, { inputId: Q_INPUT_A_ID }, { inputId: Q_INPUT_A_ID }))
-  mapper.apply(qEnv('turn.started', 2, { turnId: TURN_A }, { turnId: TURN_A }))
+  mapper.apply(
+    qEnv(
+      'turn.started',
+      2,
+      { turnId: TURN_A, inputId: Q_INPUT_A_ID },
+      { turnId: TURN_A, inputId: Q_INPUT_A_ID }
+    )
+  )
   mapper.apply(qEnv('input.accepted', 3, { inputId: Q_INPUT_B_ID }, { inputId: Q_INPUT_B_ID }))
 }
 
@@ -205,7 +212,14 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
     applyAMidTurnSequence()
     applyATerminal()
 
-    const result = mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
+    const result = mapper.apply(
+      qEnv(
+        'turn.started',
+        9,
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID },
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID }
+      )
+    )
     // FAILS: hasTerminalTurnAfter(3, 9) finds turn.completed at seq=7 → runId=undefined
     expect(result.lifecycleEvents[0]?.runId).toBe(Q_RUN_B_ID)
   })
@@ -213,7 +227,14 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
   it('turn.started(B) claims runtime.activeRunId=B so the runtime is not orphaned', () => {
     applyAMidTurnSequence()
     applyATerminal()
-    mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
+    mapper.apply(
+      qEnv(
+        'turn.started',
+        9,
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID },
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID }
+      )
+    )
 
     const runtime = fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
     // FAILS: current code does not set activeRunId on turn.started for queued runs
@@ -224,7 +245,14 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
   it("B's mid-turn events resolve to run B", () => {
     applyAMidTurnSequence()
     applyATerminal()
-    mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
+    mapper.apply(
+      qEnv(
+        'turn.started',
+        9,
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID },
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID }
+      )
+    )
 
     const userResult = mapper.apply(
       qEnv('user.message', 10, { content: 'prompt for B' }, { turnId: TURN_B })
@@ -249,7 +277,14 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
   it("B's turn.completed completes run B and flips runtime ready", () => {
     applyAMidTurnSequence()
     applyATerminal()
-    mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
+    mapper.apply(
+      qEnv(
+        'turn.started',
+        9,
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID },
+        { turnId: TURN_B, inputId: Q_INPUT_B_ID }
+      )
+    )
 
     const terminalB = mapper.apply(
       qEnv(
@@ -329,7 +364,14 @@ describe('[guard T-04239/4] non-queued regression: single-input sequence attribu
 
     // Seed run A's dispatchedInputId (already set in makeQueuedFixture)
     mapper.apply(qEnv('input.accepted', 1, { inputId: Q_INPUT_A_ID }, { inputId: Q_INPUT_A_ID }))
-    mapper.apply(qEnv('turn.started', 2, { turnId: TURN_A }, { turnId: TURN_A }))
+    mapper.apply(
+      qEnv(
+        'turn.started',
+        2,
+        { turnId: TURN_A, inputId: Q_INPUT_A_ID },
+        { turnId: TURN_A, inputId: Q_INPUT_A_ID }
+      )
+    )
 
     // NO input.accepted(B) — only A's turn events
     const assistResult = mapper.apply(
@@ -376,7 +418,14 @@ describe('[RED T-04239/5] out-of-order: input.accepted(B) before turn.started(A)
     mapper.apply(qEnv('input.accepted', 1, { inputId: Q_INPUT_A_ID }, { inputId: Q_INPUT_A_ID }))
     // input.accepted(B) arrives at seq=3 but is processed BEFORE turn.started(A) at seq=2
     mapper.apply(qEnv('input.accepted', 3, { inputId: Q_INPUT_B_ID }, { inputId: Q_INPUT_B_ID }))
-    mapper.apply(qEnv('turn.started', 2, { turnId: TURN_A }, { turnId: TURN_A }))
+    mapper.apply(
+      qEnv(
+        'turn.started',
+        2,
+        { turnId: TURN_A, inputId: Q_INPUT_A_ID },
+        { turnId: TURN_A, inputId: Q_INPUT_A_ID }
+      )
+    )
 
     const terminalResult = applyATerminal()
 

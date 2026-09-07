@@ -117,6 +117,15 @@ describe('auxiliary projections', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
 
+    mapper.apply(
+      envelope(
+        'turn.started',
+        49,
+        { turnId: 'turn_api_error' as TurnId, inputId: 'input_w3a_1' as never },
+        { turnId: 'turn_api_error' as TurnId, inputId: 'input_w3a_1' as never }
+      )
+    )
+
     // T-05096 guard: info/warn diagnostics remain provenance-only so monitor
     // visibility does not broaden into noisy broker health chatter.
     const warn = mapper.apply(
@@ -152,7 +161,7 @@ describe('auxiliary projections', () => {
         },
         {
           turnId: 'turn_api_error' as TurnId,
-          inputId: 'input_api_error' as never,
+          inputId: 'input_w3a_1' as never,
           itemId: 'item_api_error',
         }
       ),
@@ -184,7 +193,7 @@ describe('auxiliary projections', () => {
       seq: 51,
       time: ts(51),
       turnId: 'turn_api_error',
-      inputId: 'input_api_error',
+      inputId: 'input_w3a_1',
       itemId: 'item_api_error',
       correlation: { requestId: 'req_05096', spanId: 'span_05096' },
       driver: { kind: 'claude-code-tmux', rawType: 'assistant' },

@@ -7,6 +7,7 @@ import type {
   SweepRuntimeTransport,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { hasUnsettledAbsorbedAuxiliary } from './broker/turn-ownership.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { isLiveProcess } from './server-lock.js'
 import type { ListRuntimesFilter } from './server-parsers.js'
@@ -113,7 +114,7 @@ export type RuntimeTmuxManagerFactory = (options: { socketPath: string }) => Pic
   'inspectWindow'
 >
 
-const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'zombie'])
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'zombie', 'coalesced'])
 
 function runtimeTmuxIdentity(runtime: HrcRuntimeSnapshot): RuntimeTmuxIdentity | undefined {
   const tmux = runtime.tmuxJson
@@ -261,7 +262,8 @@ export async function evaluateRuntimeAgingDisposition(
  */
 export async function evaluatePruneDisposition(
   runtime: HrcRuntimeSnapshot,
-  tmux: ServerTmuxManager
+  tmux: ServerTmuxManager,
+  db?: HrcDatabase | undefined
 ): Promise<{ prunable: boolean; reason?: string }> {
   if (isExternalLifecycleOwner(runtime)) {
     return { prunable: false, reason: 'external_lifecycle_owner' }
@@ -271,6 +273,9 @@ export async function evaluatePruneDisposition(
   }
   if (runtime.activeRunId != null) {
     return { prunable: false, reason: 'active_run' }
+  }
+  if (db !== undefined && hasUnsettledAbsorbedAuxiliary(db, runtime.runtimeId)) {
+    return { prunable: false, reason: 'unsettled_absorbed_auxiliary' }
   }
 
   const trackedPid = runtime.childPid ?? runtime.wrapperPid

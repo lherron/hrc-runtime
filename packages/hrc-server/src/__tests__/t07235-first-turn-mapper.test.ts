@@ -130,7 +130,7 @@ describe('run-terminal monotonicity under a late start', () => {
   it('never rewrites a terminal run back to running', () => {
     arm(fixture)
     markRunTripped()
-    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' }))
 
     const run = fixture.db.runs.getByRunId(RUN_ID)
     expect(run?.status).toBe('failed')
@@ -141,7 +141,9 @@ describe('run-terminal monotonicity under a late start', () => {
   it('records the late start as a linked informational event', () => {
     arm(fixture)
     markRunTripped()
-    const result = mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    const result = mapper.apply(
+      env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' })
+    )
 
     const lateStart = fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)
     expect(lateStart).toHaveLength(1)
@@ -159,7 +161,7 @@ describe('run-terminal monotonicity under a late start', () => {
   it('lets the real turn proceed on the still-live runtime (observe-only policy)', () => {
     arm(fixture)
     markRunTripped()
-    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' }))
 
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.status).toBe('busy')
     expect(fixture.db.brokerInvocations.getByInvocationId(INVOCATION_ID)?.invocationState).toBe(
@@ -170,7 +172,7 @@ describe('run-terminal monotonicity under a late start', () => {
   it('does not classify the run a second time when the late turn completes', () => {
     arm(fixture)
     markRunTripped()
-    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' }))
     mapper.apply(env('turn.completed', 11, { turnId: 'turn-late' }))
 
     const run = fixture.db.runs.getByRunId(RUN_ID)
@@ -182,7 +184,7 @@ describe('run-terminal monotonicity under a late start', () => {
 
   it('a healthy first turn is unaffected by the guard', () => {
     arm(fixture)
-    mapper.apply(env('turn.started', 1, { turnId: 'turn-1' }))
+    mapper.apply(env('turn.started', 1, { turnId: 'turn-1', inputId: 'input_w3a_1' }))
     const run = fixture.db.runs.getByRunId(RUN_ID)
     expect(run?.status).toBe('running')
     expect(run?.startedAt).toBe(ts(1))
@@ -199,7 +201,7 @@ describe('post-terminal turn.started that the watchdog never caused (T-07630)', 
    * here is a first-turn liveness failure.
    */
   function completeOneHealthyTurn(): void {
-    mapper.apply(env('turn.started', 1, { turnId: 'turn-1' }))
+    mapper.apply(env('turn.started', 1, { turnId: 'turn-1', inputId: 'input_w3a_1' }))
     mapper.apply(env('turn.completed', 2, { turnId: 'turn-1' }))
   }
 
@@ -238,7 +240,7 @@ describe('post-terminal turn.started that the watchdog never caused (T-07630)', 
       completedAt: ts(5),
       updatedAt: ts(5),
     })
-    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' }))
 
     expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
     expect(fixture.db.runs.getByRunId(RUN_ID)?.status).toBe('cancelled')
@@ -253,7 +255,7 @@ describe('post-terminal turn.started that the watchdog never caused (T-07630)', 
       errorCode: HrcErrorCode.RUN_MISMATCH,
       errorMessage: 'run_mismatch',
     })
-    mapper.apply(env('turn.started', 10, { turnId: 'turn-late' }))
+    mapper.apply(env('turn.started', 10, { turnId: 'turn-late', inputId: 'input_w3a_1' }))
 
     expect(fixture.db.hrcEvents.listByKind(HRC_FIRST_TURN_MISSING_LATE_START_EVENT)).toHaveLength(0)
   })

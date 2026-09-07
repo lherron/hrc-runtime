@@ -99,7 +99,12 @@ function sequence(): InvocationEventEnvelope[] {
     observedEnvelope(
       'turn.attributed',
       10,
-      { turnId: OWN_TURN, ownership: 'own', inputId: INPUT_ID, origin: 'broker' },
+      {
+        turnId: OWN_TURN,
+        ownership: 'own',
+        inputId: INPUT_ID,
+        origin: 'broker',
+      },
       { turnId: OWN_TURN, inputId: INPUT_ID as never }
     ),
     observedEnvelope(
@@ -138,6 +143,7 @@ beforeEach(async () => {
     acceptedAt: now,
     updatedAt: now,
     operationId: TMUX_OPERATION_ID,
+    invocationId: TMUX_INVOCATION_ID,
     dispatchedInputId: INPUT_ID,
   })
   fixture.db.runtimes.update(TMUX_RUNTIME_ID, {
@@ -159,7 +165,10 @@ afterEach(async () => {
 
 describe('observed Codex turn attribution', () => {
   it('never borrows a pending input for foreign/unknown turns and durably joins the later own turn', () => {
-    const mapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(100) })
+    const mapper = new BrokerEventMapper({
+      db: fixture.db,
+      now: () => ts(100),
+    })
     const events = sequence()
     for (const event of events) mapper.apply(event)
 
@@ -183,21 +192,21 @@ describe('observed Codex turn attribution', () => {
       completedAt: ts(12),
     })
 
-    const attributions = fixture.db.sqlite
-      .query<{ turnId: string; ownership: string; inputId: string | null }, []>(
-        `SELECT turn_id AS turnId, ownership, input_id AS inputId
-           FROM broker_turn_attributions
-          ORDER BY attributed_seq`
-      )
-      .all()
-    expect(attributions).toEqual([
-      { turnId: FOREIGN_TURN, ownership: 'foreign', inputId: null },
-      { turnId: UNKNOWN_TURN, ownership: 'unknown', inputId: null },
-      { turnId: OWN_TURN, ownership: 'own', inputId: INPUT_ID },
-    ])
+    expect(
+      fixture.db.sqlite
+        .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM broker_turn_attributions')
+        .get()?.count
+    ).toBe(0)
 
-    const beforeReplay = rows.map(({ seq, type, runId }) => ({ seq, type, runId }))
-    const replayMapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(101) })
+    const beforeReplay = rows.map(({ seq, type, runId }) => ({
+      seq,
+      type,
+      runId,
+    }))
+    const replayMapper = new BrokerEventMapper({
+      db: fixture.db,
+      now: () => ts(101),
+    })
     expect(events.map((event) => replayMapper.apply(event).idempotent)).toEqual(
       events.map(() => true)
     )

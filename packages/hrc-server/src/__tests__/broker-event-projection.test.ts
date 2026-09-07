@@ -151,8 +151,15 @@ describe('projection mapping (ordered sequence)', () => {
     const tid = 'turn_delta_completed' as TurnId
     const messageId = 'msg_delta_completed'
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_delta_completed' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
     mapper.apply(
       envelope(
         'assistant.message.delta',
@@ -189,8 +196,15 @@ describe('projection mapping (ordered sequence)', () => {
     const db = harness.fixture.db
     const tid = 'turn_message_boundary' as TurnId
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_message_boundary' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
     mapper.apply(envelope('assistant.message.started', 5, { messageId: messageId('msg_narrate') }))
     mapper.apply(
       envelope(
@@ -230,8 +244,15 @@ describe('projection mapping (ordered sequence)', () => {
     const db = harness.fixture.db
     const tid = 'turn_first_message' as TurnId
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_first_message' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
     mapper.apply(envelope('assistant.message.started', 5, { messageId: messageId('msg_only') }))
     mapper.apply(
       envelope(
@@ -255,8 +276,15 @@ describe('projection mapping (ordered sequence)', () => {
     const nextChunkSeqByRunId = db.runtimeBuffers.nextChunkSeqByRunId.bind(db.runtimeBuffers)
     let nextChunkSeqQueries = 0
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_bounded_buffer_append' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
 
     db.runtimeBuffers.nextChunkSeqByRunId = (runId) => {
       nextChunkSeqQueries += 1

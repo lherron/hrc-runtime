@@ -65,7 +65,14 @@ describe('broker input timeout fence (T-05176)', () => {
     const accepted = mapper.apply(
       qEnv('input.accepted', 3, { inputId: Q_INPUT_B_ID }, { inputId: Q_INPUT_B_ID })
     )
-    const started = mapper.apply(qEnv('turn.started', 4, { turnId: 'turn_fenced' }))
+    const started = mapper.apply(
+      qEnv(
+        'turn.started',
+        4,
+        { turnId: 'turn_fenced', inputId: Q_INPUT_B_ID },
+        { turnId: 'turn_fenced' as never, inputId: Q_INPUT_B_ID }
+      )
+    )
     const completed = mapper.apply(qEnv('turn.completed', 5, { status: 'completed' }))
 
     expect(accepted.lifecycleEvents).toHaveLength(0)

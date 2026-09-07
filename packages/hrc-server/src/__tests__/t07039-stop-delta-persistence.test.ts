@@ -46,8 +46,15 @@ describe('T-07039 raw broker delta persistence gate', () => {
   it('leaves seq gaps while still projecting and returning live delta envelopes', () => {
     const eventMapper = mapper()
 
-    eventMapper.apply(envelope('input.accepted', 3, { inputId: 'input_t07039' }))
-    eventMapper.apply(envelope('turn.started', 4, { turnId: TURN_ID }, { turnId: TURN_ID }))
+    eventMapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    eventMapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: TURN_ID, inputId: 'input_w3a_1' as never },
+        { turnId: TURN_ID, inputId: 'input_w3a_1' as never }
+      )
+    )
     const assistantDelta = eventMapper.apply(
       envelope(
         'assistant.message.delta',

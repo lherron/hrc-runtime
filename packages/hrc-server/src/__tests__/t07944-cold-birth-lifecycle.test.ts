@@ -25,7 +25,6 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 import {
-  HOST_SESSION_ID,
   OPERATION_ID,
   RUNTIME_ID,
   RUN_ID,
@@ -599,18 +598,8 @@ describe('T-07944 defect 2 — event-consumer catch on an intentional reap', () 
   }
 
   function seedOperationRow(status: string): void {
-    fixture.db.runtimeOperations.insert({
-      operationId: OPERATION_ID,
-      runtimeId: RUNTIME_ID,
-      runId: RUN_ID,
-      hostSessionId: HOST_SESSION_ID,
-      generation: 1,
-      operationKind: 'broker_invocation',
-      controller: 'harness-broker',
-      startupMethod: 'broker.startInvocationFromRequest',
+    fixture.db.runtimeOperations.update(OPERATION_ID, {
       status,
-      routeDecisionJson: JSON.stringify({ controller: 'harness-broker' }),
-      createdAt: '2026-09-02T22:00:00.000Z',
       startedAt: '2026-09-02T22:00:00.000Z',
       updatedAt: '2026-09-02T22:00:00.000Z',
     })

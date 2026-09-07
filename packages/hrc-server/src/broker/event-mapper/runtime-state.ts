@@ -37,6 +37,9 @@ export function claimRuntimeTurnOwnership(
 ): void {
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
+  if (runtime.generation !== ctx.generation) return
+  if (runtime.activeOperationId !== undefined && runtime.activeOperationId !== ctx.operationId)
+    return
   if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
     const activeRun = db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && activeRun.completedAt === undefined) return
@@ -228,13 +231,30 @@ export function markRuntimeTurnTerminal(
   db: HrcDatabase,
   ctx: ProjectionContext,
   envelope: InvocationEventEnvelope,
-  runId: string,
+  runId: string | undefined,
   occurredAt: string,
-  updatedAt: string
+  updatedAt: string,
+  options: {
+    exactOwner?: boolean | undefined
+    newerTurnActive?: boolean | undefined
+  } = {}
 ): void {
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
+  if (runtime.generation !== ctx.generation) return
+  if (options.newerTurnActive === true) return
+  if (runId === undefined) {
+    // An observed native bracket can be real runtime work even when its run
+    // owner is deliberately unresolved. Keep the runtime state truthful, but
+    // never let that owner-less terminal clear a known execution owner.
+    if (runtime.activeRunId !== undefined) return
+    if (!terminalBelongsToActiveInvocation(runtime, ctx, envelope.invocationId)) return
+    if (runtimeHasAnyOpenAskBracket(db, runtime)) return
+    clearRuntimeTurnOwnership(db, runtime, occurredAt, updatedAt)
+    return
+  }
   if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
+    if (options.exactOwner === true) return
     const canUnwedge =
       terminalBelongsToActiveInvocation(runtime, ctx, envelope.invocationId) &&
       !hasOpenTurnBracketAtSeq(db, envelope.invocationId, envelope.seq) &&

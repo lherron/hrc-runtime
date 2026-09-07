@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { HrcErrorCode } from 'hrc-core'
 import type {
   InputId,
   InvocationEventEnvelope,
@@ -218,7 +217,14 @@ describe('broker event gap detection and durable-ledger backfill', () => {
     mapper.apply(
       queuedEvent('input.accepted', 47, { inputId: Q_INPUT_A_ID }, { inputId: Q_INPUT_A_ID })
     )
-    mapper.apply(queuedEvent('turn.started', 48, { turnId: turnA }, { turnId: turnA }))
+    mapper.apply(
+      queuedEvent(
+        'turn.started',
+        48,
+        { turnId: turnA, inputId: Q_INPUT_A_ID },
+        { turnId: turnA, inputId: Q_INPUT_A_ID }
+      )
+    )
     fixture.db.brokerInvocations.update(Q_INVOCATION_ID, {
       lastEventSeq: 48,
       updatedAt: ts(48),
@@ -239,7 +245,12 @@ describe('broker event gap detection and durable-ledger backfill', () => {
 
     consume(controller, Q_RUNTIME_ID, [
       queuedEvent('input.accepted', 50, { inputId: Q_INPUT_C_ID }, { inputId: Q_INPUT_C_ID }),
-      queuedEvent('turn.started', 51, { turnId: turnC }, { turnId: turnC }),
+      queuedEvent(
+        'turn.started',
+        51,
+        { turnId: turnC, inputId: Q_INPUT_C_ID },
+        { turnId: turnC, inputId: Q_INPUT_C_ID }
+      ),
       queuedEvent(
         'turn.completed',
         52,
@@ -249,10 +260,7 @@ describe('broker event gap detection and durable-ledger backfill', () => {
     ])
     await settle()
 
-    expect(fixture.db.runs.getByRunId(Q_RUN_A_ID)).toMatchObject({
-      status: 'failed',
-      errorCode: HrcErrorCode.RUN_MISMATCH,
-    })
+    expect(fixture.db.runs.getByRunId(Q_RUN_A_ID)).toMatchObject({ status: 'completed' })
     expect(fixture.db.runs.getByRunId(Q_RUN_C_ID)?.status).toBe('completed')
     expect(
       fixture.db.brokerInvocationEvents.getByInvocationAndSeq(Q_INVOCATION_ID, 49)

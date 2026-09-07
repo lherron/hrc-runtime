@@ -244,7 +244,7 @@ export function transitionRuntimeForAging(
               SELECT 1
                 FROM runs
                WHERE runtime_id = runtimes.runtime_id
-                 AND status NOT IN ('completed', 'failed', 'cancelled', 'zombie')
+                 AND status NOT IN ('completed', 'failed', 'cancelled', 'zombie', 'coalesced')
             )`
       )
       .run(
@@ -376,7 +376,7 @@ export async function handlePruneRuntimes(
 
     let disposition: { prunable: boolean; reason?: string }
     try {
-      disposition = await evaluatePruneDisposition(runtime, this.tmux)
+      disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db)
     } catch (err) {
       results.push({
         ...base,
@@ -463,7 +463,7 @@ async function handleLedgerManifestPrune(
       reasons.push('scope_not_allowlisted')
     }
     try {
-      const disposition = await evaluatePruneDisposition(runtime, this.tmux)
+      const disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db)
       if (!disposition.prunable) reasons.push(disposition.reason ?? 'not_prunable')
     } catch (error) {
       reasons.push(`safety_gate_error:${error instanceof Error ? error.message : String(error)}`)

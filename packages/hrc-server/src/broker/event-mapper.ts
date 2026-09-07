@@ -72,7 +72,6 @@ import type {
   ToolCallCompletedPayload,
   ToolCallFailedPayload,
   ToolCallStartedPayload,
-  TurnAttributedPayload,
   TurnFailedPayload,
   TurnRetryPayload,
 } from 'spaces-harness-broker-protocol'
@@ -105,8 +104,16 @@ import {
   markRuntimeAwaitingInput,
   markRuntimeInputResumed,
   markRuntimeTurnTerminal,
+  setRuntimeStatus,
 } from './event-mapper/runtime-state'
 import { isRetryableInvocationFailure } from './invocation-failure'
+import {
+  failUnresolvedAbsorbedAuxiliaries,
+  hasOtherOpenTurn,
+  resolveExactTurnOwner,
+  settleAbsorbedAuxiliary,
+  settlePriorAbsorbedAuxiliaries,
+} from './turn-ownership.js'
 
 export type { BrokerEventMapperDeps, BrokerProjectionResult } from './event-mapper/helpers'
 
@@ -377,6 +384,9 @@ export class BrokerEventMapper {
     if (!runtime) {
       throw new Error(`runtime not found for broker invocation: ${invocation.runtimeId}`)
     }
+    const operation = db.runtimeOperations.getByOperationId(invocation.operationId)
+    const historicalGeneration =
+      operation?.runtimeId === invocation.runtimeId ? operation.generation : runtime.generation
 
     // ── Broker FIFO queue correlation (order-robust resolution) ─────────────
     // Resolve runId by finding the most recent input.accepted at seq <=
@@ -398,7 +408,7 @@ export class BrokerEventMapper {
       hostSessionId: runtime.hostSessionId,
       scopeRef: runtime.scopeRef,
       laneRef: runtime.laneRef,
-      generation: runtime.generation,
+      generation: historicalGeneration,
       transport: lifecycleTransportFromRuntime(runtime.transport),
       operationId: invocation.operationId,
       runId: resolvedRunId,
@@ -721,9 +731,13 @@ export class BrokerEventMapper {
     runtime: HrcRuntimeSnapshot
   ): string | undefined {
     const fallbackRunId = invocation.runId
-    const bracketMintingMode = this.bracketMintingMode(invocation)
     const submissionId = this.extractSubmissionIdFromPayload(envelope.payload)
-    if (submissionId !== undefined) {
+    const submissionRecord =
+      envelope.type.startsWith('submission.') ||
+      envelope.type.startsWith('admission.') ||
+      envelope.type.startsWith('input.') ||
+      envelope.type.startsWith('queue.')
+    if (submissionRecord && submissionId !== undefined) {
       const run = this.db.runs.getByBrokerSubmissionId(submissionId)
       if (run?.runId !== undefined) return run.runId
     }
@@ -731,29 +745,15 @@ export class BrokerEventMapper {
     const turnId = this.extractTurnId(envelope)
     const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
 
-    // Observed brackets open before ownership is known. Only explicit broker
-    // input identity or the durable turn.attributed table can join a row to an
-    // HRC run; absence, foreign, and unknown are authoritative no-run answers.
-    // In particular, never fall through to nearest input.accepted borrowing.
-    if (bracketMintingMode === 'observed') {
-      if (envelopeInputId !== undefined) {
-        return this.runForInputIdentity(envelopeInputId)?.runId
-      }
-      if (turnId !== undefined) {
-        const attribution = this.findObservedTurnAttribution(String(envelope.invocationId), turnId)
-        return attribution?.ownership === 'own' &&
-          attribution.inputId !== null &&
-          attribution.attributedSeq <= envelope.seq
-          ? this.runForInputIdentity(attribution.inputId)?.runId
-          : undefined
-      }
-      return undefined
+    // A named execution turn has one durable owner derived only from immutable
+    // initiating evidence in this invocation's historical epoch. Never fall
+    // through from an unresolved named turn to submission order, the current
+    // runtime owner, or the newest open bracket.
+    if (turnId !== undefined && !submissionRecord) {
+      return resolveExactTurnOwner(this.db, envelope)
     }
 
-    if (turnId !== undefined) {
-      const run = this.findRunByDispositionTurnId(String(envelope.invocationId), turnId)
-      if (run !== undefined) return run
-    }
+    const bracketMintingMode = this.bracketMintingMode(invocation)
 
     // Prefer envelope.inputId when the broker sets it: input.accepted /
     // input.queued / input.rejected always carry it (contract), and
@@ -926,64 +926,6 @@ export class BrokerEventMapper {
     )
   }
 
-  private findObservedTurnAttribution(
-    invocationId: string,
-    turnId: string
-  ):
-    | {
-        ownership: 'own' | 'foreign' | 'unknown'
-        inputId: string | null
-        attributedSeq: number
-      }
-    | undefined {
-    return (
-      this.db.sqlite
-        .query<
-          {
-            ownership: 'own' | 'foreign' | 'unknown'
-            inputId: string | null
-            attributedSeq: number
-          },
-          [string, string]
-        >(
-          `SELECT ownership, input_id AS inputId, attributed_seq AS attributedSeq
-             FROM broker_turn_attributions
-            WHERE invocation_id = ? AND turn_id = ?`
-        )
-        .get(invocationId, turnId) ?? undefined
-    )
-  }
-
-  private persistObservedTurnAttribution(
-    envelope: InvocationEventEnvelope,
-    payload: TurnAttributedPayload,
-    now: string
-  ): void {
-    const invocationId = String(envelope.invocationId)
-    const turnId = String(payload.turnId)
-    const inputId = payload.inputId === undefined ? null : String(payload.inputId)
-    const existing = this.findObservedTurnAttribution(invocationId, turnId)
-    if (existing !== undefined) {
-      if (
-        existing.ownership !== payload.ownership ||
-        existing.inputId !== inputId ||
-        existing.attributedSeq !== envelope.seq
-      ) {
-        throw new Error(
-          `conflicting observed turn attribution for ${invocationId}/${turnId}: refusing to overwrite`
-        )
-      }
-      return
-    }
-    this.db.sqlite
-      .query(
-        `INSERT INTO broker_turn_attributions (
-           invocation_id, turn_id, ownership, input_id, attributed_seq, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(invocationId, turnId, payload.ownership, inputId, envelope.seq, envelope.time ?? now)
-  }
-
   private static readonly NONTERMINAL_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
 
   private hasOtherActiveNonterminalRun(runtimeId: string, candidateRunId: string): boolean {
@@ -1032,22 +974,6 @@ export class BrokerEventMapper {
       return typeof value === 'string' ? value : undefined
     }
     return undefined
-  }
-
-  private findRunByDispositionTurnId(invocationId: string, turnId: string): string | undefined {
-    const row = this.db.sqlite
-      .query<{ submissionId: string | null }, [string, string]>(
-        `SELECT json_extract(broker_event_json, '$.submissionId') AS submissionId
-           FROM broker_invocation_events
-          WHERE invocation_id = ?
-            AND type IN ('submission.executed', 'submission.absorbed')
-            AND json_extract(broker_event_json, '$.turnId') = ?
-          ORDER BY seq DESC
-          LIMIT 1`
-      )
-      .get(invocationId, turnId)
-    if (row?.submissionId === null || row?.submissionId === undefined) return undefined
-    return this.db.runs.getByBrokerSubmissionId(row.submissionId)?.runId
   }
 
   private findPriorInputAccepted(
@@ -1258,6 +1184,7 @@ export class BrokerEventMapper {
       }
       case 'invocation.exited': {
         const payload = envelope.payload as InvocationExitedPayload
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
         db.brokerInvocations.update(invocationId, {
           invocationState: 'exited',
           lifecycleTerminalReason: payload.reason ?? 'process-exit',
@@ -1280,6 +1207,7 @@ export class BrokerEventMapper {
         if (isRetryableInvocationFailure(envelope)) {
           break
         }
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
         db.brokerInvocations.update(invocationId, {
           invocationState: 'failed',
           lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',
@@ -1289,6 +1217,7 @@ export class BrokerEventMapper {
       }
       case 'invocation.disposed': {
         const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
         db.brokerInvocations.update(invocationId, {
           invocationState: 'disposed',
           ...(invocation?.lifecycleTerminalReason === undefined
@@ -1442,6 +1371,16 @@ export class BrokerEventMapper {
           })
           if (envelope.type === 'submission.executed') {
             db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+            const ownerRunId = resolveExactTurnOwner(db, envelope)
+            if (ownerRunId !== undefined) {
+              settlePriorAbsorbedAuxiliaries(db, envelope, ownerRunId, now)
+            }
+          }
+        }
+        if (envelope.type === 'submission.absorbed') {
+          const ownerRunId = resolveExactTurnOwner(db, envelope)
+          if (ownerRunId !== undefined) {
+            settleAbsorbedAuxiliary(db, envelope, ownerRunId, now)
           }
         }
         break
@@ -1511,6 +1450,18 @@ export class BrokerEventMapper {
             if (lateStart !== null) this.pendingLateStartEvents.push(lateStart)
           }
           claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now)
+        } else {
+          const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
+          if (
+            runtime?.generation === ctx.generation &&
+            runtime.activeRunId === undefined &&
+            (runtime.activeOperationId === undefined ||
+              runtime.activeOperationId === ctx.operationId) &&
+            (runtime.activeInvocationId === undefined ||
+              runtime.activeInvocationId === String(invocationId))
+          ) {
+            setRuntimeStatus(db, ctx.runtimeId, 'busy', occurredAt, now)
+          }
         }
         db.brokerInvocations.update(invocationId, {
           invocationState: 'turn_active',
@@ -1519,11 +1470,10 @@ export class BrokerEventMapper {
         break
       }
       case 'turn.attributed': {
-        this.persistObservedTurnAttribution(
-          envelope,
-          envelope.payload as TurnAttributedPayload,
-          now
-        )
+        const ownerRunId = resolveExactTurnOwner(db, envelope)
+        if (ownerRunId !== undefined) {
+          settlePriorAbsorbedAuxiliaries(db, envelope, ownerRunId, now)
+        }
         break
       }
       case 'turn.completed': {
@@ -1537,10 +1487,13 @@ export class BrokerEventMapper {
               updatedAt: now,
             })
           }
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
           this.nextBufferChunkSeqByRunId.delete(runId)
         }
-        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
+          exactOwner: this.extractTurnId(envelope) !== undefined,
+          newerTurnActive: hasOtherOpenTurn(db, envelope),
+        })
+        this.markInvocationReadyAfterTerminal(invocationId, ctx, envelope, now)
         break
       }
       case 'turn.failed': {
@@ -1556,10 +1509,13 @@ export class BrokerEventMapper {
               errorMessage: payload.message,
             })
           }
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
           this.nextBufferChunkSeqByRunId.delete(runId)
         }
-        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
+          exactOwner: this.extractTurnId(envelope) !== undefined,
+          newerTurnActive: hasOtherOpenTurn(db, envelope),
+        })
+        this.markInvocationReadyAfterTerminal(invocationId, ctx, envelope, now)
         break
       }
       case 'turn.interrupted': {
@@ -1573,10 +1529,13 @@ export class BrokerEventMapper {
               updatedAt: now,
             })
           }
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
           this.nextBufferChunkSeqByRunId.delete(runId)
         }
-        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now, {
+          exactOwner: this.extractTurnId(envelope) !== undefined,
+          newerTurnActive: hasOtherOpenTurn(db, envelope),
+        })
+        this.markInvocationReadyAfterTerminal(invocationId, ctx, envelope, now)
         break
       }
       case 'turn.stalled': {
@@ -1592,6 +1551,21 @@ export class BrokerEventMapper {
         break
       }
     }
+  }
+
+  private markInvocationReadyAfterTerminal(
+    invocationId: string,
+    ctx: ProjectionContext,
+    envelope: InvocationEventEnvelope,
+    now: string
+  ): void {
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    if (runtime?.generation !== ctx.generation) return
+    if (runtime.activeRunId !== undefined || hasOtherOpenTurn(this.db, envelope)) return
+    this.db.brokerInvocations.update(invocationId, {
+      invocationState: 'ready',
+      updatedAt: now,
+    })
   }
 
   // ── Assistant output -> runtime buffer (text projection) ────────────────

@@ -67,6 +67,28 @@ export type SeededFixture = {
   cleanup: () => Promise<void>
 }
 
+function seedRuntimeOperation(
+  db: FixtureDb,
+  input: {
+    operationId: string
+    runtimeId: string
+    hostSessionId: string
+    generation: number
+    runId?: string | undefined
+  }
+): void {
+  db.runtimeOperations.insert({
+    ...input,
+    operationKind: 'broker_invocation',
+    controller: 'harness-broker',
+    startupMethod: 'test',
+    status: 'started',
+    routeDecisionJson: '{}',
+    createdAt: ts(),
+    updatedAt: ts(),
+  })
+}
+
 /**
  * Open a fresh migrated DB in a temp dir and seed the runtime graph the mapper
  * resolves context from. The mapper is expected to look up the broker
@@ -120,6 +142,15 @@ export async function makeSeededFixture(): Promise<SeededFixture> {
     updatedAt: now,
     operationId: OPERATION_ID,
     invocationId: INVOCATION_ID,
+    dispatchedInputId: 'input_w3a_1',
+  })
+
+  seedRuntimeOperation(db, {
+    operationId: OPERATION_ID,
+    runtimeId: RUNTIME_ID,
+    hostSessionId: HOST_SESSION_ID,
+    generation: GENERATION,
+    runId: RUN_ID,
   })
 
   // broker_invocations carries no FK, but is the canonical invocationId ->
@@ -199,6 +230,13 @@ export async function makeTmuxSeededFixture(priorPromptContent?: string): Promis
     updatedAt: now,
   })
 
+  seedRuntimeOperation(db, {
+    operationId: TMUX_OPERATION_ID,
+    runtimeId: TMUX_RUNTIME_ID,
+    hostSessionId: TMUX_HOST_SESSION_ID,
+    generation: GENERATION,
+  })
+
   // Real broker-tmux shape: invocation has NO runId.
   // No db.runs.insert either — interactive TUI turns don't go through the
   // dispatched-input path that binds a runId at invocation time.
@@ -231,7 +269,10 @@ export async function makeTmuxSeededFixture(priorPromptContent?: string): Promis
       category: 'turn',
       eventKind: 'turn.user_prompt',
       transport: 'tmux',
-      payload: { type: 'message_end', message: { role: 'user', content: priorPromptContent } },
+      payload: {
+        type: 'message_end',
+        message: { role: 'user', content: priorPromptContent },
+      },
     })
   }
 
@@ -375,6 +416,13 @@ export async function makeOwnedNoBracketFixture(): Promise<SeededFixture> {
     updatedAt: ts(1),
   })
 
+  seedRuntimeOperation(db, {
+    operationId: O_OPERATION_ID,
+    runtimeId: O_RUNTIME_ID,
+    hostSessionId: O_HOST_SESSION_ID,
+    generation: GENERATION,
+  })
+
   db.runs.insert({
     runId: O_RUN_ID,
     hostSessionId: O_HOST_SESSION_ID,
@@ -434,7 +482,7 @@ export function headlessSequence(): InvocationEventEnvelope[] {
     }),
     envelope('invocation.ready', 2, { state: 'ready' }),
     envelope('input.accepted', 3, { inputId: iid }, { inputId: iid }),
-    envelope('turn.started', 4, { turnId: tid }, { turnId: tid }),
+    envelope('turn.started', 4, { turnId: tid, inputId: iid }, { turnId: tid, inputId: iid }),
     envelope(
       'assistant.message.completed',
       5,
@@ -546,6 +594,13 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     updatedAt: ts(1),
   })
 
+  seedRuntimeOperation(db, {
+    operationId: Q_OPERATION_ID,
+    runtimeId: Q_RUNTIME_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    generation: GENERATION,
+  })
+
   // Run A: the currently-running input (dispatched before B arrived)
   db.runs.insert({
     runId: Q_RUN_A_ID,
@@ -559,6 +614,7 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     acceptedAt: now,
     updatedAt: now,
     operationId: Q_OPERATION_ID,
+    invocationId: Q_INVOCATION_ID,
     dispatchedInputId: Q_INPUT_A_ID,
   })
 
@@ -575,6 +631,7 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     acceptedAt: ts(3),
     updatedAt: ts(3),
     operationId: Q_OPERATION_ID,
+    invocationId: Q_INVOCATION_ID,
     dispatchedInputId: Q_INPUT_B_ID,
   })
 
@@ -593,6 +650,7 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     acceptedAt: ts(50),
     updatedAt: ts(50),
     operationId: Q_OPERATION_ID,
+    invocationId: Q_INVOCATION_ID,
     dispatchedInputId: Q_INPUT_C_ID,
   })
 

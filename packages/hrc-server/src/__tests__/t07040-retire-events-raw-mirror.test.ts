@@ -24,6 +24,15 @@ describe('T-07040 broker raw-mirror retirement', () => {
   it('projects durable broker rows and lifecycle events without appending to events', () => {
     const mapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(100) })
 
+    mapper.apply(
+      envelope(
+        'turn.started',
+        6,
+        { turnId: 'turn_t07040' as never, inputId: 'input_w3a_1' as never },
+        { turnId: 'turn_t07040' as never, inputId: 'input_w3a_1' as never }
+      )
+    )
+
     const result = mapper.apply(
       envelope(
         'turn.completed',

@@ -21,6 +21,7 @@ import { isExternalLifecycleOwner } from '../../external-participant-lifecycle'
 import { appendHrcEvent } from '../../hrc-event-helper'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import type { BrokerProjectionResult } from '../event-mapper'
+import { failUnresolvedAbsorbedAuxiliaries } from '../turn-ownership.js'
 import type { BrokerControllerError } from './errors'
 import { isActiveBrokerRun, isControllerFencedError } from './internal'
 import { findUserInitiatedContinuationClearReason } from './persistence'
@@ -103,6 +104,7 @@ export function markBrokerInvocationTerminal(
 
   const now = ctx.now()
   const invocation = ctx.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
+  failUnresolvedAbsorbedAuxiliaries(ctx.db, runtimeId, String(envelope.invocationId), now)
   const runId = invocation?.runId ?? runtime.activeRunId
   const userExitReason =
     envelope.type === 'invocation.exited'

@@ -588,7 +588,12 @@ describe('T-01811 honors snapshot.inputDispositions (no duplicate user prompt)',
       { inputId: RETRY_INPUT },
       { inputId: RETRY_INPUT }
     )
-    const turnStarted = envelope('turn.started', 11, { turnId: tid }, { turnId: tid })
+    const turnStarted = envelope(
+      'turn.started',
+      11,
+      { turnId: tid, inputId: RETRY_INPUT },
+      { turnId: tid, inputId: RETRY_INPUT }
+    )
 
     const client = new MockDurableBrokerClient()
     client.snapshotResponse = emptySnapshot({

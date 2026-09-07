@@ -27,8 +27,15 @@ describe('T-06578 runtime status causal-time projection', () => {
     const mapper = new BrokerEventMapper({ db: fixture.db, now: () => processingTime })
     const turnId = 'turn-status-changed-at' as TurnId
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input-status-changed-at' }))
-    mapper.apply(envelope('turn.started', 4, { turnId }, { turnId }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId, inputId: 'input_w3a_1' as never },
+        { turnId, inputId: 'input_w3a_1' as never }
+      )
+    )
     expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
       status: 'busy',
       statusChangedAt: ts(4),

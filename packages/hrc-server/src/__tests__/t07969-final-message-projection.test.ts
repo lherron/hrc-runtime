@@ -318,8 +318,15 @@ describe('T-07969 mapper carries the broker finality flag', () => {
     const mapperDb = harness.fixture.db
     const tid = 'turn_t07969_flags' as TurnId
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_t07969' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
     const segments: Array<[string, boolean]> = [
       ['narrating one', false],
       ['narrating two', false],
@@ -358,8 +365,15 @@ describe('T-07969 mapper carries the broker finality flag', () => {
     const mapperDb = harness.fixture.db
     const tid = 'turn_t07969_unflagged' as TurnId
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_t07969_unflagged' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
     mapper.apply(
       envelope(
         'assistant.message.completed',

@@ -60,6 +60,17 @@ import { createBrokerEventMapperTestFixture } from './broker-event-mapper.test.f
 
 const harness = createBrokerEventMapperTestFixture()
 
+function startOwnedTurn(mapper: ReturnType<typeof harness.makeMapper>, turnId = 'turn_x'): void {
+  mapper.apply(
+    envelope(
+      'turn.started',
+      1,
+      { turnId: turnId as never, inputId: 'input_w3a_1' as never },
+      { turnId: turnId as never, inputId: 'input_w3a_1' as never }
+    )
+  )
+}
+
 describe('emitted lifecycle events', () => {
   it('does not duplicate a durable acceptance when broker input.accepted arrives', () => {
     appendHrcEvent(harness.fixture.db, 'turn.accepted', {
@@ -202,6 +213,7 @@ describe('emitted lifecycle events', () => {
   it('projects mapped broker types into the hrc_events lifecycle stream', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    startOwnedTurn(mapper)
 
     const completed = mapper.apply(
       envelope(
@@ -271,6 +283,7 @@ describe('emitted lifecycle events', () => {
       updatedAt: ts(99),
     })
     const mapper = harness.makeMapper()
+    startOwnedTurn(mapper)
 
     const completed = mapper.apply(
       envelope(
@@ -305,6 +318,7 @@ describe('emitted lifecycle events', () => {
   it('projects tool.call.started into turn.tool_call with hook-derived payload', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    startOwnedTurn(mapper)
 
     const result = mapper.apply(
       envelope(
@@ -337,6 +351,7 @@ describe('emitted lifecycle events', () => {
   it('projects tool.call.completed into turn.tool_result, normalizing driver result shape', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    startOwnedTurn(mapper)
 
     const result = mapper.apply(
       envelope(
@@ -378,6 +393,7 @@ describe('emitted lifecycle events', () => {
   it('projects user.message into turn.user_prompt with role:user payload', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
+    startOwnedTurn(mapper)
 
     const result = mapper.apply(
       envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })

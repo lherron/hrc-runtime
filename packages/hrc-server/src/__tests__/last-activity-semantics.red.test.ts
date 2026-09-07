@@ -236,7 +236,12 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
       const turnId = 'turn-last-activity-replay' as TurnId
 
       mapper.apply(
-        envelope('turn.started', 4, { turnId }, { turnId, time: occurrenceTs as IsoTimestamp })
+        envelope(
+          'turn.started',
+          4,
+          { turnId, inputId: 'input_w3a_1' as never },
+          { turnId, inputId: 'input_w3a_1' as never, time: occurrenceTs as IsoTimestamp }
+        )
       )
 
       const runtime = fixture.db.runtimes.getByRuntimeId(MAPPER_RUNTIME_ID)!

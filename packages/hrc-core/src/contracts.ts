@@ -592,7 +592,7 @@ export type HrcRunRecord = {
   queuedInputSeq?: number | undefined
   /** Zero-based position within the durable queue snapshot. */
   queueSnapshotPosition?: number | undefined
-  /** Carrying run when this queued run was terminalized into a coalesced batch. */
+  /** Execution owner that absorbed this input (queued batch or in-turn steer). */
   coalescedIntoRunId?: string | undefined
   /** Zero-based position of this queued run within its carrying batch. */
   coalescedPosition?: number | undefined

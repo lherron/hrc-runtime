@@ -490,7 +490,11 @@ export type BrokerInvocationEventAfterSeqSelector = {
 
 function isTerminalRunStatus(status: string): boolean {
   return (
-    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'reaped'
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'reaped' ||
+    status === 'coalesced'
   )
 }
 

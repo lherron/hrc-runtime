@@ -21,11 +21,7 @@ import { HrcErrorCode } from 'hrc-core'
 
 import { BrokerEventMapper } from '../broker/event-mapper'
 
-import type {
-  InvocationEventEnvelope,
-  InvocationEventType,
-  TurnId,
-} from 'spaces-harness-broker-protocol'
+import type { InvocationEventEnvelope, InvocationEventType } from 'spaces-harness-broker-protocol'
 import {
   Q_INPUT_C_ID,
   Q_INVOCATION_ID,
@@ -55,8 +51,6 @@ function qEnv(
   }
 }
 
-const TURN_C = 'turn_unwedge_C' as TurnId
-
 let fixture: SeededFixture
 let mapper: BrokerEventMapper
 
@@ -69,17 +63,13 @@ afterEach(async () => {
   await fixture.cleanup()
 })
 
-/** Clean single-turn sequence for run C against the pre-wedged (activeRunId=A) runtime. */
+/** Legacy input-identified terminal with no native turn bracket against activeRunId=A. */
 function applyMismatchedTerminal() {
   mapper.apply(qEnv('input.accepted', 50, { inputId: Q_INPUT_C_ID }, { inputId: Q_INPUT_C_ID }))
-  mapper.apply(qEnv('turn.started', 51, { turnId: TURN_C }, { turnId: TURN_C }))
   mapper.apply(
-    qEnv(
-      'turn.completed',
-      52,
-      { turnId: TURN_C, status: 'completed', producedContent: true },
-      { turnId: TURN_C }
-    )
+    qEnv('turn.completed', 52, { status: 'completed', producedContent: true } as never, {
+      inputId: Q_INPUT_C_ID,
+    })
   )
 }
 

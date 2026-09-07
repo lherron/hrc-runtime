@@ -6,6 +6,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { failUnresolvedAbsorbedAuxiliaries } from '../broker/turn-ownership.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { isTerminalBrokerInvocationState } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
@@ -116,6 +117,7 @@ function settleInvocation(
   invocationState: 'disposed' | 'exited'
 ): void {
   if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
+    failUnresolvedAbsorbedAuxiliaries(db, runtime.runtimeId, invocationId, now)
     const invocation = db.brokerInvocations.getByInvocationId(invocationId)
     if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
       db.brokerInvocations.update(invocationId, {
@@ -134,6 +136,9 @@ export function markRuntimeDead(
   eventJson: Record<string, unknown>
 ): void {
   const now = timestamp()
+  if (runtime.controllerKind === 'harness-broker') {
+    failUnresolvedAbsorbedAuxiliaries(db, runtime.runtimeId, undefined, now)
+  }
   finalizeActiveRun(
     db,
     runtime,
@@ -167,6 +172,9 @@ export function markRuntimeStale(
 ): HrcLifecycleEvent {
   const now = timestamp()
   const invocationId = runtime.activeInvocationId
+  if (runtime.controllerKind === 'harness-broker') {
+    failUnresolvedAbsorbedAuxiliaries(db, runtime.runtimeId, undefined, now)
+  }
   settleInvocation(db, runtime, invocationId, now, 'disposed')
   finalizeActiveRun(
     db,
@@ -261,6 +269,9 @@ export function markRuntimeTerminatedAfterUserExit(
 ): HrcLifecycleEvent {
   const now = timestamp()
   const invocationId = runtime.activeInvocationId
+  if (runtime.controllerKind === 'harness-broker') {
+    failUnresolvedAbsorbedAuxiliaries(db, runtime.runtimeId, undefined, now)
+  }
   settleInvocation(db, runtime, invocationId, now, 'exited')
   finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} was terminated by user exit`)
 

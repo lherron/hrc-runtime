@@ -46,7 +46,11 @@ describe('ask bracket: OPEN', () => {
     const mapper = makeMapper()
 
     const result = mapper.apply(
-      envelope('tool.call.started', 5, { toolCallId: 'tc-1', name: 'AskUserQuestion', input: {} })
+      envelope('tool.call.started', 5, {
+        toolCallId: 'tc-1',
+        name: 'AskUserQuestion',
+        input: {},
+      })
     )
 
     // Lifecycle event emitted
@@ -82,7 +86,11 @@ describe('ask bracket: CLOSE via tool.call.completed', () => {
 
     // Open the bracket
     mapper.apply(
-      envelope('tool.call.started', 5, { toolCallId: 'tc-1', name: 'AskUserQuestion', input: {} })
+      envelope('tool.call.started', 5, {
+        toolCallId: 'tc-1',
+        name: 'AskUserQuestion',
+        input: {},
+      })
     )
 
     // Close the bracket
@@ -278,6 +286,15 @@ describe('ask bracket: RE-ASK tracks open bracket', () => {
 describe('ask bracket: TERMINAL clears open bracket', () => {
   it('clears the open bracket and sets runtime ready when turn.completed follows an open ask', () => {
     const mapper = makeMapper()
+
+    mapper.apply(
+      envelope(
+        'turn.started',
+        49,
+        { turnId: 'turn_x', inputId: 'input_w3a_1' as never },
+        { turnId: 'turn_x' as never, inputId: 'input_w3a_1' as never }
+      )
+    )
 
     // Open bracket
     mapper.apply(

@@ -105,8 +105,15 @@ describe('transaction atomicity', () => {
       { turnId: tid }
     )
 
-    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_buffer_rollback' }))
-    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_w3a_1' }))
+    mapper.apply(
+      envelope(
+        'turn.started',
+        4,
+        { turnId: tid, inputId: 'input_w3a_1' as never },
+        { turnId: tid, inputId: 'input_w3a_1' as never }
+      )
+    )
 
     const appendLifecycle = db.hrcEvents.append.bind(db.hrcEvents)
     db.hrcEvents.append = () => {
@@ -134,6 +141,15 @@ describe('transaction atomicity', () => {
       runtimeStateJson: { status: 'busy', activeRunId: RUN_ID },
       updatedAt: ts(99),
     })
+
+    mapper.apply(
+      envelope(
+        'turn.started',
+        6,
+        { turnId: 'turn_x' as never, inputId: 'input_w3a_1' as never },
+        { turnId: 'turn_x' as never, inputId: 'input_w3a_1' as never }
+      )
+    )
 
     mapper.apply(
       envelope(

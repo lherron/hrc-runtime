@@ -136,6 +136,31 @@ describe('T-07881 door-dispatched run persistence', () => {
     })
   })
 
+  it('keeps an acknowledged interactive steer accepted until native disposition', async () => {
+    fixture = await makeTmuxSeededFixture()
+    fixture.db.runtimes.update(TMUX_RUNTIME_ID, {
+      activeInvocationId: TMUX_INVOCATION_ID,
+      updatedAt: ts(0),
+    })
+    const runtime = fixture.db.runtimes.getByRuntimeId(TMUX_RUNTIME_ID)!
+    const session = fixture.db.sessions.getByHostSessionId(TMUX_HOST_SESSION_ID)!
+
+    await executeInteractiveBrokerInputTurn.call(
+      successfulDoorServer(fixture.db),
+      session,
+      runtime,
+      'steer admission is not execution',
+      RUN_ID,
+      { waitForCompletion: false, submissionDoor: 'steer' }
+    )
+
+    expect(fixture.db.runs.getByRunId(RUN_ID)).toMatchObject({
+      status: 'accepted',
+      completedAt: undefined,
+      brokerSubmissionId: SUBMISSION_ID,
+    })
+  })
+
   it('dispatches a cold interactive door run that controller startup already preaccepted', async () => {
     fixture = await makeTmuxSeededFixture()
     fixture.db.runtimes.update(TMUX_RUNTIME_ID, {
