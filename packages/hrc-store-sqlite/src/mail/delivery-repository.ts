@@ -79,6 +79,8 @@ export type HrcMailPresentation = {
   deliveryOutcome: string
   landingHrcSeq: number
   landedAt: string
+  /** Set only after wrkq has accepted the receipt for this presentation. */
+  receiptCommittedAt?: string | undefined
   /** When the turn that carried the body ended; the reminder header quotes it. */
   turnEndedAt?: string | undefined
   reminderArmedAt?: string | undefined
@@ -158,6 +160,7 @@ type PresentationRow = {
   delivery_outcome: string
   landing_hrc_seq: number
   landed_at: string
+  receipt_committed_at: string | null
   turn_ended_at: string | null
   reminder_armed_at: string | null
   reminder_due_at: string | null
@@ -195,7 +198,7 @@ const INTENT_COLUMNS = `
 
 const PRESENTATION_COLUMNS = `
   envelope_id, runtime_id, target_session_ref, generation, presentation_id,
-  input_id, delivery_outcome, landing_hrc_seq, landed_at, turn_ended_at,
+  input_id, delivery_outcome, landing_hrc_seq, landed_at, receipt_committed_at, turn_ended_at,
   reminder_armed_at, reminder_due_at, reminder_landing_hrc_seq,
   reminder_landed_at, disposed_at, disposition
 `
@@ -241,6 +244,7 @@ function mapPresentation(row: PresentationRow): HrcMailPresentation {
     deliveryOutcome: row.delivery_outcome,
     landingHrcSeq: row.landing_hrc_seq,
     landedAt: row.landed_at,
+    ...(row.receipt_committed_at === null ? {} : { receiptCommittedAt: row.receipt_committed_at }),
     ...(row.turn_ended_at === null ? {} : { turnEndedAt: row.turn_ended_at }),
     ...(row.reminder_armed_at === null ? {} : { reminderArmedAt: row.reminder_armed_at }),
     ...(row.reminder_due_at === null ? {} : { reminderDueAt: row.reminder_due_at }),
@@ -531,8 +535,8 @@ export class HrcMailDeliveryRepository {
           .query(
             `INSERT INTO hrcmail_presentations (
                envelope_id, runtime_id, target_session_ref, generation, presentation_id,
-               input_id, delivery_outcome, landing_hrc_seq, landed_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               input_id, delivery_outcome, landing_hrc_seq, landed_at, receipt_committed_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
              ON CONFLICT(envelope_id, runtime_id) DO UPDATE SET
                target_session_ref = excluded.target_session_ref,
                generation = excluded.generation,
@@ -541,6 +545,7 @@ export class HrcMailDeliveryRepository {
                delivery_outcome = excluded.delivery_outcome,
                landing_hrc_seq = excluded.landing_hrc_seq,
                landed_at = excluded.landed_at,
+               receipt_committed_at = NULL,
                turn_ended_at = NULL,
                reminder_armed_at = NULL,
                reminder_due_at = NULL,
@@ -577,6 +582,17 @@ export class HrcMailDeliveryRepository {
       )
       .get(envelopeId, runtimeId)
     return row === null ? undefined : mapPresentation(row)
+  }
+
+  /** Promote a local landing to D3 authority only after wrkq accepted its receipt. */
+  markReceiptCommitted(envelopeId: string, runtimeId: string): boolean {
+    return (
+      this.db
+        .query(
+          'UPDATE hrcmail_presentations SET receipt_committed_at = COALESCE(receipt_committed_at, ?) WHERE envelope_id = ? AND runtime_id = ?'
+        )
+        .run(new Date().toISOString(), envelopeId, runtimeId).changes > 0
+    )
   }
 
   presentationsForEnvelope(envelopeId: string): HrcMailPresentation[] {
@@ -618,7 +634,7 @@ export class HrcMailDeliveryRepository {
     return this.db
       .query<PresentationRow, [string]>(
         `SELECT ${PRESENTATION_COLUMNS} FROM hrcmail_presentations
-          WHERE runtime_id = ? AND disposed_at IS NULL
+          WHERE runtime_id = ? AND disposed_at IS NULL AND receipt_committed_at IS NOT NULL
           ORDER BY landing_hrc_seq ASC, envelope_id ASC`
       )
       .all(runtimeId)
@@ -636,7 +652,7 @@ export class HrcMailDeliveryRepository {
     return this.db
       .query<PresentationRow, [number]>(
         `SELECT ${PRESENTATION_COLUMNS} FROM hrcmail_presentations
-          WHERE disposed_at IS NULL
+          WHERE disposed_at IS NULL AND receipt_committed_at IS NOT NULL
           ORDER BY landed_at ASC, envelope_id ASC
           LIMIT ?`
       )
@@ -678,7 +694,7 @@ export class HrcMailDeliveryRepository {
           `UPDATE hrcmail_presentations
               SET reminder_armed_at = ?, reminder_due_at = ?, turn_ended_at = ?
             WHERE envelope_id = ? AND runtime_id = ?
-              AND disposed_at IS NULL AND reminder_armed_at IS NULL`
+              AND disposed_at IS NULL AND receipt_committed_at IS NOT NULL AND reminder_armed_at IS NULL`
         )
         .run(
           new Date().toISOString(),
@@ -696,7 +712,7 @@ export class HrcMailDeliveryRepository {
       .query<PresentationRow, [string, string]>(
         `SELECT ${PRESENTATION_COLUMNS} FROM hrcmail_presentations
           WHERE target_session_ref = ?
-            AND disposed_at IS NULL
+            AND disposed_at IS NULL AND receipt_committed_at IS NOT NULL
             AND reminder_due_at IS NOT NULL
             AND reminder_due_at <= ?
             AND reminder_landing_hrc_seq IS NULL
@@ -711,7 +727,7 @@ export class HrcMailDeliveryRepository {
     return this.db
       .query<{ target_session_ref: string }, [string]>(
         `SELECT DISTINCT target_session_ref FROM hrcmail_presentations
-          WHERE disposed_at IS NULL
+          WHERE disposed_at IS NULL AND receipt_committed_at IS NOT NULL
             AND reminder_due_at IS NOT NULL
             AND reminder_due_at <= ?
             AND reminder_landing_hrc_seq IS NULL

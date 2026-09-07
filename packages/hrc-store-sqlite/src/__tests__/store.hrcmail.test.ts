@@ -80,6 +80,25 @@ describe('HrcMailEnvelopeRepository', () => {
           submitted_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE hrcmail_presentations (
+          envelope_id TEXT NOT NULL,
+          runtime_id TEXT NOT NULL,
+          target_session_ref TEXT NOT NULL,
+          generation INTEGER,
+          presentation_id TEXT NOT NULL,
+          input_id TEXT,
+          delivery_outcome TEXT NOT NULL,
+          landing_hrc_seq INTEGER NOT NULL,
+          landed_at TEXT NOT NULL,
+          turn_ended_at TEXT,
+          reminder_armed_at TEXT,
+          reminder_due_at TEXT,
+          reminder_landing_hrc_seq INTEGER,
+          reminder_landed_at TEXT,
+          disposed_at TEXT,
+          disposition TEXT,
+          PRIMARY KEY (envelope_id, runtime_id)
+        );
         INSERT INTO hrcmail_delivery_intents VALUES (
           'EN-snapshot', 'agent:test:project:hrc-runtime:primary', 'steer', 'full',
           'present-snapshot', 'rt-snapshot', NULL, NULL, NULL, NULL, 1,
@@ -89,8 +108,13 @@ describe('HrcMailEnvelopeRepository', () => {
       const migration = schemaMigrations.find(
         (candidate) => candidate.id === '0061_hrcmail_uncertain_delivery'
       )
+      const receiptMigration = schemaMigrations.find(
+        (candidate) => candidate.id === '0062_hrcmail_receipt_commit_gate'
+      )
       expect(migration).toBeDefined()
       migration?.apply(snapshot)
+      expect(receiptMigration).toBeDefined()
+      receiptMigration?.apply(snapshot)
       const columns = snapshot
         .query<{ name: string }, []>('PRAGMA table_info(hrcmail_delivery_intents)')
         .all()
@@ -109,6 +133,12 @@ describe('HrcMailEnvelopeRepository', () => {
           'cleanup_at',
         ])
       )
+      expect(
+        snapshot
+          .query<{ name: string }, []>('PRAGMA table_info(hrcmail_presentations)')
+          .all()
+          .map((column) => column.name)
+      ).toContain('receipt_committed_at')
       expect(
         snapshot
           .query<{ envelope_id: string }, []>(

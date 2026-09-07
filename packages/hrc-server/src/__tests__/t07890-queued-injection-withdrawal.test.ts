@@ -44,11 +44,11 @@ type TailServer = {
   db: HrcDatabase
   ledger: FakeWrkqLedger
   broker: {
-    withdraw(input: {
-      runtimeId: string
-      envelopeId: string
-      reason: string
-    }): Promise<{ ok: true; response: WithdrawOutcome }>
+    withdraw(
+      input:
+        | { runtimeId: string; submissionId: string; reason: string }
+        | { runtimeId: string; envelopeId: string; reason: string }
+    ): Promise<{ ok: true; response: WithdrawOutcome }>
   }
   wake(target: string, reason: string): void
   log(level: string, event: string, detail: Record<string, unknown>): void
@@ -59,7 +59,11 @@ describe('T-07890 — an acked envelope recalls the submission still in flight',
   let db: HrcDatabase
   let ledger: FakeWrkqLedger
   let withdrawOutcome: WithdrawOutcome
-  let withdrawCalls: Array<{ runtimeId: string; envelopeId: string; reason: string }>
+  let withdrawCalls: Array<
+    | { runtimeId: string; submissionId: string; reason: string }
+    | { runtimeId: string; envelopeId: string; reason: string }
+  >
+  let throwWithdrawal: boolean
   let wakes: Array<{ target: string; reason: string }>
   let server: TailServer
 
@@ -69,6 +73,7 @@ describe('T-07890 — an acked envelope recalls the submission still in flight',
     ledger = new FakeWrkqLedger()
     withdrawOutcome = { outcome: 'withdrawn' }
     withdrawCalls = []
+    throwWithdrawal = false
     wakes = []
     server = {
       enabled: true,
@@ -82,6 +87,7 @@ describe('T-07890 — an acked envelope recalls the submission still in flight',
       broker: {
         withdraw: async (input) => {
           withdrawCalls.push(input)
+          if (throwWithdrawal) throw new Error('broker transport failed')
           return { ok: true as const, response: withdrawOutcome }
         },
       },
@@ -175,14 +181,32 @@ describe('T-07890 — an acked envelope recalls the submission still in flight',
     expect(withdrawCalls).toEqual([])
   })
 
-  it('never withdraws a launch-carried body: there is no submission to recall', async () => {
+  it('terminal-holds a launch-carried body without claiming a native removal', async () => {
     const envelopeId = seedOutstanding('launch')
     ledger.ack(envelopeId)
 
     await runTail()
 
     expect(withdrawCalls).toEqual([])
-    expect(db.mailDelivery.getIntent(envelopeId)).toBeDefined()
+    expect(db.mailDelivery.getIntent(envelopeId)).toMatchObject({
+      terminalEnvelopeCause: 'envelope.acked',
+      cleanupOutcome: 'not_applicable',
+    })
+  })
+
+  it('does terminal cleanup at most once and records a thrown withdrawal', async () => {
+    const envelopeId = seedOutstanding()
+    throwWithdrawal = true
+    ledger.ack(envelopeId)
+    ledger.ack(envelopeId)
+
+    await runTail()
+
+    expect(withdrawCalls).toHaveLength(1)
+    expect(db.mailDelivery.getIntent(envelopeId)).toMatchObject({
+      terminalEnvelopeCause: 'envelope.acked',
+      cleanupOutcome: 'unsupported_or_error',
+    })
   })
 
   it('leaves a fyi acked by its own presentation alone', async () => {

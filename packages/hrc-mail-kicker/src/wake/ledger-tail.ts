@@ -38,32 +38,64 @@ export async function withdrawAckedQueuedInjection(
   const envelopeId = event.resourceId
   if (envelopeId === undefined) return
 
-  // The OPEN INTENT is the proof that HRC submitted this envelope and has not
-  // seen it land. Nothing else is consulted: under T-08094 an envelope with no
-  // open intent either never went to a door or has already landed, and in both
-  // shapes there is nothing to recall.
+  // The durable intent is the no-second-body fence. Terminalizing it applies
+  // to every shape, including a launch-carried or runtime-less uncertain call;
+  // only the broker-held cleanup below needs a concrete runtime.
   const intent = server.db.mailDelivery.getIntent(envelopeId)
-  if (intent === undefined || intent.runtimeId === undefined || intent.door === 'launch') return
+  if (intent === undefined) return
+  const terminal =
+    server.db.mailDelivery.markTerminalEnvelope(envelopeId, event.eventType) ?? intent
+  // The ledger can report equivalent terminal evidence more than once. A
+  // cleanup is a one-shot observation, never a polling loop.
+  if (terminal.cleanupAt !== undefined) return
+  if (terminal.runtimeId === undefined || terminal.door === 'launch') {
+    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'not_applicable')
+    server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
+      envelopeId,
+      ...(terminal.runtimeId === undefined ? {} : { runtimeId: terminal.runtimeId }),
+      door: terminal.door,
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+      outcome: 'not_applicable',
+      selector: 'envelope_fallback_diagnostic',
+    })
+    return
+  }
 
   // This is a broker-held queue cleanup only.  It is not a native harness
   // removal and neither an error nor `not_held` proves that the body was not
   // already applied.  Terminalize the durable fence before asking the broker.
-  server.db.mailDelivery.markTerminalEnvelope(envelopeId, event.eventType)
-  const withdrawal = await server.broker.withdraw(
-    intent.submissionId === undefined
-      ? { runtimeId: intent.runtimeId, envelopeId, reason: QUEUED_INJECTION_WITHDRAW_REASON }
-      : {
-          runtimeId: intent.runtimeId,
-          submissionId: intent.submissionId,
-          reason: QUEUED_INJECTION_WITHDRAW_REASON,
-        }
-  )
+  let withdrawal: Awaited<ReturnType<MailKickerContext['broker']['withdraw']>>
+  try {
+    withdrawal = await server.broker.withdraw(
+      terminal.submissionId === undefined
+        ? {
+            runtimeId: terminal.runtimeId,
+            envelopeId,
+            reason: QUEUED_INJECTION_WITHDRAW_REASON,
+          }
+        : {
+            runtimeId: terminal.runtimeId,
+            submissionId: terminal.submissionId,
+            reason: QUEUED_INJECTION_WITHDRAW_REASON,
+          }
+    )
+  } catch (error) {
+    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
+    server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
+      envelopeId,
+      runtimeId: terminal.runtimeId,
+      ...(terminal.submissionId === undefined ? {} : { submissionId: terminal.submissionId }),
+      reason: QUEUED_INJECTION_WITHDRAW_REASON,
+      error: errorText(error),
+    })
+    return
+  }
   if (!withdrawal.ok) {
     server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
     server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
       envelopeId,
-      runtimeId: intent.runtimeId,
-      ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
+      runtimeId: terminal.runtimeId,
+      ...(terminal.submissionId === undefined ? {} : { submissionId: terminal.submissionId }),
       reason: QUEUED_INJECTION_WITHDRAW_REASON,
       error: withdrawal.error.message,
     })
@@ -74,9 +106,9 @@ export async function withdrawAckedQueuedInjection(
     server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'withdrawn')
     server.log('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
       envelopeId,
-      runtimeId: intent.runtimeId,
-      ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
-      door: intent.door,
+      runtimeId: terminal.runtimeId,
+      ...(terminal.submissionId === undefined ? {} : { submissionId: terminal.submissionId }),
+      door: terminal.door,
       reason: QUEUED_INJECTION_WITHDRAW_REASON,
     })
     return
@@ -87,8 +119,8 @@ export async function withdrawAckedQueuedInjection(
   server.db.mailDelivery.recordTerminalCleanup(envelopeId, withdrawal.response.outcome)
   server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
     envelopeId,
-    runtimeId: intent.runtimeId,
-    door: intent.door,
+    runtimeId: terminal.runtimeId,
+    door: terminal.door,
     reason: QUEUED_INJECTION_WITHDRAW_REASON,
     outcome: withdrawal.response.outcome,
     ...('state' in withdrawal.response ? { state: withdrawal.response.state } : {}),

@@ -467,6 +467,10 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       'receipt_wrong_state'
     )
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
+    expect(db.mailDelivery.getPresentation(envelope.id, RUNTIME)?.disposition).toBe(
+      'terminal_before_receipt'
+    )
+    expect(db.mailDelivery.listUndisposedForRuntime(RUNTIME)).toEqual([])
     const line = logs.find((entry) => entry.event === 'wrkq.kicker.disposed_before_landing')
     expect(line?.level).toBe('INFO')
     expect(logs.some((e) => e.event === 'wrkq.kicker.presentation_commit_failed')).toBe(false)
@@ -477,6 +481,35 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       disposed: 0,
       open: 0,
     })
+  })
+
+  it('treats live submission and launch landing after a terminal hold as audit-only', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+    db.mailDelivery.markTerminalEnvelope(envelope.id, 'envelope.acked')
+    const before = ledger.presentRequests.length
+
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+    expect(ledger.presentRequests).toHaveLength(before)
+    expect(db.mailDelivery.getPresentation(envelope.id, RUNTIME)).toBeUndefined()
+
+    const launch = ledger.say()
+    db.mailDelivery.openIntent({
+      envelopeId: launch.id,
+      targetSessionRef: TARGET,
+      door: 'launch',
+      form: 'full',
+      presentationId: 'present-terminal-launch',
+      runtimeId: RUNTIME,
+      submittedHrcSeq: 0,
+    })
+    db.mailDelivery.markTerminalEnvelope(launch.id, 'envelope.failed')
+    await observeBrokerLanding(context, brokerRecord('turn.started', { turnId: 'turn-2' }))
+    expect(ledger.presentRequests).toHaveLength(before)
+    expect(db.mailDelivery.getPresentation(launch.id, RUNTIME)).toBeUndefined()
   })
 
   it('counts a disposed-before-landing commit as disposed, never as landed', async () => {
@@ -595,6 +628,42 @@ describe('D3 — disposal is keyed by runtime and ledger sequence', () => {
       armed?.reminderArmedAt as string
     )
     expect(ledger.failRequests).toEqual([])
+  })
+
+  it('does not grant a local-only receipt D3 or reminder authority', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+    const lostResponse = {
+      ...context,
+      ledger: {
+        present: async () => {
+          throw new Error('transport lost after remote receipt')
+        },
+      } as never,
+    }
+    await observeBrokerLanding(
+      lostResponse,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+    const local = db.mailDelivery.getPresentation(envelope.id, RUNTIME)
+    expect(local?.receiptCommittedAt).toBeUndefined()
+    expect(db.mailDelivery.listUndisposedForRuntime(RUNTIME)).toEqual([])
+
+    await disposeAt((local?.landingHrcSeq ?? 0) + 10)
+    expect(db.mailDelivery.getPresentation(envelope.id, RUNTIME)?.reminderArmedAt).toBeUndefined()
+
+    // Replaying the exact presentation ID after the lost response is what
+    // grants disposal authority; no second body is sent.
+    await observeBrokerLanding(
+      context,
+      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
+    )
+    const committed = db.mailDelivery.getPresentation(envelope.id, RUNTIME)
+    expect(committed?.receiptCommittedAt).toBeDefined()
+    await disposeAt((committed?.landingHrcSeq ?? 0) + 10)
+    expect(db.mailDelivery.getPresentation(envelope.id, RUNTIME)?.reminderArmedAt).toBeDefined()
+    expect(ledger.presentRequests.filter((request) => request.preview !== true)).toHaveLength(1)
+    expect(ledger.presentRequests.at(-1)?.driveAttemptId).toBe(local?.presentationId)
   })
 
   it('does not arm for a body that landed at or after the terminal', async () => {

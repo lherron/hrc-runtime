@@ -2932,6 +2932,28 @@ const hrcmailUncertainDeliveryMigration: HrcMigration = {
   },
 }
 
+/** A local landing becomes disposal/reminder authority only after receipt success. */
+const hrcmailReceiptCommitMigration: HrcMigration = {
+  id: '0062_hrcmail_receipt_commit_gate',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(hrcmail_presentations)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!columns.has('receipt_committed_at')) {
+      db.exec('ALTER TABLE hrcmail_presentations ADD COLUMN receipt_committed_at TEXT')
+      // Rows predate the gate and were recorded under the prior committed-only
+      // contract. Preserve their existing D3 authority rather than retroactively
+      // stranding them.
+      db.exec(
+        'UPDATE hrcmail_presentations SET receipt_committed_at = landed_at WHERE receipt_committed_at IS NULL'
+      )
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2989,4 +3011,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailDeliveryExpiryMigration,
   hrcmailRefusalWindowMigration,
   hrcmailUncertainDeliveryMigration,
+  hrcmailReceiptCommitMigration,
 ]

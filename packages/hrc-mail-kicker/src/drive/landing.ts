@@ -83,7 +83,7 @@ function deliveryOutcomeFor(intent: HrcMailDeliveryIntent, eventType: string): s
  * reconcile's own summary line say `landed:3` about three envelopes that got no
  * receipt (chief, finding 4) — a counter that lies is worse than no counter.
  */
-export type LandingCommit = 'committed' | 'disposed' | 'failed'
+export type LandingCommit = 'committed' | 'disposed' | 'failed' | 'held'
 
 /**
  * Commit one landing: local record first, then the ledger.
@@ -97,6 +97,10 @@ export async function commitLanding(
   intent: HrcMailDeliveryIntent,
   input: { runtimeId: string; eventType: string; landingHrcSeq: number }
 ): Promise<LandingCommit> {
+  // Terminal envelopes are audit-only.  This guard is deliberately here (not
+  // only in reconcile) because live broker observation and launch turn-start
+  // delivery call commitLanding directly.
+  if (intent.terminalEnvelopeAt !== undefined) return 'held'
   const outcome = deliveryOutcomeFor(intent, input.eventType)
   // A reminder lands ON the record it is reminding about — unless the seat
   // rotated between arming and firing, in which case the body reached a runtime
@@ -154,6 +158,11 @@ export async function commitLanding(
       // intent as an inspectable terminal fence: deleting it would allow a
       // sweep to inject a second body while the receipt is impossible.
       server.db.mailDelivery.markTerminalEnvelope(intent.envelopeId, 'receipt_wrong_state')
+      server.db.mailDelivery.recordDisposition(
+        intent.envelopeId,
+        input.runtimeId,
+        'terminal_before_receipt'
+      )
       server.log('INFO', 'wrkq.kicker.disposed_before_landing', {
         targetSessionRef: intent.targetSessionRef,
         envelope: intent.envelopeId,
@@ -177,6 +186,7 @@ export async function commitLanding(
     return 'failed'
   }
 
+  server.db.mailDelivery.markReceiptCommitted(intent.envelopeId, input.runtimeId)
   server.db.mailDelivery.clearIntent(intent.envelopeId)
   server.mailKickerDeliveryBackoff.delete(input.runtimeId)
   // The seat took a body, so it is not the seat that cannot land: the TTL bound
