@@ -11,12 +11,42 @@ predicate: >
   hrc_events, and advances a contiguous projection cursor or records a typed
   fenced disposition. The cursor advances across intentionally non-mirrored
   high-volume deltas without treating mirror retention as a source gap. An
-  invocation whose bracket minting mode is observed resolves turn-scoped rows
-  only from explicit input identity or a durable per-invocation turn attribution.
-  Own attribution joins the named input's run; foreign, unknown, absent, and
-  not-yet-attributed turns resolve to no run and never borrow the nearest
-  accepted input. Attribution sequence is part of the lookup so replay cannot
-  let a future attribution retroactively change an earlier row. Only
+  execution naming a native turn resolves ownership from immutable broker event
+  evidence keyed by runtime, historical operation generation, invocation, native
+  turn id, and harness generation or turn attempt where present. Event,
+  invocation, operation, and candidate run identities must agree; the current
+  runtime generation is not historical authority. Initiating evidence is an
+  explicit start input, definitive own attribution, or executed submission
+  mapped to its run. A stored start run_id alone, absorbed input, acceptance
+  order, current active run, and newest bracket cannot establish ownership.
+  The controller-persisted launch-carried invoke marker is the narrow legacy
+  exception for that invocation's first input-less launch turn only; it is not
+  native consumption proof. Foreign turns remain unowned. Unknown, absent, or
+  conflicting evidence remains unresolved; the first definitive own attribution
+  may bind an unresolved turn once. Later execution events retain the exact
+  owner even after another turn starts. A named unresolved turn never falls
+  through to submission or bracket inference. Existing no-bracket compatibility
+  remains limited to events without turn identity and without an observed bracket.
+  Immutable attribution events govern; broker_turn_attributions cannot be a
+  competing authority. Attribution sequence bounds prevent future evidence from
+  rewriting an earlier projected row; historical ledger rows are not rewritten.
+  Submission-record resolution is distinct from execution ownership. A
+  definitively absorbed, submission-linked, admission-class steer auxiliary in
+  the same historical epoch with no startedAt settles idempotently against its
+  exact owner, never against itself. Accepted or legacy ACK-completed auxiliaries
+  become terminal coalesced with an owner link, preserved or settlement completion
+  time, no invented start or batch position, and no synthetic execution lifecycle.
+  Failed, cancelled, or zombie auxiliaries retain their truthful status and error
+  when gaining a definitive owner link; a different existing owner conflicts.
+  New steer acknowledgements do not complete auxiliary runs. Delayed definitive
+  ownership settles earlier absorption for that exact turn. Definitive teardown
+  explicitly disposes absorbed auxiliaries whose owner remains unresolved.
+  Neither ordinary nor ledger-inclusive runtime prune may remove the evidence
+  while a definitive absorbed dependency lacks an owner association or explicit
+  unresolved-owner teardown disposition; terminal status alone is insufficient.
+  An old owner's terminal closes only that owner and clears activeRunId only
+  when equal. It cannot fail, finalize, clear, or release a newer execution, mark
+  its invocation ready, or drain its queue through mismatch repair. Only
   after that transaction commits may HRC acknowledge the broker sequence, notify
   followers, or evaluate a control policy that depends on the fact. HRC is the
   sole broker-ledger retention-bearing consumer: its fenced control connection
@@ -33,16 +63,20 @@ predicate: >
   permission decisions are HRC-owned and persist before permission.respond on
   the fenced control connection. A deadline fallback is broker-owned; HRC later
   projects its already committed permission.resolved timeout fact.
-authority: Lance HCS T-07827 / Daedalus approvals wrkq:T-07853 and companion design wrkq:T-08098
+authority: Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
 source:
   - wrkq:T-07853
   - wrkq:T-07827
   - wrkq:T-08098
+  - wrkq:T-08201
   - commit:6d04d5de
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
   - packages/hrc-server/src/broker/controller.ts
   - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-server/src/broker/event-mapper/runtime-state.ts
+  - packages/hrc-server/src/broker/controller/persistence.ts
+  - packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts
   - packages/hrc-store-sqlite/src/migrations/broker-migrations.ts
 required_tests:
   - normalized broker append failure publishes nothing to HRC
@@ -54,9 +88,12 @@ required_tests:
   - explicit permission decisions persist before fenced response while disconnected timeout fallback projects only from the broker's committed fact
   - control RPC acceptance remains distinct from committed input turn permission and effect observations
   - T-08098 observed-mode replay proves foreign and unknown turn rows never resolve to a pending run, later own rows do, terminals affect only the own run, and replay preserves every resolution
+  - T-08201 exact ownership gates cover multiple absorbed steers, delayed own attribution and old terminals after newer starts, repeated native ids across epochs, pre-fix borrowed rows, and first-launch-only compatibility
+  - T-08201 auxiliary gates cover accepted and ACK-completed coalescence, truthful failed/cancelled/zombie preservation, duplicate absorption, crash after commit before ACK, unresolved teardown, and both prune dependency guards
+  - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
 last_verified:
   date: 2026-09-06
-  evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws.
+  evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
 reopen_when:
   - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter
   - projection transaction cursor acknowledgement or post-commit ordering changes
@@ -64,6 +101,7 @@ reopen_when:
   - HRC projected ledger retention changes
   - observation and mutation fencing or effect-proof semantics change
   - observed turn attribution persistence no-run ownership rules or replay sequence bounds change
+  - exact initiating evidence, historical epoch ownership, launch compatibility, auxiliary settlement or retention, or old-owner terminal isolation changes
   - kicker trigger obligation authority or reminder bound changes
   - explicit-versus-timeout permission decision ownership changes
 supersedes: []
