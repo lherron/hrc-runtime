@@ -18,8 +18,17 @@ predicate: >
   Disposal is keyed by runtime and ledger sequence: the reminder and
   failed:ignored follow turn terminals observed for the presented runtime, run
   or no run, and failed:runtime_terminated follows that runtime's termination.
-  A refused or lost submission clears HRC's outstanding record and re-delivers
-  under policy; it never fails an envelope. A refused STEER re-delivers by
+  A submission permits body retry only on correlated positive evidence that it
+  was not written or that this exact input was removed. Broker queue withdrawal
+  or expiry qualifies only before driver application; native recall qualifies
+  only when it proves removal of this exact input.
+  Rejection reasons, acceptance, missing identity, RPC failure, post-write
+  cancellation or loss, runtime termination, teardown and TTL do not prove that.
+  Possible-write ambiguity retains the durable intent without body reinjection,
+  presentation, or nonlanding strikes. A possibly_written input.rejected is
+  diagnostic and remains eligible for later consumption evidence; absent
+  deliveryEvidence conveys uncertainty. Proven no-write refusals retain bounded
+  backoff and undeliverable policy. A safely retryable refused STEER re-delivers by
   refusal CLASS, read from the broker's own admission layer: a capability-layer
   refusal is a fact about the driver and the next delivery takes the enqueue
   door, while a state-, policy-, authority- or execution-layer refusal is a fact
@@ -31,11 +40,36 @@ predicate: >
   periodically; an envelope with an open intent is never actionable. A
   launch-carried presentation lands on the first turn start of the runtime the
   launch produced and is recorded as launch_carried.
-  Presentation is at-least-once: HRC's write-ahead intent makes every HRC-side
-  crash yield at most one receipt and no redelivery, while a broker failure
-  between applying a body and emitting its landing fact may cause one
-  redelivery — the bounded window of accepted risk
-  wrkq.collaboration-ledger.at-least-once-presentation.
+  Missing submission identity is recoverable only from one distinct committed
+  admission matching the intent's exact runtime, invocation, origin.envelopeId
+  and broker sequence lower bound captured before dispatch. Zero or multiple
+  candidates, an unproven legacy cursor, or an unconfirmed invocation change
+  remains uncertain; a known submission is never rebound. The canonical HRC
+  cursor cannot bound provenance-only admission events. Retry evidence is
+  durably recorded before releasing the old fence; delayed earlier admissions
+  cannot identify a later attempt. An unidentifiable launch retains uncertainty
+  and cannot authorize another birth to settle it.
+  Local landing bookkeeping precedes the wrkq receipt and retries that receipt
+  under the same pre-minted presentationId/driveAttemptId after transport failure
+  or a crash. Local-only presentation does not establish reminder, D3 disposal,
+  or runtime-lapse eligibility: those require committed receipt success.
+  Successful receipt completion clears its intent, preserving legitimate
+  pointer and reminder delivery. A lost landing fact after possible application
+  now retains uncertainty rather than exercising the former HRC loss/TTL
+  redelivery permission; this does not amend wrkq's own accepted-risk record.
+  Independent envelope terminality retains unresolved delivery as an inspectable
+  terminal hold, excluded from routine wake and periodic candidate sets while
+  correlated late evidence still updates it. Late landing sends no new receipt
+  and never reopens the envelope. A local-only presentation refused by wrong_state
+  is disposed terminal_before_receipt without inventing a presented obligation.
+  FYI receipt terminality is its own idempotent completion, not revocation.
+  Terminal cleanup uses the existing broker withdrawal selector once, recording
+  request intent and outcome. Exact queue removal before application proves
+  removal; aggregate envelope-selector success, not_held, unknown, unavailable
+  and RPC failure do not prove this attempt was removed. Broker-held withdrawal
+  does not clear already injected native text. Launch has no submission to
+  withdraw, and cleanup uncertainty never authorizes native clearing, destructive
+  retry or runtime teardown. Aging may expose uncertainty once, never erase it.
   One run has one canonical turn-response projection, produced by the shared
   projectSemanticTurnResponse/finalizeSemanticTurnResponse path. For one run the
   projection reads turn.message rows in hrc_seq order, drops text-empty rows, and
@@ -51,11 +85,13 @@ predicate: >
   hrcmail_* rows remain local delivery-intent, presentation, reminder,
   failure-notice and recovery bookkeeping; they are not room, envelope,
   obligation, discharge, or reply-body authority.
-authority: Lance principal rulings 2026-09-05 (context hcs T-07987), spec wrkq:T-08092 rev 4 D1/D2/D3 (daedalus APPROVE); supersedes the retired hrc-runtime.collaboration-auto-reply-actuation and the T-07789 auto-reply amendment
+authority: Lance principal rulings 2026-09-05 (context hcs T-07987), spec wrkq:T-08092 rev 4 D1/D2/D3 (daedalus APPROVE), and wrkq:T-08205 revision 2 approval C-19946 on 2026-09-07; supersedes the retired hrc-runtime.collaboration-auto-reply-actuation and the T-07789 auto-reply amendment
 source:
   - wrkq:T-08092
   - wrkq:T-08093
   - wrkq:T-08094
+  - wrkq:T-08205
+  - wrkq:T-08204
   - wrkq:T-07969
   - packages/hrc-core/src/final-turn-message.ts
   - packages/hrc-server/src/event-notification-handlers.ts
@@ -75,7 +111,11 @@ required_tests:
   - the forward migration deletes hrcmail_drive_attempts, its slot and presentation children, and backfills every runtime-bound receipt into hrcmail_presentations with its disposition intact
   - the delivery intent is committed before any door is called, is unique per envelope, and makes that envelope unactionable until it lands or is cleared
   - a receipt is written only on submission.absorbed, submission.executed, or the launch-produced runtime's first turn.started, and carries no run id
-  - a rejected, lost or TTL-expired submission clears the intent, re-wakes the target, and leaves the envelope pending with no failure
+  - T-08205 cancellation TTL runtime loss ambiguous RPC and possibly-written rejection retain one body injection and the intent without presentation or nonlanding strikes; only positive no-write or exact removal evidence permits bounded retry
+  - T-08205 recovery covers unique zero multiple and replayed admission candidates, old sequence exclusion, invocation changes, known identity preservation, null legacy cursor and crash before admission response
+  - T-08205 receipt transport failure and crash after remote commit retry the same presentation id without the body; local-only rows cannot trigger D3 reminders or runtime-lapse failure
+  - T-08205 terminal holds preserve late evidence without receipts or reopening, distinguish exact withdrawal from aggregate not_held unknown and failure, and preserve FYI self-terminalization and ordinary pointer/reminder behavior
+  - T-08205 consistent SQLite snapshot migration preserves existing intent uncertainty and accepted receipt semantics; installed Codex TUI and Claude CLI evidence names native broker envelope and receipt identities
   - a capability-layer steer refusal falls to enqueue; a transient one (pane_not_quiescent, busy, guarded) retries steer on a bounded backoff and memoizes nothing
   - reconcile at daemon start, at runtime termination and on the sweep writes exactly one receipt for a landing HRC never observed live
   - a turn terminal on the presented runtime arms one reminder; a terminal after the reminder landed fails the envelope ignored; both with no run row present
@@ -84,7 +124,7 @@ required_tests:
   - reply-is-ack, defer, operator ack, consumed_by_wait, fyi_presented, failed:ignored and failed:runtime_terminated remain the only dispositions
 last_verified:
   date: 2026-09-05
-  evidence: T-08093 landed D1 — auto-reply-handlers.ts, the candidate/intent schema and the wrkq.auto_reply.* log surface deleted; migration 0057 drops the table and columns; installed activation smoke on max3 recorded in the T-08093 artifact_dir. T-08094 landed D2/D3 — the drive attempt, slot, held batch and claim CAS deleted, migration 0058 introducing hrcmail_delivery_intents/hrcmail_presentations, and the write-ahead, landing-fact, refusal and runtime-keyed disposal gates in packages/hrc-mail-kicker/src/__tests__/t08094-steer-first-delivery.test.ts.
+  evidence: T-08093 landed D1 — auto-reply-handlers.ts, the candidate/intent schema and the wrkq.auto_reply.* log surface deleted; migration 0057 drops the table and columns; installed activation smoke on max3 recorded in the T-08093 artifact_dir. T-08094 landed D2/D3 — the drive attempt, slot, held batch and claim CAS deleted, migration 0058 introducing hrcmail_delivery_intents/hrcmail_presentations, and the write-ahead, landing-fact, refusal and runtime-keyed disposal gates in packages/hrc-mail-kicker/src/__tests__/t08094-steer-first-delivery.test.ts. T-08205 revision 2 was source-reviewed and approved in C-19946 on 2026-09-07; its implementation, migration and installed receipt gates remain pending, and this date is not refreshed by design approval.
 reopen_when:
   - HRC gains any path that writes to the collaboration ledger as a principal other than agent:hrc
   - turn completion, or any other implicit signal, becomes a discharge
@@ -94,7 +134,8 @@ reopen_when:
   - presentation stops being a landing fact, or a run or turn identity re-enters presentation, discharge or disposal
   - delivery stops being write-ahead, or a submission carries more than one envelope
   - the steer refusal classes stop being read from the broker's admission layer
-  - the at-least-once guarantee or its bounded broker window changes
+  - possible-write uncertainty gains retry authority, admission recovery identity or bounds change, or terminal cleanup claims native removal
+  - local-only presentation gains disposal authority or receipt retry loses its stable identity
 supersedes:
   - hrc-runtime.collaboration-auto-reply-actuation
   - hrc-runtime.collaboration-obligation-discharge
