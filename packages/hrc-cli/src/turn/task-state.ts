@@ -1,4 +1,4 @@
-import { type ExecProcess, type ExecProcessResult, execProcess } from './consul-secrets.js'
+import { type ExecProcess, type ExecProcessResult, execProcess } from './exec-process.js'
 
 /**
  * Reads the live wrkq state for a task id (e.g. "T-04216") at terminal-frame

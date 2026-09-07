@@ -11,6 +11,7 @@ import { CliUsageError } from 'cli-kit'
 
 import {
   TURN_EXIT_RUNTIME_DEAD,
+  TURN_EXIT_SIGINT,
   TURN_EXIT_STALL,
   TurnExitError,
   type TurnOptions,
@@ -82,6 +83,7 @@ function createTurnClient(options: {
   handoff?: SemanticTurnHandoffResponse
   events?: MockWatchEvents
   handoffCalls?: SemanticTurnHandoffRequest[]
+  summarizerTerminateCalls?: string[]
 }): HrcClient {
   const handoffCalls = options.handoffCalls ?? []
 
@@ -98,6 +100,73 @@ function createTurnClient(options: {
       ]
       for (const event of events) {
         yield event
+      }
+    },
+    async ensureTarget(request: { sessionRef: string }) {
+      const scopeRef = request.sessionRef.split('/lane:')[0]!
+      return {
+        sessionRef: request.sessionRef,
+        scopeRef,
+        laneRef: 'main',
+        state: 'summoned' as const,
+        activeHostSessionId: 'hsid-summarizer',
+        capabilities: {
+          state: 'summoned' as const,
+          modesSupported: ['nonInteractive' as const],
+          defaultMode: 'nonInteractive' as const,
+          dmReady: true,
+          sendReady: false,
+          peekReady: false,
+        },
+      }
+    },
+    async invoke() {
+      return {
+        submissionId: 'submission-summarizer',
+        admission: 'admitted' as const,
+        runId: 'run-summarizer',
+        runtimeId: 'rt-summarizer',
+        hostSessionId: 'hsid-summarizer',
+        generation: 1,
+        transport: 'tmux' as const,
+        status: 'completed' as const,
+        startIdentity: { kind: 'broker' as const, invocationId: 'inv-summarizer' },
+        observation: {
+          lifecycle: {
+            selector: {
+              runId: 'run-summarizer',
+              runtimeId: 'rt-summarizer',
+              generation: 1,
+            },
+            fromSeq: 1,
+          },
+        },
+        disposition: { type: 'executed' as const, turnId: 'turn-summarizer' },
+        terminal: {
+          turnId: 'turn-summarizer',
+          status: 'completed' as const,
+          finalMessage: 'Summarizes the observed test turn.',
+        },
+      }
+    },
+    async listRuntimes() {
+      return []
+    },
+    async terminate(runtimeId: string) {
+      options.summarizerTerminateCalls?.push(runtimeId)
+      return {
+        ok: true as const,
+        runtimeId,
+        hostSessionId: 'hsid-summarizer',
+        droppedContinuation: true,
+      }
+    },
+    async dropContinuation() {
+      return {
+        ok: true as const,
+        hostSessionId: 'hsid-summarizer',
+        dropped: true,
+        previousContinuationKey: null,
       }
     },
   } as HrcClient
@@ -702,4 +771,74 @@ describe('hrcchat turn — --stacked monitor stream', () => {
     expect(result.stdout.indexOf('"turn_stacked"')).toBeGreaterThanOrEqual(0)
     expect(result.stderr).toContain('permission')
   })
+
+  it('terminates the summarizer exactly once on success, error, stall, and SIGINT', async () => {
+    const successTerminations: string[] = []
+    const success = await runTurnCommand(
+      createTurnClient({
+        summarizerTerminateCalls: successTerminations,
+        events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
+      }),
+      { stacked: '1h' },
+      ['larry@agent-spaces:T-01449', 'finish']
+    )
+    expect(success.exitCode).toBe(0)
+    expect(successTerminations).toEqual(['rt-summarizer'])
+
+    const errorTerminations: string[] = []
+    const error = await runTurnCommand(
+      createTurnClient({
+        summarizerTerminateCalls: errorTerminations,
+        events: [makeLifecycleEvent({ eventKind: 'run_failed', payload: { message: 'failed' } })],
+      }),
+      { stacked: '1h' },
+      ['larry@agent-spaces:T-01449', 'fail']
+    )
+    expect(error.exitCode).toBe(TURN_EXIT_RUNTIME_DEAD)
+    expect(errorTerminations).toEqual(['rt-summarizer'])
+
+    const stallTerminations: string[] = []
+    const stallBase = createTurnClient({ summarizerTerminateCalls: stallTerminations })
+    const stallClient = {
+      ...stallBase,
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        yield makeLifecycleEvent({ eventKind: 'turn.tool_call', payload: { toolName: 'Read' } })
+        await waitForAbort(options?.signal)
+      },
+    } as HrcClient
+    const stall = await runTurnCommand(stallClient, { stacked: '1h', stallAfter: '5ms' }, [
+      'larry@agent-spaces:T-01449',
+      'stall',
+    ])
+    expect(stall.exitCode).toBe(TURN_EXIT_STALL)
+    expect(stallTerminations).toEqual(['rt-summarizer'])
+
+    const sigintTerminations: string[] = []
+    const sigintBase = createTurnClient({ summarizerTerminateCalls: sigintTerminations })
+    const sigintClient = {
+      ...sigintBase,
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        yield makeLifecycleEvent({
+          eventKind: 'permission_request',
+          payload: { requestId: 'perm-sigint', toolName: 'Bash' },
+        })
+        setTimeout(() => process.emit('SIGINT'), 0)
+        await waitForAbort(options?.signal)
+      },
+    } as HrcClient
+    const sigint = await runTurnCommand(sigintClient, { stacked: '1h' }, [
+      'larry@agent-spaces:T-01449',
+      'interrupt',
+    ])
+    expect(sigint.exitCode).toBe(TURN_EXIT_SIGINT)
+    expect(sigintTerminations).toEqual(['rt-summarizer'])
+  })
 })
+
+function waitForAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+      once: true,
+    })
+  })
+}

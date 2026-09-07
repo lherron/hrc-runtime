@@ -24,7 +24,7 @@ import {
 import { resolveLaunchTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
 import { isRecord } from '../stacked-shared.js'
-import { createStackedSummarizer } from '../stacked-summary.js'
+import { type StackedSeatSummarizer, createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result } from '../stacked-types.js'
 
 export type TurnOptions = {
@@ -479,6 +479,7 @@ export async function cmdTurn(
   let turnCompleted = false
   let lastPhase: RenderFrame['phase'] | undefined
   let stackedAggregator: StackedAggregator | undefined
+  let stackedSummarizer: StackedSeatSummarizer | undefined
 
   // SIGINT handler
   const sigintHandler = () => {
@@ -522,12 +523,18 @@ export async function cmdTurn(
   manager?.subscribe(handoff.sessionRef, resolved.parsed.projectId ?? '')
 
   if (stackedWindowMs !== undefined) {
+    stackedSummarizer = createStackedSummarizer({
+      client,
+      targetProjectId: resolved.parsed.projectId as string,
+      observedAgentId: resolved.parsed.agentId,
+      runId: handoff.runId,
+    })
     stackedAggregator = createStackedAggregator({
       windowMs: stackedWindowMs,
       stallAfterMs,
       targetScope: targetInput,
       handoff,
-      summarizer: createStackedSummarizer(),
+      summarizer: stackedSummarizer,
       writeLine(line) {
         process.stdout.write(`${JSON.stringify(line)}\n`)
       },
@@ -540,79 +547,86 @@ export async function cmdTurn(
   }
 
   try {
-    for await (const event of client.watch({
-      scopeRef: handoff.scopeRef,
-      laneRef: handoff.laneRef,
-      runId: handoff.runId,
-      generation: handoff.generation,
-      fromSeq: handoff.fromSeq,
-      follow: true,
-      signal: abortController.signal,
-    })) {
-      const stackedEvent =
-        stackedAggregator && isWatchLoopTurnTerminal(event)
-          ? await enrichFinalEvent(client, handoff, event, {
-              expectedResponder,
-              expectedRecipient: from,
-            })
-          : event
-      if (stackedAggregator) {
-        lastPhase = deriveStackedPhase(stackedEvent, lastPhase)
-        await stackedAggregator.receive(stackedEvent)
-      } else {
-        const envelope = adaptHrcLifecycleEvent(event)
-        if (envelope) {
-          manager?.receive(envelope)
+    try {
+      for await (const event of client.watch({
+        scopeRef: handoff.scopeRef,
+        laneRef: handoff.laneRef,
+        runId: handoff.runId,
+        generation: handoff.generation,
+        fromSeq: handoff.fromSeq,
+        follow: true,
+        signal: abortController.signal,
+      })) {
+        const stackedEvent =
+          stackedAggregator && isWatchLoopTurnTerminal(event)
+            ? await enrichFinalEvent(client, handoff, event, {
+                expectedResponder,
+                expectedRecipient: from,
+              })
+            : event
+        if (stackedAggregator) {
+          lastPhase = deriveStackedPhase(stackedEvent, lastPhase)
+          await stackedAggregator.receive(stackedEvent)
+        } else {
+          const envelope = adaptHrcLifecycleEvent(event)
+          if (envelope) {
+            manager?.receive(envelope)
+          }
+        }
+
+        // Check for terminal events
+        if (isWatchLoopTurnTerminal(event)) {
+          turnCompleted = true
+          abortController.abort()
+          break
+        }
+
+        // Runtime died before turn completed
+        if (isRuntimeDead(event)) {
+          await finalizeTurn(stackedAggregator, 'runtimeDead')
         }
       }
-
-      // Check for terminal events
-      if (isWatchLoopTurnTerminal(event)) {
-        turnCompleted = true
-        abortController.abort()
-        break
+    } catch (err) {
+      if (err instanceof TurnExitError) {
+        throw err
       }
-
-      // Runtime died before turn completed
-      if (isRuntimeDead(event)) {
-        await finalizeTurn(stackedAggregator, 'runtimeDead')
-      }
-    }
-  } catch (err) {
-    if (err instanceof TurnExitError) {
-      throw err
-    }
-    // Turn completed — abort was intentional to close the follow stream, so
-    // fall through to exit-code determination below.
-    if (!turnCompleted) {
-      if (abortController.signal.aborted) {
-        // AbortError from stall timer or SIGINT
-        if (stallFired) {
-          throw new TurnExitError(TURN_EXIT_STALL, 'stall-after timeout reached')
+      // Turn completed — abort was intentional to close the follow stream, so
+      // fall through to exit-code determination below.
+      if (!turnCompleted) {
+        if (abortController.signal.aborted) {
+          // AbortError from stall timer or SIGINT
+          if (stallFired) {
+            throw new TurnExitError(TURN_EXIT_STALL, 'stall-after timeout reached')
+          }
+          // SIGINT
+          throw new TurnExitError(TURN_EXIT_SIGINT, 'interrupted')
         }
-        // SIGINT
-        throw new TurnExitError(TURN_EXIT_SIGINT, 'interrupted')
+        throw err
       }
-      throw err
+    }
+
+    // ── Determine exit code from final state ──
+    if (lastPhase === 'permission') {
+      await finalizeTurn(stackedAggregator, 'permission')
+    }
+
+    if (lastPhase === 'error') {
+      await finalizeTurn(stackedAggregator, 'error')
+    }
+
+    if (stackedAggregator && turnCompleted) {
+      await finalizeTurn(stackedAggregator, 'success')
     }
   } finally {
     if (stallTimer !== undefined) {
       clearTimeout(stallTimer)
     }
     process.removeListener('SIGINT', sigintHandler)
-  }
-
-  // ── Determine exit code from final state ──
-  if (lastPhase === 'permission') {
-    await finalizeTurn(stackedAggregator, 'permission')
-  }
-
-  if (lastPhase === 'error') {
-    await finalizeTurn(stackedAggregator, 'error')
-  }
-
-  if (stackedAggregator && turnCompleted) {
-    await finalizeTurn(stackedAggregator, 'success')
+    try {
+      await stackedAggregator?.close()
+    } finally {
+      await stackedSummarizer?.cleanup()
+    }
   }
 
   // exit 0 — success (implicit return)

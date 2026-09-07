@@ -1,7 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk'
-import type { HrcLifecycleEvent } from 'hrc-core'
+import type { HrcLifecycleEvent, HrcRuntimeIntent, HrcSubmissionResponse } from 'hrc-core'
+import type { HrcClient } from 'hrc-sdk'
 
-import { consulKvGet as defaultConsulKvGet } from './consul-secrets.js'
+import { resolveLaunchTarget } from './resolve-intent.js'
 import {
   isRecord,
   mechanicalSummary,
@@ -12,52 +12,65 @@ import {
 } from './stacked-shared.js'
 import { FlushReason, Phase, type Summarizer, type SummarizerInput } from './stacked-types.js'
 
-const MODEL = 'claude-haiku-4-5'
-// Dedicated, narrowly-scoped key for the stacked-summary feature only — a
-// restricted Anthropic key (haiku-tier, low limits) kept separate from the
-// broadly-shared cfg/dev/_global/llm/anthropic/api_key.
-const DEFAULT_CONSUL_KEY = 'cfg/dev/_global/hrcchat/stacked_summaries_api_key'
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_DIGEST_BYTES = 24_000
 const DEFAULT_MAX_EVENTS = 120
 const TEXT_PREVIEW_CHARS = 500
+const CLEANUP_REASON = 'stacked summarizer cleanup'
+const CLEANUP_SOURCE = 'hrc turn'
 
-type AnthropicLike = {
-  messages: {
-    create(request: unknown): Promise<{ content: Array<{ type: 'text'; text: string }> }>
-  }
+type SummaryTarget = {
+  sessionRef: string
+  scopeRef: string
+  runtimeIntent: HrcRuntimeIntent
+  parsedScopeJson: Record<string, unknown>
 }
 
+export type StackedSummaryClient = Pick<
+  HrcClient,
+  'ensureTarget' | 'invoke' | 'listRuntimes' | 'terminate' | 'dropContinuation'
+>
+
 export type StackedSummarizerOptions = {
-  apiKey?: string | undefined
-  consulKey?: string | undefined
-  consulKvGet?: ((key: string) => Promise<string | undefined>) | undefined
+  client: StackedSummaryClient
+  targetProjectId: string
+  observedAgentId: string
+  runId: string
   timeoutMs?: number | undefined
   maxDigestBytes?: number | undefined
   maxEvents?: number | undefined
-  createAnthropicClient?: ((apiKey: string) => AnthropicLike) | undefined
+  resolveTarget?: ((handle: string) => SummaryTarget) | undefined
   setTimeout?: ((callback: () => void, ms: number) => unknown) | undefined
   clearTimeout?: ((handle: unknown) => void) | undefined
   stderr?: Pick<NodeJS.WriteStream, 'write'> | undefined
 }
 
-const warnedCredentialSinks = new WeakSet<object>()
-
-export function createStackedSummarizer(options: StackedSummarizerOptions = {}): Summarizer {
-  return new StackedSummarizer(options)
+export interface StackedSeatSummarizer extends Summarizer {
+  cleanup(): Promise<void>
 }
 
-class StackedSummarizer implements Summarizer {
+export function createStackedSummarizer(options: StackedSummarizerOptions): StackedSeatSummarizer {
+  return new SeatStackedSummarizer(options)
+}
+
+class SeatStackedSummarizer implements StackedSeatSummarizer {
   private readonly options: StackedSummarizerOptions
   private readonly timeoutMs: number
   private readonly maxDigestBytes: number
   private readonly maxEvents: number
+  private readonly recursionGuarded: boolean
+  private target: SummaryTarget | undefined
+  private ensurePromise: Promise<void> | undefined
+  private hostSessionId: string | undefined
+  private readonly runtimeIds = new Set<string>()
+  private cleanupPromise: Promise<void> | undefined
 
   constructor(options: StackedSummarizerOptions) {
     this.options = options
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxDigestBytes = options.maxDigestBytes ?? DEFAULT_MAX_DIGEST_BYTES
     this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS
+    this.recursionGuarded = options.observedAgentId === 'summarizer'
   }
 
   async summarize(input: SummarizerInput): Promise<string> {
@@ -65,8 +78,7 @@ class StackedSummarizer implements Summarizer {
       input.phase === Phase.Final || input.flush === FlushReason.Final
         ? (input.wholeTurnEvents ?? input.events)
         : input.events
-    const apiKey = await this.resolveApiKey()
-    if (apiKey === undefined) {
+    if (this.recursionGuarded || events.length === 0) {
       return mechanicalSummary(events, input.phase)
     }
 
@@ -80,53 +92,131 @@ class StackedSummarizer implements Summarizer {
     })
 
     try {
-      const client = this.createClient(apiKey)
+      const target = this.resolveTarget()
+      await this.ensureSession(target)
+
+      // Live preflight on 2026-09-07 used the public `invoke` door against the
+      // max3 daemon and compared its keys with HrcSubmissionResponse. A virgin
+      // session returned 503 runtime_unavailable; `ensureTarget` minted only the
+      // session, after which invoke cold-born the runtime and returned the
+      // admitted response plus terminal.finalMessage. We use that two-step door
+      // to avoid spending a dummy summarizer turn through semanticTurnHandoff.
+      const invocation = this.options.client
+        .invoke({
+          target: target.sessionRef,
+          body: prompt,
+          origin: { principalRef: 'agent:summarizer' },
+          runtimeIntent: target.runtimeIntent,
+          wait: true,
+          turnPolicy: 'guarded',
+        })
+        .then((response) => {
+          this.captureInvocation(response)
+          return response
+        })
       const response = await withTimeout(
-        client.messages.create({
-          model: MODEL,
-          max_tokens: 128,
-          temperature: 0,
-          messages: [{ role: 'user', content: prompt }],
-        }),
+        invocation,
         this.timeoutMs,
         this.options.setTimeout ?? setTimeout,
         this.options.clearTimeout ??
           ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>))
       )
-      return extractText(response) ?? mechanicalSummary(events, input.phase)
+      if (response.admission !== 'admitted') {
+        return mechanicalSummary(events, input.phase)
+      }
+      const finalMessage = response.terminal?.finalMessage?.trim()
+      return finalMessage ? finalMessage : mechanicalSummary(events, input.phase)
     } catch {
       return mechanicalSummary(events, input.phase)
     }
   }
 
-  private async resolveApiKey(): Promise<string | undefined> {
-    if (this.options.apiKey !== undefined && this.options.apiKey.length > 0) {
-      return this.options.apiKey
-    }
-
-    const key = this.options.consulKey ?? DEFAULT_CONSUL_KEY
-    const kvGet = this.options.consulKvGet ?? defaultConsulKvGet
-    const apiKey = await kvGet(key)
-    if (apiKey === undefined) {
-      this.warnOnce(`hrc: stacked summaries disabled; Consul key unavailable: ${key}\n`)
-    }
-    return apiKey
+  cleanup(): Promise<void> {
+    this.cleanupPromise ??= this.cleanupOnce()
+    return this.cleanupPromise
   }
 
-  private createClient(apiKey: string): AnthropicLike {
-    if (this.options.createAnthropicClient) {
-      return this.options.createAnthropicClient(apiKey)
+  private resolveTarget(): SummaryTarget {
+    if (this.target !== undefined) {
+      return this.target
     }
-    return new Anthropic({ apiKey }) as AnthropicLike
+    const handle = `summarizer@${this.options.targetProjectId}:stacked/${this.options.runId.slice(0, 8)}`
+    if (this.options.resolveTarget) {
+      this.target = this.options.resolveTarget(handle)
+      return this.target
+    }
+    const resolved = resolveLaunchTarget(handle)
+    this.target = {
+      sessionRef: resolved.sessionRef,
+      scopeRef: resolved.resolved.scopeRef,
+      runtimeIntent: resolved.runtimeIntent,
+      parsedScopeJson: resolved.resolved.parsed as unknown as Record<string, unknown>,
+    }
+    return this.target
   }
 
-  private warnOnce(message: string): void {
-    const sink = this.options.stderr ?? process.stderr
-    if (warnedCredentialSinks.has(sink)) {
+  private ensureSession(target: SummaryTarget): Promise<void> {
+    this.ensurePromise ??= this.options.client
+      .ensureTarget({
+        sessionRef: target.sessionRef,
+        runtimeIntent: target.runtimeIntent,
+        parsedScopeJson: target.parsedScopeJson,
+      })
+      .then((ensured) => {
+        this.hostSessionId = ensured.activeHostSessionId
+        if (ensured.runtime?.runtimeId) {
+          this.runtimeIds.add(ensured.runtime.runtimeId)
+        }
+      })
+    return this.ensurePromise
+  }
+
+  private captureInvocation(response: HrcSubmissionResponse): void {
+    if ('hostSessionId' in response && typeof response.hostSessionId === 'string') {
+      this.hostSessionId = response.hostSessionId
+    }
+    if ('runtimeId' in response && typeof response.runtimeId === 'string') {
+      this.runtimeIds.add(response.runtimeId)
+    }
+  }
+
+  private async cleanupOnce(): Promise<void> {
+    if (this.recursionGuarded || this.target === undefined) {
       return
     }
-    warnedCredentialSinks.add(sink)
-    sink.write(message)
+
+    try {
+      await this.ensurePromise?.catch(() => undefined)
+      if (this.runtimeIds.size === 0) {
+        const runtimes = await this.options.client.listRuntimes({ scope: this.target.scopeRef })
+        for (const runtime of runtimes) {
+          this.runtimeIds.add(runtime.runtimeId)
+          this.hostSessionId ??= runtime.hostSessionId
+        }
+      }
+
+      if (this.runtimeIds.size > 0) {
+        for (const runtimeId of this.runtimeIds) {
+          await this.options.client.terminate(runtimeId, {
+            dropContinuation: true,
+            reason: CLEANUP_REASON,
+            source: CLEANUP_SOURCE,
+          })
+        }
+        return
+      }
+
+      if (this.hostSessionId !== undefined) {
+        await this.options.client.dropContinuation({
+          hostSessionId: this.hostSessionId,
+          reason: CLEANUP_REASON,
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const sink = this.options.stderr ?? process.stderr
+      sink.write(`hrc: stacked summarizer cleanup failed: ${message}\n`)
+    }
   }
 }
 
@@ -147,17 +237,7 @@ function withTimeout<T>(
   })
 }
 
-function extractText(response: { content: Array<{ type: 'text'; text: string }> }):
-  | string
-  | undefined {
-  const text = response.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text.trim())
-    .find((line) => line.length > 0)
-  return text
-}
-
-function buildPrompt(input: {
+export function buildPrompt(input: {
   events: HrcLifecycleEvent[]
   phase: string
   flush: string
@@ -165,10 +245,13 @@ function buildPrompt(input: {
   maxEvents: number
   maxDigestBytes: number
 }): string {
-  const digest = buildDigest(input.events, input.maxEvents)
   const windowLabel = formatWindow(input.windowMs)
-  const prefix = `Summarize what this agent did in the past ${windowLabel}. One sentence, present tense, concrete. Phase: ${input.phase}. Flush: ${input.flush}. Events:\n`
-  return truncateBytes(redactSecrets(`${prefix}${digest}`), input.maxDigestBytes)
+  const prefix = `window=${windowLabel} phase=${input.phase} flush=${input.flush}\n<events>\n`
+  const suffix = '\n</events>'
+  const wrapperBytes = new TextEncoder().encode(prefix + suffix).byteLength
+  const digest = redactSecrets(buildDigest(input.events, input.maxEvents))
+  const boundedDigest = truncateBytes(digest, Math.max(0, input.maxDigestBytes - wrapperBytes))
+  return `${prefix}${boundedDigest}${suffix}`
 }
 
 function buildDigest(events: HrcLifecycleEvent[], maxEvents: number): string {
