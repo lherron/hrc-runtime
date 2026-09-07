@@ -59,6 +59,10 @@ export type TurnOptions = {
   quiet?: boolean | undefined
 }
 
+export type TurnCommandDependencies = {
+  createStackedSummarizer?: typeof createStackedSummarizer
+}
+
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
 
 function isPendingSemanticTurnHandoff(
@@ -323,7 +327,8 @@ function assertProjectResolved(
 export async function cmdTurn(
   client: HrcClient,
   opts: TurnOptions,
-  positionals: string[]
+  positionals: string[],
+  dependencies: TurnCommandDependencies = {}
 ): Promise<void> {
   const { targetInput, body, bodyFromFile, bodyFromStdin } = readTurnBodyInput(opts, positionals)
   const responseFormat = parseResponseFormatOption(opts)
@@ -523,7 +528,8 @@ export async function cmdTurn(
   manager?.subscribe(handoff.sessionRef, resolved.parsed.projectId ?? '')
 
   if (stackedWindowMs !== undefined) {
-    stackedSummarizer = createStackedSummarizer({
+    const createSummarizer = dependencies.createStackedSummarizer ?? createStackedSummarizer
+    stackedSummarizer = createSummarizer({
       client,
       targetProjectId: resolved.parsed.projectId as string,
       observedAgentId: resolved.parsed.agentId,
