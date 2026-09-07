@@ -42,6 +42,7 @@ import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
 
 const LANDED_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 const REFUSED_TYPES = new Set([
+  'input.rejected',
   'submission.rejected',
   'submission.lost',
   'submission.expired',
@@ -149,8 +150,10 @@ export async function commitLanding(
     // presentation onto a discharged row, and forging one would be a worse
     // record than none.
     if (isDisposedBeforeLanding(error)) {
-      server.db.mailDelivery.clearIntent(intent.envelopeId)
-      server.db.mailDelivery.clearNonLandingStrikes(intent.envelopeId)
+      // The body landed after the envelope became terminal.  Preserve the
+      // intent as an inspectable terminal fence: deleting it would allow a
+      // sweep to inject a second body while the receipt is impossible.
+      server.db.mailDelivery.markTerminalEnvelope(intent.envelopeId, 'receipt_wrong_state')
       server.log('INFO', 'wrkq.kicker.disposed_before_landing', {
         targetSessionRef: intent.targetSessionRef,
         envelope: intent.envelopeId,
@@ -405,7 +408,7 @@ export async function refuseIntent(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent,
   reason: string,
-  now = Date.now()
+  _now = Date.now()
 ): Promise<'refused' | 'undeliverable'> {
   const runtimeId = intent.runtimeId
   if (runtimeId === undefined) {
@@ -415,23 +418,8 @@ export async function refuseIntent(
   }
 
   if (refusalFollowedAWrite(server, runtimeId, intent.submissionId)) {
-    if ((await chargeNonLandingOutcome(server, intent, runtimeId, reason)) === 'exhausted') {
-      return 'undeliverable'
-    }
-    clearRefusedIntent(server, intent, reason, { refusalClass: 'post_write' })
+    server.db.mailDelivery.markUncertain(intent.envelopeId, reason, 'post_write_refusal')
     return 'refused'
-  }
-
-  const openedAt = server.db.mailDelivery.openRefusalWindow(
-    intent.envelopeId,
-    runtimeId,
-    new Date(now).toISOString()
-  )
-  const openFor = now - Date.parse(openedAt)
-  if (Number.isFinite(openFor) && openFor >= KICKER_SUBMISSION_TTL_MS) {
-    if ((await chargeNonLandingOutcome(server, intent, runtimeId, reason)) === 'exhausted') {
-      return 'undeliverable'
-    }
   }
 
   if (
@@ -444,7 +432,7 @@ export async function refuseIntent(
     return 'refused'
   }
   clearRefusedIntent(server, intent, reason, {
-    refusalClass: 'transient',
+    refusalClass: 'not_written',
     retryInMs: nextDeliveryBackoffMs(server, runtimeId),
   })
   return 'refused'
@@ -474,7 +462,7 @@ export async function observeBrokerLanding(
   }
   if (!LANDED_TYPES.has(record.type) && !REFUSED_TYPES.has(record.type)) return
   const payload = parsePayload(record)
-  const submissionId = payload?.['submissionId']
+  const submissionId = payload?.['submissionId'] ?? payload?.['inputId']
   if (typeof submissionId !== 'string') return
   const intent = server.db.mailDelivery.getIntentBySubmissionId(submissionId)
   if (intent === undefined) return
@@ -488,5 +476,16 @@ export async function observeBrokerLanding(
     return
   }
   const reason = typeof payload?.['reason'] === 'string' ? payload['reason'] : record.type
+  // A refusal alone is not proof that the body was never written.  Producer
+  // rev2 emits this explicit correlation on `input.rejected`; older/partial
+  // streams remain safely uncertain rather than reopening the envelope.
+  if (payload?.['deliveryEvidence'] !== 'not_written') {
+    server.db.mailDelivery.markUncertain(
+      intent.envelopeId,
+      reason,
+      'refusal_without_no_write_proof'
+    )
+    return
+  }
   await refuseIntent(server, intent, reason)
 }

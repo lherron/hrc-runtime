@@ -60,6 +60,8 @@ export type MailInspectEvent = {
 export type MailInspectVerdictCode =
   | 'stranded'
   | 'stalled_delivery'
+  | 'uncertain_delivery'
+  | 'terminal_delivery_hold'
   | 'awaiting_landing'
   | 'reminder_armed'
   | 'reminder_delivered'
@@ -178,6 +180,20 @@ function buildTimeline(
         intent.runtimeId ?? '(none)'
       } submission=${intent.submissionId ?? '(pending)'} id=${intent.presentationId}`,
     })
+    if (intent.uncertainAt !== undefined) {
+      events.push({
+        at: intent.uncertainAt,
+        kind: 'delivery.uncertain',
+        detail: `${intent.uncertainCause ?? 'unknown'} evidence=${intent.lastEvidenceKind ?? 'unknown'}`,
+      })
+    }
+    if (intent.terminalEnvelopeAt !== undefined) {
+      events.push({
+        at: intent.terminalEnvelopeAt,
+        kind: 'delivery.terminal_hold',
+        detail: `${intent.terminalEnvelopeCause ?? 'unknown'} cleanup=${intent.cleanupOutcome ?? 'unattempted'}`,
+      })
+    }
   }
   for (const entry of presentations) {
     const row = entry.presentation
@@ -283,6 +299,22 @@ function verdictFor(
     }
   }
   if (intent !== undefined) {
+    if (intent.terminalEnvelopeAt !== undefined) {
+      return {
+        code: 'terminal_delivery_hold',
+        line: `terminal_delivery_hold: ${intent.terminalEnvelopeCause ?? 'terminal'}; cleanup=${
+          intent.cleanupOutcome ?? 'unattempted'
+        }; no receipt or reinjection`,
+      }
+    }
+    if (intent.uncertainAt !== undefined) {
+      return {
+        code: 'uncertain_delivery',
+        line: `uncertain_delivery: ${intent.uncertainCause ?? 'possible write'}; fence retained for ${
+          intent.submissionId ?? '(unidentified submission)'
+        }`,
+      }
+    }
     // A submission is admitted and no landing fact has arrived. Below the
     // threshold that is an ordinary in-flight delivery; past it, the evidence
     // is not coming and the reconcile will redeliver once at TTL.

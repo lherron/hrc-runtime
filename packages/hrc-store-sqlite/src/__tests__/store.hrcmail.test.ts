@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,6 +12,7 @@ import {
 
 import { HrcMailRepositoryError, openHrcDatabase } from '../index.js'
 import type { HrcDatabase } from '../index.js'
+import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const target = 'agent:cody:project:hrc-runtime:task:T-06810/lane:main'
 const sender: HrcMailActor = {
@@ -59,6 +61,66 @@ function send(
 }
 
 describe('HrcMailEnvelopeRepository', () => {
+  it('migrates an existing delivery-intent snapshot with uncertainty and terminal evidence', () => {
+    const snapshot = new Database(':memory:')
+    try {
+      snapshot.exec(`
+        CREATE TABLE hrcmail_delivery_intents (
+          envelope_id TEXT PRIMARY KEY,
+          target_session_ref TEXT NOT NULL,
+          door TEXT NOT NULL,
+          form TEXT NOT NULL,
+          presentation_id TEXT NOT NULL,
+          runtime_id TEXT,
+          submission_id TEXT,
+          host_session_id TEXT,
+          generation INTEGER,
+          delivery_outcome TEXT,
+          submitted_hrc_seq INTEGER NOT NULL,
+          submitted_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO hrcmail_delivery_intents VALUES (
+          'EN-snapshot', 'agent:test:project:hrc-runtime:primary', 'steer', 'full',
+          'present-snapshot', 'rt-snapshot', NULL, NULL, NULL, NULL, 1,
+          '2026-09-07T00:00:00.000Z', '2026-09-07T00:00:00.000Z'
+        );
+      `)
+      const migration = schemaMigrations.find(
+        (candidate) => candidate.id === '0061_hrcmail_uncertain_delivery'
+      )
+      expect(migration).toBeDefined()
+      migration?.apply(snapshot)
+      const columns = snapshot
+        .query<{ name: string }, []>('PRAGMA table_info(hrcmail_delivery_intents)')
+        .all()
+        .map((column) => column.name)
+      expect(columns).toEqual(
+        expect.arrayContaining([
+          'invocation_id',
+          'broker_after_seq',
+          'uncertain_cause',
+          'uncertain_at',
+          'last_evidence_kind',
+          'last_evidence_at',
+          'terminal_envelope_cause',
+          'terminal_envelope_at',
+          'cleanup_outcome',
+          'cleanup_at',
+        ])
+      )
+      expect(
+        snapshot
+          .query<{ envelope_id: string }, []>(
+            "SELECT envelope_id FROM hrcmail_delivery_intents WHERE envelope_id = 'EN-snapshot'"
+          )
+          .get()
+      ).toEqual({ envelope_id: 'EN-snapshot' })
+    } finally {
+      snapshot.close()
+    }
+  })
+
   it('persists one stable receipt for an idempotent ingress and refuses conflicting reuse', () => {
     const first = send('ingress-1')
     const retried = send('ingress-1')

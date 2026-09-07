@@ -2905,6 +2905,33 @@ const hrcmailRefusalWindowMigration: HrcMigration = {
   },
 }
 
+const hrcmailUncertainDeliveryMigration: HrcMigration = {
+  id: '0061_hrcmail_uncertain_delivery',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(hrcmail_delivery_intents)')
+        .all()
+        .map((row) => row.name)
+    )
+    for (const [name, type] of [
+      ['invocation_id', 'TEXT'],
+      ['broker_after_seq', 'INTEGER'],
+      ['uncertain_cause', 'TEXT'],
+      ['uncertain_at', 'TEXT'],
+      ['last_evidence_kind', 'TEXT'],
+      ['last_evidence_at', 'TEXT'],
+      ['terminal_envelope_cause', 'TEXT'],
+      ['terminal_envelope_at', 'TEXT'],
+      ['cleanup_outcome', 'TEXT'],
+      ['cleanup_at', 'TEXT'],
+    ] as const) {
+      if (!columns.has(name))
+        db.exec(`ALTER TABLE hrcmail_delivery_intents ADD COLUMN ${name} ${type}`)
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -2961,4 +2988,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailSteerFirstDeliveryMigration,
   hrcmailDeliveryExpiryMigration,
   hrcmailRefusalWindowMigration,
+  hrcmailUncertainDeliveryMigration,
 ]

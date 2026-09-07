@@ -1004,6 +1004,30 @@ export class BrokerInvocationEventRepository {
     }
   }
 
+  /** Explicit producer proof that an input did not reach a native write. */
+  findInputRejectionDeliveryEvidence(
+    runtimeId: string,
+    submissionId: string
+  ): 'not_written' | 'possibly_written' | undefined {
+    const row = this.db
+      .query<{ deliveryEvidence: string | null }, [string, string, string]>(
+        `SELECT json_extract(broker_event_json, '$.deliveryEvidence') AS deliveryEvidence
+           FROM broker_invocation_events
+          WHERE runtime_id = ?
+            AND type = 'input.rejected'
+            AND (
+              json_extract(broker_event_json, '$.inputId') = ? OR
+              json_extract(broker_event_json, '$.submissionId') = ?
+            )
+          ORDER BY time ASC, seq ASC
+          LIMIT 1`
+      )
+      .get(runtimeId, submissionId, submissionId)
+    return row?.deliveryEvidence === 'not_written' || row?.deliveryEvidence === 'possibly_written'
+      ? row.deliveryEvidence
+      : undefined
+  }
+
   /**
    * The ADMISSION LAYER a rejected submission was refused at (T-08094).
    *
@@ -1059,6 +1083,26 @@ export class BrokerInvocationEventRepository {
       )
       .get(runtimeId, envelopeId)
     return row?.submissionId ?? undefined
+  }
+
+  findUniqueSubmissionForEnvelopeAfter(input: {
+    runtimeId: string
+    invocationId: string
+    envelopeId: string
+    afterSeq: number
+  }): string | undefined {
+    const rows = this.db
+      .query<{ submissionId: string | null }, [string, string, number, string]>(
+        `SELECT DISTINCT json_extract(broker_event_json, '$.submissionId') AS submissionId
+         FROM broker_invocation_events WHERE runtime_id = ? AND invocation_id = ?
+           AND seq > ? AND type = 'admission.requested'
+           AND json_extract(broker_event_json, '$.origin.envelopeId') = ?`
+      )
+      .all(input.runtimeId, input.invocationId, input.afterSeq, input.envelopeId)
+    const ids = rows
+      .map((row) => row.submissionId)
+      .filter((id): id is string => typeof id === 'string')
+    return ids.length === 1 ? ids[0] : undefined
   }
 
   maxBrokerSeq(invocationId: string): number {

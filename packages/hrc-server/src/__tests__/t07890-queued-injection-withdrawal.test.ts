@@ -30,7 +30,6 @@ const TARGET = 'agent:kicker-proof:project:hrc-runtime:task:T-07890/lane:main'
 const SCOPE = 'agent:kicker-proof:project:hrc-runtime:task:T-07890'
 const RUNTIME_ID = 'rt-t07890-busy'
 const SUBMISSION_ID = 'sub-t07890-queued'
-const REASON = 'envelope_acked_before_injection'
 
 type WithdrawOutcome =
   | { outcome: 'withdrawn' }
@@ -127,17 +126,20 @@ describe('T-07890 — an acked envelope recalls the submission still in flight',
     return envelope.id
   }
 
-  it('withdraws the outstanding submission, clears the intent, and emits no wake', async () => {
+  it('withdraws the exact outstanding submission and retains a terminal fence', async () => {
     const envelopeId = seedOutstanding()
     ledger.ack(envelopeId)
 
     await runTail()
 
-    expect(withdrawCalls).toEqual([{ runtimeId: RUNTIME_ID, envelopeId, reason: REASON }])
-    // The intent is CLOSED, not merely forgotten: the body was recalled, so no
-    // landing is coming and the envelope must be actionable again if it ever
-    // returns to pending.
-    expect(db.mailDelivery.getIntent(envelopeId)).toBeUndefined()
+    expect(withdrawCalls).toEqual([
+      {
+        runtimeId: RUNTIME_ID,
+        submissionId: SUBMISSION_ID,
+        reason: 'envelope_terminal_before_injection',
+      },
+    ])
+    expect(db.mailDelivery.getIntent(envelopeId)?.terminalEnvelopeCause).toBe('envelope.acked')
     expect(wakes).toEqual([])
   })
 

@@ -34,13 +34,7 @@ import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 import type { MailKickerContext } from '../context.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
 import { isRuntimeTerminal } from '../terminal/runtime-status.js'
-import {
-  chargeNonLandingOutcome,
-  clearRefusedIntent,
-  commitLanding,
-  landLaunchIfStarted,
-  refuseIntent,
-} from './landing.js'
+import { commitLanding, landLaunchIfStarted, refuseIntent } from './landing.js'
 
 const LANDED_EVENT_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 
@@ -66,11 +60,21 @@ export async function reconcileIntent(
   intent: HrcMailDeliveryIntent,
   now = Date.now()
 ): Promise<IntentReconcileVerdict> {
+  // A terminal envelope remains an audit fence.  Late broker evidence may be
+  // inspected, but cannot create a receipt or re-open delivery.
+  if (intent.terminalEnvelopeAt !== undefined) return 'open'
   const runtimeId = intent.runtimeId
   if (runtimeId !== undefined) {
     const submissionId =
       intent.submissionId ??
-      server.db.brokerInvocationEvents.findSubmissionIdForEnvelope(runtimeId, intent.envelopeId)
+      (intent.invocationId !== undefined && intent.brokerAfterSeq !== undefined
+        ? server.db.brokerInvocationEvents.findUniqueSubmissionForEnvelopeAfter({
+            runtimeId,
+            invocationId: intent.invocationId,
+            envelopeId: intent.envelopeId,
+            afterSeq: intent.brokerAfterSeq,
+          })
+        : undefined)
     if (submissionId !== undefined) {
       if (intent.submissionId === undefined) {
         server.db.mailDelivery.attachAdmission(intent.envelopeId, { submissionId })
@@ -90,7 +94,32 @@ export async function reconcileIntent(
         return commit === 'committed' ? 'landed' : commit === 'disposed' ? 'disposed' : 'open'
       }
       if (disposition !== undefined) {
+        const evidence = server.db.brokerInvocationEvents.findInputRejectionDeliveryEvidence(
+          runtimeId,
+          submissionId
+        )
+        if (evidence !== 'not_written') {
+          server.db.mailDelivery.markUncertain(
+            intent.envelopeId,
+            disposition.reason ?? disposition.type,
+            evidence === 'possibly_written' ? 'possibly_written' : 'refusal_without_no_write_proof'
+          )
+          return 'open'
+        }
         return await refuseIntent(server, intent, disposition.reason ?? disposition.type)
+      }
+      const evidence = server.db.brokerInvocationEvents.findInputRejectionDeliveryEvidence(
+        runtimeId,
+        submissionId
+      )
+      if (evidence === 'not_written') return await refuseIntent(server, intent, 'input.rejected')
+      if (evidence === 'possibly_written') {
+        server.db.mailDelivery.markUncertain(
+          intent.envelopeId,
+          'input.rejected',
+          'possibly_written'
+        )
+        return 'open'
       }
     } else if (intent.door === 'launch') {
       // The launch-carried body has no submission by construction. Its landing
@@ -102,23 +131,19 @@ export async function reconcileIntent(
 
     const runtime = server.db.runtimes.getByRuntimeId(runtimeId) ?? undefined
     if (runtime === undefined || isRuntimeTerminal(runtime.status)) {
-      clearRefusedIntent(server, intent, 'runtime_terminated_before_landing')
-      return 'runtime_gone'
+      server.db.mailDelivery.markUncertain(
+        intent.envelopeId,
+        'runtime_terminated_before_landing',
+        'runtime_terminal'
+      )
+      return 'open'
     }
   }
 
   const age = now - Date.parse(intent.submittedAt)
   if (Number.isFinite(age) && age >= KICKER_SUBMISSION_TTL_MS) {
-    // A TTL expiry is ONE KIND of non-landing outcome, charged against the same
-    // per-(envelope, runtime) counter as a post-write refusal. Counting the two
-    // separately would let a seat that alternates between them evade both.
-    const runtimeId = intent.runtimeId
-    if (runtimeId !== undefined) {
-      const charge = await chargeNonLandingOutcome(server, intent, runtimeId, 'ttl_without_landing')
-      if (charge === 'exhausted') return 'undeliverable'
-    }
-    clearRefusedIntent(server, intent, 'ttl_without_landing')
-    return 'expired'
+    server.db.mailDelivery.markUncertain(intent.envelopeId, 'ttl_without_landing', 'ttl')
+    return 'open'
   }
   return 'open'
 }
@@ -145,7 +170,7 @@ export async function reconcileOpenIntents(
     open: 0,
   }
   const intents = server.db.mailDelivery
-    .listOpenIntents()
+    .listActiveOpenIntents()
     .filter(
       (intent) =>
         options.runtimeIds === undefined ||

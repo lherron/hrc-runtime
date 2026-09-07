@@ -16,7 +16,7 @@ import { obligationSummons } from '../ledger/types.js'
 import { queueFailureNotice } from '../terminal/failure-notices.js'
 import { runMailKickerColdStartCatchup } from './cold-start.js'
 
-const QUEUED_INJECTION_WITHDRAW_REASON = 'envelope_acked_before_injection'
+const QUEUED_INJECTION_WITHDRAW_REASON = 'envelope_terminal_before_injection'
 
 export async function withdrawAckedQueuedInjection(
   server: MailKickerContext,
@@ -45,12 +45,21 @@ export async function withdrawAckedQueuedInjection(
   const intent = server.db.mailDelivery.getIntent(envelopeId)
   if (intent === undefined || intent.runtimeId === undefined || intent.door === 'launch') return
 
-  const withdrawal = await server.broker.withdraw({
-    runtimeId: intent.runtimeId,
-    envelopeId,
-    reason: QUEUED_INJECTION_WITHDRAW_REASON,
-  })
+  // This is a broker-held queue cleanup only.  It is not a native harness
+  // removal and neither an error nor `not_held` proves that the body was not
+  // already applied.  Terminalize the durable fence before asking the broker.
+  server.db.mailDelivery.markTerminalEnvelope(envelopeId, event.eventType)
+  const withdrawal = await server.broker.withdraw(
+    intent.submissionId === undefined
+      ? { runtimeId: intent.runtimeId, envelopeId, reason: QUEUED_INJECTION_WITHDRAW_REASON }
+      : {
+          runtimeId: intent.runtimeId,
+          submissionId: intent.submissionId,
+          reason: QUEUED_INJECTION_WITHDRAW_REASON,
+        }
+  )
   if (!withdrawal.ok) {
+    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'unsupported_or_error')
     server.log('WARN', 'wrkq.kicker.queued_injection_withdraw_failed', {
       envelopeId,
       runtimeId: intent.runtimeId,
@@ -62,7 +71,7 @@ export async function withdrawAckedQueuedInjection(
   }
 
   if (withdrawal.response.outcome === 'withdrawn') {
-    server.db.mailDelivery.clearIntent(envelopeId)
+    server.db.mailDelivery.recordTerminalCleanup(envelopeId, 'withdrawn')
     server.log('INFO', 'wrkq.kicker.queued_injection_withdrawn', {
       envelopeId,
       runtimeId: intent.runtimeId,
@@ -73,9 +82,9 @@ export async function withdrawAckedQueuedInjection(
     return
   }
 
-  // `not_held` means the broker has already applied it: the landing is on its
-  // way and will write the receipt. Leaving the intent open is what keeps that
-  // idempotent.
+  // `not_held`/`unknown` are not a no-write proof.  The terminal intent stays
+  // held and a late landing is audit-only; no receipt or reinjection follows.
+  server.db.mailDelivery.recordTerminalCleanup(envelopeId, withdrawal.response.outcome)
   server.log('INFO', 'wrkq.kicker.queued_injection_withdraw_skipped', {
     envelopeId,
     runtimeId: intent.runtimeId,
@@ -124,6 +133,7 @@ export async function runWrkqLedgerTail(this: MailKickerContext): Promise<void> 
           continue
         }
         if (event.eventType === 'envelope.failed') {
+          await withdrawAckedQueuedInjection(this, event)
           await queueFailureNotice(this, event).catch((error: unknown) => {
             this.log('WARN', 'wrkq.kicker.failure_notice_queue_failed', {
               envelope: event.resourceId,

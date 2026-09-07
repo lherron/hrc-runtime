@@ -54,6 +54,16 @@ export type HrcMailDeliveryIntent = {
   generation?: number | undefined
   /** An outcome the door already decided, e.g. a hold whose authority was refused. */
   deliveryOutcome?: string | undefined
+  invocationId?: string | undefined
+  brokerAfterSeq?: number | undefined
+  uncertainCause?: string | undefined
+  uncertainAt?: string | undefined
+  lastEvidenceKind?: string | undefined
+  lastEvidenceAt?: string | undefined
+  terminalEnvelopeCause?: string | undefined
+  terminalEnvelopeAt?: string | undefined
+  cleanupOutcome?: string | undefined
+  cleanupAt?: string | undefined
   submittedHrcSeq: number
   submittedAt: string
   updatedAt: string
@@ -123,6 +133,16 @@ type IntentRow = {
   host_session_id: string | null
   generation: number | null
   delivery_outcome: string | null
+  invocation_id: string | null
+  broker_after_seq: number | null
+  uncertain_cause: string | null
+  uncertain_at: string | null
+  last_evidence_kind: string | null
+  last_evidence_at: string | null
+  terminal_envelope_cause: string | null
+  terminal_envelope_at: string | null
+  cleanup_outcome: string | null
+  cleanup_at: string | null
   submitted_hrc_seq: number
   submitted_at: string
   updated_at: string
@@ -168,7 +188,9 @@ type FailureNoticeRow = {
 const INTENT_COLUMNS = `
   envelope_id, target_session_ref, door, form, presentation_id, runtime_id,
   submission_id, host_session_id, generation, delivery_outcome,
-  submitted_hrc_seq, submitted_at, updated_at
+  submitted_hrc_seq, submitted_at, updated_at, invocation_id, broker_after_seq,
+  uncertain_cause, uncertain_at, last_evidence_kind, last_evidence_at,
+  terminal_envelope_cause, terminal_envelope_at, cleanup_outcome, cleanup_at
 `
 
 const PRESENTATION_COLUMNS = `
@@ -190,6 +212,18 @@ function mapIntent(row: IntentRow): HrcMailDeliveryIntent {
     ...(row.host_session_id === null ? {} : { hostSessionId: row.host_session_id }),
     ...(row.generation === null ? {} : { generation: row.generation }),
     ...(row.delivery_outcome === null ? {} : { deliveryOutcome: row.delivery_outcome }),
+    ...(row.invocation_id === null ? {} : { invocationId: row.invocation_id }),
+    ...(row.broker_after_seq === null ? {} : { brokerAfterSeq: row.broker_after_seq }),
+    ...(row.uncertain_cause === null ? {} : { uncertainCause: row.uncertain_cause }),
+    ...(row.uncertain_at === null ? {} : { uncertainAt: row.uncertain_at }),
+    ...(row.last_evidence_kind === null ? {} : { lastEvidenceKind: row.last_evidence_kind }),
+    ...(row.last_evidence_at === null ? {} : { lastEvidenceAt: row.last_evidence_at }),
+    ...(row.terminal_envelope_cause === null
+      ? {}
+      : { terminalEnvelopeCause: row.terminal_envelope_cause }),
+    ...(row.terminal_envelope_at === null ? {} : { terminalEnvelopeAt: row.terminal_envelope_at }),
+    ...(row.cleanup_outcome === null ? {} : { cleanupOutcome: row.cleanup_outcome }),
+    ...(row.cleanup_at === null ? {} : { cleanupAt: row.cleanup_at }),
     submittedHrcSeq: row.submitted_hrc_seq,
     submittedAt: row.submitted_at,
     updatedAt: row.updated_at,
@@ -271,6 +305,8 @@ export class HrcMailDeliveryRepository {
     hostSessionId?: string | undefined
     generation?: number | undefined
     deliveryOutcome?: string | undefined
+    invocationId?: string | undefined
+    brokerAfterSeq?: number | undefined
     submittedHrcSeq: number
   }): HrcMailDeliveryIntent | undefined {
     const now = new Date().toISOString()
@@ -279,8 +315,8 @@ export class HrcMailDeliveryRepository {
         `INSERT OR IGNORE INTO hrcmail_delivery_intents (
            envelope_id, target_session_ref, door, form, presentation_id, runtime_id,
            submission_id, host_session_id, generation, delivery_outcome,
-           submitted_hrc_seq, submitted_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`
+           submitted_hrc_seq, submitted_at, updated_at, invocation_id, broker_after_seq
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.envelopeId,
@@ -294,7 +330,9 @@ export class HrcMailDeliveryRepository {
         input.deliveryOutcome ?? null,
         input.submittedHrcSeq,
         now,
-        now
+        now,
+        input.invocationId ?? null,
+        input.brokerAfterSeq ?? null
       ).changes
     return changes > 0 ? this.getIntent(input.envelopeId) : undefined
   }
@@ -369,6 +407,53 @@ export class HrcMailDeliveryRepository {
     return rows.map(mapIntent)
   }
 
+  /** An ambiguous/native-held or terminal envelope is a fence, never a wake candidate. */
+  listActiveOpenIntents(targetSessionRef?: string): HrcMailDeliveryIntent[] {
+    return this.listOpenIntents(targetSessionRef).filter(
+      (intent) => intent.terminalEnvelopeAt === undefined
+    )
+  }
+
+  markUncertain(
+    envelopeId: string,
+    cause: string,
+    evidenceKind?: string
+  ): HrcMailDeliveryIntent | undefined {
+    this.db
+      .query(
+        'UPDATE hrcmail_delivery_intents SET uncertain_cause = ?, uncertain_at = COALESCE(uncertain_at, ?), last_evidence_kind = COALESCE(?, last_evidence_kind), last_evidence_at = ?, updated_at = ? WHERE envelope_id = ?'
+      )
+      .run(
+        cause,
+        new Date().toISOString(),
+        evidenceKind ?? null,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        envelopeId
+      )
+    return this.getIntent(envelopeId)
+  }
+
+  markTerminalEnvelope(envelopeId: string, cause: string): HrcMailDeliveryIntent | undefined {
+    const now = new Date().toISOString()
+    this.db
+      .query(
+        'UPDATE hrcmail_delivery_intents SET terminal_envelope_cause = ?, terminal_envelope_at = COALESCE(terminal_envelope_at, ?), updated_at = ? WHERE envelope_id = ?'
+      )
+      .run(cause, now, now, envelopeId)
+    return this.getIntent(envelopeId)
+  }
+
+  recordTerminalCleanup(envelopeId: string, outcome: string): HrcMailDeliveryIntent | undefined {
+    const now = new Date().toISOString()
+    this.db
+      .query(
+        'UPDATE hrcmail_delivery_intents SET cleanup_outcome = COALESCE(cleanup_outcome, ?), cleanup_at = COALESCE(cleanup_at, ?), updated_at = ? WHERE envelope_id = ?'
+      )
+      .run(outcome, now, now, envelopeId)
+    return this.getIntent(envelopeId)
+  }
+
   getIntentBySubmissionId(submissionId: string): HrcMailDeliveryIntent | undefined {
     const row = this.db
       .query<IntentRow, [string]>(
@@ -395,6 +480,7 @@ export class HrcMailDeliveryRepository {
     return this.db
       .query<{ target_session_ref: string }, []>(
         `SELECT DISTINCT target_session_ref FROM hrcmail_delivery_intents
+          WHERE terminal_envelope_at IS NULL
           ORDER BY target_session_ref ASC`
       )
       .all()
@@ -406,7 +492,7 @@ export class HrcMailDeliveryRepository {
     return this.db
       .query<IntentRow, [string]>(
         `SELECT ${INTENT_COLUMNS} FROM hrcmail_delivery_intents
-          WHERE submitted_at <= ?
+          WHERE submitted_at <= ? AND terminal_envelope_at IS NULL
           ORDER BY submitted_at ASC, envelope_id ASC`
       )
       .all(before)

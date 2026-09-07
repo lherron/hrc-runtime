@@ -26,7 +26,7 @@ import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../interna
 import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import type { PresentableEnvelope } from '../ledger/presentation.js'
 import { presentationRuntimeIdFor } from './authority.js'
-import { landLaunchIfStarted, nextDeliveryBackoffMs } from './landing.js'
+import { landLaunchIfStarted } from './landing.js'
 import type { ActionableEnvelope } from './presentation.js'
 import { actionableDirectives, senderGenerationFor } from './presentation.js'
 import type { ObservedBrokerSeat } from './seat.js'
@@ -174,6 +174,8 @@ export async function deliverToSeat(
   }
 
   const presentationId = `present-${randomUUID()}`
+  const runtime = runtimeId === undefined ? undefined : server.db.runtimes.getByRuntimeId(runtimeId)
+  const invocationId = runtime?.activeInvocationId
   const intent = server.db.mailDelivery.openIntent({
     envelopeId: item.envelope.id,
     targetSessionRef,
@@ -185,6 +187,12 @@ export async function deliverToSeat(
     generation: session.generation,
     ...(deliveryOutcome === undefined ? {} : { deliveryOutcome }),
     submittedHrcSeq: server.db.hrcEvents.maxHrcSeq(),
+    ...(invocationId === undefined
+      ? {}
+      : {
+          invocationId,
+          brokerAfterSeq: server.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
+        }),
   })
   if (intent === undefined) return 'skipped'
 
@@ -212,34 +220,22 @@ export async function deliverToSeat(
       submissionOrigin: originFor(item),
     })
   } catch (error) {
-    // Nothing honest can be claimed. The intent is cleared so the envelope is
-    // actionable again on the next pass; it was never presented.
-    //
-    // PACED, on the same per-runtime backoff every other refusal uses. A door
-    // that throws is a refusal about the moment — a daemon draining for restart
-    // answers this way — and an unpaced retry span five submissions inside one
-    // drain window (chief, 2026-09-06).
-    server.db.mailDelivery.clearIntent(item.envelope.id)
-    const retryInMs = runtimeId === undefined ? undefined : nextDeliveryBackoffMs(server, runtimeId)
+    // A thrown RPC is not positive proof that the broker did not write.  Keep
+    // the pre-minted intent as the no-second-body fence; a later receipt may
+    // still arrive for this exact presentation.
+    server.db.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
     server.log('WARN', 'wrkq.kicker.delivery_failed', {
       targetSessionRef,
       wakeReason,
       envelope: item.envelope.id,
       door,
-      ...(retryInMs === undefined ? {} : { retryInMs }),
       error: errorText(error),
     })
-    if (retryInMs !== undefined) {
-      const timer = setTimeout(() => {
-        if (!server.stopping) server.wake(targetSessionRef, 'insert')
-      }, retryInMs)
-      timer.unref?.()
-    }
     return 'refused'
   }
 
   const submissionId = body.submissionId ?? body.inputId
-  if (body.admission === 'rejected' || submissionId === undefined) {
+  if (body.admission === 'rejected') {
     server.db.mailDelivery.clearIntent(item.envelope.id)
     server.log('WARN', 'wrkq.kicker.landing_refused', {
       targetSessionRef,
@@ -250,6 +246,14 @@ export async function deliverToSeat(
       phase: 'admission',
     })
     return 'refused'
+  }
+  if (submissionId === undefined) {
+    server.db.mailDelivery.markUncertain(
+      item.envelope.id,
+      'missing_submission_identity',
+      'admission_response'
+    )
+    return 'submitted'
   }
 
   server.db.mailDelivery.attachAdmission(item.envelope.id, {
@@ -379,7 +383,9 @@ export async function deliverByColdBirth(
       }
     )
   } catch (error) {
-    server.db.mailDelivery.clearIntent(item.envelope.id)
+    // The invoke/launch RPC may have reached the provider before its response
+    // was lost. It is an uncertain delivery, never a new birth opportunity.
+    server.db.mailDelivery.markUncertain(item.envelope.id, 'dispatch_error', 'dispatch_error')
     throw error
   }
 

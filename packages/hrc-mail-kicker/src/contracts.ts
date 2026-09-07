@@ -33,11 +33,11 @@ export type KickerRpcResult<T> =
 
 export type KickerBrokerPort = {
   seatProbe(runtimeId: string): Promise<KickerRpcResult<SeatProbeResponse>>
-  withdraw(input: {
-    runtimeId: string
-    envelopeId: string
-    reason: string
-  }): Promise<KickerRpcResult<SubmissionWithdrawResponse>>
+  withdraw(
+    input:
+      | { runtimeId: string; submissionId: string; reason: string }
+      | { runtimeId: string; envelopeId: string; reason: string }
+  ): Promise<KickerRpcResult<SubmissionWithdrawResponse>>
 }
 
 export type KickerDispatchOptions = {

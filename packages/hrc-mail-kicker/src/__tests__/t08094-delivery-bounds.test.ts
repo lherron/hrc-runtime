@@ -8,7 +8,7 @@ import { reconcileOpenIntents } from '../drive/reconcile.js'
 import type { ObservedBrokerSeat } from '../drive/seat.js'
 import { KICKER_SUBMISSION_TTL_MS } from '../internal.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
-import type { FakeLedger, Recorded, T08094Harness } from './t08094-harness.js'
+import type { FakeLedger, T08094Harness } from './t08094-harness.js'
 import {
   RUNTIME_ID as RUNTIME,
   TARGET_REF as TARGET,
@@ -37,12 +37,11 @@ import {
 let harness: T08094Harness
 let db: HrcDatabase
 let ledger: FakeLedger
-let logs: Recorded[]
 let context: MailKickerContext
 
 beforeEach(async () => {
   harness = await createT08094Harness()
-  ;({ db, ledger, logs, context } = harness)
+  ;({ db, ledger, context } = harness)
 })
 
 afterEach(async () => {
@@ -60,31 +59,21 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
    * retrying it every TTL forever tells the sender nothing while the envelope
    * sits pending — the observed case ran over twelve hours that way.
    */
-  it('fails the envelope undeliverable after three TTL expiries on one runtime', async () => {
+  it('holds the envelope after a TTL with no landing proof', async () => {
     const envelope = ledger.say()
     const age = () =>
       db.sqlite
         .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
         .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
 
-    for (const strike of [1, 2]) {
-      await deliverOne(seatIn('turn-active'), envelope)
-      age()
-      expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
-        expired: 1,
-      })
-      expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(strike)
-      // Still pending and still deliverable: two strikes is not a verdict.
-      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-      expect(ledger.failRequests).toEqual([])
-    }
-
     await deliverOne(seatIn('turn-active'), envelope)
     age()
-    await reconcileOpenIntents(context, { reason: 'periodic' })
-    expect(ledger.failRequests).toEqual([{ envelope: envelope.id, reason: 'undeliverable' }])
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
-    expect(logs.some((e) => e.event === 'wrkq.kicker.non_landing_strikes_exhausted')).toBe(true)
+    expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({ open: 1 })
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
+    expect(ledger.failRequests).toEqual([])
+    expect(
+      (await readActionableEnvelopes(context, TARGET)).map((item) => item.envelope.id)
+    ).not.toContain(envelope.id)
   })
 
   /**
@@ -113,28 +102,12 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
     )
   }
 
-  it('fails the envelope undeliverable after three merged-into-foreign-turn refusals', async () => {
+  it('holds the envelope after a post-write refusal', async () => {
     const envelope = ledger.say()
-
-    for (const strike of [1, 2]) {
-      await deliverOne(seatIn('turn-active'), envelope)
-      await refuseAfterTheWriteLanded('merged-into-foreign-turn')
-      expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(strike)
-      // Two strikes is not a verdict: still pending, still deliverable.
-      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
-      expect(ledger.failRequests).toEqual([])
-      const actionable = await readActionableEnvelopes(context, TARGET)
-      expect(actionable.map((item) => item.envelope.id)).toContain(envelope.id)
-    }
-
     await deliverOne(seatIn('turn-active'), envelope)
     await refuseAfterTheWriteLanded('merged-into-foreign-turn')
-
-    expect(ledger.failRequests).toEqual([{ envelope: envelope.id, reason: 'undeliverable' }])
-    expect(logs.some((e) => e.event === 'wrkq.kicker.non_landing_strikes_exhausted')).toBe(true)
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
-    // NO FOURTH DELIVERY. This is the whole point of the bound: the loop stops
-    // rather than showing the reader the same body once a turn forever.
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('merged-into-foreign-turn')
+    expect(ledger.failRequests).toEqual([])
     const actionable = await readActionableEnvelopes(context, TARGET)
     expect(actionable.map((item) => item.envelope.id)).not.toContain(envelope.id)
   })
@@ -154,7 +127,11 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
       await deliverOne(seatIn('turn-active'), envelope)
       await observeBrokerLanding(
         context,
-        brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'pane_not_quiescent' })
+        brokerRecord('input.rejected', {
+          inputId: 'sub-1',
+          reason: 'pane_not_quiescent',
+          deliveryEvidence: 'not_written',
+        })
       )
       expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(0)
     }
@@ -171,55 +148,51 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
    * exactly one strike, so both kinds of unlandable seat finish in three
    * windows.
    */
-  it('strikes once for a run of pre-write refusals that spans one TTL window', async () => {
+  it('permits a retry only after a pre-write refusal', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
     await observeBrokerLanding(
       context,
-      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'pane_not_quiescent' })
+      brokerRecord('input.rejected', {
+        inputId: 'sub-1',
+        reason: 'pane_not_quiescent',
+        deliveryEvidence: 'not_written',
+      })
     )
     expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(0)
-    expect(db.mailDelivery.refusalWindowOpenedAt(envelope.id, RUNTIME)).toBeDefined()
-
-    // Age the OPEN window rather than the intent: what is being measured is how
-    // long this seat has been refusing without ever writing.
-    db.sqlite
-      .query(
-        'UPDATE hrcmail_delivery_expiries SET refusal_window_opened_at = ? WHERE envelope_id = ?'
-      )
-      .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
-
-    await deliverOne(seatIn('turn-active'), envelope)
-    await observeBrokerLanding(
-      context,
-      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'pane_not_quiescent' })
-    )
-    expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(1)
-    // The window closed with the strike, so the next run is measured afresh
-    // instead of striking on every subsequent refusal.
-    expect(db.mailDelivery.refusalWindowOpenedAt(envelope.id, RUNTIME)).toBeUndefined()
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(
+      (await readActionableEnvelopes(context, TARGET)).map((item) => item.envelope.id)
+    ).toContain(envelope.id)
     expect(ledger.failRequests).toEqual([])
   })
 
-  it('resets the strike count on a NEW runtime, and on a successful landing', async () => {
+  it('retains the fence when a rejection has no correlated no-write proof', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active'), envelope)
+    await observeBrokerLanding(
+      context,
+      brokerRecord('input.rejected', { inputId: 'sub-1', reason: 'transport_lost' })
+    )
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('transport_lost')
+    expect(
+      (await readActionableEnvelopes(context, TARGET)).map((item) => item.envelope.id)
+    ).not.toContain(envelope.id)
+  })
+
+  it('keeps uncertainty scoped to the original envelope and runtime', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
     db.sqlite
       .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
       .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
     await reconcileOpenIntents(context, { reason: 'periodic' })
-    expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(1)
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
 
     // A different runtime is a different row: rotation and restart give the next
     // seat its full allowance without anyone having to remember a reset rule.
     expect(db.mailDelivery.nonLandingStrikes(envelope.id, 'rt-rotated')).toBe(0)
 
-    // And a landing means the seat CAN take deliveries, so the count goes.
-    await deliverOne(seatIn('turn-active'), envelope)
-    await observeBrokerLanding(
-      context,
-      brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
-    )
     expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(0)
   })
 })

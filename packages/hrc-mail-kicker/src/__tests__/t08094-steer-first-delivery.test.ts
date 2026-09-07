@@ -161,6 +161,63 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
 })
 
 describe('D2 — write-ahead, and presentation only on a landing fact', () => {
+  it('recovers only one admission after the intent cursor for its invocation', () => {
+    const envelope = ledger.say()
+    const now = new Date().toISOString()
+    db.mailDelivery.openIntent({
+      envelopeId: envelope.id,
+      targetSessionRef: TARGET,
+      door: 'steer',
+      form: 'full',
+      presentationId: 'present-recovery',
+      runtimeId: RUNTIME,
+      invocationId: 'inv-recovery',
+      brokerAfterSeq: 10,
+      submittedHrcSeq: 0,
+    })
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-recovery',
+      runtimeId: RUNTIME,
+      seq: 10,
+      time: now,
+      type: 'admission.requested',
+      payload: { submissionId: 'before', origin: { envelopeId: envelope.id } },
+    })
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-recovery',
+      runtimeId: RUNTIME,
+      seq: 11,
+      time: now,
+      type: 'admission.requested',
+      payload: { submissionId: 'only-after', origin: { envelopeId: envelope.id } },
+    })
+    expect(
+      db.brokerInvocationEvents.findUniqueSubmissionForEnvelopeAfter({
+        runtimeId: RUNTIME,
+        invocationId: 'inv-recovery',
+        envelopeId: envelope.id,
+        afterSeq: 10,
+      })
+    ).toBe('only-after')
+
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-recovery',
+      runtimeId: RUNTIME,
+      seq: 12,
+      time: now,
+      type: 'admission.requested',
+      payload: { submissionId: 'ambiguous-after', origin: { envelopeId: envelope.id } },
+    })
+    expect(
+      db.brokerInvocationEvents.findUniqueSubmissionForEnvelopeAfter({
+        runtimeId: RUNTIME,
+        invocationId: 'inv-recovery',
+        envelopeId: envelope.id,
+        afterSeq: 10,
+      })
+    ).toBeUndefined()
+  })
+
   it('commits the intent BEFORE the door and writes no receipt on admission', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
@@ -234,7 +291,11 @@ describe('D2 — a refused submission is not a failed envelope', () => {
 
     await observeBrokerLanding(
       context,
-      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: 'steer_not_supported' })
+      brokerRecord('input.rejected', {
+        inputId: 'sub-1',
+        reason: 'steer_not_supported',
+        deliveryEvidence: 'not_written',
+      })
     )
 
     expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
@@ -278,7 +339,11 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     }
     await observeBrokerLanding(
       context,
-      brokerRecord('submission.rejected', { submissionId: 'sub-1', reason: input.reason })
+      brokerRecord('input.rejected', {
+        inputId: 'sub-1',
+        reason: input.reason,
+        deliveryEvidence: 'not_written',
+      })
     )
     // The envelope must be deliverable again either way; what differs is the
     // DOOR the next pass takes.
@@ -295,14 +360,14 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
     expect(context.mailKickerDeliveryBackoff.get(RUNTIME)).toBe(2_000)
     const refused = logs.find((entry) => entry.event === 'wrkq.kicker.landing_refused')
-    expect(refused?.detail).toMatchObject({ refusalClass: 'transient', retryInMs: 2_000 })
+    expect(refused?.detail).toMatchObject({ refusalClass: 'not_written', retryInMs: 2_000 })
 
     // The door that will work in a moment is the right door.
     expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
     expect(dispatches[0]?.submissionDoor).toBe('steer')
   })
 
-  it('paces a door that THREW on the same backoff, so no refusal path is unpaced', async () => {
+  it('retains a door that THREW as an uncertain delivery fence', async () => {
     const envelope = ledger.say()
     // Swap the door on the HARNESS, not on a local copy: `deliverOne` drives
     // the harness's context, so a shadowed local would leave the real door in
@@ -314,11 +379,10 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       },
     }
     expect(await deliverOne(seatIn('turn-active'), envelope)).toBe('refused')
-    // The drain window spun five submissions in a second without this.
-    expect(context.mailKickerDeliveryBackoff.get(RUNTIME)).toBe(2_000)
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(context.mailKickerDeliveryBackoff.has(RUNTIME)).toBe(false)
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('dispatch_error')
     const failed = logs.find((entry) => entry.event === 'wrkq.kicker.delivery_failed')
-    expect(failed?.detail).toMatchObject({ retryInMs: 2_000 })
+    expect(failed?.detail).toMatchObject({ envelope: envelope.id })
     harness.context = context
   })
 
@@ -384,7 +448,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
    * happened and the obligation is already discharged, so there is nothing to
    * record and nothing to retry.
    */
-  it('closes the intent when the envelope was discharged before the landing committed', async () => {
+  it('keeps a terminal audit fence when the envelope was discharged before the landing committed', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
 
@@ -399,7 +463,9 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       brokerRecord('submission.absorbed', { submissionId: 'sub-1', turnId: 'turn-1' })
     )
 
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(db.mailDelivery.getIntent(envelope.id)?.terminalEnvelopeCause).toBe(
+      'receipt_wrong_state'
+    )
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toEqual([])
     const line = logs.find((entry) => entry.event === 'wrkq.kicker.disposed_before_landing')
     expect(line?.level).toBe('INFO')
@@ -461,7 +527,7 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
 
-  it('clears an intent whose landing never arrives, after the TTL', async () => {
+  it('holds an intent whose landing never arrives, after the TTL', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
 
@@ -471,19 +537,22 @@ describe('D2 — a refused submission is not a failed envelope', () => {
       .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
       .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
     expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
-      expired: 1,
+      open: 1,
     })
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
   })
-  it('clears an intent bound to a runtime that terminated before landing', async () => {
+  it('holds an intent bound to a runtime that terminated before landing', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
     db.runtimes.updateStatus(RUNTIME, 'terminated', new Date().toISOString())
 
     expect(await reconcileOpenIntents(context, { reason: 'runtime_terminated' })).toMatchObject({
-      runtime_gone: 1,
+      open: 1,
     })
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe(
+      'runtime_terminated_before_landing'
+    )
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
     expect(ledger.failRequests).toEqual([])
   })
