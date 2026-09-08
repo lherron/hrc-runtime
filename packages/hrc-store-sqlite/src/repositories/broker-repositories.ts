@@ -471,7 +471,7 @@ export type BrokerProjectionDisposition = {
   invocationId: string
   seq: number
   envelopeHash: string
-  disposition: 'applied' | 'skipped_fenced'
+  disposition: 'applied' | 'skipped_fenced' | 'skipped_duplicate'
   createdAt: string
 }
 
@@ -1122,7 +1122,7 @@ export class BrokerInvocationEventRepository {
           invocation_id: string
           seq: number
           envelope_hash: string
-          disposition: 'applied' | 'skipped_fenced'
+          disposition: 'applied' | 'skipped_fenced' | 'skipped_duplicate'
           created_at: string
         },
         [string, number]

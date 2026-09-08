@@ -77,6 +77,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
+import { shouldSuppressDesktopDuplicate } from '../desktop/duplicate-suppression'
 import {
   disarmFirstTurnWatch,
   disarmFirstTurnWatchOnContinuationCleared,
@@ -518,6 +519,47 @@ export class BrokerEventMapper {
         now
       )
       return { idempotent: true, brokerEvent, events: [], lifecycleEvents: [] }
+    }
+
+    // T-08294 — a REPLACED desktop observer replays the whole historical prefix
+    // from byte zero, because only the driver knows what normalization it is
+    // still holding and therefore where it is safe to resume. HRC is the side
+    // that must refuse to project what it already committed; without this,
+    // recovery re-presents the entire conversation. Mirrors the fenced branch
+    // exactly: durable row, recorded disposition, cursor advanced — the event is
+    // consumed and acknowledged, just not projected, so no HRC state moves, no
+    // lifecycle event is emitted and no mail receipt is minted.
+    if (
+      shouldSuppressDesktopDuplicate({
+        db,
+        lifecycleOwner: runtime.runtimeStateJson?.['lifecycleOwner'],
+        brokerDriver: invocation.brokerDriver,
+        hostSessionId: runtime.hostSessionId,
+        invocationId: String(envelope.invocationId),
+        envelopeJson: brokerEvent.brokerEnvelopeJson,
+      })
+    ) {
+      if (appended !== undefined) {
+        db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
+          // Recorded, not dropped: with two successive replacements a set built
+          // from the previous invocation's APPLIED rows alone would forget what
+          // that invocation suppressed, and the third observer would re-admit it.
+          projectionStatus: 'duplicate',
+          projectionError: 'already committed by an earlier desktop observer',
+        })
+      }
+      db.brokerInvocationEvents.recordProjectionDisposition({
+        invocationId: String(envelope.invocationId),
+        seq: envelope.seq,
+        envelopeHash: projectionEnvelopeHash,
+        disposition: 'skipped_duplicate',
+        createdAt: now,
+      })
+      db.brokerInvocationEvents.advanceContiguousProjectionCursor(
+        String(envelope.invocationId),
+        now
+      )
+      return { idempotent: false, brokerEvent, events: [], lifecycleEvents: [] }
     }
 
     const fencedRun = ctx.runId !== undefined ? db.runs.getByRunId(ctx.runId) : null
