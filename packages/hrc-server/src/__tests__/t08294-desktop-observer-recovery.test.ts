@@ -395,22 +395,29 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
     const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
     expect(boundary?.empty).toBe(false)
     expect(boundary?.sourceEpoch).toBe('ep-fixture')
-    // raw_2, NOT raw_3: the uncommitted record is beyond the boundary.
-    expect(boundary?.startRecord).toMatchObject({
+    // raw_2, NOT raw_3: raw_3 was captured but never projected, so it is not
+    // something HRC committed — and an uncommitted event is exactly what
+    // recovery must re-deliver.
+    expect(boundary?.furthestCommittedRecord).toMatchObject({
       rawRecordId: 'raw_2',
       byteOffset: 500,
       line: 2,
       rawSha256: 'sha-raw_2',
-      chosenBy: 'furthest-applied',
     })
     expect(boundary?.appliedThroughSeq).toBe(3)
-    expect(boundary?.committedProjections.map((p) => p.itemId)).toEqual(['msg-a', 'usage-a'])
+    // The dedupe set is EVERY committed projection, including raw_1's, because
+    // the driver may restart earlier than anything HRC knows about.
+    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual([
+      'raw_1',
+      'raw_2',
+      'raw_2',
+    ])
   })
 
   it('reports an EMPTY boundary when nothing was committed', () => {
     const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
     expect(boundary?.empty).toBe(true)
-    expect(boundary?.startRecord).toBeUndefined()
+    expect(boundary?.furthestCommittedRecord).toBeUndefined()
     expect(boundary?.appliedThroughSeq).toBe(0)
   })
 
@@ -438,7 +445,7 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
     expect(specs[0]?.['nativeAttemptStorePath']).toContain('native-attempts.db')
     expect(specs[0]?.['recoveryBoundary']).toMatchObject({
       sourceEpoch: 'ep-fixture',
-      startRecord: { rawRecordId: 'raw_1', byteOffset: 120 },
+      furthestCommittedRecord: { rawRecordId: 'raw_1', byteOffset: 120 },
       empty: false,
     })
   })
@@ -451,14 +458,7 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
   })
 })
 
-describe('delayed, out-of-order normalization', () => {
-  /**
-   * codex-desktop can hold an AgentMessage carrying an EARLIER record's
-   * provenance and emit it when `task_complete` flushes. So a LATER record is
-   * applied while an EARLIER one is still pending, and a boundary taken from the
-   * furthest applied cursor would declare that earlier record published and lose
-   * its projection permanently. Raised by Cody on the T-08295 seam.
-   */
+describe('delayed normalization — including what HRC cannot see', () => {
   function append(input: {
     seq: number
     rawRecordId: string
@@ -492,36 +492,56 @@ describe('delayed, out-of-order normalization', () => {
     })
   }
 
-  it('starts replay at the EARLIEST PENDING record, not the furthest applied one', () => {
+  it('reports an earlier PENDING row as a lower bound, not as a start position', () => {
     append({ seq: 1, rawRecordId: 'raw_1', byteOffset: 100, status: 'applied', itemId: 'i1' })
-    // Held: emitted later, but carrying record 2's provenance.
     append({ seq: 2, rawRecordId: 'raw_2', byteOffset: 200, status: 'pending', itemId: 'i2' })
     append({ seq: 3, rawRecordId: 'raw_3', byteOffset: 300, status: 'applied', itemId: 'i3' })
-    append({ seq: 4, rawRecordId: 'raw_4', byteOffset: 400, status: 'applied', itemId: 'i4' })
 
     const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
-    expect(boundary?.startRecord).toMatchObject({
-      rawRecordId: 'raw_2',
-      byteOffset: 200,
-      chosenBy: 'earliest-pending',
-    })
-    // Dedupe must span the WHOLE replay suffix, not one record: replay now
-    // re-covers raw_3 and raw_4, which HRC already applied.
-    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual(['raw_3', 'raw_4'])
-    // raw_1 is before the start and is never re-emitted, so it is not listed.
-    expect(boundary?.committedProjections.map((p) => p.itemId)).not.toContain('i1')
+    expect(boundary?.earliestPendingRecord).toMatchObject({ rawRecordId: 'raw_2', byteOffset: 200 })
+    expect(boundary?.furthestCommittedRecord).toMatchObject({ rawRecordId: 'raw_3' })
+    // Dedupe covers everything applied, so replay may safely begin anywhere.
+    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual(['raw_1', 'raw_3'])
   })
 
-  it('falls back to the furthest applied record when every pending one is later', () => {
+  it('CANNOT see normalization still buffered inside the driver — and does not pretend to', () => {
+    // Astra's case: an AgentMessage buffered before the furthest committed
+    // record, held until `task_complete`, with the broker killed first. There is
+    // NO broker_invocation_events row for it, so no scan of HRC's own rows can
+    // find it. The boundary must therefore never be read as "everything before
+    // furthestCommittedRecord is published" — the driver owns the restart
+    // position because only it knows what it is still holding.
     append({ seq: 1, rawRecordId: 'raw_1', byteOffset: 100, status: 'applied', itemId: 'i1' })
-    append({ seq: 2, rawRecordId: 'raw_2', byteOffset: 200, status: 'applied', itemId: 'i2' })
-    append({ seq: 3, rawRecordId: 'raw_3', byteOffset: 300, status: 'pending', itemId: 'i3' })
+    // raw_2 is buffered inside ASP: deliberately NOT appended here.
+    append({ seq: 2, rawRecordId: 'raw_3', byteOffset: 300, status: 'applied', itemId: 'i3' })
 
     const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
-    expect(boundary?.startRecord).toMatchObject({
-      rawRecordId: 'raw_2',
-      chosenBy: 'furthest-applied',
+    // No pending row exists, so HRC has no lower bound to offer at all.
+    expect(boundary?.earliestPendingRecord).toBeUndefined()
+    expect(boundary?.furthestCommittedRecord).toMatchObject({ rawRecordId: 'raw_3' })
+    // The contract that keeps this safe: the boundary carries no start position
+    // and no claim about raw_2, and the dedupe set is complete, so a driver that
+    // restarts before raw_2 republishes it once and duplicates nothing.
+    expect(JSON.stringify(boundary)).not.toContain('startRecord')
+    expect(JSON.stringify(boundary)).not.toContain('chosenBy')
+    expect(boundary?.committedProjections.map((p) => p.itemId)).toEqual(['i1', 'i3'])
+    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).not.toContain('raw_2')
+  })
+
+  it('a record with BOTH published and buffered output lists only what was published', () => {
+    // Same raw record, two normalized events: one committed, one still held.
+    // Only the committed sibling may be de-duplicated; the held one must be
+    // published when replay re-emits the record.
+    append({
+      seq: 1,
+      rawRecordId: 'raw_5',
+      byteOffset: 500,
+      status: 'applied',
+      itemId: 'published',
     })
-    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual(['raw_2'])
+    const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
+    const forRecord = boundary?.committedProjections.filter((p) => p.rawRecordId === 'raw_5')
+    expect(forRecord?.map((p) => p.itemId)).toEqual(['published'])
+    expect(forRecord?.map((p) => p.itemId)).not.toContain('buffered')
   })
 })

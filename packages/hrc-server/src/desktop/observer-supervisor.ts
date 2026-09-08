@@ -300,36 +300,43 @@ export type DesktopRecoveryBoundary = {
   /** Identity of the observed file. A different epoch invalidates the offsets. */
   readonly sourceEpoch?: string | undefined
   /**
-   * The record replay must START from, re-emitted whole.
+   * The furthest source record HRC has COMMITTED anything from.
    *
-   * NOT simply the furthest applied record. Normalization can be delayed and
-   * out of order: codex-desktop can hold an AgentMessage carrying an EARLIER
-   * record's provenance and emit it when `task_complete` flushes, so a later
-   * record is applied while an earlier one is still pending. Starting at the
-   * furthest applied cursor would declare that earlier record published and
-   * lose the pending projection for good. So the start is the earliest PENDING
-   * cursor when one precedes the furthest applied cursor, and the furthest
-   * applied record otherwise.
+   * ADVISORY. It does NOT certify that every earlier record was published, and
+   * a replacement must not use it as a skip-to position. HRC scans its own
+   * `broker_invocation_events`, so it can only speak about records that reached
+   * it: normalization still BUFFERED inside the driver — an AgentMessage held
+   * until `task_complete` flushes — has no row here at all, and is invisible to
+   * this scan even when its raw record precedes this one. Choosing the restart
+   * position belongs to the side that knows what it is still holding.
    */
-  readonly startRecord?:
+  readonly furthestCommittedRecord?:
     | {
         readonly rawRecordId: string
         readonly byteOffset: number
         readonly line?: number | undefined
         readonly rawSha256?: string | undefined
         readonly nativeType?: string | undefined
-        /** Why this record was chosen, for the diagnostic trail. */
-        readonly chosenBy: 'earliest-pending' | 'furthest-applied'
       }
     | undefined
   /**
-   * Every projection HRC already committed AT OR AFTER the start record — the
-   * whole replay suffix, not one record's siblings.
+   * The earliest record HRC holds an UNPROJECTED row for, when it has one.
    *
-   * It has to be the suffix because the start record can be EARLIER than the
-   * furthest applied one (see below), in which case replay re-covers records
-   * HRC has already fully projected. De-duplicating only the start record would
-   * then duplicate every applied record after it.
+   * A LOWER BOUND on how far back replay must reach, never an upper bound, for
+   * the same reason: a record the driver never emitted leaves no row to find.
+   */
+  readonly earliestPendingRecord?:
+    | { readonly rawRecordId: string; readonly byteOffset: number }
+    | undefined
+  /**
+   * EVERY projection HRC has committed for this invocation — not a suffix.
+   *
+   * The whole set, because the replacement may legitimately restart EARLIER
+   * than anything in this boundary (it retains buffered normalization HRC never
+   * saw). A suffix-scoped dedupe set would then re-admit every applied record
+   * before that point as new. This is the load-bearing half of the contract:
+   * HRC says what it already has, the driver decides where to resume, and
+   * duplicates are resolved by identity rather than by position.
    */
   readonly committedProjections: readonly {
     readonly seq: number
@@ -382,10 +389,10 @@ function parseAppliedEnvelope(json: string | undefined): AppliedEnvelope | undef
 /**
  * Derive the recovery boundary from a previous observer's durable events.
  *
- * Two passes, because "what did HRC commit" and "where must replay start" are
- * different questions. The applied events say what may be dropped as duplicate;
- * the PENDING ones say how far back replay has to reach so a delayed projection
- * is not lost.
+ * HRC reports what it committed and what it knows is outstanding. It does not
+ * compute a restart position, because it cannot: its evidence is limited to
+ * events that actually reached it, and the driver may still be holding
+ * normalization that never did.
  */
 export function desktopRecoveryBoundary(
   server: HrcServerInstanceForHandlers,
@@ -427,69 +434,63 @@ export function desktopRecoveryBoundary(
       }
       continue
     }
-    // Not applied — captured, held, or failed. This is the event recovery
-    // exists to re-deliver, and its record is how far back replay must reach.
     if (byteOffset !== undefined && byteOffset < earliestPendingOffset) {
       earliestPendingOffset = byteOffset
       earliestPending = envelope
     }
   }
 
-  const usePending =
-    earliestPending !== undefined &&
-    (furthestApplied === undefined || earliestPendingOffset <= furthestAppliedOffset)
-  const chosen = usePending ? earliestPending : furthestApplied
-  const chosenOffset = usePending ? earliestPendingOffset : furthestAppliedOffset
-
-  if (chosen === undefined) {
+  const recordOf = (
+    envelope: AppliedEnvelope,
+    byteOffset: number
+  ): { rawRecordId: string; byteOffset: number } => {
+    const rawRecordId = envelope.provenance['rawRecordId']
     return {
-      ...(sourceKind === undefined ? {} : { sourceKind }),
-      ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
-      committedProjections: [],
-      appliedThroughSeq,
-      empty: true,
+      rawRecordId: typeof rawRecordId === 'string' ? rawRecordId : `offset:${byteOffset}`,
+      byteOffset,
     }
   }
 
-  const cursor = chosen.provenance['sourceCursor']
-  const rawRecordId = chosen.provenance['rawRecordId']
-  // Everything already applied AT OR AFTER the start record. Replay re-covers
-  // that whole span, so the dedupe set has to span it too.
-  const suffix = applied.filter((envelope) => {
-    const envelopeCursor = envelope.provenance['sourceCursor']
-    if (!isRecord(envelopeCursor) || typeof envelopeCursor['byteOffset'] !== 'number') return false
-    return envelopeCursor['byteOffset'] >= chosenOffset
+  const committedProjections = applied.map((envelope) => {
+    const rawRecordId = envelope.provenance['rawRecordId']
+    return {
+      seq: envelope.seq,
+      type: envelope.type,
+      ...(envelope.turnId === undefined ? {} : { turnId: envelope.turnId }),
+      ...(envelope.itemId === undefined ? {} : { itemId: envelope.itemId }),
+      ...(typeof envelope.provenance['nativeId'] === 'string'
+        ? { nativeId: envelope.provenance['nativeId'] }
+        : {}),
+      ...(typeof rawRecordId === 'string' ? { rawRecordId } : {}),
+    }
   })
 
-  return {
+  const base = {
     ...(sourceKind === undefined ? {} : { sourceKind }),
     ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
-    startRecord: {
-      rawRecordId: typeof rawRecordId === 'string' ? rawRecordId : `offset:${chosenOffset}`,
-      byteOffset: chosenOffset,
-      ...(isRecord(cursor) && typeof cursor['line'] === 'number' ? { line: cursor['line'] } : {}),
-      ...(typeof chosen.provenance['rawSha256'] === 'string'
-        ? { rawSha256: chosen.provenance['rawSha256'] }
-        : {}),
-      ...(typeof chosen.provenance['nativeType'] === 'string'
-        ? { nativeType: chosen.provenance['nativeType'] }
-        : {}),
-      chosenBy: usePending ? ('earliest-pending' as const) : ('furthest-applied' as const),
-    },
-    committedProjections: suffix.map((envelope) => {
-      const envelopeRecordId = envelope.provenance['rawRecordId']
-      return {
-        seq: envelope.seq,
-        type: envelope.type,
-        ...(envelope.turnId === undefined ? {} : { turnId: envelope.turnId }),
-        ...(envelope.itemId === undefined ? {} : { itemId: envelope.itemId }),
-        ...(typeof envelope.provenance['nativeId'] === 'string'
-          ? { nativeId: envelope.provenance['nativeId'] }
-          : {}),
-        ...(typeof envelopeRecordId === 'string' ? { rawRecordId: envelopeRecordId } : {}),
-      }
-    }),
+    ...(earliestPending === undefined
+      ? {}
+      : { earliestPendingRecord: recordOf(earliestPending, earliestPendingOffset) }),
+    committedProjections,
     appliedThroughSeq,
+  }
+
+  if (furthestApplied === undefined) {
+    return { ...base, empty: committedProjections.length === 0 }
+  }
+  const cursor = furthestApplied.provenance['sourceCursor']
+  return {
+    ...base,
+    furthestCommittedRecord: {
+      ...recordOf(furthestApplied, furthestAppliedOffset),
+      ...(isRecord(cursor) && typeof cursor['line'] === 'number' ? { line: cursor['line'] } : {}),
+      ...(typeof furthestApplied.provenance['rawSha256'] === 'string'
+        ? { rawSha256: furthestApplied.provenance['rawSha256'] }
+        : {}),
+      ...(typeof furthestApplied.provenance['nativeType'] === 'string'
+        ? { nativeType: furthestApplied.provenance['nativeType'] }
+        : {}),
+    },
     empty: false,
   }
 }
