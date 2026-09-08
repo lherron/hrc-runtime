@@ -10,10 +10,15 @@
  * broker stream forever; the store stays correct because projection is
  * idempotent, which is exactly why the leak is invisible in the data.
  *
- * The overlap here is a DETERMINISTIC IN-PROCESS BARRIER at the existing
- * client-factory seam — the factory blocks until both callers have entered — not
- * a millisecond race. No production test door: the factory is already an
- * injectable dependency of the reattach path.
+ * The overlap here is DETERMINISTIC and staged at the existing client-factory
+ * seam, not a millisecond race. No production test door: the factory is already
+ * an injectable dependency of the reattach path.
+ *
+ * SCOPE, stated so nobody reads more into it than it proves: this lane stubs
+ * `attachAndReplay` and counts a MODELLED consumer, so it establishes
+ * factory/owner MULTIPLICITY — how many clients get built and how many callers
+ * converge. It does not exercise the real controller, the real live subscription,
+ * projection or ack; `t08296-shared-attach-integration.test.ts` does that.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -38,6 +43,10 @@ let inFlight: Map<string, Promise<BrokerReattachOutcome>>
 type FakeClient = { id: number; streamed: number; closed: boolean }
 let clients: FakeClient[]
 let activeInvocation: string | undefined
+/** Make the modelled attach fail without throwing (the outcome-failure path). */
+let failNextAttach = false
+/** Make the CLIENT FACTORY throw, which the reattach path converts to a failure. */
+let throwNextFactory = false
 
 /**
  * A gate the client factory holds open until the test releases it.
@@ -72,6 +81,8 @@ beforeEach(async () => {
   inFlight = new Map()
   clients = []
   activeInvocation = undefined
+  failNextAttach = false
+  throwNextFactory = false
   const now = new Date().toISOString()
   db.sessions.insert({
     hostSessionId: HOST,
@@ -156,6 +167,13 @@ function deps(gate?: { wait(): Promise<void> }) {
     runtimeRoot: dir,
     controller: {
       attachAndReplay: async (input: { runtimeId: string; client: unknown }) => {
+        if (failNextAttach) {
+          return {
+            ok: false as const,
+            brokerAttached: false as const,
+            error: new Error('attach unavailable'),
+          }
+        }
         const client = input.client as FakeClient
         activeInvocation = INVOCATION
         client.streamed += 1
@@ -165,6 +183,7 @@ function deps(gate?: { wait(): Promise<void> }) {
         runtimeId === RUNTIME ? activeInvocation : undefined,
     },
     brokerUnixClientFactory: async () => {
+      if (throwNextFactory) throw new Error('factory exploded')
       const client: FakeClient = { id: clients.length + 1, streamed: 0, closed: false }
       clients.push(client)
       // The seam: hold the caller inside the factory until the test releases it,
@@ -224,6 +243,72 @@ describe('startup warmup and registration recovery share one attach owner', () =
     expect(after.runtimeId).toBe(RUNTIME)
     expect(after.activeInvocationId).toBe(INVOCATION)
     expect(db.runtimes.listByHostSessionId(HOST)).toHaveLength(1)
+  })
+
+  it('a cohort joined to a FAILED flight shares one failure and does not stampede', async () => {
+    // The hole in the first cut. A non-throwing failure left every joiner falling
+    // past both checks to construct its own competing operation, overwriting the
+    // map — two joiners became two retries, and a retry that succeeded rebuilt
+    // the double-client race this helper exists to prevent.
+    failNextAttach = true
+    const gate = makeGate()
+    const owner = attachDurableBrokerShared(db, runtime(), deps(gate))
+    await whenOwnerInFlight()
+    const joinerA = attachDurableBrokerShared(db, runtime(), deps(gate))
+    const joinerB = attachDurableBrokerShared(db, runtime(), deps(gate))
+    gate.release()
+    const outcomes = await Promise.all([owner, joinerA, joinerB])
+
+    // One attempt for the whole cohort, and all three see the same failure.
+    expect(clients).toHaveLength(1)
+    expect(outcomes.map((outcome) => outcome.state)).toEqual([
+      outcomes[0]?.state,
+      outcomes[0]?.state,
+      outcomes[0]?.state,
+    ])
+    expect(outcomes[0]?.state).not.toBe('broker-attached')
+    expect(inFlight.size).toBe(0)
+
+    // A genuinely LATER call acquires ownership normally and can succeed. That is
+    // where a retry belongs — not inside a joiner holding a stale promise.
+    failNextAttach = false
+    const later = await attachDurableBrokerShared(db, runtime(), deps())
+    expect(later.state).toBe('broker-attached')
+    expect(clients).toHaveLength(2)
+
+    // And overlapping callers after recovery still produce ONE attachment.
+    const secondGate = makeGate()
+    const a2 = attachDurableBrokerShared(db, runtime(), deps(secondGate))
+    const b2 = attachDurableBrokerShared(db, runtime(), deps(secondGate))
+    secondGate.release()
+    await Promise.all([a2, b2])
+    expect(clients).toHaveLength(2)
+  })
+
+  it('a THROWING client factory is shared as one failure, cleaned up, and recoverable', async () => {
+    // Measured rather than assumed: `reconcileDurableBrokerRuntimeReattach` is
+    // exception-safe, so a throwing factory RESOLVES as `broker-ipc-unavailable`
+    // instead of rejecting. The single-flight's reject branch is therefore
+    // defensive and not reachable through this seam — worth stating, because a
+    // test that forced an artificial rejection would be describing a path
+    // production does not take. What matters is unchanged and asserted here: one
+    // attempt for the cohort, map cleaned either way by the `finally`, and the
+    // next call able to recover.
+    throwNextFactory = true
+    const gate = makeGate()
+    const owner = attachDurableBrokerShared(db, runtime(), deps(gate))
+    await whenOwnerInFlight()
+    const joiner = attachDurableBrokerShared(db, runtime(), deps(gate))
+    gate.release()
+    const [ownerOutcome, joinerOutcome] = await Promise.all([owner, joiner])
+
+    expect(ownerOutcome.state).not.toBe('broker-attached')
+    expect(joinerOutcome.state).toBe(ownerOutcome.state)
+    expect(inFlight.size).toBe(0)
+
+    throwNextFactory = false
+    const recovered = await attachDurableBrokerShared(db, runtime(), deps())
+    expect(recovered.state).toBe('broker-attached')
   })
 
   it('CONTROL: without the shared owner, both callers build their own client', async () => {

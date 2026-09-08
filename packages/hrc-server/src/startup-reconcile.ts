@@ -758,19 +758,37 @@ function alreadyAttachedOnServingController(
  * The SINGLE shared owner. Startup warmup and desktop registration recovery both
  * enter here, so they cannot each open a client for the same runtime, and the
  * rich outcome is preserved for the warmup's category diagnostics.
+ *
+ * Concurrency contract, in full:
+ *  - a caller that finds a flight JOINS it and receives that flight's outcome,
+ *    success or failure, and never starts one of its own;
+ *  - a caller that finds none checks whether the runtime is already attached on
+ *    the serving controller before acquiring ownership, because a flight that
+ *    completed a moment ago has already cleared the map;
+ *  - a rejected flight propagates to everyone who joined it, and the map entry is
+ *    cleared, so the next call can acquire ownership and recover.
  */
 export async function attachDurableBrokerShared(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
   deps: SharedBrokerAttachDeps
 ): Promise<BrokerReattachOutcome> {
+  // A JOINER SHARES THE OUTCOME, including a failure.
+  //
+  // The first cut returned early only when the joined flight had actually
+  // attached, and fell through otherwise. That looked like a harmless retry and
+  // was not: on a non-throwing failure every joiner falls past both checks,
+  // constructs its own operation and OVERWRITES the map, so two joiners become
+  // two competing retries — and if those succeed, the double-client race this
+  // helper exists to prevent is back. It also silently converted "one shared
+  // failure" into "one automatic retry per joiner".
+  //
+  // Sharing the outcome is the whole contract. A genuinely LATER call — one that
+  // finds no flight at entry — still acquires ownership normally and retries,
+  // which is where a retry belongs.
   const joined = deps.inFlightOperations.get(runtime.runtimeId)
-  if (joined) {
-    const outcome = await joined
-    // The flight we joined may have attached it; re-checking is what stops the
-    // joiner from immediately starting a second attach of its own.
-    if (alreadyAttachedOnServingController(db, runtime, deps)) return outcome
-  }
+  if (joined) return await joined
+
   if (alreadyAttachedOnServingController(db, runtime, deps)) {
     return { runtimeId: runtime.runtimeId, state: 'broker-attached', brokerAttached: true }
   }
