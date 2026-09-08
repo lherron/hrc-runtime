@@ -309,6 +309,30 @@ describe('T-07612 rev 5.1 §4 pointer forms', () => {
     expect(rendered).not.toContain('the body')
   })
 
+  // An ellipsis alone cannot be told apart from a body that simply ended, so a
+  // clipped injection declares the clip and names the read that recovers the
+  // rest — the same `wrkc show` the pointer forms name.
+  it('declares the clip and points at the full body when the body does not fit', () => {
+    const body = `${'x'.repeat(4_000)}PAST-THE-CLIP`
+    const rendered = formatEnvelopePresentation(presentable({ envelope: envelope({ body }) }), NOW)
+    expect(rendered).not.toContain('PAST-THE-CLIP')
+    expect(rendered).toContain(
+      '[body clipped at 4,000 of 4,013 chars — full body: wrkc show EN-00042]'
+    )
+    // The clip line sits between the body and the reply verb, so the reader
+    // meets it before deciding how to answer.
+    expect(rendered.indexOf('body clipped at')).toBeLessThan(rendered.indexOf('reply: wrkc say'))
+  })
+
+  it('says nothing about clipping when the whole body fit', () => {
+    const rendered = formatEnvelopePresentation(
+      presentable({ envelope: envelope({ body: 'x'.repeat(4_000) }) }),
+      NOW
+    )
+    expect(rendered).not.toContain('body clipped')
+    expect(rendered).toContain('x'.repeat(4_000))
+  })
+
   it('clips a runaway defer reason rather than re-injecting an essay', () => {
     const rendered = formatEnvelopePresentation(
       presentable({

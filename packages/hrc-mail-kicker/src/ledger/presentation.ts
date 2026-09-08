@@ -23,6 +23,10 @@ import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } fr
  * automatic turn-final reply is retired, so a turn that ends without an
  * explicit say leaves its envelope presented and takes the reminder.
  *
+ * A body too long for the injection is clipped, and the clip is DECLARED —
+ * `[body clipped at 4,000 of 9,120 chars — full body: wrkc show EN-01165]` —
+ * so the reader knows there is more and how to get it. See MAX_BODY_CHARS.
+ *
  * POINTER FORM — every later surface. It carries NO BODY. That is a rule and
  * not a size optimization: the reminder goes to the runtime that already has
  * the body in context, and the defer retry goes to a reader who asked for it
@@ -43,7 +47,14 @@ import type { WrkqEnvelope, WrkqEnvelopeDelivery, WrkqEnvelopeFailureReason } fr
  * ENVELOPE, not the room key — see formatReplyLine.
  */
 
-/** Body clip. The room holds the full text; the injection is a summons to it. */
+/**
+ * Body clip. The room holds the full text; the injection is a summons to it.
+ *
+ * A clipped body is followed by a `full body:` pointer (see `formatBodyLines`).
+ * Without it the reader sees a trailing ellipsis and has no way to tell a body
+ * that ENDED mid-sentence from one that was CUT, so the instruction the sender
+ * put past the 4,000th character is silently lost.
+ */
 const MAX_BODY_CHARS = 4_000
 /** The reader's own defer reason, quoted back in the retry header. */
 const MAX_DEFER_REASON_CHARS = 120
@@ -98,7 +109,7 @@ export function formatEnvelopePresentation(
   if (formOf(presentable) === 'full') {
     const history = formatHistoryLine(presentable, now)
     if (history !== undefined) lines.push(history)
-    lines.push(clipBody(envelope.body))
+    lines.push(...formatBodyLines(envelope))
   } else {
     lines.push(`read: wrkc show ${envelope.id}   ·   thread: wrkc log ${envelope.roomKey}`)
   }
@@ -385,8 +396,22 @@ function formatPrincipalName(principalRef: string): string {
   return principalRef.startsWith('agent:') ? principalRef.slice('agent:'.length) : principalRef
 }
 
-function clipBody(body: string): string {
-  return clip(body, MAX_BODY_CHARS)
+/**
+ * The full form's body, plus the clip pointer when it did not all fit.
+ *
+ * The pointer names the same read the pointer FORMS name (`wrkc show
+ * EN-xxxxx`), because it is the same act: the injection is a summons to the
+ * room, and a clipped body is a summons that ran out of room mid-sentence. It
+ * states the sizes so the reader can judge how much is missing rather than
+ * guess from an ellipsis.
+ */
+function formatBodyLines(envelope: WrkqEnvelope): string[] {
+  const body = envelope.body
+  if (body.length <= MAX_BODY_CHARS) return [body]
+  return [
+    clip(body, MAX_BODY_CHARS),
+    `[body clipped at ${MAX_BODY_CHARS.toLocaleString('en-US')} of ${body.length.toLocaleString('en-US')} chars — full body: wrkc show ${envelope.id}]`,
+  ]
 }
 
 function clip(text: string, max: number): string {
