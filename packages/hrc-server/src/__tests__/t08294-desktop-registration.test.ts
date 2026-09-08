@@ -840,7 +840,14 @@ describe('observer attachment scheduling', () => {
     expect(again.status === 'registered' && again.observation.state).toBe('attached')
   })
 
-  it('RECOVERY: re-registration after the observer dies reattaches on the SAME address', async () => {
+  it('RECOVERY: re-registration after a TERMINATED observer reattaches on the SAME address', async () => {
+    // Narrow by design: a terminated row is only ONE way an observer stops, and
+    // it is the one HRC itself causes (dispose/evict). The mechanisms production
+    // actually hits — a broker crash and a replay-stale detach — leave
+    // `status: 'ready'` untouched and are covered in
+    // t08294-desktop-observer-recovery.test.ts against the real handlers. Read
+    // this one as the terminated-row case, not as recovery coverage.
+
     const first = await register(DESKTOP_THREAD)
     await settleAttachments()
     const scopeRef = first.status === 'registered' ? first.cache.scopeRef : 'none'

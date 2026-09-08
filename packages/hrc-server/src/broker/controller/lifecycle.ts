@@ -334,6 +334,14 @@ export async function failReplayStale(
   if (isExternalLifecycleOwner(runtime)) {
     ctx.deleteActive(runtime.runtimeId, client)
     await client.close().catch(() => undefined)
+    // Same split as the crash path: the attachment is gone, the subject is not.
+    // Without this the row kept `control.brokerAttached: true` after HRC had
+    // already closed and forgotten the connection.
+    recordExternalObserverDetached(ctx, runtime, {
+      reason: 'replay_stale',
+      code: error.code,
+      message: error.message,
+    })
     return
   }
   ctx.deleteActive(runtime.runtimeId, client)
@@ -402,6 +410,58 @@ export async function failReplayStale(
   })
 }
 
+/**
+ * Record that HRC's OWN broker attachment to an externally-owned runtime is gone
+ * (T-08294).
+ *
+ * The early returns below are correct about the thing they were written for: HRC
+ * must never terminalize a runtime whose subject it does not own. But "I am no
+ * longer attached" is a fact about HRC's observer, not about the desktop thread,
+ * and returning before recording it left the row reading `ready` with
+ * `control.brokerAttached: true` while the connection was dead — so recovery
+ * could never tell a healthy observer from a lost one.
+ *
+ * Deliberately NOT changed here: `status`, `statusChangedAt`,
+ * `lifecycleTerminalReason`, or anything else that would assert a terminal fact.
+ * §5: "A helper process is not desktop liveness", and silence must never
+ * fabricate turn completion.
+ */
+function recordExternalObserverDetached(
+  ctx: LifecycleContext,
+  runtime: HrcRuntimeSnapshot,
+  detail: { reason: string; code?: string | undefined; message?: string | undefined }
+): void {
+  const now = ctx.now()
+  const priorState = runtime.runtimeStateJson ?? {}
+  const priorControl =
+    priorState['control'] !== null &&
+    typeof priorState['control'] === 'object' &&
+    !Array.isArray(priorState['control'])
+      ? (priorState['control'] as Record<string, unknown>)
+      : {}
+  ctx.db.runtimes.update(runtime.runtimeId, {
+    updatedAt: now,
+    runtimeStateJson: {
+      ...priorState,
+      updatedAt: now,
+      control: { ...priorControl, brokerAttached: false },
+      observerAttachment: {
+        state: 'detached',
+        detachedAt: now,
+        reason: detail.reason,
+        ...(detail.code === undefined ? {} : { code: detail.code }),
+        ...(detail.message === undefined ? {} : { message: detail.message }),
+      },
+    },
+  })
+  ctx.logger.info?.('broker.external_observer_detached', {
+    runtimeId: runtime.runtimeId,
+    scopeRef: runtime.scopeRef,
+    reason: detail.reason,
+    ...(detail.code === undefined ? {} : { code: detail.code }),
+  })
+}
+
 export function markBrokerCrashTerminal(
   ctx: LifecycleContext,
   runtimeId: string,
@@ -409,6 +469,20 @@ export function markBrokerCrashTerminal(
 ): void {
   const ownedRuntime = ctx.db.runtimes.getByRuntimeId(runtimeId)
   if (ownedRuntime && isExternalLifecycleOwner(ownedRuntime)) {
+    // The broker serving this observer crashed. Drop the now-dead client — it
+    // was being left in `active`, so a later probe would have been answered by a
+    // corpse — and record that HRC is detached. Still no status change and no
+    // terminal reason: the desktop thread is unaffected and unobserved, which
+    // are different things.
+    const staleClient = ctx.getActiveClient(runtimeId)
+    if (staleClient) {
+      ctx.deleteActive(runtimeId, staleClient)
+    }
+    recordExternalObserverDetached(ctx, ownedRuntime, {
+      reason: 'broker_crash',
+      code: error.code,
+      message: error.message,
+    })
     return
   }
   const activeClient = ctx.getActiveClient(runtimeId)
