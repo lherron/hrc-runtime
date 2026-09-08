@@ -13,6 +13,7 @@ import { ROSTER_SLOT_TOKENS } from 'spaces-config'
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
+import { isScopeReservedForDesktop } from './desktop/scope-reservation.js'
 import { sendRemoteRosterStart } from './federation/roster-start-client.js'
 import {
   preflightSuffixRosterFamily,
@@ -246,6 +247,13 @@ async function resolveClaim(
 
   for (const slot of rosterSlotTokens(base.baseTaskId)) {
     const sessionRef = slotSessionRef(base, slot)
+    // T-08294: a slot permanently reserved for a Codex desktop conversation is
+    // NOT free, however dead its session looks. `primary-nova` is a legal roster
+    // member AND a legal desktop address, and a desktop conversation Lance has
+    // not touched for a week has no live runtime at all — so the freedom
+    // predicate below would happily recycle it and silently redirect every
+    // future mail addressed to that conversation. Walk on instead.
+    if (isScopeReservedForDesktop(this.db, slotScopeRef(base, slot))) continue
     const existing = findContinuitySession(this.db, sessionRef)
     if (existing === null) {
       const minted = await mintClaimedSession(this, {

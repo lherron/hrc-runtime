@@ -2963,6 +2963,56 @@ const hrcmailReceiptCommitMigration: HrcMigration = {
   },
 }
 
+/**
+ * Permanent desktop-conversation → readable Stella scope mappings (T-08294).
+ *
+ * `UNIQUE(home_identity, native_thread_id)` is the registration key from the
+ * approved contract: a duplicate registration of the same desktop conversation
+ * collides here and returns the existing mapping instead of allocating a second
+ * name. `scope_ref UNIQUE` is the reservation fence: two concurrent distinct
+ * threads racing for the same free slot cannot both commit it.
+ *
+ * No foreign key to `sessions`, and no prune: the reservation must outlive the
+ * session generation it was first attached to, and outlive archival of the
+ * desktop conversation itself. Recycling a desktop address is how mail reaches
+ * the wrong conversation, so the row is keep-forever by design.
+ */
+const desktopThreadRegistrationsMigration: HrcMigration = {
+  id: '0063_desktop_thread_registrations',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS desktop_thread_registrations (
+        registration_key TEXT PRIMARY KEY,
+        home_identity TEXT NOT NULL,
+        sqlite_home TEXT NOT NULL,
+        native_thread_id TEXT NOT NULL,
+        scope_ref TEXT NOT NULL UNIQUE,
+        agent_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        slot_token TEXT NOT NULL,
+        lane_ref TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        project_root TEXT NOT NULL,
+        workspace_cwd TEXT NOT NULL,
+        rollout_path TEXT,
+        legacy_scope_ref TEXT,
+        bundle_path TEXT,
+        bundle_version TEXT,
+        registered_via TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_desktop_thread_registrations_native_key
+        ON desktop_thread_registrations(home_identity, native_thread_id);
+      CREATE INDEX IF NOT EXISTS idx_desktop_thread_registrations_namespace
+        ON desktop_thread_registrations(agent_id, project_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_desktop_thread_registrations_host_session
+        ON desktop_thread_registrations(host_session_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3021,4 +3071,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailRefusalWindowMigration,
   hrcmailUncertainDeliveryMigration,
   hrcmailReceiptCommitMigration,
+  desktopThreadRegistrationsMigration,
 ]

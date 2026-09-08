@@ -36,6 +36,7 @@ import {
   canUseDirectPaneFallback,
   hasLeasedBrokerSubstrate,
 } from './broker/runtime-hosting.js'
+import { assertDesktopScopeNotColdBorn } from './desktop/scope-reservation.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
@@ -285,6 +286,10 @@ export async function startRuntimeForSession(
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  // T-08294: never boot a runtime onto a Codex desktop conversation's permanent
+  // address. This is the single door every start path shares, and HRC's own
+  // desktop observer does not use it.
+  assertDesktopScopeNotColdBorn(this.db, session.scopeRef)
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
     const runtime = await existingOperation

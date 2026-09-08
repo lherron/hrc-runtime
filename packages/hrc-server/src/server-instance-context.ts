@@ -24,6 +24,8 @@ import type {
   BrokerUnixClientFactory,
   HarnessBrokerController,
 } from './broker/controller.js'
+import type { DesktopObserverHandlersMethods } from './desktop/observer-attachment.js'
+import type { DesktopRegistrationHandlersMethods } from './desktop/registration.js'
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
 import type { ExactClaimHandlersMethods } from './exact-claim.js'
@@ -82,6 +84,8 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * type-checked.
  */
 type DecomposedHandlerMethods = AppSessionHandlersMethods &
+  DesktopRegistrationHandlersMethods &
+  DesktopObserverHandlersMethods &
   BridgeSurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &

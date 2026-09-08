@@ -6,6 +6,7 @@ import {
   CollectiveHistoryReplicationRepository,
   CollectiveHistoryRepository,
 } from './collective-history-repository.js'
+import { DesktopThreadRegistrationRepository } from './desktop-thread-registration-repository.js'
 import { ExternalRegistrationGrantRepository } from './external-registration-grant-repository.js'
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
@@ -90,6 +91,7 @@ export type HrcDatabase = {
   sessionTitles: SessionTitleRepository
   sessionTaskClaimAuthorities: SessionTaskClaimAuthorityRepository
   rosterClaims: RosterClaimRepository
+  desktopThreadRegistrations: DesktopThreadRegistrationRepository
   externalRegistrationGrants: ExternalRegistrationGrantRepository
   appManagedSessions: AppManagedSessionRepository
   appSessions: AppSessionRepository
@@ -203,6 +205,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     sessionTitles: new SessionTitleRepository(sqlite),
     sessionTaskClaimAuthorities: new SessionTaskClaimAuthorityRepository(sqlite),
     rosterClaims: new RosterClaimRepository(sqlite),
+    desktopThreadRegistrations: new DesktopThreadRegistrationRepository(sqlite),
     externalRegistrationGrants: new ExternalRegistrationGrantRepository(sqlite),
     appManagedSessions: new AppManagedSessionRepository(sqlite),
     appSessions: new AppSessionRepository(sqlite),

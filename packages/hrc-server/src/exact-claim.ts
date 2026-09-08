@@ -31,6 +31,7 @@ import {
 
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 
+import { isScopeReservedForDesktop } from './desktop/scope-reservation.js'
 import { sendRemoteExactStart } from './federation/exact-start-client.js'
 import { preflightExactScope, resolveImplicitScopeHome } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
@@ -191,6 +192,24 @@ async function resolveExactClaim(
     requestHash,
   })
   if (replayed !== null) return { session: replayed.session, replayed: true }
+
+  // T-08294: an exact claim can name a desktop reservation by typing its
+  // readable address — `stella@hrc-ios:primary-nova` is an ordinary token. The
+  // reservation is permanent and outlives every runtime, so refusing here is
+  // the whole fence; there is no "free" state to fall through to later.
+  if (isScopeReservedForDesktop(this.db, scope.scopeRef)) {
+    throw new HrcConflictError(
+      HrcErrorCode.SESSION_SCOPE_OCCUPIED,
+      'the exact scope is permanently reserved for a Codex desktop conversation',
+      {
+        scopeRef: scope.scopeRef,
+        laneRef: scope.laneRef,
+        sessionRef: `${scope.scopeRef}/lane:${scope.laneRef}`,
+        reservation: 'codex-desktop',
+        retryable: false,
+      }
+    )
+  }
 
   const claimRecord = {
     idempotencyKey: request.idempotencyKey,
