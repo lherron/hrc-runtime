@@ -25,7 +25,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
-import type { DesktopThreadRegistration } from 'hrc-store-sqlite'
+import type { DesktopThreadRegistration, HrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 
@@ -101,13 +101,13 @@ export function desktopNativeAttemptStorePath(
   return join(root, 'codex-desktop', registration.registrationKey, 'native-attempts.db')
 }
 
-export function currentDesktopObserverRuntime(
-  server: HrcServerInstanceForHandlers,
+export function currentDesktopObserverRuntimeFor(
+  db: HrcDatabase,
   registration: DesktopThreadRegistration
 ): HrcRuntimeSnapshot | undefined {
-  const session = server.db.sessions.getByHostSessionId(registration.hostSessionId)
+  const session = db.sessions.getByHostSessionId(registration.hostSessionId)
   if (session === undefined || session === null) return undefined
-  const runtimes = server.db.runtimes.listByHostSessionId(registration.hostSessionId)
+  const runtimes = db.runtimes.listByHostSessionId(registration.hostSessionId)
   for (let index = runtimes.length - 1; index >= 0; index -= 1) {
     const runtime = runtimes[index]
     if (runtime === undefined) continue
@@ -116,6 +116,34 @@ export function currentDesktopObserverRuntime(
     return runtime
   }
   return undefined
+}
+
+/**
+ * The set of runtimes that ARE the current observer of some registered desktop
+ * conversation — at most one per registration.
+ *
+ * A superseded observer stays `ready` and externally owned on purpose (§5: HRC
+ * records that it replaced its own observer and asserts nothing terminal about a
+ * conversation it does not own), so "has a desktop registration for its scope" is
+ * NOT a selection rule: it matches every historical observer that conversation
+ * ever had. Anything reattaching desktop observers has to use the same
+ * one-per-registration rule the supervisor uses, or a restart would dial the
+ * endpoints of retired rows too and break the one-effective-observer invariant.
+ */
+export function currentDesktopObserverRuntimeIds(db: HrcDatabase): Set<string> {
+  const current = new Set<string>()
+  for (const registration of db.desktopThreadRegistrations.listAll()) {
+    const runtime = currentDesktopObserverRuntimeFor(db, registration)
+    if (runtime !== undefined) current.add(runtime.runtimeId)
+  }
+  return current
+}
+
+export function currentDesktopObserverRuntime(
+  server: HrcServerInstanceForHandlers,
+  registration: DesktopThreadRegistration
+): HrcRuntimeSnapshot | undefined {
+  return currentDesktopObserverRuntimeFor(server.db, registration)
 }
 
 export type DesktopObserverHealth =

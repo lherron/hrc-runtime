@@ -30,6 +30,7 @@ import {
   extractRuntimeControlState,
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
+import { currentDesktopObserverRuntimeIds } from './desktop/observer-supervisor.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, requireSession } from './require-helpers.js'
@@ -840,30 +841,36 @@ export function brokerWarmupCategoryForOutcome(
  * operator can see the control loop if the intermittent failure reappears.
  */
 /**
- * A Codex desktop observer, as distinct from a genuine external participant.
+ * The desktop observers a restart may reattach: at most ONE per registration.
  *
- * Both carry `lifecycleOwner: 'external'`, and the blanket exclusion of that flag
- * is why an HRC restart left desktop conversations unobserved (T-08296): the
- * broker survived, but the request-serving controller was never given a client
- * for it, so `seatProbe` answered `no active broker client` indefinitely and mail
- * sat pending while the runtime row read `ready`.
+ * Both a desktop observer and a genuine external participant carry
+ * `lifecycleOwner: 'external'`, and the blanket exclusion of that flag is why an
+ * HRC restart left desktop conversations unobserved (T-08296): the broker
+ * survived, but the request-serving controller was never given a client for it,
+ * so `seatProbe` answered `no active broker client` indefinitely and mail sat
+ * pending while the runtime row read `ready`.
  *
- * The flag means two different things to the two populations, which is exactly
- * why keying on it alone is wrong. For EPR the exclusion is REAL and stays: its
+ * The flag means two different things to the two populations, which is why
+ * keying on it alone is wrong. For EPR the exclusion is REAL and stays: its
  * process substrate and attach protocol are external, `broker.attach` is not how
  * those rows are reattached, and registration convergence owns them. A desktop
  * observer is external only in the sense that HRC must never kill, reap or
  * cold-restart the ChatGPT window; its OBSERVER is an ordinary durable broker
- * with a unix endpoint over a leased tmux substrate, reattached like any other.
+ * over a unix endpoint and a leased tmux substrate.
  *
- * The discriminator is the durable registration row rather than a shape guess: a
- * scope with a `desktop_thread_registrations` entry IS a desktop conversation and
- * nothing else can accidentally match. External PROCESS-lifecycle protection is
- * untouched — this decides only who gets a socket reattached, never who may be
- * terminated.
+ * "Has a desktop registration for its scope" is NOT sufficient, and that gap is
+ * Astra's finding on the first cut: §5 leaves a SUPERSEDED observer `ready` and
+ * externally owned deliberately, so a scope predicate matches every historical
+ * observer that conversation ever had and a restart would dial all of their
+ * endpoints. Selection therefore reuses the supervisor's own
+ * one-per-registration rule, which pins the session generation and takes the
+ * most recent non-terminal row.
+ *
+ * External PROCESS-lifecycle protection is untouched either way: this decides
+ * who gets a socket reattached, never who may be terminated.
  */
-export function isRegisteredDesktopObserver(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
-  return db.desktopThreadRegistrations.getByScopeRef(runtime.scopeRef) !== null
+function eligibleDesktopObserverIds(db: HrcDatabase): Set<string> {
+  return currentDesktopObserverRuntimeIds(db)
 }
 
 export async function warmDurableBrokerBindings(
@@ -895,11 +902,12 @@ export async function warmDurableBrokerBindings(
     },
   }
 
+  const eligibleDesktopObservers = eligibleDesktopObserverIds(db)
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
       isRuntimeUnavailableStatus(runtime.status) ||
-      (isExternalLifecycleOwner(runtime) && !isRegisteredDesktopObserver(db, runtime)) ||
+      (isExternalLifecycleOwner(runtime) && !eligibleDesktopObservers.has(runtime.runtimeId)) ||
       !getPersistedDurableBrokerEndpoint(runtime)
     ) {
       continue

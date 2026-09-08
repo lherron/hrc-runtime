@@ -16,11 +16,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { desktopObserverAttachmentHealth } from '../desktop/observer-supervisor.js'
-import { isRegisteredDesktopObserver } from '../startup-reconcile.js'
+import { currentDesktopObserverRuntimeIds } from '../desktop/observer-supervisor.js'
 
 const DESKTOP_SCOPE = 'agent:stella:project:hrc-ios:task:primary-nova'
 const DESKTOP_HOST = 'hsid-t08296-desktop'
@@ -48,17 +47,28 @@ function insertRuntime(input: {
   hostSessionId: string
   state: Record<string, unknown>
   activeInvocationId?: string | undefined
+  /**
+   * Explicit creation instant. `listByHostSessionId` orders
+   * `created_at ASC, runtime_id ASC`, so two rows minted in the same millisecond
+   * are separated by ID alone — and this fixture's ids happen to sort the
+   * SUPERSEDED row last, which made the selection case pass or fail depending on
+   * whether the clock ticked between two inserts. Real observers are created
+   * seconds apart; the fixture now says so instead of racing.
+   */
+  createdAt?: string | undefined
 }): void {
-  db.sessions.insert({
-    hostSessionId: input.hostSessionId,
-    scopeRef: input.scopeRef,
-    laneRef: 'main',
-    generation: 1,
-    status: 'active',
-    createdAt: now(),
-    updatedAt: now(),
-    ancestorScopeRefs: [],
-  })
+  if (db.sessions.getByHostSessionId(input.hostSessionId) === null) {
+    db.sessions.insert({
+      hostSessionId: input.hostSessionId,
+      scopeRef: input.scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      status: 'active',
+      createdAt: now(),
+      updatedAt: now(),
+      ancestorScopeRefs: [],
+    })
+  }
   db.runtimes.insert({
     runtimeId: input.runtimeId,
     hostSessionId: input.hostSessionId,
@@ -71,8 +81,8 @@ function insertRuntime(input: {
     status: 'ready',
     supportsInflightInput: true,
     adopted: false,
-    createdAt: now(),
-    updatedAt: now(),
+    createdAt: input.createdAt ?? now(),
+    updatedAt: input.createdAt ?? now(),
     runtimeStateJson: input.state,
     ...(input.activeInvocationId === undefined
       ? {}
@@ -123,13 +133,30 @@ function serverWith(
   } as unknown as Parameters<typeof desktopObserverAttachmentHealth>[0]
 }
 
-describe('the warmup population: desktop is included, genuine EPR is not', () => {
-  it('separates a registered desktop observer from EPR and from an ordinary row', () => {
+describe('the warmup population: the CURRENT desktop observer, and nothing else', () => {
+  it('selects one observer per registration and excludes superseded, EPR and ordinary rows', () => {
     registerDesktop()
+    // A SUPERSEDED observer for the same registration. §5 leaves it `ready` and
+    // externally owned on purpose, so a scope-only predicate matches it too and
+    // a restart would dial its endpoint alongside the live one. It shares the
+    // host session, which is what makes it the same conversation's history.
+    insertRuntime({
+      runtimeId: 'rt-t08296-superseded',
+      scopeRef: DESKTOP_SCOPE,
+      hostSessionId: DESKTOP_HOST,
+      createdAt: '2026-09-08T00:00:00.000Z',
+      state: {
+        lifecycleOwner: 'external',
+        observerAttachment: { state: 'superseded' },
+        control: { mode: 'broker-ipc', brokerAttached: true },
+      },
+      activeInvocationId: 'inv-t08296-superseded',
+    })
     insertRuntime({
       runtimeId: DESKTOP_RUNTIME,
       scopeRef: DESKTOP_SCOPE,
       hostSessionId: DESKTOP_HOST,
+      createdAt: '2026-09-08T01:00:00.000Z',
       state: restartSurvivorState(),
       activeInvocationId: DESKTOP_INVOCATION,
     })
@@ -149,17 +176,23 @@ describe('the warmup population: desktop is included, genuine EPR is not', () =>
       state: { control: { mode: 'broker-ipc', brokerAttached: true } },
     })
 
-    const runtime = (id: string): HrcRuntimeSnapshot => {
-      const found = db.runtimes.getByRuntimeId(id)
-      if (found === null) throw new Error(`fixture runtime ${id} missing`)
-      return found
-    }
+    const eligible = currentDesktopObserverRuntimeIds(db)
+    // Exactly one per registration — the CURRENT observer.
+    expect([...eligible]).toEqual([DESKTOP_RUNTIME])
+    expect(eligible.has('rt-t08296-superseded')).toBe(false)
+    expect(eligible.has('rt-t08296-epr')).toBe(false)
+    expect(eligible.has('rt-t08296-ordinary')).toBe(false)
 
-    // Both externals; only the one HRC holds a registration for is a desktop
-    // conversation, so the EPR exclusion survives intact.
-    expect(isRegisteredDesktopObserver(db, runtime(DESKTOP_RUNTIME))).toBe(true)
-    expect(isRegisteredDesktopObserver(db, runtime('rt-t08296-epr'))).toBe(false)
-    expect(isRegisteredDesktopObserver(db, runtime('rt-t08296-ordinary'))).toBe(false)
+    // The gap this case exists for, stated positively so it cannot quietly stop
+    // discriminating: selecting by "the scope has a desktop registration" — the
+    // first cut of this fix — admits the superseded row as well, because §5
+    // leaves it `ready` and externally owned on purpose.
+    const scopeOnly = db.runtimes
+      .listAll()
+      .filter((row) => db.desktopThreadRegistrations.getByScopeRef(row.scopeRef) !== null)
+      .map((row) => row.runtimeId)
+      .sort()
+    expect(scopeOnly).toEqual(['rt-t08296-superseded', DESKTOP_RUNTIME].sort())
   })
 })
 
