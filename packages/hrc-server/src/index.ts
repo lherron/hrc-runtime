@@ -296,7 +296,7 @@ import {
   shadowTeardownHandlersMethods,
 } from './shadow-teardown-handlers.js'
 import {
-  type DurableBrokerDispatchReattachResult,
+  type BrokerReattachOutcome,
   reconcileStartupState,
   warmDurableBrokerBindings,
 } from './startup-reconcile.js'
@@ -842,10 +842,7 @@ class HrcServerInstance implements HrcServer {
   readonly invokeFirstTurnRendezvous = new Map<string, InvokeFirstTurnRendezvous>()
   private readonly runtimeStartPresentationAbortController = new AbortController()
   readonly runtimeStartPresentationSignal = this.runtimeStartPresentationAbortController.signal
-  readonly brokerReattachOperations = new Map<
-    string,
-    Promise<DurableBrokerDispatchReattachResult>
-  >()
+  readonly brokerReattachOperations = new Map<string, Promise<BrokerReattachOutcome>>()
   /**
    * Every request handler currently executing, as a promise that settles when
    * the handler does. `Bun.serve().stop(true)` closes the SOCKET, not the
@@ -1390,6 +1387,7 @@ class HrcServerInstance implements HrcServer {
     this.brokerWarmupComplete = warmDurableBrokerBindings(this.db, {
       runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
+      inFlightOperations: this.brokerReattachOperations,
     })
       .then(() => undefined)
       .catch((error: unknown) => {

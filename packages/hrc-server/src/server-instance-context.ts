@@ -11,7 +11,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
-import type { DurableBrokerDispatchReattachResult } from './startup-reconcile.js'
+import type { BrokerReattachOutcome } from './startup-reconcile.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
 import type { AcpEventBridge } from './acp-event-bridge.js'
@@ -174,7 +174,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly invokeFirstTurnRendezvous: Map<string, InvokeFirstTurnRendezvous>
   /** Cancelled by stop() before the store closes; never used as a shutdown drain. */
   readonly runtimeStartPresentationSignal: AbortSignal
-  readonly brokerReattachOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>
+  readonly brokerReattachOperations: Map<string, Promise<BrokerReattachOutcome>>
   readonly attachedRunOperations: Map<string, PendingAttachedRunOperation>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>

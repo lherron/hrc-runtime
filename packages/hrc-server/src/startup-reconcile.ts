@@ -711,38 +711,85 @@ export async function reconcileDurableBrokerStartup(
  * callers cannot confuse an off-root authority rejection with ordinary broker
  * unavailability and destructively clean up the persisted source lease.
  */
-export async function reattachDurableBrokerForDispatch(
+export type SharedBrokerAttachDeps = {
+  runtimeRoot: string
+  controller: Pick<HarnessBrokerController, 'attachAndReplay' | 'activeClientInvocationId'>
+  brokerUnixClientFactory: BrokerUnixClientFactory
+  // Default to the persisted-state probe/token resolvers (production). Tests
+  // script these to avoid touching a live socket / on-disk attach token.
+  resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
+  probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
+  /**
+   * Request-serving ownership for durable reattach. EVERY caller that may attach
+   * a durable runtime onto the serving controller shares this per-server map, so
+   * only one attach runs per runtime and crossing callers await the same result.
+   */
+  inFlightOperations: Map<string, Promise<BrokerReattachOutcome>>
+}
+
+/**
+ * Is this runtime ALREADY attached on the serving controller?
+ *
+ * The recheck that makes the single-flight an ownership fence rather than a
+ * coincidence. Joining an in-flight attach is not enough on its own: a caller
+ * that arrives just after one completed finds an empty map, and would start a
+ * SECOND attach on a runtime that is already attached. `attachAndReplay`
+ * publishes the new client with `setActive` and then subscribes a live consumer
+ * on it; nothing closes the previous client or cancels its consumer, so a second
+ * attach leaves two sockets and two consumers projecting the same stream. The
+ * store stays correct — projection is idempotent — but the process leaks a
+ * connection and an event loop per race, and "the map has one entry" was never
+ * evidence of one connection.
+ */
+function alreadyAttachedOnServingController(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  deps: {
-    runtimeRoot: string
-    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
-    brokerUnixClientFactory: BrokerUnixClientFactory
-    // Default to the persisted-state probe/token resolvers (production). Tests
-    // script these to avoid touching a live socket / on-disk attach token.
-    resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
-    probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
-    /**
-     * Request-serving ownership for lazy reattach. Every request path shares
-     * this per-server map, so only one candidate may attach a durable runtime
-     * while crossing callers await the exact same result.
-     */
-    inFlightOperations: Map<string, Promise<DurableBrokerDispatchReattachResult>>
+  deps: Pick<SharedBrokerAttachDeps, 'controller'>
+): boolean {
+  const current = db.runtimes.getByRuntimeId(runtime.runtimeId) ?? runtime
+  const invocationId = current.activeInvocationId
+  if (invocationId === undefined) return false
+  return deps.controller.activeClientInvocationId(current.runtimeId) === invocationId
+}
+
+/**
+ * Attach one durable runtime onto the serving controller, at most once at a time.
+ *
+ * The SINGLE shared owner. Startup warmup and desktop registration recovery both
+ * enter here, so they cannot each open a client for the same runtime, and the
+ * rich outcome is preserved for the warmup's category diagnostics.
+ */
+export async function attachDurableBrokerShared(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  deps: SharedBrokerAttachDeps
+): Promise<BrokerReattachOutcome> {
+  const joined = deps.inFlightOperations.get(runtime.runtimeId)
+  if (joined) {
+    const outcome = await joined
+    // The flight we joined may have attached it; re-checking is what stops the
+    // joiner from immediately starting a second attach of its own.
+    if (alreadyAttachedOnServingController(db, runtime, deps)) return outcome
   }
-): Promise<DurableBrokerDispatchReattachResult> {
-  const existing = deps.inFlightOperations.get(runtime.runtimeId)
-  if (existing) {
-    return await existing
+  if (alreadyAttachedOnServingController(db, runtime, deps)) {
+    return { runtimeId: runtime.runtimeId, state: 'broker-attached', brokerAttached: true }
   }
 
-  let resolveOperation!: (result: DurableBrokerDispatchReattachResult) => void
+  let resolveOperation!: (result: BrokerReattachOutcome) => void
   let rejectOperation!: (error: unknown) => void
-  const operation = new Promise<DurableBrokerDispatchReattachResult>((resolve, reject) => {
+  const operation = new Promise<BrokerReattachOutcome>((resolve, reject) => {
     resolveOperation = resolve
     rejectOperation = reject
   })
   deps.inFlightOperations.set(runtime.runtimeId, operation)
-  void reattachDurableBrokerForDispatchOwned(db, runtime, deps)
+  void reconcileDurableBrokerRuntimeReattach(db, runtime, {
+    runtimeRoot: deps.runtimeRoot,
+    controller: deps.controller,
+    brokerUnixClientFactory: deps.brokerUnixClientFactory,
+    resolveAttachToken: deps.resolveAttachToken ?? resolvePersistedBrokerAttachToken,
+    probeBrokerLease: deps.probeBrokerLease ?? probePersistedBrokerLease,
+    attach: true,
+  })
     .then(resolveOperation, rejectOperation)
     .finally(() => {
       if (deps.inFlightOperations.get(runtime.runtimeId) === operation) {
@@ -752,27 +799,15 @@ export async function reattachDurableBrokerForDispatch(
   return await operation
 }
 
-async function reattachDurableBrokerForDispatchOwned(
+export async function reattachDurableBrokerForDispatch(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
-  deps: {
-    runtimeRoot: string
-    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
-    brokerUnixClientFactory: BrokerUnixClientFactory
-    resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
-    probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
-  }
+  deps: SharedBrokerAttachDeps
 ): Promise<DurableBrokerDispatchReattachResult> {
   if (!getPersistedDurableBrokerEndpoint(runtime)) {
     return { state: 'unavailable' }
   }
-  const outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
-    runtimeRoot: deps.runtimeRoot,
-    controller: deps.controller,
-    brokerUnixClientFactory: deps.brokerUnixClientFactory,
-    resolveAttachToken: deps.resolveAttachToken ?? resolvePersistedBrokerAttachToken,
-    probeBrokerLease: deps.probeBrokerLease ?? probePersistedBrokerLease,
-  })
+  const outcome = await attachDurableBrokerShared(db, runtime, deps)
   if (outcome.state === 'broker-attached') {
     return { state: 'reattached' }
   }
@@ -877,8 +912,10 @@ export async function warmDurableBrokerBindings(
   db: HrcDatabase,
   deps: {
     runtimeRoot: string
-    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
+    controller: Pick<HarnessBrokerController, 'attachAndReplay' | 'activeClientInvocationId'>
     brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
+    /** The server's shared per-runtime attach owner; see {@link attachDurableBrokerShared}. */
+    inFlightOperations: Map<string, Promise<BrokerReattachOutcome>>
   }
 ): Promise<BrokerWarmupSummary> {
   const brokerUnixClientFactory: BrokerUnixClientFactory =
@@ -915,13 +952,19 @@ export async function warmDurableBrokerBindings(
     summary.total += 1
     let outcome: BrokerReattachOutcome
     try {
-      outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
+      // Through the SHARED per-runtime owner, not a private call. Desktop
+      // registration recovery reaches the serving controller by the same route,
+      // and the two used to be able to attach the same runtime concurrently —
+      // `setActive` replaces the map entry but neither closes the losing client
+      // nor cancels its live consumer, so the loser kept projecting from a second
+      // socket forever.
+      outcome = await attachDurableBrokerShared(db, runtime, {
         runtimeRoot: deps.runtimeRoot,
         controller: deps.controller,
         brokerUnixClientFactory,
         resolveAttachToken: resolvePersistedBrokerAttachToken,
         probeBrokerLease: probePersistedBrokerLease,
-        attach: true,
+        inFlightOperations: deps.inFlightOperations,
       })
     } catch (error) {
       // A warmup miss is never fatal: the lazy dispatch-path reattach remains the
