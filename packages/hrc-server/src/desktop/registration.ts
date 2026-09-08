@@ -47,6 +47,10 @@ import {
   parseDesktopSessionMeta,
   resolveDesktopHomeIdentity,
 } from './native-identity.js'
+import {
+  type DesktopAttachmentDisposition,
+  scheduleDesktopObserverAttachment,
+} from './observer-supervisor.js'
 import { resolveDesktopProjectBinding } from './project-binding.js'
 import { allocateDesktopSlot, desktopSlotAvailability } from './scope-reservation.js'
 
@@ -90,7 +94,7 @@ export type DesktopRegistrationResponse =
       readonly cache: DesktopScopeCache
       readonly created: boolean
       readonly observation: { readonly state: string; readonly detail?: string | undefined }
-      readonly placement?: string | undefined
+      readonly attachment: DesktopAttachmentDisposition
     }
   | {
       readonly status: 'pending'
@@ -215,11 +219,17 @@ export async function registerDesktopThread(
       nativeThreadId: existing.nativeThreadId,
       hookSource: request.hookSource,
     })
+    // Re-registration is also the RECOVERY door. A conversation whose observer
+    // died — daemon restart, broker crash, a `stop` that released only watcher
+    // resources — reattaches here, on the same permanent address. §3 grants HRC
+    // exactly this power over its own observer and no power at all over desktop.
+    const attachment = scheduleDesktopObserverAttachment(this, existing)
     return {
       status: 'registered',
       created: false,
       cache: toCache(existing),
       observation: observationState(this, existing),
+      attachment,
     }
   }
 
@@ -390,11 +400,15 @@ export async function registerDesktopThread(
     }
   )
 
+  // Scheduled, never awaited: the permanent mapping is already committed, and a
+  // slow or unavailable broker must cost the hook nothing.
+  const attachment = scheduleDesktopObserverAttachment(this, record.record)
   return {
     status: 'registered',
     created: record.created,
     cache: toCache(record.record),
     observation: observationState(this, record.record),
+    attachment,
   }
 }
 

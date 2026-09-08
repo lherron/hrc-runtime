@@ -24,11 +24,16 @@ import type { DesktopThreadRegistration, HrcDatabase } from 'hrc-store-sqlite'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { validateInvocationStartRequest } from 'spaces-harness-broker-protocol'
 
-import { admitDesktopThread, parseDesktopSessionMeta } from '../desktop/native-identity'
+import {
+  admitDesktopThread,
+  canonicalPath,
+  parseDesktopSessionMeta,
+} from '../desktop/native-identity'
 import {
   buildDesktopObserverPlan,
   markDesktopRuntimeExternallyOwned,
 } from '../desktop/observer-attachment'
+import { scheduleDesktopObserverAttachment } from '../desktop/observer-supervisor'
 import { resolveDesktopProjectBinding } from '../desktop/project-binding'
 import { type DesktopRegistrationResponse, registerDesktopThread } from '../desktop/registration'
 import {
@@ -107,10 +112,13 @@ type Harness = {
   db: HrcDatabase
   /** Sessions the ORDINARY start path was asked to boot. Must stay empty for a desktop scope. */
   started: HrcSessionRecord[]
+  /** Driver specs the observer attachment was asked to attach with. */
+  attachments: Array<Record<string, unknown>>
 }
 
 function makeHarness(db: HrcDatabase): Harness {
   const started: HrcSessionRecord[] = []
+  const attachments: Array<Record<string, unknown>> = []
   const instance = {
     db,
     options: {},
@@ -146,11 +154,35 @@ function makeHarness(db: HrcDatabase): Harness {
       if (!runtime) throw new Error('failed to seed runtime')
       return Promise.resolve(runtime)
     },
+    // Stands in for the broker controller round-trip. The scheduling contract —
+    // when it is called, when it is NOT — is what these tests own; the real
+    // invocation shape is asserted separately against the public validators.
+    attachDesktopObserver: (input: { driver: Record<string, unknown> }) => {
+      attachments.push(input.driver)
+      return Promise.resolve({
+        attached: false as const,
+        reason: 'test_stub',
+        detail: 'no broker in this fixture',
+      })
+    },
   } as unknown as HrcServerInstanceForHandlers
-  return { instance, db, started }
+  return { instance, db, started, attachments }
 }
 
 const NOW = '2026-09-08T12:00:00.000Z'
+
+/**
+ * Let scheduled (deliberately un-awaited) attachment work settle.
+ *
+ * `scheduleDesktopObserverAttachment` returns a disposition, never a promise —
+ * callers must not be able to wait on it — so tests drain the macrotask queue
+ * instead. One `Promise.resolve()` is not enough: the attachment runs through a
+ * `.then().catch().finally()` chain.
+ */
+async function settleAttachments(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 let dir: string
 let db: HrcDatabase
@@ -159,6 +191,7 @@ let harness: Harness
 let codexHome: string
 /** `<dir>/praesidium` — mirrors the real nested/symlinked checkout topology. */
 let praesidium: string
+let bundleExecutable: string
 let registryProjects: WrkqProjectRegistryEntry[]
 
 async function writeRollout(threadId: string, line: string): Promise<string> {
@@ -175,6 +208,10 @@ beforeEach(async () => {
   harness = makeHarness(db)
   codexHome = join(dir, 'codex')
   await mkdir(codexHome, { recursive: true })
+  // A real file, so bundle resolution is deterministic instead of depending on
+  // whether this host happens to have ChatGPT.app installed.
+  bundleExecutable = join(dir, 'codex-bundle')
+  await writeFile(bundleExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
 
   // The real topology this task has to get right: a registered project whose
   // registry root is a SYMLINK into a nested directory, inside another
@@ -285,6 +322,7 @@ describe('permanent scope allocation', () => {
         nativeThreadId: threadId,
         codexHome,
         rolloutPath,
+        bundleExecutable,
         hookSource: 'startup',
         ...overrides,
       },
@@ -723,5 +761,164 @@ describe('codex-desktop observer invocation', () => {
     // This one field is the entire authority boundary: it is what the existing
     // sweep / startup-reconcile / dispatch guards read.
     expect(isExternalLifecycleOwner(after)).toBe(true)
+  })
+})
+
+// --- observer attachment scheduling ---------------------------------------
+
+describe('observer attachment scheduling', () => {
+  const register = async (
+    threadId: string,
+    overrides: Record<string, unknown> = {}
+  ): Promise<DesktopRegistrationResponse> => {
+    const rolloutPath = await writeRollout(
+      threadId,
+      desktopMetaLine(threadId, join(praesidium, 'clients', 'hrc-ios'))
+    )
+    return await registerDesktopThread.call(
+      harness.instance,
+      {
+        nativeThreadId: threadId,
+        codexHome,
+        rolloutPath,
+        bundleExecutable,
+        hookSource: 'startup',
+        ...overrides,
+      },
+      { registryProjects }
+    )
+  }
+
+  it('schedules an attachment carrying the private driver config', async () => {
+    const result = await register(DESKTOP_THREAD)
+    expect(result.status === 'registered' && result.attachment.scheduled).toBe(true)
+    // The scheduled work is not awaited by registration, so let it run.
+    await settleAttachments()
+    expect(harness.attachments).toHaveLength(1)
+    expect(harness.attachments[0]).toMatchObject({
+      kind: 'codex-desktop',
+      // Reported verbatim — the bundle is compatibility metadata, not identity.
+      bundleExecutable,
+      // CANONICALIZED — `/var/folders/...` realpaths to `/private/var/folders/...`
+      // on macOS, and two spellings of one home would be two identities.
+      codexHome: canonicalPath(codexHome),
+      sqliteHome: canonicalPath(codexHome),
+      threadId: DESKTOP_THREAD,
+    })
+  })
+
+  it('does not attach a SECOND observer when one is already live', async () => {
+    const first = await register(DESKTOP_THREAD)
+    await settleAttachments()
+    const hostSessionId = first.status === 'registered' ? first.cache.hostSessionId : 'none'
+    db.runtimes.insert({
+      runtimeId: 'rt-observer-live',
+      hostSessionId,
+      scopeRef: first.status === 'registered' ? first.cache.scopeRef : 'none',
+      laneRef: 'main',
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: NOW,
+      updatedAt: NOW,
+      runtimeStateJson: { lifecycleOwner: 'external' },
+    })
+    const attachmentsBefore = harness.attachments.length
+
+    const again = await register(DESKTOP_THREAD, { hookSource: 'user-prompt-submit' })
+    await settleAttachments()
+
+    expect(again.status === 'registered' && again.attachment.scheduled).toBe(false)
+    expect(
+      again.status === 'registered' && !again.attachment.scheduled && again.attachment.reason
+    ).toBe('already_attached')
+    expect(harness.attachments).toHaveLength(attachmentsBefore)
+    expect(again.status === 'registered' && again.observation.state).toBe('attached')
+  })
+
+  it('RECOVERY: re-registration after the observer dies reattaches on the SAME address', async () => {
+    const first = await register(DESKTOP_THREAD)
+    await settleAttachments()
+    const scopeRef = first.status === 'registered' ? first.cache.scopeRef : 'none'
+    const hostSessionId = first.status === 'registered' ? first.cache.hostSessionId : 'none'
+    db.runtimes.insert({
+      runtimeId: 'rt-observer-dead',
+      hostSessionId,
+      scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: NOW,
+      updatedAt: NOW,
+      runtimeStateJson: { lifecycleOwner: 'external' },
+    })
+    // The observer exits. This is NOT a statement about the desktop thread.
+    db.runtimes.update('rt-observer-dead', {
+      status: 'terminated',
+      statusChangedAt: NOW,
+      updatedAt: NOW,
+    })
+    const attachmentsBefore = harness.attachments.length
+
+    const again = await register(DESKTOP_THREAD, { hookSource: 'resume' })
+    await settleAttachments()
+
+    expect(again.status === 'registered' && again.attachment.scheduled).toBe(true)
+    expect(harness.attachments).toHaveLength(attachmentsBefore + 1)
+    // Same permanent address, no second name, no new mapping.
+    expect(again.status === 'registered' && again.cache.scopeRef).toBe(scopeRef)
+    expect(again.status === 'registered' && again.created).toBe(false)
+    expect(db.desktopThreadRegistrations.listAll()).toHaveLength(1)
+    // And nothing was cold-born onto the address to "recover" it.
+    expect(harness.started).toHaveLength(0)
+  })
+
+  it('defers attachment, keeping the address, when the rollout is not readable', async () => {
+    const result = await registerDesktopThread.call(
+      harness.instance,
+      {
+        nativeThreadId: DESKTOP_THREAD,
+        codexHome,
+        rolloutPath: await writeRollout(
+          DESKTOP_THREAD,
+          desktopMetaLine(DESKTOP_THREAD, join(praesidium, 'clients', 'hrc-ios'))
+        ),
+        bundleExecutable,
+        hookSource: 'startup',
+      },
+      { registryProjects }
+    )
+    expect(result.status).toBe('registered')
+    await settleAttachments()
+    harness.attachments.length = 0
+
+    // The rollout disappears (replaced, rotated, or archived under the seat).
+    const registration = db.desktopThreadRegistrations.listAll()[0]!
+    db.desktopThreadRegistrations.updateObservation(registration.registrationKey, {
+      rolloutPath: join(codexHome, 'sessions', 'gone.jsonl'),
+      updatedAt: NOW,
+    })
+    for (const runtime of db.runtimes.listByHostSessionId(registration.hostSessionId)) {
+      db.runtimes.update(runtime.runtimeId, { status: 'terminated', updatedAt: NOW })
+    }
+
+    const disposition = scheduleDesktopObserverAttachment(
+      harness.instance,
+      db.desktopThreadRegistrations.getByRegistrationKey(registration.registrationKey)!
+    )
+    expect(disposition.scheduled).toBe(false)
+    expect(!disposition.scheduled && disposition.reason).toBe('rollout_unavailable')
+    expect(harness.attachments).toHaveLength(0)
+    // Silence never fabricates a terminal fact: the address is still reserved.
+    expect(isScopeReservedForDesktop(db, registration.scopeRef)).toBe(true)
   })
 })
