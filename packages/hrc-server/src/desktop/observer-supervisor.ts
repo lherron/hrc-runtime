@@ -193,7 +193,7 @@ export type DesktopAttachmentDisposition =
 export function buildDesktopDriverSpec(
   registration: DesktopThreadRegistration,
   env?: Record<string, string | undefined> | undefined,
-  adoptionWatermark?: { readonly byteOffset: number } | undefined
+  recoveryBoundary?: DesktopRecoveryBoundary | undefined
 ):
   | { readonly driver: CodexDesktopDriverSpec }
   | { readonly reason: string; readonly detail: string } {
@@ -225,28 +225,195 @@ export function buildDesktopDriverSpec(
       sqliteHome: registration.sqliteHome,
       threadId: registration.nativeThreadId,
       rolloutPath,
-      // Present ONLY on a replacement observer. A fresh invocation has no memory
-      // of what a previous one already normalized, so without this the driver
-      // re-reads the rollout from byte 0 and every historical turn is projected
-      // a second time — observed as 22 turns becoming 44 in the T-08294 recovery
-      // chart before this existed.
-      ...(adoptionWatermark === undefined ? {} : { adoptionWatermark }),
+      // Present ONLY on a replacement observer, and deliberately NOT a byte
+      // offset. See {@link desktopRecoveryBoundary}: HRC has no source position
+      // to give, and the filesystem length it CAN measure is the producer's EOF,
+      // which would silently discard everything written-but-unread and
+      // read-but-uncommitted when the driver honours it.
+      ...(recoveryBoundary === undefined ? {} : { recoveryBoundary }),
     },
   }
 }
 
-/** The byte offset a previous observer had reached, if one recorded it. */
-export function recordedObserverWatermark(
-  runtime: HrcRuntimeSnapshot | undefined
-): { readonly byteOffset: number } | undefined {
-  const attachment = runtime?.runtimeStateJson?.['observerAttachment']
-  if (attachment === null || typeof attachment !== 'object' || Array.isArray(attachment)) {
+/**
+ * What HRC has DURABLY COMMITTED for a previous observer's invocation.
+ *
+ * This replaces an earlier `adoptionWatermark: { byteOffset }` taken from
+ * `statSync(rolloutPath).size`. That was wrong and Astra caught it: the file
+ * length is the PRODUCER's current EOF, not how far the observer read nor how
+ * far HRC committed. A broker can die behind the producer, with unread lines,
+ * captured-but-unprojected events and a partial trailing line all below that
+ * offset — so resuming there would have silently dropped them the moment the
+ * driver honoured the field. Filesystem length is not delivery evidence.
+ *
+ * The real evidence was already on disk and I had not looked in the right
+ * column. `broker_invocation_events.broker_envelope_json` carries, per event:
+ *
+ *   provenance.rawRecordId    the source RECORD, so several normalized events
+ *                             from one JSONL line are groupable (observed: 372
+ *                             records producing 400+ events)
+ *   provenance.sourceCursor   { byteOffset, line } — the record's START offset
+ *   provenance.sourceEpoch    file identity, so a replaced/rotated rollout is
+ *                             not mistaken for the same source
+ *   provenance.rawSha256      the raw record hash
+ *   provenance.nativeType/nativeId, plus envelope turnId/itemId
+ *
+ * Filtering on `projectionStatus === 'applied'` turns that into a COMMITTED
+ * boundary rather than a captured one: an event the broker delivered but HRC
+ * never projected is exactly the event recovery must re-deliver.
+ *
+ * The boundary says what was committed and where that record STARTS. It does
+ * not tell the driver where to resume reading — deciding that belongs to the
+ * side that owns the file cursor, which is why the boundary record is named
+ * rather than skipped: re-emitting it whole and letting HRC drop the
+ * projections it already has is what makes a partially-projected record safe.
+ */
+export type DesktopRecoveryBoundary = {
+  readonly sourceKind?: string | undefined
+  /** Identity of the observed file. A different epoch invalidates the offsets. */
+  readonly sourceEpoch?: string | undefined
+  /** The last source record HRC committed anything from. */
+  readonly boundaryRecord?:
+    | {
+        readonly rawRecordId: string
+        readonly byteOffset: number
+        readonly line?: number | undefined
+        readonly rawSha256?: string | undefined
+        readonly nativeType?: string | undefined
+      }
+    | undefined
+  /**
+   * Every projection HRC already committed FOR THE BOUNDARY RECORD. The
+   * replacement re-emits that record whole; these are the siblings to drop.
+   */
+  readonly committedBoundaryProjections: readonly {
+    readonly seq: number
+    readonly type: string
+    readonly turnId?: string | undefined
+    readonly itemId?: string | undefined
+    readonly nativeId?: string | undefined
+  }[]
+  /** Highest broker seq HRC applied. Per-invocation space; diagnostics only. */
+  readonly appliedThroughSeq: number
+  /** Nothing committed — the replacement must adopt from the start. */
+  readonly empty: boolean
+}
+
+type AppliedEnvelope = {
+  readonly seq: number
+  readonly type: string
+  readonly turnId?: string | undefined
+  readonly itemId?: string | undefined
+  readonly provenance: Record<string, unknown>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseAppliedEnvelope(json: string | undefined): AppliedEnvelope | undefined {
+  if (json === undefined) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
     return undefined
   }
-  const offset = (attachment as Record<string, unknown>)['watermarkByteOffset']
-  return typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0
-    ? { byteOffset: offset }
-    : undefined
+  if (!isRecord(parsed)) return undefined
+  const seq = parsed['seq']
+  const type = parsed['type']
+  if (typeof seq !== 'number' || typeof type !== 'string') return undefined
+  const provenance = parsed['provenance']
+  return {
+    seq,
+    type,
+    ...(typeof parsed['turnId'] === 'string' ? { turnId: parsed['turnId'] } : {}),
+    ...(typeof parsed['itemId'] === 'string' ? { itemId: parsed['itemId'] } : {}),
+    provenance: isRecord(provenance) ? provenance : {},
+  }
+}
+
+/** Derive the committed boundary from a previous observer's applied events. */
+export function desktopRecoveryBoundary(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot | undefined
+): DesktopRecoveryBoundary | undefined {
+  const invocationId = runtime?.activeInvocationId
+  if (runtime === undefined || invocationId === undefined) return undefined
+
+  const applied: AppliedEnvelope[] = []
+  let appliedThroughSeq = 0
+  for (const event of server.db.brokerInvocationEvents.listByInvocationId(invocationId)) {
+    if (event.projectionStatus !== 'applied') continue
+    appliedThroughSeq = Math.max(appliedThroughSeq, event.seq)
+    const envelope = parseAppliedEnvelope(event.brokerEnvelopeJson)
+    if (envelope !== undefined) applied.push(envelope)
+  }
+
+  // The furthest source record HRC committed anything from. Chosen by byte
+  // offset rather than by broker seq: seq is a delivery order, and the source
+  // position is what a replacement has to reason about.
+  let boundary: AppliedEnvelope | undefined
+  let boundaryOffset = -1
+  let sourceKind: string | undefined
+  let sourceEpoch: string | undefined
+  for (const envelope of applied) {
+    const cursor = envelope.provenance['sourceCursor']
+    if (!isRecord(cursor) || typeof cursor['byteOffset'] !== 'number') continue
+    if (typeof envelope.provenance['sourceKind'] === 'string') {
+      sourceKind = envelope.provenance['sourceKind']
+    }
+    if (typeof envelope.provenance['sourceEpoch'] === 'string') {
+      sourceEpoch = envelope.provenance['sourceEpoch']
+    }
+    if (cursor['byteOffset'] > boundaryOffset) {
+      boundaryOffset = cursor['byteOffset']
+      boundary = envelope
+    }
+  }
+
+  if (boundary === undefined) {
+    return {
+      ...(sourceKind === undefined ? {} : { sourceKind }),
+      ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
+      committedBoundaryProjections: [],
+      appliedThroughSeq,
+      empty: true,
+    }
+  }
+
+  const rawRecordId = boundary.provenance['rawRecordId']
+  const cursor = boundary.provenance['sourceCursor'] as Record<string, unknown>
+  const siblings = applied.filter(
+    (envelope) =>
+      typeof rawRecordId === 'string' && envelope.provenance['rawRecordId'] === rawRecordId
+  )
+  return {
+    ...(sourceKind === undefined ? {} : { sourceKind }),
+    ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
+    boundaryRecord: {
+      rawRecordId: typeof rawRecordId === 'string' ? rawRecordId : `offset:${boundaryOffset}`,
+      byteOffset: boundaryOffset,
+      ...(typeof cursor['line'] === 'number' ? { line: cursor['line'] } : {}),
+      ...(typeof boundary.provenance['rawSha256'] === 'string'
+        ? { rawSha256: boundary.provenance['rawSha256'] }
+        : {}),
+      ...(typeof boundary.provenance['nativeType'] === 'string'
+        ? { nativeType: boundary.provenance['nativeType'] }
+        : {}),
+    },
+    committedBoundaryProjections: siblings.map((envelope) => ({
+      seq: envelope.seq,
+      type: envelope.type,
+      ...(envelope.turnId === undefined ? {} : { turnId: envelope.turnId }),
+      ...(envelope.itemId === undefined ? {} : { itemId: envelope.itemId }),
+      ...(typeof envelope.provenance['nativeId'] === 'string'
+        ? { nativeId: envelope.provenance['nativeId'] }
+        : {}),
+    })),
+    appliedThroughSeq,
+    empty: false,
+  }
 }
 
 /**
@@ -292,7 +459,7 @@ export function scheduleDesktopObserverAttachment(
   const resumed =
     detached === undefined
       ? built
-      : buildDesktopDriverSpec(registration, undefined, recordedObserverWatermark(detached))
+      : buildDesktopDriverSpec(registration, undefined, desktopRecoveryBoundary(server, detached))
   if (!('driver' in resumed)) {
     return { scheduled: false, reason: resumed.reason, detail: resumed.detail }
   }

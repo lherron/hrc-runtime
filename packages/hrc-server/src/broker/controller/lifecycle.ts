@@ -9,8 +9,6 @@
  * the controller's public export surface.
  */
 
-import { statSync } from 'node:fs'
-
 import { HrcErrorCode } from 'hrc-core'
 import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -428,19 +426,6 @@ export async function failReplayStale(
  * §5: "A helper process is not desktop liveness", and silence must never
  * fabricate turn completion.
  */
-/** Bytes of the observed rollout at detach time, when the runtime names one. */
-function externalObserverWatermark(runtimeStateJson: Record<string, unknown>): number | undefined {
-  const desktop = runtimeStateJson['codexDesktop']
-  if (desktop === null || typeof desktop !== 'object' || Array.isArray(desktop)) return undefined
-  const rolloutPath = (desktop as Record<string, unknown>)['rolloutPath']
-  if (typeof rolloutPath !== 'string' || rolloutPath.length === 0) return undefined
-  try {
-    return statSync(rolloutPath).size
-  } catch {
-    return undefined
-  }
-}
-
 function recordExternalObserverDetached(
   ctx: LifecycleContext,
   runtime: HrcRuntimeSnapshot,
@@ -448,11 +433,6 @@ function recordExternalObserverDetached(
 ): void {
   const now = ctx.now()
   const priorState = runtime.runtimeStateJson ?? {}
-  // How far this observer had read. Measured HERE, at the instant the
-  // connection is lost, rather than when a replacement starts: the rollout keeps
-  // growing in between, so a later measurement would silently skip the gap.
-  // Erring toward a small re-read is correct; erring toward a skip loses turns.
-  const watermarkByteOffset = externalObserverWatermark(priorState)
   const priorControl =
     priorState['control'] !== null &&
     typeof priorState['control'] === 'object' &&
@@ -468,7 +448,6 @@ function recordExternalObserverDetached(
       observerAttachment: {
         state: 'detached',
         detachedAt: now,
-        ...(watermarkByteOffset === undefined ? {} : { watermarkByteOffset }),
         reason: detail.reason,
         ...(detail.code === undefined ? {} : { code: detail.code }),
         ...(detail.message === undefined ? {} : { message: detail.message }),

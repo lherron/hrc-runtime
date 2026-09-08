@@ -31,6 +31,7 @@ import {
   buildDesktopDriverSpec,
   currentDesktopObserverRuntime,
   desktopObserverAttachmentHealth,
+  desktopRecoveryBoundary,
   scheduleDesktopObserverAttachment,
 } from '../desktop/observer-supervisor'
 import { isExternalLifecycleOwner } from '../external-participant-lifecycle'
@@ -314,12 +315,110 @@ describe('recovery prefers durable reattachment', () => {
   })
 })
 
-describe('a replacement observer resumes rather than replaying', () => {
-  it('carries the detach watermark into the fresh driver spec', async () => {
-    // The chart against a real broker showed 22 turns becoming 44 without this:
-    // a fresh invocation has no memory of what the previous one normalized, so
-    // it re-read the rollout from byte 0 and re-presented the whole history.
+describe('the recovery boundary is delivery evidence, not filesystem length', () => {
+  /**
+   * Envelope shaped exactly like the real ones observed in an isolated store:
+   * `provenance.sourceCursor.{byteOffset,line}`, `rawRecordId`, `sourceEpoch`,
+   * `rawSha256`, `nativeType`/`nativeId`, plus envelope `turnId`/`itemId`.
+   */
+  function appendApplied(input: {
+    seq: number
+    type: string
+    rawRecordId: string
+    byteOffset: number
+    line: number
+    itemId?: string
+    projectionStatus?: 'applied' | 'pending'
+  }): void {
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-observer',
+      seq: input.seq,
+      time: NOW,
+      type: input.type,
+      runtimeId: 'rt-observer',
+      payload: { turnId: 'native-turn-1' },
+      envelopeJson: JSON.stringify({
+        invocationId: 'inv-observer',
+        seq: input.seq,
+        time: NOW,
+        type: input.type,
+        turnId: 'native-turn-1',
+        ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+        driver: { kind: 'codex-desktop' },
+        provenance: {
+          rawRecordId: input.rawRecordId,
+          sourceKind: 'provider-jsonl',
+          sourceEpoch: 'ep-fixture',
+          sourceCursor: { byteOffset: input.byteOffset, line: input.line },
+          nativeType: 'event_msg:item_completed',
+          nativeId: 'native-turn-1',
+          rawSha256: `sha-${input.rawRecordId}`,
+          normalizer: { name: 'codex-desktop', version: '0.1.0' },
+        },
+      }),
+      projectionStatus: input.projectionStatus ?? 'applied',
+    })
+  }
+
+  it('names the furthest COMMITTED source record, and its committed siblings', () => {
+    appendApplied({ seq: 1, type: 'turn.started', rawRecordId: 'raw_1', byteOffset: 0, line: 1 })
+    // One source record, TWO normalized events — the case a positional-only
+    // boundary cannot express, and the reason the record is re-emitted whole.
+    appendApplied({
+      seq: 2,
+      type: 'assistant.message.completed',
+      rawRecordId: 'raw_2',
+      byteOffset: 500,
+      line: 2,
+      itemId: 'msg-a',
+    })
+    appendApplied({
+      seq: 3,
+      type: 'usage.updated',
+      rawRecordId: 'raw_2',
+      byteOffset: 500,
+      line: 2,
+      itemId: 'usage-a',
+    })
+    // Captured but NEVER projected, and FURTHER along. A filesystem offset would
+    // have swallowed it; a committed boundary must not.
+    appendApplied({
+      seq: 4,
+      type: 'tool.call.completed',
+      rawRecordId: 'raw_3',
+      byteOffset: 900,
+      line: 3,
+      itemId: 'call-uncommitted',
+      projectionStatus: 'pending',
+    })
+
+    const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
+    expect(boundary?.empty).toBe(false)
+    expect(boundary?.sourceEpoch).toBe('ep-fixture')
+    // raw_2, NOT raw_3: the uncommitted record is beyond the boundary.
+    expect(boundary?.boundaryRecord).toMatchObject({
+      rawRecordId: 'raw_2',
+      byteOffset: 500,
+      line: 2,
+      rawSha256: 'sha-raw_2',
+    })
+    expect(boundary?.appliedThroughSeq).toBe(3)
+    expect(boundary?.committedBoundaryProjections.map((p) => p.itemId)).toEqual([
+      'msg-a',
+      'usage-a',
+    ])
+  })
+
+  it('reports an EMPTY boundary when nothing was committed', () => {
+    const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
+    expect(boundary?.empty).toBe(true)
+    expect(boundary?.boundaryRecord).toBeUndefined()
+    expect(boundary?.appliedThroughSeq).toBe(0)
+  })
+
+  it('carries the boundary — and never a byte-length watermark — into a replacement', async () => {
     reattachResults = [{ state: 'unavailable' }]
+    appendApplied({ seq: 1, type: 'turn.started', rawRecordId: 'raw_1', byteOffset: 120, line: 1 })
     const specs: Array<Record<string, unknown>> = []
     ;(server as unknown as { attachDesktopObserver: unknown }).attachDesktopObserver = (input: {
       driver: Record<string, unknown>
@@ -332,21 +431,23 @@ describe('a replacement observer resumes rather than replaying', () => {
       'rt-observer',
       new BrokerControllerError('broker_transport_closed', 'socket closed')
     )
-    const detached = db.runtimes.getByRuntimeId('rt-observer')!
-    const recorded = detached.runtimeStateJson?.['observerAttachment'] as Record<string, unknown>
-    // The rollout fixture is a real file, so the watermark is its real size.
-    expect(recorded['watermarkByteOffset']).toBe(3)
-
     expect(scheduleDesktopObserverAttachment(server, registration()).scheduled).toBe(true)
     await settle()
+
     expect(specs).toHaveLength(1)
-    expect(specs[0]?.['adoptionWatermark']).toEqual({ byteOffset: 3 })
+    // The unsafe field is gone for good.
+    expect(specs[0]?.['adoptionWatermark']).toBeUndefined()
+    expect(specs[0]?.['recoveryBoundary']).toMatchObject({
+      sourceEpoch: 'ep-fixture',
+      boundaryRecord: { rawRecordId: 'raw_1', byteOffset: 120 },
+      empty: false,
+    })
   })
 
-  it('a FIRST attachment carries no watermark', () => {
-    // Adoption of a conversation HRC has never observed must project its history
-    // as history — the watermark is strictly a resumption device.
+  it('a FIRST attachment carries no boundary at all', () => {
+    // Adopting a conversation HRC has never observed must project its history as
+    // history; the boundary is strictly a resumption device.
     const first = buildDesktopDriverSpec(registration())
-    expect('driver' in first && first.driver.adoptionWatermark).toBeUndefined()
+    expect('driver' in first && first.driver['recoveryBoundary']).toBeUndefined()
   })
 })
