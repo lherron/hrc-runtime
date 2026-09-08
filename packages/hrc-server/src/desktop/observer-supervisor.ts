@@ -192,7 +192,8 @@ export type DesktopAttachmentDisposition =
  */
 export function buildDesktopDriverSpec(
   registration: DesktopThreadRegistration,
-  env?: Record<string, string | undefined> | undefined
+  env?: Record<string, string | undefined> | undefined,
+  adoptionWatermark?: { readonly byteOffset: number } | undefined
 ):
   | { readonly driver: CodexDesktopDriverSpec }
   | { readonly reason: string; readonly detail: string } {
@@ -224,8 +225,28 @@ export function buildDesktopDriverSpec(
       sqliteHome: registration.sqliteHome,
       threadId: registration.nativeThreadId,
       rolloutPath,
+      // Present ONLY on a replacement observer. A fresh invocation has no memory
+      // of what a previous one already normalized, so without this the driver
+      // re-reads the rollout from byte 0 and every historical turn is projected
+      // a second time — observed as 22 turns becoming 44 in the T-08294 recovery
+      // chart before this existed.
+      ...(adoptionWatermark === undefined ? {} : { adoptionWatermark }),
     },
   }
+}
+
+/** The byte offset a previous observer had reached, if one recorded it. */
+export function recordedObserverWatermark(
+  runtime: HrcRuntimeSnapshot | undefined
+): { readonly byteOffset: number } | undefined {
+  const attachment = runtime?.runtimeStateJson?.['observerAttachment']
+  if (attachment === null || typeof attachment !== 'object' || Array.isArray(attachment)) {
+    return undefined
+  }
+  const offset = (attachment as Record<string, unknown>)['watermarkByteOffset']
+  return typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0
+    ? { byteOffset: offset }
+    : undefined
 }
 
 /**
@@ -268,7 +289,14 @@ export function scheduleDesktopObserverAttachment(
   }
 
   const detached = health.state === 'detached' ? health.runtime : undefined
-  const operation = recoverDesktopObserver(server, registration, built.driver, detached)
+  const resumed =
+    detached === undefined
+      ? built
+      : buildDesktopDriverSpec(registration, undefined, recordedObserverWatermark(detached))
+  if (!('driver' in resumed)) {
+    return { scheduled: false, reason: resumed.reason, detail: resumed.detail }
+  }
+  const operation = recoverDesktopObserver(server, registration, resumed.driver, detached)
     .then((outcome) => {
       if (!outcome.attached) {
         // Degraded observation, recorded and left recoverable. The permanent

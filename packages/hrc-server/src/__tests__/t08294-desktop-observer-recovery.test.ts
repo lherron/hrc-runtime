@@ -28,6 +28,7 @@ import { BrokerControllerError } from '../broker/controller/errors'
 import { failReplayStale, markBrokerCrashTerminal } from '../broker/controller/lifecycle'
 import type { LifecycleContext } from '../broker/controller/lifecycle'
 import {
+  buildDesktopDriverSpec,
   currentDesktopObserverRuntime,
   desktopObserverAttachmentHealth,
   scheduleDesktopObserverAttachment,
@@ -146,6 +147,9 @@ function seedRegisteredObserver(): void {
     runtimeStateJson: {
       lifecycleOwner: 'external',
       control: { mode: 'broker-ipc', brokerAttached: true },
+      // What `markDesktopRuntimeExternallyOwned` writes in production; the
+      // detach handler measures the watermark from this path.
+      codexDesktop: { registrationKey: 'key-live', nativeThreadId: THREAD, rolloutPath },
     },
   })
   db.brokerInvocations.insert({
@@ -307,5 +311,42 @@ describe('recovery prefers durable reattachment', () => {
     expect(!second.scheduled && second.reason).toBe('attachment_in_flight')
     await settle()
     expect(attachCalls).toBe(1)
+  })
+})
+
+describe('a replacement observer resumes rather than replaying', () => {
+  it('carries the detach watermark into the fresh driver spec', async () => {
+    // The chart against a real broker showed 22 turns becoming 44 without this:
+    // a fresh invocation has no memory of what the previous one normalized, so
+    // it re-read the rollout from byte 0 and re-presented the whole history.
+    reattachResults = [{ state: 'unavailable' }]
+    const specs: Array<Record<string, unknown>> = []
+    ;(server as unknown as { attachDesktopObserver: unknown }).attachDesktopObserver = (input: {
+      driver: Record<string, unknown>
+    }) => {
+      specs.push(input.driver)
+      return Promise.resolve({ attached: true as const, runtime: {} as never })
+    }
+    markBrokerCrashTerminal(
+      lifecycleCtx(),
+      'rt-observer',
+      new BrokerControllerError('broker_transport_closed', 'socket closed')
+    )
+    const detached = db.runtimes.getByRuntimeId('rt-observer')!
+    const recorded = detached.runtimeStateJson?.['observerAttachment'] as Record<string, unknown>
+    // The rollout fixture is a real file, so the watermark is its real size.
+    expect(recorded['watermarkByteOffset']).toBe(3)
+
+    expect(scheduleDesktopObserverAttachment(server, registration()).scheduled).toBe(true)
+    await settle()
+    expect(specs).toHaveLength(1)
+    expect(specs[0]?.['adoptionWatermark']).toEqual({ byteOffset: 3 })
+  })
+
+  it('a FIRST attachment carries no watermark', () => {
+    // Adoption of a conversation HRC has never observed must project its history
+    // as history — the watermark is strictly a resumption device.
+    const first = buildDesktopDriverSpec(registration())
+    expect('driver' in first && first.driver.adoptionWatermark).toBeUndefined()
   })
 })

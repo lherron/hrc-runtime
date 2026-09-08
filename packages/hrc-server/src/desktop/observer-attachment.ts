@@ -432,6 +432,12 @@ export function markDesktopRuntimeExternallyOwned(
         homeIdentity: registration.homeIdentity,
         projectId: registration.projectId,
         slotToken: registration.slotToken,
+        // Carried so the DETACH handler can measure how far this observer had
+        // read before it died. Without a watermark a replacement observer
+        // re-projects the whole rollout and every historical turn lands twice.
+        ...(registration.rolloutPath === undefined
+          ? {}
+          : { rolloutPath: registration.rolloutPath }),
         // Observation health is recorded separately from desktop availability
         // on purpose (§5). `observerAttachedAt` is a fact about HRC; it is not
         // evidence that the desktop thread is alive, loaded, or idle.
