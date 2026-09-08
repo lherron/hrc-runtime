@@ -73,7 +73,19 @@ export type CodexDesktopDriverSpec = {
   readonly sqliteHome: string
   readonly threadId: string
   readonly rolloutPath: string
-  readonly adoptionWatermark?: { readonly byteOffset: number } | undefined
+  /**
+   * Where replay must restart and what HRC already committed. Private, and
+   * present only on a REPLACEMENT observer. Deliberately not a byte-length
+   * watermark — see `desktopRecoveryBoundary`.
+   */
+  readonly recoveryBoundary?: unknown
+  /**
+   * Opaque absolute path to ASP's own native-attempt store. HRC derives it per
+   * REGISTRATION, persists nothing else about it, and never opens it; ASP owns
+   * the schema. It is what keeps an uncertain native queue write fenced when the
+   * observer is replaced and the capture directory changes.
+   */
+  readonly nativeAttemptStorePath?: string | undefined
 }
 
 export type DesktopObserverPlan = {

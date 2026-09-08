@@ -21,6 +21,8 @@
  */
 
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { DesktopThreadRegistration } from 'hrc-store-sqlite'
@@ -82,6 +84,23 @@ export function resolveDesktopBundleExecutable(input: {
  * connected". Blacklisting more statuses would not have helped: the real failure
  * leaves `ready` untouched.
  */
+/**
+ * Stable location for ASP's private native-attempt store.
+ *
+ * Keyed on the REGISTRATION, not the invocation or the capture directory, which
+ * is the whole point: an uncertain native queue write must stay fenced when the
+ * observer is replaced, and a replacement gets a fresh captureDir. Derived
+ * deterministically so HRC hands back the same path after a restart without
+ * storing an extra column. HRC never opens it — ASP owns the schema.
+ */
+export function desktopNativeAttemptStorePath(
+  registration: DesktopThreadRegistration,
+  stateRoot?: string | undefined
+): string {
+  const root = stateRoot ?? join(homedir(), '.hrc')
+  return join(root, 'codex-desktop', registration.registrationKey, 'native-attempts.db')
+}
+
 export function currentDesktopObserverRuntime(
   server: HrcServerInstanceForHandlers,
   registration: DesktopThreadRegistration
@@ -193,7 +212,8 @@ export type DesktopAttachmentDisposition =
 export function buildDesktopDriverSpec(
   registration: DesktopThreadRegistration,
   env?: Record<string, string | undefined> | undefined,
-  recoveryBoundary?: DesktopRecoveryBoundary | undefined
+  recoveryBoundary?: DesktopRecoveryBoundary | undefined,
+  stateRoot?: string | undefined
 ):
   | { readonly driver: CodexDesktopDriverSpec }
   | { readonly reason: string; readonly detail: string } {
@@ -231,6 +251,13 @@ export function buildDesktopDriverSpec(
       // which would silently discard everything written-but-unread and
       // read-but-uncommitted when the driver honours it.
       ...(recoveryBoundary === undefined ? {} : { recoveryBoundary }),
+      // ASP's own attempt store, so an uncertain native queue write stays fenced
+      // across observer replacement. HRC derives it once per registration,
+      // persists it, and re-passes it verbatim — it is an OPAQUE path here.
+      // ASP owns the schema and is the only reader/writer; HRC never opens it.
+      // Deliberately NOT under the per-invocation captureDir, which is exactly
+      // what a replacement observer does not inherit.
+      nativeAttemptStorePath: desktopNativeAttemptStorePath(registration, stateRoot),
     },
   }
 }
@@ -272,26 +299,45 @@ export type DesktopRecoveryBoundary = {
   readonly sourceKind?: string | undefined
   /** Identity of the observed file. A different epoch invalidates the offsets. */
   readonly sourceEpoch?: string | undefined
-  /** The last source record HRC committed anything from. */
-  readonly boundaryRecord?:
+  /**
+   * The record replay must START from, re-emitted whole.
+   *
+   * NOT simply the furthest applied record. Normalization can be delayed and
+   * out of order: codex-desktop can hold an AgentMessage carrying an EARLIER
+   * record's provenance and emit it when `task_complete` flushes, so a later
+   * record is applied while an earlier one is still pending. Starting at the
+   * furthest applied cursor would declare that earlier record published and
+   * lose the pending projection for good. So the start is the earliest PENDING
+   * cursor when one precedes the furthest applied cursor, and the furthest
+   * applied record otherwise.
+   */
+  readonly startRecord?:
     | {
         readonly rawRecordId: string
         readonly byteOffset: number
         readonly line?: number | undefined
         readonly rawSha256?: string | undefined
         readonly nativeType?: string | undefined
+        /** Why this record was chosen, for the diagnostic trail. */
+        readonly chosenBy: 'earliest-pending' | 'furthest-applied'
       }
     | undefined
   /**
-   * Every projection HRC already committed FOR THE BOUNDARY RECORD. The
-   * replacement re-emits that record whole; these are the siblings to drop.
+   * Every projection HRC already committed AT OR AFTER the start record — the
+   * whole replay suffix, not one record's siblings.
+   *
+   * It has to be the suffix because the start record can be EARLIER than the
+   * furthest applied one (see below), in which case replay re-covers records
+   * HRC has already fully projected. De-duplicating only the start record would
+   * then duplicate every applied record after it.
    */
-  readonly committedBoundaryProjections: readonly {
+  readonly committedProjections: readonly {
     readonly seq: number
     readonly type: string
     readonly turnId?: string | undefined
     readonly itemId?: string | undefined
     readonly nativeId?: string | undefined
+    readonly rawRecordId?: string | undefined
   }[]
   /** Highest broker seq HRC applied. Per-invocation space; diagnostics only. */
   readonly appliedThroughSeq: number
@@ -333,7 +379,14 @@ function parseAppliedEnvelope(json: string | undefined): AppliedEnvelope | undef
   }
 }
 
-/** Derive the committed boundary from a previous observer's applied events. */
+/**
+ * Derive the recovery boundary from a previous observer's durable events.
+ *
+ * Two passes, because "what did HRC commit" and "where must replay start" are
+ * different questions. The applied events say what may be dropped as duplicate;
+ * the PENDING ones say how far back replay has to reach so a delayed projection
+ * is not lost.
+ */
 export function desktopRecoveryBoundary(
   server: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot | undefined
@@ -343,74 +396,99 @@ export function desktopRecoveryBoundary(
 
   const applied: AppliedEnvelope[] = []
   let appliedThroughSeq = 0
-  for (const event of server.db.brokerInvocationEvents.listByInvocationId(invocationId)) {
-    if (event.projectionStatus !== 'applied') continue
-    appliedThroughSeq = Math.max(appliedThroughSeq, event.seq)
-    const envelope = parseAppliedEnvelope(event.brokerEnvelopeJson)
-    if (envelope !== undefined) applied.push(envelope)
-  }
-
-  // The furthest source record HRC committed anything from. Chosen by byte
-  // offset rather than by broker seq: seq is a delivery order, and the source
-  // position is what a replacement has to reason about.
-  let boundary: AppliedEnvelope | undefined
-  let boundaryOffset = -1
   let sourceKind: string | undefined
   let sourceEpoch: string | undefined
-  for (const envelope of applied) {
-    const cursor = envelope.provenance['sourceCursor']
-    if (!isRecord(cursor) || typeof cursor['byteOffset'] !== 'number') continue
+  let furthestApplied: AppliedEnvelope | undefined
+  let furthestAppliedOffset = -1
+  let earliestPending: AppliedEnvelope | undefined
+  let earliestPendingOffset = Number.POSITIVE_INFINITY
+
+  for (const event of server.db.brokerInvocationEvents.listByInvocationId(invocationId)) {
+    const envelope = parseAppliedEnvelope(event.brokerEnvelopeJson)
+    if (envelope === undefined) continue
     if (typeof envelope.provenance['sourceKind'] === 'string') {
       sourceKind = envelope.provenance['sourceKind']
     }
     if (typeof envelope.provenance['sourceEpoch'] === 'string') {
       sourceEpoch = envelope.provenance['sourceEpoch']
     }
-    if (cursor['byteOffset'] > boundaryOffset) {
-      boundaryOffset = cursor['byteOffset']
-      boundary = envelope
+    const cursor = envelope.provenance['sourceCursor']
+    const byteOffset =
+      isRecord(cursor) && typeof cursor['byteOffset'] === 'number'
+        ? cursor['byteOffset']
+        : undefined
+
+    if (event.projectionStatus === 'applied') {
+      appliedThroughSeq = Math.max(appliedThroughSeq, event.seq)
+      applied.push(envelope)
+      if (byteOffset !== undefined && byteOffset > furthestAppliedOffset) {
+        furthestAppliedOffset = byteOffset
+        furthestApplied = envelope
+      }
+      continue
+    }
+    // Not applied — captured, held, or failed. This is the event recovery
+    // exists to re-deliver, and its record is how far back replay must reach.
+    if (byteOffset !== undefined && byteOffset < earliestPendingOffset) {
+      earliestPendingOffset = byteOffset
+      earliestPending = envelope
     }
   }
 
-  if (boundary === undefined) {
+  const usePending =
+    earliestPending !== undefined &&
+    (furthestApplied === undefined || earliestPendingOffset <= furthestAppliedOffset)
+  const chosen = usePending ? earliestPending : furthestApplied
+  const chosenOffset = usePending ? earliestPendingOffset : furthestAppliedOffset
+
+  if (chosen === undefined) {
     return {
       ...(sourceKind === undefined ? {} : { sourceKind }),
       ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
-      committedBoundaryProjections: [],
+      committedProjections: [],
       appliedThroughSeq,
       empty: true,
     }
   }
 
-  const rawRecordId = boundary.provenance['rawRecordId']
-  const cursor = boundary.provenance['sourceCursor'] as Record<string, unknown>
-  const siblings = applied.filter(
-    (envelope) =>
-      typeof rawRecordId === 'string' && envelope.provenance['rawRecordId'] === rawRecordId
-  )
+  const cursor = chosen.provenance['sourceCursor']
+  const rawRecordId = chosen.provenance['rawRecordId']
+  // Everything already applied AT OR AFTER the start record. Replay re-covers
+  // that whole span, so the dedupe set has to span it too.
+  const suffix = applied.filter((envelope) => {
+    const envelopeCursor = envelope.provenance['sourceCursor']
+    if (!isRecord(envelopeCursor) || typeof envelopeCursor['byteOffset'] !== 'number') return false
+    return envelopeCursor['byteOffset'] >= chosenOffset
+  })
+
   return {
     ...(sourceKind === undefined ? {} : { sourceKind }),
     ...(sourceEpoch === undefined ? {} : { sourceEpoch }),
-    boundaryRecord: {
-      rawRecordId: typeof rawRecordId === 'string' ? rawRecordId : `offset:${boundaryOffset}`,
-      byteOffset: boundaryOffset,
-      ...(typeof cursor['line'] === 'number' ? { line: cursor['line'] } : {}),
-      ...(typeof boundary.provenance['rawSha256'] === 'string'
-        ? { rawSha256: boundary.provenance['rawSha256'] }
+    startRecord: {
+      rawRecordId: typeof rawRecordId === 'string' ? rawRecordId : `offset:${chosenOffset}`,
+      byteOffset: chosenOffset,
+      ...(isRecord(cursor) && typeof cursor['line'] === 'number' ? { line: cursor['line'] } : {}),
+      ...(typeof chosen.provenance['rawSha256'] === 'string'
+        ? { rawSha256: chosen.provenance['rawSha256'] }
         : {}),
-      ...(typeof boundary.provenance['nativeType'] === 'string'
-        ? { nativeType: boundary.provenance['nativeType'] }
+      ...(typeof chosen.provenance['nativeType'] === 'string'
+        ? { nativeType: chosen.provenance['nativeType'] }
         : {}),
+      chosenBy: usePending ? ('earliest-pending' as const) : ('furthest-applied' as const),
     },
-    committedBoundaryProjections: siblings.map((envelope) => ({
-      seq: envelope.seq,
-      type: envelope.type,
-      ...(envelope.turnId === undefined ? {} : { turnId: envelope.turnId }),
-      ...(envelope.itemId === undefined ? {} : { itemId: envelope.itemId }),
-      ...(typeof envelope.provenance['nativeId'] === 'string'
-        ? { nativeId: envelope.provenance['nativeId'] }
-        : {}),
-    })),
+    committedProjections: suffix.map((envelope) => {
+      const envelopeRecordId = envelope.provenance['rawRecordId']
+      return {
+        seq: envelope.seq,
+        type: envelope.type,
+        ...(envelope.turnId === undefined ? {} : { turnId: envelope.turnId }),
+        ...(envelope.itemId === undefined ? {} : { itemId: envelope.itemId }),
+        ...(typeof envelope.provenance['nativeId'] === 'string'
+          ? { nativeId: envelope.provenance['nativeId'] }
+          : {}),
+        ...(typeof envelopeRecordId === 'string' ? { rawRecordId: envelopeRecordId } : {}),
+      }
+    }),
     appliedThroughSeq,
     empty: false,
   }
@@ -444,7 +522,8 @@ export function scheduleDesktopObserverAttachment(
       detail: 'an attachment attempt for this conversation is already running',
     }
   }
-  const built = buildDesktopDriverSpec(registration)
+  const stateRoot = server.options.stateRoot
+  const built = buildDesktopDriverSpec(registration, undefined, undefined, stateRoot)
   if (!('driver' in built)) {
     writeServerLog('INFO', 'desktop_observer.attach_deferred', {
       scopeRef: registration.scopeRef,
@@ -459,7 +538,12 @@ export function scheduleDesktopObserverAttachment(
   const resumed =
     detached === undefined
       ? built
-      : buildDesktopDriverSpec(registration, undefined, desktopRecoveryBoundary(server, detached))
+      : buildDesktopDriverSpec(
+          registration,
+          undefined,
+          desktopRecoveryBoundary(server, detached),
+          stateRoot
+        )
   if (!('driver' in resumed)) {
     return { scheduled: false, reason: resumed.reason, detail: resumed.detail }
   }

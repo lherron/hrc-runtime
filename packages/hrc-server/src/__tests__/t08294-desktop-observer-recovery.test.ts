@@ -396,23 +396,21 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
     expect(boundary?.empty).toBe(false)
     expect(boundary?.sourceEpoch).toBe('ep-fixture')
     // raw_2, NOT raw_3: the uncommitted record is beyond the boundary.
-    expect(boundary?.boundaryRecord).toMatchObject({
+    expect(boundary?.startRecord).toMatchObject({
       rawRecordId: 'raw_2',
       byteOffset: 500,
       line: 2,
       rawSha256: 'sha-raw_2',
+      chosenBy: 'furthest-applied',
     })
     expect(boundary?.appliedThroughSeq).toBe(3)
-    expect(boundary?.committedBoundaryProjections.map((p) => p.itemId)).toEqual([
-      'msg-a',
-      'usage-a',
-    ])
+    expect(boundary?.committedProjections.map((p) => p.itemId)).toEqual(['msg-a', 'usage-a'])
   })
 
   it('reports an EMPTY boundary when nothing was committed', () => {
     const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
     expect(boundary?.empty).toBe(true)
-    expect(boundary?.boundaryRecord).toBeUndefined()
+    expect(boundary?.startRecord).toBeUndefined()
     expect(boundary?.appliedThroughSeq).toBe(0)
   })
 
@@ -437,9 +435,10 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
     expect(specs).toHaveLength(1)
     // The unsafe field is gone for good.
     expect(specs[0]?.['adoptionWatermark']).toBeUndefined()
+    expect(specs[0]?.['nativeAttemptStorePath']).toContain('native-attempts.db')
     expect(specs[0]?.['recoveryBoundary']).toMatchObject({
       sourceEpoch: 'ep-fixture',
-      boundaryRecord: { rawRecordId: 'raw_1', byteOffset: 120 },
+      startRecord: { rawRecordId: 'raw_1', byteOffset: 120 },
       empty: false,
     })
   })
@@ -449,5 +448,80 @@ describe('the recovery boundary is delivery evidence, not filesystem length', ()
     // history; the boundary is strictly a resumption device.
     const first = buildDesktopDriverSpec(registration())
     expect('driver' in first && first.driver['recoveryBoundary']).toBeUndefined()
+  })
+})
+
+describe('delayed, out-of-order normalization', () => {
+  /**
+   * codex-desktop can hold an AgentMessage carrying an EARLIER record's
+   * provenance and emit it when `task_complete` flushes. So a LATER record is
+   * applied while an EARLIER one is still pending, and a boundary taken from the
+   * furthest applied cursor would declare that earlier record published and lose
+   * its projection permanently. Raised by Cody on the T-08295 seam.
+   */
+  function append(input: {
+    seq: number
+    rawRecordId: string
+    byteOffset: number
+    status: 'applied' | 'pending'
+    itemId?: string
+  }): void {
+    db.brokerInvocationEvents.appendEvent({
+      invocationId: 'inv-observer',
+      seq: input.seq,
+      time: NOW,
+      type: 'assistant.message.completed',
+      runtimeId: 'rt-observer',
+      payload: { turnId: 'native-turn-1' },
+      envelopeJson: JSON.stringify({
+        invocationId: 'inv-observer',
+        seq: input.seq,
+        time: NOW,
+        type: 'assistant.message.completed',
+        turnId: 'native-turn-1',
+        ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+        provenance: {
+          rawRecordId: input.rawRecordId,
+          sourceKind: 'provider-jsonl',
+          sourceEpoch: 'ep-fixture',
+          sourceCursor: { byteOffset: input.byteOffset, line: input.byteOffset },
+          rawSha256: `sha-${input.rawRecordId}`,
+        },
+      }),
+      projectionStatus: input.status,
+    })
+  }
+
+  it('starts replay at the EARLIEST PENDING record, not the furthest applied one', () => {
+    append({ seq: 1, rawRecordId: 'raw_1', byteOffset: 100, status: 'applied', itemId: 'i1' })
+    // Held: emitted later, but carrying record 2's provenance.
+    append({ seq: 2, rawRecordId: 'raw_2', byteOffset: 200, status: 'pending', itemId: 'i2' })
+    append({ seq: 3, rawRecordId: 'raw_3', byteOffset: 300, status: 'applied', itemId: 'i3' })
+    append({ seq: 4, rawRecordId: 'raw_4', byteOffset: 400, status: 'applied', itemId: 'i4' })
+
+    const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
+    expect(boundary?.startRecord).toMatchObject({
+      rawRecordId: 'raw_2',
+      byteOffset: 200,
+      chosenBy: 'earliest-pending',
+    })
+    // Dedupe must span the WHOLE replay suffix, not one record: replay now
+    // re-covers raw_3 and raw_4, which HRC already applied.
+    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual(['raw_3', 'raw_4'])
+    // raw_1 is before the start and is never re-emitted, so it is not listed.
+    expect(boundary?.committedProjections.map((p) => p.itemId)).not.toContain('i1')
+  })
+
+  it('falls back to the furthest applied record when every pending one is later', () => {
+    append({ seq: 1, rawRecordId: 'raw_1', byteOffset: 100, status: 'applied', itemId: 'i1' })
+    append({ seq: 2, rawRecordId: 'raw_2', byteOffset: 200, status: 'applied', itemId: 'i2' })
+    append({ seq: 3, rawRecordId: 'raw_3', byteOffset: 300, status: 'pending', itemId: 'i3' })
+
+    const boundary = desktopRecoveryBoundary(server, db.runtimes.getByRuntimeId('rt-observer'))
+    expect(boundary?.startRecord).toMatchObject({
+      rawRecordId: 'raw_2',
+      chosenBy: 'furthest-applied',
+    })
+    expect(boundary?.committedProjections.map((p) => p.rawRecordId)).toEqual(['raw_2'])
   })
 })
