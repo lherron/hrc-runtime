@@ -649,6 +649,14 @@ export async function reconcileDurableBrokerStartup(
     // protocol are external. Registration convergence / epr.reattach own these
     // rows; the harness-broker startup classifier must never stale or attach
     // them with broker.attach.
+    //
+    // A registered Codex desktop observer is ALSO external and is deliberately
+    // still skipped HERE, unlike in `warmDurableBrokerBindings` (T-08296). This
+    // pass runs before the server instance exists and only CLASSIFIES on a
+    // throwaway controller; binding is the warmup's job, on the controller that
+    // owns the live event loop. Attaching in both places would put two clients
+    // on one desktop broker for no benefit. What this exclusion also buys is that
+    // no desktop row is classified-stale by a pass that cannot reattach it.
     if (isExternalLifecycleOwner(runtime)) {
       continue
     }
@@ -831,6 +839,33 @@ export function brokerWarmupCategoryForOutcome(
  * Never dispatches. Per-runtime outcomes are logged with a stable category so an
  * operator can see the control loop if the intermittent failure reappears.
  */
+/**
+ * A Codex desktop observer, as distinct from a genuine external participant.
+ *
+ * Both carry `lifecycleOwner: 'external'`, and the blanket exclusion of that flag
+ * is why an HRC restart left desktop conversations unobserved (T-08296): the
+ * broker survived, but the request-serving controller was never given a client
+ * for it, so `seatProbe` answered `no active broker client` indefinitely and mail
+ * sat pending while the runtime row read `ready`.
+ *
+ * The flag means two different things to the two populations, which is exactly
+ * why keying on it alone is wrong. For EPR the exclusion is REAL and stays: its
+ * process substrate and attach protocol are external, `broker.attach` is not how
+ * those rows are reattached, and registration convergence owns them. A desktop
+ * observer is external only in the sense that HRC must never kill, reap or
+ * cold-restart the ChatGPT window; its OBSERVER is an ordinary durable broker
+ * with a unix endpoint over a leased tmux substrate, reattached like any other.
+ *
+ * The discriminator is the durable registration row rather than a shape guess: a
+ * scope with a `desktop_thread_registrations` entry IS a desktop conversation and
+ * nothing else can accidentally match. External PROCESS-lifecycle protection is
+ * untouched — this decides only who gets a socket reattached, never who may be
+ * terminated.
+ */
+export function isRegisteredDesktopObserver(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
+  return db.desktopThreadRegistrations.getByScopeRef(runtime.scopeRef) !== null
+}
+
 export async function warmDurableBrokerBindings(
   db: HrcDatabase,
   deps: {
@@ -864,7 +899,7 @@ export async function warmDurableBrokerBindings(
     if (
       runtime.controllerKind !== 'harness-broker' ||
       isRuntimeUnavailableStatus(runtime.status) ||
-      isExternalLifecycleOwner(runtime) ||
+      (isExternalLifecycleOwner(runtime) && !isRegisteredDesktopObserver(db, runtime)) ||
       !getPersistedDurableBrokerEndpoint(runtime)
     ) {
       continue

@@ -2456,6 +2456,28 @@ export class HarnessBrokerController {
     })
   }
 
+  /**
+   * The invocation THIS controller currently holds a live client for, if any.
+   *
+   * Synchronous and in-memory on purpose. The question callers actually need
+   * answered is "can this daemon talk to that broker right now", and the two
+   * things that look like an answer are both wrong: a persisted
+   * `control.brokerAttached` is whatever the PREVIOUS daemon wrote before it
+   * exited, and `broker.ownerServerInstanceId` names the process that started
+   * the broker, not the one holding a socket to it — a healthy runtime
+   * reattached by this daemon still carries the old id. `seatProbe` is
+   * authoritative but costs an RPC and a timeout against an unreachable broker,
+   * which is not affordable on a registration path that sits in front of a
+   * human's turn.
+   *
+   * Returning the invocation id rather than a boolean lets a caller check that
+   * the client it found belongs to the runtime's CURRENT invocation, so a client
+   * left over from a superseded invocation does not read as healthy.
+   */
+  activeClientInvocationId(runtimeId: string): string | undefined {
+    return this.active.get(runtimeId)?.invocationId
+  }
+
   private notActive(runtimeId: string): BrokerControllerError {
     return new BrokerControllerError(
       'broker_runtime_not_active',

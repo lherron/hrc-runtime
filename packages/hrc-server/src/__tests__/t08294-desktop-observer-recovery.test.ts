@@ -47,6 +47,7 @@ let db: HrcDatabase
 let server: HrcServerInstanceForHandlers
 let attachCalls: number
 let reattachResults: Array<{ state: string }>
+let heldInvocationId: string | undefined
 let reattachCalls: HrcRuntimeSnapshot[]
 let rolloutPath: string
 let bundlePath: string
@@ -181,10 +182,20 @@ beforeEach(async () => {
   await writeFile(bundlePath, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   attachCalls = 0
   reattachCalls = []
+
   reattachResults = [{ state: 'reattached' }]
+  // T-08296: "healthy" now includes the live half — this daemon holding a client
+  // for the observer's CURRENT invocation. The double therefore has to say what
+  // the serving controller holds, because a durable row alone can no longer make
+  // a runtime read attached. Defaults to holding `inv-observer`, which is what
+  // every pre-existing case in this file means by a healthy observer.
+  heldInvocationId = 'inv-observer'
   server = {
     db,
     options: {},
+    getHarnessBrokerController: () => ({
+      activeClientInvocationId: () => heldInvocationId,
+    }),
     attachDesktopObserver: () => {
       attachCalls += 1
       return Promise.resolve({ attached: false as const, reason: 'stub', detail: 'no broker' })
@@ -209,6 +220,18 @@ describe('observer loss is detected by the REAL mechanisms', () => {
     // Both rows are `ready` and neither is terminated. Only the generation
     // separates them, and the wrong one would make every later check lie.
     expect(currentDesktopObserverRuntime(server, registration())?.runtimeId).toBe('rt-observer')
+  })
+
+  it('a restart survivor reads DETACHED even though every durable field says attached', () => {
+    // The T-08296 specimen. An HRC restart is not a crash: nothing writes a
+    // detachment, so the row keeps `brokerAttached: true` and status `ready`
+    // from the previous daemon while the new one holds no socket at all.
+    heldInvocationId = undefined
+    const health = desktopObserverAttachmentHealth(server, registration())
+    expect(health.state).toBe('detached')
+    expect(health.state === 'detached' ? health.reason : '').toBe(
+      'serving_controller_client_absent'
+    )
   })
 
   it('CONTROL: a healthy observer reports attached and schedules nothing', () => {

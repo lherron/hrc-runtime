@@ -142,6 +142,17 @@ export type DesktopObserverHealth =
  * the recovery below re-probes for real by attempting the reattach anyway. The
  * cost of being wrong in the optimistic direction is one reattach attempt that
  * finds the broker healthy; the cost of the old predicate was never recovering.
+ *
+ * The durable projection alone is NOT sufficient, and T-08296 is the specimen.
+ * An HRC restart is not a crash: nothing writes a detachment, so
+ * `observerAttachment` stays null and `control.brokerAttached` keeps the `true`
+ * the PREVIOUS daemon wrote. Every field this function used to read therefore
+ * said "attached" while the new daemon held no socket at all — the conversation
+ * went unobserved with its row reading `ready`, and every re-registration
+ * answered `already_attached`. So the projection is now joined with the one fact
+ * only the live process has: whether the REQUEST-SERVING controller holds a
+ * client for this runtime's CURRENT invocation. That is an in-memory lookup, not
+ * the RPC this comment rules out.
  */
 export function desktopObserverAttachmentHealth(
   server: HrcServerInstanceForHandlers,
@@ -174,6 +185,23 @@ export function desktopObserverAttachmentHealth(
     (control as Record<string, unknown>)['brokerAttached'] === false
   ) {
     return { state: 'detached', runtime, reason: 'broker_not_attached' }
+  }
+  // The live half. A runtime whose invocation this daemon is not holding a
+  // client for needs a REATTACH — it says nothing about whether the broker is
+  // alive, which is why the recovery below dials the persisted endpoint before
+  // it ever considers a replacement.
+  if (runtime.activeInvocationId !== undefined) {
+    const held = server.getHarnessBrokerController().activeClientInvocationId(runtime.runtimeId)
+    if (held !== runtime.activeInvocationId) {
+      return {
+        state: 'detached',
+        runtime,
+        reason:
+          held === undefined
+            ? 'serving_controller_client_absent'
+            : 'serving_controller_client_stale',
+      }
+    }
   }
   // A runtime that never reached a started invocation has nothing to reattach.
   if (runtime.status === 'failed' || runtime.status === 'crashed' || runtime.status === 'stale') {
@@ -607,7 +635,14 @@ async function recoverDesktopObserver(
       }))
     if (reattach.state === 'reattached') {
       const now = timestamp()
-      const priorState = detached.runtimeStateJson ?? {}
+      // Re-read AFTER the await. `attachAndReplay` persists refreshed broker,
+      // invocation and replay state onto this row while we were suspended, and
+      // spreading the pre-await snapshot over it silently reverted all of it —
+      // including the very cursor that stops replay re-presenting history. The
+      // stale-snapshot overwrite is only invisible because the fields it clobbers
+      // are the ones nothing reads until the next restart.
+      const fresh = server.db.runtimes.getByRuntimeId(detached.runtimeId) ?? detached
+      const priorState = fresh.runtimeStateJson ?? {}
       const priorControl =
         priorState['control'] !== null &&
         typeof priorState['control'] === 'object' &&
@@ -637,7 +672,8 @@ async function recoverDesktopObserver(
     // HRC superseded ITS OWN observer — no status change, no terminal reason,
     // and nothing said about the desktop thread.
     const now = timestamp()
-    const priorState = detached.runtimeStateJson ?? {}
+    const priorState =
+      (server.db.runtimes.getByRuntimeId(detached.runtimeId) ?? detached).runtimeStateJson ?? {}
     server.db.runtimes.update(detached.runtimeId, {
       updatedAt: now,
       runtimeStateJson: {
