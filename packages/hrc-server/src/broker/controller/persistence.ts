@@ -138,6 +138,9 @@ export function persistStartGraph(
       hostSessionId: String(identity.hostSessionId),
       generation: identity.generation,
       status: 'starting',
+      // Stamped at INSERT, not after start: this row is visible to the broker
+      // close handler and to every sweep the moment it exists (T-08294).
+      ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
       ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
       ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
         ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
@@ -315,6 +318,9 @@ export function buildRuntimeStateJson(
     generation: identity.generation,
     status: runtimeStatusFromInvocationState(response.state),
     ...(identity.runId !== undefined ? { activeRunId: String(identity.runId) } : {}),
+    // This REPLACES runtimeStateJson wholesale, so the guard must be re-stamped
+    // here or a successful start would erase what the insert established.
+    ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
     ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
     createdAt: now,
     updatedAt: now,
@@ -426,6 +432,10 @@ export function markStartedInvocationFailed(
       hostSessionId: String(identity.hostSessionId),
       generation: identity.generation,
       status: 'failed',
+      // A FAILED start is exactly when losing ownership hurts most: the runtime
+      // is terminal-looking and unowned, so the ordinary reaper would treat a
+      // live desktop conversation's observer as its own dead process.
+      ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
       admissionFailure: detail,
       updatedAt: now,
     },

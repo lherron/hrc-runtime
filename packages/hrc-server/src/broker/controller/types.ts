@@ -450,6 +450,24 @@ export type BrokerControllerStartInput = {
    */
   runtimeAuthority?: Record<string, unknown> | undefined
   /**
+   * Declares that the thing this invocation OBSERVES is owned by something
+   * outside HRC (T-08294: a Codex desktop conversation). Dispatch-time policy,
+   * never compiler closure — it does not enter the spec, start request, profile
+   * or any hash.
+   *
+   * It has to be a START INPUT rather than a post-start patch, and that is the
+   * whole point of the field. `isExternalLifecycleOwner` reads
+   * `runtimeStateJson.lifecycleOwner`, and the runtime row is INSERTED by
+   * `persistStartGraph` — before `startInvocationFromRequest` is awaited, and
+   * long before `start()` returns. A caller that stamped ownership on the
+   * returned runtime would leave a window in which the row exists, the broker
+   * `onClose` handler is already registered, and every sweep/reconcile guard
+   * reads the runtime as HRC-owned. Passing it in closes the window: the row
+   * carries the guard from the instant it exists, through the post-start
+   * rebuild, and through post-start admission FAILURE.
+   */
+  lifecycleOwner?: 'external' | undefined
+  /**
    * The per-turn response format requested for this start, threaded independently
    * of `startRequest.initialInput.responseFormat`. Launch-argv-primed profiles
    * (e.g. interactive-tmux) drop `startRequest.initialInput` entirely during

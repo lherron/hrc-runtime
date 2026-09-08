@@ -358,6 +358,14 @@ export async function attachDesktopObserver(
 
   const controller = this.getHarnessBrokerController()
   const result = await controller.start({
+    // T-08294: ownership is a START INPUT, not a post-start patch. The runtime
+    // row is inserted by `persistStartGraph` before `startInvocationFromRequest`
+    // is even awaited, and the broker `onClose` handler is registered before
+    // that — so stamping ownership on the RETURNED runtime would leave a real
+    // window in which a crash, an observer exit, or a post-start admission
+    // failure projects terminal state onto a runtime every guard reads as
+    // HRC-owned. See the regression in t08294-desktop-observer-ownership.test.ts.
+    lifecycleOwner: 'external',
     plan: built.plan,
     profile: built.profile,
     startRequest: built.startRequest,
@@ -398,13 +406,13 @@ export async function attachDesktopObserver(
 }
 
 /**
- * Stamp external lifecycle ownership onto the observer runtime.
+ * Add the desktop projection to an already-owned observer runtime.
  *
- * This is the whole authority boundary and it is one write, applied AFTER the
- * controller has produced the runtime row. `isExternalLifecycleOwner` reads
- * `runtimeStateJson.lifecycleOwner`, so from this moment the zombie sweep will
- * not reap it, startup reconcile will not restart it as a fresh process, and the
- * turn-dispatch cold path will not treat its absence as a runtime to replace.
+ * `lifecycleOwner` is NOT established here — it is a start input, stamped at
+ * row insert (see the comment at the `controller.start` call above). This write
+ * is additive diagnostic state, and it re-asserts the field only so that a
+ * runtime reaching this function can never be observed without it; if this is
+ * the first place the guard appears, something upstream regressed.
  */
 export function markDesktopRuntimeExternallyOwned(
   server: HrcServerInstanceForHandlers,
