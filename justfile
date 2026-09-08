@@ -282,7 +282,7 @@ deploy-fleet-from-max3:
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
-# Read-only hrc/asp parity table across max3, svc, lab, and hrcdev
+# Read-only hrc/asp parity table plus bun/codex/claude tool versions across max3, svc, lab, and hrcdev
 fleet-status:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -314,6 +314,44 @@ fleet-status:
     probe svc 'mini'
     probe lab 'lab@mini'
     probe hrcdev 'hrcdev'
+
+    # Harness tool versions. Read through a LOGIN shell so PATH matches what the
+    # node's agents get (mini's codex lives under nvm, invisible to a bare ssh
+    # PATH). The daemon does not pin these: a node-local `bun upgrade` changed
+    # node:net semantics under every hook bridge on svc (2026-09-07) and a codex
+    # downgrade broke thread/resume the same day, both while hrc/asp parity read
+    # clean. max3 is the reference; a value that differs from max3 is marked `*`.
+    tool_probe='zsh -lic "bun --version 2>/dev/null | head -1; codex --version 2>/dev/null | head -1; claude --version 2>/dev/null | head -1" 2>/dev/null'
+    tools() {
+      local label="$1" target="$2" out
+      if [[ -z "$target" ]]; then
+        out="$(bash -c "$tool_probe")"
+      else
+        out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" "$tool_probe" 2>/dev/null)"
+      fi
+      if [[ -z "$out" ]]; then
+        printf '%-8s %s\n' "$label" 'unreachable'
+        return
+      fi
+      # Normalise "codex-cli 0.153.4" and "2.1.263 (Claude Code)" to bare versions.
+      local bun codex claude
+      bun="$(sed -n '1p' <<<"$out")"
+      codex="$(sed -n '2p' <<<"$out" | sed -E 's/^codex-cli +//')"
+      claude="$(sed -n '3p' <<<"$out" | sed -E 's/ +\(Claude Code\)$//')"
+      if [[ "$label" == max3 ]]; then
+        ref_bun="$bun"; ref_codex="$codex"; ref_claude="$claude"
+      fi
+      mark() { [[ -n "$1" && "$1" == "$2" ]] && printf '%s' "$1" || printf '%s*' "${1:-missing}"; }
+      printf '%-8s %-10s %-10s %s\n' "$label" \
+        "$(mark "$bun" "$ref_bun")" "$(mark "$codex" "$ref_codex")" "$(mark "$claude" "$ref_claude")"
+    }
+
+    ref_bun=''; ref_codex=''; ref_claude=''
+    printf '\n%-8s %-10s %-10s %s\n' NODE BUN CODEX CLAUDE
+    tools max3 ''
+    tools svc 'mini'
+    tools lab 'lab@mini'
+    tools hrcdev 'hrcdev'
 
 # Print the hrc source commit max3's daemon is currently running.
 #
