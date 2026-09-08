@@ -1,8 +1,9 @@
+#!/usr/bin/env bun
 /**
  * Entrypoint for the desktop registration hook helper.
  *
- * Contract with whatever invokes it (the managed overlay hook — wired in the
- * downstream cutover task, not here):
+ * Contract with whatever invokes it (the managed overlay hook installed by
+ * agent-spaces `scripts/sync-agent-to-codex-default.ts`):
  *   stdin  — the Codex hook JSON (`session_id`, `transcript_path`, `cwd`, `source`)
  *   stdout — one JSON line: `{"status":"registered",…}` or
  *            `{"status":"integration_pending","reason":…,"detail":…}`
@@ -28,7 +29,36 @@ import {
 } from './desktop-hook.js'
 import { spoolCallback } from './spool.js'
 
+const USAGE = `hrc-desktop-hook \u2014 Codex desktop registration hook helper (private plumbing).
+
+Reads one Codex hook payload (SessionStart / UserPromptSubmit) as JSON on stdin
+and writes one JSON line on stdout:
+
+  {"status":"registered","source":"hrc"|"cache","cache":{"scopeRef":\u2026}}
+  {"status":"integration_pending","reason":\u2026,"detail":\u2026}
+
+Environment:
+  HRC_CALLBACK_SOCKET   internal callback socket to register against
+  HRC_SPOOL_DIR         spool directory for an undelivered registration
+  HRC_DESKTOP_CACHE_DIR override for the established-scope cache directory
+  HRC_DESKTOP_BUNDLE    desktop bundle executable, reported as compatibility metadata
+  HRC_DESKTOP_LEGACY_SCOPE_REF
+                        the UUID-style address this conversation used before
+                        registration, recorded for the migration report only
+  CODEX_HOME            Codex home the desktop app is using
+
+Not an operator command: it is invoked by the managed overlay hook.
+`
+
 async function main(): Promise<void> {
+  // The release smoke runs every installed bin with `--help`, and this one
+  // otherwise blocks on a stdin that will never close. Answered BEFORE the read
+  // for that reason, and exits 0 because a helper that cannot describe itself
+  // fails an install for no behavioral reason.
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(USAGE)
+    return
+  }
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
 
@@ -77,6 +107,12 @@ async function main(): Promise<void> {
     ...(process.env['HRC_DESKTOP_BUNDLE'] === undefined
       ? {}
       : { bundleExecutable: process.env['HRC_DESKTOP_BUNDLE'] }),
+    // Contract §4: the previous computed address is recorded for the migration
+    // report and NOTHING else — never forwarded, acked or reassigned. Only the
+    // overlay hook knows it, because only the overlay ever minted it.
+    ...(process.env['HRC_DESKTOP_LEGACY_SCOPE_REF'] === undefined
+      ? {}
+      : { legacyScopeRef: process.env['HRC_DESKTOP_LEGACY_SCOPE_REF'] }),
   }
 
   const posted =

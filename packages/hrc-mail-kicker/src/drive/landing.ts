@@ -41,6 +41,15 @@ import {
 import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
 
 const LANDED_TYPES = new Set(['submission.absorbed', 'submission.executed'])
+
+/**
+ * Appended to a terminal intent's cause when the body executed anyway.
+ *
+ * A suffix rather than a replacement: WHY the envelope went terminal (expired,
+ * withdrawn, receipt refused on a discharged row) and WHETHER it ran anyway are
+ * two independent facts, and the race report needs both.
+ */
+const TERMINAL_EXECUTION_SUFFIX = '+execution_observed'
 const REFUSED_TYPES = new Set([
   'input.rejected',
   'submission.rejected',
@@ -100,7 +109,49 @@ export async function commitLanding(
   // Terminal envelopes are audit-only.  This guard is deliberately here (not
   // only in reconcile) because live broker observation and launch turn-start
   // delivery call commitLanding directly.
-  if (intent.terminalEnvelopeAt !== undefined) return 'held'
+  if (intent.terminalEnvelopeAt !== undefined) {
+    // …but the EXECUTION still happened, and P-00502 §6 requires that fact to
+    // survive: "if its body nevertheless started in a race, retain the observed
+    // execution fact and report it without reviving the envelope." Silence here
+    // was the whole record: an expired or withdrawn envelope whose body landed
+    // in a Codex desktop turn anyway left nothing at all behind, so the next
+    // reader of that conversation saw a message no HRC row explained.
+    //
+    // The fact is written onto the INTENT's terminal cause, not into
+    // `hrcmail_presentations`: in the case that matters — expired or withdrawn
+    // BEFORE any landing — no presentation row was ever written, so
+    // `recordDisposition` would update nothing and the record would be a log
+    // line that rotates. The original cause is preserved alongside it, and
+    // `terminal_envelope_at` is COALESCEd by the repository so the first
+    // terminal instant stands. No receipt, no wake and no re-open follows.
+    const priorCause = intent.terminalEnvelopeCause ?? 'terminal'
+    if (!priorCause.endsWith(TERMINAL_EXECUTION_SUFFIX)) {
+      server.db.mailDelivery.markTerminalEnvelope(
+        intent.envelopeId,
+        `${priorCause}${TERMINAL_EXECUTION_SUFFIX}`
+      )
+    }
+    // Harmless and correct when a presentation row does exist (a reply that
+    // discharged the obligation between landing and commit); a no-op otherwise.
+    server.db.mailDelivery.recordDisposition(
+      intent.envelopeId,
+      input.runtimeId,
+      'terminal_execution_observed'
+    )
+    server.log('INFO', 'wrkq.kicker.terminal_execution_observed', {
+      targetSessionRef: intent.targetSessionRef,
+      envelope: intent.envelopeId,
+      runtimeId: input.runtimeId,
+      presentationId: intent.presentationId,
+      door: intent.door,
+      ...(intent.submissionId === undefined ? {} : { inputId: intent.submissionId }),
+      landedOn: input.eventType,
+      landingHrcSeq: input.landingHrcSeq,
+      terminalEnvelopeCause: intent.terminalEnvelopeCause ?? 'terminal',
+      note: 'body executed after the envelope became terminal; recorded, not revived',
+    })
+    return 'held'
+  }
   const outcome = deliveryOutcomeFor(intent, input.eventType)
   // A reminder lands ON the record it is reminding about — unless the seat
   // rotated between arming and firing, in which case the body reached a runtime

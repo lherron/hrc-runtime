@@ -41,6 +41,7 @@
 import type { MailKickerContext } from '../context.js'
 import type { KickerRegistryConsultResult } from '../contracts.js'
 import { kickerScopeRefFor } from '../drive/authority.js'
+import { deferDesktopDelivery, desktopRegistrationForTarget } from '../drive/desktop.js'
 import { BIRTH_SWEEP_BACKOFF_BASE_MS, BIRTH_SWEEP_MAX_REFUSALS, errorText } from '../internal.js'
 import { targetSessionRefForLedgerScope } from '../ledger/scope.js'
 import { failEnvelopeWithAudit } from '../terminal/envelope-terminal.js'
@@ -139,6 +140,23 @@ export async function chargeBirthSweepRefusal(
   server: MailKickerContext,
   targetSessionRef: string
 ): Promise<void> {
+  // A permanently reserved desktop conversation has no birth to charge and no
+  // undeliverable verdict to reach (P-00502 §6). The drive already declines to
+  // birth one, so reaching here at all would mean a stale birth-refusal row from
+  // before the reservation existed; either way D7's bound must not apply, or a
+  // closed ChatGPT window would eventually tell every sender the address is
+  // undeliverable. Defense in depth for the one rule that ends in a lie.
+  const desktopRegistration = desktopRegistrationForTarget(server, targetSessionRef)
+  if (desktopRegistration !== undefined) {
+    server.mailKickerBirthSweepBackoff.delete(targetSessionRef)
+    server.db.mailDelivery.resolveBirthRefusal(targetSessionRef, 'desktop reservation: no birth')
+    deferDesktopDelivery(server, {
+      targetSessionRef,
+      registration: desktopRegistration,
+      reason: 'birth_suppressed',
+    })
+    return
+  }
   const now = Date.now()
   const attempts = (server.mailKickerBirthSweepBackoff.get(targetSessionRef)?.attempts ?? 0) + 1
   if (attempts >= BIRTH_SWEEP_MAX_REFUSALS) {

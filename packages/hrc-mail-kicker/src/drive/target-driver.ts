@@ -17,6 +17,11 @@
  *    drains it at the boundary;
  *  - seat idle → enqueue, as before;
  *  - seat absent → cold birth, and the launch carries the body.
+ *
+ * ONE address family is exempt from the last rule: a scope permanently reserved
+ * for a Codex desktop conversation (P-00502 §6). HRC does not own that process,
+ * so "nothing is seated" is a reason to WAIT under the registered address, never
+ * to birth a replacement. See `desktop.ts`.
  */
 import type { HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
@@ -31,6 +36,7 @@ import {
   skipForeignHomedTarget,
 } from './authority.js'
 import { deliverByColdBirth, deliverToSeat } from './delivery.js'
+import { deferDesktopDelivery, desktopRegistrationForTarget } from './desktop.js'
 import type { ActionableEnvelope } from './presentation.js'
 import { readActionableEnvelopes, summonsATurn } from './presentation.js'
 import { observeBrokerSeat } from './seat.js'
@@ -76,7 +82,22 @@ export async function driveMailTargetOnce(
   }
   if (actionable.length === 0) return
 
+  // A registered desktop conversation is never HRC's to seat (P-00502 §6). The
+  // check sits after the ledger read so the deferral line can name the mail it
+  // is holding, and before every door so no branch below can birth or dispatch.
+  const desktopRegistration = desktopRegistrationForTarget(server, targetSessionRef)
+
   if (session === undefined) {
+    if (desktopRegistration !== undefined) {
+      deferDesktopDelivery(server, {
+        targetSessionRef,
+        registration: desktopRegistration,
+        reason: 'no_registered_session',
+        envelopeIds: actionable.map((item) => item.envelope.id),
+        detail: { wakeReason },
+      })
+      return
+    }
     // A non-summoning envelope (a legacy `fyi`) is presented into a live
     // generation if there is one, and otherwise waits. It is never the reason a
     // session is born, so a wake set holding nothing else stops here.
@@ -118,6 +139,23 @@ export async function driveMailTargetOnce(
   }
 
   const seat = await observeBrokerSeat(server, session)
+
+  // `absent` means no live broker observation of this conversation. For an
+  // ordinary seat the pass below dispatches into the session and HRC provisions
+  // a runtime; for a desktop conversation that provisioning IS the forbidden
+  // cold CLI replacement, because the session row outlives every observer.
+  // Detachment is also not evidence about the desktop process itself, so this
+  // is a wait, not a verdict.
+  if (desktopRegistration !== undefined && seat.state === 'absent') {
+    deferDesktopDelivery(server, {
+      targetSessionRef,
+      registration: desktopRegistration,
+      reason: 'observer_absent',
+      envelopeIds: actionable.map((item) => item.envelope.id),
+      detail: { wakeReason },
+    })
+    return
+  }
   if (
     seat.state === 'unavailable' ||
     seat.state === 'starting' ||
@@ -129,6 +167,7 @@ export async function driveMailTargetOnce(
       wakeReason,
       observedSeatState: seat.state,
       envelopeIds: actionable.map((item) => item.envelope.id),
+      ...(desktopRegistration === undefined ? {} : { desktopReservation: true }),
     })
     return
   }
@@ -142,6 +181,7 @@ export async function driveMailTargetOnce(
       wakeReason,
       observedSeatState: seat.state,
       envelopeIds: actionable.map((item) => item.envelope.id),
+      ...(desktopRegistration === undefined ? {} : { desktopReservation: true }),
     })
     return
   }

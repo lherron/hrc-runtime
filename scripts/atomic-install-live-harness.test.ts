@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { CLI_PACKAGES, type InstalledSurfacePaths, installAtomicRelease } from './atomic-install'
 
@@ -64,15 +64,20 @@ async function makeLegacyLinkedSurface(): Promise<{
   return { binPath, dependencyRoot }
 }
 
+/**
+ * Every entrypoint the real installer will look for, derived from the real
+ * table rather than restated here.
+ *
+ * A hand-written list drifts silently in the direction that matters: adding a
+ * CLI package makes `validateReleaseShape` demand an entrypoint this fixture
+ * never wrote, and the harness fails with "prepared release is missing …" about
+ * a release it built itself. The nested path is `dirname`d for the same reason —
+ * not every entrypoint lives directly under `src`.
+ */
 async function writeCliSources(releasePath: string, generation: string): Promise<void> {
-  for (const [packageName, entrypoint] of [
-    ['hrc-cli', 'cli.ts'],
-    ['hrcchat-cli', 'main.ts'],
-    ['hrc-viewer', 'main.ts'],
-  ] as const) {
-    const sourceDir = join(releasePath, 'packages', packageName, 'src')
-    await mkdir(sourceDir, { recursive: true })
-    const sourcePath = join(sourceDir, entrypoint)
+  for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
+    const sourcePath = join(releasePath, 'packages', packageName, cli.entrypoint)
+    await mkdir(dirname(sourcePath), { recursive: true })
     await writeFile(
       sourcePath,
       `#!/usr/bin/env bun\nimport value from 'fixture-dependency'\nconsole.log('${generation}:' + value)\n`
@@ -171,11 +176,8 @@ describe('T-06685 installed CLI continuity harness', () => {
   })
 
   test('real atomic-install entrypoints are executable before publication', async () => {
-    for (const entrypoint of [
-      'packages/hrc-cli/src/cli.ts',
-      'packages/hrcchat-cli/src/main.ts',
-      'packages/hrc-viewer/src/main.ts',
-    ]) {
+    for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
+      const entrypoint = join('packages', packageName, cli.entrypoint)
       const metadata = await stat(join(import.meta.dir, '..', entrypoint))
       expect(metadata.mode & 0o111, entrypoint).not.toBe(0)
     }

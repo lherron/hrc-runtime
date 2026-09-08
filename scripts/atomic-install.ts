@@ -37,6 +37,15 @@ export const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts', helpExitCode: 0 },
   'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts', helpExitCode: 2 },
   'hrc-viewer': { bin: 'hrc-viewer', entrypoint: 'src/main.ts', helpExitCode: 0 },
+  // Private integration plumbing, not an operator command (P-00502 §3). It is
+  // linked as a bin because the managed Codex overlay hook has to name a stable
+  // path from inside the desktop app's own hook execution, where neither the
+  // release root nor a workspace checkout is known.
+  'hrc-server': {
+    bin: 'hrc-desktop-hook',
+    entrypoint: 'src/launch/desktop-hook-cli.ts',
+    helpExitCode: 0,
+  },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES
@@ -117,7 +126,18 @@ async function existingInstalledRoot(paths: InstalledSurfacePaths): Promise<stri
     if ((await pathKind(packageLink)) !== 'symlink') {
       throw new Error(`installed package path is not a symlink: ${packageLink}`)
     }
-    const packageRoot = await realpath(packageLink)
+    // A DANGLING link carries no release root. Pre-split leftovers exist in the
+    // wild (`hrc-server -> agent-spaces/packages/hrc-server`, from before the
+    // repo split), and `realpath` throws ENOENT on one — which would turn a
+    // bootstrap install into a hard failure over an artifact the very next
+    // `installLinks` replaces.
+    let packageRoot: string
+    try {
+      packageRoot = await realpath(packageLink)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') continue
+      throw error
+    }
     if (basename(packageRoot) !== packageName || basename(dirname(packageRoot)) !== 'packages') {
       throw new Error(
         `cannot derive an HRC release root from installed link ${packageLink} -> ${packageRoot}`
