@@ -75,6 +75,8 @@ export type ParticipantAttempt = {
   attemptId: string
   registrationId: string
   attachEpoch: number
+  requestId: string
+  operationId: string
   invocationId: string
   runtimeId: string
   state: ParticipantAttemptState
@@ -115,6 +117,8 @@ type ParticipantAttemptRow = {
   attempt_id: string
   registration_id: string
   attach_epoch: number
+  request_id: string
+  operation_id: string
   invocation_id: string
   runtime_id: string
   state: ParticipantAttemptState
@@ -135,7 +139,7 @@ const REGISTRATION_COLUMNS = `
   preparation_json, continuity_evidence_json, created_at, updated_at`
 
 const ATTEMPT_COLUMNS = `
-  attempt_id, registration_id, attach_epoch, invocation_id, runtime_id, state,
+  attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
   realized_hosting_json, dispatch_json, initial_activation_confirmed_at,
   disposition_reason, created_at, updated_at`
@@ -166,6 +170,8 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
     attemptId: row.attempt_id,
     registrationId: row.registration_id,
     attachEpoch: row.attach_epoch,
+    requestId: row.request_id,
+    operationId: row.operation_id,
     invocationId: row.invocation_id,
     runtimeId: row.runtime_id,
     state: row.state,
@@ -245,14 +251,35 @@ export class ParticipantRegistrationRepository {
     return row === null ? null : mapRegistration(row)
   }
 
+  getAttemptByRegistrationId(registrationId: string): ParticipantAttempt | null {
+    const row = this.db
+      .query<ParticipantAttemptRow, [string]>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
+         WHERE registration_id = ? ORDER BY attach_epoch DESC LIMIT 1`
+      )
+      .get(registrationId)
+    return row === null ? null : mapAttempt(row)
+  }
+
+  countRegistrationsByClassId(classId: string): number {
+    const row = this.db
+      .query<{ count: number }, [string]>(
+        'SELECT COUNT(*) AS count FROM participant_registrations WHERE class_id = ?'
+      )
+      .get(classId)
+    return row?.count ?? 0
+  }
+
   insertAttempt(record: ParticipantAttempt): ParticipantAttempt {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
+      record.requestId,
+      record.operationId,
       record.invocationId,
       record.runtimeId,
       record.state,

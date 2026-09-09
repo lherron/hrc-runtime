@@ -28,6 +28,8 @@ const attempt = (overrides: Partial<ParticipantAttempt> = {}): ParticipantAttemp
   attemptId: 'patt-1',
   registrationId: 'preg-1',
   attachEpoch: 1,
+  requestId: 'req-participant-1',
+  operationId: 'op-participant-1',
   invocationId: 'inv-participant-1',
   runtimeId: 'rt-participant-1',
   state: 'REGISTERED',

@@ -188,8 +188,8 @@ describe('T-08349 generic participant registration callback surface', () => {
     })
 
     // Use the canonical source-graph adapter, not a local duplicate, for both
-    // legal join shapes. Admission alone remains pending until HRC has made the
-    // durable allocation / hosting / broker-effect transaction.
+    // legal join shapes. This reaches the first durable boundary only: profile
+    // preparation is frozen before any HRC hosting or broker effect.
     const admittedHosted = await observe(
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
@@ -200,7 +200,15 @@ describe('T-08349 generic participant registration callback surface', () => {
     )
     expect(admittedHosted).toMatchObject({
       status: 200,
-      body: { status: 'pending', reason: 'participant_activation_unavailable' },
+      body: {
+        status: 'registered',
+        created: true,
+        resumed: false,
+        scopeRef: expect.stringMatching(/^agent:smokey:project:hrc-runtime:task:participant-/),
+        hostSessionId: expect.stringMatching(/^hsid-/),
+        generation: 1,
+        observation: { state: 'prepared' },
+      },
     })
 
     const admittedServed = await observe(
@@ -214,8 +222,55 @@ describe('T-08349 generic participant registration callback surface', () => {
     )
     expect(admittedServed).toMatchObject({
       status: 200,
-      body: { status: 'pending', reason: 'participant_activation_unavailable' },
+      body: {
+        status: 'registered',
+        created: true,
+        resumed: false,
+        observation: { state: 'prepared' },
+      },
     })
+
+    const retriedHosted = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: hostedClass.classId,
+        processToken: 'opaque-hosted-token',
+        participantKey: 'hosted-permanent-key',
+        evidence: { kind: 'controlled-continuity/v1', token: 'first' },
+      })
+    )
+    expect(retriedHosted).toMatchObject({
+      status: 200,
+      body: {
+        status: 'registered',
+        created: false,
+        resumed: false,
+        scopeRef: (admittedHosted.body as { scopeRef: string }).scopeRef,
+        hostSessionId: (admittedHosted.body as { hostSessionId: string }).hostSessionId,
+        generation: 1,
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
+        hostedClass.classId,
+        'hosted-permanent-key'
+      )
+      expect(registration).not.toBeNull()
+      const attempt = db.participantRegistrations.getAttemptByRegistrationId(
+        registration?.registrationId ?? ''
+      )
+      expect(attempt).toMatchObject({
+        state: 'PREPARED',
+        requestId: expect.stringMatching(/^req-/),
+        operationId: expect.stringMatching(/^op-/),
+        invocationId: expect.stringMatching(/^inv-/),
+        runtimeId: expect.stringMatching(/^rt-/),
+        preparedProfileJson: expect.stringContaining(hostedClass.classId),
+      })
+    } finally {
+      db.close()
+    }
   })
 
   test('keeps unavailable adapters pending without allocating or taking down EPR', async () => {

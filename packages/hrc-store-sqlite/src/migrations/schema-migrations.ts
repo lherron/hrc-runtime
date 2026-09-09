@@ -3044,6 +3044,8 @@ const participantRegistrationLifecycleMigration: HrcMigration = {
         attempt_id TEXT PRIMARY KEY,
         registration_id TEXT NOT NULL,
         attach_epoch INTEGER NOT NULL CHECK (attach_epoch >= 1),
+        request_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
         invocation_id TEXT NOT NULL UNIQUE,
         runtime_id TEXT NOT NULL UNIQUE,
         state TEXT NOT NULL CHECK (state IN (

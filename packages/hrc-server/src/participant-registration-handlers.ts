@@ -1,11 +1,20 @@
+import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 
+import { buildScopeRef, parseScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
-import { type JsonValue, validateParticipantAdapterAdmission } from 'spaces-runtime-contracts'
+import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
+import {
+  type JsonValue,
+  type ParticipantAdapterPreparationRequest,
+  validateParticipantAdapterAdmission,
+  validateParticipantAdapterPreparation,
+} from 'spaces-runtime-contracts'
 
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
+import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { json } from './server-util.js'
+import { createHostSessionId, json, timestamp } from './server-util.js'
 
 /** The callback contract in T-08344 C.2; adapter-owned fields remain opaque. */
 export type RegisterParticipantRequest = {
@@ -16,11 +25,21 @@ export type RegisterParticipantRequest = {
   participantKey?: string
 }
 
-export type RegisterParticipantResponse = {
-  status: 'pending' | 'rejected'
-  reason: string
-  detail: string
-}
+export type RegisterParticipantResponse =
+  | {
+      status: 'registered'
+      scopeRef: string
+      hostSessionId: string
+      generation: number
+      created: boolean
+      resumed: false
+      observation: { state: 'prepared'; detail: string }
+    }
+  | {
+      status: 'pending' | 'rejected'
+      reason: string
+      detail: string
+    }
 
 function malformed(message: string, field?: string): never {
   throw new HrcBadRequestError(
@@ -43,6 +62,28 @@ function isJsonValue(value: unknown): value is JsonValue {
   if (Array.isArray(value)) return value.every(isJsonValue)
   if (typeof value !== 'object') return false
   return Object.values(value).every(isJsonValue)
+}
+
+function serializedJson(value: unknown): string {
+  return JSON.stringify(value ?? null) ?? 'null'
+}
+
+function registeredResponse(
+  registration: ParticipantRegistration,
+  created: boolean
+): RegisterParticipantResponse {
+  return {
+    status: 'registered',
+    scopeRef: registration.scopeRef,
+    hostSessionId: registration.hostSessionId,
+    generation: registration.generation,
+    created,
+    resumed: false,
+    observation: {
+      state: 'prepared',
+      detail: 'participant registration and immutable adapter preparation are durable',
+    },
+  }
 }
 
 export function parseRegisterParticipantRequest(input: unknown): RegisterParticipantRequest {
@@ -141,23 +182,192 @@ export async function handleRegisterParticipant(
       detail: admission.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
     } satisfies RegisterParticipantResponse)
   }
-  if (admission.value.status !== 'admitted') {
+  const admitted = admission.value
+  if (admitted.status !== 'admitted') {
     return json({
-      status: admission.value.status,
-      reason: admission.value.reason,
-      detail: `participant adapter ${admission.value.status} registration admission`,
+      status: admitted.status,
+      reason: admitted.reason,
+      detail: `participant adapter ${admitted.status} registration admission`,
     } satisfies RegisterParticipantResponse)
   }
 
-  // T-08346 owns broker.installIdentity / broker.ensureInvocation. Until the
-  // generic lifecycle transaction allocates/persists the admitted address and
-  // preparation, no registration row or lifecycle effect is created: returning
-  // a retryable pending result cannot manufacture recovery or activation.
-  return json({
-    status: 'pending',
-    reason: 'participant_activation_unavailable',
-    detail: 'generic participant admission is available; activation effects are not yet wired',
-  } satisfies RegisterParticipantResponse)
+  const result = await withScopeClaimMutex(
+    this,
+    `roster:${registrationClass.scopeTemplate.agent}:${registrationClass.scopeTemplate.project}`,
+    async (): Promise<RegisterParticipantResponse> => {
+      let registration = this.db.participantRegistrations.getRegistrationByClassAndKey(
+        registrationClass.classId,
+        admitted.participantKey
+      )
+      let attempt =
+        registration === null
+          ? null
+          : this.db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
+      let created = false
+
+      if (registration === null) {
+        if (
+          this.db.participantRegistrations.countRegistrationsByClassId(registrationClass.classId) >=
+          registrationClass.maxInstances
+        ) {
+          return {
+            status: 'pending',
+            reason: 'participant_registration_capacity_exhausted',
+            detail: `participant class "${registrationClass.classId}" has no permanent registration capacity`,
+          }
+        }
+
+        const now = timestamp()
+        const hostSessionId = createHostSessionId()
+        const registrationId = `participant-registration-${randomUUID()}`
+        const attemptId = `participant-attempt-${randomUUID()}`
+        const requestId = `req-${randomUUID()}`
+        const operationId = `op-${randomUUID()}`
+        const runtimeId = `rt-${randomUUID()}`
+        const invocationId = `inv-${randomUUID()}`
+        const scopeRef = buildScopeRef({
+          agentId: registrationClass.scopeTemplate.agent,
+          projectId: registrationClass.scopeTemplate.project,
+          taskId: `participant-${randomUUID()}`,
+        })
+        const newRegistration: ParticipantRegistration = {
+          registrationId,
+          classId: registrationClass.classId,
+          adapterId: registrationClass.adapterId,
+          join: registrationClass.join,
+          participantKey: admitted.participantKey,
+          scopeRef,
+          laneRef: 'main',
+          hostSessionId,
+          generation: 1,
+          workspaceCwd: admitted.workspaceCwd,
+          preparationJson: serializedJson(admitted.preparation),
+          ...(admitted.continuityEvidence === undefined
+            ? {}
+            : { continuityEvidenceJson: serializedJson(admitted.continuityEvidence) }),
+          createdAt: now,
+          updatedAt: now,
+        }
+        const newAttempt: ParticipantAttempt = {
+          attemptId,
+          registrationId,
+          attachEpoch: 1,
+          requestId,
+          operationId,
+          invocationId,
+          runtimeId,
+          state: 'IDENTITY_MINTED',
+          createdAt: now,
+          updatedAt: now,
+        }
+        this.db.sqlite.transaction(() => {
+          this.db.sessions.insert({
+            hostSessionId,
+            scopeRef,
+            laneRef: newRegistration.laneRef,
+            generation: newRegistration.generation,
+            status: 'active',
+            createdAt: now,
+            updatedAt: now,
+            parsedScopeJson: parseScopeRef(scopeRef) as unknown as Record<string, unknown>,
+            ancestorScopeRefs: [],
+          })
+          this.db.continuities.upsert({
+            scopeRef,
+            laneRef: newRegistration.laneRef,
+            activeHostSessionId: hostSessionId,
+            updatedAt: now,
+          })
+          this.db.participantRegistrations.insertRegistration(newRegistration)
+          this.db.participantRegistrations.insertAttempt(newAttempt)
+        })()
+        registration = newRegistration
+        attempt = newAttempt
+        created = true
+      }
+
+      if (registration === null || attempt === null) {
+        return {
+          status: 'pending',
+          reason: 'participant_attempt_unavailable',
+          detail: 'registered participant has no durable attempt to prepare',
+        }
+      }
+      const resolvedRegistration = registration
+      const resolvedAttempt = attempt
+      if (resolvedAttempt.preparedProfileJson !== undefined) {
+        return registeredResponse(resolvedRegistration, created)
+      }
+
+      const preparationRequest = {
+        classId: resolvedRegistration.classId,
+        join: resolvedRegistration.join,
+        participantKey: resolvedRegistration.participantKey,
+        workspaceCwd: resolvedRegistration.workspaceCwd,
+        preparation: JSON.parse(resolvedRegistration.preparationJson) as JsonValue,
+        identity: {
+          requestId: resolvedAttempt.requestId,
+          operationId: resolvedAttempt.operationId,
+          hostSessionId: resolvedRegistration.hostSessionId,
+          generation: resolvedRegistration.generation,
+          runtimeId: resolvedAttempt.runtimeId,
+          invocationId: resolvedAttempt.invocationId,
+        },
+        scopeRef: resolvedRegistration.scopeRef,
+        laneRef: resolvedRegistration.laneRef,
+        attachEpoch: resolvedAttempt.attachEpoch,
+      } as ParticipantAdapterPreparationRequest
+      const prepared = validateParticipantAdapterPreparation(
+        preparationRequest,
+        await adapter.prepare(preparationRequest)
+      )
+      if (!prepared.ok) {
+        return {
+          status: 'pending',
+          reason: 'participant_adapter_preparation_invalid',
+          detail: prepared.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+        }
+      }
+      const preparedValue = prepared.value
+      if (preparedValue.status !== 'prepared') {
+        return {
+          status: preparedValue.status,
+          reason: preparedValue.reason,
+          detail: `participant adapter ${preparedValue.status} registration preparation`,
+        }
+      }
+
+      const now = timestamp()
+      const frozen = this.db.sqlite.transaction(() => {
+        const didFreeze = this.db.participantRegistrations.freezePreparedBoundaryIfAbsent(
+          resolvedAttempt.attemptId,
+          serializedJson(preparedValue.profile),
+          serializedJson(preparedValue.dispatchEnv),
+          now
+        )
+        if (!didFreeze) return false
+        return this.db.participantRegistrations.transitionAttempt(
+          resolvedAttempt.attemptId,
+          ['IDENTITY_MINTED'],
+          'PREPARED',
+          now
+        )
+      })()
+      if (!frozen) {
+        const current = this.db.participantRegistrations.getAttempt(resolvedAttempt.attemptId)
+        if (current?.preparedProfileJson !== undefined)
+          return registeredResponse(resolvedRegistration, false)
+        return {
+          status: 'pending',
+          reason: 'participant_preparation_race',
+          detail: 'participant preparation could not be durably frozen',
+        }
+      }
+
+      return registeredResponse(resolvedRegistration, created)
+    }
+  )
+  return json(result)
 }
 
 export const participantRegistrationHandlersMethods = {
