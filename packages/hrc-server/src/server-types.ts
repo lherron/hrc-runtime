@@ -22,6 +22,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import type { ExternalParticipantClientFactory } from './external-registration-rendezvous.js'
 import type { FederationConfig } from './federation/federation-config.js'
+import type { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import type { RegistrationClassConfig } from './registration-classes-config.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 
@@ -443,6 +444,8 @@ export type HrcServerOptions = {
   commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
   /** Operator-ratified external-participant birth templates. No API mutates these. */
   registrationClasses?: readonly RegistrationClassConfig[] | undefined
+  /** Static, trusted participant adapters supplied by server composition. */
+  participantAdapterRegistry?: ParticipantAdapterRegistry | undefined
   /** Test/embedded seam for the daemon-owned EPR Unix client. */
   externalParticipantClientFactory?: ExternalParticipantClientFactory | undefined
   /** Test/embedded EPR retry overrides; production backs off from 100ms to a 2s cap. */

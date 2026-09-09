@@ -179,6 +179,10 @@ import {
   startOtlpListener,
 } from './otel-ingest.js'
 import {
+  ParticipantAdapterRegistry,
+  requireParticipantClassAdapters,
+} from './participant-adapter-registry.js'
+import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
 } from './participant-registration-handlers.js'
@@ -2931,12 +2935,17 @@ Object.assign(
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
+  const registrationClasses = await resolveRegistrationClasses(options.registrationClasses)
+  const participantAdapterRegistry =
+    options.participantAdapterRegistry ?? new ParticipantAdapterRegistry([])
+  requireParticipantClassAdapters(participantAdapterRegistry, registrationClasses)
   const resolvedOptions: HrcServerOptions = {
     ...options,
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),
     localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
-    registrationClasses: await resolveRegistrationClasses(options.registrationClasses),
+    registrationClasses,
+    participantAdapterRegistry,
   }
   const logCtx = {
     runtimeRoot: resolvedOptions.runtimeRoot,

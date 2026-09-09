@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path'
 
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
+import { type JsonValue, validateParticipantAdapterAdmission } from 'spaces-runtime-contracts'
 
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -10,14 +11,14 @@ import { json } from './server-util.js'
 export type RegisterParticipantRequest = {
   classId: string
   processToken: string
-  evidence?: unknown
+  evidence?: JsonValue
   socketPath?: string
   participantKey?: string
 }
 
 export type RegisterParticipantResponse = {
-  status: 'pending'
-  reason: 'broker_bootstrap_unavailable'
+  status: 'pending' | 'rejected'
+  reason: string
   detail: string
 }
 
@@ -36,6 +37,14 @@ function requiredNonEmptyString(value: unknown, field: string): string {
   return value.trim()
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every(isJsonValue)
+  if (typeof value !== 'object') return false
+  return Object.values(value).every(isJsonValue)
+}
+
 export function parseRegisterParticipantRequest(input: unknown): RegisterParticipantRequest {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     malformed('request body must be an object')
@@ -48,6 +57,10 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
   }
   const classId = requiredNonEmptyString(body['classId'], 'classId')
   const processToken = requiredNonEmptyString(body['processToken'], 'processToken')
+  const evidence = body['evidence']
+  if (evidence !== undefined && !isJsonValue(evidence)) {
+    malformed('evidence must be JSON-serializable when provided', 'evidence')
+  }
   const participantKey = body['participantKey']
   if (
     participantKey !== undefined &&
@@ -68,7 +81,7 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
   return {
     classId,
     processToken,
-    ...(body['evidence'] === undefined ? {} : { evidence: body['evidence'] }),
+    ...(evidence === undefined ? {} : { evidence }),
     ...(socketPath === undefined ? {} : { socketPath: socketPath.trim() }),
     ...(participantKey === undefined ? {} : { participantKey: participantKey.trim() }),
   }
@@ -102,14 +115,48 @@ export async function handleRegisterParticipant(
     malformed('socketPath is required for a participant-served participant', 'socketPath')
   }
 
+  const adapter = this.options.participantAdapterRegistry?.get(registrationClass.adapterId)
+  if (adapter === undefined) {
+    // createHrcServer rejects this composition error. Retain a truthful local
+    // refusal for embedded instances that did not pass through construction.
+    return json({
+      status: 'pending',
+      reason: 'participant_adapter_unavailable',
+      detail: `configured participant adapter "${registrationClass.adapterId}" is unavailable`,
+    } satisfies RegisterParticipantResponse)
+  }
+
+  const admission = validateParticipantAdapterAdmission(
+    await adapter.admit({
+      classId: registrationClass.classId,
+      join: registrationClass.join,
+      ...(body.participantKey === undefined ? {} : { participantKey: body.participantKey }),
+      ...(body.evidence === undefined ? {} : { evidence: body.evidence }),
+    })
+  )
+  if (!admission.ok) {
+    return json({
+      status: 'pending',
+      reason: 'participant_adapter_admission_invalid',
+      detail: admission.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+    } satisfies RegisterParticipantResponse)
+  }
+  if (admission.value.status !== 'admitted') {
+    return json({
+      status: admission.value.status,
+      reason: admission.value.reason,
+      detail: `participant adapter ${admission.value.status} registration admission`,
+    } satisfies RegisterParticipantResponse)
+  }
+
   // T-08346 owns broker.installIdentity / broker.ensureInvocation. Until the
-  // published client contract is available, no registration row or lifecycle
-  // effect is created: returning a retryable pending result is deliberately
-  // non-mutating and cannot manufacture a successful recovery or activation.
+  // generic lifecycle transaction allocates/persists the admitted address and
+  // preparation, no registration row or lifecycle effect is created: returning
+  // a retryable pending result cannot manufacture recovery or activation.
   return json({
     status: 'pending',
-    reason: 'broker_bootstrap_unavailable',
-    detail: 'generic participant activation requires the broker bootstrap protocol',
+    reason: 'participant_activation_unavailable',
+    detail: 'generic participant admission is available; activation effects are not yet wired',
   } satisfies RegisterParticipantResponse)
 }
 

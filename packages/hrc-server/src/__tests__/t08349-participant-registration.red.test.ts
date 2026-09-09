@@ -14,8 +14,11 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
+import { createControlledParticipantAdapter } from 'agent-spaces/testing'
+
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
+import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 type GenericParticipantClass = {
@@ -142,6 +145,12 @@ describe('T-08349 generic participant registration callback surface', () => {
           hostedClass,
           participantServedClass,
         ] as unknown as readonly RegistrationClassConfig[],
+        participantAdapterRegistry: new ParticipantAdapterRegistry([
+          createControlledParticipantAdapter({
+            adapterId: hostedClass.adapterId,
+            workspaceCwd: fixture.tmpDir,
+          }),
+        ]),
       })
     ).then(
       (value) => ({ server: value, error: undefined }),
@@ -175,6 +184,36 @@ describe('T-08349 generic participant registration callback surface', () => {
     expect(servedWithoutSocket).toMatchObject({
       status: 400,
       body: { error: { code: 'malformed_request', detail: { field: 'socketPath' } } },
+    })
+
+    // Use the canonical source-graph adapter, not a local duplicate, for both
+    // legal join shapes. Admission alone remains pending until HRC has made the
+    // durable allocation / hosting / broker-effect transaction.
+    const admittedHosted = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: hostedClass.classId,
+        processToken: 'opaque-hosted-token',
+        participantKey: 'hosted-permanent-key',
+        evidence: { kind: 'controlled-continuity/v1', token: 'first' },
+      })
+    )
+    expect(admittedHosted).toMatchObject({
+      status: 200,
+      body: { status: 'pending', reason: 'participant_activation_unavailable' },
+    })
+
+    const admittedServed = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: participantServedClass.classId,
+        processToken: 'opaque-served-token',
+        participantKey: 'served-permanent-key',
+        socketPath: `${fixture.tmpDir}/participant-served.sock`,
+        evidence: { kind: 'controlled-continuity/v1', token: 'same' },
+      })
+    )
+    expect(admittedServed).toMatchObject({
+      status: 200,
+      body: { status: 'pending', reason: 'participant_activation_unavailable' },
     })
   })
 
