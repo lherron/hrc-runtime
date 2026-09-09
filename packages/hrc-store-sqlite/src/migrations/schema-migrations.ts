@@ -3013,6 +3013,65 @@ const desktopThreadRegistrationsMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08349 Phase2: permanent generic participant addresses and attempt-level
+ * persistence boundaries. Adapter payloads remain opaque JSON; this store owns
+ * neither profile construction nor lifecycle-policy selection.
+ */
+const participantRegistrationLifecycleMigration: HrcMigration = {
+  id: '0064_participant_registration_lifecycle',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS participant_registrations (
+        registration_id TEXT PRIMARY KEY,
+        class_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        join_direction TEXT NOT NULL CHECK (join_direction IN ('hrc-hosted', 'participant-served')),
+        participant_key TEXT NOT NULL,
+        scope_ref TEXT NOT NULL UNIQUE,
+        lane_ref TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK (generation >= 1),
+        workspace_cwd TEXT NOT NULL,
+        preparation_json TEXT NOT NULL,
+        continuity_evidence_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(class_id, participant_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS participant_registration_attempts (
+        attempt_id TEXT PRIMARY KEY,
+        registration_id TEXT NOT NULL,
+        attach_epoch INTEGER NOT NULL CHECK (attach_epoch >= 1),
+        invocation_id TEXT NOT NULL UNIQUE,
+        runtime_id TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK (state IN (
+          'REGISTERED', 'IDENTITY_MINTED', 'PREPARED', 'HOSTING_INTENT_PERSISTED',
+          'REALIZED', 'DISPATCH_FROZEN', 'INSTALL_CONFIRMED', 'INVOCATION_READY',
+          'ATTACH_CONFIRMED', 'ACTIVE', 'DETACHED', 'SUPERSEDED', 'ABANDONED', 'TERMINAL'
+        )),
+        prepared_profile_json TEXT,
+        adapter_dispatch_env_json TEXT,
+        hosting_intent_json TEXT,
+        realized_hosting_json TEXT,
+        dispatch_json TEXT,
+        disposition_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK ((prepared_profile_json IS NULL) = (adapter_dispatch_env_json IS NULL)),
+        UNIQUE(registration_id, attach_epoch),
+        FOREIGN KEY (registration_id) REFERENCES participant_registrations(registration_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_participant_attempts_registration
+        ON participant_registration_attempts(registration_id, attach_epoch);
+      CREATE INDEX IF NOT EXISTS idx_participant_attempts_state
+        ON participant_registration_attempts(state, updated_at);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3072,4 +3131,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailUncertainDeliveryMigration,
   hrcmailReceiptCommitMigration,
   desktopThreadRegistrationsMigration,
+  participantRegistrationLifecycleMigration,
 ]

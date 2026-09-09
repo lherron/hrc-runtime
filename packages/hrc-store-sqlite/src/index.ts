@@ -21,6 +21,12 @@ export type {
   ExternalRegistrationMint,
   IssueExternalRegistrationGrantResult,
 } from './external-registration-grant-repository.js'
+export { ParticipantRegistrationRepository } from './participant-registration-repository.js'
+export type {
+  ParticipantAttempt,
+  ParticipantAttemptState,
+  ParticipantRegistration,
+} from './participant-registration-repository.js'
 export type { SqliteSlowStatement } from './statement-telemetry.js'
 export {
   CollectiveHistoryReplicationRepository,
