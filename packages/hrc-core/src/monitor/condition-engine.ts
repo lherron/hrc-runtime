@@ -8,6 +8,7 @@ import type {
   HrcMonitorSnapshot,
   HrcMonitorWatchRequest,
 } from './index.js'
+import { isTerminalRuntimeStatus } from './status-levels.js'
 
 export type HrcMonitorCondition = 'turn-finished' | 'idle' | 'busy' | 'response' | 'runtime-dead'
 
@@ -90,22 +91,12 @@ type EvaluationContext = {
   capture: HrcMonitorCapture
 }
 
-const DEAD_RUNTIME_STATUSES = new Set([
-  'dead',
-  'stale',
-  'terminated',
-  'stopped',
-  'failed',
-  'disposed',
-  'crashed',
-  'exited',
-])
 const CONTEXT_CHANGED_REASONS = new Set(['session_rebound', 'generation_changed', 'cleared'])
 const FAILURE_KINDS = new Set(['model', 'tool', 'process', 'runtime', 'cancelled', 'unknown'])
 const IDLE_RUNTIME_STATUSES = new Set(['idle', 'ready'])
 
 // Canonical enumeration of HrcMonitorConditionResult, used to derive the
-// runtime guard from a single source (mirrors the DEAD_RUNTIME_STATUSES pattern).
+// runtime guard from a single source (mirrors TERMINAL_RUNTIME_STATUSES).
 const CONDITION_RESULTS = [
   'turn_succeeded',
   'turn_failed',
@@ -278,7 +269,7 @@ const CONDITION_STRATEGIES = {
   },
   'runtime-dead': {
     start: (_context, snapshot) =>
-      isDeadRuntimeStatus(snapshot.runtime?.status)
+      isTerminalRuntimeStatus(snapshot.runtime?.status)
         ? { result: 'already_dead', outcome: 'success', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) => runtimeDeathOutcome(context, event),
@@ -597,10 +588,6 @@ function unknownString(event: MonitorOutputEvent, key: string): string | undefin
 function unknownNumber(event: MonitorOutputEvent, key: string): number | undefined {
   const value = event[key]
   return typeof value === 'number' ? value : undefined
-}
-
-function isDeadRuntimeStatus(status: string | undefined): boolean {
-  return status !== undefined && DEAD_RUNTIME_STATUSES.has(status)
 }
 
 function isIdleRuntimeStatus(status: string | undefined): boolean {

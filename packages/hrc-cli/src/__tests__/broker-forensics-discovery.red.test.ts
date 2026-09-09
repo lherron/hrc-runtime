@@ -489,6 +489,50 @@ describe('hrc monitor stats and selector convenience', () => {
     expect(previousTwo.stdout).toContain('second.terminated')
   })
 
+  it('selects a rotated-out stale generation with --previous, not just a terminated one', async () => {
+    // T-08327: a rotated seat leaves gen N in status `stale`, never
+    // `terminated`. Its transcript is intact and renders by runtimeId, so
+    // --previous must reach it — selecting on `terminated` alone reported
+    // "0 exist" for a scope whose prior transcript was fully present.
+    const staleScopeRef = 'agent:rotated:project:hrc-runtime:task:T-08327'
+    const staleScopeHandle = 'rotated@hrc-runtime:T-08327'
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-rotated-gen1',
+      runtimeId: 'rt-forensics-rotated-gen1',
+      runId: 'run-forensics-rotated-gen1',
+      invocationId: 'inv-forensics-rotated-gen1',
+      scopeRef: staleScopeRef,
+      status: 'stale',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    })
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-rotated-gen2',
+      runtimeId: 'rt-forensics-rotated-gen2',
+      runId: 'run-forensics-rotated-gen2',
+      invocationId: 'inv-forensics-rotated-gen2',
+      scopeRef: staleScopeRef,
+      status: 'busy',
+      createdAt: '2026-07-06T00:00:00.000Z',
+    })
+    appendEvent(fixture, {
+      runtimeId: 'rt-forensics-rotated-gen1',
+      runId: 'run-forensics-rotated-gen1',
+      invocationId: 'inv-forensics-rotated-gen1',
+      seq: 1,
+      type: 'rotated.gen1',
+      payload: {},
+    })
+
+    const previous = await runCli(
+      ['monitor', 'events', staleScopeHandle, '--previous', '--ndjson'],
+      cliEnv(fixture)
+    )
+
+    expect(previous.exitCode).toBe(0)
+    expect(previous.stdout).toContain('rotated.gen1')
+    expect(previous.stdout).not.toContain('rt-forensics-rotated-gen2')
+  })
+
   it('errors when --previous over-counts terminated runtimes or is combined with --latest', async () => {
     const overCount = await runCli(
       ['monitor', 'stats', SCOPE_HANDLE, '--previous', '2'],
@@ -500,7 +544,10 @@ describe('hrc monitor stats and selector convenience', () => {
     )
 
     expect(overCount.exitCode).not.toBe(0)
-    expect(overCount.stderr).toContain('only 1 exist')
+    // The count is a count over a FILTER, so it must name the filter, the
+    // population it ran over, and the escape hatch — never a bare "0 exist".
+    expect(overCount.stderr).toContain('1 of 1 known runtime(s) for that scope are prior runtimes')
+    expect(overCount.stderr).toContain(`hrc runtime list --scope ${SCOPE_HANDLE} --all --json`)
     expect(conflicting.exitCode).not.toBe(0)
     expect(conflicting.stderr).toContain('--previous and --latest are mutually exclusive')
   })

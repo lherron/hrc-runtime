@@ -320,7 +320,7 @@ hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
 hrc monitor stats <runtimeId|invocationId|scope> --json
 ```
 
-A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest live runtime or `--previous [n]` to select terminated history newest-first. Human event and transcript output clips large payloads with an explicit marker. `monitor events --ndjson` and `monitor transcript --full` preserve complete content.
+A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest live runtime or `--previous [n]` to select prior (non-live) history newest-first — any runtime that will never run another turn, whether it terminated cleanly or was rotated out and left `stale`. Human event and transcript output clips large payloads with an explicit marker. `monitor events --ndjson` and `monitor transcript --full` preserve complete content.
 
 ### `hrc turn`
 

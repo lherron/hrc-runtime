@@ -22,3 +22,22 @@ export const RUNTIME_STATUS_LEVEL_BY_STATUS = {
   adopted: null,
   detached: null,
 } as const satisfies Record<string, HrcRuntimeStatusLevel | null>
+
+/**
+ * Every status a runtime can hold that means it will never run another turn.
+ * Derived from the frozen classification above so the set cannot drift from it:
+ * a new terminal status is terminal here the moment it is classified
+ * `runtime-dead`. Callers that need "not live, not current" — `--previous`
+ * runtime selection, monitor's runtime-dead guard — ask here rather than
+ * hand-rolling a status list, which is how `--previous` came to recognize
+ * `terminated` but not `stale`.
+ */
+export const TERMINAL_RUNTIME_STATUSES: ReadonlySet<string> = new Set(
+  Object.entries(RUNTIME_STATUS_LEVEL_BY_STATUS)
+    .filter(([, level]) => level === 'runtime-dead')
+    .map(([status]) => status)
+)
+
+export function isTerminalRuntimeStatus(status: string | undefined): boolean {
+  return status !== undefined && TERMINAL_RUNTIME_STATUSES.has(status)
+}

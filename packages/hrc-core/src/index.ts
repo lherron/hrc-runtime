@@ -493,7 +493,11 @@ export {
 } from './monitor/index.js'
 export { MONITOR_EXIT_CODES } from './monitor/exit-codes.js'
 export type { MonitorExitCode } from './monitor/exit-codes.js'
-export { RUNTIME_STATUS_LEVEL_BY_STATUS } from './monitor/status-levels.js'
+export {
+  isTerminalRuntimeStatus,
+  RUNTIME_STATUS_LEVEL_BY_STATUS,
+  TERMINAL_RUNTIME_STATUSES,
+} from './monitor/status-levels.js'
 export type { HrcRuntimeStatusLevel } from './monitor/status-levels.js'
 export type {
   HrcMonitorCondition,

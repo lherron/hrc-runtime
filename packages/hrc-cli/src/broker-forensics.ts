@@ -1,4 +1,4 @@
-import { HrcDomainError, HrcErrorCode, splitSessionRef } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, isTerminalRuntimeStatus, splitSessionRef } from 'hrc-core'
 import type { BrokerForensicsEvent, BrokerForensicsResponse, HrcSelector } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { EventProvenance } from 'spaces-harness-broker-protocol'
@@ -149,13 +149,17 @@ async function resolvePreviousRuntimeArg(
       fatal(`--previous requires a scope or handle target (received: ${rawTarget})`)
   }
 
-  const matches = (await client.listRuntimes({ all: true }))
-    .filter(
-      (runtime) =>
-        runtime.status === 'terminated' &&
-        runtime.scopeRef === scopeRef &&
-        (laneRef === undefined || runtime.laneRef === laneRef)
-    )
+  const forScope = (await client.listRuntimes({ all: true })).filter(
+    (runtime) =>
+      runtime.scopeRef === scopeRef && (laneRef === undefined || runtime.laneRef === laneRef)
+  )
+  // T-08327: any runtime that will never run another turn is a prior session,
+  // whether it terminated cleanly or was rotated out and left `stale`. Selecting
+  // on `terminated` alone hid intact transcripts behind "0 exist" — and the
+  // documented fallback (`hrc runtime list --scope`) hides terminal runtimes by
+  // default, so both surfaces corroborated the same false negative.
+  const matches = forScope
+    .filter((runtime) => isTerminalRuntimeStatus(runtime.status))
     .sort(
       (left, right) =>
         Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
@@ -163,8 +167,14 @@ async function resolvePreviousRuntimeArg(
     )
   const match = matches[previous - 1]
   if (!match) {
+    // Never state the filtered count as a bare fact about the world: name the
+    // filter, the population it ran over, and the way out.
+    const live = forScope.length - matches.length
     fatal(
-      `--previous ${previous} requested a terminated runtime for "${rawTarget}", but only ${matches.length} exist`
+      `--previous ${previous} requested a prior (non-live) runtime for "${rawTarget}", but only ` +
+        `${matches.length} of ${forScope.length} known runtime(s) for that scope are prior runtimes` +
+        `${live > 0 ? ` (${live} still live)` : ''}. ` +
+        `Enumerate them with: hrc runtime list --scope ${rawTarget} --all --json`
     )
   }
   return match.runtimeId

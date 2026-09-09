@@ -87,7 +87,7 @@ function registerBrokerReads(monitor: Command): void {
     .option('--type <types>', 'comma-separated event types')
     .option('--seq <range>', 'inclusive invocation-local sequence range (<from>..<to>)')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
-    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
+    .option('--previous [n]', 'select the nth-most-recent prior (non-live) runtime for a scope')
     .option('--json', 'output as a JSON array')
     .option('--ndjson', 'output one complete event per NDJSON line')
     .option('--provenance', 'show sourceKind/nativeType/rawRecordId in table output')
@@ -116,7 +116,7 @@ function registerBrokerReads(monitor: Command): void {
     .option('--tail <n>', 'emit only the last n rendered events')
     .option('--full', 'do not clip long event text')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
-    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
+    .option('--previous [n]', 'select the nth-most-recent prior (non-live) runtime for a scope')
     .addHelpText(
       'after',
       '\nThis is invocation activity, not conversation readback. Its --seq cursor is invocation-local and is not an hrcSeq monitor replay cursor.\n'
@@ -136,7 +136,7 @@ function registerBrokerReads(monitor: Command): void {
     .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
     .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
-    .option('--previous [n]', 'select the nth-most-recent terminated runtime for a scope')
+    .option('--previous [n]', 'select the nth-most-recent prior (non-live) runtime for a scope')
     .option('--json', 'output as JSON')
     .addHelpText(
       'after',

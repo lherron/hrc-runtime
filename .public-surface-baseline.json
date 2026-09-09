@@ -3031,6 +3031,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "isTerminalRuntimeStatus",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/status-levels.ts",
+      "hash": "hrc-core|isTerminalRuntimeStatus|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "KillBrokerTmuxLeasesResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3995,6 +4003,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|TargetCapabilityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TERMINAL_RUNTIME_STATUSES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/status-levels.ts",
+      "hash": "hrc-core|TERMINAL_RUNTIME_STATUSES|value",
       "count": 1
     },
     {
