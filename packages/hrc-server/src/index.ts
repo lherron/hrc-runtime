@@ -179,6 +179,10 @@ import {
   startOtlpListener,
 } from './otel-ingest.js'
 import {
+  type ParticipantRegistrationHandlersMethods,
+  participantRegistrationHandlersMethods,
+} from './participant-registration-handlers.js'
+import {
   type PresentationPublishMethods,
   presentationPublishMethods,
 } from './presentation-publish.js'
@@ -801,6 +805,7 @@ interface HrcServerInstance
     RosterClaimHandlersMethods,
     ExactClaimHandlersMethods,
     RegistrationGcHandlersMethods,
+    ParticipantRegistrationHandlersMethods,
     RegistrationHandlersMethods,
     DesktopRegistrationHandlersMethods,
     DesktopObserverHandlersMethods,
@@ -911,6 +916,8 @@ class HrcServerInstance implements HrcServer {
       this.handleRetireRegistrationScopes(request),
     [exactRouteKey('POST', '/v1/registrations')]: (request) =>
       this.handleCreateExternalRegistration(request),
+    [exactRouteKey('POST', '/v1/participants/register')]: (request) =>
+      this.handleRegisterParticipant(request),
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
     [exactRouteKey('GET', '/v1/sessions')]: (_request, url) => this.handleListSessions(url),
@@ -2917,6 +2924,7 @@ Object.assign(
   rosterClaimHandlersMethods,
   exactClaimHandlersMethods,
   registrationGcHandlersMethods,
+  participantRegistrationHandlersMethods,
   registrationHandlersMethods,
   desktopRegistrationHandlersMethods,
   desktopObserverHandlersMethods
@@ -3066,8 +3074,12 @@ export {
   parseRegistrationClassesConfig,
   resolveRegistrationClasses,
   validateRegistrationClassConfig,
+  isExternalRegistrationClass,
+  isParticipantRegistrationClass,
 } from './registration-classes-config.js'
 export type {
+  ExternalRegistrationClassConfig,
+  ParticipantRegistrationClassConfig,
   RegistrationClassConfig,
   RegistrationClassScopeTemplate,
 } from './registration-classes-config.js'
@@ -3076,6 +3088,11 @@ export type {
   CreateExternalRegistrationRequest,
   CreateExternalRegistrationResponse,
 } from './registration-handlers.js'
+export { parseRegisterParticipantRequest } from './participant-registration-handlers.js'
+export type {
+  RegisterParticipantRequest,
+  RegisterParticipantResponse,
+} from './participant-registration-handlers.js'
 export {
   EPR_HELLO_ERROR_CODE,
   EPR_PROTOCOL_VERSION,

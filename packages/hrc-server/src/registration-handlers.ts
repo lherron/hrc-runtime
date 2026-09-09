@@ -6,7 +6,10 @@ import { HrcBadRequestError, HrcConflictError, HrcErrorCode, HrcNotFoundError } 
 import type { ExternalRegistrationGrant } from 'hrc-store-sqlite'
 
 import { externalRegistrationPlacementAdvisory } from './federation/summon-gate-server.js'
-import { MAX_EXTERNAL_REGISTRATION_TTL_SECONDS } from './registration-classes-config.js'
+import {
+  MAX_EXTERNAL_REGISTRATION_TTL_SECONDS,
+  isExternalRegistrationClass,
+} from './registration-classes-config.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { json } from './server-util.js'
 
@@ -104,6 +107,13 @@ export async function handleCreateExternalRegistration(
     throw new HrcNotFoundError(
       HrcErrorCode.UNKNOWN_REGISTRATION_CLASS,
       `registration class "${body.classId}" is not configured`,
+      { classId: body.classId }
+    )
+  }
+  if (!isExternalRegistrationClass(registrationClass)) {
+    throw new HrcNotFoundError(
+      HrcErrorCode.UNKNOWN_REGISTRATION_CLASS,
+      `registration class "${body.classId}" is not configured for external registration`,
       { classId: body.classId }
     )
   }

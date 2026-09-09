@@ -38,6 +38,7 @@ import type { ForeignHome } from './federation/home-authority.js'
 import type { BindingRegistryClient } from './federation/registry-client.js'
 import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
+import type { ParticipantRegistrationHandlersMethods } from './participant-registration-handlers.js'
 import type { PresentationPublishMethods } from './presentation-publish.js'
 import type { RegistrationGcHandlersMethods } from './registration-gc-handlers.js'
 import type { RegistrationHandlersMethods } from './registration-handlers.js'
@@ -98,6 +99,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   RosterClaimHandlersMethods &
   ExactClaimHandlersMethods &
   RegistrationGcHandlersMethods &
+  ParticipantRegistrationHandlersMethods &
   RegistrationHandlersMethods &
   ShadowTeardownHandlersMethods &
   RuntimeControlHandlersMethods &

@@ -10,13 +10,34 @@ export type RegistrationClassScopeTemplate = {
   project: string
 }
 
-export type RegistrationClassConfig = {
+export type ExternalRegistrationClassConfig = {
   classId: string
   scopeTemplate: RegistrationClassScopeTemplate
   maxInstances: number
   defaultTtl: number
   turnsAllowed: boolean
 }
+
+/**
+ * Policy for a harness-broker participant that joins the generic registration
+ * path. The adapter owns the meanings of `processToken` and `evidence`; HRC
+ * only persists and fences the lifecycle that follows registration.
+ */
+export type ParticipantRegistrationClassConfig = {
+  classId: string
+  adapterId: string
+  join: 'hrc-hosted' | 'participant-served'
+  address: 'permanent-keyed'
+  continuity: 'key-scoped'
+  replaySemantics: 'none' | 'full-source-replay'
+  scopeTemplate: RegistrationClassScopeTemplate
+  maxInstances: number
+  defaultTtl: number
+}
+
+export type RegistrationClassConfig =
+  | ExternalRegistrationClassConfig
+  | ParticipantRegistrationClassConfig
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -60,9 +81,27 @@ export function validateRegistrationClassConfig(
   if (!isPlainRecord(value)) {
     throw new Error(`${where} must be an object`)
   }
+  const generic =
+    'adapterId' in value ||
+    'join' in value ||
+    'address' in value ||
+    'continuity' in value ||
+    'replaySemantics' in value
   assertExactKeys(
     value,
-    ['classId', 'scopeTemplate', 'maxInstances', 'defaultTtl', 'turnsAllowed'],
+    generic
+      ? [
+          'classId',
+          'adapterId',
+          'join',
+          'address',
+          'continuity',
+          'replaySemantics',
+          'scopeTemplate',
+          'maxInstances',
+          'defaultTtl',
+        ]
+      : ['classId', 'scopeTemplate', 'maxInstances', 'defaultTtl', 'turnsAllowed'],
     where
   )
 
@@ -79,10 +118,6 @@ export function validateRegistrationClassConfig(
   if (defaultTtl > MAX_EXTERNAL_REGISTRATION_TTL_SECONDS) {
     throw new Error(`${where}.defaultTtl must not exceed ${MAX_EXTERNAL_REGISTRATION_TTL_SECONDS}`)
   }
-  if (typeof value['turnsAllowed'] !== 'boolean') {
-    throw new Error(`${where}.turnsAllowed must be a boolean`)
-  }
-
   // Prove at daemon startup that this operator template can produce a valid,
   // node-free task-qualified ScopeRef. Request handling only supplies entropy.
   const probe = buildScopeRef({ agentId: agent, projectId: project, taskId: 'reg-probe' })
@@ -91,13 +126,57 @@ export function validateRegistrationClassConfig(
     throw new Error(`${where}.scopeTemplate cannot derive a ScopeRef: ${scopeValidation.error}`)
   }
 
+  if (!generic) {
+    if (typeof value['turnsAllowed'] !== 'boolean') {
+      throw new Error(`${where}.turnsAllowed must be a boolean`)
+    }
+    return {
+      classId,
+      scopeTemplate: { agent, project },
+      maxInstances,
+      defaultTtl,
+      turnsAllowed: value['turnsAllowed'],
+    }
+  }
+
+  const adapterId = requireToken(value['adapterId'], 'adapterId', where)
+  const join = value['join']
+  if (join !== 'hrc-hosted' && join !== 'participant-served') {
+    throw new Error(`${where}.join must be hrc-hosted or participant-served`)
+  }
+  if (value['address'] !== 'permanent-keyed') {
+    throw new Error(`${where}.address must be permanent-keyed`)
+  }
+  if (value['continuity'] !== 'key-scoped') {
+    throw new Error(`${where}.continuity must be key-scoped`)
+  }
+  const replaySemantics = value['replaySemantics']
+  if (replaySemantics !== 'none' && replaySemantics !== 'full-source-replay') {
+    throw new Error(`${where}.replaySemantics must be none or full-source-replay`)
+  }
   return {
     classId,
+    adapterId,
+    join,
+    address: 'permanent-keyed',
+    continuity: 'key-scoped',
+    replaySemantics,
     scopeTemplate: { agent, project },
     maxInstances,
     defaultTtl,
-    turnsAllowed: value['turnsAllowed'],
   }
+}
+
+export function isExternalRegistrationClass(
+  registrationClass: RegistrationClassConfig
+): registrationClass is ExternalRegistrationClassConfig {
+  return 'turnsAllowed' in registrationClass
+}
+
+export function isParticipantRegistrationClass(
+  registrationClass: RegistrationClassConfig
+): registrationClass is ParticipantRegistrationClassConfig {
+  return 'adapterId' in registrationClass
 }
 
 export function parseRegistrationClassesConfig(
