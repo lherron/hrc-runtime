@@ -442,7 +442,9 @@ describe('broker dispatch observability', () => {
    * start -> correlated execution, with the unexecuted control on the same path.
    */
   async function queuedSubmissionAndProbe(options: {
-    executedSubmissionId?: string | undefined
+    landing?:
+      | { type: 'submission.executed' | 'submission.absorbed'; submissionId: string }
+      | undefined
   }): Promise<{
     warnings: string[]
     stalled: ReturnType<typeof diagnosticEvents>
@@ -506,12 +508,12 @@ describe('broker dispatch observability', () => {
         { invocationId: 'invocation_w2' as never, turnId: turnId('turn-executed') }
       )
     )
-    if (options.executedSubmissionId !== undefined) {
+    if (options.landing !== undefined) {
       fake.events.push(
         envelope(
-          'submission.executed',
+          options.landing.type,
           3,
-          { submissionId: options.executedSubmissionId, turnId: turnId('turn-executed') },
+          { submissionId: options.landing.submissionId, turnId: turnId('turn-executed') },
           { invocationId: 'invocation_w2' as never }
         )
       )
@@ -530,7 +532,7 @@ describe('broker dispatch observability', () => {
 
   it('never calls an executed queued submission stalled', async () => {
     const observed = await queuedSubmissionAndProbe({
-      executedSubmissionId: 'submission_enqueue',
+      landing: { type: 'submission.executed', submissionId: 'submission_enqueue' },
     })
     expect(observed.warnings).toEqual([])
     expect(observed.stalled).toHaveLength(0)
@@ -550,7 +552,7 @@ describe('broker dispatch observability', () => {
     // Identity is the whole exemption. An execution that names a DIFFERENT
     // submission is unrelated evidence and must leave this one exposed.
     const observed = await queuedSubmissionAndProbe({
-      executedSubmissionId: 'submission_unrelated',
+      landing: { type: 'submission.executed', submissionId: 'submission_unrelated' },
     })
     expect(observed.warnings).toHaveLength(1)
     const submissions = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions ?? []
@@ -629,6 +631,162 @@ describe('broker dispatch observability', () => {
       turnId: 'turn-late',
       stalledWarnedAt: '2026-05-27T12:34:58.000Z',
     })
+  })
+
+  /**
+   * T-08333 (astra clarification): the same approved false-stall class covers a
+   * QUEUE-door submission that is ABSORBED — merged into a turn that is already
+   * running. `landing.ts` already treats `submission.absorbed` and
+   * `submission.executed` alike as landed evidence; the stall tracker treated
+   * neither as landed, and the T-08108 carve-out reaches absorbed submissions
+   * only when the door happens to be `steer`.
+   *
+   * Absorption is NOT a turn start. It joins an existing turn and originates
+   * none of its own, so it must settle the delivery-stall condition WITHOUT
+   * stamping a turn start or a turn origin.
+   */
+  it('never calls an absorbed queued submission stalled', async () => {
+    const observed = await queuedSubmissionAndProbe({
+      landing: { type: 'submission.absorbed', submissionId: 'submission_enqueue' },
+    })
+    expect(observed.warnings).toEqual([])
+    expect(observed.stalled).toHaveLength(0)
+  })
+
+  it('records absorption as landing evidence, never as a turn start or origin', async () => {
+    await queuedSubmissionAndProbe({
+      landing: { type: 'submission.absorbed', submissionId: 'submission_enqueue' },
+    })
+    const diagnostics = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')
+    expect(
+      diagnostics?.submissions?.find((entry) => entry.submissionId === 'submission_enqueue')
+    ).toMatchObject({
+      admissionClass: 'queue',
+      // The submission reached the harness and joined a turn. It did not start
+      // one, so the milestone stays `handed_to_harness` and no start time or
+      // originated turn is asserted.
+      lastMilestone: 'handed_to_harness',
+      turnStartedAt: null,
+      turnId: null,
+      absorbedTurnId: 'turn-executed',
+      absorbedAt: expect.any(String),
+    })
+    // Only the observed `turn.started` produces an origin. Absorption adds none.
+    expect(diagnosticEvents('broker.turn.origin')).toHaveLength(1)
+  })
+
+  it('does not let one submission absorption settle another input', async () => {
+    const observed = await queuedSubmissionAndProbe({
+      landing: { type: 'submission.absorbed', submissionId: 'submission_unrelated' },
+    })
+    expect(observed.warnings).toHaveLength(1)
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+        (entry) => entry.submissionId === 'submission_enqueue'
+      )
+    ).toMatchObject({
+      lastMilestone: 'handed_to_harness',
+      absorbedAt: null,
+      stalledWarnedAt: '2026-05-27T12:34:58.000Z',
+    })
+  })
+
+  it('keeps the first observed absorption when it repeats or arrives late', async () => {
+    const fake = new FakeBrokerClient()
+    fake.seatProbe = async (request: SeatProbeRequest) => ({
+      invocationId: request.invocationId,
+      seat: { state: 'idle' },
+      brokerHeldDepth: 0,
+    })
+    let now = NOW
+    const warnings: string[] = []
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerDispatchStallThresholdMs: 1_000,
+      now: () => now,
+      logger: { warn: (event) => warnings.push(event) },
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+    await controller.invoke({
+      runtimeId: 'runtime_w2',
+      runId: 'run_w2',
+      submissionDoor: 'invoke',
+      origin: { principalRef: 'agent:astra' },
+      body: 'warned, then absorbed',
+    })
+
+    // A legitimate warning first: nothing had landed by the threshold.
+    now = '2026-05-27T12:34:58.000Z'
+    await controller.seatProbe('runtime_w2')
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
+
+    const absorbed = (observedAt: string, seq: number) =>
+      recordBrokerEventMilestones({
+        db: fixture.db,
+        logger: {},
+        runtimeId: 'runtime_w2',
+        envelope: envelope(
+          'submission.absorbed',
+          seq,
+          { submissionId: 'submission_invoke', turnId: turnId('turn-joined') },
+          { invocationId: 'invocation_w2' as never }
+        ),
+        observedAt,
+      })
+
+    absorbed('2026-05-27T12:35:10.000Z', 11)
+    absorbed('2026-05-27T12:36:40.000Z', 12)
+
+    now = '2026-05-27T12:37:00.000Z'
+    await controller.seatProbe('runtime_w2')
+    // The earlier warning stands unretracted and no second one is emitted.
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
+    expect(diagnosticEvents('broker.submission.stalled')).toHaveLength(1)
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+        (entry) => entry.submissionId === 'submission_invoke'
+      )
+    ).toMatchObject({
+      lastMilestone: 'handed_to_harness',
+      absorbedAt: '2026-05-27T12:35:10.000Z',
+      absorbedTurnId: 'turn-joined',
+      turnStartedAt: null,
+      turnId: null,
+      stalledWarnedAt: '2026-05-27T12:34:58.000Z',
+    })
+  })
+
+  /**
+   * The invariant behind reusing `turn_started`/`turnStartedAt` for an executed
+   * submission: these are OBSERVATION-time evidence — the moment HRC saw the
+   * disposition — never an asserted original start. The helper's landing
+   * envelope carries `time` = ts(3) = 2026-05-27T12:00:03Z, roughly 35 minutes
+   * BEFORE the observation at NOW. If anything ever backdates the record to the
+   * envelope's own clock, this fails.
+   */
+  it('timestamps landings at observation time, never from the envelope clock', async () => {
+    const envelopeTime = '2026-05-27T12:00:03.000Z'
+    await queuedSubmissionAndProbe({
+      landing: { type: 'submission.executed', submissionId: 'submission_enqueue' },
+    })
+    const executed = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+      (entry) => entry.submissionId === 'submission_enqueue'
+    )
+    expect(executed?.turnStartedAt).toBe(NOW)
+    expect(executed?.turnStartedAt).not.toBe(envelopeTime)
+
+    await fixture.cleanup()
+    fixture = await makeFixture()
+    controller?.shutdown()
+    await queuedSubmissionAndProbe({
+      landing: { type: 'submission.absorbed', submissionId: 'submission_enqueue' },
+    })
+    const absorbedEntry = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+      (entry) => entry.submissionId === 'submission_enqueue'
+    )
+    expect(absorbedEntry?.absorbedAt).toBe(NOW)
+    expect(absorbedEntry?.absorbedAt).not.toBe(envelopeTime)
   })
 
   it('still calls an identical unexecuted queued submission stalled', async () => {

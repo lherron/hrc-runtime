@@ -55,6 +55,16 @@ export type BrokerSubmissionMilestone = {
   handedToHarnessAt: string | null
   turnStartedAt: string | null
   turnId: string | null
+  /**
+   * T-08333. Absorption is LANDED evidence, not a turn start: the body merged
+   * into a turn that was already running, so the submission originates no turn
+   * of its own and never advances past `handed_to_harness`. Kept separate from
+   * `turnStartedAt`/`turnId` so the record itself preserves the distinction —
+   * `absorbedTurnId` is the turn this submission JOINED, never one it started.
+   * Absent on records written before T-08333, so read them with `!= null`.
+   */
+  absorbedAt: string | null
+  absorbedTurnId: string | null
   lastMilestone: 'accepted' | 'handed_to_harness' | 'turn_started'
   stalledWarnedAt?: string | undefined
 }
@@ -298,6 +308,28 @@ export function recordSubmissionAccepted(input: {
   })
 }
 
+/**
+ * The correlation carried by `submission.executed` / `submission.absorbed`:
+ * `{submissionId, turnId}`. The submissionId is the submission's OWN identity,
+ * so evidence read here can only ever settle the submission it names.
+ */
+function submissionDispositionEvidence(
+  envelope: InvocationEventEnvelope
+): { submissionId: string; turnId: string | null } | undefined {
+  const payload =
+    envelope.payload !== null && typeof envelope.payload === 'object'
+      ? (envelope.payload as { submissionId?: unknown; turnId?: unknown })
+      : undefined
+  if (typeof payload?.submissionId !== 'string') return undefined
+  const turnId =
+    typeof envelope.turnId === 'string'
+      ? envelope.turnId
+      : typeof payload.turnId === 'string'
+        ? payload.turnId
+        : null
+  return { submissionId: payload.submissionId, turnId }
+}
+
 export function recordBrokerEventMilestones(input: {
   db: HrcDatabase
   logger: BrokerControllerLogger
@@ -326,28 +358,21 @@ export function recordBrokerEventMilestones(input: {
   // submission whose driver reports an inputId-less `turn.started`. Its payload
   // names the submission AND the turn it originated, so it settles exactly that
   // submission and can never settle another input. It records the moment HRC
-  // OBSERVED the execution — no earlier start time is invented — and it never
+  // OBSERVED the execution — the envelope's own `time` is deliberately NOT
+  // read, so nothing is backdated to an asserted original start — and it never
   // overwrites a start already observed, so a replayed or duplicated execution
   // leaves the recorded start alone. Frozen evidence in
   // var/wrkq-artifacts/T-08296/quasar-audit (C-21096/C-21097): four queued
   // submissions across both drivers executed and were then reported stalled 60 s
   // after acceptance, because nothing here consumed this event.
   if (input.envelope.type === 'submission.executed') {
-    const executedPayload =
-      input.envelope.payload !== null && typeof input.envelope.payload === 'object'
-        ? (input.envelope.payload as { submissionId?: unknown; turnId?: unknown })
-        : undefined
-    const submissionId =
-      typeof executedPayload?.submissionId === 'string' ? executedPayload.submissionId : undefined
-    const executedTurnId =
-      input.envelope.turnId ??
-      (typeof executedPayload?.turnId === 'string' ? executedPayload.turnId : undefined)
-    if (submissionId !== undefined) {
+    const evidence = submissionDispositionEvidence(input.envelope)
+    if (evidence !== undefined) {
       updateSubmission(
         {
           ...input,
           invocationId: String(input.envelope.invocationId),
-          submissionId,
+          submissionId: evidence.submissionId,
           door: 'unknown',
         },
         (previous) =>
@@ -355,8 +380,38 @@ export function recordBrokerEventMilestones(input: {
             ? { lastMilestone: 'turn_started' }
             : {
                 turnStartedAt: input.observedAt,
-                turnId: executedTurnId ?? previous?.turnId ?? null,
+                turnId: evidence.turnId ?? previous?.turnId ?? null,
                 lastMilestone: 'turn_started',
+              }
+      )
+    }
+    return
+  }
+  // T-08333: `submission.absorbed` is landed evidence of the SAME class —
+  // `hrc-mail-kicker/src/drive/landing.ts` has always treated executed and
+  // absorbed alike as landed. Absorption is NOT a turn start: the body merged
+  // into a turn already running, so it originates no turn, emits no
+  // `turn.started` of its own, and must not stamp a start time or a turn
+  // origin. It settles the DELIVERY-stall condition only, and the milestone
+  // stays `handed_to_harness` — which absorption does prove, since a body
+  // cannot merge into a live turn without having reached the harness.
+  if (input.envelope.type === 'submission.absorbed') {
+    const evidence = submissionDispositionEvidence(input.envelope)
+    if (evidence !== undefined) {
+      updateSubmission(
+        {
+          ...input,
+          invocationId: String(input.envelope.invocationId),
+          submissionId: evidence.submissionId,
+          door: 'unknown',
+        },
+        (previous) =>
+          previous?.absorbedAt != null
+            ? { lastMilestone: 'handed_to_harness' }
+            : {
+                absorbedAt: input.observedAt,
+                absorbedTurnId: evidence.turnId ?? previous?.absorbedTurnId ?? null,
+                lastMilestone: 'handed_to_harness',
               }
       )
     }
@@ -452,6 +507,8 @@ function updateSubmission(
       handedToHarnessAt: previous?.handedToHarnessAt ?? null,
       turnStartedAt: previous?.turnStartedAt ?? null,
       turnId: previous?.turnId ?? null,
+      absorbedAt: previous?.absorbedAt ?? null,
+      absorbedTurnId: previous?.absorbedTurnId ?? null,
       ...previous,
       ...resolved,
       lastMilestone,
@@ -502,6 +559,12 @@ export function warnStalledSubmissions(input: {
     ) {
       continue
     }
+    // T-08333: absorption is landed evidence. A QUEUE-door submission that
+    // merges into a live turn originates no turn of its own, so it never
+    // reports a `turn.started` and never advances past `handed_to_harness` —
+    // the exact exposure the door-scoped carve-out below does NOT cover. It is
+    // the delivery-stall condition that is settled here; no start is asserted.
+    if (submission.absorbedAt != null) continue
     // A STEER's last milestone IS `handed_to_harness` (T-08108). It joins a turn
     // that is already running and originates none of its own, so it will never
     // report a `turn.started` of its own and this detector would warn about
