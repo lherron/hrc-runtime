@@ -35,7 +35,10 @@ type Window = {
 
 function fakeTmux() {
   const windows = new Map<string, Window>()
-  const processes = new Map<string, { command: string; pid: number; dead: boolean }>()
+  const processes = new Map<
+    string,
+    { command: string; pid: number; dead: boolean; commandLine?: string }
+  >()
   const createCommands: string[] = []
   let next = 1
   const key = (sessionName: string, windowName: string) => `${sessionName}:${windowName}`
@@ -54,6 +57,16 @@ function fakeTmux() {
   }
   return {
     createCommands,
+    seedWindow: (
+      socketPath: string,
+      sessionName: string,
+      windowName: string,
+      process: { command: string; pid: number; dead: boolean; commandLine?: string }
+    ) => {
+      const window = makeWindow(socketPath, sessionName, windowName)
+      processes.set(window.paneId, process)
+      return window
+    },
     manager: (opts: { socketPath: string }) => ({
       initialize: async () => undefined,
       inspectWindow: async (input: { sessionName: string; windowName: string }) =>
@@ -65,7 +78,12 @@ function fakeTmux() {
       }) => {
         createCommands.push(input.command)
         const window = makeWindow(opts.socketPath, input.sessionName, input.windowName)
-        processes.set(window.paneId, { command: 'bun', pid: 83_349, dead: false })
+        processes.set(window.paneId, {
+          command: 'bun',
+          pid: 83_349,
+          dead: false,
+          commandLine: input.command,
+        })
         return window
       },
       createOrInspectWindow: async (input: { sessionName: string; windowName: string }) => {
@@ -195,6 +213,21 @@ test('persists actual HRC leases then freezes the unchanged start request before
     ).toEqual(frozenHosted)
     expect(tmux.createCommands).toHaveLength(1)
 
+    const unavailableServer = {
+      ...server,
+      brokerTmuxManagerFactory: () => {
+        throw new Error('writer unavailable')
+      },
+    } as unknown as HrcServerInstanceForHandlers
+    await expect(
+      realizeAndFreezeParticipantDispatch(unavailableServer, hostedRegistration, frozenHosted)
+    ).rejects.toThrow('writer unavailable')
+    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
+      state: 'DISPATCH_FROZEN',
+      dispatchJson: frozenHosted.dispatchJson,
+      realizedHostingJson: frozenHosted.realizedHostingJson,
+    })
+
     const servedRegistration = registration('participant-served')
     const servedAttempt = attempt(servedRegistration.registrationId, 'rt-served')
     const preparedServed = await profileFor('participant-served', servedAttempt)
@@ -234,6 +267,56 @@ test('persists actual HRC leases then freezes the unchanged start request before
       terminalSurfaceRequired: true,
     })
     expect(tmux.createCommands).toHaveLength(1)
+  } finally {
+    db.close()
+  }
+})
+
+test('refuses an incumbent broker pane that cannot prove the committed launch identity', async () => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-incumbent-'))
+  temporaryRoots.push(runtimeRoot)
+  const db = openHrcDatabase(':memory:')
+  const tmux = fakeTmux()
+  const server = {
+    options: { runtimeRoot },
+    db,
+    generateBrokerAttachToken: () => 'incumbent-token',
+    brokerTmuxManagerFactory: tmux.manager,
+  } as unknown as HrcServerInstanceForHandlers
+  try {
+    const hostedRegistration = registration('hrc-hosted')
+    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-incumbent')
+    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
+    const hostedIntent = await createParticipantHostingIntent(
+      server,
+      hostedRegistration,
+      hostedAttempt,
+      hostedProfile
+    )
+    const hosted = hostedIntent.hrcHosted
+    if (hosted === undefined) throw new Error('expected hosted intent')
+    tmux.seedWindow(hosted.tmuxSocketPath, hosted.sessionName, 'broker', {
+      command: 'bun',
+      pid: 91_234,
+      dead: false,
+      commandLine: 'bun unrelated-worker.js',
+    })
+    db.participantRegistrations.insertRegistration(hostedRegistration)
+    db.participantRegistrations.insertAttempt({
+      ...hostedAttempt,
+      preparedProfileJson: JSON.stringify(hostedProfile),
+      adapterDispatchEnvJson: 'null',
+      hostingIntentJson: JSON.stringify(hostedIntent),
+    })
+
+    await expect(
+      realizeAndFreezeParticipantDispatch(server, hostedRegistration, hostedAttempt)
+    ).rejects.toThrow('participant broker writer does not match the committed launch identity')
+    expect(tmux.createCommands).toEqual([])
+    const persisted = db.participantRegistrations.getAttempt(hostedAttempt.attemptId)
+    expect(persisted).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
+    expect(persisted?.realizedHostingJson).toBeUndefined()
+    expect(persisted?.dispatchJson).toBeUndefined()
   } finally {
     db.close()
   }

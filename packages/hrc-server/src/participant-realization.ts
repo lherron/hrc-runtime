@@ -26,6 +26,10 @@ type InspectableTmuxManager = DurableTmuxManagerLike & {
   inspectWindow(input: { sessionName: string; windowName: string }): Promise<TmuxWindow | null>
 }
 
+type ObservedPaneProcess = NonNullable<
+  Awaited<ReturnType<NonNullable<DurableTmuxManagerLike['inspectPaneProcess']>>>
+>
+
 /**
  * HRC's observed resource boundary. It intentionally contains concrete lease
  * identities, unlike the prior hosting intent, and is persisted before the
@@ -161,6 +165,30 @@ function requireInspectableTmux(tmux: DurableTmuxManagerLike): InspectableTmuxMa
   return tmux as InspectableTmuxManager
 }
 
+function assertCommittedHostedWriter(
+  process: ObservedPaneProcess,
+  hosted: NonNullable<ParticipantHostingIntent['hrcHosted']>
+): void {
+  if (process.dead || process.pid <= 0) {
+    throw new Error('participant broker did not realize a live process')
+  }
+  // `pane_current_command` is only a basename. The generic OS command line is
+  // required to bind an incumbent to the pre-persisted executable and argv;
+  // otherwise a same-named zsh or unrelated bun could be blessed as our writer.
+  const commandLine = process.commandLine
+  if (commandLine === undefined) {
+    throw new Error('participant broker writer does not match the committed launch identity')
+  }
+  let cursor = 0
+  for (const argument of hosted.brokerArgv) {
+    const next = commandLine.indexOf(argument, cursor)
+    if (next === -1) {
+      throw new Error('participant broker writer does not match the committed launch identity')
+    }
+    cursor = next + argument.length
+  }
+}
+
 async function realizeHosted(
   server: HrcServerInstanceForHandlers,
   intent: ParticipantHostingIntent
@@ -192,9 +220,8 @@ async function realizeHosted(
   if (process === undefined) {
     throw new Error('participant broker realization requires pane process inspection')
   }
-  if (process === null || process.dead || process.pid <= 0) {
-    throw new Error('participant broker did not realize a live process')
-  }
+  if (process === null) throw new Error('participant broker did not realize a live process')
+  assertCommittedHostedWriter(process, hosted)
 
   const tui =
     intent.presentation.kind === 'tmux-tui'
@@ -259,7 +286,8 @@ async function realizeParticipantServed(
 
 async function validateRediscovery(
   server: HrcServerInstanceForHandlers,
-  realized: ParticipantRealizedHosting
+  realized: ParticipantRealizedHosting,
+  intent: ParticipantHostingIntent
 ): Promise<void> {
   if (realized.substrate.kind === 'leased-tmux') {
     const broker = realized.substrate.brokerWindow
@@ -278,12 +306,15 @@ async function validateRediscovery(
     if (
       process === undefined ||
       process === null ||
-      process.dead ||
       process.pid !== realized.substrate.pid ||
       process.command !== realized.substrate.command
     ) {
       throw new Error('persisted participant broker writer cannot be verified')
     }
+    if (intent.hrcHosted === undefined) {
+      throw new Error('persisted participant broker lease has no committed hosting identity')
+    }
+    assertCommittedHostedWriter(process, intent.hrcHosted)
   }
   if (realized.presentation.kind === 'tmux-tui') {
     const tui = realized.presentation.tuiWindow
@@ -315,11 +346,21 @@ export async function realizeAndFreezeParticipantDispatch(
 ): Promise<ParticipantAttempt> {
   let attempt =
     server.db.participantRegistrations.getAttempt(initialAttempt.attemptId) ?? initialAttempt
-  if (attempt.state === 'DISPATCH_FROZEN') return attempt
+  const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
+  if (attempt.state === 'DISPATCH_FROZEN') {
+    const realized = parseJson<ParticipantRealizedHosting>(
+      attempt.realizedHostingJson,
+      'realized hosting'
+    )
+    // Frozen bytes are immutable, not an evergreen resource assertion. Every
+    // eventual install/ensure retry first proves the exact lease/writer still
+    // exists, and blocks if it cannot.
+    await validateRediscovery(server, realized, intent)
+    return attempt
+  }
   if (!['HOSTING_INTENT_PERSISTED', 'REALIZED'].includes(attempt.state)) {
     throw new Error(`participant attempt cannot realize from ${attempt.state}`)
   }
-  const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
   const profile = parseJson<BrokerExecutionProfile>(attempt.preparedProfileJson, 'prepared profile')
   assertJoinOwnership(registration, profile)
 
@@ -349,7 +390,7 @@ export async function realizeAndFreezeParticipantDispatch(
     })()
     attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId) ?? attempt
   } else {
-    await validateRediscovery(server, realized)
+    await validateRediscovery(server, realized, intent)
   }
 
   if (attempt.dispatchJson !== undefined || attempt.state === 'DISPATCH_FROZEN') return attempt
@@ -360,7 +401,7 @@ export async function realizeAndFreezeParticipantDispatch(
     attempt.realizedHostingJson,
     'realized hosting'
   )
-  await validateRediscovery(server, persistedRealized)
+  await validateRediscovery(server, persistedRealized, intent)
   const dispatch = freezeDispatch(
     profile,
     attempt.adapterDispatchEnvJson,

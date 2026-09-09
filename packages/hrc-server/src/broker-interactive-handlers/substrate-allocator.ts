@@ -47,9 +47,12 @@ export type DurableTmuxManagerLike = {
     sessionName: string
     windowName: string
   }): Promise<BrokerWindowIdentity>
-  inspectPaneProcess?(
-    paneId: string
-  ): Promise<{ command: string; pid: number; dead: boolean } | null>
+  inspectPaneProcess?(paneId: string): Promise<{
+    command: string
+    pid: number
+    dead: boolean
+    commandLine?: string | undefined
+  } | null>
   waitForAttachedClient?(
     target: string,
     options?: {

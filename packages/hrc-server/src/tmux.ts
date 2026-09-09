@@ -446,9 +446,12 @@ export class TmuxManager {
    * exec'd broker binary, and to capture broker pid for persisted identity.
    * Returns `null` when the pane/server is gone.
    */
-  async inspectPaneProcess(
-    paneId: string
-  ): Promise<{ command: string; pid: number; dead: boolean } | null> {
+  async inspectPaneProcess(paneId: string): Promise<{
+    command: string
+    pid: number
+    dead: boolean
+    commandLine?: string | undefined
+  } | null> {
     try {
       const result = await this.exec([
         'display-message',
@@ -458,7 +461,10 @@ export class TmuxManager {
         '-F',
         '#{pane_pid}\t#{pane_dead}\t#{pane_current_command}',
       ])
-      return parsePaneProcess(result.stdout)
+      const process = parsePaneProcess(result.stdout)
+      if (process === null || process.dead || process.pid <= 0) return process
+      const commandLine = await this.inspectProcessCommandLine(process.pid)
+      return commandLine === undefined ? process : { ...process, commandLine }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (isMissingTargetError(message) || isServerGoneError(message)) {
@@ -466,6 +472,24 @@ export class TmuxManager {
       }
       throw error
     }
+  }
+
+  /**
+   * `pane_current_command` is only an executable basename (often just `bun`).
+   * The durable participant path needs the generic OS command line as well to
+   * distinguish its committed broker argv from an unrelated live pane.
+   */
+  private async inspectProcessCommandLine(pid: number): Promise<string | undefined> {
+    return await new Promise((resolve) => {
+      execFile('ps', ['-ww', '-p', String(pid), '-o', 'command='], (error, stdout) => {
+        if (error) {
+          resolve(undefined)
+          return
+        }
+        const commandLine = stdout.trim()
+        resolve(commandLine.length === 0 ? undefined : commandLine)
+      })
+    })
   }
 
   private async createNamedWindow(
