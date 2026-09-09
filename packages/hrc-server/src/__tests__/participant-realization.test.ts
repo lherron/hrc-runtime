@@ -12,7 +12,10 @@ import {
 } from 'hrc-store-sqlite'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
-import { installAndHelloParticipantBroker } from '../participant-establishment.js'
+import {
+  ensureParticipantInvocation,
+  installAndHelloParticipantBroker,
+} from '../participant-establishment.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import { realizeAndFreezeParticipantDispatch } from '../participant-realization.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -203,6 +206,21 @@ test('persists actual HRC leases then freezes the unchanged start request before
           helloRequests.push(request)
           return {}
         },
+        ensureInvocation: async (request: {
+          startAttemptId: string
+          invocationId: string
+          attachEpoch: number
+        }) => ({
+          receipt: {
+            startAttemptId: request.startAttemptId,
+            invocationId: request.invocationId,
+            attachEpoch: request.attachEpoch,
+            state: 'started' as const,
+            requestDigest: 'ensure-digest',
+            brokerInstanceId,
+            updatedAt: '2026-09-09T23:30:01.000Z',
+          },
+        }),
         close: async () => undefined,
       }) as never,
   } as unknown as HrcServerInstanceForHandlers
@@ -275,18 +293,25 @@ test('persists actual HRC leases then freezes the unchanged start request before
         capabilities: { permissionRequests: true },
       },
     ])
-    expect(
-      await installAndHelloParticipantBroker(server, hostedRegistration, installedHosted)
-    ).toMatchObject({
-      state: 'INSTALL_CONFIRMED',
-      brokerIdentityJson: installedHosted.brokerIdentityJson,
+    const ensuredHosted = await ensureParticipantInvocation(
+      server,
+      hostedRegistration,
+      installedHosted
+    )
+    expect(ensuredHosted).toMatchObject({
+      attempt: {
+        state: 'INVOCATION_READY',
+        brokerIdentityJson: installedHosted.brokerIdentityJson,
+      },
+      receipt: { state: 'started', brokerInstanceId: 'broker-instance-1' },
     })
+    expect(ensuredHosted.attempt.dispatchJson).toBe(installedHosted.dispatchJson)
     brokerInstanceId = 'broker-instance-conflict'
     await expect(
-      installAndHelloParticipantBroker(server, hostedRegistration, installedHosted)
+      installAndHelloParticipantBroker(server, hostedRegistration, ensuredHosted.attempt)
     ).rejects.toThrow('participant broker instance or epoch conflicts with durable acknowledgement')
     expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
-      state: 'INSTALL_CONFIRMED',
+      state: 'INVOCATION_READY',
       dispatchJson: installedHosted.dispatchJson,
       realizedHostingJson: installedHosted.realizedHostingJson,
       brokerIdentityJson: installedHosted.brokerIdentityJson,
@@ -302,7 +327,7 @@ test('persists actual HRC leases then freezes the unchanged start request before
       realizeAndFreezeParticipantDispatch(unavailableServer, hostedRegistration, frozenHosted)
     ).rejects.toThrow('writer unavailable')
     expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
-      state: 'INSTALL_CONFIRMED',
+      state: 'INVOCATION_READY',
       dispatchJson: installedHosted.dispatchJson,
       realizedHostingJson: installedHosted.realizedHostingJson,
       brokerIdentityJson: installedHosted.brokerIdentityJson,

@@ -18,6 +18,8 @@ import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-br
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
+  BrokerEnsureInvocationRequest,
+  BrokerEnsureInvocationResponse,
   BrokerHealthResponse,
   BrokerHelloResponse,
   BrokerInstallIdentityRequest,
@@ -148,6 +150,7 @@ export type DurableBrokerClientLike = BrokerClientLike & {
    * if its connected client does not expose the canonical operation.
    */
   installIdentity?(req: BrokerInstallIdentityRequest): Promise<BrokerInstallIdentityResponse>
+  ensureInvocation?(req: BrokerEnsureInvocationRequest): Promise<BrokerEnsureInvocationResponse>
   /**
    * T-01801: live event stream for an invocation re-attached over `broker.attach`
    * (unlike `startInvocationFromRequest`, attach returns no stream). The controller

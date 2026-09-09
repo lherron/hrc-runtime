@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import type { BrokerClient } from 'spaces-harness-broker-client'
 import type {
+  BrokerEnsureInvocationResponse,
   BrokerInstallIdentityResponse,
   BrokerRuntimeIdentity,
   InvocationId,
@@ -15,7 +16,10 @@ import { realizeAndFreezeParticipantDispatch } from './participant-realization.j
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { timestamp } from './server-util.js'
 
-type ParticipantBootstrapClient = Pick<BrokerClient, 'close' | 'hello' | 'installIdentity'>
+type ParticipantBootstrapClient = Pick<
+  BrokerClient,
+  'close' | 'ensureInvocation' | 'hello' | 'installIdentity'
+>
 
 function parseJson<T>(json: string | undefined, label: string): T {
   if (json === undefined) throw new Error(`participant attempt is missing ${label}`)
@@ -164,7 +168,7 @@ export async function installAndHelloParticipantBroker(
   initialAttempt: ParticipantAttempt
 ): Promise<ParticipantAttempt> {
   const attempt = await realizeAndFreezeParticipantDispatch(server, registration, initialAttempt)
-  if (!['DISPATCH_FROZEN', 'INSTALL_CONFIRMED'].includes(attempt.state)) {
+  if (!['DISPATCH_FROZEN', 'INSTALL_CONFIRMED', 'INVOCATION_READY'].includes(attempt.state)) {
     throw new Error(`participant attempt cannot install broker identity from ${attempt.state}`)
   }
   const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
@@ -186,4 +190,75 @@ export async function installAndHelloParticipantBroker(
     await client.close()
   }
   return persistInstallAcknowledgement(server, attempt, acknowledgement)
+}
+
+function assertEnsureReceipt(
+  response: BrokerEnsureInvocationResponse,
+  attempt: ParticipantAttempt,
+  acknowledgement: BrokerInstallIdentityResponse
+): void {
+  const receipt = response.receipt
+  if (
+    receipt.startAttemptId !== attempt.attemptId ||
+    receipt.invocationId !== attempt.invocationId ||
+    receipt.attachEpoch !== attempt.attachEpoch ||
+    receipt.brokerInstanceId !== acknowledgement.brokerInstanceId
+  ) {
+    throw new Error('participant broker ensure receipt conflicts with durable identity')
+  }
+}
+
+/**
+ * Uses the already-frozen complete dispatch tuple for the broker's one
+ * at-most-once start attempt. Only a `started` receipt advances HRC; failed or
+ * indeterminate receipts retain the immutable attempt and assert no recovery.
+ */
+export async function ensureParticipantInvocation(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  initialAttempt: ParticipantAttempt
+): Promise<{ attempt: ParticipantAttempt; receipt: BrokerEnsureInvocationResponse['receipt'] }> {
+  const attempt = await installAndHelloParticipantBroker(server, registration, initialAttempt)
+  if (attempt.dispatchJson === undefined || attempt.brokerIdentityJson === undefined) {
+    throw new Error('participant attempt is missing immutable dispatch or broker identity')
+  }
+  const acknowledgement = parseJson<BrokerInstallIdentityResponse>(
+    attempt.brokerIdentityJson,
+    'broker install acknowledgement'
+  )
+  const dispatch = parseJson<{
+    startRequest: Parameters<BrokerClient['ensureInvocation']>[0]['startRequest']
+    dispatchEnv?: Parameters<BrokerClient['ensureInvocation']>[0]['dispatchEnv']
+    runtime?: Parameters<BrokerClient['ensureInvocation']>[0]['runtime']
+    lifecyclePolicy?: Parameters<BrokerClient['ensureInvocation']>[0]['lifecyclePolicy']
+  }>(attempt.dispatchJson, 'frozen dispatch')
+  const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
+  const client = await connectParticipantBroker(server, intent.endpoint.socketPath)
+  let response: BrokerEnsureInvocationResponse
+  try {
+    if (typeof client.ensureInvocation !== 'function') {
+      throw new Error('participant broker client does not expose ensureInvocation')
+    }
+    response = await client.ensureInvocation({
+      startAttemptId: attempt.attemptId,
+      invocationId: attempt.invocationId as InvocationId,
+      attachEpoch: attempt.attachEpoch,
+      ...dispatch,
+    })
+    assertEnsureReceipt(response, attempt, acknowledgement)
+  } finally {
+    await client.close()
+  }
+  if (response.receipt.state === 'started' && attempt.state === 'INSTALL_CONFIRMED') {
+    const transitioned = server.db.participantRegistrations.transitionAttempt(
+      attempt.attemptId,
+      ['INSTALL_CONFIRMED'],
+      'INVOCATION_READY',
+      timestamp()
+    )
+    if (!transitioned) throw new Error('participant invocation-ready transition raced')
+  }
+  const persisted = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  if (persisted === null) throw new Error('participant attempt disappeared after ensure receipt')
+  return { attempt: persisted, receipt: response.receipt }
 }
