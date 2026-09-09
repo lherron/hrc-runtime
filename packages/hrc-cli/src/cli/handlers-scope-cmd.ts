@@ -793,16 +793,23 @@ async function renderBrokerPlanPreview(
     return false
   }
 
-  // The compiled argv is authoritative: `--append-system-prompt` carries the
-  // exact bytes the harness will receive. `systemPromptFile` is the same
-  // content for harnesses that pass a path instead of an inline value.
+  // Prefer the resolved prompt zones: they are the only source that covers
+  // every route (codex passes no prompt flag and no prompt file) and the only
+  // one carrying the reminder and per-section sizes `asp run --dry-run` shows.
+  // The argv/file readings remain as fallbacks for a route that somehow has an
+  // inline prompt but no resolvable context template.
   const argvSystemPrompt = extractSystemPromptFromArgv(brokerPreview.process.args)
   const fileSystemPrompt = readOptionalUtf8(brokerPreview.systemPromptFile)
   const systemPrompt =
-    argvSystemPrompt ??
-    (fileSystemPrompt !== undefined
-      ? { content: fileSystemPrompt, mode: brokerPreview.systemPromptMode ?? 'append' }
-      : undefined)
+    brokerPreview.systemPrompt !== undefined
+      ? {
+          content: brokerPreview.systemPrompt,
+          mode: brokerPreview.systemPromptMode ?? 'append',
+        }
+      : (argvSystemPrompt ??
+        (fileSystemPrompt !== undefined
+          ? { content: fileSystemPrompt, mode: brokerPreview.systemPromptMode ?? 'append' }
+          : undefined))
   const primingPrompt =
     brokerPreview.primingPrompt ?? extractPrimingFromArgv(brokerPreview.process.args)
 
@@ -862,7 +869,23 @@ async function renderBrokerPlanPreview(
     ...(systemPrompt !== undefined
       ? { systemPrompt: systemPrompt.content, systemPromptMode: systemPrompt.mode }
       : {}),
+    ...(brokerPreview.reminderContent !== undefined
+      ? { reminderContent: brokerPreview.reminderContent }
+      : {}),
     ...(primingPrompt !== undefined ? { primingPrompt } : {}),
+    ...(brokerPreview.promptSectionSizes !== undefined
+      ? { promptSectionSizes: brokerPreview.promptSectionSizes }
+      : {}),
+    ...(brokerPreview.reminderSectionSizes !== undefined
+      ? { reminderSectionSizes: brokerPreview.reminderSectionSizes }
+      : {}),
+    ...(brokerPreview.totalContextChars !== undefined
+      ? { totalContextChars: brokerPreview.totalContextChars }
+      : {}),
+    ...(brokerPreview.maxChars !== undefined ? { maxChars: brokerPreview.maxChars } : {}),
+    ...(brokerPreview.nearMaxChars !== undefined
+      ? { nearMaxChars: brokerPreview.nearMaxChars }
+      : {}),
     betweenLines: lines,
     command: formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args),
     showCommand: true,

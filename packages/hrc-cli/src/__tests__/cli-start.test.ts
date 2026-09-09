@@ -471,3 +471,45 @@ describe('hrc run --dry-run', () => {
     expect(result.stdout).toContain('initialPrompt: 15 chars')
   })
 })
+
+describe('hrc run --dry-run prompt parity across routes', () => {
+  beforeEach(async () => {
+    setServer(await createHrcServer(serverOpts()))
+    await seedRunRoots('rex', 'agent-spaces')
+    await writeFile(join(agentsRoot, 'rex', 'SOUL.md'), '# Rex\n\nRex is a test agent.\n', 'utf8')
+  })
+
+  /**
+   * The codex route passes no `--append-system-prompt` and no prompt file, so a
+   * preview that read prompts off the compiled spec alone rendered NOTHING for
+   * a codex agent while looking perfectly healthy for a claude one. Prompts
+   * must come from the resolver, which is route-independent.
+   */
+  it('renders the system prompt for a codex-route agent, which carries no prompt argv', async () => {
+    await writeCodexAgentProfile('rex')
+
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    // Pin the route: this must be the codex BROKER branch, not the spec-build
+    // fallback (which already rendered prompts and would pass vacuously).
+    expect(result.stdout).toContain('provider:     openai')
+    expect(result.stdout).toContain('driver:       codex-app-server')
+    expect(result.stdout).toContain('brokerPlan:   available')
+    expect(result.stdout).toContain('compiles the broker plan locally')
+    // codex passes neither a prompt flag nor a prompt file, so this is exactly
+    // the case that used to render no prompt at all.
+    expect(result.stdout).not.toContain('--append-system-prompt')
+    expect(result.stdout).not.toContain('promptFile:')
+    // The prompt must still be framed and present in full.
+    expect(result.stdout).toMatch(/System Prompt \((append|replace)\)/)
+    expect(result.stdout).toContain('Rex is a test agent.')
+    expect(result.stdout).not.toContain('broker plan build failed')
+  })
+})
