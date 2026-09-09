@@ -91,6 +91,8 @@ export type ParticipantAttempt = {
   realizedHostingJson?: string | undefined
   /** Full immutable dispatch tuple, frozen before the first ensure call. */
   dispatchJson?: string | undefined
+  /** Immutable broker acknowledgement after INSTALL -> HELLO succeeds. */
+  brokerIdentityJson?: string | undefined
   /** Marks the one initial activation whose classification may release replay. */
   initialActivationConfirmedAt?: string | undefined
   dispositionReason?: string | undefined
@@ -130,6 +132,7 @@ type ParticipantAttemptRow = {
   hosting_intent_json: string | null
   realized_hosting_json: string | null
   dispatch_json: string | null
+  broker_identity_json: string | null
   initial_activation_confirmed_at: string | null
   disposition_reason: string | null
   created_at: string
@@ -144,7 +147,7 @@ const REGISTRATION_COLUMNS = `
 const ATTEMPT_COLUMNS = `
   attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
-  realized_hosting_json, dispatch_json, initial_activation_confirmed_at,
+  realized_hosting_json, dispatch_json, broker_identity_json, initial_activation_confirmed_at,
   disposition_reason, created_at, updated_at`
 
 function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistration {
@@ -190,6 +193,7 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
       ? {}
       : { realizedHostingJson: row.realized_hosting_json }),
     ...(row.dispatch_json === null ? {} : { dispatchJson: row.dispatch_json }),
+    ...(row.broker_identity_json === null ? {} : { brokerIdentityJson: row.broker_identity_json }),
     ...(row.initial_activation_confirmed_at === null
       ? {}
       : { initialActivationConfirmedAt: row.initial_activation_confirmed_at }),
@@ -279,7 +283,7 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -293,6 +297,7 @@ export class ParticipantRegistrationRepository {
       record.hostingIntentJson ?? null,
       record.realizedHostingJson ?? null,
       record.dispatchJson ?? null,
+      record.brokerIdentityJson ?? null,
       record.initialActivationConfirmedAt ?? null,
       record.dispositionReason ?? null,
       record.createdAt,
@@ -335,7 +340,7 @@ export class ParticipantRegistrationRepository {
 
   setSnapshotIfAbsent(
     attemptId: string,
-    field: 'hostingIntentJson' | 'realizedHostingJson' | 'dispatchJson',
+    field: 'hostingIntentJson' | 'realizedHostingJson' | 'dispatchJson' | 'brokerIdentityJson',
     value: string,
     updatedAt: string
   ): boolean {
@@ -343,6 +348,7 @@ export class ParticipantRegistrationRepository {
       hostingIntentJson: 'hosting_intent_json',
       realizedHostingJson: 'realized_hosting_json',
       dispatchJson: 'dispatch_json',
+      brokerIdentityJson: 'broker_identity_json',
     }[field]
     const result = this.db
       .query(

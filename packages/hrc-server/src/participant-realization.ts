@@ -350,7 +350,7 @@ export async function realizeAndFreezeParticipantDispatch(
   let attempt =
     server.db.participantRegistrations.getAttempt(initialAttempt.attemptId) ?? initialAttempt
   const intent = parseJson<ParticipantHostingIntent>(attempt.hostingIntentJson, 'hosting intent')
-  if (attempt.state === 'DISPATCH_FROZEN') {
+  if (attempt.state === 'DISPATCH_FROZEN' || attempt.state === 'INSTALL_CONFIRMED') {
     const realized = parseJson<ParticipantRealizedHosting>(
       attempt.realizedHostingJson,
       'realized hosting'

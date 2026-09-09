@@ -3076,6 +3076,21 @@ const participantRegistrationLifecycleMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08349 Phase2: the broker's own installation acknowledgement is separate
+ * from HRC's three hosting/dispatch boundaries. It is write-once so an
+ * acknowledged broker incarnation can never be silently replaced on retry.
+ */
+const participantBrokerIdentityMigration: HrcMigration = {
+  id: '0065_participant_broker_identity',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE participant_registration_attempts
+        ADD COLUMN broker_identity_json TEXT;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3136,4 +3151,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailReceiptCommitMigration,
   desktopThreadRegistrationsMigration,
   participantRegistrationLifecycleMigration,
+  participantBrokerIdentityMigration,
 ]

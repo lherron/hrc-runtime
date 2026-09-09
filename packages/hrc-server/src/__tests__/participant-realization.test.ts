@@ -12,6 +12,7 @@ import {
 } from 'hrc-store-sqlite'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
+import { installAndHelloParticipantBroker } from '../participant-establishment.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import { realizeAndFreezeParticipantDispatch } from '../participant-realization.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -169,11 +170,41 @@ test('persists actual HRC leases then freezes the unchanged start request before
   temporaryRoots.push(runtimeRoot)
   const db = openHrcDatabase(':memory:')
   const tmux = fakeTmux()
+  const installedIdentities: unknown[] = []
+  const helloRequests: unknown[] = []
+  let brokerInstanceId = 'broker-instance-1'
   const server = {
     options: { runtimeRoot },
     db,
     generateBrokerAttachToken: () => 'realization-token',
     brokerTmuxManagerFactory: tmux.manager,
+    brokerUnixClientFactory: async () =>
+      ({
+        installIdentity: async (identity: {
+          runtimeId: string
+          hostSessionId: string
+          generation: number
+          attachEpoch: number
+          invocationId: string
+        }) => {
+          installedIdentities.push(identity)
+          return {
+            installed: true as const,
+            brokerInstanceId,
+            runtimeId: identity.runtimeId,
+            hostSessionId: identity.hostSessionId,
+            generation: identity.generation,
+            attachEpoch: identity.attachEpoch,
+            invocationId: identity.invocationId,
+            installedAt: '2026-09-09T23:30:00.000Z',
+          }
+        },
+        hello: async (request: unknown) => {
+          helloRequests.push(request)
+          return {}
+        },
+        close: async () => undefined,
+      }) as never,
   } as unknown as HrcServerInstanceForHandlers
   try {
     const hostedRegistration = registration('hrc-hosted')
@@ -221,6 +252,46 @@ test('persists actual HRC leases then freezes the unchanged start request before
     ).toEqual(frozenHosted)
     expect(tmux.createCommands).toHaveLength(1)
 
+    // Exact lease/process equality only admits a candidate. The broker still
+    // receives the launch identity, then HELLO, and its instance/epoch
+    // acknowledgement is frozen before any ensure can be considered.
+    const installedHosted = await installAndHelloParticipantBroker(
+      server,
+      hostedRegistration,
+      frozenHosted
+    )
+    expect(installedHosted).toMatchObject({ state: 'INSTALL_CONFIRMED' })
+    expect(JSON.parse(installedHosted.brokerIdentityJson ?? '{}')).toMatchObject({
+      brokerInstanceId: 'broker-instance-1',
+      runtimeId: hostedAttempt.runtimeId,
+      attachEpoch: hostedAttempt.attachEpoch,
+      invocationId: hostedAttempt.invocationId,
+    })
+    expect(installedIdentities).toHaveLength(1)
+    expect(helloRequests).toEqual([
+      {
+        clientInfo: { name: 'hrc-server' },
+        protocolVersions: [hostedIntent.endpoint.protocolVersion],
+        capabilities: { permissionRequests: true },
+      },
+    ])
+    expect(
+      await installAndHelloParticipantBroker(server, hostedRegistration, installedHosted)
+    ).toMatchObject({
+      state: 'INSTALL_CONFIRMED',
+      brokerIdentityJson: installedHosted.brokerIdentityJson,
+    })
+    brokerInstanceId = 'broker-instance-conflict'
+    await expect(
+      installAndHelloParticipantBroker(server, hostedRegistration, installedHosted)
+    ).rejects.toThrow('participant broker instance or epoch conflicts with durable acknowledgement')
+    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
+      state: 'INSTALL_CONFIRMED',
+      dispatchJson: installedHosted.dispatchJson,
+      realizedHostingJson: installedHosted.realizedHostingJson,
+      brokerIdentityJson: installedHosted.brokerIdentityJson,
+    })
+
     const unavailableServer = {
       ...server,
       brokerTmuxManagerFactory: () => {
@@ -231,9 +302,10 @@ test('persists actual HRC leases then freezes the unchanged start request before
       realizeAndFreezeParticipantDispatch(unavailableServer, hostedRegistration, frozenHosted)
     ).rejects.toThrow('writer unavailable')
     expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
-      state: 'DISPATCH_FROZEN',
-      dispatchJson: frozenHosted.dispatchJson,
-      realizedHostingJson: frozenHosted.realizedHostingJson,
+      state: 'INSTALL_CONFIRMED',
+      dispatchJson: installedHosted.dispatchJson,
+      realizedHostingJson: installedHosted.realizedHostingJson,
+      brokerIdentityJson: installedHosted.brokerIdentityJson,
     })
 
     const servedRegistration = registration('participant-served')

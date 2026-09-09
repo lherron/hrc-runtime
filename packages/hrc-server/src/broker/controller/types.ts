@@ -20,6 +20,8 @@ import type {
   BrokerAttachResponse,
   BrokerHealthResponse,
   BrokerHelloResponse,
+  BrokerInstallIdentityRequest,
+  BrokerInstallIdentityResponse,
   BrokerLifecyclePolicyOverlay,
   BrokerListInvocationsRequest,
   BrokerListInvocationsResponse,
@@ -140,6 +142,12 @@ export type DurableBrokerClientLike = BrokerClientLike & {
   permissionRespond(
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse>
+  /**
+   * T-08349 participant bootstrap. Optional only so pre-bootstrap scripted
+   * durable-client fixtures remain usable; the participant path fails closed
+   * if its connected client does not expose the canonical operation.
+   */
+  installIdentity?(req: BrokerInstallIdentityRequest): Promise<BrokerInstallIdentityResponse>
   /**
    * T-01801: live event stream for an invocation re-attached over `broker.attach`
    * (unlike `startInvocationFromRequest`, attach returns no stream). The controller

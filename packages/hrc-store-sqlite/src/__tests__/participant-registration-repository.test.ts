@@ -44,6 +44,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
     const db = openHrcDatabase(':memory:')
     try {
       expect(db.migrations.applied).toContain('0064_participant_registration_lifecycle')
+      expect(db.migrations.applied).toContain('0065_participant_broker_identity')
       db.sqlite.transaction(() => {
         db.participantRegistrations.insertRegistration(registration())
         db.participantRegistrations.insertAttempt(attempt())
