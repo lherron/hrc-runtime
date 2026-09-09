@@ -11,15 +11,31 @@
  *    rode `spec.launch.initialPrompt` and therefore has no submission at all.
  *
  * Anything else a submission can end as — rejected, lost, expired, cancelled,
- * withdrawn — CLEARS the intent and re-wakes the target: the next pass
- * re-delivers it under the same policy, so a refused steer becomes an enqueue
- * while the seat is busy and a drive when it is idle.
+ * withdrawn — is a NON-LANDING outcome, and what follows turns on ONE gate:
+ * whether the producer CORRELATED proof that nothing was written.
  *
- * That redelivery is BOUNDED, because unbounded it is a loop that costs the
- * reader a turn per cycle forever (T-08094 finding 5, live). The bound counts
- * NON-LANDING OUTCOMES per (envelope, runtime) and a TTL expiry is only one
- * kind of them; see `refuseIntent` for the post-write / pre-write split that
- * decides when a refusal is one.
+ *  - With `deliveryEvidence: 'not_written'` correlated to the submission, the
+ *    refusal CLEARS the intent and re-wakes the target: the next pass
+ *    re-delivers it under the same policy, so a refused steer becomes an
+ *    enqueue while the seat is busy and a drive when it is idle.
+ *  - Without it — no evidence at all, or `possibly_written` — the intent is
+ *    RETAINED with an uncertainty cause and nothing is redelivered. Silence is
+ *    not proof of a no-write, and an unproven no-write must not authorize an
+ *    automatic resend onto a reader that may already have been shown the body.
+ *
+ * So a non-landing outcome is NOT retryable by kind, and expiry in particular
+ * is not. A queue TTL expiry is the ordinary retained case: `submission.expired`
+ * names only its submission, and the evidence lookup
+ * (`findInputRejectionDeliveryEvidence`) reads `input.rejected` records, so a
+ * submission that expired before any driver hand-off has no correlated proof by
+ * construction and stays fenced as `refusal_without_no_write_proof`.
+ *
+ * The redelivery that a proven no-write does permit is BOUNDED, because
+ * unbounded it is a loop that costs the reader a turn per cycle forever
+ * (T-08094 finding 5, live). The bound counts NON-LANDING OUTCOMES per
+ * (envelope, runtime) and a TTL expiry is only one kind of them; see
+ * `refuseIntent` for the post-write / pre-write split that decides when a
+ * refusal is one.
  *
  * The receipt is written with the intent's own presentation id, minted before
  * the door was called. wrkq's unique index on that id is the dedupe, so a
