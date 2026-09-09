@@ -70,17 +70,10 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
   })
 
-  it('hrc run --dry-run is exempt from the interactive-only gate', async () => {
-    // A dry-run prints a local plan and returns without resolving a session,
-    // spawning a runtime, or attaching — so a pipe is a legitimate caller.
-    // There is no `rex` agent under this suite's agents root, so the dry-run
-    // gets as far as scope resolution and fails there. That failure is the
-    // discriminator: it can only be reached PAST the gate, so it proves the
-    // flag skipped the gate rather than that the gate silently did nothing.
-    const result = await runCli(['run', 'rex@agent-spaces', '--dry-run'])
-    expect(result.stderr).not.toContain('hrc run is interactive-only')
-    expect(result.stderr).toContain('agent "rex" not found')
-  })
+  // The matching case — `--dry-run` is exempt from this gate — is asserted in
+  // cli-start.test.ts, where the fixture supplies a resolvable agent and a
+  // hermetic agents root. Asserting it here would depend on whether an agent
+  // happens to exist under the ambient root, which varies by environment.
 
   it('hrc capture --help exposes broker capture control', async () => {
     const result = await runCli(['capture', '--help'])

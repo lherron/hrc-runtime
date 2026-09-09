@@ -431,6 +431,9 @@ describe('hrc run --dry-run', () => {
     )
 
     expect(result.exitCode).toBe(0)
+    // `runCli` has no TTY, so reaching a rendered plan at all proves `--dry-run`
+    // is exempt from the interactive-only gate a real `hrc run` still hits.
+    expect(result.stderr).not.toContain('hrc run is interactive-only')
     // The prompt itself, in full — not the `<N chars>` placeholder.
     expect(result.stdout).toContain('System Prompt (replace)')
     expect(result.stdout).toContain('Rex is a test agent.')
