@@ -1,3 +1,6 @@
+import { mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import type {
   InvocationDispatchRequest,
@@ -196,6 +199,10 @@ async function realizeHosted(
   const hosted = intent.hrcHosted
   if (hosted === undefined)
     throw new Error('hrc-hosted participant is missing its HRC hosting intent')
+  // The intent commits an HRC-owned tmux socket path, but the durable IPC
+  // boundary only creates its sibling directory. Establish the tmux parent
+  // before the first resource effect so a fresh runtime root can realize it.
+  await mkdir(dirname(hosted.tmuxSocketPath), { recursive: true, mode: 0o700 })
   const tmux = (server.brokerTmuxManagerFactory ?? createTmuxManager)({
     socketPath: hosted.tmuxSocketPath,
   })
