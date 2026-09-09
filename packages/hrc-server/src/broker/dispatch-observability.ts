@@ -59,6 +59,10 @@ export type BrokerSubmissionMilestone = {
   stalledWarnedAt?: string | undefined
 }
 
+type SubmissionMilestonePatch = Partial<BrokerSubmissionMilestone> & {
+  lastMilestone: BrokerSubmissionMilestone['lastMilestone']
+}
+
 export type BrokerTurnOriginDiagnostic = {
   turnId: string | null
   inputId: string | null
@@ -318,6 +322,46 @@ export function recordBrokerEventMilestones(input: {
       { handedToHarnessAt: input.observedAt, lastMilestone: 'handed_to_harness' }
     )
   }
+  // T-08333: `submission.executed` IS the correlated start evidence for a
+  // submission whose driver reports an inputId-less `turn.started`. Its payload
+  // names the submission AND the turn it originated, so it settles exactly that
+  // submission and can never settle another input. It records the moment HRC
+  // OBSERVED the execution — no earlier start time is invented — and it never
+  // overwrites a start already observed, so a replayed or duplicated execution
+  // leaves the recorded start alone. Frozen evidence in
+  // var/wrkq-artifacts/T-08296/quasar-audit (C-21096/C-21097): four queued
+  // submissions across both drivers executed and were then reported stalled 60 s
+  // after acceptance, because nothing here consumed this event.
+  if (input.envelope.type === 'submission.executed') {
+    const executedPayload =
+      input.envelope.payload !== null && typeof input.envelope.payload === 'object'
+        ? (input.envelope.payload as { submissionId?: unknown; turnId?: unknown })
+        : undefined
+    const submissionId =
+      typeof executedPayload?.submissionId === 'string' ? executedPayload.submissionId : undefined
+    const executedTurnId =
+      input.envelope.turnId ??
+      (typeof executedPayload?.turnId === 'string' ? executedPayload.turnId : undefined)
+    if (submissionId !== undefined) {
+      updateSubmission(
+        {
+          ...input,
+          invocationId: String(input.envelope.invocationId),
+          submissionId,
+          door: 'unknown',
+        },
+        (previous) =>
+          previous?.turnStartedAt != null
+            ? { lastMilestone: 'turn_started' }
+            : {
+                turnStartedAt: input.observedAt,
+                turnId: executedTurnId ?? previous?.turnId ?? null,
+                lastMilestone: 'turn_started',
+              }
+      )
+    }
+    return
+  }
   if (input.envelope.type !== 'turn.started') return
 
   const turnId =
@@ -381,21 +425,24 @@ function updateSubmission(
     admissionClass?: string | undefined
     observedAt: string
   },
-  patch: Partial<BrokerSubmissionMilestone> & {
-    lastMilestone: BrokerSubmissionMilestone['lastMilestone']
-  }
+  patch:
+    | SubmissionMilestonePatch
+    | ((previous?: BrokerSubmissionMilestone) => SubmissionMilestonePatch)
 ): void {
   let milestone!: BrokerSubmissionMilestone
+  let appliedMilestone!: BrokerSubmissionMilestone['lastMilestone']
   updateDiagnostics(input.db, input.runtimeId, input.observedAt, (latest) => {
     const submissions = [...(latest.submissions ?? [])]
     const index = submissions.findIndex((entry) => entry.submissionId === input.submissionId)
     const previous = index >= 0 ? submissions[index] : undefined
+    const resolved = typeof patch === 'function' ? patch(previous) : patch
+    appliedMilestone = resolved.lastMilestone
     const milestoneRank = { accepted: 0, handed_to_harness: 1, turn_started: 2 } as const
     const lastMilestone =
       previous !== undefined &&
-      milestoneRank[previous.lastMilestone] > milestoneRank[patch.lastMilestone]
+      milestoneRank[previous.lastMilestone] > milestoneRank[resolved.lastMilestone]
         ? previous.lastMilestone
-        : patch.lastMilestone
+        : resolved.lastMilestone
     milestone = {
       submissionId: input.submissionId,
       runId: input.runId ?? previous?.runId ?? null,
@@ -406,7 +453,7 @@ function updateSubmission(
       turnStartedAt: previous?.turnStartedAt ?? null,
       turnId: previous?.turnId ?? null,
       ...previous,
-      ...patch,
+      ...resolved,
       lastMilestone,
     }
     if (index >= 0) submissions[index] = milestone
@@ -420,7 +467,7 @@ function updateSubmission(
     runId: milestone.runId,
     door: milestone.door,
     admissionClass: milestone.admissionClass,
-    milestone: patch.lastMilestone,
+    milestone: appliedMilestone,
     observedAt: input.observedAt,
   }
   appendDurableDiagnostic(

@@ -426,6 +426,228 @@ describe('broker dispatch observability', () => {
     expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
   })
 
+  /**
+   * T-08333: a QUEUED submission that already EXECUTED is not stalled.
+   *
+   * Frozen evidence (var/wrkq-artifacts/T-08296/quasar-audit, C-21096/C-21097):
+   * four queued submissions across BOTH drivers executed and were then reported
+   * `broker.submission.stalled` roughly 60 s after ACCEPTANCE, each carrying
+   * `lastCompletedMilestone: "handed_to_harness"` — astra _53 while its own
+   * payload said seatState idle / invocationPhase ready. Their `turn.started`
+   * envelopes carry no inputId, so the tracker never advanced past
+   * `handed_to_harness`; the correlation it needed was in the
+   * `submission.executed` payload, which it did not read.
+   *
+   * This reproduces that exact shape: queue admission -> inputId-less observed
+   * start -> correlated execution, with the unexecuted control on the same path.
+   */
+  async function queuedSubmissionAndProbe(options: {
+    executedSubmissionId?: string | undefined
+  }): Promise<{
+    warnings: string[]
+    stalled: ReturnType<typeof diagnosticEvents>
+  }> {
+    const fake = new FakeBrokerClient()
+    fake.seatProbe = async (request: SeatProbeRequest) => ({
+      invocationId: request.invocationId,
+      seat: { state: 'idle' },
+      brokerHeldDepth: 0,
+    })
+    let now = NOW
+    const warnings: string[] = []
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerDispatchStallThresholdMs: 1_000,
+      now: () => now,
+      logger: { warn: (event) => warnings.push(event) },
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+    const invocation = fixture.db.brokerInvocations.getByInvocationId('invocation_w2')!
+    const capabilities = JSON.parse(invocation.capabilitiesJson) as {
+      admission: { classes: string[] }
+    }
+    capabilities.admission.classes = ['steer', 'queue']
+    fixture.db.brokerInvocations.update('invocation_w2', {
+      capabilitiesJson: JSON.stringify(capabilities),
+      updatedAt: NOW,
+    })
+    const admitted = await controller.invoke({
+      runtimeId: 'runtime_w2',
+      runId: 'run_w2',
+      submissionDoor: 'invoke',
+      origin: { principalRef: 'agent:astra' },
+      body: 'queued behind the current turn',
+    })
+    expect(admitted).toMatchObject({
+      ok: true,
+      response: { submissionId: 'submission_enqueue', admission: 'admitted' },
+    })
+    fixture.db.runs.update('run_w2', {
+      brokerSubmissionId: 'submission_enqueue',
+      dispatchedInputId: 'submission_enqueue',
+      updatedAt: NOW,
+    })
+    fake.events.push(
+      envelope(
+        'input.accepted',
+        1,
+        { inputId: inputId('submission_enqueue'), disposition: 'queued' },
+        { invocationId: 'invocation_w2' as never, inputId: inputId('submission_enqueue') }
+      )
+    )
+    // The audit shape: `turn.started` carries only {turnId, source, sessionId}.
+    // No inputId on the envelope and none in the payload.
+    fake.events.push(
+      envelope(
+        'turn.started',
+        2,
+        { turnId: turnId('turn-executed') },
+        { invocationId: 'invocation_w2' as never, turnId: turnId('turn-executed') }
+      )
+    )
+    if (options.executedSubmissionId !== undefined) {
+      fake.events.push(
+        envelope(
+          'submission.executed',
+          3,
+          { submissionId: options.executedSubmissionId, turnId: turnId('turn-executed') },
+          { invocationId: 'invocation_w2' as never }
+        )
+      )
+    }
+    await tick()
+    await tick()
+    await tick()
+    now = '2026-05-27T12:34:58.000Z'
+    await controller.seatProbe('runtime_w2')
+    await controller.seatProbe('runtime_w2')
+    return {
+      warnings: warnings.filter((event) => event === 'broker.submission.stalled'),
+      stalled: diagnosticEvents('broker.submission.stalled'),
+    }
+  }
+
+  it('never calls an executed queued submission stalled', async () => {
+    const observed = await queuedSubmissionAndProbe({
+      executedSubmissionId: 'submission_enqueue',
+    })
+    expect(observed.warnings).toEqual([])
+    expect(observed.stalled).toHaveLength(0)
+    const submission = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+      (entry) => entry.submissionId === 'submission_enqueue'
+    )
+    expect(submission).toMatchObject({
+      admissionClass: 'queue',
+      lastMilestone: 'turn_started',
+      turnId: 'turn-executed',
+      turnStartedAt: expect.any(String),
+    })
+    expect(submission?.stalledWarnedAt).toBeUndefined()
+  })
+
+  it('does not let one submission execution settle another input', async () => {
+    // Identity is the whole exemption. An execution that names a DIFFERENT
+    // submission is unrelated evidence and must leave this one exposed.
+    const observed = await queuedSubmissionAndProbe({
+      executedSubmissionId: 'submission_unrelated',
+    })
+    expect(observed.warnings).toHaveLength(1)
+    const submissions = getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions ?? []
+    expect(submissions.find((entry) => entry.submissionId === 'submission_enqueue')).toMatchObject({
+      lastMilestone: 'handed_to_harness',
+      turnStartedAt: null,
+      stalledWarnedAt: '2026-05-27T12:34:58.000Z',
+    })
+    expect(
+      submissions.find((entry) => entry.submissionId === 'submission_unrelated')
+    ).toMatchObject({ lastMilestone: 'turn_started', turnStartedAt: expect.any(String) })
+  })
+
+  it('keeps the first observed start when execution evidence repeats or arrives late', async () => {
+    const fake = new FakeBrokerClient()
+    fake.seatProbe = async (request: SeatProbeRequest) => ({
+      invocationId: request.invocationId,
+      seat: { state: 'idle' },
+      brokerHeldDepth: 0,
+    })
+    let now = NOW
+    const warnings: string[] = []
+    controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerDispatchStallThresholdMs: 1_000,
+      now: () => now,
+      logger: { warn: (event) => warnings.push(event) },
+    })
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
+    await controller.invoke({
+      runtimeId: 'runtime_w2',
+      runId: 'run_w2',
+      submissionDoor: 'invoke',
+      origin: { principalRef: 'agent:astra' },
+      body: 'warned, then executed',
+    })
+
+    // A legitimate warning first: nothing had reached the harness by the
+    // threshold, which is exactly what this detector exists for.
+    now = '2026-05-27T12:34:58.000Z'
+    await controller.seatProbe('runtime_w2')
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
+
+    const executed = (observedAt: string, seq: number) =>
+      recordBrokerEventMilestones({
+        db: fixture.db,
+        logger: {},
+        runtimeId: 'runtime_w2',
+        envelope: envelope(
+          'submission.executed',
+          seq,
+          { submissionId: 'submission_invoke', turnId: turnId('turn-late') },
+          { invocationId: 'invocation_w2' as never }
+        ),
+        observedAt,
+      })
+
+    executed('2026-05-27T12:35:10.000Z', 9)
+    // Replay/duplicate execution is inert: the recorded start stays the first
+    // one observed rather than drifting forward to the replay's timestamp.
+    executed('2026-05-27T12:36:40.000Z', 10)
+
+    now = '2026-05-27T12:37:00.000Z'
+    await controller.seatProbe('runtime_w2')
+    // The earlier warning is not retracted and no second one is emitted.
+    expect(warnings.filter((event) => event === 'broker.submission.stalled')).toHaveLength(1)
+    expect(diagnosticEvents('broker.submission.stalled')).toHaveLength(1)
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+        (entry) => entry.submissionId === 'submission_invoke'
+      )
+    ).toMatchObject({
+      lastMilestone: 'turn_started',
+      turnStartedAt: '2026-05-27T12:35:10.000Z',
+      turnId: 'turn-late',
+      stalledWarnedAt: '2026-05-27T12:34:58.000Z',
+    })
+  })
+
+  it('still calls an identical unexecuted queued submission stalled', async () => {
+    // The control that makes the exemption a discriminator rather than a
+    // blanket suppression: same door, same admission class, same inputId-less
+    // observed start — only the correlated execution is missing.
+    const observed = await queuedSubmissionAndProbe({})
+    expect(observed.warnings).toHaveLength(1)
+    expect(observed.stalled).toHaveLength(1)
+    expect(
+      getBrokerDispatchDiagnostics(fixture.db, 'runtime_w2')?.submissions?.find(
+        (entry) => entry.submissionId === 'submission_enqueue'
+      )
+    ).toMatchObject({
+      lastMilestone: 'handed_to_harness',
+      stalledWarnedAt: '2026-05-27T12:34:58.000Z',
+    })
+  })
+
   it('projects matching, divergent, stale, and unavailable inspect states', () => {
     const base = {
       runtimeProjection: 'ready',
