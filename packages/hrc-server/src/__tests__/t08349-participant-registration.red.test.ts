@@ -261,7 +261,7 @@ describe('T-08349 generic participant registration callback surface', () => {
         registration?.registrationId ?? ''
       )
       expect(attempt).toMatchObject({
-        state: 'PREPARED',
+        state: 'HOSTING_INTENT_PERSISTED',
         requestId: expect.stringMatching(/^req-/),
         operationId: expect.stringMatching(/^op-/),
         invocationId: expect.stringMatching(/^inv-/),
@@ -274,6 +274,38 @@ describe('T-08349 generic participant registration callback surface', () => {
           'served-permanent-key'
         )
       ).toMatchObject({ socketPath: `${fixture.tmpDir}/participant-served.sock` })
+      const hostedRegistration = db.participantRegistrations.getRegistrationByClassAndKey(
+        hostedClass.classId,
+        'hosted-permanent-key'
+      )
+      const servedRegistration = db.participantRegistrations.getRegistrationByClassAndKey(
+        participantServedClass.classId,
+        'served-permanent-key'
+      )
+      const hostedAttempt = db.participantRegistrations.getAttemptByRegistrationId(
+        hostedRegistration?.registrationId ?? ''
+      )
+      const servedAttempt = db.participantRegistrations.getAttemptByRegistrationId(
+        servedRegistration?.registrationId ?? ''
+      )
+      expect(hostedAttempt).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
+      expect(servedAttempt).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
+      const hostedIntent = JSON.parse(hostedAttempt?.hostingIntentJson ?? '{}')
+      const servedIntent = JSON.parse(servedAttempt?.hostingIntentJson ?? '{}')
+      expect(hostedIntent).toMatchObject({
+        join: 'hrc-hosted',
+        hrcHosted: {
+          brokerDriver: 'codex-app-server',
+          sessionName: expect.stringMatching(/^hrc-codex-app-server-rt-/),
+        },
+        lifecyclePolicy: expect.objectContaining({ policyId: expect.any(String) }),
+      })
+      expect(servedIntent).toMatchObject({
+        join: 'participant-served',
+        endpoint: { socketPath: `${fixture.tmpDir}/participant-served.sock` },
+        lifecyclePolicy: expect.objectContaining({ policyId: expect.any(String) }),
+      })
+      expect(servedIntent.hrcHosted).toBeUndefined()
     } finally {
       db.close()
     }

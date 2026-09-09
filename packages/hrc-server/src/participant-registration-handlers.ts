@@ -5,12 +5,14 @@ import { buildScopeRef, parseScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
+  type BrokerExecutionProfile,
   type JsonValue,
   type ParticipantAdapterPreparationRequest,
   validateParticipantAdapterAdmission,
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
+import { createParticipantHostingIntent } from './participant-hosting-intent.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -70,7 +72,8 @@ function serializedJson(value: unknown): string {
 
 function registeredResponse(
   registration: ParticipantRegistration,
-  created: boolean
+  created: boolean,
+  attempt: ParticipantAttempt
 ): RegisterParticipantResponse {
   return {
     status: 'registered',
@@ -81,9 +84,47 @@ function registeredResponse(
     resumed: false,
     observation: {
       state: 'prepared',
-      detail: 'participant registration and immutable adapter preparation are durable',
+      detail:
+        attempt.hostingIntentJson === undefined
+          ? 'participant registration and immutable adapter preparation are durable'
+          : 'participant registration, adapter preparation, and HRC hosting intent are durable',
     },
   }
+}
+
+async function persistHostingIntentIfRequired(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): Promise<ParticipantAttempt | null> {
+  if (attempt.hostingIntentJson !== undefined) return attempt
+  if (attempt.preparedProfileJson === undefined || attempt.state !== 'PREPARED') return null
+
+  let profile: BrokerExecutionProfile
+  try {
+    profile = JSON.parse(attempt.preparedProfileJson) as BrokerExecutionProfile
+  } catch {
+    return null
+  }
+  const intent = await createParticipantHostingIntent(server, registration, attempt, profile)
+  const now = timestamp()
+  const persisted = server.db.sqlite.transaction(() => {
+    const snapshot = server.db.participantRegistrations.setSnapshotIfAbsent(
+      attempt.attemptId,
+      'hostingIntentJson',
+      serializedJson(intent),
+      now
+    )
+    if (!snapshot) return false
+    return server.db.participantRegistrations.transitionAttempt(
+      attempt.attemptId,
+      ['PREPARED'],
+      'HOSTING_INTENT_PERSISTED',
+      now
+    )
+  })()
+  if (!persisted) return server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  return server.db.participantRegistrations.getAttempt(attempt.attemptId)
 }
 
 export function parseRegisterParticipantRequest(input: unknown): RegisterParticipantRequest {
@@ -297,7 +338,19 @@ export async function handleRegisterParticipant(
       const resolvedRegistration = registration
       const resolvedAttempt = attempt
       if (resolvedAttempt.preparedProfileJson !== undefined) {
-        return registeredResponse(resolvedRegistration, created)
+        const withHostingIntent = await persistHostingIntentIfRequired(
+          this,
+          resolvedRegistration,
+          resolvedAttempt
+        )
+        if (withHostingIntent === null) {
+          return {
+            status: 'pending',
+            reason: 'participant_hosting_intent_unavailable',
+            detail: 'prepared participant attempt cannot persist its HRC hosting intent',
+          }
+        }
+        return registeredResponse(resolvedRegistration, created, withHostingIntent)
       }
 
       const preparationRequest = {
@@ -357,7 +410,7 @@ export async function handleRegisterParticipant(
       if (!frozen) {
         const current = this.db.participantRegistrations.getAttempt(resolvedAttempt.attemptId)
         if (current?.preparedProfileJson !== undefined)
-          return registeredResponse(resolvedRegistration, false)
+          return registeredResponse(resolvedRegistration, false, current)
         return {
           status: 'pending',
           reason: 'participant_preparation_race',
@@ -365,7 +418,27 @@ export async function handleRegisterParticipant(
         }
       }
 
-      return registeredResponse(resolvedRegistration, created)
+      const preparedAttempt = this.db.participantRegistrations.getAttempt(resolvedAttempt.attemptId)
+      if (preparedAttempt === null) {
+        return {
+          status: 'pending',
+          reason: 'participant_attempt_unavailable',
+          detail: 'prepared participant attempt disappeared before hosting intent persistence',
+        }
+      }
+      const withHostingIntent = await persistHostingIntentIfRequired(
+        this,
+        resolvedRegistration,
+        preparedAttempt
+      )
+      if (withHostingIntent === null) {
+        return {
+          status: 'pending',
+          reason: 'participant_hosting_intent_unavailable',
+          detail: 'prepared participant attempt cannot persist its HRC hosting intent',
+        }
+      }
+      return registeredResponse(resolvedRegistration, created, withHostingIntent)
     }
   )
   return json(result)
