@@ -15,7 +15,7 @@
 import { laneIdFromRef, normalizeLaneRef, parseScopeRef } from 'agent-scope'
 
 import { agentTheme } from './agent-theme.js'
-import type { GhostmuxStatusBarSpec } from './ghostmux.js'
+import type { GhostmuxSecondaryStatusBarSpec, GhostmuxStatusBarSpec } from './ghostmux.js'
 import { shortenProjectId } from './project-prefix.js'
 import type { TaskSlugResolver } from './wrkq-task-label.js'
 
@@ -81,6 +81,31 @@ export function renderStatusBar(
     fg: theme.fg,
     bg: theme.bg,
   }
+}
+
+/**
+ * hcs's marker glyph, so the title bar is distinguishable at a glance from the
+ * primary triplet directly above it. Byte-identical to hcs's `contextBarMarker`.
+ */
+const SECONDARY_BAR_MARKER = '▸ '
+
+/**
+ * Build the SECONDARY (title) bar for a task-scoped pane, or null when there is
+ * nothing to say — which is hcs's `show == false`, i.e. hide rather than stamp.
+ *
+ * The payload is the wrkq TITLE alone, in `left`, with `center` and `right`
+ * empty: exactly what hcs's `secondaryBarFor` writes today. hcs keeps stamping
+ * this same slot on its own context panes until T-08332 lands, and identical
+ * output is what makes that overlap invisible.
+ *
+ * Deliberately NOT state-driven: this bar answers "what task is this pane?",
+ * a fact that changes only when wrkq is retitled or the pane is rebound — never
+ * at a turn boundary.
+ */
+export function renderSecondaryStatusBar(title: string): GhostmuxSecondaryStatusBarSpec | null {
+  const trimmed = title.trim()
+  if (trimmed === '') return null
+  return { left: `${SECONDARY_BAR_MARKER}${trimmed}`, center: '', right: '' }
 }
 
 /** The agent-color terminal tint (`set-bg`) for a scope's viewer window. */

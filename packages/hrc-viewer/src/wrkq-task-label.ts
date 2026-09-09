@@ -140,3 +140,107 @@ export function defaultTaskSlugResolver(): TaskSlugResolver {
   if (!sharedResolver) sharedResolver = createTaskSlugResolver()
   return sharedResolver
 }
+
+/* ------------------------------------------------------------------------- *
+ * Batched task-TITLE reads for the secondary status bar (T-08331).
+ *
+ * The primary bar's slug memo above is deliberately untouched. The secondary
+ * bar is a TITLE bar: a task retitled in wrkq must show up on the next
+ * reconcile, so it is read fresh every pass and never cached at this layer.
+ * That is affordable because `wrkq cat` takes MANY ids in one invocation and
+ * resolves them ACROSS projects without `--project` — measured on this machine
+ * at 26ms for 1 id and 81ms for 8 — so one reconcile costs one subprocess for
+ * the whole fleet of panes, strictly fewer than the per-task path.
+ * ------------------------------------------------------------------------- */
+
+/** Injectable batch runner (tests pass a fake; prod spawns `wrkq cat`). */
+export type WrkqBatchRunner = (taskIds: readonly string[]) => Promise<WrkqRunResult>
+
+/** Read task titles by id. Never throws; unresolved ids are simply absent. */
+export type TaskTitleReader = (taskIds: readonly string[]) => Promise<Map<string, string>>
+
+/**
+ * Parse `id` → trimmed `title` from `wrkq cat <ids...> --json` stdout. Records
+ * without a canonical id or with an empty title are dropped rather than mapped
+ * to a blank, so a malformed record can never blank a pane's bar.
+ */
+export function parseTaskTitles(stdout: string): Map<string, string> {
+  const titles = new Map<string, string>()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return titles
+  }
+  const records = Array.isArray(parsed) ? parsed : [parsed]
+  for (const record of records) {
+    if (typeof record !== 'object' || record === null) continue
+    const fields = record as Record<string, unknown>
+    const id = fields['id']
+    const title = fields['title']
+    if (typeof id !== 'string' || !TASK_ID_PATTERN.test(id)) continue
+    if (typeof title !== 'string' || title.trim().length === 0) continue
+    titles.set(id, title.trim())
+  }
+  return titles
+}
+
+/** Default batch runner: one `wrkq cat <ids...> --json` with a bounded timeout. */
+async function defaultWrkqBatchRunner(taskIds: readonly string[]): Promise<WrkqRunResult> {
+  const proc = Bun.spawn(['wrkq', 'cat', ...taskIds, '--json'], {
+    env: process.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    signal: AbortSignal.timeout(WRKQ_TIMEOUT_MS),
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  return { stdout, stderr, exitCode }
+}
+
+/**
+ * Build a batched task-title reader.
+ *
+ * ONE unknown id fails the WHOLE batch (`Error: task not found: T-99999`,
+ * exit 1) — a reaped or deleted task would otherwise blank every pane at once.
+ * So a failed batch of more than one id degrades to individual reads and keeps
+ * every id that still resolves; the missing one is simply absent from the map
+ * and the caller holds its last-known title. Never throws.
+ */
+export function createTaskTitleReader(options: { runner?: WrkqBatchRunner } = {}): TaskTitleReader {
+  const runner = options.runner ?? defaultWrkqBatchRunner
+  const readBatch = async (ids: readonly string[]): Promise<Map<string, string> | null> => {
+    try {
+      const result = await runner(ids)
+      if (result.exitCode !== 0) return null
+      return parseTaskTitles(result.stdout)
+    } catch {
+      return null
+    }
+  }
+  return async (taskIds: readonly string[]): Promise<Map<string, string>> => {
+    const ids = [...new Set(taskIds.filter((id) => TASK_ID_PATTERN.test(id)))]
+    if (ids.length === 0) return new Map()
+    const batched = await readBatch(ids)
+    if (batched !== null) return batched
+    if (ids.length === 1) return new Map()
+    const titles = new Map<string, string>()
+    const perId = await Promise.all(ids.map((id) => readBatch([id])))
+    for (const result of perId) {
+      if (result === null) continue
+      for (const [id, title] of result) titles.set(id, title)
+    }
+    return titles
+  }
+}
+
+let sharedTitleReader: TaskTitleReader | undefined
+
+/** Process-wide shared title reader (stateless; shared only to avoid churn). */
+export function defaultTaskTitleReader(): TaskTitleReader {
+  if (!sharedTitleReader) sharedTitleReader = createTaskTitleReader()
+  return sharedTitleReader
+}

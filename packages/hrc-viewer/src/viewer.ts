@@ -1,6 +1,7 @@
 import type { HrcClient, HrcEventTail } from 'hrc-sdk'
 
 import {
+  type GhostmuxSecondaryStatusBarSpec,
   type GhostmuxStatusBarSpec,
   type HeadlessReapResult,
   type HeadlessViewerPane,
@@ -10,12 +11,18 @@ import {
 } from './ghostmux.js'
 import {
   HeadlessViewerStatusProjector,
+  renderSecondaryStatusBar,
   renderStatusBar,
   viewerStateForEventKind,
   viewerTerminalBg,
 } from './headless-viewer-status.js'
 import { type TmuxClientProbe, createTmuxClientProbe } from './tmux-clients.js'
-import { defaultTaskSlugResolver } from './wrkq-task-label.js'
+import {
+  type TaskTitleReader,
+  defaultTaskSlugResolver,
+  defaultTaskTitleReader,
+  extractTaskIdFromScope,
+} from './wrkq-task-label.js'
 
 export type HrcViewerClient = Pick<
   HrcClient,
@@ -60,6 +67,8 @@ export type ViewerGhostmux = {
   ): Promise<void>
   setHeadlessViewerTitle(surfaceId: string, title: string): Promise<void>
   setStatusBar(surfaceId: string, spec: GhostmuxStatusBarSpec): Promise<void>
+  setSecondaryStatusBar(surfaceId: string, spec: GhostmuxSecondaryStatusBarSpec): Promise<void>
+  hideSecondaryStatusBar(surfaceId: string): Promise<void>
   reapHeadlessAgentPane(surfaceId: string, runtimeId: string): Promise<HeadlessReapResult>
 }
 
@@ -84,6 +93,8 @@ export type HrcViewerOptions = {
    * the operator-attached suppression is testable without a live tmux server.
    */
   probeTmuxClients?: TmuxClientProbe | undefined
+  /** Batched wrkq task-title reader for the secondary bar (T-08331). Injected for tests. */
+  readTaskTitles?: TaskTitleReader | undefined
 }
 
 const DEFAULT_LINGER_SECONDS = 300
@@ -188,6 +199,14 @@ export class HrcViewer {
   private stopped = false
   private readonly statusProjector: HeadlessViewerStatusProjector
   private readonly probeTmuxClients: TmuxClientProbe
+  private readonly readTaskTitles: TaskTitleReader
+  /**
+   * Last-known wrkq title per task id (T-08331). Refreshed in one batched read
+   * per reconcile and NEVER evicted on a read failure — a deleted task, a wrkq
+   * missing from PATH or a hung CLI must degrade to the title already on the
+   * bar, never blank every pane at once.
+   */
+  private readonly taskTitles = new Map<string, string>()
 
   constructor(options: HrcViewerOptions) {
     this.client = options.client
@@ -201,6 +220,7 @@ export class HrcViewer {
     this.schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearScheduled = options.clearScheduled ?? ((handle) => clearTimeout(handle))
     this.probeTmuxClients = options.probeTmuxClients ?? createTmuxClientProbe()
+    this.readTaskTitles = options.readTaskTitles ?? defaultTaskTitleReader()
     this.statusProjector = new HeadlessViewerStatusProjector({
       resolveSurfaceId: (runtimeId) =>
         this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(runtimeId),
@@ -273,6 +293,10 @@ export class HrcViewer {
     if (TERMINAL_EVENT_KINDS.has(event.eventKind) && event.runtimeId !== undefined) {
       const surfaceId = await this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(event.runtimeId)
       if (surfaceId !== null) {
+        // The task title describes a LIVE seat. A pane lingers for minutes after
+        // its runtime ends and may be recycled for another occupant, so drop the
+        // title at the terminal event rather than leaving it up until the reap.
+        await this.clearSecondaryBar(surfaceId)
         const occurredAt = eventTimeMs(event) ?? this.now()
         this.scheduleReap(surfaceId, event.runtimeId, event.scopeRef, occurredAt)
       }
@@ -399,6 +423,9 @@ export class HrcViewer {
       const rowsByPaneKey = new Map(rows.map((row) => [paneKeyFor(row), row]))
       const eventsByRuntime = latestByRuntime(latest)
       const adoptedSurfaceIds = new Set<string>()
+      // One batched read for the whole fleet, BEFORE any pane is stamped, so
+      // every pane in this pass is titled from the same fresh answer.
+      await this.refreshTaskTitles(rows.map((row) => row.scopeRef))
 
       for (const pane of panes) {
         const direct = pane.runtimeId === undefined ? undefined : rowsByRuntime.get(pane.runtimeId)
@@ -423,9 +450,17 @@ export class HrcViewer {
           }
           await this.ghostmux.setHeadlessViewerTitle(pane.surfaceId, titleFor(row))
           await this.paintFromLatest(pane.surfaceId, row, eventsByRuntime.get(row.runtimeId))
+          // Deliberately OUTSIDE paintFromLatest: the secondary bar is
+          // fact-driven, and paintFromLatest returns early for a runtime whose
+          // latest event carries no state. A pane mid-turn on an unmapped kind
+          // gets no primary repaint at all, and must still be retitled here.
+          await this.applySecondaryBar(pane.surfaceId, row.scopeRef)
           continue
         }
 
+        // No presentation row: this pane is terminal or orphaned and is headed
+        // for the reaper. Same reason as the terminal-event path above.
+        await this.clearSecondaryBar(pane.surfaceId)
         if (pane.runtimeId === undefined) continue
         const latestEvent = eventsByRuntime.get(pane.runtimeId)
         const terminalAt =
@@ -515,6 +550,10 @@ export class HrcViewer {
       })
       return
     }
+    if (result.status === 'created' || result.status === 'reused') {
+      // Fire-and-forget: a title read must never delay or fail pane creation.
+      void this.stampSecondaryBarFresh(result.surfaceId, row.scopeRef)
+    }
     this.log(
       result.status === 'failed' ? 'WARN' : 'INFO',
       `broker_headless_viewer.${result.status}`,
@@ -538,6 +577,69 @@ export class HrcViewer {
       surfaceId,
       renderStatusBar(row.scopeRef, state, slug, normalizePresentationLaneRef(row.laneRef))
     )
+  }
+
+  /**
+   * Refresh last-known titles for every task carried by these scopes, in ONE
+   * batched `wrkq cat`. Never throws and never evicts: an id the read could not
+   * resolve keeps whatever title it already had, so a single deleted task can
+   * not blank the fleet.
+   */
+  private async refreshTaskTitles(scopeRefs: readonly string[]): Promise<void> {
+    const taskIds = new Set<string>()
+    for (const scopeRef of scopeRefs) {
+      const taskId = extractTaskIdFromScope(scopeRef)
+      if (taskId !== null) taskIds.add(taskId)
+    }
+    if (taskIds.size === 0) return
+    try {
+      const titles = await this.readTaskTitles([...taskIds])
+      for (const [taskId, title] of titles) this.taskTitles.set(taskId, title)
+    } catch (error) {
+      this.warn('broker_headless_viewer.task_titles_failed', error)
+    }
+  }
+
+  /**
+   * Stamp (or hide) the secondary bar for one pane from the last-known titles.
+   * Cosmetic and total: it never throws, never delays lifecycle work, and never
+   * clears a bar it merely failed to read — a task-scoped pane with no known
+   * title is left exactly as it is, so a wrkq outage degrades to a stale title
+   * rather than a blank one. `:primary` and lane-only seats carry no task, so
+   * they are HIDDEN rather than skipped: a recycled pane would otherwise keep
+   * its previous occupant's title.
+   */
+  private async applySecondaryBar(surfaceId: string, scopeRef: string): Promise<void> {
+    try {
+      const taskId = extractTaskIdFromScope(scopeRef)
+      if (taskId === null) {
+        await this.ghostmux.hideSecondaryStatusBar(surfaceId)
+        return
+      }
+      const title = this.taskTitles.get(taskId)
+      if (title === undefined) return
+      const spec = renderSecondaryStatusBar(title)
+      if (spec === null) return
+      await this.ghostmux.setSecondaryStatusBar(surfaceId, spec)
+    } catch (error) {
+      this.warn('broker_headless_viewer.secondary_status_failed', error, { surfaceId, scopeRef })
+    }
+  }
+
+  /** Read the title first when this task has never been seen, then stamp. */
+  private async stampSecondaryBarFresh(surfaceId: string, scopeRef: string): Promise<void> {
+    const taskId = extractTaskIdFromScope(scopeRef)
+    if (taskId !== null && !this.taskTitles.has(taskId)) await this.refreshTaskTitles([scopeRef])
+    await this.applySecondaryBar(surfaceId, scopeRef)
+  }
+
+  /** Drop the title bar from a pane whose seat is gone. Never throws. */
+  private async clearSecondaryBar(surfaceId: string): Promise<void> {
+    try {
+      await this.ghostmux.hideSecondaryStatusBar(surfaceId)
+    } catch (error) {
+      this.warn('broker_headless_viewer.secondary_status_failed', error, { surfaceId })
+    }
   }
 
   private scheduleReap(

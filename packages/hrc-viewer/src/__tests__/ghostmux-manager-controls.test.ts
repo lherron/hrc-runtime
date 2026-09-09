@@ -273,3 +273,97 @@ describe('GhostmuxManager.setTerminalBackground', () => {
     expect(statusBarCalls).toBe(1)
   })
 })
+
+/**
+ * T-08331 — the SECONDARY slot. Its argv, its wire sanitizing and its capability
+ * memo are all distinct from the primary bar's, and the difference is load-
+ * bearing: hcs stamps this same slot on its own context panes until T-08332
+ * removes that writer, so any divergence renders as a flapping bar.
+ */
+describe('GhostmuxManager.setSecondaryStatusBar', () => {
+  it('sets then SHOWS — a set alone renders nothing, the slot defaults to hidden', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setSecondaryStatusBar('surf-1', {
+      left: '▸ hrc-viewer should populate second status bar',
+      center: '',
+      right: '',
+    })
+
+    expect(calls).toEqual([
+      [
+        'statusbar',
+        'set',
+        '-t',
+        'surf-1',
+        '--bar',
+        'secondary',
+        '▸ hrc-viewer should populate second status bar||',
+      ],
+      ['statusbar', 'show', '-t', 'surf-1', '--bar', 'secondary'],
+    ])
+  })
+
+  it('sanitizes exactly as hcs does: `|` becomes `/`, not a space', async () => {
+    // The PRIMARY rule maps `|` to a space. Matching hcs's `statusBarField`
+    // byte for byte is what makes the two writers overlap invisibly.
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setSecondaryStatusBar('surf-1', {
+      left: '  ▸ a|b\tc\nd  ',
+      center: '',
+      right: '',
+    })
+
+    expect(calls[0]?.[6]).toBe('▸ a/b c d||')
+  })
+
+  it('hide emits the secondary-scoped hide argv', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.hideSecondaryStatusBar('surf-1')
+
+    expect(calls).toEqual([['statusbar', 'hide', '-t', 'surf-1', '--bar', 'secondary']])
+  })
+
+  it('swallows failures and never throws', async () => {
+    const manager = new GhostmuxManager('ghostmux', async () => {
+      throw new Error('transient surface error')
+    })
+    await expect(
+      manager.setSecondaryStatusBar('surf-1', { left: 'a', center: '', right: '' })
+    ).resolves.toBeUndefined()
+    await expect(manager.hideSecondaryStatusBar('surf-1')).resolves.toBeUndefined()
+  })
+
+  it('an unsupported secondary slot memoizes OFF without disabling the primary bar', async () => {
+    // ghostmux refuses rather than falling back to the primary bar, so this is
+    // a capability answer. A shared memo would take the primary down with it.
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      if (args.includes('secondary')) throw new Error('unsupported status bar slot: secondary')
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setSecondaryStatusBar('surf-1', { left: 'a', center: '', right: '' })
+    await manager.setSecondaryStatusBar('surf-1', { left: 'a', center: '', right: '' })
+    await manager.hideSecondaryStatusBar('surf-1')
+    expect(calls.filter((args) => args.includes('secondary'))).toHaveLength(1)
+
+    await manager.setStatusBar('surf-1', { left: 'a', center: 'b', right: 'c' })
+    expect(calls.some((args) => args[0] === 'statusbar' && !args.includes('secondary'))).toBe(true)
+  })
+})

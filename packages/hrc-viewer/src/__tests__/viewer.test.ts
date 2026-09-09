@@ -43,6 +43,10 @@ function makeHarness(input?: {
   panes?: HeadlessViewerPane[]
   latest?: Event[]
   lingerSeconds?: number
+  /** Task id -> wrkq title. Omit to answer every batch with an empty map. */
+  taskTitles?: Record<string, string>
+  /** Force the batched title read to fail, as a deleted id or a missing wrkq does. */
+  titleReadFails?: boolean
 }) {
   const rows = input?.rows ?? []
   const panes = input?.panes ?? []
@@ -51,6 +55,10 @@ function makeHarness(input?: {
   const rebindCalls: Array<Record<string, unknown>> = []
   const titleCalls: Array<{ surfaceId: string; title: string }> = []
   const statusCalls: Array<{ surfaceId: string; right: string }> = []
+  const secondaryCalls: Array<{ surfaceId: string; left: string; center: string; right: string }> =
+    []
+  const secondaryHides: string[] = []
+  const titleReads: string[][] = []
   const reapCalls: Array<{ surfaceId: string; runtimeId: string }> = []
   const scheduled: Array<() => void> = []
   const logs: Array<{ event: string; fields: Record<string, unknown> }> = []
@@ -89,6 +97,12 @@ function makeHarness(input?: {
     async setStatusBar(surfaceId, spec) {
       statusCalls.push({ surfaceId, right: spec.right })
     },
+    async setSecondaryStatusBar(surfaceId, spec) {
+      secondaryCalls.push({ surfaceId, ...spec })
+    },
+    async hideSecondaryStatusBar(surfaceId) {
+      secondaryHides.push(surfaceId)
+    },
     async reapHeadlessAgentPane(surfaceId, runtimeId) {
       reapCalls.push({ surfaceId, runtimeId })
       return { status: 'reaped', surfaceId, tabCollapsed: true }
@@ -106,6 +120,16 @@ function makeHarness(input?: {
       return {} as ReturnType<typeof setTimeout>
     },
     clearScheduled() {},
+    async readTaskTitles(taskIds) {
+      titleReads.push([...taskIds])
+      if (input?.titleReadFails === true) return new Map()
+      const titles = new Map<string, string>()
+      for (const taskId of taskIds) {
+        const title = input?.taskTitles?.[taskId]
+        if (title !== undefined) titles.set(taskId, title)
+      }
+      return titles
+    },
   })
   return {
     viewer,
@@ -113,6 +137,9 @@ function makeHarness(input?: {
     rebindCalls,
     titleCalls,
     statusCalls,
+    secondaryCalls,
+    secondaryHides,
+    titleReads,
     reapCalls,
     scheduled,
     logs,
@@ -281,5 +308,153 @@ describe('HrcViewer reconcile (§4.5 / §5.5)', () => {
     expect(
       harness.logs.some((entry) => entry.event === 'broker_headless_viewer.reconcile_failed')
     ).toBe(false)
+  })
+})
+
+/**
+ * T-08331: the secondary status bar is a TITLE bar. It answers "what task is
+ * this pane?" — a fact — so it is stamped on every reconcile pass regardless of
+ * what the runtime's latest event was, and it must render byte-identically to
+ * what hcs writes on its own context panes until T-08332 removes that writer.
+ */
+describe('HrcViewer secondary status bar (T-08331)', () => {
+  const TASK_SCOPE = 'agent:cody:project:wrkq:task:T-08259'
+  const TASK_PANE_KEY = 'agent:cody:project:wrkq:task:T-08259#main'
+
+  function taskHarness(input?: Parameters<typeof makeHarness>[0]) {
+    return makeHarness({
+      rows: [presentationRow({ scopeRef: TASK_SCOPE })],
+      panes: [
+        {
+          surfaceId: 'surface-task',
+          windowKey: 'default',
+          paneKey: TASK_PANE_KEY,
+          runtimeId: 'rt-1',
+          scopeRef: TASK_SCOPE,
+        },
+      ],
+      taskTitles: { 'T-08259': 'wrkq: teach cat to take many ids' },
+      ...input,
+    })
+  }
+
+  test('stamps `▸ <title>` in left with center and right empty, matching hcs byte for byte', async () => {
+    const harness = taskHarness()
+    await harness.viewer.reconcile('start')
+    expect(harness.secondaryCalls).toContainEqual({
+      surfaceId: 'surface-task',
+      left: '▸ wrkq: teach cat to take many ids',
+      center: '',
+      right: '',
+    })
+  })
+
+  test('stamps a pane whose latest event has no viewer state — the state gate must not cover it', async () => {
+    // `session.retitled` is not one of the eight kinds viewerStateForEventKind
+    // maps, so paintFromLatest returns early and writes no primary bar. A title
+    // bar behind that gate would hold a stale title until the next turn boundary.
+    const harness = taskHarness({
+      latest: [event('session.retitled', { scopeRef: TASK_SCOPE })],
+    })
+    await harness.viewer.reconcile('timer')
+    expect(harness.statusCalls).toHaveLength(0)
+    expect(harness.secondaryCalls).toHaveLength(1)
+    expect(harness.secondaryCalls[0]?.left).toBe('▸ wrkq: teach cat to take many ids')
+  })
+
+  test('one batched read covers every task-scoped pane in the pass', async () => {
+    const harness = makeHarness({
+      rows: [
+        presentationRow({ scopeRef: TASK_SCOPE }),
+        presentationRow({ runtimeId: 'rt-2', hostSessionId: 'hs-2', scopeRef: SCOPE }),
+        presentationRow({
+          runtimeId: 'rt-3',
+          hostSessionId: 'hs-3',
+          scopeRef: 'agent:clod:project:hrc-runtime:task:T-08296',
+        }),
+      ],
+      taskTitles: { 'T-08259': 'first', 'T-08296': 'second' },
+    })
+    await harness.viewer.reconcile('start')
+    // Exactly one read, carrying both task ids; the `:primary` scope contributes none.
+    expect(harness.titleReads).toHaveLength(1)
+    expect(harness.titleReads[0]?.sort()).toEqual(['T-08259', 'T-08296'])
+  })
+
+  test('a `:primary` seat is HIDDEN, not skipped, so a recycled pane drops the old title', async () => {
+    const harness = makeHarness({
+      rows: [presentationRow()],
+      panes: [
+        {
+          surfaceId: 'surface-primary',
+          windowKey: 'default',
+          paneKey: 'agent:cody:project:hrc-runtime:task:primary#main',
+          runtimeId: 'rt-1',
+          scopeRef: SCOPE,
+        },
+      ],
+    })
+    await harness.viewer.reconcile('start')
+    expect(harness.secondaryHides).toContain('surface-primary')
+    expect(harness.secondaryCalls).toHaveLength(0)
+  })
+
+  test('a failed title read degrades to the last-known title and never blanks the bar', async () => {
+    const harness = taskHarness()
+    await harness.viewer.reconcile('start')
+    expect(harness.secondaryCalls).toHaveLength(1)
+
+    // Same viewer, now with wrkq answering nothing — a deleted id failing the
+    // whole batch, or wrkq gone from PATH.
+    const failing = taskHarness({ titleReadFails: true })
+    await failing.viewer.reconcile('start')
+    expect(failing.secondaryHides).toHaveLength(0)
+    // Never seen: no title to hold, so the bar is left exactly as it was.
+    expect(failing.secondaryCalls).toHaveLength(0)
+  })
+
+  test('a retitled task is restamped on the next reconcile with no lifecycle event', async () => {
+    const titles: Record<string, string> = { 'T-08259': 'before' }
+    const harness = makeHarness({
+      rows: [presentationRow({ scopeRef: TASK_SCOPE })],
+      panes: [
+        {
+          surfaceId: 'surface-task',
+          windowKey: 'default',
+          paneKey: TASK_PANE_KEY,
+          runtimeId: 'rt-1',
+          scopeRef: TASK_SCOPE,
+        },
+      ],
+      taskTitles: titles,
+    })
+    await harness.viewer.reconcile('start')
+    titles['T-08259'] = 'after'
+    await harness.viewer.reconcile('timer')
+    expect(harness.secondaryCalls.map((call) => call.left)).toEqual(['▸ before', '▸ after'])
+  })
+
+  test('a terminal runtime hides the bar so a lingering pane sheds its title', async () => {
+    const harness = taskHarness()
+    await harness.viewer.handleEvent(
+      event('runtime.terminated', { scopeRef: TASK_SCOPE, runtimeId: 'rt-1' })
+    )
+    expect(harness.secondaryHides).toContain('surface-task')
+  })
+
+  test('a pane with no presentation row hides the bar on its way to the reaper', async () => {
+    const harness = makeHarness({
+      panes: [
+        {
+          surfaceId: 'surface-orphan',
+          windowKey: 'default',
+          paneKey: TASK_PANE_KEY,
+          runtimeId: 'rt-gone',
+          scopeRef: TASK_SCOPE,
+        },
+      ],
+    })
+    await harness.viewer.reconcile('start')
+    expect(harness.secondaryHides).toContain('surface-orphan')
   })
 })

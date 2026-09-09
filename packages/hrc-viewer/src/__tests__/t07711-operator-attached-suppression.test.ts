@@ -237,6 +237,8 @@ function makeHarness(clients: readonly string[]) {
     async rebindHeadlessViewerPane() {},
     async setHeadlessViewerTitle() {},
     async setStatusBar() {},
+    async setSecondaryStatusBar() {},
+    async hideSecondaryStatusBar() {},
     async reapHeadlessAgentPane(surfaceId) {
       return { status: 'reaped', surfaceId, tabCollapsed: true }
     },
@@ -254,6 +256,10 @@ function makeHarness(clients: readonly string[]) {
     async probeTmuxClients(socketPath, attachTarget) {
       probeCalls.push({ socketPath, attachTarget })
       return clients
+    },
+    // No task in this scope, but keep the fixture off the real `wrkq` binary.
+    async readTaskTitles() {
+      return new Map<string, string>()
     },
   })
   return { viewer, createdCalls, probeCalls, logs }

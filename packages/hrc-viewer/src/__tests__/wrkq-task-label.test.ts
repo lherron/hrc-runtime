@@ -12,9 +12,11 @@ import { describe, expect, it } from 'bun:test'
 import {
   type WrkqRunResult,
   createTaskSlugResolver,
+  createTaskTitleReader,
   extractTaskIdFromScope,
   isPlaceholderTaskSlug,
   parseTaskSlug,
+  parseTaskTitles,
 } from '../wrkq-task-label.js'
 
 const ok = (stdout: string): WrkqRunResult => ({ stdout, stderr: '', exitCode: 0 })
@@ -199,5 +201,128 @@ describe('createTaskSlugResolver placeholder staleness (T-08028)', () => {
     const scope = 'agent:chief:project:hcs:task:T-08007'
     for (let i = 0; i < 5; i++) expect(await resolve(scope)).toBe('already-settled')
     expect(calls).toBe(1)
+  })
+})
+
+/**
+ * T-08331 — batched task-TITLE reads for the secondary status bar.
+ *
+ * `wrkq cat` takes many ids and resolves them across projects without
+ * `--project`, so one reconcile costs one subprocess. The trap is that ONE
+ * unknown id fails the WHOLE batch (`Error: task not found: T-99999`, exit 1) —
+ * a reaped task must never blank every pane at once.
+ */
+describe('createTaskTitleReader (T-08331)', () => {
+  const record = (id: string, title: string) => ({ id, title, slug: 'ignored' })
+  const batch = (...records: object[]): WrkqRunResult => ({
+    stdout: JSON.stringify(records),
+    stderr: '',
+    exitCode: 0,
+  })
+  const failed = (stderr: string): WrkqRunResult => ({ stdout: '', stderr, exitCode: 1 })
+
+  it('parses id -> trimmed title and drops records with no id or no title', () => {
+    const titles = parseTaskTitles(
+      JSON.stringify([
+        record('T-08219', '  hrc-viewer should populate second status bar  '),
+        { id: 'T-08259', title: '   ' },
+        { title: 'no id at all' },
+        { id: 'not-a-task-id', title: 'wrong shape' },
+        record('T-08296', 'clod work'),
+      ])
+    )
+    expect([...titles]).toEqual([
+      ['T-08219', 'hrc-viewer should populate second status bar'],
+      ['T-08296', 'clod work'],
+    ])
+  })
+
+  it('parses malformed JSON to an empty map instead of throwing', () => {
+    expect(parseTaskTitles('not json').size).toBe(0)
+    expect(parseTaskTitles('').size).toBe(0)
+  })
+
+  it('reads every id in ONE invocation, deduped and filtered to canonical ids', async () => {
+    const calls: string[][] = []
+    const read = createTaskTitleReader({
+      runner: async (ids) => {
+        calls.push([...ids])
+        return batch(record('T-08219', 'first'), record('T-08259', 'second'))
+      },
+    })
+
+    const titles = await read(['T-08219', 'T-08259', 'T-08219', 'primary', 'not-an-id'])
+
+    expect(calls).toEqual([['T-08219', 'T-08259']])
+    expect(titles.get('T-08219')).toBe('first')
+    expect(titles.get('T-08259')).toBe('second')
+  })
+
+  it('spawns nothing when no scope carried a canonical task id', async () => {
+    let calls = 0
+    const read = createTaskTitleReader({
+      runner: async () => {
+        calls++
+        return batch()
+      },
+    })
+    expect((await read(['primary', ''])).size).toBe(0)
+    expect(calls).toBe(0)
+  })
+
+  it('one unknown id fails the batch — the good ids are salvaged by per-id reads', async () => {
+    const calls: string[][] = []
+    const read = createTaskTitleReader({
+      runner: async (ids) => {
+        calls.push([...ids])
+        if (ids.length > 1) return failed('Error: task not found: T-99999')
+        if (ids[0] === 'T-99999') return failed('Error: task not found: T-99999')
+        return batch(record(ids[0] ?? '', `title for ${ids[0]}`))
+      },
+    })
+
+    const titles = await read(['T-08219', 'T-99999', 'T-08259'])
+
+    expect(calls[0]).toEqual(['T-08219', 'T-99999', 'T-08259'])
+    expect(calls).toHaveLength(4)
+    expect(titles.get('T-08219')).toBe('title for T-08219')
+    expect(titles.get('T-08259')).toBe('title for T-08259')
+    // The deleted id is ABSENT, not blank — the caller holds its last-known title.
+    expect(titles.has('T-99999')).toBe(false)
+  })
+
+  it('does not fan out when a single-id read fails', async () => {
+    let calls = 0
+    const read = createTaskTitleReader({
+      runner: async () => {
+        calls++
+        return failed('Error: task not found: T-99999')
+      },
+    })
+    expect((await read(['T-99999'])).size).toBe(0)
+    expect(calls).toBe(1)
+  })
+
+  it('never throws when the runner throws (missing wrkq, timeout)', async () => {
+    const read = createTaskTitleReader({
+      runner: async () => {
+        throw new Error('spawn wrkq ENOENT')
+      },
+    })
+    expect((await read(['T-08219'])).size).toBe(0)
+    expect((await read(['T-08219', 'T-08259'])).size).toBe(0)
+  })
+
+  it('takes whatever a zero-exit batch returned without fanning out', async () => {
+    let calls = 0
+    const read = createTaskTitleReader({
+      runner: async () => {
+        calls++
+        return batch(record('T-08219', 'first'))
+      },
+    })
+    const titles = await read(['T-08219', 'T-08259'])
+    expect(calls).toBe(1)
+    expect([...titles.keys()]).toEqual(['T-08219'])
   })
 })

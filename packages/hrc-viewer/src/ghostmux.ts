@@ -362,6 +362,17 @@ export type GhostmuxStatusBarSpec = {
   bg?: string | undefined
 }
 
+/**
+ * The Ghostty SECONDARY status-bar slot — the title bar that renders under the
+ * primary triplet (T-08331). No colours: hcs writes this slot uncoloured today
+ * and the two writers must overlap byte-identically until hcs stops (T-08332).
+ */
+export type GhostmuxSecondaryStatusBarSpec = {
+  left: string
+  center: string
+  right: string
+}
+
 export type HeadlessViewerResult =
   | { status: 'created'; surfaceId: string; tabKey: string }
   | { status: 'reused'; surfaceId: string; tabKey: string }
@@ -467,6 +478,21 @@ function isWindowsApiUnsupportedError(message: string): boolean {
 /** Status-bar fields are `|`-delimited on the wire; keep them single-line and `|`-free. */
 function sanitizeStatusField(value: string): string {
   return value.replace(/[|\r\n]+/g, ' ').trim()
+}
+
+/**
+ * Secondary-slot field sanitizing, byte-identical to hcs's `statusBarField`
+ * (`internal/ghost/client.go`): `|` becomes `/` — NOT a space, as the primary
+ * rule does — and each of `\n` `\r` `\t` becomes one space, then trim. The two
+ * writers stamp this slot simultaneously until T-08332 removes hcs's, so any
+ * divergence here shows up as a bar flapping between two renderings at two
+ * cadences.
+ */
+function sanitizeSecondaryStatusField(value: string): string {
+  return value
+    .replace(/\|/g, '/')
+    .replace(/[\n\r\t]/g, ' ')
+    .trim()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -637,6 +663,12 @@ export class GhostmuxManager {
   private statusBarUnsupported = false
   /** Separate memo: set once `set-bg` is seen to be unsupported (T-04439). */
   private setBgUnsupported = false
+  /**
+   * THIRD, separate memo: set once the SECONDARY slot is seen to be unsupported
+   * (T-08331). An older Ghostty that accepts a primary write and refuses
+   * `--bar secondary` must not switch the primary bar off as collateral.
+   */
+  private secondaryStatusBarUnsupported = false
   /**
    * Windows-API capability, probed at most once per daemon process (T-07121).
    * `undefined` until a DEFINITIVE answer is seen; a transient probe failure
@@ -1065,6 +1097,46 @@ export class GhostmuxManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (isUnsupportedCommandError(message)) this.statusBarUnsupported = true
+      // Cosmetic — never propagate.
+    }
+  }
+
+  /**
+   * Write the SECONDARY slot and make it visible (T-08331).
+   *
+   * `set` alone renders NOTHING — the secondary slot defaults to hidden — so
+   * `show` is part of the operation, not an optional follow-up. Single attempt,
+   * swallows every failure, and memoizes an unsupported secondary slot in its
+   * OWN flag: ghostmux refuses rather than falling back to the primary bar, so
+   * an `unsupported` answer is a capability fact, not a retryable failure.
+   */
+  async setSecondaryStatusBar(
+    surfaceId: string,
+    spec: GhostmuxSecondaryStatusBarSpec
+  ): Promise<void> {
+    if (this.secondaryStatusBarUnsupported) return
+    const text = [spec.left, spec.center, spec.right].map(sanitizeSecondaryStatusField).join('|')
+    try {
+      await this.exec(['statusbar', 'set', '-t', surfaceId, '--bar', 'secondary', text])
+      await this.exec(['statusbar', 'show', '-t', surfaceId, '--bar', 'secondary'])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isUnsupportedCommandError(message)) this.secondaryStatusBarUnsupported = true
+      // Cosmetic — never propagate.
+    }
+  }
+
+  /**
+   * Hide the SECONDARY slot, so a pane with no task — and a recycled pane whose
+   * previous occupant had one — never carries a stale title (T-08331).
+   */
+  async hideSecondaryStatusBar(surfaceId: string): Promise<void> {
+    if (this.secondaryStatusBarUnsupported) return
+    try {
+      await this.exec(['statusbar', 'hide', '-t', surfaceId, '--bar', 'secondary'])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isUnsupportedCommandError(message)) this.secondaryStatusBarUnsupported = true
       // Cosmetic — never propagate.
     }
   }

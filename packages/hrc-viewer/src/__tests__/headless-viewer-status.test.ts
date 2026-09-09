@@ -11,6 +11,7 @@ import { agentTheme } from '../agent-theme.js'
 import type { GhostmuxStatusBarSpec } from '../ghostmux.js'
 import {
   HeadlessViewerStatusProjector,
+  renderSecondaryStatusBar,
   renderStatusBar,
   viewerStateForEventKind,
   viewerTerminalBg,
@@ -291,5 +292,31 @@ describe('HeadlessViewerStatusProjector', () => {
     expect(Object.keys(projector as unknown as Record<string, unknown>)).not.toContain(
       'applyTerminalBackground'
     )
+  })
+})
+
+/**
+ * T-08331 — the secondary (title) bar. hcs's `secondaryBarFor` writes the TITLE
+ * alone into `left` behind a `▸ ` marker, with center and right empty, and hides
+ * the bar rather than stamping when there is nothing to say.
+ */
+describe('renderSecondaryStatusBar (T-08331)', () => {
+  it('puts `▸ <title>` in left and leaves center and right empty', () => {
+    expect(renderSecondaryStatusBar('hrc-viewer should populate second status bar')).toEqual({
+      left: '▸ hrc-viewer should populate second status bar',
+      center: '',
+      right: '',
+    })
+  })
+
+  it('trims the title before the marker, as hcs does', () => {
+    expect(renderSecondaryStatusBar('  create procelain surface for wrkp log  ')?.left).toBe(
+      '▸ create procelain surface for wrkp log'
+    )
+  })
+
+  it('answers null for an empty or blank title — hide, do not stamp a bare marker', () => {
+    expect(renderSecondaryStatusBar('')).toBeNull()
+    expect(renderSecondaryStatusBar('   ')).toBeNull()
   })
 })
