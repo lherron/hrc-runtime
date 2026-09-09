@@ -19,33 +19,37 @@ export type ParticipantAttemptState =
   | 'ABANDONED'
   | 'TERMINAL'
 
-const participantAttemptStateOrder: readonly ParticipantAttemptState[] = [
-  'REGISTERED',
-  'IDENTITY_MINTED',
-  'PREPARED',
-  'HOSTING_INTENT_PERSISTED',
-  'REALIZED',
-  'DISPATCH_FROZEN',
-  'INSTALL_CONFIRMED',
-  'INVOCATION_READY',
-  'ATTACH_CONFIRMED',
-  'ACTIVE',
-  'DETACHED',
-]
-
-const terminalParticipantAttemptStates = new Set<ParticipantAttemptState>([
-  'SUPERSEDED',
-  'ABANDONED',
-  'TERMINAL',
-])
+/**
+ * C.7 is a graph, not a rank. In particular, a detached participant returns
+ * through current attach confirmation; it does not mint a new user resume.
+ */
+const participantAttemptTransitions: Readonly<
+  Record<ParticipantAttemptState, readonly ParticipantAttemptState[]>
+> = {
+  REGISTERED: ['IDENTITY_MINTED'],
+  IDENTITY_MINTED: ['PREPARED', 'ABANDONED'],
+  PREPARED: ['HOSTING_INTENT_PERSISTED', 'ABANDONED'],
+  HOSTING_INTENT_PERSISTED: ['REALIZED', 'ABANDONED'],
+  REALIZED: ['DISPATCH_FROZEN', 'ABANDONED'],
+  DISPATCH_FROZEN: ['INSTALL_CONFIRMED', 'ABANDONED'],
+  INSTALL_CONFIRMED: ['INVOCATION_READY', 'ABANDONED'],
+  INVOCATION_READY: ['ATTACH_CONFIRMED', 'ABANDONED', 'TERMINAL'],
+  ATTACH_CONFIRMED: ['ABANDONED', 'TERMINAL'],
+  ACTIVE: ['DETACHED', 'ABANDONED', 'TERMINAL'],
+  DETACHED: ['ATTACH_CONFIRMED', 'ABANDONED', 'TERMINAL'],
+  SUPERSEDED: [],
+  ABANDONED: [],
+  TERMINAL: [],
+}
 
 function allowsParticipantAttemptTransition(
   from: ParticipantAttemptState,
-  to: ParticipantAttemptState
+  to: ParticipantAttemptState,
+  dispositionReason: string | undefined
 ): boolean {
-  if (from === to || terminalParticipantAttemptStates.has(from)) return false
-  if (terminalParticipantAttemptStates.has(to)) return true
-  return participantAttemptStateOrder.indexOf(to) > participantAttemptStateOrder.indexOf(from)
+  if (!participantAttemptTransitions[from].includes(to)) return false
+  if (to === 'ABANDONED' || to === 'TERMINAL') return dispositionReason !== undefined
+  return true
 }
 
 export type ParticipantRegistration = {
@@ -83,6 +87,8 @@ export type ParticipantAttempt = {
   realizedHostingJson?: string | undefined
   /** Full immutable dispatch tuple, frozen before the first ensure call. */
   dispatchJson?: string | undefined
+  /** Marks the one initial activation whose classification may release replay. */
+  initialActivationConfirmedAt?: string | undefined
   dispositionReason?: string | undefined
   createdAt: string
   updatedAt: string
@@ -117,6 +123,7 @@ type ParticipantAttemptRow = {
   hosting_intent_json: string | null
   realized_hosting_json: string | null
   dispatch_json: string | null
+  initial_activation_confirmed_at: string | null
   disposition_reason: string | null
   created_at: string
   updated_at: string
@@ -130,7 +137,8 @@ const REGISTRATION_COLUMNS = `
 const ATTEMPT_COLUMNS = `
   attempt_id, registration_id, attach_epoch, invocation_id, runtime_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
-  realized_hosting_json, dispatch_json, disposition_reason, created_at, updated_at`
+  realized_hosting_json, dispatch_json, initial_activation_confirmed_at,
+  disposition_reason, created_at, updated_at`
 
 function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistration {
   return {
@@ -172,6 +180,9 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
       ? {}
       : { realizedHostingJson: row.realized_hosting_json }),
     ...(row.dispatch_json === null ? {} : { dispatchJson: row.dispatch_json }),
+    ...(row.initial_activation_confirmed_at === null
+      ? {}
+      : { initialActivationConfirmedAt: row.initial_activation_confirmed_at }),
     ...(row.disposition_reason === null ? {} : { dispositionReason: row.disposition_reason }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -238,7 +249,7 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -250,6 +261,7 @@ export class ParticipantRegistrationRepository {
       record.hostingIntentJson ?? null,
       record.realizedHostingJson ?? null,
       record.dispatchJson ?? null,
+      record.initialActivationConfirmedAt ?? null,
       record.dispositionReason ?? null,
       record.createdAt,
       record.updatedAt
@@ -310,6 +322,41 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  /**
+   * Marks the sole activation allowed to classify continuity and release replay.
+   * `handleRegisterParticipant`'s future lifecycle transaction owns that
+   * classification; this repository only durably fences current attach proof.
+   */
+  confirmInitialActivation(attemptId: string, confirmedAt: string): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET state = 'ACTIVE', initial_activation_confirmed_at = ?, updated_at = ?
+          WHERE attempt_id = ?
+            AND state = 'ATTACH_CONFIRMED'
+            AND initial_activation_confirmed_at IS NULL`
+      )
+      .run(confirmedAt, confirmedAt, attemptId)
+    return result.changes === 1
+  }
+
+  /**
+   * Restores an already-active attempt after a new attach confirmation. It
+   * intentionally cannot run initial activation classification or release replay.
+   */
+  confirmReattachment(attemptId: string, confirmedAt: string): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET state = 'ACTIVE', updated_at = ?
+          WHERE attempt_id = ?
+            AND state = 'ATTACH_CONFIRMED'
+            AND initial_activation_confirmed_at IS NOT NULL`
+      )
+      .run(confirmedAt, attemptId)
+    return result.changes === 1
+  }
+
   transitionAttempt(
     attemptId: string,
     from: readonly ParticipantAttemptState[],
@@ -318,7 +365,9 @@ export class ParticipantRegistrationRepository {
     dispositionReason?: string
   ): boolean {
     if (from.length === 0) return false
-    if (!from.every((state) => allowsParticipantAttemptTransition(state, to))) return false
+    if (!from.every((state) => allowsParticipantAttemptTransition(state, to, dispositionReason))) {
+      return false
+    }
     const placeholders = from.map(() => '?').join(', ')
     const result = this.db
       .query(

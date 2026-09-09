@@ -3056,6 +3056,7 @@ const participantRegistrationLifecycleMigration: HrcMigration = {
         hosting_intent_json TEXT,
         realized_hosting_json TEXT,
         dispatch_json TEXT,
+        initial_activation_confirmed_at TEXT,
         disposition_reason TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
