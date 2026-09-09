@@ -294,6 +294,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       const servedIntent = JSON.parse(servedAttempt?.hostingIntentJson ?? '{}')
       expect(hostedIntent).toMatchObject({
         join: 'hrc-hosted',
+        presentation: { kind: 'none' },
         hrcHosted: {
           brokerDriver: 'codex-app-server',
           sessionName: expect.stringMatching(/^hrc-codex-app-server-rt-/),
@@ -302,6 +303,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       })
       expect(servedIntent).toMatchObject({
         join: 'participant-served',
+        presentation: { kind: 'none' },
         endpoint: { socketPath: `${fixture.tmpDir}/participant-served.sock` },
         lifecyclePolicy: expect.objectContaining({ policyId: expect.any(String) }),
       })

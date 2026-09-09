@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
@@ -21,6 +21,8 @@ import { getBrokerIpcSocketPath, getBrokerTmuxSocketPath } from './tmux-socket.j
 export type ParticipantHostingIntent = {
   schemaVersion: 'participant-hosting-intent/v1'
   join: ParticipantRegistration['join']
+  /** HRC-owned requested resource, distinct from broker process ownership. */
+  presentation: { kind: 'none' } | { kind: 'tmux-tui' }
   endpoint: {
     kind: 'unix-jsonrpc-ndjson'
     socketPath: string
@@ -31,11 +33,12 @@ export type ParticipantHostingIntent = {
   hrcHosted?: {
     brokerDriver: string
     brokerBinary: string
+    /** Exact executable argv; command is only the tmux shell rendering of this. */
+    brokerArgv: string[]
     brokerCommand: string
     tmuxSocketPath: string
     sessionName: string
     eventLedgerPath: string
-    presentation: 'none'
   }
 }
 
@@ -50,17 +53,37 @@ async function writeAttachTokenOnce(path: string, token: string): Promise<void> 
   // The permanent registration's roster lock serializes this. `wx` still makes
   // an accidental second token writer fail closed rather than replace evidence.
   try {
-    await writeFile(path, token, { mode: 0o600, flag: 'wx' })
-    await chmod(path, 0o600)
+    const handle = await open(path, 'wx', 0o600)
+    try {
+      await handle.writeFile(token, 'utf8')
+      await handle.chmod(0o600)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     // A process crash after token creation but before the SQLite boundary has
     // no authorized spawn. The identity-derived, owner-only file is safe to
     // retain and reference on retry, but an empty/torn credential is never
     // treated as a successful recovery.
-    if ((await readFile(path, 'utf8')).trim().length === 0) {
-      throw new Error('existing participant attach token is empty')
+    const existing = await open(path, 'r')
+    try {
+      if ((await existing.readFile({ encoding: 'utf8' })).trim().length === 0) {
+        throw new Error('existing participant attach token is empty')
+      }
+      await existing.sync()
+    } finally {
+      await existing.close()
     }
+  }
+  // File bytes alone are insufficient: persist the directory entry before its
+  // reference can be committed to SQLite and before any spawn is authorized.
+  const directoryHandle = await open(directory, 'r')
+  try {
+    await directoryHandle.sync()
+  } finally {
+    await directoryHandle.close()
   }
 }
 
@@ -90,6 +113,14 @@ export async function createParticipantHostingIntent(
     path: attachTokenPath,
     redacted: true,
   }
+  const presentation =
+    profile.brokerTerminal === undefined
+      ? ({ kind: 'none' } as const)
+      : profile.brokerTerminal.host === 'tmux'
+        ? ({ kind: 'tmux-tui' } as const)
+        : (() => {
+            throw new Error('participant profile requests an unsupported HRC presentation resource')
+          })()
 
   if (registration.join === 'participant-served') {
     if (registration.socketPath === undefined) {
@@ -98,6 +129,7 @@ export async function createParticipantHostingIntent(
     return {
       schemaVersion: 'participant-hosting-intent/v1',
       join: registration.join,
+      presentation,
       endpoint: {
         kind: 'unix-jsonrpc-ndjson',
         socketPath: registration.socketPath,
@@ -116,11 +148,31 @@ export async function createParticipantHostingIntent(
   )
   const sessionName = `hrc-${profile.brokerDriver}-${attempt.runtimeId}`
   const eventLedgerPath = join(dirname(brokerIpcSocketPath), 'events.ndjson')
-  const brokerCommand = `exec ${shellQuote(brokerBinary)} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${attempt.runtimeId} --host-session-id ${registration.hostSessionId} --generation ${registration.generation} --attach-token-file ${attachTokenPath} 2>${join(dirname(brokerIpcSocketPath), 'broker.err')}`
+  const brokerStderrPath = join(dirname(brokerIpcSocketPath), 'broker.err')
+  const brokerArgv = [
+    brokerBinary,
+    'run',
+    '--transport',
+    'unix',
+    '--socket',
+    brokerIpcSocketPath,
+    '--event-ledger',
+    eventLedgerPath,
+    '--runtime-id',
+    attempt.runtimeId,
+    '--host-session-id',
+    registration.hostSessionId,
+    '--generation',
+    String(registration.generation),
+    '--attach-token-file',
+    attachTokenPath,
+  ]
+  const brokerCommand = `exec ${brokerArgv.map(shellQuote).join(' ')} 2>${shellQuote(brokerStderrPath)}`
 
   return {
     schemaVersion: 'participant-hosting-intent/v1',
     join: registration.join,
+    presentation,
     endpoint: {
       kind: 'unix-jsonrpc-ndjson',
       socketPath: brokerIpcSocketPath,
@@ -131,11 +183,11 @@ export async function createParticipantHostingIntent(
     hrcHosted: {
       brokerDriver: profile.brokerDriver,
       brokerBinary,
+      brokerArgv,
       brokerCommand,
       tmuxSocketPath: btmuxSocketPath,
       sessionName,
       eventLedgerPath,
-      presentation: 'none',
     },
   }
 }
