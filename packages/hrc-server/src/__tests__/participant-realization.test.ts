@@ -14,10 +14,10 @@ import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { HarnessBrokerController } from '../broker/controller.js'
 import {
-  activateStagedParticipant,
   ensureAndStageParticipantAttach,
   ensureParticipantInvocation,
   installAndHelloParticipantBroker,
+  scheduleParticipantEstablishment,
 } from '../participant-establishment.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
 import { realizeAndFreezeParticipantDispatch } from '../participant-realization.js'
@@ -495,6 +495,8 @@ test('stages a current ensured participant without projection, ACK, or active pu
     brokerUnixClientFactory,
     harnessBrokerController: controller,
     ctx: { notifyEvent: () => undefined },
+    participantEstablishmentOperations: new Map<string, Promise<void>>(),
+    stopping: false,
   } as unknown as HrcServerInstanceForHandlers
   try {
     const hostedRegistration = registration('hrc-hosted')
@@ -549,12 +551,17 @@ test('stages a current ensured participant without projection, ACK, or active pu
       startRequestHash: hostedProfile.harnessInvocation.startRequestHash,
     })
 
-    const active = await activateStagedParticipant(server, hostedRegistration, staged)
-    expect(active).toMatchObject({
+    // Losing an unactivated candidate leaves the durable attempt staged. Its
+    // next callback must reconnect that same attempt instead of rerunning
+    // ensure or trying to release a missing candidate.
+    await controller.discardStagedParticipantAttach(hostedAttempt.attemptId)
+    scheduleParticipantEstablishment(server, hostedRegistration, staged)
+    await server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
       state: 'ACTIVE',
       initialActivationConfirmedAt: expect.any(String),
     })
-    expect(attachCalls).toBe(2)
+    expect(attachCalls).toBe(3)
     expect(replayCalls).toBe(1)
     expect(ackCalls).toBe(0)
     expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)?.runtimeStateJson).toMatchObject({
@@ -564,6 +571,17 @@ test('stages a current ensured participant without projection, ACK, or active pu
         classification: 'attached_unknown',
       },
     })
+
+    // An ordinary retry in the owning controller is a no-op: no extra attach
+    // and, critically, no activation attempt without a staged candidate.
+    scheduleParticipantEstablishment(
+      server,
+      hostedRegistration,
+      db.participantRegistrations.getAttempt(hostedAttempt.attemptId) ?? hostedAttempt
+    )
+    await server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    expect(attachCalls).toBe(3)
+    expect(replayCalls).toBe(1)
   } finally {
     controller.shutdown()
     db.close()

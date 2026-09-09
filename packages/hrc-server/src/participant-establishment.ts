@@ -601,8 +601,8 @@ async function stageExistingParticipantAttachment(
     attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
     if (attempt === null) throw new Error('participant attempt disappeared after detachment')
   }
-  if (attempt.state !== 'DETACHED') {
-    throw new Error('participant reattachment requires a detached durable attempt')
+  if (!['DETACHED', 'ATTACH_CONFIRMED'].includes(attempt.state)) {
+    throw new Error('participant reattachment requires a detached or staged durable attempt')
   }
   const installed = await installAndHelloParticipantBrokerDetails(server, registration, attempt)
   attempt = installed.attempt
@@ -627,14 +627,16 @@ async function stageExistingParticipantAttachment(
       attachToken,
       brokerInstanceId: acknowledgement.brokerInstanceId,
     })
-    const confirmed = server.db.participantRegistrations.transitionAttempt(
-      attempt.attemptId,
-      ['DETACHED'],
-      'ATTACH_CONFIRMED',
-      timestamp()
-    )
-    if (!confirmed)
-      throw new Error('participant reattach confirmation lost its current attempt fence')
+    if (attempt.state === 'DETACHED') {
+      const confirmed = server.db.participantRegistrations.transitionAttempt(
+        attempt.attemptId,
+        ['DETACHED'],
+        'ATTACH_CONFIRMED',
+        timestamp()
+      )
+      if (!confirmed)
+        throw new Error('participant reattach confirmation lost its current attempt fence')
+    }
   } catch (error) {
     await controller.discardStagedParticipantAttach(attempt.attemptId)
     throw error
@@ -782,10 +784,23 @@ export function scheduleParticipantEstablishment(
     .then(async () => {
       if (server.stopping) return
       const current = server.db.participantRegistrations.getAttempt(attempt.attemptId) ?? attempt
+      const controller = server.harnessBrokerController
+      if (
+        current.state === 'ACTIVE' &&
+        controller?.activeClientInvocationId(current.runtimeId) === current.invocationId
+      ) {
+        return
+      }
       const staged =
-        current.state === 'ACTIVE' || current.state === 'DETACHED'
+        current.state === 'ACTIVE' ||
+        current.state === 'DETACHED' ||
+        current.state === 'ATTACH_CONFIRMED'
           ? await stageExistingParticipantAttachment(server, registration, current)
           : await ensureAndStageParticipantAttach(server, registration, current)
+      // A same-process active binding has no staged candidate to release. A
+      // restart or candidate loss reaches ATTACH_CONFIRMED above and stages a
+      // fresh attachment before activation, so it cannot take this no-op path.
+      if (staged.state === 'ACTIVE') return
       await activateStagedParticipant(server, registration, staged)
     })
     .catch((error: unknown) => {
