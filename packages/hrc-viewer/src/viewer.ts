@@ -85,6 +85,8 @@ export type HrcViewerOptions = {
   lingerSeconds?: number | undefined
   reconcileIntervalMs?: number | undefined
   reconnectDelaysMs?: readonly number[] | undefined
+  /** How long a stream must survive before its end resets the backoff. */
+  streamStableAfterMs?: number | undefined
   now?: (() => number) | undefined
   schedule?: ((fn: () => void, ms: number) => ReturnType<typeof setTimeout>) | undefined
   clearScheduled?: ((handle: ReturnType<typeof setTimeout>) => void) | undefined
@@ -116,6 +118,16 @@ const DEFAULT_LINGER_SECONDS = 300
 const REAP_HANDOFF_MARGIN_SECONDS = 15
 const DEFAULT_RECONCILE_INTERVAL_MS = 5 * 60 * 1_000
 const DEFAULT_RECONNECT_DELAYS_MS = [0, 500, 1_000, 2_000, 4_000] as const
+/**
+ * How long `consumeStream` must survive before its end counts as a healthy
+ * stream ending rather than a failed reconnect (T-08296).
+ *
+ * `watchBoundedEvents` is BOUNDED: it closes on its own, and the loop turns
+ * every close into a throw. The failure counter therefore has to distinguish
+ * "ran for a while, then ended" from "closed immediately, again" — the latter
+ * is the shape that spins. Anything under this window escalates the backoff.
+ */
+const DEFAULT_STREAM_STABLE_AFTER_MS = 5_000
 const TERMINAL_EVENT_KINDS = new Set([
   'runtime.terminated',
   'runtime.dead',
@@ -190,6 +202,7 @@ export class HrcViewer {
   private readonly lingerSeconds: number
   private readonly reconcileIntervalMs: number
   private readonly reconnectDelaysMs: readonly number[]
+  private readonly streamStableAfterMs: number
   private readonly now: () => number
   private readonly schedule: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearScheduled: (handle: ReturnType<typeof setTimeout>) => void
@@ -216,6 +229,7 @@ export class HrcViewer {
       options.lingerSeconds ?? parseViewerLingerSeconds(process.env['HRC_VIEWER_LINGER_SECONDS'])
     this.reconcileIntervalMs = options.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS
     this.reconnectDelaysMs = options.reconnectDelaysMs ?? DEFAULT_RECONNECT_DELAYS_MS
+    this.streamStableAfterMs = options.streamStableAfterMs ?? DEFAULT_STREAM_STABLE_AFTER_MS
     this.now = options.now ?? Date.now
     this.schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearScheduled = options.clearScheduled ?? ((handle) => clearTimeout(handle))
@@ -240,22 +254,42 @@ export class HrcViewer {
     if (typeof reconcileTimer === 'object' && 'unref' in reconcileTimer) reconcileTimer.unref()
 
     let failures = 0
+    let everStarted = false
     try {
       while (!this.isStopped(signal)) {
+        let streamStartedAt: number | undefined
         try {
           await this.client.health()
           const tail = await this.client.tailEvents({ limit: 1 })
-          await this.reconcile(failures === 0 ? 'start' : 'reconnect')
-          failures = 0
+          await this.reconcile(everStarted ? 'reconnect' : 'start')
+          everStarted = true
+          streamStartedAt = this.now()
           await this.consumeStream(tail, signal)
           if (!this.isStopped(signal)) {
             throw new Error('bounded event stream closed')
           }
         } catch (error) {
           if (this.isStopped(signal)) break
-          this.warn('broker_headless_viewer.stream_failed', error)
+          // Reset the backoff only for a stream that actually ran. Resetting
+          // BEFORE consumeStream (the shape this replaces) meant a stream that
+          // closed immediately re-entered the catch with failures === 0, took
+          // reconnectDelaysMs[0] === 0, and reconnected with no delay at all —
+          // each iteration paying a full reconcile. The escalation could never
+          // engage for the one case it exists to damp.
+          const streamMs = streamStartedAt === undefined ? undefined : this.now() - streamStartedAt
+          if (streamMs !== undefined && streamMs >= this.streamStableAfterMs) {
+            failures = 0
+          }
           const index = Math.min(failures, this.reconnectDelaysMs.length - 1)
           const delayMs = this.reconnectDelaysMs[index] ?? 4_000
+          // Carry the backoff state on the warning: a reconnect storm is only
+          // legible in the log if each line says how long the stream lasted and
+          // how long the viewer is about to wait.
+          this.warn('broker_headless_viewer.stream_failed', error, {
+            failures,
+            delayMs,
+            ...(streamMs !== undefined ? { streamMs } : {}),
+          })
           failures += 1
           await this.delay(delayMs, signal)
         }
