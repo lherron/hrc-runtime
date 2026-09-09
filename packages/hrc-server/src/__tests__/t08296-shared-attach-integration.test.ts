@@ -315,6 +315,60 @@ async function whenOwnerInFlight(): Promise<void> {
 }
 
 describe('shared attach owner, real controller', () => {
+  it('uses external terminal law while the controller-held durable client still acknowledges', async () => {
+    const runId = 'run-t08296-external'
+    db.runs.insert({
+      runId,
+      hostSessionId: HOST_SESSION_ID,
+      runtimeId: RUNTIME_ID,
+      scopeRef: SCOPE,
+      laneRef: 'main',
+      generation: 1,
+      transport: 'headless',
+      status: 'running',
+      acceptedAt: NOW,
+      startedAt: NOW,
+      updatedAt: NOW,
+    })
+    db.runtimes.update(RUNTIME_ID, { activeRunId: runId, status: 'busy', updatedAt: NOW })
+    db.brokerInvocations.update(INVOCATION_ID, {
+      runId,
+      invocationState: 'turn_active',
+      updatedAt: NOW,
+    })
+
+    const attached = await attachDurableBrokerShared(db, runtime(), deps(false))
+    expect(attached.state).toBe('broker-attached')
+    const client = clients[0]
+    if (client === undefined) throw new Error('controller-held durable client was not created')
+
+    client.emit(
+      envelope('invocation.exited', 2, {
+        exitCode: 0,
+        signal: null,
+        reason: 'process-exit',
+      })
+    )
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const terminal = db.runtimes.getByRuntimeId(RUNTIME_ID)
+      if (terminal?.lifecycleTerminalReason === 'external_participant_exit') break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
+      status: 'terminated',
+      lifecycleTerminalReason: 'external_participant_exit',
+      activeRunId: runId,
+    })
+    expect(db.runs.getByRunId(runId)?.status).toBe('running')
+    expect(client.ackedThrough).toContain(2)
+    expect(
+      db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: RUNTIME_ID })
+        .some((event) => event.eventKind === 'runtime.crashed')
+    ).toBe(false)
+  })
+
   it('overlapped attaches leave ONE live subscription that projects and acks', async () => {
     const owner = attachDurableBrokerShared(db, runtime(), deps(true))
     await whenOwnerInFlight()

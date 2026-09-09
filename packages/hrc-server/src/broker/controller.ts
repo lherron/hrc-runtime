@@ -1699,7 +1699,7 @@ export class HarnessBrokerController {
         if (result.captureStateRefresh === true) {
           await this.refreshCaptureState(runtimeId, String(envelope.invocationId))
         }
-        this.afterMappedEvent(runtimeId, envelope, result, options)
+        this.afterMappedEvent(runtimeId, envelope, result)
         return
       } catch (error) {
         if (this.shuttingDown || isClosedDbError(error)) {
@@ -1977,8 +1977,7 @@ export class HarnessBrokerController {
   private afterMappedEvent(
     runtimeId: string,
     envelope: InvocationEventEnvelope,
-    result: BrokerProjectionResult,
-    options: { externalParticipant?: boolean | undefined } = {}
+    result: BrokerProjectionResult
   ): void {
     if (!result.idempotent) {
       const invocation = this.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
@@ -2037,22 +2036,24 @@ export class HarnessBrokerController {
       // provider never reports child exit.
     }
 
-    if (options.externalParticipant) {
-      if (envelope.type === 'invocation.exited') {
-        this.flushBrokerEventGapBackfill(String(envelope.invocationId))
-        markExternalParticipantInvocationTerminal(
-          this.lifecycleContext(),
-          runtimeId,
-          envelope,
-          result
-        )
-      }
-      // `invocation.failed` describes invocation state, not externally-owned
-      // process fate. Without the required clean `invocation.exited`, transport
-      // loss is classified by the EPR owner as detached, never broker-crashed.
+    // Terminal fate is a durable runtime ownership fact; controller possession
+    // remains solely an acknowledgement concern above. A desktop observer is
+    // controller-held but externally owned, so its clean exit must not fail the
+    // conversation's active run as though HRC had owned the process.
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    const externalLifecycle = runtime !== null && isExternalLifecycleOwner(runtime)
+    if (externalLifecycle && envelope.type === 'invocation.exited') {
+      this.flushBrokerEventGapBackfill(String(envelope.invocationId))
+      markExternalParticipantInvocationTerminal(
+        this.lifecycleContext(),
+        runtimeId,
+        envelope,
+        result
+      )
     } else if (
-      envelope.type === 'invocation.exited' ||
-      (envelope.type === 'invocation.failed' && !isRetryableInvocationFailure(envelope))
+      !externalLifecycle &&
+      (envelope.type === 'invocation.exited' ||
+        (envelope.type === 'invocation.failed' && !isRetryableInvocationFailure(envelope)))
     ) {
       this.flushBrokerEventGapBackfill(String(envelope.invocationId))
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result, {

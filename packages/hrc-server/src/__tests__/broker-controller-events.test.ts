@@ -230,6 +230,69 @@ describe('HarnessBrokerController', () => {
     ])
   })
 
+  it('uses external terminal law while retaining controller acknowledgement ownership', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const started = await controller.start({
+      ...makeStartInput(),
+      brokerClient: fake,
+      lifecycleOwner: 'external',
+    })
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 0, signal: null, reason: 'process-exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')).toMatchObject({
+      status: 'terminated',
+      lifecycleTerminalReason: 'external_participant_exit',
+      activeRunId: 'run_w2',
+    })
+    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+        .filter((event) => event.eventKind === 'runtime.crashed')
+    ).toHaveLength(0)
+  })
+
+  it('CONTROL: applies managed crash law to the same controller-held exit', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 0, signal: null, reason: 'process-exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('crashed')
+    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('failed')
+  })
+
   it('marks a runtime crashed when its active broker invocation exits abnormally', async () => {
     const fake = new FakeBrokerClient()
     fake.emitCloseOnClose = true
