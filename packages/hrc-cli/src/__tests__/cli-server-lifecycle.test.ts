@@ -64,10 +64,22 @@ describe('top-level commander help (Phase 6 T2b)', () => {
   })
 
   it('hrc run from a non-TTY fails before resolving or starting a runtime', async () => {
-    const result = await runCli(['run', 'rex@agent-spaces', '--dry-run'])
+    const result = await runCli(['run', 'rex@agent-spaces'])
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toContain('hrc run is interactive-only (no TTY detected)')
     expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
+  })
+
+  it('hrc run --dry-run is exempt from the interactive-only gate', async () => {
+    // A dry-run prints a local plan and returns without resolving a session,
+    // spawning a runtime, or attaching — so a pipe is a legitimate caller.
+    // There is no `rex` agent under this suite's agents root, so the dry-run
+    // gets as far as scope resolution and fails there. That failure is the
+    // discriminator: it can only be reached PAST the gate, so it proves the
+    // flag skipped the gate rather than that the gate silently did nothing.
+    const result = await runCli(['run', 'rex@agent-spaces', '--dry-run'])
+    expect(result.stderr).not.toContain('hrc run is interactive-only')
+    expect(result.stderr).toContain('agent "rex" not found')
   })
 
   it('hrc capture --help exposes broker capture control', async () => {

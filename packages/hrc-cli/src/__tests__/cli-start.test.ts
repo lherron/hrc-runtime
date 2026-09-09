@@ -403,3 +403,68 @@ describe('hrc start', () => {
     }
   }, 10000)
 })
+
+describe('hrc run --dry-run', () => {
+  beforeEach(async () => {
+    setServer(await createHrcServer(serverOpts()))
+    await seedRunRoots('rex', 'agent-spaces')
+    // A SOUL.md gives the compile something to materialize, so the preview has
+    // a real system prompt to frame rather than an empty one.
+    await writeFile(join(agentsRoot, 'rex', 'SOUL.md'), '# Rex\n\nRex is a test agent.\n', 'utf8')
+  })
+
+  /**
+   * The broker-plan branch is the branch every broker-driven agent takes, and
+   * it used to return before any prompt was rendered — `--dry-run` showed
+   * hashes and an elided `'<N chars>'` argv and nothing else. It must now frame
+   * the compiled prompts the way `asp run --dry-run` does AND keep every plan
+   * line it already emitted.
+   */
+  it('frames the compiled system prompt alongside the full broker plan', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    // The prompt itself, in full — not the `<N chars>` placeholder.
+    expect(result.stdout).toContain('System Prompt (replace)')
+    expect(result.stdout).toContain('Rex is a test agent.')
+    // Compiled launch environment and the command, as `asp run --dry-run` shows.
+    expect(result.stdout).toContain('── env ──')
+    expect(result.stdout).toContain(`ASP_AGENT_ROOT         ${join(agentsRoot, 'rex')}`)
+    expect(result.stdout).toContain('── command ──')
+    // Every pre-existing plan line survives.
+    expect(result.stdout).toContain('brokerPlan:   available')
+    expect(result.stdout).toContain('controller:   harness-broker')
+    expect(result.stdout).toContain('driver:       claude-code-tmux')
+    expect(result.stdout).toContain(
+      'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
+    )
+    expect(result.stdout).toContain('restartStyle: reuse_pty')
+    expect(result.stdout).toContain('specHash:     ')
+    expect(result.stdout).toContain('requestHash:  ')
+    expect(result.stdout).toContain('inputQueue:   fifo')
+    expect(result.stdout).not.toContain('broker plan build failed')
+  })
+
+  it('renders the priming prompt supplied on the command line', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run', '-p', 'probe the thing'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('Priming Prompt')
+    expect(result.stdout).toContain('probe the thing')
+    expect(result.stdout).toContain('initialPrompt: 15 chars')
+  })
+})

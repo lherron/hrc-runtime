@@ -220,7 +220,12 @@ export async function cmdRun(
     return
   }
 
-  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+  // `--dry-run` prints a local plan and returns; it never resolves a session,
+  // spawns a runtime, or attaches a terminal, so the interactive-only gate does
+  // not apply to it. Reading the plan (and the compiled prompts) from a pipe is
+  // the point of the flag.
+  const dryRun = hasFlag(args, '--dry-run')
+  if (!dryRun && (process.stdin.isTTY !== true || process.stdout.isTTY !== true)) {
     fatal(
       'hrc run is interactive-only (no TTY detected). To provision a non-interactive agent runtime use: hrc start <scope> [-p <prompt>]'
     )
@@ -229,7 +234,6 @@ export async function cmdRun(
   const scopeInput = requireArg(args, 0, '<scope>')
   const forceRestart = hasFlag(args, '--force-restart')
   const newSession = hasFlag(args, '--new-session')
-  const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
   const jsonOutput = hasFlag(args, '--json')
@@ -740,10 +744,34 @@ const PREVIEW_ENV_OVERRIDE_MAX_CHARS = 120
 type RunPreviewWriter = (s: string) => void
 
 /**
+ * Key-sorted env entries with long values elided, for the dry-run env block.
+ * Shared by the broker-plan and spec-build branches so both truncate alike.
+ */
+function previewEnvEntries(env: Record<string, string>): Array<[string, string]> {
+  return Object.keys(env)
+    .sort()
+    .map((key): [string, string] => {
+      const value = env[key] ?? ''
+      return [
+        key,
+        value.length > PREVIEW_ENV_VALUE_MAX_CHARS
+          ? `${value.slice(0, PREVIEW_ENV_VALUE_MAX_CHARS - 3)}...`
+          : value,
+      ]
+    })
+}
+
+/**
  * Render the broker-plan branch of the run dry-run preview. Returns `true` when
  * a broker plan was rendered (caller should stop), `false` to fall through to
- * the spec-build preview. Emitted lines are byte-identical to the prior inline
- * branch.
+ * the spec-build preview.
+ *
+ * Every plan line the prior version emitted is still emitted, verbatim, but
+ * they are now handed to `displayPrompts` as `betweenLines` so the branch also
+ * frames the compiled system and priming prompts the way `asp run --dry-run`
+ * does. Broker-driven agents are the normal route today, so this branch always
+ * won and the prompt-rendering branch below it had become unreachable — the
+ * regression this restores.
  */
 async function renderBrokerPlanPreview(
   w: RunPreviewWriter,
@@ -764,40 +792,82 @@ async function renderBrokerPlanPreview(
   if (!brokerPreview) {
     return false
   }
-  w('')
-  w('  brokerPlan:   available')
-  w(`  sessionRef:   ${sessionRef}`)
-  w(`  restartStyle: ${restartStyle}`)
-  w(`  controller:   ${brokerPreview.controllerKind}`)
-  w(`  driver:       ${brokerPreview.brokerDriver}`)
-  w(`  interaction:  ${brokerPreview.interactionMode}`)
-  w(`  agentRoot:    ${intent.placement.agentRoot}`)
-  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
-  w(`  provider:     ${intent.harness.provider}`)
-  w(`  profileId:    ${brokerPreview.profileId}`)
-  w(`  profileHash:  ${brokerPreview.profileHash}`)
-  w(`  specHash:     ${brokerPreview.specHash}`)
-  w(`  requestHash:  ${brokerPreview.startRequestHash}`)
-  w(`  cwd:          ${brokerPreview.process.cwd}`)
-  w(
-    `  command:      ${formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args)}`
+
+  // The compiled argv is authoritative: `--append-system-prompt` carries the
+  // exact bytes the harness will receive. `systemPromptFile` is the same
+  // content for harnesses that pass a path instead of an inline value.
+  const argvSystemPrompt = extractSystemPromptFromArgv(brokerPreview.process.args)
+  const fileSystemPrompt = readOptionalUtf8(brokerPreview.systemPromptFile)
+  const systemPrompt =
+    argvSystemPrompt ??
+    (fileSystemPrompt !== undefined
+      ? { content: fileSystemPrompt, mode: brokerPreview.systemPromptMode ?? 'append' }
+      : undefined)
+  const primingPrompt =
+    brokerPreview.primingPrompt ?? extractPrimingFromArgv(brokerPreview.process.args)
+
+  const lines: string[] = []
+  lines.push('  brokerPlan:   available')
+  lines.push(`  sessionRef:   ${sessionRef}`)
+  lines.push(`  restartStyle: ${restartStyle}`)
+  lines.push(`  controller:   ${brokerPreview.controllerKind}`)
+  lines.push(`  driver:       ${brokerPreview.brokerDriver}`)
+  lines.push(`  interaction:  ${brokerPreview.interactionMode}`)
+  lines.push(`  agentRoot:    ${intent.placement.agentRoot}`)
+  lines.push(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+  lines.push(`  provider:     ${intent.harness.provider}`)
+  lines.push(
+    `  model:        ${brokerPreview.model.modelId}${
+      brokerPreview.model.requestedModel !== undefined &&
+      brokerPreview.model.requestedModel !== brokerPreview.model.modelId
+        ? ` (requested ${brokerPreview.model.requestedModel})`
+        : ''
+    }`
   )
-  w(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
-  w(
+  lines.push(`  bundle:       ${brokerPreview.bundleIdentity}`)
+  lines.push(`  profileId:    ${brokerPreview.profileId}`)
+  lines.push(`  profileHash:  ${brokerPreview.profileHash}`)
+  lines.push(`  compileId:    ${brokerPreview.compileId}`)
+  lines.push(`  planHash:     ${brokerPreview.planHash}`)
+  lines.push(`  specHash:     ${brokerPreview.specHash}`)
+  lines.push(`  requestHash:  ${brokerPreview.startRequestHash}`)
+  lines.push(`  cwd:          ${brokerPreview.process.cwd}`)
+  lines.push(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
+  lines.push(
     `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : brokerPreview.launchInitialPromptLength !== undefined ? `${brokerPreview.launchInitialPromptLength} launch chars` : '(none)'}`
   )
-  w(`  inputQueue:   ${brokerPreview.inputQueue}`)
-  w(`  interrupt:    ${brokerPreview.interrupt}`)
+  lines.push(`  inputQueue:   ${brokerPreview.inputQueue}`)
+  lines.push(`  interrupt:    ${brokerPreview.interrupt}`)
   if (brokerPreview.resource) {
-    w(`  resource:     ${brokerPreview.resource}`)
+    lines.push(`  resource:     ${brokerPreview.resource}`)
+  }
+  if (brokerPreview.systemPromptFile !== undefined) {
+    lines.push(`  promptFile:   ${brokerPreview.systemPromptFile}`)
   }
   if (brokerPreview.warnings.length > 0) {
-    w('')
-    w('  warnings:')
+    lines.push('')
+    lines.push('  warnings:')
     for (const warning of brokerPreview.warnings) {
-      w(`    - ${warning}`)
+      lines.push(`    - ${warning}`)
     }
   }
+
+  const envBlock = renderKeyValueSection('env', previewEnvEntries(brokerPreview.env))
+  if (envBlock.length > 0) {
+    lines.push('')
+    lines.push(...envBlock)
+  }
+
+  await displayPrompts({
+    ...(systemPrompt !== undefined
+      ? { systemPrompt: systemPrompt.content, systemPromptMode: systemPrompt.mode }
+      : {}),
+    ...(primingPrompt !== undefined ? { primingPrompt } : {}),
+    betweenLines: lines,
+    command: formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args),
+    showCommand: true,
+  })
+
   w('')
   w('  Note: this preview compiles the broker plan locally and does not')
   w('  inspect existing runtime, PTY, or tmux state. Run without --dry-run to execute.')
@@ -834,18 +904,7 @@ async function renderSpecBuildPreview(
         : undefined)
     const primingPrompt =
       extractPrimingFromArgv(invocation.argv) ?? invocation.prompts?.priming?.content
-    const envEntries = Object.keys(invocation.env)
-      .sort()
-      .map((k): [string, string] => {
-        const val = invocation.env[k] ?? ''
-        return [
-          k,
-          val.length > PREVIEW_ENV_VALUE_MAX_CHARS
-            ? `${val.slice(0, PREVIEW_ENV_VALUE_MAX_CHARS - 3)}...`
-            : val,
-        ]
-      })
-    const envBlock = renderKeyValueSection('env', envEntries)
+    const envBlock = renderKeyValueSection('env', previewEnvEntries(invocation.env))
     const argvHead = invocation.argv[0] ?? ''
     const display = formatDisplayCommand(argvHead, invocation.argv.slice(1))
 

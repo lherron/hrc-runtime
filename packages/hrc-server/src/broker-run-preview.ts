@@ -37,6 +37,29 @@ export type BrokerRunPreview = {
   interrupt: string
   resource?: string | undefined
   warnings: string[]
+  /**
+   * Prompt + environment material from the compiled spec, so `--dry-run` can
+   * render the same framed system/priming prompts `asp run --dry-run` does.
+   *
+   * These are READ OFF the frozen compile result — the file at
+   * `systemPromptFile` is byte-identical to the `--append-system-prompt` value
+   * in `process.args`. Nothing here re-derives a prompt: a preview that
+   * recomputed the prompt would agree with its own mistake rather than with
+   * the plan that is actually about to launch.
+   */
+  systemPromptFile?: string | undefined
+  systemPromptMode?: 'append' | 'replace' | undefined
+  primingPrompt?: string | undefined
+  /** Compiled launch environment (`spec.process.lockedEnv`), values included. */
+  env: Record<string, string>
+  planHash: string
+  compileId: string
+  bundleIdentity: string
+  model: {
+    provider: string
+    modelId: string
+    requestedModel?: string | undefined
+  }
 }
 
 export async function buildBrokerRunPreview(
@@ -144,6 +167,26 @@ export async function buildBrokerRunPreview(
         ? { resource: 'runtime-owned broker tmux lease socket' }
         : {}),
       warnings,
+      ...(typeof spec.launch?.systemPromptFile === 'string'
+        ? { systemPromptFile: spec.launch.systemPromptFile }
+        : {}),
+      ...(spec.launch?.systemPromptMode === 'append' || spec.launch?.systemPromptMode === 'replace'
+        ? { systemPromptMode: spec.launch.systemPromptMode }
+        : {}),
+      ...(typeof launchInitialPrompt === 'string' && launchInitialPrompt.length > 0
+        ? { primingPrompt: launchInitialPrompt }
+        : {}),
+      env: { ...(spec.process.lockedEnv ?? {}) },
+      planHash: compiled.plan.planHash,
+      compileId: compiled.plan.compileId,
+      bundleIdentity: compiled.plan.resolvedBundle.bundleIdentity,
+      model: {
+        provider: compiled.plan.model.provider,
+        modelId: compiled.plan.model.modelId,
+        ...(compiled.plan.model.requestedModel !== undefined
+          ? { requestedModel: compiled.plan.model.requestedModel }
+          : {}),
+      },
     }
   } finally {
     await client?.close().catch(() => undefined)
