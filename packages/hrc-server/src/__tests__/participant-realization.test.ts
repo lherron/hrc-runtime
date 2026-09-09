@@ -1,0 +1,240 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, expect, test } from 'bun:test'
+
+import { createControlledParticipantAdapter } from 'agent-spaces/testing'
+import {
+  type ParticipantAttempt,
+  type ParticipantRegistration,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
+import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
+
+import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
+import { realizeAndFreezeParticipantDispatch } from '../participant-realization.js'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+
+const temporaryRoots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  )
+})
+
+type Window = {
+  socketPath: string
+  sessionName: string
+  windowName: string
+  sessionId: string
+  windowId: string
+  paneId: string
+}
+
+function fakeTmux() {
+  const windows = new Map<string, Window>()
+  const processes = new Map<string, { command: string; pid: number; dead: boolean }>()
+  const createCommands: string[] = []
+  let next = 1
+  const key = (sessionName: string, windowName: string) => `${sessionName}:${windowName}`
+  const makeWindow = (socketPath: string, sessionName: string, windowName: string): Window => {
+    const created: Window = {
+      socketPath,
+      sessionName,
+      windowName,
+      sessionId: `$${next}`,
+      windowId: `@${next}`,
+      paneId: `%${next}`,
+    }
+    next += 1
+    windows.set(key(sessionName, windowName), created)
+    return created
+  }
+  return {
+    createCommands,
+    manager: (opts: { socketPath: string }) => ({
+      initialize: async () => undefined,
+      inspectWindow: async (input: { sessionName: string; windowName: string }) =>
+        windows.get(key(input.sessionName, input.windowName)) ?? null,
+      createWindowWithCommand: async (input: {
+        sessionName: string
+        windowName: string
+        command: string
+      }) => {
+        createCommands.push(input.command)
+        const window = makeWindow(opts.socketPath, input.sessionName, input.windowName)
+        processes.set(window.paneId, { command: 'bun', pid: 83_349, dead: false })
+        return window
+      },
+      createOrInspectWindow: async (input: { sessionName: string; windowName: string }) => {
+        const existing = windows.get(key(input.sessionName, input.windowName))
+        return existing ?? makeWindow(opts.socketPath, input.sessionName, input.windowName)
+      },
+      inspectPaneProcess: async (paneId: string) => processes.get(paneId) ?? null,
+    }),
+  }
+}
+
+function registration(joinDirection: ParticipantRegistration['join']): ParticipantRegistration {
+  return {
+    registrationId: `registration-${joinDirection}`,
+    classId: `class-${joinDirection}`,
+    adapterId: 'controlled-participant',
+    join: joinDirection,
+    participantKey: `key-${joinDirection}`,
+    scopeRef: `agent:larry:project:hrc-runtime:task:participant-realization-${joinDirection}`,
+    laneRef: 'main',
+    hostSessionId: 'hsid-participant-realization',
+    generation: 1,
+    workspaceCwd: '/tmp/participant-workspace',
+    ...(joinDirection === 'participant-served' ? { socketPath: '/tmp/served.sock' } : {}),
+    preparationJson: '{}',
+    createdAt: '2026-09-09T22:30:00.000Z',
+    updatedAt: '2026-09-09T22:30:00.000Z',
+  }
+}
+
+function attempt(registrationId: string, runtimeId: string): ParticipantAttempt {
+  return {
+    attemptId: `attempt-${runtimeId}`,
+    registrationId,
+    attachEpoch: 1,
+    requestId: `req-${runtimeId}`,
+    operationId: `op-${runtimeId}`,
+    invocationId: `inv-${runtimeId}`,
+    runtimeId,
+    state: 'HOSTING_INTENT_PERSISTED',
+    createdAt: '2026-09-09T22:30:00.000Z',
+    updatedAt: '2026-09-09T22:30:00.000Z',
+  }
+}
+
+async function profileFor(
+  joinDirection: ParticipantRegistration['join'],
+  input: ParticipantAttempt
+): Promise<BrokerExecutionProfile> {
+  const adapter = createControlledParticipantAdapter({
+    adapterId: 'controlled-participant',
+    workspaceCwd: '/tmp/participant-workspace',
+    driver: 'noop-driver',
+  })
+  const prepared = await adapter.prepare({
+    classId: `class-${joinDirection}`,
+    join: joinDirection,
+    participantKey: `key-${joinDirection}`,
+    workspaceCwd: '/tmp/participant-workspace',
+    preparation: {},
+    identity: {
+      requestId: input.requestId,
+      operationId: input.operationId,
+      hostSessionId: 'hsid-participant-realization',
+      generation: 1,
+      runtimeId: input.runtimeId,
+      invocationId: input.invocationId,
+    },
+    scopeRef: 'agent:larry:project:hrc-runtime:task:participant-realization',
+    laneRef: 'main',
+    attachEpoch: 1,
+  })
+  if (prepared.status !== 'prepared') throw new Error('controlled profile was not prepared')
+  return prepared.profile
+}
+
+test('persists actual HRC leases then freezes the unchanged start request before any ensure', async () => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-realization-'))
+  temporaryRoots.push(runtimeRoot)
+  const db = openHrcDatabase(':memory:')
+  const tmux = fakeTmux()
+  const server = {
+    options: { runtimeRoot },
+    db,
+    generateBrokerAttachToken: () => 'realization-token',
+    brokerTmuxManagerFactory: tmux.manager,
+  } as unknown as HrcServerInstanceForHandlers
+  try {
+    const hostedRegistration = registration('hrc-hosted')
+    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-hosted')
+    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
+    const hostedIntent = await createParticipantHostingIntent(
+      server,
+      hostedRegistration,
+      hostedAttempt,
+      hostedProfile
+    )
+    db.participantRegistrations.insertRegistration(hostedRegistration)
+    db.participantRegistrations.insertAttempt({
+      ...hostedAttempt,
+      preparedProfileJson: JSON.stringify(hostedProfile),
+      adapterDispatchEnvJson: JSON.stringify({ ADAPTER_ONLY: 'kept' }),
+      hostingIntentJson: JSON.stringify(hostedIntent),
+    })
+
+    const frozenHosted = await realizeAndFreezeParticipantDispatch(
+      server,
+      hostedRegistration,
+      hostedAttempt
+    )
+    expect(frozenHosted).toMatchObject({ state: 'DISPATCH_FROZEN' })
+    const realizedHosted = JSON.parse(frozenHosted.realizedHostingJson ?? '{}')
+    const dispatchHosted = JSON.parse(frozenHosted.dispatchJson ?? '{}')
+    expect(realizedHosted).toMatchObject({
+      substrate: { kind: 'leased-tmux', brokerWindow: { paneId: '%1' }, pid: 83_349 },
+      presentation: { kind: 'none' },
+    })
+    expect(dispatchHosted).toMatchObject({
+      startRequest: hostedProfile.harnessInvocation.startRequest,
+      dispatchEnv: { ADAPTER_ONLY: 'kept' },
+      lifecyclePolicy: hostedIntent.lifecyclePolicy,
+    })
+    expect(dispatchHosted.runtime).toBeUndefined()
+    expect(tmux.createCommands).toEqual([hostedIntent.hrcHosted?.brokerCommand])
+    expect(
+      await realizeAndFreezeParticipantDispatch(server, hostedRegistration, frozenHosted)
+    ).toEqual(frozenHosted)
+    expect(tmux.createCommands).toHaveLength(1)
+
+    const servedRegistration = registration('participant-served')
+    const servedAttempt = attempt(servedRegistration.registrationId, 'rt-served')
+    const preparedServed = await profileFor('participant-served', servedAttempt)
+    const servedProfile: BrokerExecutionProfile = {
+      ...preparedServed,
+      interactionMode: 'interactive',
+      brokerTerminal: {
+        host: 'tmux',
+        startupMethod: 'create-terminal',
+        turnDelivery: 'terminal-literal-input',
+        operatorAttach: true,
+        exposurePolicy: { mode: 'broker-reports-target', targetKind: 'tmux-session' },
+      },
+    }
+    const servedIntent = await createParticipantHostingIntent(
+      server,
+      servedRegistration,
+      servedAttempt,
+      servedProfile
+    )
+    db.participantRegistrations.insertRegistration(servedRegistration)
+    db.participantRegistrations.insertAttempt({
+      ...servedAttempt,
+      preparedProfileJson: JSON.stringify(servedProfile),
+      adapterDispatchEnvJson: 'null',
+      hostingIntentJson: JSON.stringify(servedIntent),
+    })
+    const frozenServed = await realizeAndFreezeParticipantDispatch(
+      server,
+      servedRegistration,
+      servedAttempt
+    )
+    const dispatchServed = JSON.parse(frozenServed.dispatchJson ?? '{}')
+    expect(frozenServed).toMatchObject({ state: 'DISPATCH_FROZEN' })
+    expect(dispatchServed.runtime).toMatchObject({
+      terminalSurface: { kind: 'tmux-pane', ownership: 'hrc', paneId: expect.any(String) },
+      terminalSurfaceRequired: true,
+    })
+    expect(tmux.createCommands).toHaveLength(1)
+  } finally {
+    db.close()
+  }
+})
