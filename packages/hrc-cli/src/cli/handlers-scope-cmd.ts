@@ -840,8 +840,19 @@ async function renderBrokerPlanPreview(
   lines.push(`  requestHash:  ${brokerPreview.startRequestHash}`)
   lines.push(`  cwd:          ${brokerPreview.process.cwd}`)
   lines.push(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
+  // `launchInitialPromptLength` is the claude-route field; codex carries its
+  // priming as the initial user turn, so fall back to the resolved priming
+  // prompt rather than claiming "(none)" next to a rendered Priming Prompt.
   lines.push(
-    `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : brokerPreview.launchInitialPromptLength !== undefined ? `${brokerPreview.launchInitialPromptLength} launch chars` : '(none)'}`
+    `  initialPrompt: ${
+      prompt !== undefined
+        ? `${prompt.length} chars`
+        : brokerPreview.launchInitialPromptLength !== undefined
+          ? `${brokerPreview.launchInitialPromptLength} launch chars`
+          : primingPrompt !== undefined
+            ? `${primingPrompt.length} launch chars`
+            : '(none)'
+    }`
   )
   lines.push(`  inputQueue:   ${brokerPreview.inputQueue}`)
   lines.push(`  interrupt:    ${brokerPreview.interrupt}`)
