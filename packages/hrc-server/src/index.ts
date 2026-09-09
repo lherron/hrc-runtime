@@ -178,10 +178,7 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
-import {
-  ParticipantAdapterRegistry,
-  requireParticipantClassAdapters,
-} from './participant-adapter-registry.js'
+import { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
@@ -2938,7 +2935,6 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
   const registrationClasses = await resolveRegistrationClasses(options.registrationClasses)
   const participantAdapterRegistry =
     options.participantAdapterRegistry ?? new ParticipantAdapterRegistry([])
-  requireParticipantClassAdapters(participantAdapterRegistry, registrationClasses)
   const resolvedOptions: HrcServerOptions = {
     ...options,
     sqliteBusyTimeoutMs: resolveSqliteBusyTimeoutMs(options.sqliteBusyTimeoutMs),

@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { createControlledParticipantAdapter } from 'agent-spaces/testing'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
@@ -214,6 +215,48 @@ describe('T-08349 generic participant registration callback surface', () => {
     expect(admittedServed).toMatchObject({
       status: 200,
       body: { status: 'pending', reason: 'participant_activation_unavailable' },
+    })
+  })
+
+  test('keeps unavailable adapters pending without allocating or taking down EPR', async () => {
+    await start({
+      registrationClasses: [hostedClass, eprClass] as unknown as readonly RegistrationClassConfig[],
+    })
+
+    const unavailable = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: hostedClass.classId,
+        processToken: 'opaque-hosted-token',
+        participantKey: 'unavailable-adapter-key',
+      })
+    )
+    expect(unavailable).toMatchObject({
+      status: 200,
+      body: { status: 'pending', reason: 'participant_adapter_unavailable' },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      expect(
+        db.participantRegistrations.getRegistrationByClassAndKey(
+          hostedClass.classId,
+          'unavailable-adapter-key'
+        )
+      ).toBeNull()
+    } finally {
+      db.close()
+    }
+
+    const epr = await observe(
+      await fixture.postJson('/v1/registrations', {
+        classId: eprClass.classId,
+        socketPath: `${fixture.tmpDir}/epr-available.sock`,
+        provisioner: { name: 't08349-adapter-pending', version: '1', pid: 83_349 },
+      })
+    )
+    expect(epr).toMatchObject({
+      status: 200,
+      body: { registrationId: expect.stringMatching(/^registration-/) },
     })
   })
 

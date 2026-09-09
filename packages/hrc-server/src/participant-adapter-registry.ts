@@ -24,17 +24,3 @@ export class ParticipantAdapterRegistry {
     return this.#adapters.get(adapterId)
   }
 }
-
-export function requireParticipantClassAdapters(
-  adapters: ParticipantAdapterRegistry,
-  classes: readonly { classId: string; adapterId?: string | undefined }[]
-): void {
-  for (const registrationClass of classes) {
-    if (registrationClass.adapterId === undefined) continue
-    if (adapters.get(registrationClass.adapterId) === undefined) {
-      throw new Error(
-        `participant registration class "${registrationClass.classId}" references unavailable adapterId "${registrationClass.adapterId}"`
-      )
-    }
-  }
-}
