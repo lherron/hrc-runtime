@@ -241,6 +241,7 @@ export async function handleRegisterParticipant(
           hostSessionId,
           generation: 1,
           workspaceCwd: admitted.workspaceCwd,
+          ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
           preparationJson: serializedJson(admitted.preparation),
           ...(admitted.continuityEvidence === undefined
             ? {}

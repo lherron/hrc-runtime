@@ -63,6 +63,8 @@ export type ParticipantRegistration = {
   hostSessionId: string
   generation: number
   workspaceCwd: string
+  /** Participant-owned broker endpoint; absent for HRC-hosted participants. */
+  socketPath?: string | undefined
   /** Opaque, JSON-serialized adapter admission output. */
   preparationJson: string
   /** Opaque, JSON-serialized continuity evidence, when the adapter supplied it. */
@@ -107,6 +109,7 @@ type ParticipantRegistrationRow = {
   host_session_id: string
   generation: number
   workspace_cwd: string
+  serving_socket_path: string | null
   preparation_json: string
   continuity_evidence_json: string | null
   created_at: string
@@ -136,7 +139,7 @@ type ParticipantAttemptRow = {
 const REGISTRATION_COLUMNS = `
   registration_id, class_id, adapter_id, join_direction, participant_key,
   scope_ref, lane_ref, host_session_id, generation, workspace_cwd,
-  preparation_json, continuity_evidence_json, created_at, updated_at`
+  serving_socket_path, preparation_json, continuity_evidence_json, created_at, updated_at`
 
 const ATTEMPT_COLUMNS = `
   attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
@@ -156,6 +159,7 @@ function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistrati
     hostSessionId: row.host_session_id,
     generation: row.generation,
     workspaceCwd: row.workspace_cwd,
+    ...(row.serving_socket_path === null ? {} : { socketPath: row.serving_socket_path }),
     preparationJson: row.preparation_json,
     ...(row.continuity_evidence_json === null
       ? {}
@@ -210,7 +214,7 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registrations (${REGISTRATION_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.registrationId,
       record.classId,
       record.adapterId,
@@ -221,6 +225,7 @@ export class ParticipantRegistrationRepository {
       record.hostSessionId,
       record.generation,
       record.workspaceCwd,
+      record.socketPath ?? null,
       record.preparationJson,
       record.continuityEvidenceJson ?? null,
       record.createdAt,

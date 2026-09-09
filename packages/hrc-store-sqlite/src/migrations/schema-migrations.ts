@@ -3033,6 +3033,7 @@ const participantRegistrationLifecycleMigration: HrcMigration = {
         host_session_id TEXT NOT NULL,
         generation INTEGER NOT NULL CHECK (generation >= 1),
         workspace_cwd TEXT NOT NULL,
+        serving_socket_path TEXT,
         preparation_json TEXT NOT NULL,
         continuity_evidence_json TEXT,
         created_at TEXT NOT NULL,

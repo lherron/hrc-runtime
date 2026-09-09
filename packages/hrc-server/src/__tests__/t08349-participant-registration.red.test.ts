@@ -268,6 +268,12 @@ describe('T-08349 generic participant registration callback surface', () => {
         runtimeId: expect.stringMatching(/^rt-/),
         preparedProfileJson: expect.stringContaining(hostedClass.classId),
       })
+      expect(
+        db.participantRegistrations.getRegistrationByClassAndKey(
+          participantServedClass.classId,
+          'served-permanent-key'
+        )
+      ).toMatchObject({ socketPath: `${fixture.tmpDir}/participant-served.sock` })
     } finally {
       db.close()
     }

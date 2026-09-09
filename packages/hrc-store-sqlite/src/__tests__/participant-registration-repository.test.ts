@@ -18,6 +18,7 @@ const registration = (): ParticipantRegistration => ({
   hostSessionId: 'hsid-participant-1',
   generation: 1,
   workspaceCwd: '/tmp/workspace',
+  socketPath: '/tmp/participant.sock',
   preparationJson: '{"opaque":true}',
   continuityEvidenceJson: '{"continuity":"known"}',
   createdAt: '2026-09-09T21:10:00.000Z',
