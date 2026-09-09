@@ -175,20 +175,16 @@ function assertCommittedHostedWriter(
   if (process.dead || process.pid <= 0) {
     throw new Error('participant broker did not realize a live process')
   }
-  // `pane_current_command` is only a basename. The generic OS command line is
-  // required to bind an incumbent to the pre-persisted executable and argv;
-  // otherwise a same-named zsh or unrelated bun could be blessed as our writer.
+  // The shipped broker is a Bun shebang script. macOS `ps` reports its post-exec
+  // form as `bun <persisted-script-argv...>`; it does not expose a structured
+  // argv vector. Compare that observed representation as a complete value, not
+  // as a token parser or a substring predicate. This makes it only a live
+  // process candidate check: installIdentity below remains the broker-owned
+  // identity authority before this attempt may ensure an invocation.
   const commandLine = process.commandLine
-  if (commandLine === undefined) {
+  const expectedCommandLine = `bun ${hosted.brokerArgv.join(' ')}`
+  if (process.command !== 'bun' || commandLine !== expectedCommandLine) {
     throw new Error('participant broker writer does not match the committed launch identity')
-  }
-  let cursor = 0
-  for (const argument of hosted.brokerArgv) {
-    const next = commandLine.indexOf(argument, cursor)
-    if (next === -1) {
-      throw new Error('participant broker writer does not match the committed launch identity')
-    }
-    cursor = next + argument.length
   }
 }
 

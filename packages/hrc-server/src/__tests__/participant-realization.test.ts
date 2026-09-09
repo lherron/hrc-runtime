@@ -40,6 +40,7 @@ function fakeTmux() {
     { command: string; pid: number; dead: boolean; commandLine?: string }
   >()
   const createCommands: string[] = []
+  let nextBrokerCommandLine: string | undefined
   let next = 1
   const key = (sessionName: string, windowName: string) => `${sessionName}:${windowName}`
   const makeWindow = (socketPath: string, sessionName: string, windowName: string): Window => {
@@ -57,6 +58,9 @@ function fakeTmux() {
   }
   return {
     createCommands,
+    setNextBrokerCommandLine: (commandLine: string) => {
+      nextBrokerCommandLine = commandLine
+    },
     seedWindow: (
       socketPath: string,
       sessionName: string,
@@ -82,7 +86,7 @@ function fakeTmux() {
           command: 'bun',
           pid: 83_349,
           dead: false,
-          commandLine: input.command,
+          commandLine: nextBrokerCommandLine,
         })
         return window
       },
@@ -181,6 +185,10 @@ test('persists actual HRC leases then freezes the unchanged start request before
       hostedAttempt,
       hostedProfile
     )
+    if (hostedIntent.hrcHosted === undefined) throw new Error('expected hosted intent')
+    // The isolated hosted-broker probe records macOS's post-shebang `ps`
+    // representation: the shipped executable appears as `bun <script argv>`.
+    tmux.setNextBrokerCommandLine(`bun ${hostedIntent.hrcHosted.brokerArgv.join(' ')}`)
     db.participantRegistrations.insertRegistration(hostedRegistration)
     db.participantRegistrations.insertAttempt({
       ...hostedAttempt,
@@ -272,7 +280,7 @@ test('persists actual HRC leases then freezes the unchanged start request before
   }
 })
 
-test('refuses an incumbent broker pane that cannot prove the committed launch identity', async () => {
+test('refuses an incumbent broker whose attach-token path differs from the committed argv', async () => {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-incumbent-'))
   temporaryRoots.push(runtimeRoot)
   const db = openHrcDatabase(':memory:')
@@ -299,7 +307,7 @@ test('refuses an incumbent broker pane that cannot prove the committed launch id
       command: 'bun',
       pid: 91_234,
       dead: false,
-      commandLine: 'bun unrelated-worker.js',
+      commandLine: `bun ${hosted.brokerArgv.join(' ')}-different`,
     })
     db.participantRegistrations.insertRegistration(hostedRegistration)
     db.participantRegistrations.insertAttempt({
