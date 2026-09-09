@@ -7,6 +7,28 @@ predicate: >
   HRC owns generic process hosting, registration addresses, sessions, attempt
   identity, and activation; ASP adapters and brokers own harness discovery,
   admission, native identity, normalization, and native lifetime evidence.
+  A trusted static ASP adapter registry supplies admission before HRC allocates
+  identity; unavailable adapters return pending without allocation. Admission
+  may discover read-only evidence but cannot spawn, write native input, assign
+  HRC identity, or authorize replacement. HRC commits the admitted key, workspace,
+  and opaque JSON preparation with its attempt identity before requesting
+  preparation. Adapter preparation returns only the existing broker execution
+  profile and optional dispatch environment, never runtime handles or lifecycle
+  policy. HRC verifies structure, identity, and hashes without harness-specific
+  selector predicates. The existing brokerOwnership field must agree with join:
+  hrc-owned-process for hosted and participant-owned-process for participant-served.
+  Three boundaries remain distinct: freeze the validated ASP result before
+  hosting; persist HRC hosting intent including its selected lifecycle policy
+  before realization, then persist actual or rediscovered leases; finally compose
+  and atomically persist the complete dispatch before scheduling the first ensure.
+  HRC alone constructs runtime overlays from actual leases and composes resource
+  environment values under existing environment ownership and locked-env checks.
+  The broker pane is never an operator presentation pane. Ensure retries use the
+  exact frozen tuple; policy reload or missing resources cannot edit it under the
+  same start attempt. Participant-served join spawns no broker through HRC; any
+  required HRC presentation resource is independently realized or refused without
+  fabricating ownership. A controlled ASP adapter proves both joins through the
+  installed Phase 2 path; native Phase 3 and direct-lowering proofs remain separate.
   Hosted and participant-served brokers share the registration lifecycle with
   declared address and continuity policies. A permanent key retains its scope,
   host session, and generation across native host restart and observer replacement;
@@ -46,10 +68,11 @@ predicate: >
   remain unchanged. This architecture approval does not authorize implementation
   or accept final-tail loss; Phase 5 completeness requires its separately verified
   retention and catch-up contract without dependence on a future user resume.
-authority: Daedalus approval of T-08344 DESIGN.md rev 6, C-21192 / EN-08780, 2026-09-09
+authority: Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09
 source:
   - wrkq:T-08344
   - commit:8f1b61c77f89cbe415fdebab9336ff460e59fc55
+  - commit:c4d37069bdb7ef44e04bf84596b7a8944db63787
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
@@ -59,7 +82,10 @@ source:
   - packages/hrc-server/src/broker/controller/dispatch.ts
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts
+  - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
+  - T-08344 adapter seam rejects unknown adapters foreign identity hash mismatches ownership mismatches and adapter runtime or lifecycle-policy fields before effects
+  - T-08344 hosted presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
   - T-08344 both join directions register establish a resident invocation attach terminate and resume through the generic path
   - T-08344 C.5.1 concurrent duplicate lost-response request-conflict and crash-boundary receipt gates preserve at-most-once driver start and truthful indeterminate outcomes
   - T-08344 C.5.2 spawn-before-completion recovery preserves credential bytes and exactly one broker process and window
@@ -69,8 +95,9 @@ required_tests:
   - T-08344 permanent-address legacy-observer alias and unchanged EPR regression gates
 last_verified:
   date: 2026-09-09
-  evidence: C-21192 source-grounded architecture approval against pinned HRC 8f1b61c and ASP f047c896; implementation gates not run and remain pending; Phase 5 completeness withheld
+  evidence: C-21192 approved rev6 against HRC 8f1b61c and ASP f047c896; C-21247 approved adapter seam rev2 against HRC c4d37069 and ASP b6f9dd70 by source reading; implementation gates not run and remain pending; Phase 5 completeness withheld
 reopen_when:
+  - adapter registry admission preparation ownership or the pre-hosting post-realization and pre-ensure persistence boundaries change
   - registration policy session identity or HRC versus adapter authority changes
   - resident-invocation receipt idempotency hosting rediscovery or uncertain-start recovery changes
   - successor admission irreversible retirement pending-input exclusion or epoch fencing changes
