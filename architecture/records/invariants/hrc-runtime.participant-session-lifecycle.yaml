@@ -1,0 +1,81 @@
+id: hrc-runtime.participant-session-lifecycle
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: generic participant registration, observer attempts, session continuity, and recovery under T-08344
+predicate: >
+  HRC owns generic process hosting, registration addresses, sessions, attempt
+  identity, and activation; ASP adapters and brokers own harness discovery,
+  admission, native identity, normalization, and native lifetime evidence.
+  Hosted and participant-served brokers share the registration lifecycle with
+  declared address and continuity policies. A permanent key retains its scope,
+  host session, and generation across native host restart and observer replacement;
+  registration remains durable when observation is unavailable. Each durable
+  attempt has one invocation identity. Identity installation, hello, resident
+  invocation establishment, attach confirmation, and activation are distinct.
+  HRC persists the immutable start request and dispatch options before requesting
+  resident establishment. Broker-owned durable start receipts serialize matching
+  retries, refuse conflicting reuse, and record starting before driver side
+  effects. Lost replies never repeat driver.start; uncertain restart or a started
+  receipt without its resident invocation remains indeterminate until broker or
+  adapter evidence reconciles or retires the attempt. Hosted creation persists
+  identity, paths, command, and credential before spawn; serialized rediscovery
+  bypasses credential rewrites and duplicate window creation, and an unverifiable
+  incumbent blocks. Live or pending attempts cannot be superseded by ordinary
+  registration. An epoch is a concurrency precondition, not replacement authority.
+  Successor admission requires an absorbing prior disposition and broker-owned
+  irreversible retirement or verified prior writer death. Retirement closes every
+  path to new native writes before acknowledgement. Retry exhaustion, transport
+  loss, and an empty unresolved-write store do not prove retirement. Unresolved
+  input remains independently broker-fenced across replacement without resend,
+  cancellation, inferred outcome, or manufactured turn failure. Epochs fence
+  control and outbox work, not validated historical evidence. Activation requires
+  the current attempt's confirmed attach and commits its binding classification
+  once. Unknown continuity evidence preserves known evidence and emits no resume;
+  first known evidence attaches, unchanged known evidence replaces, and changed
+  known evidence resumes under the same session. Replay remains durable and
+  unacknowledged until projected; successor replay is released only after
+  activation and prior recovery reconciled or explicitly abandoned with a reason.
+  Recovery projects committed prior-invocation evidence without restoring its
+  control authority, repairing its ledger, or mutating retention acknowledgements.
+  A recovered producer terminal is distinct from broker loss with unknown native
+  outcome. External process-fate law follows durable lifecycle ownership, while
+  acknowledgement ownership follows the controlling client. Legacy observers
+  without native lifetime capability remain not-activated and emit no invented
+  resume. EPR grant behavior and the direct agent-harness resource-loader boundary
+  remain unchanged. This architecture approval does not authorize implementation
+  or accept final-tail loss; Phase 5 completeness requires its separately verified
+  retention and catch-up contract without dependence on a future user resume.
+authority: Daedalus approval of T-08344 DESIGN.md rev 6, C-21192 / EN-08780, 2026-09-09
+source:
+  - wrkq:T-08344
+  - commit:8f1b61c77f89cbe415fdebab9336ff460e59fc55
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
+  - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
+  - packages/hrc-server/src/desktop/registration.ts
+  - packages/hrc-server/src/desktop/observer-attachment.ts
+  - packages/hrc-server/src/desktop/observer-supervisor.ts
+  - packages/hrc-server/src/broker/controller/dispatch.ts
+  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
+  - packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts
+required_tests:
+  - T-08344 both join directions register establish a resident invocation attach terminate and resume through the generic path
+  - T-08344 C.5.1 concurrent duplicate lost-response request-conflict and crash-boundary receipt gates preserve at-most-once driver start and truthful indeterminate outcomes
+  - T-08344 C.5.2 spawn-before-completion recovery preserves credential bytes and exactly one broker process and window
+  - T-08344 retirement discriminator rejects old-owner writes before and after successor claim completion while unresolved input remains independently protected
+  - T-08344 activation and recovery gates preserve same-session identity attachment-before-resume exactly-once publication durable staged replay and historical-control isolation
+  - T-08344 E.8 direct headless and interactive modes work with ASPC unavailable and no compile RPC preserving drivers resources and continuation
+  - T-08344 permanent-address legacy-observer alias and unchanged EPR regression gates
+last_verified:
+  date: 2026-09-09
+  evidence: C-21192 source-grounded architecture approval against pinned HRC 8f1b61c and ASP f047c896; implementation gates not run and remain pending; Phase 5 completeness withheld
+reopen_when:
+  - registration policy session identity or HRC versus adapter authority changes
+  - resident-invocation receipt idempotency hosting rediscovery or uncertain-start recovery changes
+  - successor admission irreversible retirement pending-input exclusion or epoch fencing changes
+  - activation classification historical recovery replay release or acknowledgement ownership changes
+  - EPR compatibility direct-resource-loader independence or legacy migration semantics change
+  - final-tail retention and catch-up design is submitted for Phase 5 completeness verification
+supersedes: []
+superseded_by: []
