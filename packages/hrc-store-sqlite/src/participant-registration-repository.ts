@@ -270,6 +270,16 @@ export class ParticipantRegistrationRepository {
     return row === null ? null : mapAttempt(row)
   }
 
+  listAttemptsByRegistrationId(registrationId: string): ParticipantAttempt[] {
+    const rows = this.db
+      .query<ParticipantAttemptRow, [string]>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
+         WHERE registration_id = ? ORDER BY attach_epoch ASC, attempt_id ASC`
+      )
+      .all(registrationId)
+    return rows.map(mapAttempt)
+  }
+
   countRegistrationsByClassId(classId: string): number {
     const row = this.db
       .query<{ count: number }, [string]>(

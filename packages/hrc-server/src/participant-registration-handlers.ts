@@ -12,6 +12,7 @@ import {
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
+import { scheduleParticipantEstablishment } from './participant-establishment.js'
 import { createParticipantHostingIntent } from './participant-hosting-intent.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
@@ -441,6 +442,16 @@ export async function handleRegisterParticipant(
       return registeredResponse(resolvedRegistration, created, withHostingIntent)
     }
   )
+  if (result.status === 'registered') {
+    const registration = this.db.participantRegistrations.getRegistrationByScopeRef(result.scopeRef)
+    const attempt =
+      registration === null
+        ? null
+        : this.db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
+    if (registration !== null && attempt !== null) {
+      scheduleParticipantEstablishment(this, registration, attempt)
+    }
+  }
   return json(result)
 }
 

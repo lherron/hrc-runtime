@@ -581,6 +581,34 @@ export type BrokerControllerAttachResult =
       error: BrokerControllerError
     }
 
+/**
+ * Pre-activation attach for a generic participant. The controller keeps its
+ * own incarnation private; callers provide only the durable participant and
+ * broker identities that must agree before a candidate can be retained.
+ */
+export type BrokerControllerParticipantStageInput = {
+  attemptId: string
+  attachEpoch: number
+  runtimeId: string
+  invocationId: string
+  socketPath: string
+  attachToken: string
+  brokerInstanceId: string
+}
+
+export type BrokerControllerParticipantStageResult = {
+  brokerInstanceId: string
+  currentSeq: number
+  retentionFloorSeq: number
+  lastProjectedSeq: number
+}
+
+export type BrokerControllerParticipantActivationInput = {
+  attemptId: string
+  runtimeId: string
+  attachToken: string
+}
+
 export type BrokerControllerRpcResult<T> =
   | { ok: true; response: T }
   | { ok: false; error: BrokerControllerError }

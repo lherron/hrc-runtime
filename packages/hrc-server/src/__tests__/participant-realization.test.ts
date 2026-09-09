@@ -12,7 +12,10 @@ import {
 } from 'hrc-store-sqlite'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
+import { HarnessBrokerController } from '../broker/controller.js'
 import {
+  activateStagedParticipant,
+  ensureAndStageParticipantAttach,
   ensureParticipantInvocation,
   installAndHelloParticipantBroker,
 } from '../participant-establishment.js'
@@ -373,6 +376,196 @@ test('persists actual HRC leases then freezes the unchanged start request before
     })
     expect(tmux.createCommands).toHaveLength(1)
   } finally {
+    db.close()
+  }
+})
+
+test('stages a current ensured participant without projection, ACK, or active publication', async () => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-stage-'))
+  temporaryRoots.push(runtimeRoot)
+  const db = openHrcDatabase(':memory:')
+  const tmux = fakeTmux()
+  let attachCalls = 0
+  let replayCalls = 0
+  let ackCalls = 0
+  const brokerUnixClientFactory = async () =>
+    ({
+      installIdentity: async (identity: {
+        runtimeId: string
+        hostSessionId: string
+        generation: number
+        attachEpoch: number
+        invocationId: string
+      }) => ({
+        installed: true as const,
+        brokerInstanceId: 'broker-stage-1',
+        runtimeId: identity.runtimeId,
+        hostSessionId: identity.hostSessionId,
+        generation: identity.generation,
+        attachEpoch: identity.attachEpoch,
+        invocationId: identity.invocationId,
+        installedAt: '2026-09-09T23:40:00.000Z',
+      }),
+      hello: async () => ({
+        protocolVersion: 'harness-broker/0.2' as const,
+        capabilities: {},
+        drivers: [],
+      }),
+      ensureInvocation: async (request: {
+        startAttemptId: string
+        invocationId: string
+        attachEpoch: number
+      }) => ({
+        receipt: {
+          startAttemptId: request.startAttemptId,
+          invocationId: request.invocationId,
+          attachEpoch: request.attachEpoch,
+          state: 'started' as const,
+          requestDigest: 'ensure-stage-digest',
+          brokerInstanceId: 'broker-stage-1',
+          updatedAt: '2026-09-09T23:40:01.000Z',
+        },
+      }),
+      attach: async (request: { runtimeId: string; generation: number; invocationId: string }) => {
+        attachCalls += 1
+        return {
+          attached: true as const,
+          brokerInstanceId: 'broker-stage-1',
+          runtimeId: request.runtimeId,
+          generation: request.generation,
+          invocationId: request.invocationId,
+          activeControllerInstanceId: 'participant-stage-controller',
+          currentSeq: 3,
+          retentionFloorSeq: 1,
+          snapshot: {
+            invocationId: request.invocationId,
+            state: 'ready',
+            capabilities: {},
+            pendingInputIds: [],
+            inputDispositions: {},
+            pendingPermissionRequests: [],
+            seat: { state: 'available' },
+            brokerQueue: [],
+            turnManifests: [],
+            currentSeq: 3,
+            retentionFloorSeq: 1,
+          },
+        }
+      },
+      snapshot: async (request: { invocationId: string }) => ({
+        invocationId: request.invocationId,
+        state: 'ready',
+        capabilities: {},
+        pendingInputIds: [],
+        inputDispositions: {},
+        pendingPermissionRequests: [],
+        seat: { state: 'available' },
+        brokerQueue: [],
+        turnManifests: [],
+        currentSeq: 3,
+        retentionFloorSeq: 1,
+      }),
+      health: async () => ({ status: 'ok' as const }),
+      status: async (request: { invocationId: string }) => ({
+        invocationId: request.invocationId,
+        state: 'ready',
+      }),
+      eventsSince: async () => {
+        replayCalls += 1
+        return { events: [], currentSeq: 3, retentionFloorSeq: 1 }
+      },
+      ackEvents: async () => {
+        ackCalls += 1
+        throw new Error('staging must not ACK')
+      },
+      permissionRespond: async () => ({ status: 'unknown' as const, permissionRequestId: 'none' }),
+      onClose: () => undefined,
+      close: async () => undefined,
+    }) as never
+  const controller = new HarnessBrokerController({
+    db,
+    brokerUnixClientFactory,
+    serverInstanceId: 'participant-stage-controller',
+  })
+  const server = {
+    options: { runtimeRoot },
+    db,
+    generateBrokerAttachToken: () => 'stage-token',
+    brokerTmuxManagerFactory: tmux.manager,
+    brokerUnixClientFactory,
+    harnessBrokerController: controller,
+    ctx: { notifyEvent: () => undefined },
+  } as unknown as HrcServerInstanceForHandlers
+  try {
+    const hostedRegistration = registration('hrc-hosted')
+    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-stage')
+    const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
+    const hostedIntent = await createParticipantHostingIntent(
+      server,
+      hostedRegistration,
+      hostedAttempt,
+      hostedProfile
+    )
+    if (hostedIntent.hrcHosted === undefined) throw new Error('expected hosted intent')
+    tmux.setNextBrokerCommandLine(`bun ${hostedIntent.hrcHosted.brokerArgv.join(' ')}`)
+    db.sessions.insert({
+      hostSessionId: hostedRegistration.hostSessionId,
+      scopeRef: hostedRegistration.scopeRef,
+      laneRef: hostedRegistration.laneRef,
+      generation: hostedRegistration.generation,
+      status: 'active',
+      createdAt: hostedRegistration.createdAt,
+      updatedAt: hostedRegistration.updatedAt,
+      parsedScopeJson: {},
+      ancestorScopeRefs: [],
+    })
+    db.participantRegistrations.insertRegistration(hostedRegistration)
+    db.participantRegistrations.insertAttempt({
+      ...hostedAttempt,
+      preparedProfileJson: JSON.stringify(hostedProfile),
+      adapterDispatchEnvJson: 'null',
+      hostingIntentJson: JSON.stringify(hostedIntent),
+    })
+
+    const staged = await ensureAndStageParticipantAttach(server, hostedRegistration, hostedAttempt)
+
+    expect(staged).toMatchObject({ state: 'ATTACH_CONFIRMED' })
+    expect(attachCalls).toBe(1)
+    expect(replayCalls).toBe(0)
+    expect(ackCalls).toBe(0)
+    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)).toMatchObject({
+      activeOperationId: hostedAttempt.operationId,
+      activeInvocationId: hostedAttempt.invocationId,
+      status: 'starting',
+      runtimeStateJson: { control: { brokerAttached: false } },
+    })
+    expect(db.runtimeOperations.getByOperationId(hostedAttempt.operationId)).toMatchObject({
+      startupMethod: 'broker.ensureInvocation',
+      selectedProfileHash: hostedProfile.profileHash,
+    })
+    expect(db.brokerInvocations.getByInvocationId(hostedAttempt.invocationId)).toMatchObject({
+      invocationState: 'ready',
+      lastProjectedSeq: 0,
+      startRequestHash: hostedProfile.harnessInvocation.startRequestHash,
+    })
+
+    const active = await activateStagedParticipant(server, hostedRegistration, staged)
+    expect(active).toMatchObject({
+      state: 'ACTIVE',
+      initialActivationConfirmedAt: expect.any(String),
+    })
+    expect(attachCalls).toBe(2)
+    expect(replayCalls).toBe(1)
+    expect(ackCalls).toBe(0)
+    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)?.runtimeStateJson).toMatchObject({
+      participantActivation: {
+        attemptId: hostedAttempt.attemptId,
+        attachEpoch: hostedAttempt.attachEpoch,
+        classification: 'attached_unknown',
+      },
+    })
+  } finally {
+    controller.shutdown()
     db.close()
   }
 })

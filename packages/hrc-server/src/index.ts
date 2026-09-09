@@ -840,6 +840,7 @@ class HrcServerInstance implements HrcServer {
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly externalRegistrationOperations = new Map<string, Promise<void>>()
   readonly externalRegistrationEstablishmentOperations = new Map<string, Promise<void>>()
+  readonly participantEstablishmentOperations = new Map<string, Promise<void>>()
   readonly externalParticipantClients = new Map<
     string,
     import('./external-registration-rendezvous.js').ExternalParticipantRpcClient
@@ -1711,6 +1712,10 @@ class HrcServerInstance implements HrcServer {
     ]
     if (externalRegistrationEstablishmentOperations.length > 0) {
       await Promise.allSettled(externalRegistrationEstablishmentOperations)
+    }
+    const participantEstablishmentOperations = [...this.participantEstablishmentOperations.values()]
+    if (participantEstablishmentOperations.length > 0) {
+      await Promise.allSettled(participantEstablishmentOperations)
     }
     for (const close of [...this.activeStreamClosers]) {
       try {

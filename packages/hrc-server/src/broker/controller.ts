@@ -67,6 +67,7 @@ import type { AllocationContext } from './controller/allocation'
 import {
   type DispatchContext,
   attachAndReplay as attachAndReplayFlow,
+  proveReattachedBrokerControl,
   startController,
 } from './controller/dispatch'
 import { BrokerControllerError } from './controller/errors'
@@ -106,6 +107,9 @@ import type {
   BrokerControllerEnqueueInput,
   BrokerControllerInvokeInput,
   BrokerControllerLogger,
+  BrokerControllerParticipantActivationInput,
+  BrokerControllerParticipantStageInput,
+  BrokerControllerParticipantStageResult,
   BrokerControllerPreemptInput,
   BrokerControllerReconcileResult,
   BrokerControllerRpcResult,
@@ -268,9 +272,12 @@ export type {
   BrokerClientLike,
   BrokerControllerAttachInput,
   BrokerControllerAttachResult,
+  BrokerControllerParticipantActivationInput,
   BrokerControllerEnqueueInput,
   BrokerControllerInvokeInput,
   BrokerControllerLogger,
+  BrokerControllerParticipantStageInput,
+  BrokerControllerParticipantStageResult,
   BrokerControllerPreemptInput,
   BrokerControllerReconcileResult,
   BrokerControllerRpcResult,
@@ -313,6 +320,14 @@ type ActiveBrokerRuntime = {
    * active record: cleared automatically when the runtime leaves `active`.
    */
   inspection?: BrokerInspectionCapabilities | undefined
+}
+
+type StagedParticipantBroker = {
+  attemptId: string
+  attachEpoch: number
+  runtimeId: string
+  invocationId: string
+  client: DurableBrokerClientLike
 }
 
 type PendingBrokerEventGapBackfill = {
@@ -397,6 +412,10 @@ export class HarnessBrokerController {
       }) => Promise<void> | void)
     | undefined
   private readonly active = new Map<string, ActiveBrokerRuntime>()
+  // A candidate has passed broker attach/control proof but is deliberately not
+  // an active controller binding yet.  Activation owns replay, acknowledgement,
+  // and publication; a pre-activation disconnect merely requires a new attach.
+  private readonly stagedParticipants = new Map<string, StagedParticipantBroker>()
   // Intent belongs to the connection being closed, not the logical runtime ID:
   // a replacement client may legitimately reuse that ID before an older close
   // callback arrives.
@@ -1001,6 +1020,179 @@ export class HarnessBrokerController {
 
   async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
     return attachAndReplayFlow(this.dispatchContext(), input)
+  }
+
+  /**
+   * Attach a resident participant invocation without projecting or ACKing its
+   * ledger.  This is the C.5/C.6 staging boundary: only a later activation may
+   * publish the binding and resume ordinary replay.
+   */
+  async stageParticipantAttach(
+    input: BrokerControllerParticipantStageInput
+  ): Promise<BrokerControllerParticipantStageResult> {
+    const runtime = this.db.runtimes.getByRuntimeId(input.runtimeId)
+    const invocation = this.db.brokerInvocations.getByInvocationId(input.invocationId)
+    if (
+      runtime === null ||
+      invocation === null ||
+      runtime.activeInvocationId !== input.invocationId ||
+      invocation.runtimeId !== input.runtimeId
+    ) {
+      throw new BrokerControllerError(
+        'participant_attach_identity_unavailable',
+        'participant runtime or invocation no longer matches the current attach identity',
+        { runtimeId: input.runtimeId, invocationId: input.invocationId, attemptId: input.attemptId }
+      )
+    }
+
+    const lastProjectedSeq = this.lastProjectedBrokerSeq(invocation.invocationId)
+    const client = await this.connectDurableBrokerWithRetry(input.socketPath, input.runtimeId)
+    let retained = false
+    let closedBeforeStaging = false
+    client.onClose(() => {
+      closedBeforeStaging = true
+      if (this.stagedParticipants.get(input.attemptId)?.client === client) {
+        this.stagedParticipants.delete(input.attemptId)
+      }
+    })
+    try {
+      const attach = await client.attach({
+        runtimeId: runtime.runtimeId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        invocationId: invocation.invocationId as InvocationId,
+        startRequestHash: invocation.startRequestHash,
+        selectedProfileHash: invocation.selectedProfileHash,
+        controllerInstanceId: this.serverInstanceId,
+        attachToken: input.attachToken,
+        lastProjectedSeq,
+      })
+      if (
+        attach.brokerInstanceId !== input.brokerInstanceId ||
+        attach.runtimeId !== runtime.runtimeId ||
+        attach.generation !== runtime.generation ||
+        String(attach.invocationId) !== invocation.invocationId ||
+        attach.activeControllerInstanceId !== this.serverInstanceId
+      ) {
+        throw new BrokerControllerError(
+          'participant_attach_identity_conflict',
+          'participant attach response conflicts with the durable broker identity',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            attemptId: input.attemptId,
+          }
+        )
+      }
+      const snapshot = await client.snapshot({
+        invocationId: invocation.invocationId as InvocationId,
+      })
+      if (String(snapshot.invocationId) !== invocation.invocationId) {
+        throw new BrokerControllerError(
+          'participant_attach_identity_conflict',
+          'participant attach snapshot conflicts with the durable invocation identity',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            attemptId: input.attemptId,
+          }
+        )
+      }
+      const retentionFloorSeq = Math.max(
+        attach.retentionFloorSeq,
+        attach.snapshot.retentionFloorSeq,
+        snapshot.retentionFloorSeq
+      )
+      if (retentionFloorSeq > lastProjectedSeq + 1) {
+        throw new BrokerControllerError(
+          'broker_replay_retention_gap',
+          'broker event retention floor is past HRC projected high-water',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            lastProjectedSeq,
+            retentionFloorSeq,
+          }
+        )
+      }
+      await proveReattachedBrokerControl(
+        this.dispatchContext(),
+        { runtimeId: runtime.runtimeId, client, attachToken: input.attachToken },
+        runtime,
+        invocation,
+        () => undefined
+      )
+      if (closedBeforeStaging) {
+        throw new BrokerControllerError(
+          'participant_attach_candidate_lost',
+          'participant attach candidate closed before activation staging completed',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            attemptId: input.attemptId,
+          }
+        )
+      }
+
+      // A same-attempt retry supersedes only its unactivated candidate.  This
+      // cannot replace a live owner because staged clients are never published
+      // into `active`.
+      const prior = this.stagedParticipants.get(input.attemptId)
+      if (prior !== undefined && prior.client !== client) {
+        this.stagedParticipants.delete(input.attemptId)
+        await prior.client.close().catch(() => undefined)
+      }
+      const staged: StagedParticipantBroker = {
+        attemptId: input.attemptId,
+        attachEpoch: input.attachEpoch,
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        client,
+      }
+      this.stagedParticipants.set(input.attemptId, staged)
+      retained = true
+      return {
+        brokerInstanceId: attach.brokerInstanceId,
+        currentSeq: Math.max(attach.currentSeq, snapshot.currentSeq),
+        retentionFloorSeq,
+        lastProjectedSeq,
+      }
+    } finally {
+      if (!retained) await client.close().catch(() => undefined)
+    }
+  }
+
+  /** Drop an unactivated candidate when its durable attempt/epoch fence loses. */
+  async discardStagedParticipantAttach(attemptId: string): Promise<void> {
+    const staged = this.stagedParticipants.get(attemptId)
+    if (staged === undefined) return
+    this.stagedParticipants.delete(attemptId)
+    await staged.client.close().catch(() => undefined)
+  }
+
+  /**
+   * Release an already-staged participant only after its durable activation
+   * transaction has committed. The ordinary attach/replay flow remains the
+   * single projection and ACK authority; this continuation deliberately does
+   * not invent a participant cursor or active-binding model.
+   */
+  async activateStagedParticipant(
+    input: BrokerControllerParticipantActivationInput
+  ): Promise<BrokerControllerAttachResult> {
+    const staged = this.stagedParticipants.get(input.attemptId)
+    if (staged === undefined || staged.runtimeId !== input.runtimeId) {
+      throw new BrokerControllerError(
+        'participant_activation_candidate_unavailable',
+        'participant activation has no current staged broker candidate',
+        { attemptId: input.attemptId, runtimeId: input.runtimeId }
+      )
+    }
+    this.stagedParticipants.delete(input.attemptId)
+    return attachAndReplayFlow(this.dispatchContext(), {
+      runtimeId: staged.runtimeId,
+      client: staged.client,
+      attachToken: input.attachToken,
+    })
   }
 
   async recoverFinalSummary(input: {
@@ -1956,6 +2148,10 @@ export class HarnessBrokerController {
    */
   shutdown(): void {
     this.shuttingDown = true
+    for (const staged of this.stagedParticipants.values()) {
+      void staged.client.close().catch(() => undefined)
+    }
+    this.stagedParticipants.clear()
     for (const timer of this.brokerSeatMonitorTimers.values()) {
       clearInterval(timer)
     }

@@ -353,7 +353,10 @@ export async function realizeAndFreezeParticipantDispatch(
   if (
     attempt.state === 'DISPATCH_FROZEN' ||
     attempt.state === 'INSTALL_CONFIRMED' ||
-    attempt.state === 'INVOCATION_READY'
+    attempt.state === 'INVOCATION_READY' ||
+    attempt.state === 'ATTACH_CONFIRMED' ||
+    attempt.state === 'ACTIVE' ||
+    attempt.state === 'DETACHED'
   ) {
     const realized = parseJson<ParticipantRealizedHosting>(
       attempt.realizedHostingJson,

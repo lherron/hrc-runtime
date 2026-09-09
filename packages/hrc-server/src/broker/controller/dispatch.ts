@@ -207,7 +207,7 @@ async function withAttachControlProbeTimeout<T>(
   }
 }
 
-async function proveReattachedBrokerControl(
+export async function proveReattachedBrokerControl(
   ctx: DispatchContext,
   input: BrokerControllerAttachInput,
   runtime: HrcRuntimeSnapshot,

@@ -171,6 +171,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
   readonly externalRegistrationOperations: Map<string, Promise<void>>
   readonly externalRegistrationEstablishmentOperations: Map<string, Promise<void>>
+  /** Detached generic participant establishment, keyed by durable attempt ID. */
+  readonly participantEstablishmentOperations: Map<string, Promise<void>>
   readonly externalParticipantClients: Map<string, ExternalParticipantRpcClient>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
   readonly invokeFirstTurnRendezvous: Map<string, InvokeFirstTurnRendezvous>
