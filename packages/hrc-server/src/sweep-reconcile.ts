@@ -664,7 +664,10 @@ function abandonedRunResult(
 function reconcileCorruptAwaitingRuntimes(ctx: ServerContext): ReconcileActiveRunResult[] {
   const results: ReconcileActiveRunResult[] = []
   const now = timestamp()
-  for (const runtime of ctx.db.runtimes.listAll()) {
+  // T-08363: `isCorruptAwaitingRuntime` is `status === 'awaiting_input' &&
+  // activeRunId === undefined`, so no other status can qualify. Selecting the
+  // status in SQL keeps this 300s sweep off the terminal-row ledger.
+  for (const runtime of ctx.db.runtimes.listByStatus(['awaiting_input'])) {
     if (!isCorruptAwaitingRuntime(runtime)) continue
     const invocationId = runtime.activeInvocationId
     const brackets = listOpenAskBrackets(ctx.db, runtime)

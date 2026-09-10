@@ -230,6 +230,48 @@ export class RuntimeRepository {
       .map((row) => row.session_ref)
   }
 
+  /**
+   * T-08363 — the runtimes table is a ledger, not a live set: on a long-lived
+   * host it is >99% terminal rows (13,741 rows for 58 live seats when this was
+   * written, 2.7MB of `*_json` columns per full read). Recurring timers that
+   * only care about live seats used to call `listAll()` and drop the rest in JS,
+   * paying the full row materialization every tick. These push the predicate
+   * into SQL instead.
+   *
+   * `listAvailable` is an EXCLUSION, deliberately mirroring
+   * `isRuntimeUnavailableStatus` (+ `exited`) rather than listing live statuses:
+   * a status added later must default to "still shown", which is what the JS
+   * filter it replaces did. An inclusion list would silently start hiding seats.
+   */
+  listAvailable(): HrcRuntimeSnapshot[] {
+    return this.db
+      .query<RuntimeRow, []>(
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
+          WHERE status NOT IN ('terminated', 'dead', 'stale', 'crashed', 'detached', 'exited')
+          ORDER BY created_at ASC, runtime_id ASC`
+      )
+      .all()
+      .map(mapRuntimeRow)
+  }
+
+  listByStatus(statuses: readonly string[]): HrcRuntimeSnapshot[] {
+    if (statuses.length === 0) return []
+    const placeholders = statuses.map(() => '?').join(', ')
+    return this.db
+      .query<RuntimeRow, string[]>(
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
+          WHERE status IN (${placeholders})
+          ORDER BY created_at ASC, runtime_id ASC`
+      )
+      .all(...(statuses as string[]))
+      .map(mapRuntimeRow)
+  }
+
+  /**
+   * The whole ledger, terminal rows included. Correct for the sweep/prune paths,
+   * whose entire job is stale and terminated rows. Recurring liveness timers
+   * want `listAvailable()` / `listByStatus()`.
+   */
   listAll(): HrcRuntimeSnapshot[] {
     const rows = this.db
       .query<RuntimeRow, []>(

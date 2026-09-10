@@ -917,6 +917,40 @@ const brokerTurnAttributionMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08363 — bound the ask-bracket predicate to one invocation.
+ *
+ * `hasOpenAskBracket` documents its own cost model: "Filtering on
+ * `invocation_id` (indexed) before the `json_extract` keeps the scan bounded to
+ * one invocation's events." That was true until `0050_prune_candidate_indexes`
+ * added a standalone `(type)` index for retention discovery, which handed the
+ * planner a second candidate. With no ANALYZE stats on the file the planner
+ * cannot know `type = 'tool.call.started'` selects six figures of rows while
+ * `invocation_id = ?` selects tens, so it picked `(type)` and turned a bounded
+ * probe into a full ledger scan with a `json_extract` per row — measured at
+ * 327ms vs 3ms for the intended plan on an 11GB store, and up to 22s under load.
+ *
+ * The composite makes the intended plan strictly better than `(type)` on cost
+ * rather than merely available, so the predicate stays bounded even on a file
+ * that has never been analyzed -- which is the state every existing store is in.
+ *
+ * Deliberately NO `ANALYZE` here. Running one was the first thing tried and it
+ * does fix this plan, but stats re-plan EVERY query on the store at once: it
+ * regressed `store.event-query-plans` by moving an `hrc_events` lookup onto a
+ * covering index plus a TEMP B-TREE sort. A schema-local index fixes the one
+ * broken predicate with a blast radius we can actually test; adopting ANALYZE
+ * is a separate change that has to be qualified against the whole query set.
+ */
+const askBracketScanIndexMigration: HrcMigration = {
+  id: '0055_ask_bracket_scan_index',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_invocation_type_seq
+        ON broker_invocation_events(invocation_id, type, seq);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -938,4 +972,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runBrokerSubmissionIdMigration,
   transcriptTurnIndexMigration,
   brokerTurnAttributionMigration,
+  askBracketScanIndexMigration,
 ]

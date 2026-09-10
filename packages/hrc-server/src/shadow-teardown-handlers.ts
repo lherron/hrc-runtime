@@ -30,7 +30,6 @@
  */
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
-import { isRuntimeUnavailableStatus } from './require-helpers.js'
 
 import { isSingleNodeMode } from './federation/federation-config.js'
 import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authority.js'
@@ -52,9 +51,10 @@ function errorText(error: unknown): string {
 
 /** Live seats only: a stale or terminated row is already retired. */
 function liveRuntimes(server: HrcServerInstanceForHandlers): HrcRuntimeSnapshot[] {
-  return server.db.runtimes
-    .listAll()
-    .filter((runtime) => runtime.status !== 'exited' && !isRuntimeUnavailableStatus(runtime.status))
+  // T-08363: `listAvailable()` is this exact predicate pushed into SQL. It runs
+  // on a 60s timer, and reading the whole ledger to discard >99% of it was a
+  // standing cost that grew with host age.
+  return server.db.runtimes.listAvailable()
 }
 
 export function startForeignHomeShadowTeardown(this: HrcServerInstanceForHandlers): void {
