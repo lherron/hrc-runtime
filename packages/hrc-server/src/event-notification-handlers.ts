@@ -79,6 +79,9 @@ export function notifyEvent(
   // this event. Disabled unless explicitly configured.
   this.acpEventBridge.observe(event)
   if ('hrcSeq' in event) {
+    // T-08389 — `session.*` project events. Same observer discipline: a refusal
+    // from wrkq is a missing timeline row, never a failed birth.
+    this.sessionProjectEvents.observe(event)
     this.mailKicker.observeLifecycleEvent(event)
   }
   if (

@@ -67,6 +67,7 @@ import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 import type { TurnAdmissionGate } from './turn-admission-gate.js'
 import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 import type { WrkqLedgerClient } from './wrkq/ledger-client.js'
+import type { SessionProjectEventPublisher } from './wrkq/session-project-events.js'
 import type { WrkqStopGateHandlersMethods } from './wrkq/stop-gate-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
@@ -167,6 +168,8 @@ type HrcServerInstanceDataForHandlers = {
   readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
   /** HRC→ACP reason-coded event bridge observer (T-07236). */
   readonly acpEventBridge: AcpEventBridge
+  /** `session.*` project-event producer observer (T-08389). */
+  readonly sessionProjectEvents: SessionProjectEventPublisher
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
   readonly externalRegistrationOperations: Map<string, Promise<void>>

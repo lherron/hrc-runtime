@@ -621,8 +621,12 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     fatal(harnessGuard)
   }
 
-  const { createHrcServer, loadCommandRunTargetsFromEnv, loadRegistrationClassesFromEnv } =
-    await import('hrc-server')
+  const {
+    WrkqStdioLedgerClient,
+    createHrcServer,
+    loadCommandRunTargetsFromEnv,
+    loadRegistrationClassesFromEnv,
+  } = await import('hrc-server')
 
   const paths = resolveServerPaths()
 
@@ -638,6 +642,11 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     otelPreferredPort: resolveOtelPreferredPortFromEnv(),
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
     registrationClasses: await loadRegistrationClassesFromEnv(),
+    // The ONE place that reaches the fleet wrkq ledger. Any other
+    // `createHrcServer` — every test, every embedded instance — gets the
+    // unreachable default, so an in-process server cannot drive mail or write
+    // project events into shared state by inheriting the daemon's environment.
+    wrkqLedger: new WrkqStdioLedgerClient(),
   })
 
   let shutdownStarted = false

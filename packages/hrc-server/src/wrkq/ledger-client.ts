@@ -86,7 +86,96 @@ export type WrkqLedgerClient = MailKickerLedger & {
   roomSay(params: WrkqRoomSayParams): Promise<WrkqRoomSayResult>
   /** The bounded, cursor-fenced event page the kicker's wake tail reads. */
   eventsView(params: WrkqMonitorEventsViewParams): Promise<WrkqMonitorEventsView>
+  /**
+   * T-08389: one foreign project fact on a project timeline. HRC's only WRITE
+   * outside the collaboration surface, and the only one that is best-effort by
+   * design — a refusal here is a missing timeline row, never a failed birth.
+   */
+  projectEventPost(params: WrkqProjectEventPostParams): Promise<WrkqProjectEventPostResult>
   close(): Promise<void>
+}
+
+/**
+ * `wrkq.projectEvent.post` params, as verified live against the running server
+ * (T-08389; wrkq T-08388, migration 000061).
+ *
+ * `attributes` is sent VERBATIM as a JSON object and wrkq stores the raw bytes,
+ * so the insertion order of these keys is the order a reader sees on the
+ * timeline. Build it in reading order; do not sort it.
+ *
+ * Exactly one of `project` or `task` is sent. Sending both is a refusal
+ * (`task_not_in_project`) when they disagree, and the caller here can never
+ * prove they agree.
+ */
+export type WrkqProjectEventPostParams = {
+  project?: string | undefined
+  task?: string | undefined
+  type: string
+  summary: string
+  attributes: Record<string, string>
+  idempotencyKey?: string | undefined
+  occurredAt?: string | undefined
+  scopeRef?: string | undefined
+}
+
+export type WrkqProjectEventPostResult = {
+  uuid: string
+  created: boolean
+}
+
+/**
+ * A ledger client that is never reachable.
+ *
+ * An in-process `createHrcServer` is indistinguishable from the node's daemon
+ * as far as the ledger is concerned: it resolves the same locator from the same
+ * host-authoritative environment, so a test server births sessions and drives
+ * mail against the FLEET ledger. Isolating runtime and state roots does not
+ * help — the ledger's address lives in the environment, not in those roots.
+ *
+ * So it is the DEFAULT `wrkqLedger`, and `hrc server serve` is the one caller
+ * that passes the real client: reaching fleet state is something a server does
+ * on purpose, not something it inherits. Every call fails the way an
+ * unreachable wrkq already fails, so callers exercise their real unavailability
+ * path rather than a bespoke stub's.
+ */
+export class UnreachableWrkqLedger implements WrkqLedgerClient {
+  /** Rejects rather than throwing: callers await these, and a sync throw from
+   *  an async-shaped method escapes a `.catch()` that a real failure would hit. */
+  private async refuse(method: string): Promise<never> {
+    throw new WrkqLedgerUnavailableError('wrkq ledger is not wired to this server', method)
+  }
+
+  pendingView(): Promise<never> {
+    return this.refuse('wrkq.envelope.pendingView')
+  }
+  present(): Promise<never> {
+    return this.refuse('wrkq.envelope.present')
+  }
+  fail(): Promise<never> {
+    return this.refuse('wrkq.envelope.fail')
+  }
+  birthEnvelope(): Promise<never> {
+    return this.refuse('wrkq.envelope.birthEnvelope')
+  }
+  envelopeShow(): Promise<never> {
+    return this.refuse('wrkq.envelope.show')
+  }
+  roomShow(): Promise<never> {
+    return this.refuse('wrkq.room.show')
+  }
+  roomLog(): Promise<never> {
+    return this.refuse('wrkq.room.log')
+  }
+  roomSay(): Promise<never> {
+    return this.refuse('wrkq.room.say')
+  }
+  eventsView(): Promise<never> {
+    return this.refuse('wrkq.monitor.eventsView')
+  }
+  projectEventPost(): Promise<never> {
+    return this.refuse('wrkq.projectEvent.post')
+  }
+  async close(): Promise<void> {}
 }
 
 export type WrkqLedgerClientOptions = {
@@ -176,6 +265,17 @@ export class WrkqStdioLedgerClient implements WrkqLedgerClient {
     return {
       items: Array.isArray(view.items) ? view.items.map(mapMonitorEvent) : [],
       highWater: typeof view.high_water === 'number' ? view.high_water : params.cursor,
+    }
+  }
+
+  async projectEventPost(params: WrkqProjectEventPostParams): Promise<WrkqProjectEventPostResult> {
+    const posted = await this.call<{ uuid?: unknown; created?: unknown }>(
+      'wrkq.projectEvent.post',
+      params as unknown as Record<string, unknown>
+    )
+    return {
+      uuid: typeof posted.uuid === 'string' ? posted.uuid : '',
+      created: posted.created === true,
     }
   }
 

@@ -330,7 +330,8 @@ import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
-import { type WrkqLedgerClient, WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
+import { UnreachableWrkqLedger, type WrkqLedgerClient } from './wrkq/ledger-client.js'
+import { SessionProjectEventPublisher } from './wrkq/session-project-events.js'
 import {
   type WrkqStopGateHandlersMethods,
   wrkqStopGateHandlersMethods,
@@ -675,7 +676,7 @@ async function finalizeConfiguredCommandRun(
 
 // Re-export CLI invocation builder so hrc-cli can produce dry-run previews
 // without duplicating the intent → argv/env translation.
-export { WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
+export { UnreachableWrkqLedger, WrkqStdioLedgerClient } from './wrkq/ledger-client.js'
 export type { WrkqLedgerClient } from './wrkq/ledger-client.js'
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
 export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
@@ -907,6 +908,8 @@ class HrcServerInstance implements HrcServer {
   brokerWarmupComplete?: Promise<void> | undefined
   /** HRC→ACP reason-coded event bridge; disabled unless explicitly configured (T-07236). */
   readonly acpEventBridge: AcpEventBridge
+  /** `session.*` project-event producer (T-08389). */
+  readonly sessionProjectEvents: SessionProjectEventPublisher
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   eventIngestListener: EventIngestListener | undefined
@@ -1334,7 +1337,12 @@ class HrcServerInstance implements HrcServer {
     this.hrcTranscriptIndexEnabled = resolveHrcTranscriptIndexEnabled(options)
     this.hrcTranscriptIndexTickIntervalMs = resolveHrcTranscriptIndexTickIntervalMs(options)
     this.federationNodeId = options.federationConfig?.nodeId ?? deriveNodeIdFromHostname()
-    this.wrkqLedger = options.wrkqLedger ?? new WrkqStdioLedgerClient()
+    // UNREACHABLE BY DEFAULT. An in-process server resolves the same wrkq
+    // locator as the node's daemon — the ledger's address lives in the
+    // environment, not in the runtime/state roots a test isolates — so a
+    // defaulted real client lets any embedded instance write to fleet state.
+    // `hrc server serve` passes the real one; nothing else should.
+    this.wrkqLedger = options.wrkqLedger ?? new UnreachableWrkqLedger()
     this.mailKicker = createServerMailKicker(this)
     this.transcriptIndexer = createServerTranscriptIndexer(this)
     this.ctx = {
@@ -1351,6 +1359,11 @@ class HrcServerInstance implements HrcServer {
         nodeId: options.federationConfig?.nodeId ?? deriveNodeIdFromHostname(),
         nodeIdProvenance: options.federationConfig?.nodeIdProvenance ?? 'derived',
       },
+    })
+    this.sessionProjectEvents = new SessionProjectEventPublisher({
+      db: this.db,
+      post: (params) => this.wrkqLedger.projectEventPost(params),
+      node: this.federationNodeId,
     })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,

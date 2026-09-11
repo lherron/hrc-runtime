@@ -19,7 +19,11 @@ import type {
   WrkqRoomShowParams,
   WrkqRoomView,
 } from 'hrc-mail-kicker'
-import type { WrkqLedgerClient } from '../../wrkq/ledger-client.js'
+import type {
+  WrkqLedgerClient,
+  WrkqProjectEventPostParams,
+  WrkqProjectEventPostResult,
+} from '../../wrkq/ledger-client.js'
 import { WrkqLedgerRequestError, WrkqLedgerUnavailableError } from '../../wrkq/ledger-client.js'
 
 /**
@@ -95,6 +99,14 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
   /** Every (envelope, runtime) pair already presented, for the history cue. */
   private readonly runtimesSeenPerRoom = new Map<string, Set<string>>()
   readonly attemptReceipts = new Set<string>()
+  /** T-08389 — every post attempt, in order, including refused ones. */
+  readonly projectEventPosts: WrkqProjectEventPostParams[] = []
+  /** Task selectors this ledger refuses, standing in for wrkq's NotFoundError. */
+  readonly unresolvableTasks = new Set<string>()
+  private readonly projectEvents = new Map<
+    string,
+    { uuid: string; params: WrkqProjectEventPostParams }
+  >()
   private eventSeq = 0
   unavailable = false
   presentCalls = 0
@@ -556,6 +568,31 @@ export class FakeWrkqLedger implements WrkqLedgerClient {
         })),
       highWater: page.length === 0 ? params.cursor : (page[page.length - 1]?.id ?? params.cursor),
     }
+  }
+
+  /**
+   * T-08389 — records every `session.*` post, and can refuse a task-affiliated
+   * one so the project-only fallback is exercised.
+   */
+  async projectEventPost(params: WrkqProjectEventPostParams): Promise<WrkqProjectEventPostResult> {
+    this.guard('wrkq.projectEvent.post')
+    this.projectEventPosts.push(params)
+    if (params.task !== undefined && this.unresolvableTasks.has(params.task)) {
+      throw new WrkqLedgerRequestError(
+        `task not found: ${params.task}`,
+        'wrkq.projectEvent.post',
+        -32004,
+        { reason: 'not_found' }
+      )
+    }
+    const key = params.idempotencyKey ?? `anon-${this.projectEventPosts.length}`
+    const existing = this.projectEvents.get(key)
+    if (existing !== undefined) {
+      return { uuid: existing.uuid, created: false }
+    }
+    const uuid = `pe-${this.projectEvents.size + 1}`
+    this.projectEvents.set(key, { uuid, params })
+    return { uuid, created: true }
   }
 
   async close(): Promise<void> {}
