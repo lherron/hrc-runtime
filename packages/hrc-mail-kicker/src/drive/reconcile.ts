@@ -16,8 +16,11 @@
  *  - DISPOSED — the reader discharged the envelope before the landing committed.
  *    Nothing to record, nothing to retry; not a landing and not a fault.
  *  - REFUSED — clear, re-wake, deliver again under the same policy next pass.
- *  - RUNTIME GONE — clear, re-wake. The envelope stays `pending`: it was never
- *    presented, so nothing about it is failed.
+ *  - RUNTIME GONE — uncertain, then cleared and re-woken once the TTL is spent.
+ *    A runtime that died mid-submission is NOT proof the body never reached the
+ *    pane, so this waits out the same bound as every other uncertain outcome
+ *    rather than redelivering on the spot. The envelope stays `pending`
+ *    throughout: it was never presented, so nothing about it is failed.
  *  - UNDELIVERABLE — the bound is spent. Three non-landing outcomes for one
  *    envelope on ONE runtime, of any mix of kinds, and the sender is told rather
  *    than left watching a `pending` row while the reader is shown the same body
@@ -34,7 +37,12 @@ import type { HrcMailDeliveryIntent } from 'hrc-store-sqlite'
 import type { MailKickerContext } from '../context.js'
 import { KICKER_SUBMISSION_TTL_MS, errorText } from '../internal.js'
 import { isRuntimeTerminal } from '../terminal/runtime-status.js'
-import { commitLanding, landLaunchIfStarted, refuseIntent } from './landing.js'
+import {
+  chargeNonLandingOutcome,
+  commitLanding,
+  landLaunchIfStarted,
+  refuseIntent,
+} from './landing.js'
 
 const LANDED_EVENT_TYPES = new Set(['submission.absorbed', 'submission.executed'])
 
@@ -99,12 +107,13 @@ export async function reconcileIntent(
           submissionId
         )
         if (evidence !== 'not_written') {
+          const cause = disposition.reason ?? disposition.type
           server.db.mailDelivery.markUncertain(
             intent.envelopeId,
-            disposition.reason ?? disposition.type,
+            cause,
             evidence === 'possibly_written' ? 'possibly_written' : 'refusal_without_no_write_proof'
           )
-          return 'open'
+          return await expireIfSpent(server, intent, runtimeId, cause, now)
         }
         return await refuseIntent(server, intent, disposition.reason ?? disposition.type)
       }
@@ -119,7 +128,7 @@ export async function reconcileIntent(
           'input.rejected',
           'possibly_written'
         )
-        return 'open'
+        return await expireIfSpent(server, intent, runtimeId, 'input.rejected', now)
       }
     } else if (intent.door === 'launch') {
       // The launch-carried body has no submission by construction. Its landing
@@ -136,16 +145,69 @@ export async function reconcileIntent(
         'runtime_terminated_before_landing',
         'runtime_terminal'
       )
-      return 'open'
+      return await expireIfSpent(
+        server,
+        intent,
+        runtimeId,
+        'runtime_terminated_before_landing',
+        now
+      )
     }
   }
 
+  return await expireIfSpent(server, intent, runtimeId, 'ttl_without_landing', now)
+}
+
+/**
+ * End an intent whose TTL has run out, or leave it alone while it could land.
+ *
+ * Every uncertain branch above ends here rather than returning `open` on its
+ * own. Uncertain is not resolved, and staying open is only correct while the
+ * delivery could still land: past the TTL the submission is gone, and an open
+ * intent keeps its envelope out of `readActionableEnvelopes` FOREVER. That is
+ * how 33 envelopes reached four days old still `pending`, never presented, with
+ * no failure notice to their senders (T-08394) — the verdicts this module's
+ * header promises for RUNTIME GONE and NOTHING FOUND AFTER TTL were written
+ * down but never returned.
+ *
+ * Expiry IS the bounded redelivery window the spec calls at-least-once: clear
+ * the intent, charge the seat one non-landing strike, and re-wake the target.
+ * The strike is what keeps the window bounded — three on one runtime still
+ * tells the sender `undeliverable` rather than showing the reader one body
+ * forever — and an intent with no runtime has no seat to charge, so it clears
+ * on the TTL alone.
+ */
+async function expireIfSpent(
+  server: MailKickerContext,
+  intent: HrcMailDeliveryIntent,
+  runtimeId: string | undefined,
+  cause: string,
+  now: number
+): Promise<IntentReconcileVerdict> {
   const age = now - Date.parse(intent.submittedAt)
-  if (Number.isFinite(age) && age >= KICKER_SUBMISSION_TTL_MS) {
-    server.db.mailDelivery.markUncertain(intent.envelopeId, 'ttl_without_landing', 'ttl')
-    return 'open'
+  if (!Number.isFinite(age) || age < KICKER_SUBMISSION_TTL_MS) return 'open'
+  server.db.mailDelivery.markUncertain(intent.envelopeId, cause, 'ttl')
+
+  if (runtimeId !== undefined) {
+    // `exhausted` has already cleared the intent and failed the envelope to the
+    // sender, so there is nothing left here to clear or re-wake for.
+    const charged = await chargeNonLandingOutcome(server, intent, runtimeId, cause)
+    if (charged === 'exhausted') return 'undeliverable'
   }
-  return 'open'
+
+  server.db.mailDelivery.clearIntent(intent.envelopeId)
+  server.log('INFO', 'wrkq.kicker.delivery_expired', {
+    targetSessionRef: intent.targetSessionRef,
+    envelope: intent.envelopeId,
+    door: intent.door,
+    ...(runtimeId === undefined ? {} : { runtimeId }),
+    ...(intent.submissionId === undefined ? {} : { submissionId: intent.submissionId }),
+    cause,
+    ageMs: age,
+    ttlMs: KICKER_SUBMISSION_TTL_MS,
+  })
+  server.wake(intent.targetSessionRef, 'insert')
+  return 'expired'
 }
 
 /**

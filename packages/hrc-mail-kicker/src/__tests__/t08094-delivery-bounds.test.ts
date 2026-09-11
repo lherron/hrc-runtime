@@ -6,7 +6,7 @@ import { observeBrokerLanding } from '../drive/landing.js'
 import { readActionableEnvelopes } from '../drive/presentation.js'
 import { reconcileOpenIntents } from '../drive/reconcile.js'
 import type { ObservedBrokerSeat } from '../drive/seat.js'
-import { KICKER_SUBMISSION_TTL_MS } from '../internal.js'
+import { KICKER_MAX_NON_LANDING_STRIKES, KICKER_SUBMISSION_TTL_MS } from '../internal.js'
 import type { WrkqEnvelope } from '../ledger/types.js'
 import type { FakeLedger, T08094Harness } from './t08094-harness.js'
 import {
@@ -59,7 +59,7 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
    * retrying it every TTL forever tells the sender nothing while the envelope
    * sits pending — the observed case ran over twelve hours that way.
    */
-  it('holds the envelope after a TTL with no landing proof', async () => {
+  it('clears and re-wakes after a TTL with no landing proof, charging one strike', async () => {
     const envelope = ledger.say()
     const age = () =>
       db.sqlite
@@ -68,12 +68,47 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
 
     await deliverOne(seatIn('turn-active'), envelope)
     age()
-    expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({ open: 1 })
-    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
-    expect(ledger.failRequests).toEqual([])
+    expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
+      expired: 1,
+    })
+    // D2 step 5 stands: the intent is CLEARED, which is the only thing that
+    // returns the envelope to the wake set. Holding it open instead is what
+    // stranded 33 envelopes as `pending`, never presented (T-08394).
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
     expect(
       (await readActionableEnvelopes(context, TARGET)).map((item) => item.envelope.id)
-    ).not.toContain(envelope.id)
+    ).toContain(envelope.id)
+    // ...and the addendum's bound advances, so the loop this opens is finite.
+    expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(1)
+    expect(ledger.failRequests).toEqual([])
+  })
+
+  /**
+   * The bound the chief ordered, exercised end to end. Nothing reached it
+   * before: the TTL path never charged a strike at all, so `expiries` — the
+   * column named for exactly this — was only ever incremented by refusals.
+   */
+  it('fails the envelope undeliverable after three consecutive TTL expiries', async () => {
+    const envelope = ledger.say()
+    const age = () =>
+      db.sqlite
+        .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
+        .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
+
+    for (let strike = 1; strike <= KICKER_MAX_NON_LANDING_STRIKES; strike += 1) {
+      await deliverOne(seatIn('turn-active'), envelope)
+      age()
+      const counts = await reconcileOpenIntents(context, { reason: 'periodic' })
+      if (strike < KICKER_MAX_NON_LANDING_STRIKES) {
+        expect(counts).toMatchObject({ expired: 1 })
+        expect(ledger.failRequests).toEqual([])
+      } else {
+        expect(counts).toMatchObject({ undeliverable: 1 })
+      }
+    }
+    // The sender is TOLD, rather than left watching a pending row for eternity.
+    expect(ledger.failRequests).toEqual([{ envelope: envelope.id, reason: 'undeliverable' }])
+    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
   })
 
   /**
@@ -187,12 +222,10 @@ describe('D2 — the redelivery loop is bounded per (envelope, runtime)', () => 
       .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
       .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
     await reconcileOpenIntents(context, { reason: 'periodic' })
-    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
+    expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(1)
 
     // A different runtime is a different row: rotation and restart give the next
     // seat its full allowance without anyone having to remember a reset rule.
     expect(db.mailDelivery.nonLandingStrikes(envelope.id, 'rt-rotated')).toBe(0)
-
-    expect(db.mailDelivery.nonLandingStrikes(envelope.id, RUNTIME)).toBe(0)
   })
 })

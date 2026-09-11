@@ -43,6 +43,62 @@ import { observeBrokerSeat } from './seat.js'
 
 export type DriveMailTargetOutcome = { outcome: 'birth-refused' } | undefined
 
+/**
+ * Take the launch-carried door for a target with no live runtime.
+ *
+ * Shared by the two ways a target can have nothing seated: no session row at
+ * all, and a session row whose seat the broker reports `absent`. They are the
+ * same delivery problem — there is no harness to submit into — and routing only
+ * the first one here is what let the second fall to `enqueue` and race the
+ * launch's own priming prompt (T-08394).
+ */
+async function birthForTarget(
+  server: MailKickerContext,
+  targetSessionRef: string,
+  scopeRef: string | undefined,
+  actionable: readonly ActionableEnvelope[],
+  wakeReason: HrcMailDriveWakeReason
+): Promise<DriveMailTargetOutcome> {
+  // A non-summoning envelope (a legacy `fyi`) is presented into a live
+  // generation if there is one, and otherwise waits. It is never the reason a
+  // session is born, so a wake set holding nothing else stops here.
+  const summons = actionable.find((item) => summonsATurn(item.envelope))
+  if (summons === undefined) return
+  try {
+    const outcome = await deliverByColdBirth(server, targetSessionRef, summons, wakeReason)
+    if (outcome === 'submitted' && actionable.length > 1) {
+      // One launch carries one envelope; the rest are delivered by policy
+      // once the seat is live.
+      server.wake(targetSessionRef, wakeReason)
+    }
+    return
+  } catch (error) {
+    // A birth deferral is not a failed delivery. It is this node correctly
+    // declining a birth the collective designated elsewhere, and reporting it
+    // as a failure is what made the pre-T-07655 race look like breakage on
+    // every node that lost it.
+    const deferral = birthDeferralFor(error)
+    if (deferral !== undefined && scopeRef !== undefined) {
+      deferBirthForTarget(server, targetSessionRef, scopeRef, deferral, wakeReason)
+      return
+    }
+    server.log('WARN', 'wrkq.kicker.birth_failed', {
+      targetSessionRef,
+      wakeReason,
+      envelope: summons.envelope.id,
+      error: errorText(error),
+    })
+    if (scopeRef !== undefined) {
+      server.db.mailDelivery.recordBirthRefusal({
+        targetSessionRef,
+        scopeRef,
+        reason: errorText(error),
+      })
+    }
+    return { outcome: 'birth-refused' }
+  }
+}
+
 export async function driveMailTargetOnce(
   server: MailKickerContext,
   targetSessionRef: string,
@@ -98,54 +154,16 @@ export async function driveMailTargetOnce(
       })
       return
     }
-    // A non-summoning envelope (a legacy `fyi`) is presented into a live
-    // generation if there is one, and otherwise waits. It is never the reason a
-    // session is born, so a wake set holding nothing else stops here.
-    const summons = actionable.find((item) => summonsATurn(item.envelope))
-    if (summons === undefined) return
-    try {
-      const outcome = await deliverByColdBirth(server, targetSessionRef, summons, wakeReason)
-      if (outcome === 'submitted' && actionable.length > 1) {
-        // One launch carries one envelope; the rest are delivered by policy
-        // once the seat is live.
-        server.wake(targetSessionRef, wakeReason)
-      }
-      return
-    } catch (error) {
-      // A birth deferral is not a failed delivery. It is this node correctly
-      // declining a birth the collective designated elsewhere, and reporting it
-      // as a failure is what made the pre-T-07655 race look like breakage on
-      // every node that lost it.
-      const deferral = birthDeferralFor(error)
-      if (deferral !== undefined && scopeRef !== undefined) {
-        deferBirthForTarget(server, targetSessionRef, scopeRef, deferral, wakeReason)
-        return
-      }
-      server.log('WARN', 'wrkq.kicker.birth_failed', {
-        targetSessionRef,
-        wakeReason,
-        envelope: summons.envelope.id,
-        error: errorText(error),
-      })
-      if (scopeRef !== undefined) {
-        server.db.mailDelivery.recordBirthRefusal({
-          targetSessionRef,
-          scopeRef,
-          reason: errorText(error),
-        })
-      }
-      return { outcome: 'birth-refused' }
-    }
+    return await birthForTarget(server, targetSessionRef, scopeRef, actionable, wakeReason)
   }
 
   const seat = await observeBrokerSeat(server, session)
 
-  // `absent` means no live broker observation of this conversation. For an
-  // ordinary seat the pass below dispatches into the session and HRC provisions
-  // a runtime; for a desktop conversation that provisioning IS the forbidden
-  // cold CLI replacement, because the session row outlives every observer.
-  // Detachment is also not evidence about the desktop process itself, so this
-  // is a wait, not a verdict.
+  // `absent` means no live broker observation of this conversation. For a
+  // desktop conversation, provisioning one IS the forbidden cold CLI
+  // replacement, because the session row outlives every observer. Detachment is
+  // also not evidence about the desktop process itself, so this is a wait, not
+  // a verdict.
   if (desktopRegistration !== undefined && seat.state === 'absent') {
     deferDesktopDelivery(server, {
       targetSessionRef,
@@ -155,6 +173,16 @@ export async function driveMailTargetOnce(
       detail: { wakeReason },
     })
     return
+  }
+
+  // For an ordinary seat, absent means there is no harness to submit into, so
+  // this is the launch-carried door — the same one a target with no session row
+  // takes. A session row is not a seat: it outlives every runtime, so routing on
+  // the row is what sent this case to `enqueue`, where the body was written into
+  // a harness still booting and lost the first turn to the launch's own priming
+  // prompt (T-08394).
+  if (seat.state === 'absent') {
+    return await birthForTarget(server, targetSessionRef, scopeRef, actionable, wakeReason)
   }
   if (
     seat.state === 'unavailable' ||
