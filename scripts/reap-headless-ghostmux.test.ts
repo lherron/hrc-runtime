@@ -37,7 +37,8 @@ function reapStatusFixture(input: {
       scope_ref TEXT NOT NULL,
       status TEXT NOT NULL,
       accepted_at TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      coalesced_into_run_id TEXT
     );
     CREATE TABLE hrc_events (
       hrc_seq INTEGER PRIMARY KEY,
@@ -64,18 +65,14 @@ function reapStatusFixture(input: {
     input.runtimeLastActivityAt,
     input.runtimeLastActivityAt
   )
-  db.query(`INSERT INTO runs VALUES ('run-completed', ?, ?, 'completed', ?, ?)`).run(
-    runtimeId,
-    scopeRef,
-    input.completedAcceptedAt,
-    '2026-08-29T16:50:01.924Z'
-  )
-  db.query(`INSERT INTO runs VALUES ('run-orphan', ?, ?, 'zombie', ?, ?)`).run(
-    runtimeId,
-    scopeRef,
-    input.zombieAcceptedAt,
-    '2026-08-29T17:20:31.409Z'
-  )
+  db.query(
+    `INSERT INTO runs (run_id, runtime_id, scope_ref, status, accepted_at, updated_at)
+     VALUES ('run-completed', ?, ?, 'completed', ?, ?)`
+  ).run(runtimeId, scopeRef, input.completedAcceptedAt, '2026-08-29T16:50:01.924Z')
+  db.query(
+    `INSERT INTO runs (run_id, runtime_id, scope_ref, status, accepted_at, updated_at)
+     VALUES ('run-orphan', ?, ?, 'zombie', ?, ?)`
+  ).run(runtimeId, scopeRef, input.zombieAcceptedAt, '2026-08-29T17:20:31.409Z')
   db.query(
     `INSERT INTO hrc_events VALUES (10, ?, ?, 'run-completed', '2026-08-29T16:50:01.924Z', 'turn.completed')`
   ).run(runtimeId, scopeRef)
@@ -133,6 +130,114 @@ describe('statusSql turn chronology', () => {
     })
     expect(row[7]).toBe('2026-08-29T17:30:00.000Z')
     expect(row[9]).toBe('turn.completed')
+  })
+})
+
+// A coalesced run is a terminal SUCCESS whose prompt was absorbed into an owner
+// run, and it always carries a LATER accepted_at than the run of record — so
+// dispatch chronology alone selects the auxiliary. Shape taken from the observed
+// clod@hrc-ios:T-08351 seat: aux accepted 22:12:08 / coalesced, owner accepted
+// 22:09:34 / completed at 22:13:28.
+function coalescedStatusFixture(input: {
+  ownerStatus: string
+  ownerRunId?: string | undefined
+  pointer?: string | null | undefined
+}): unknown[] {
+  const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE runtimes (
+      runtime_id TEXT PRIMARY KEY,
+      scope_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      active_run_id TEXT,
+      transport TEXT NOT NULL,
+      controller_kind TEXT NOT NULL,
+      runtime_state_json TEXT NOT NULL,
+      last_activity_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      runtime_id TEXT,
+      scope_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      accepted_at TEXT,
+      updated_at TEXT NOT NULL,
+      coalesced_into_run_id TEXT
+    );
+    CREATE TABLE hrc_events (
+      hrc_seq INTEGER PRIMARY KEY,
+      runtime_id TEXT,
+      scope_ref TEXT NOT NULL,
+      run_id TEXT,
+      ts TEXT NOT NULL,
+      event_kind TEXT NOT NULL
+    );
+  `)
+  const scopeRef = 'agent:clod:project:hrc-ios:task:T-08351'
+  const runtimeId = 'rt-coalesce'
+  const ownerRunId = input.ownerRunId ?? 'run-owner'
+  db.query(
+    `INSERT INTO runtimes VALUES (?, ?, 'ready', NULL, 'headless', 'harness-broker', ?, ?, ?)`
+  ).run(
+    runtimeId,
+    scopeRef,
+    JSON.stringify({
+      broker: { presentation: { kind: 'tmux-tui' }, substrate: { kind: 'leased-tmux' } },
+    }),
+    '2026-09-09T22:13:28.699Z',
+    '2026-09-09T22:13:28.699Z'
+  )
+  db.query(
+    `INSERT INTO runs (run_id, runtime_id, scope_ref, status, accepted_at, updated_at)
+     VALUES (?, ?, ?, ?, '2026-09-09T22:09:34.642Z', '2026-09-09T22:13:28.742Z')`
+  ).run(ownerRunId, runtimeId, scopeRef, input.ownerStatus)
+  db.query(
+    `INSERT INTO runs (run_id, runtime_id, scope_ref, status, accepted_at, updated_at, coalesced_into_run_id)
+     VALUES ('run-aux', ?, ?, 'coalesced', '2026-09-09T22:12:08.649Z', '2026-09-09T22:12:26.864Z', ?)`
+  ).run(runtimeId, scopeRef, input.pointer === undefined ? ownerRunId : input.pointer)
+  db.query('INSERT INTO hrc_events VALUES (10, ?, ?, ?, ?, ?)').run(
+    runtimeId,
+    scopeRef,
+    ownerRunId,
+    '2026-09-09T22:13:28.742Z',
+    input.ownerStatus === 'completed' ? 'turn.completed' : 'turn.started'
+  )
+  db.query(
+    `INSERT INTO hrc_events VALUES (20, ?, ?, 'run-aux', '2026-09-09T22:12:27.028Z', 'broker.submission.milestone')`
+  ).run(runtimeId, scopeRef)
+  try {
+    return db.query(statusSql(scopeRef, runtimeId, '')).values()[0] ?? []
+  } finally {
+    db.close()
+  }
+}
+
+describe('statusSql coalesced turn ownership', () => {
+  it('resolves an absorbed auxiliary to the owner run that actually ran', () => {
+    const row = coalescedStatusFixture({ ownerStatus: 'completed' })
+    expect(row[5]).toBe('completed')
+    expect(row[6]).toBe('run-owner')
+    expect(row[9]).toBe('turn.completed')
+  })
+
+  it('does not blanket-accept a coalesced turn: an owner still running reports the owner', () => {
+    const row = coalescedStatusFixture({ ownerStatus: 'running' })
+    expect(row[5]).toBe('running')
+    expect(row[6]).toBe('run-owner')
+    expect(row[9]).toBe('turn.started')
+  })
+
+  it('falls back to the auxiliary when the owner pointer dangles', () => {
+    const row = coalescedStatusFixture({ ownerStatus: 'completed', pointer: 'run-missing' })
+    expect(row[5]).toBe('coalesced')
+    expect(row[6]).toBe('run-aux')
+  })
+
+  it('falls back to the auxiliary when the owner pointer is null', () => {
+    const row = coalescedStatusFixture({ ownerStatus: 'completed', pointer: null })
+    expect(row[5]).toBe('coalesced')
+    expect(row[6]).toBe('run-aux')
   })
 })
 
@@ -313,6 +418,17 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(reasons[0]).toMatch(/active run/i)
     expect(reasons[0]).toMatch(/would fail the live run/i)
     expect(reasons[0]).toContain('run-live9')
+  })
+
+  it('explains an unresolved coalesce rather than calling it an incomplete turn', () => {
+    const reasons = skipReasons(
+      eligibleStatus({
+        turnStatus: 'coalesced',
+        latestTurnEventKind: 'broker.submission.milestone',
+      })
+    )
+    expect(reasons.some((r) => /coalesced_into_run_id is missing or dangling/i.test(r))).toBe(true)
+    expect(isQuitEligible(eligibleStatus({ turnStatus: 'coalesced' }))).toBe(false)
   })
 
   it('explains an incomplete latest turn', () => {

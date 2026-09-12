@@ -484,6 +484,13 @@ function skipReasons(status: PaneStatus): string[] {
       case 'failed':
         reasons.push('latest turn failed/reaped, not completed — may be mid-recovery')
         break
+      // statusSql resolves a coalesced run to its owner, so reaching this arm
+      // means the pointer itself is unusable — do not guess which turn ran.
+      case 'coalesced':
+        reasons.push(
+          'latest turn is coalesced but its owner run did not resolve — coalesced_into_run_id is missing or dangling; inspect the run before reaping'
+        )
+        break
       case 'started':
       case 'running':
       case 'accepted':
@@ -700,8 +707,8 @@ function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
         ORDER BY updated_at DESC
         LIMIT 1
       ),
-      latest_run AS (
-        SELECT run_id, status, accepted_at
+      latest_dispatch AS (
+        SELECT run_id, status, accepted_at, coalesced_into_run_id
         FROM runs
         WHERE (
             runtime_id = COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime))
@@ -713,6 +720,27 @@ function statusSql(scopeRef: string, runtimeId: string, tag: string): string {
         -- must not make an older orphan look like the latest dispatched turn.
         ORDER BY accepted_at DESC, run_id DESC
         LIMIT 1
+      ),
+      -- A coalesced run is a terminal SUCCESS, not an unfinished turn: its
+      -- prompt was absorbed into an owner run that carried the work (in-flight
+      -- steer merge, or a queued input claimed into a live turn). An absorbed
+      -- run never starts, never emits turn.completed, and ALWAYS has a later
+      -- accepted_at than the run of record -- so dispatch chronology alone
+      -- picks the auxiliary and the turn gate would reject a seat whose work
+      -- actually finished. Chase coalesced_into_run_id so both the eligibility
+      -- gate and the displayed turn event describe the run that really ran.
+      -- A missing or dangling pointer falls back to the auxiliary itself, and
+      -- skipReasons() then reports the unresolved coalesce instead of reaping.
+      latest_run AS (
+        SELECT
+          COALESCE(owner.run_id, dispatched.run_id) AS run_id,
+          COALESCE(owner.status, dispatched.status) AS status,
+          COALESCE(owner.accepted_at, dispatched.accepted_at) AS accepted_at
+        FROM latest_dispatch AS dispatched
+        LEFT JOIN runs AS owner
+          ON dispatched.status = 'coalesced'
+         AND NULLIF(dispatched.coalesced_into_run_id, '') IS NOT NULL
+         AND owner.run_id = dispatched.coalesced_into_run_id
       ),
       latest_event AS (
         SELECT ts, event_kind, hrc_seq
@@ -1176,7 +1204,7 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m).`
       )
     )
   }
