@@ -15,6 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -217,7 +218,9 @@ beforeEach(async () => {
   // registry root is a SYMLINK into a nested directory, inside another
   // registered project that carries an `asp-targets.toml` marker.
   praesidium = join(dir, 'praesidium')
-  await mkdir(join(praesidium, 'clients', 'hrc-ios', '.git'), { recursive: true })
+  await mkdir(join(praesidium, 'clients', 'hrc-ios', '.git'), {
+    recursive: true,
+  })
   await writeFile(join(praesidium, 'asp-targets.toml'), 'schema = 1\n')
   await symlink(join(praesidium, 'clients', 'hrc-ios'), join(praesidium, 'hrc-ios'))
   registryProjects = [
@@ -294,7 +297,9 @@ describe('frozen project binding', () => {
   it('ignores an ambient ASP_PROJECT that disagrees with the workspace', () => {
     // The literal T-07514 observation was ASP_PROJECT=praesidium on an hrc-ios
     // workspace. Env is not evidence about a directory.
-    const result = bind(join(praesidium, 'clients', 'hrc-ios'), { ASP_PROJECT: 'praesidium' })
+    const result = bind(join(praesidium, 'clients', 'hrc-ios'), {
+      ASP_PROJECT: 'praesidium',
+    })
     expect('bound' in result && result.bound.projectId).toBe('hrc-ios')
   })
 
@@ -304,6 +309,32 @@ describe('frozen project binding', () => {
     const result = bind(worktree)
     expect('pending' in result && result.reason).toBe('project_ambiguous')
     expect('pending' in result && result.detail).toContain('wrkq set')
+  })
+
+  it('binds a real linked worktree to its registered repository, unless separately registered', async () => {
+    const repo = join(praesidium, 'arris')
+    const worktree = join(praesidium, 'under-construction', 'gui-prototype')
+    await mkdir(repo, { recursive: true })
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args])
+    git('init')
+    git(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      'commit',
+      '--allow-empty',
+      '-m',
+      'init'
+    )
+    git('worktree', 'add', '-b', 'prototype', worktree)
+    registryProjects.push({ slug: 'arris', root: repo })
+    const result = bind(worktree)
+    expect('bound' in result && result.bound.projectId).toBe('arris')
+    expect('bound' in result && result.bound.projectRoot).toBe(canonicalPath(repo))
+    registryProjects.push({ slug: 'gui-prototype', root: worktree })
+    const separate = bind(worktree)
+    expect('bound' in separate && separate.bound.projectId).toBe('gui-prototype')
   })
 })
 
@@ -613,7 +644,11 @@ describe('observer failure is not desktop death', () => {
     try {
       assertDesktopScopeNotColdBorn(db, RESERVED)
     } catch (caught) {
-      error = caught as { code?: string; detail?: Record<string, unknown>; message?: string }
+      error = caught as {
+        code?: string
+        detail?: Record<string, unknown>
+        message?: string
+      }
     }
     expect(error).toBeDefined()
     // Retryable: the mail is PENDING under the registered address until desktop
@@ -829,7 +864,9 @@ describe('observer attachment scheduling', () => {
     })
     const attachmentsBefore = harness.attachments.length
 
-    const again = await register(DESKTOP_THREAD, { hookSource: 'user-prompt-submit' })
+    const again = await register(DESKTOP_THREAD, {
+      hookSource: 'user-prompt-submit',
+    })
     await settleAttachments()
 
     expect(again.status === 'registered' && again.attachment.scheduled).toBe(false)
@@ -915,7 +952,10 @@ describe('observer attachment scheduling', () => {
       updatedAt: NOW,
     })
     for (const runtime of db.runtimes.listByHostSessionId(registration.hostSessionId)) {
-      db.runtimes.update(runtime.runtimeId, { status: 'terminated', updatedAt: NOW })
+      db.runtimes.update(runtime.runtimeId, {
+        status: 'terminated',
+        updatedAt: NOW,
+      })
     }
 
     const disposition = scheduleDesktopObserverAttachment(

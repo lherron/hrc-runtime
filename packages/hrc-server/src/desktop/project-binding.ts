@@ -24,6 +24,8 @@
  * that never gets corrected.
  */
 
+import { execFileSync } from 'node:child_process'
+
 import {
   type WrkqProjectRegistryEntry,
   expandRegistryHome,
@@ -37,14 +39,35 @@ export type DesktopProjectBinding = {
   readonly projectId: string
   readonly projectRoot: string
   /** Which authority decided, for the durable diagnostic trail. */
-  readonly resolvedBy: 'registry' | 'registry+marker'
+  readonly resolvedBy: 'registry' | 'registry+marker' | 'registry+worktree'
 }
 
 export type DesktopProjectResolution =
   | { readonly bound: DesktopProjectBinding }
-  | { readonly pending: true; readonly reason: string; readonly detail: string }
+  | {
+      readonly pending: true
+      readonly reason: string
+      readonly detail: string
+    }
 
 type RegistryCandidate = { readonly projectId: string; readonly root: string }
+
+function gitDirectory(root: string, kind: '--git-common-dir' | '--git-dir'): string | undefined {
+  try {
+    return canonicalPath(
+      execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', kind], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 1500,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))
+        ),
+      }).trim()
+    )
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Every registered project root that CONTAINS the workspace, deepest first.
@@ -96,6 +119,39 @@ export function resolveDesktopProjectBinding(input: {
   const markerRoot = marker === undefined ? undefined : canonicalPath(marker.dir)
 
   const deepestRegistry = registryCandidates[0]
+
+  // An explicitly registered workspace takes precedence over its Git family.
+  // Otherwise a linked worktree can establish project ownership through the
+  // registered repository's common Git directory, without changing its root.
+  if (markerRoot !== undefined && deepestRegistry?.root !== markerRoot) {
+    const common = gitDirectory(markerRoot, '--git-common-dir')
+    const own = gitDirectory(markerRoot, '--git-dir')
+    if (common !== undefined && own !== undefined && common !== own) {
+      const owners = projects.flatMap((project) => {
+        const projectId = project.slug ?? project.path
+        if (projectId === undefined || !project.root?.trim()) return []
+        const root = canonicalPath(expandRegistryHome(project.root.trim(), input.env))
+        return gitDirectory(root, '--git-common-dir') === common ? [{ projectId, root }] : []
+      })
+      const owner = owners[0]
+      if (owners.length === 1 && owner !== undefined) {
+        return {
+          bound: {
+            projectId: owner.projectId,
+            projectRoot: owner.root,
+            resolvedBy: 'registry+worktree',
+          },
+        }
+      }
+      if (owners.length > 1) {
+        return {
+          pending: true,
+          reason: 'project_ambiguous',
+          detail: `multiple registered projects share worktree repository ${common}`,
+        }
+      }
+    }
+  }
 
   if (deepestRegistry === undefined && markerRoot === undefined) {
     return {
