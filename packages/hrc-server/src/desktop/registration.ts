@@ -51,6 +51,7 @@ import {
   type DesktopAttachmentDisposition,
   scheduleDesktopObserverAttachment,
 } from './observer-supervisor.js'
+import { desktopHomeFamily, ensureDesktopPlacement } from './placement.js'
 import { resolveDesktopProjectBinding } from './project-binding.js'
 import { allocateDesktopSlot, desktopSlotAvailability } from './scope-reservation.js'
 
@@ -206,6 +207,8 @@ export async function registerDesktopThread(
   // return the SAME mapping, never allocate a second readable name.
   const existing = this.db.desktopThreadRegistrations.getByRegistrationKey(registrationKey)
   if (existing !== null) {
+    const pending = await ensureDesktopPlacement(this, existing.scopeRef, registrationKey)
+    if (pending !== undefined) return pending
     const now = timestamp()
     this.db.desktopThreadRegistrations.updateObservation(registrationKey, {
       ...(request.rolloutPath === undefined ? {} : { rolloutPath: request.rolloutPath }),
@@ -315,6 +318,8 @@ export async function registerDesktopThread(
   }
 
   const projectId = binding.bound.projectId
+  const family = await desktopHomeFamily(this, `agent:${DESKTOP_AGENT_ID}:project:${projectId}`)
+  if ('status' in family) return family
   const record = await withScopeClaimMutex(
     this,
     `roster:${DESKTOP_AGENT_ID}:${projectId}`,
@@ -324,7 +329,9 @@ export async function registerDesktopThread(
       const raced = this.db.desktopThreadRegistrations.getByRegistrationKey(registrationKey)
       if (raced !== null) return { record: raced, created: false }
 
-      const slot = allocateDesktopSlot(this.db, DESKTOP_AGENT_ID, projectId)
+      const slot = allocateDesktopSlot(this.db, DESKTOP_AGENT_ID, projectId, family.baseTask)
+      const pending = await ensureDesktopPlacement(this, slot.scopeRef, registrationKey)
+      if (pending !== undefined) return pending
       const now = timestamp()
       const hostSessionId = createHostSessionId()
       const registration: DesktopThreadRegistration = {
@@ -402,6 +409,7 @@ export async function registerDesktopThread(
 
   // Scheduled, never awaited: the permanent mapping is already committed, and a
   // slow or unavailable broker must cost the hook nothing.
+  if ('status' in record) return record
   const attachment = scheduleDesktopObserverAttachment(this, record.record)
   return {
     status: 'registered',

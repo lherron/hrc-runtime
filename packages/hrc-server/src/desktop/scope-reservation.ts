@@ -41,11 +41,11 @@ const MAX_ROUNDS = 1_000
  * standing seat; reserving it for a desktop conversation would take the
  * collective's front door away permanently.
  */
-export function* desktopSlotTokenSequence(): Generator<string, void, void> {
+export function* desktopSlotTokenSequence(baseTask = 'primary'): Generator<string, void, void> {
   for (let round = 1; round <= MAX_ROUNDS; round += 1) {
     const suffix = round === 1 ? '' : `-${round}`
     for (const token of ROSTER_SLOT_TOKENS) {
-      yield `primary-${token}${suffix}`
+      yield `${baseTask}-${token}${suffix}`
     }
   }
 }
@@ -128,9 +128,10 @@ export class DesktopRosterExhaustedError extends Error {
 export function allocateDesktopSlot(
   db: HrcDatabase,
   agentId: string,
-  projectId: string
+  projectId: string,
+  baseTask = 'primary'
 ): { readonly slotToken: string; readonly scopeRef: string } {
-  for (const slotToken of desktopSlotTokenSequence()) {
+  for (const slotToken of desktopSlotTokenSequence(baseTask)) {
     const scopeRef = desktopScopeRef(agentId, projectId, slotToken)
     if (desktopSlotAvailability(db, scopeRef).available) return { slotToken, scopeRef }
   }
