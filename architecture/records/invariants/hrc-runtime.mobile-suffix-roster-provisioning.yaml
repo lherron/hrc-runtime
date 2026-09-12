@@ -17,16 +17,28 @@ predicate: >
   invoked only through the authenticated, capability-advertised rosterStart
   peer verb. The receiver independently preflights retirement, authority,
   binding state, placement, and materialization capability for the whole family
-  before mutation, localizes the runtime intent, and then owns the existing
-  atomic roster claim/start and durable idempotency record. Operator starts
-  without an explicit node directive remain explicit-local. Retryable peer
-  failure is synchronous runtime_unavailable and does not use the message
-  outbox.
-authority: Lance / wrkq:T-07398
+  before mutation, localizes the runtime intent, and then owns the roster claim
+  and durable idempotency record. Callers omitting materialization retain
+  claim-and-start. For the closed first_turn mode, the localized intent,
+  successor, continuity, and claim row commit atomically for mint and recycle;
+  the awaiting successor is not a free roster slot, creation returns
+  awaiting_first_turn with a nullable runtime id, and the first real broker
+  input materializes it without an empty turn. Replay validates the request hash
+  and audits every generation from active continuity back to the recorded
+  successor through the successor-host claim index. Missing rows inherit
+  ownership through ordinary rotation, the same key is consistent, and any
+  different key on an active or archived intermediate generation returns
+  roster_claim_superseded. New peers forward and parse this shape; old homes
+  reject the unknown field before mutation and old callers retain started
+  responses. Operator starts without an explicit node directive remain
+  explicit-local. Retryable peer failure is synchronous runtime_unavailable and
+  does not use the message outbox.
+authority: Lance / wrkq:T-07398 / wrkq:T-08407
 source:
   - hrcchat#18964
   - hrcchat#20022
   - wrkq:T-07398
+  - wrkq:T-08407
   - packages/hrc-server/src/roster-claim.ts
   - packages/hrc-server/src/federation/runtime-intent-localization.ts
   - packages/hrc-server/src/federation/peer-protocol.ts
@@ -38,10 +50,13 @@ required_tests:
   - wrkq:T-07398 origin and receiver directive validation, conflict, and no-mutation tests
   - live multi-node rosterStart topology proof across max3, svc, and lab
   - live multi-node undeclared-family directive and declared-family conflict proof
-last_verified: 2026-08-21
+  - wrkq:T-08407 atomic deferred-intent, awaiting occupancy, full-chain replay ownership, federation compatibility, and first-turn materialization gates
+last_verified: 2026-08-21 existing claim-and-start law; wrkq:T-08407 revision 4 amendment approved 2026-09-12 with implementation evidence pending
 reopen_when: >
   The mobile base set, fixed roster suffix list, reserved-family placement
   derivation, explicit provision directive admission, peer rosterStart contract,
-  or home-local idempotency ownership changes.
+  materialization mode, awaiting-first-turn or FREE semantics, atomic intent
+  ownership, full-chain replay ownership, federation response compatibility, or
+  home-local idempotency ownership changes.
 supersedes: []
 superseded_by: []

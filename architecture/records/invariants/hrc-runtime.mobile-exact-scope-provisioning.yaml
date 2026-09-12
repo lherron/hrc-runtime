@@ -37,19 +37,33 @@ predicate: >
   the authoritative home, exact and suffix claim/start share the same
   roster:<agentId>:<projectId> mutex and FREE predicate, so canonical exact names
   overlapping suffix members cannot claim one continuity concurrently. A new
-  exact key either atomically rotates or mints a fresh successor, records its
-  canonical request hash, and registers start before releasing the mutex, or
-  returns session_scope_occupied without mutation. Identical retries converge;
-  conflicting replays fail before intent mutation; superseded claims never
-  start archived predecessors. Retryable peer failure is synchronous
+  exact key either atomically rotates or mints a fresh successor and records its
+  canonical request hash, or returns session_scope_occupied without mutation.
+  Callers omitting materialization retain claim-and-start. The closed first_turn
+  materialization token is part of the request hash; its localized intent,
+  successor, continuity, and claim row commit as one fact for both mint and
+  recycle, and the current awaiting-first-turn successor is occupied until its
+  first real broker-dispatch input materializes the runtime. Creation returns
+  awaiting_first_turn with a nullable runtime id rather than sending an empty
+  turn. Replay validates the request hash and follows the active same-scope/lane
+  prior-host-session chain back to the recorded successor only while every
+  traversed generation has no claim row or the same idempotency key. A claim row
+  under any other key proves supersession, including on an archived intermediate
+  generation. Thus stale rotations preserve ownership, independently claimed
+  descendants never alias, conflicting replays fail before intent mutation, and
+  superseded claims never start archived predecessors. New federation callers
+  forward and parse the nullable-runtime response; an old authoritative peer
+  refuses the unknown materialization field before mutation, while old callers
+  retain started responses. Retryable peer failure is synchronous
   runtime_unavailable and does not use the message outbox.
-authority: Lance / wrkq:T-07398 / wrkq:T-07655
+authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407
 source:
   - hrcchat#19456
   - hrcchat#20022
   - wrkq:T-07302
   - wrkq:T-07398
   - wrkq:T-07655
+  - wrkq:T-08407
   - packages/hrc-server/src/scope-claim-core.ts
   - packages/hrc-server/src/exact-claim.ts
   - packages/hrc-server/src/roster-claim.ts
@@ -64,12 +78,15 @@ required_tests:
   - wrkq:T-07655 live multi-node designation, supersession, locate, and 24-hour soak proof
   - live multi-node exactStart placement, refusal, replay, and cleanup proof
   - live multi-node explicit node directive and declared-placement conflict proof
-last_verified: 2026-08-21
+  - wrkq:T-08407 atomic deferred-intent, awaiting occupancy, full-chain replay ownership, federation compatibility, and first-turn materialization gates
+last_verified: 2026-08-21 existing claim-and-start law; wrkq:T-08407 revision 4 amendment approved 2026-09-12 with implementation evidence pending
 reopen_when: >
-  Exact-start occupancy, shared mutex or FREE semantics, idempotency ownership,
-  peer exactStart authority, placement precedence, the reserved roster suffix
-  set, explicit provision directive admission, mail birth-envelope selection,
-  birth-designation authority or lifecycle, sender-derived provenance, mobile
-  suffix-versus-exact selection, or exact placement routing changes.
+  Exact-start occupancy, awaiting-first-turn or FREE semantics, materialization
+  mode, atomic intent ownership, idempotency lineage or claim-index ownership,
+  peer exactStart authority or response compatibility, placement precedence, the
+  reserved roster suffix set, explicit provision directive admission, mail
+  birth-envelope selection, birth-designation authority or lifecycle,
+  sender-derived provenance, mobile suffix-versus-exact selection, or exact
+  placement routing changes.
 supersedes: []
 superseded_by: []
