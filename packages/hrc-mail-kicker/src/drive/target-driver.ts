@@ -175,13 +175,21 @@ export async function driveMailTargetOnce(
     return
   }
 
-  // For an ordinary seat, absent means there is no harness to submit into, so
-  // this is the launch-carried door — the same one a target with no session row
-  // takes. A session row is not a seat: it outlives every runtime, so routing on
-  // the row is what sent this case to `enqueue`, where the body was written into
-  // a harness still booting and lost the first turn to the launch's own priming
-  // prompt (T-08394).
-  if (seat.state === 'absent') {
+  // For an ordinary seat, absent means there is no harness to submit into, so a
+  // SUMMONING envelope takes the launch-carried door — the same one a target
+  // with no session row takes. A session row is not a seat: it outlives every
+  // runtime, so routing on the row is what sent this case to `enqueue`, where
+  // the body was written into a harness still booting and lost the first turn
+  // to the launch's own priming prompt (T-08394).
+  //
+  // A wake set holding ONLY non-summoning mail keeps the pre-existing path: it
+  // falls through to `deliverToSeat`, which provisions a runtime for the session
+  // row that already exists. That is not the birth §5 forbids — the session was
+  // already minted, and the rule is that a fyi never mints one — and routing it
+  // here instead silently stopped delivering fyi mail to driven targets with an
+  // existing session and an absent broker (regression in 70e683c7, caught by
+  // the T-07615 suite).
+  if (seat.state === 'absent' && actionable.some((item) => summonsATurn(item.envelope))) {
     return await birthForTarget(server, targetSessionRef, scopeRef, actionable, wakeReason)
   }
   if (

@@ -560,23 +560,19 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(ledger.envelopes.get(envelope.id)?.presentedTo).toHaveLength(1)
   })
 
-  it('clears an intent whose landing never arrives, after the TTL', async () => {
+  it('holds an intent whose landing never arrives, after the TTL', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active'), envelope)
 
-    // In flight is not stranded: a submission with no disposition yet is left
-    // alone, and only the TTL decides it is spent.
     expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({ open: 1 })
 
     db.sqlite
       .query('UPDATE hrcmail_delivery_intents SET submitted_at = ? WHERE envelope_id = ?')
       .run(new Date(Date.now() - KICKER_SUBMISSION_TTL_MS - 1_000).toISOString(), envelope.id)
     expect(await reconcileOpenIntents(context, { reason: 'periodic' })).toMatchObject({
-      expired: 1,
+      open: 1,
     })
-    expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
-    // Never presented, so nothing about it is failed: it goes back to pending
-    // and is delivered again under policy, bounded by the strike count.
+    expect(db.mailDelivery.getIntent(envelope.id)?.uncertainCause).toBe('ttl_without_landing')
     expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
   })
   it('holds an intent bound to a runtime that terminated before landing', async () => {

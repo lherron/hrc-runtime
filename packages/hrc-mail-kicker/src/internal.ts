@@ -31,15 +31,12 @@ export const REMINDER_HOLD_MS = 60_000
 export const STEER_RETRY_BASE_MS = 2_000
 export const STEER_RETRY_MAX_MS = 30_000
 /**
- * How many consecutive TTL expiries on ONE runtime end the redelivery loop
- * (chief ruling 2026-09-06, addendum to spec T-08092 §D2 step 5).
+ * Bound for a sequence of positively proven pre-write refusals on one runtime.
  *
- * D2 step 5 clears an expired intent and re-wakes, which redelivers under
- * policy. Into a genuinely wedged seat that never converges — the case that
- * produced this bound re-submitted one steer every TTL for over twelve hours
- * while its sender was told nothing. Three strikes on one runtime fails the
- * envelope `undeliverable` with the existing sender notice; a new runtime is a
- * new row and gets its own three.
+ * T-08205 rev2 supersedes the earlier September 6 TTL-redelivery addendum:
+ * timeout, expiry, loss, runtime death, and every possible-write outcome keep
+ * their durable intent fence. Only correlated `deliveryEvidence: not_written`
+ * may release a body for a bounded retry.
  */
 export const KICKER_MAX_NON_LANDING_STRIKES = 3
 export const KICKER_SUBMISSION_TTL_MS = 30 * 60_000
