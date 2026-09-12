@@ -113,13 +113,31 @@ describe('T-08394 — the seat decides the door, not the session row', () => {
     expect(options?.launchPromptOnColdBirth).toBeUndefined()
   })
 
-  it('a fyi never births a seat, absent or not', async () => {
-    // The launch door is still a birth, and §5 says a non-summoning envelope is
-    // never the reason a session is born.
+  /**
+   * §5 says a non-summoning envelope is never the reason a session is BORN —
+   * which is not the same as saying it is never delivered.
+   *
+   * The session row here already exists, so delivering a fyi into it provisions
+   * a runtime for a session nobody had to mint. Reading "never births" as "takes
+   * no door" is what silently stopped fyi delivery to driven targets with an
+   * existing session and an absent broker in 70e683c7; the T-07615 suite caught
+   * it and this asserts the distinction the fix restores.
+   */
+  it('a fyi takes the ordinary door on an absent seat, never the launch door', async () => {
     h.ledger.say({ obligation: 'fyi' })
     await driveMailTargetOnce(h.context, TARGET_REF, 'insert')
 
-    expect(doors()).toEqual([])
-    expect(h.dispatches).toHaveLength(0)
+    // Delivered — but NOT launch-carried, because no session was minted for it.
+    expect(doors()).toEqual(['enqueue'])
+    expect(h.dispatches).toHaveLength(1)
+    expect((h.dispatches[0] as KickerDispatchOptions).launchPromptOnColdBirth).toBeUndefined()
+  })
+
+  it('a fyi riding alongside a summons does not stop the summons cold-birthing', async () => {
+    h.ledger.say({ obligation: 'fyi' })
+    h.ledger.say()
+    await driveMailTargetOnce(h.context, TARGET_REF, 'insert')
+
+    expect(doors()).toEqual(['launch'])
   })
 })

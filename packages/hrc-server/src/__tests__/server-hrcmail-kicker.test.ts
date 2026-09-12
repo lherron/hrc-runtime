@@ -772,15 +772,21 @@ describe('T-07615 — HRC drives the wrkq collaboration ledger', () => {
       kicker().wake(TARGET, 'insert')
       await kicker().drainTarget(TARGET)
     })
-    // T-07891: status/activeRunId are not busy authority. With no broker seat
-    // observation this follows the ordinary slot-owning drive path.
+    // T-07891: status/activeRunId are not busy authority. This fixture has no
+    // broker controller or active invocation, so it is an ABSENT seat even
+    // though its leftover run row says `busy`. A summoning envelope must take
+    // cold birth rather than infer a busy seat and steer into it.
     expect(queued.calls()).toBe(1)
     expect(captured.lines.some((line) => line.includes('wrkq.kicker.delivery_intent'))).toBe(true)
-    // The seat was observed ABSENT (no broker invocation), so the delivery took
-    // the enqueue door — not steer, which requires an observed active turn.
+    // This does not assert runtime ownership: installQueuedDispatch replaces
+    // dispatchTurnForSession and does not exercise admission/provisioning. It
+    // asserts only the kicker's authority boundary: no broker observation is
+    // no busy-seat observation. The launch door preserves the initial prompt
+    // rather than racing it through an enqueue; the receipt assertion below
+    // remains the control that the body actually landed.
     expect(
       captured.lines.some(
-        (line) => line.includes('wrkq.kicker.delivery_intent') && line.includes('"door":"enqueue"')
+        (line) => line.includes('wrkq.kicker.delivery_intent') && line.includes('"door":"launch"')
       )
     ).toBe(true)
     await waitUntil(
