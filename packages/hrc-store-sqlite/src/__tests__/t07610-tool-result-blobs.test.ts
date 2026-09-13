@@ -21,7 +21,9 @@ afterEach(() => {
 function fixture(onMiss?: Parameters<typeof openHrcDatabase>[1]['onLedgerBlobMiss']) {
   const root = mkdtempSync(join(tmpdir(), 't07610-blobs-'))
   roots.push(root)
-  return openHrcDatabase(join(root, 'state.sqlite'), { onLedgerBlobMiss: onMiss })
+  return openHrcDatabase(join(root, 'state.sqlite'), {
+    onLedgerBlobMiss: onMiss,
+  })
 }
 
 function lifecycle(runtimeId: string, toolUseId: string, result: unknown) {
@@ -55,13 +57,33 @@ describe('T-07610 tool-result blob storage', () => {
     db.close()
   })
 
-  test('three broker result shapes spill once and hydrate both ledgers exactly', () => {
+  test('real broker result shapes spill once, stay bounded, and hydrate both ledgers exactly', () => {
     const db = fixture()
     const body = `full-result-marker:${'x'.repeat(40_000)}`
     const shapes: unknown[] = [
       body,
       { output: body, exitCode: 0 },
       { content: [{ type: 'text', text: body }], details: { exitCode: 0 } },
+      {
+        content: [{ type: 'text', text: 'codex command complete' }],
+        details: {
+          stdout: 'c'.repeat(1_000_000),
+          exitCode: 0,
+          durationMs: 1234,
+        },
+      },
+      {
+        content: [{ type: 'text', text: 'claude read complete' }],
+        details: { file: { base64: 'd'.repeat(680_000) }, status: 'completed' },
+      },
+      {
+        content: [{ type: 'text', text: 'array result' }],
+        details: { pages: Array.from({ length: 40_000 }, (_, item) => item) },
+      },
+      {
+        content: [{ type: 'text', text: 'object result' }],
+        details: { structuredPatch: { patch: 'p'.repeat(100_000) } },
+      },
     ]
 
     for (const [index, rawResult] of shapes.entries()) {
@@ -107,7 +129,7 @@ describe('T-07610 tool-result blob storage', () => {
       db.sqlite
         .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM tool_result_blobs')
         .get()?.count
-    ).toBe(3)
+    ).toBe(shapes.length)
     db.close()
   })
 
@@ -163,11 +185,22 @@ describe('T-07610 tool-result blob storage', () => {
     const misses: string[] = []
     const db = fixture((miss) => misses.push(miss.metric))
     const blobId = 'tc:missing-runtime:missing-tool'
-    const result = createToolResultSpillStub('missing body', {
-      blobId,
-      bytes: 40_000,
-      kind: 'broker_raw',
-    })
+    const result = createToolResultSpillStub(
+      {
+        content: [{ type: 'text', text: 'missing body' }],
+        details: {
+          stdout: 'not retained inline',
+          exitCode: 9,
+          interrupted: true,
+          durationMs: 750,
+        },
+      },
+      {
+        blobId,
+        bytes: 40_000,
+        kind: 'broker_raw',
+      }
+    )
     db.sqlite
       .query<never, [string]>(
         `INSERT INTO broker_invocation_events (
@@ -178,14 +211,24 @@ describe('T-07610 tool-result blob storage', () => {
       )
       .run(JSON.stringify({ toolCallId: 'missing-tool', result }))
     const read = db.brokerInvocationEvents.getByInvocationAndSeq('missing-invocation', 1)!
-    expect(JSON.parse(read.brokerEventJson).result.details.spill.blobId).toBe(blobId)
+    const fallback = JSON.parse(read.brokerEventJson).result
+    expect(fallback.content[0].text).toContain('missing body')
+    expect(fallback.content[0].text).toContain('bytes spilled')
+    expect(fallback.details).toEqual({
+      exitCode: 9,
+      interrupted: true,
+      durationMs: 750,
+      spill: { blobId, bytes: 40_000, kind: 'broker_raw' },
+    })
     expect(misses).toEqual(['ledger.blob_miss'])
     db.close()
   })
 
   test('addressed parts tolerate retry and out-of-order arrival, then assemble and clear staging', () => {
     const db = fixture()
-    const resultJson = JSON.stringify({ output: `parted-${'q'.repeat(1_000)}` })
+    const resultJson = JSON.stringify({
+      output: `parted-${'q'.repeat(1_000)}`,
+    })
     const bytes = Buffer.byteLength(resultJson)
     const chunks = [resultJson.slice(0, 100), resultJson.slice(100)]
     const base = {

@@ -1,6 +1,7 @@
 export const TOOL_RESULT_SPILL_THRESHOLD_BYTES = 32_768
 export const TOOL_RESULT_SPILL_HEAD_CHARS = 4_096
 export const TOOL_RESULT_SPILL_TAIL_CHARS = 1_024
+const TOOL_RESULT_SPILL_DIAGNOSTIC_STRING_BYTES = 256
 
 export type ToolResultBlobKind = 'broker_raw' | 'lifecycle_canonical'
 
@@ -13,8 +14,18 @@ export type ToolResultSpillDescriptor = {
 export type CanonicalToolResultContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+  | {
+      type: 'tool_use'
+      id: string
+      name: string
+      input: Record<string, unknown>
+    }
+  | {
+      type: 'tool_result'
+      tool_use_id: string
+      content: string
+      is_error?: boolean
+    }
 
 export type CanonicalToolResult = {
   content: CanonicalToolResultContentBlock[]
@@ -76,27 +87,69 @@ function resultBody(result: unknown): string {
   return safeStringify(result)
 }
 
-function nonBodyDetails(result: unknown): Record<string, unknown> {
-  if (!isRecord(result)) return {}
-  const details = isRecord(result['details']) ? result['details'] : {}
-  const withoutBody = (record: Record<string, unknown>): Record<string, unknown> => {
-    const { content: _content, output: _output, spill: _spill, ...rest } = record
-    return rest
+const SPILL_DIAGNOSTIC_KEYS = [
+  'exitCode',
+  'status',
+  'interrupted',
+  'duration',
+  'durationMs',
+] as const
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  let bytes = 0
+  let result = ''
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8')
+    if (bytes + characterBytes > maxBytes) break
+    result += character
+    bytes += characterBytes
   }
-  const { content: _content, output: _output, details: _details, ...topLevel } = result
-  return { ...withoutBody(details), ...topLevel }
+  return result
+}
+
+function isScalarDiagnostic(value: unknown): value is string | number | boolean | null {
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  )
+}
+
+function spillDetails(result: unknown, spill: ToolResultSpillDescriptor): Record<string, unknown> {
+  const bounded: Record<string, unknown> = {}
+  if (isRecord(result)) {
+    const details = isRecord(result['details']) ? result['details'] : {}
+    for (const key of SPILL_DIAGNOSTIC_KEYS) {
+      const value = Object.prototype.hasOwnProperty.call(result, key) ? result[key] : details[key]
+      if (!isScalarDiagnostic(value)) continue
+      bounded[key] =
+        typeof value === 'string'
+          ? truncateUtf8(value, TOOL_RESULT_SPILL_DIAGNOSTIC_STRING_BYTES)
+          : value
+    }
+  }
+  return { ...bounded, spill }
 }
 
 /** Build the canonical excerpt stub persisted in place of a large result. */
 export function createToolResultSpillStub(
   result: unknown,
-  spill: ToolResultSpillDescriptor
+  spill: ToolResultSpillDescriptor,
+  options: { preserveExistingExcerpt?: boolean } = {}
 ): CanonicalToolResult {
+  if (options.preserveExistingExcerpt && isRecord(result) && Array.isArray(result['content'])) {
+    return {
+      content: result['content'] as CanonicalToolResultContentBlock[],
+      details: spillDetails(result, spill),
+    }
+  }
   const body = resultBody(result)
   const text = `${body.slice(0, TOOL_RESULT_SPILL_HEAD_CHARS)}\n…[${spill.bytes} bytes spilled → ${spill.blobId}]…\n${body.slice(-TOOL_RESULT_SPILL_TAIL_CHARS)}`
   return {
     content: [{ type: 'text', text }],
-    details: { ...nonBodyDetails(result), spill },
+    details: spillDetails(result, spill),
   }
 }
 
