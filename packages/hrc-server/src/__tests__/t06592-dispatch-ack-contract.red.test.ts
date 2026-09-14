@@ -21,7 +21,11 @@ beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-t06592-ack-')
   dispatchCalls = 0
   server = await createHrcServer(
-    fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    fixture.serverOpts({
+      headlessCodexBrokerEnabled: true,
+      codexCliTmuxBrokerEnabled: false,
+      otelListenerEnabled: false,
+    })
   )
   ;(server as any).getHarnessBrokerController = () => {
     const submit = async () => {
@@ -242,7 +246,11 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     expect(presentationSignals[0]).toBeInstanceOf(AbortSignal)
     expect(presentationSignals[0]?.aborted).toBe(true)
     server = await createHrcServer(
-      fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+      fixture.serverOpts({
+        headlessCodexBrokerEnabled: true,
+        codexCliTmuxBrokerEnabled: false,
+        otelListenerEnabled: false,
+      })
     )
     const afterRestartResponse = await postTurn(body)
     const afterRestart = (await afterRestartResponse.json()) as any
@@ -390,7 +398,11 @@ describe('T-06592 durable dispatch acknowledgment', () => {
     await server?.stop()
     server = undefined
     server = await createHrcServer(
-      fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+      fixture.serverOpts({
+        headlessCodexBrokerEnabled: true,
+        codexCliTmuxBrokerEnabled: false,
+        otelListenerEnabled: false,
+      })
     )
     ;(server as any).getHarnessBrokerController = () => {
       const submit = async () => ({

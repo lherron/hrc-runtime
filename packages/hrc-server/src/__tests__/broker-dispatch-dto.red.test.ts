@@ -97,7 +97,11 @@ afterEach(async () => {
  */
 async function startBrokerServer(): Promise<void> {
   server = await createHrcServer(
-    fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    fixture.serverOpts({
+      headlessCodexBrokerEnabled: true,
+      codexCliTmuxBrokerEnabled: false,
+      otelListenerEnabled: false,
+    })
   )
 }
 

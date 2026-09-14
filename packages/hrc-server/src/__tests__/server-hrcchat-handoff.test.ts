@@ -10,7 +10,10 @@ describe('hrcchat minimal server routes', () => {
   const ctx = createHrcchatMinimalFixture()
 
   it('semantic turn handoff fails closed when headless codex would use legacy exec', async () => {
-    await ctx.restartServer({ headlessCodexBrokerEnabled: false })
+    await ctx.restartServer({
+      headlessCodexBrokerEnabled: false,
+      codexCliTmuxBrokerEnabled: false,
+    })
     const fakeCodex = await ctx.installFakeCodex('fake-codex-turn-handoff')
     const sessionRef = 'agent:handoff:project:agent-spaces/lane:main'
 
@@ -59,7 +62,10 @@ describe('hrcchat minimal server routes', () => {
   })
 
   it('semantic turn handoff stales live non-broker tmux instead of literal delivery', async () => {
-    await ctx.restartServer({ headlessCodexBrokerEnabled: false })
+    await ctx.restartServer({
+      headlessCodexBrokerEnabled: false,
+      codexCliTmuxBrokerEnabled: false,
+    })
     const tmux = new TmuxManager(ctx.fixture.tmuxSocketPath)
     await tmux.initialize()
     const fakeCodex = await ctx.installFakeCodex('fake-codex-turn-handoff-live-tmux')

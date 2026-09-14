@@ -42,7 +42,11 @@ let server: HrcServer | undefined
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-multiturn-repair-reap-')
   server = await createHrcServer(
-    fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    fixture.serverOpts({
+      headlessCodexBrokerEnabled: true,
+      codexCliTmuxBrokerEnabled: false,
+      otelListenerEnabled: false,
+    })
   )
 })
 

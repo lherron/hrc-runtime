@@ -24,9 +24,11 @@ import {
   getBrokerRuntimeTmuxSocketPath,
   isMatchingInteractiveTmuxBrokerRuntime,
   normalizeClaudeInteractiveBrokerIntent,
+  normalizeCodexInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
   runInteractiveTmuxRoute,
   shouldRedirectClaudeToInteractiveBroker,
+  shouldRedirectCodexToInteractiveBroker,
   shouldUseHeadlessTransport,
   toLatestRuntimeAdmissionView,
 } from './broker-decisions.js'
@@ -304,11 +306,18 @@ export async function startRuntimeForSession(
     }
     const highRiskActuatorSplit =
       normalizeActuatorSplitPolicy(intent.execution?.actuatorSplit)?.mode === 'high-risk'
-    const startIntent =
+    const claudeRedirect =
       this.claudeCodeTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
       shouldRedirectClaudeToInteractiveBroker(intent)
-        ? normalizeClaudeInteractiveBrokerIntent(intent)
+    const codexRedirect =
+      this.codexCliTmuxBrokerEnabled &&
+      !highRiskActuatorSplit &&
+      shouldRedirectCodexToInteractiveBroker(intent)
+    const startIntent = claudeRedirect
+      ? normalizeClaudeInteractiveBrokerIntent(intent)
+      : codexRedirect
+        ? normalizeCodexInteractiveBrokerIntent(intent)
         : intent
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
     const presentationOptions = {

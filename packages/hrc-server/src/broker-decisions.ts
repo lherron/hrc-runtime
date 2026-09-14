@@ -746,6 +746,39 @@ export function normalizeClaudeInteractiveBrokerIntent(intent: HrcRuntimeIntent)
 }
 
 /**
+ * T-08338. Admit dispatched Codex CLI intents into the stock Codex TUI broker
+ * path. Keep this separate from the Claude redirect: OpenAI is shared by the
+ * Pi, SDK, and agent-harness routes, so the harness id is the discriminant.
+ *
+ * The id-less shape has no broker-era population yet, but the downstream
+ * `shouldConsiderCodexCliTmuxBrokerDispatch` contract already admits it. Keep
+ * the two predicates aligned so a normalized intent cannot be refused by the
+ * route it targets.
+ */
+export function shouldRedirectCodexToInteractiveBroker(intent: HrcRuntimeIntent): boolean {
+  return (
+    intent.harness.provider === 'openai' &&
+    (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
+  )
+}
+
+/** Rewrite a dispatched Codex intent into the codex-tui interactive shape. */
+export function normalizeCodexInteractiveBrokerIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {
+  return {
+    ...intent,
+    harness: {
+      ...intent.harness,
+      id: 'codex-cli',
+      interactive: true,
+    },
+    execution: {
+      ...intent.execution,
+      preferredMode: 'interactive',
+    },
+  }
+}
+
+/**
  * T-01770 Phase C (block). Headless-parity convention for whether a broker turn
  * blocks the synchronous caller: undefined/true => block until the run reaches a
  * terminal state; false => return status:'started' immediately (the async reply

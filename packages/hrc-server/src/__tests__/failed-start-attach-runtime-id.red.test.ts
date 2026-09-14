@@ -53,6 +53,13 @@ afterEach(async () => {
 
 describe('retired headless CLI start', () => {
   it('fails before allocating a runtime row while preserving the resolved host session', async () => {
+    await server?.stop()
+    server = await createHrcServer(
+      fixture.serverOpts({
+        headlessCodexBrokerEnabled: false,
+        codexCliTmuxBrokerEnabled: false,
+      })
+    )
     const resolved = await fixture.resolveSession(incidentScope)
 
     const response = await fixture.postJson('/v1/runtimes/start', {

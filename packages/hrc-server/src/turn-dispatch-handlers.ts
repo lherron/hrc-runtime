@@ -38,10 +38,12 @@ import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   normalizeClaudeInteractiveBrokerIntent,
+  normalizeCodexInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
   runInteractiveTmuxRoute,
   shouldDeferHeadlessToInteractiveBrokerReuse,
   shouldRedirectClaudeToInteractiveBroker,
+  shouldRedirectCodexToInteractiveBroker,
   shouldUseHeadlessTransport,
   shouldUseSdkTransport,
   toLatestRuntimeAdmissionView,
@@ -1489,11 +1491,22 @@ async function dispatchAdmittedTurnForSession(
   const highRiskActuatorSplit =
     normalizeActuatorSplitPolicy(normalizedInputIntent.execution?.actuatorSplit)?.mode ===
     'high-risk'
-  const intent =
+  const claudeRedirect =
     this.claudeCodeTmuxBrokerEnabled &&
     !highRiskActuatorSplit &&
     shouldRedirectClaudeToInteractiveBroker(normalizedInputIntent)
-      ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
+  // T-08338: responseFormat is per-turn input. A schema-bearing cold Codex
+  // dispatch stays on the headless app-server route, whose turn/start request
+  // is the schema vehicle. The stock TUI queue protocol has no schema field.
+  const codexRedirect =
+    this.codexCliTmuxBrokerEnabled &&
+    !highRiskActuatorSplit &&
+    options.responseFormat === undefined &&
+    shouldRedirectCodexToInteractiveBroker(normalizedInputIntent)
+  const intent = claudeRedirect
+    ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
+    : codexRedirect
+      ? normalizeCodexInteractiveBrokerIntent(normalizedInputIntent)
       : normalizedInputIntent
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
   // T-01873: route the durable-tmux liveness gate through the runtime-hosting

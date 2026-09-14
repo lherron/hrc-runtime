@@ -377,7 +377,10 @@ describe('hrcchat minimal server routes', () => {
   })
 
   it('fails closed for openai nonInteractive dm when the broker is not admitted', async () => {
-    await ctx.restartServer({ headlessCodexBrokerEnabled: false })
+    await ctx.restartServer({
+      headlessCodexBrokerEnabled: false,
+      codexCliTmuxBrokerEnabled: false,
+    })
     const fakeCodex = await ctx.installFakeCodex('fake-codex-dm-fallback')
 
     const dmRes = await ctx.fixture.postJson('/v1/messages/dm', {
