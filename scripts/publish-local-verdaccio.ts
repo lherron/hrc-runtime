@@ -5,6 +5,11 @@ import { join, resolve } from 'node:path'
 
 import { type PraesidiumBuild, environmentWithoutGitOverrides } from 'hrc-core'
 
+import {
+  documentationNoticeLine,
+  parsePorcelainPaths,
+  partitionInstallScope,
+} from './lib/install-source-scope'
 import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
 import { assertPublishContainment } from './lib/publish-containment'
 import { activeRegistryUrl } from './lib/registry'
@@ -260,13 +265,26 @@ export function provePublicationSource(input: {
         `Canonical publication could not freshly fetch ${canonicalRef}: ${fetched.out}`
       )
     }
-    const status = requiredCommandOutputOrEmpty(
-      'git',
-      ['status', '--porcelain=v1', '--untracked-files=all'],
-      root
+    // Source, not dirt. An uncommitted `.ts` under `packages/` is a package
+    // about to be published from bytes no commit describes; an uncommitted
+    // `docs/` page is not, and refusing over one only taught operators to work
+    // around the gate. Untracked files still count here — an untracked source
+    // file is source that is not checked in — which is why this stays stricter
+    // than the dirty-worktree guard rather than being folded into it.
+    const { source, documentation } = partitionInstallScope(
+      parsePorcelainPaths(
+        requiredCommandOutputOrEmpty(
+          'git',
+          ['status', '--porcelain=v1', '--untracked-files=all'],
+          root
+        ),
+        { includeUntracked: true }
+      )
     )
-    if (status) {
-      throw new Error(`Canonical publication requires a clean source tree:\n${status}`)
+    const notice = documentationNoticeLine('[publish] canonical source proof:', documentation)
+    if (notice) console.log(notice)
+    if (source.length > 0) {
+      throw new Error(`Canonical publication requires a clean source tree:\n${source.join('\n')}`)
     }
   }
 

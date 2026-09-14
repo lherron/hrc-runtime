@@ -43,7 +43,7 @@ describe('dirtyTrackedPaths', () => {
 describe('refusalMessage', () => {
   test('names every dirty path and the escape hatch', () => {
     const message = refusalMessage(['justfile', 'scripts/atomic-install.ts'])
-    expect(message).toContain('2 tracked paths modified')
+    expect(message).toContain('2 tracked source paths modified')
     expect(message).toContain('  justfile')
     expect(message).toContain('  scripts/atomic-install.ts')
     expect(message).toContain('just install allow-dirty=1')

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -99,7 +99,7 @@ describe('T-06958 canonical package provenance', () => {
 
   test('rejects dirty and uncontained canonical sources', async () => {
     const dirty = await canonicalFixture()
-    await writeFile(join(dirty.root, 'untracked.txt'), 'dirty\n')
+    await writeFile(join(dirty.root, 'untracked.ts'), 'export const dirty = true\n')
     expect(() =>
       provePublicationSource({
         canonical: true,
@@ -119,6 +119,27 @@ describe('T-06958 canonical package provenance', () => {
         root: uncontained.root,
       })
     ).toThrow('is not contained by freshly fetched origin/main')
+  })
+
+  // The proof is about the bytes that get published, and no build step, pack, or
+  // installed command reads a Markdown page. Refusing over one only taught
+  // operators to stash unrelated writing before every install.
+  test('documentation dirt does not block a canonical publication', async () => {
+    const fixture = await canonicalFixture()
+    await writeFile(join(fixture.root, 'NOTES.md'), 'uncommitted prose\n')
+    await mkdir(join(fixture.root, 'docs'), { recursive: true })
+    await writeFile(join(fixture.root, 'docs', 'runbook.yaml'), 'step: one\n')
+
+    expect(
+      provePublicationSource({
+        canonical: true,
+        canonicalRef: 'origin/main',
+        root: fixture.root,
+      })
+    ).toMatchObject({
+      canonical: true,
+      sourceCommit: runGit(fixture.repo, ['rev-parse', 'HEAD']),
+    })
   })
 
   test('refuses same-name/version replacement before canonical publication', async () => {

@@ -16,7 +16,7 @@ info:
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
     @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
-    @echo "  just install   - Atomic install; refuses a dirty tree unless allow-dirty=1"
+    @echo "  just install   - Atomic install; refuses uncommitted SOURCE unless allow-dirty=1"
     @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
     @echo "  just env-down  - Tear that environment down"
     @echo "  just e2e       - Run the suite against the provisioned environment"
@@ -175,8 +175,11 @@ rebuild:
 # Linked Git worktrees auto-disable the global wrapper cutover unless force-link=1 is passed explicitly.
 # Linked worktrees publish HRC packages to the isolated worktree tag/channel.
 # An install builds and publishes the tree on disk, so it refuses a worktree with
-# tracked modifications (staged or unstaged; untracked files are ignored) before
-# it builds anything. Pass allow-dirty=1 to install uncommitted work deliberately.
+# tracked modifications to SOURCE (staged or unstaged; untracked files are ignored)
+# before it builds anything. Documentation -- docs/, architecture/, and any
+# .md/.markdown/.html/.htm/.txt file -- cannot change what an install builds, so it
+# never gates one; scripts/lib/install-source-scope.ts owns that cut and fails
+# closed. Pass allow-dirty=1 to install uncommitted source deliberately.
 install *options:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -7,12 +7,21 @@
  * Untracked files are ignored: the install never packs them, and scratch files
  * in a checkout are normal. Only tracked modifications (worktree or index) count.
  *
- * No exclusion list is needed. The install's own generated output is untracked
- * or ignored (`dist/`, `node_modules/`, `asp_modules/`, `asp-lock.json`), it
- * installs with `bun install --frozen-lockfile` so `bun.lock` is never advanced,
- * and the publish step's rewrite of each package.json is restored in a `finally`
- * before the recipe returns. A package.json left modified is a failed publish,
- * which is exactly what the guard should refuse.
+ * Of those, only SOURCE modifications refuse. A modified `docs/` page or
+ * architecture record cannot change a byte of what the install builds, packs, or
+ * cuts over, so refusing over one bought nothing and cost the operator either a
+ * stash of unrelated work or an `allow-dirty=1` that also switches the guard off
+ * for the code. `scripts/lib/install-source-scope.ts` owns the cut and fails
+ * closed. The dirty documentation paths are still named, so a pass says what it
+ * looked at.
+ *
+ * No exclusion list is needed beyond that. The install's own generated output is
+ * untracked or ignored (`dist/`, `node_modules/`, `asp_modules/`,
+ * `asp-lock.json`), it installs with `bun install --frozen-lockfile` so
+ * `bun.lock` is never advanced, and the publish step's rewrite of each
+ * package.json is restored in a `finally` before the recipe returns. A
+ * package.json left modified is a failed publish, which is exactly what the
+ * guard should refuse.
  */
 import { spawnSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
@@ -21,6 +30,11 @@ import { join } from 'node:path'
 import { environmentWithoutGitOverrides } from 'hrc-core'
 
 import { parseInstallOptions } from './install-options'
+import {
+  documentationNoticeLine,
+  parsePorcelainPaths,
+  partitionInstallScope,
+} from './lib/install-source-scope'
 
 /**
  * Paths with tracked modifications, from `git status --porcelain=v1 -uno` output.
@@ -28,21 +42,12 @@ import { parseInstallOptions } from './install-options'
  * dropped defensively even though `-uno` already excludes them.
  */
 export function dirtyTrackedPaths(porcelain: string): string[] {
-  const paths: string[] = []
-  for (const line of porcelain.split('\n')) {
-    if (line.length < 4) continue
-    const code = line.slice(0, 2)
-    if (code === '??' || code === '!!') continue
-    const entry = line.slice(3)
-    const arrow = entry.indexOf(' -> ')
-    paths.push(arrow === -1 ? entry : entry.slice(arrow + 4))
-  }
-  return paths
+  return parsePorcelainPaths(porcelain)
 }
 
 export function refusalMessage(paths: string[]): string {
   return [
-    `[install] refusing to install from a dirty worktree (${paths.length} tracked ${
+    `[install] refusing to install from a dirty worktree (${paths.length} tracked source ${
       paths.length === 1 ? 'path' : 'paths'
     } modified):`,
     ...paths.map((path) => `  ${path}`),
@@ -296,15 +301,17 @@ if (import.meta.main) {
     console.error(misidentified)
     process.exit(1)
   }
-  const paths = readDirtyTrackedPaths(options.sourceRoot)
-  if (paths.length === 0) {
-    console.log('[install] dirty-tree guard: clean tracked worktree')
+  const { source, documentation } = partitionInstallScope(readDirtyTrackedPaths(options.sourceRoot))
+  const notice = documentationNoticeLine('[install] dirty-tree guard:', documentation)
+  if (notice) console.log(notice)
+  if (source.length === 0) {
+    console.log('[install] dirty-tree guard: no tracked source modifications')
   } else if (options.allowDirty) {
     console.log(
-      `[install] dirty-tree guard bypassed by allow-dirty=1; installing ${paths.length} uncommitted tracked change(s)`
+      `[install] dirty-tree guard bypassed by allow-dirty=1; installing ${source.length} uncommitted tracked source change(s)`
     )
   } else {
-    console.error(refusalMessage(paths))
+    console.error(refusalMessage(source))
     process.exit(1)
   }
 }

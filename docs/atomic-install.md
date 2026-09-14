@@ -9,34 +9,61 @@ installation, build, entrypoint smoke checks, and package publication succeed.
 An install builds and publishes the tree on disk, not the commit. Before any
 policy is computed or anything is built, `just install` runs
 `scripts/install-dirty-guard.ts`, which refuses (exit 1, nothing built) when
-`git status --porcelain=v1 --untracked-files=no` reports tracked modifications,
-listing every dirty path. Untracked files are ignored: the install never packs
-them and scratch files in a checkout are normal. Pass `allow-dirty=1` to install
-uncommitted work deliberately:
+`git status --porcelain=v1 --untracked-files=no` reports tracked modifications
+to SOURCE, listing every refused path. Untracked files are ignored: the install
+never packs them and scratch files in a checkout are normal. Pass
+`allow-dirty=1` to install uncommitted work deliberately:
 
 ```bash
-just install                 # refuses if tracked files are modified
+just install                 # refuses if tracked source files are modified
 just install allow-dirty=1   # installs the working tree as-is
 ```
+
+### What counts as source
+
+`scripts/lib/install-source-scope.ts` owns the cut, and it is a cut on what the
+install can actually consume. Everything is source except the two categories
+below, which no build step reads, no package packs, and no installed command
+changes with:
+
+- anything under `docs/` or `architecture/` (prose, durable records, and the
+  generated `architecture/index.jsonl` projection — `just verify` grades those,
+  `just install` never reads them);
+- any file with a documentation extension (`.md`, `.markdown`, `.html`, `.htm`,
+  `.txt`) wherever it sits, including beside the code it describes.
+
+The classifier fails closed: a new top-level directory, a plist, a workflow file,
+a dotfile at the root are all source until someone decides otherwise. Dirty
+documentation paths are still printed on the way past, so a gate that passed says
+what it looked at rather than passing silently.
+
+The gates used to refuse over any dirty path at all. That is broader than the
+proposition they defend — "the bytes being built and published are bytes someone
+committed" — which an edit to `docs/operations-runbook.md` cannot falsify. The
+refusal bought nothing and cost the operator either a stash of unrelated writing
+or an `allow-dirty=1` that switches the guard off for the code too.
+
+No exclusion list is needed beyond that, because the install churns no tracked
+file: its output is untracked or ignored (`dist/`, `node_modules/`,
+`asp_modules/`, `asp-lock.json`), it runs `bun install --frozen-lockfile` so
+`bun.lock` is never advanced, and the publish step's rewrite of each
+`package.json` is restored in a `finally` before the recipe returns. A
+`package.json` still modified when the guard runs is the residue of a failed
+publish, which is exactly what should be refused.
+
+The guard is not the canonical-publication check. A main-checkout install still
+proves its publication source separately and more strictly after the guard
+passes: `provePublicationSource` reads `--untracked-files=all`, so an untracked
+source file — source that is not checked in — refuses there even though the
+guard let it by. It applies the same source cut, so documentation dirt does not
+refuse in either place. The guard is what covers the linked-worktree install
+path, which publishes to the worktree channel without that proof.
 
 Install options are `name=value` tokens (`no-sync=1`, `force-sync=1`,
 `force-link=1`, `allow-dirty=1`) accepted in any order. `just` recipe arguments
 are positional, so the recipe forwards them opaquely and
 `scripts/install-options.ts` parses them by name; an unrecognized token is an
 error rather than a silently mis-assigned option.
-
-No exclusion list is needed, because the install churns no tracked file: its
-output is untracked or ignored (`dist/`, `node_modules/`, `asp_modules/`,
-`asp-lock.json`), it runs `bun install --frozen-lockfile` so `bun.lock` is never
-advanced, and the publish step's rewrite of each `package.json` is restored in a
-`finally` before the recipe returns. A `package.json` still modified when the
-guard runs is the residue of a failed publish, which is exactly what should be
-refused.
-
-The guard is not the canonical-publication check. A main-checkout install still
-proves its publication source separately and more strictly (untracked files
-included) after the guard passes; the guard is what covers the linked-worktree
-install path, which publishes to the worktree channel without that proof.
 
 ## Installed layout
 
