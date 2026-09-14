@@ -30,10 +30,10 @@ describe('broker admission gates after the class-specific ABI', () => {
 
   it('preempt authority is checked before the broker syscall and cannot upgrade another door', () => {
     const handlers = source('turn-dispatch-handlers.ts')
-    const authority = handlers.indexOf('async function preemptAuthorized')
-    const syscall = handlers.indexOf("door === 'preempt' &&", authority)
+    const authority = handlers.indexOf('async function preemptAdmission')
+    const syscall = handlers.indexOf("door === 'preempt'", authority)
     expect(authority).toBeGreaterThan(-1)
     expect(syscall).toBeGreaterThan(authority)
-    expect(handlers).toContain("reason: 'authority-denied'")
+    expect(handlers).toContain("'authority-denied'")
   })
 })

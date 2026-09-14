@@ -489,6 +489,18 @@ export type PreemptSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   wait?: boolean | undefined
 }
 
+/**
+ * Why a preempt may or may not pass HRC's door (T-08337).
+ *
+ * `preempt-unsupported` is a CAPABILITY fact about the driver behind the seat —
+ * it does not implement interruption — while `authority-denied` is a fact about
+ * the caller. They are answers to different questions, and an operator reading a
+ * refused hold needs to tell them apart, so the door does not collapse them into
+ * one boolean. It lives here because both the HTTP door (hrc-server) and the
+ * mail kicker (hrc-mail-kicker) have to name the same three answers.
+ */
+export type PreemptAdmission = 'authorized' | 'authority-denied' | 'preempt-unsupported'
+
 export type HrcSubmissionDisposition =
   | { type: 'executed'; turnId: string }
   | { type: 'absorbed'; turnId: string }

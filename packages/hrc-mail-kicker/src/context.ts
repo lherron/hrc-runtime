@@ -3,6 +3,7 @@ import type {
   HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcSessionRecord,
+  PreemptAdmission,
   PreemptSubmissionRequest,
 } from 'hrc-core'
 import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
@@ -96,7 +97,18 @@ export type MailKickerContext = {
     prompt: string,
     options: KickerDispatchOptions
   ): Promise<KickerDispatchResult>
-  preemptAuthorized(session: HrcSessionRecord, request: PreemptSubmissionRequest): Promise<boolean>
+  /**
+   * T-08337: the three-way preempt answer, not a boolean.
+   *
+   * The kicker still takes the ordinary door for anything but `authorized`, but
+   * a hold refused because the DRIVER cannot be interrupted and a hold refused
+   * because the SENDER may not interrupt are different facts, and the kicker is
+   * the surface where the first one will actually be seen.
+   */
+  preemptAdmission(
+    session: HrcSessionRecord,
+    request: PreemptSubmissionRequest
+  ): Promise<PreemptAdmission>
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void
 
   wake(targetSessionRef: string, reason: HrcMailDriveWakeReason): void

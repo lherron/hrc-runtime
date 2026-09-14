@@ -365,6 +365,7 @@ export type {
   HrcSubmissionTarget,
   HrcSubmissionTurnTerminal,
   InvokeSubmissionRequest,
+  PreemptAdmission,
   PreemptSubmissionRequest,
   SteerSubmissionRequest,
   SendAppHarnessInFlightInputRequest,

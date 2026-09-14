@@ -269,7 +269,7 @@ export async function createT08094Harness(): Promise<T08094Harness> {
       dispatches.push(options)
       return dispatchResult()
     },
-    preemptAuthorized: async () => false,
+    preemptAdmission: async () => 'authority-denied',
     log: (level, event, detail) => logs.push({ level, event, detail }),
     wake: (target) => wakes.push(target),
     drainTarget: async () => undefined,

@@ -9,6 +9,7 @@
  * W4 is responsible for calling it behind HRC_HEADLESS_CODEX_BROKER_ENABLED.
  */
 
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   FinalSummaryRecoveryResult,
@@ -62,7 +63,13 @@ import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
 import { parseBrokerRuntimeHostingState } from './runtime-hosting'
 
-import { type BrokerAdmissionClass, brokerCapabilitiesSupportAdmissionClass } from './capabilities'
+import {
+  BROKER_PREEMPT_UNSUPPORTED_REASON,
+  type BrokerAdmissionClass,
+  brokerCapabilitiesAdmissionClasses,
+  brokerCapabilitiesRefuseAdmissionClass,
+  brokerCapabilitiesSupportAdmissionClass,
+} from './capabilities'
 import type { AllocationContext } from './controller/allocation'
 import {
   type DispatchContext,
@@ -839,8 +846,32 @@ export class HarnessBrokerController {
         timeoutCode: 'broker_preempt_timeout',
         retireOnTimeout: true,
       },
-      (active) =>
-        active.client.preempt({
+      (active) => {
+        const invocation = this.db.brokerInvocations.getByInvocationId(active.invocationId)
+        // The sibling `invoke()` degrades to the queue class when the driver
+        // cannot serve `exclusive`, because an own-turn promise survives being
+        // queued. A preempt does not: it is an interruption request, and a body
+        // that merely waits its turn is not the interruption that was asked for.
+        // So the capability answer here is a REFUSAL, reported in the broker's
+        // own capability-layer vocabulary — never a silent downgrade.
+        if (brokerCapabilitiesRefuseAdmissionClass(invocation?.capabilitiesJson, 'preempt')) {
+          this.logger.warn?.('broker.preempt.unsupported', {
+            runtimeId: input.runtimeId,
+            invocationId: active.invocationId,
+            principalRef: input.origin.principalRef,
+            ...(input.origin.envelopeId === undefined
+              ? {}
+              : { envelopeId: input.origin.envelopeId }),
+            admissionClasses:
+              brokerCapabilitiesAdmissionClasses(invocation?.capabilitiesJson) ?? [],
+          })
+          return Promise.resolve({
+            submissionId: `hrc-rejected-${randomUUID()}`,
+            admission: 'rejected' as const,
+            reason: BROKER_PREEMPT_UNSUPPORTED_REASON,
+          })
+        }
+        return active.client.preempt({
           invocationId: active.invocationId as InvocationId,
           origin: input.origin,
           body: input.body,
@@ -849,6 +880,7 @@ export class HarnessBrokerController {
           ...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
           ...(input.turnPolicy !== undefined ? { turnPolicy: input.turnPolicy } : {}),
         })
+      }
     )
     this.recordAcceptedSubmission(input, result, 'preempt', 'preempt')
     return result

@@ -5,7 +5,7 @@ import { homeAuthorityDeps, resolveForeignHome } from './federation/home-authori
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { findTargetSession } from './target-view.js'
-import { preemptAuthorized } from './turn-dispatch-handlers.js'
+import { preemptAdmission } from './turn-dispatch-handlers.js'
 import { buildKickRuntimeIntent } from './wrkq/kick-intent.js'
 
 /** Bind the package-owned kicker state machine to this daemon's runtime capabilities. */
@@ -41,7 +41,7 @@ export function createServerMailKicker(server: HrcServerInstanceForHandlers): Ma
         seatProbe: (runtimeId) => server.getHarnessBrokerController().seatProbe(runtimeId),
         withdraw: (input) => server.getHarnessBrokerController().withdraw(input),
       },
-      preemptAuthorized: (session, request) => preemptAuthorized(server, session, request),
+      preemptAdmission: (session, request) => preemptAdmission(server, session, request),
       log: writeServerLog,
     },
     {

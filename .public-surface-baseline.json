@@ -3383,6 +3383,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "PreemptAdmission",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PreemptAdmission|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "PreemptSubmissionRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

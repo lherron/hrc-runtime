@@ -20,6 +20,7 @@ import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import { isAskUserTool, isCorruptAwaitingRuntime } from './ask-bracket.js'
 import {
   type BrokerAdmissionClass,
+  brokerCapabilitiesRefuseAdmissionClass,
   brokerCapabilitiesSupportAdmissionClass,
 } from './broker/capabilities.js'
 import { isRecord } from './server-parsers.js'
@@ -281,6 +282,26 @@ export function brokerRuntimeSupportsAdmissionClass(
   if (runtime.activeInvocationId === undefined) return false
   const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
   return brokerCapabilitiesSupportAdmissionClass(inv?.capabilitiesJson, submissionClass)
+}
+
+/**
+ * T-08337: does this runtime's active invocation POSITIVELY refuse `submissionClass`?
+ *
+ * The inverse of `brokerRuntimeSupportsAdmissionClass` is NOT this predicate:
+ * "supports" is false for a runtime with no active broker invocation and for one
+ * whose capabilities never named its classes, and neither of those is the driver
+ * saying no. Only a declared class list that omits the class is a refusal, so
+ * only that closes a door.
+ */
+export function brokerRuntimeRefusesAdmissionClass(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  submissionClass: BrokerAdmissionClass
+): boolean {
+  if (runtime.controllerKind !== 'harness-broker') return false
+  if (runtime.activeInvocationId === undefined) return false
+  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  return brokerCapabilitiesRefuseAdmissionClass(inv?.capabilitiesJson, submissionClass)
 }
 
 export function isTerminalBrokerInvocationState(state: string | undefined): boolean {

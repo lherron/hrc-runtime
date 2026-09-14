@@ -167,9 +167,27 @@ export async function deliverToSeat(
       ttlMs: KICKER_SUBMISSION_TTL_MS,
       turnPolicy: 'guarded',
     }
-    if (await server.preemptAuthorized(session, request)) {
+    const admission = await server.preemptAdmission(session, request)
+    if (admission === 'authorized') {
       door = 'preempt'
       deliveryOutcome = undefined
+    } else if (admission === 'preempt-unsupported') {
+      // The receipt vocabulary is closed (§2) and `hold_refused_authority` is
+      // its member for "this hold did not interrupt anything" — so the receipt
+      // is unchanged and the envelope still lands through the ordinary door.
+      // But the receipt cannot say WHY, and this reason is not the sender's
+      // fault: the seat's driver does not implement interruption at all, so no
+      // grant of authority would ever change the outcome. That fact goes in the
+      // log, where an operator asking "why did my hold not interrupt" can find
+      // it (T-08337).
+      server.log('INFO', 'wrkq.kicker.hold_preempt_unsupported', {
+        targetSessionRef,
+        wakeReason,
+        envelope: item.envelope.id,
+        ...(runtimeId === undefined ? {} : { runtimeId }),
+        door,
+        observedSeatState: seat.state,
+      })
     }
   }
 

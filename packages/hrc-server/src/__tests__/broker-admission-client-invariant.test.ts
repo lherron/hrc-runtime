@@ -80,11 +80,18 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
 
   it('preempt authority and guarded-turn policy reject unauthorized or silently upgraded interrupts', () => {
     const handlers = readServer('turn-dispatch-handlers.ts')
-    expect(handlers).toContain('preemptAuthorized')
-    expect(handlers).toContain("reason: 'authority-denied'")
+    expect(handlers).toContain('preemptAdmission')
+    expect(handlers).toContain("'authority-denied'")
     expect(handlers).toContain('.seatProbe(')
     expect(handlers).toContain('.turnManifest(')
     expect(handlers).not.toContain("door = 'preempt'")
+    // T-08337: a capability refusal must NOT be reported as an authority
+    // denial. The door carries two distinct reasons, and the capability one is
+    // the broker's own `unsupported:preempt` — collapsing them back into a
+    // single string is what this assertion exists to stop.
+    expect(handlers).toContain('BROKER_PREEMPT_UNSUPPORTED_REASON')
+    const capabilities = readServer('broker/capabilities.ts')
+    expect(capabilities).toContain("BROKER_PREEMPT_UNSUPPORTED_REASON = 'unsupported:preempt'")
   })
 
   it('uses the wrkq operator principal for both run attribution and the preempt bypass', () => {
@@ -95,7 +102,22 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
 
     const handlers = readServer('turn-dispatch-handlers.ts')
     expect(handlers).toContain('const kind = isOperatorPrincipal(origin.principalRef)')
-    expect(handlers).toContain('if (isOperatorPrincipal(request.origin.principalRef)) return true')
+    expect(handlers).toContain(
+      "if (isOperatorPrincipal(request.origin.principalRef)) return 'authorized'"
+    )
+    // T-08337: the operator bypass outranks the AUTHORITY question but not the
+    // CAPABILITY one — an operator cannot grant a driver an interrupt it does
+    // not implement. So the capability gate must sit ABOVE the bypass; if a
+    // future edit hoists the bypass back to the top of the function, the driver
+    // receives a preempt it cannot serve and this ordering assertion fails.
+    const capabilityGate = handlers.indexOf(
+      "brokerRuntimeRefusesAdmissionClass(server.db, runtime, 'preempt')"
+    )
+    const operatorBypass = handlers.indexOf(
+      "if (isOperatorPrincipal(request.origin.principalRef)) return 'authorized'"
+    )
+    expect(capabilityGate).toBeGreaterThan(-1)
+    expect(operatorBypass).toBeGreaterThan(capabilityGate)
   })
 
   it('HRC policy loops consume broker capability probe queue disposition manifest and decision events without harness-internal reads', () => {

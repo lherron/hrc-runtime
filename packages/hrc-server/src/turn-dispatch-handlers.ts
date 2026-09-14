@@ -22,6 +22,7 @@ import type {
   HrcTurnResponseFormat,
   InvokeSubmissionRequest,
   OpenBrokerSessionResponse,
+  PreemptAdmission,
   PreemptSubmissionRequest,
   PrepareAttachedRunResponse,
   ResumeAttachedRunResponse,
@@ -46,6 +47,7 @@ import {
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
 } from './broker-decisions.js'
+import { BROKER_PREEMPT_UNSUPPORTED_REASON } from './broker/capabilities.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
@@ -55,6 +57,7 @@ import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
+  brokerRuntimeRefusesAdmissionClass,
   brokerRuntimeSupportsAdmissionClass,
   isBrokerRuntimeInputDispatchable,
   isTerminalBrokerInvocationState,
@@ -336,14 +339,18 @@ function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefine
     : undefined
 }
 
-export async function preemptAuthorized(
+/**
+ * Resolve the seat the preempt would actually interrupt.
+ *
+ * Hoisted out of the authority walk because the capability question is asked of
+ * the SEAT, not of the caller — including for an operator, who outranks the
+ * authority check but cannot grant a driver an interrupt it does not implement.
+ */
+function activeBrokerRuntimeForSession(
   server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
-  request: PreemptSubmissionRequest
-): Promise<boolean> {
-  if (isOperatorPrincipal(request.origin.principalRef)) return true
-  if (request.origin.envelopeId === undefined) return false
-  const runtime = server.db.runtimes
+  session: HrcSessionRecord
+): HrcRuntimeSnapshot | undefined {
+  return server.db.runtimes
     .listByHostSessionId(session.hostSessionId)
     .filter(
       (candidate) =>
@@ -352,16 +359,55 @@ export async function preemptAuthorized(
         !isRuntimeUnavailableStatus(candidate.status)
     )
     .at(-1)
-  if (runtime === undefined || runtime.activeInvocationId === undefined) return false
-  const probe = await server.getHarnessBrokerController().seatProbe(runtime.runtimeId)
+}
+
+/**
+ * The one gate both preempt entry paths pass through — the operator HTTP door
+ * (`handleSubmission`) and the mail-kicker hold (`mail-kicker-adapter`).
+ *
+ * Capability is asked FIRST and of everyone. A preempt is an interruption
+ * request, and unlike `invoke` it cannot be honestly degraded to a queue: a
+ * queued body reported as an interrupt reports an interrupt that never happened.
+ * So when the driver has declared it does not serve the preempt class, the door
+ * is refused for an operator principal exactly as for anyone else.
+ */
+export async function preemptAdmission(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  request: PreemptSubmissionRequest
+): Promise<PreemptAdmission> {
+  const runtime = activeBrokerRuntimeForSession(server, session)
+  if (runtime !== undefined && brokerRuntimeRefusesAdmissionClass(server.db, runtime, 'preempt')) {
+    return 'preempt-unsupported'
+  }
+  if (isOperatorPrincipal(request.origin.principalRef)) return 'authorized'
+  if (request.origin.envelopeId === undefined) return 'authority-denied'
+  const invocationId = runtime?.activeInvocationId
+  if (runtime === undefined || invocationId === undefined) return 'authority-denied'
+  return (await preemptOriginOwnsActiveTurn(server, runtime.runtimeId, invocationId, request))
+    ? 'authorized'
+    : 'authority-denied'
+}
+
+/**
+ * The authority walk proper: does this caller already own a submission in the
+ * turn it is asking to interrupt? Unchanged by T-08337 — only its callers moved.
+ */
+async function preemptOriginOwnsActiveTurn(
+  server: HrcServerInstanceForHandlers,
+  runtimeId: string,
+  activeInvocationId: string,
+  request: PreemptSubmissionRequest
+): Promise<boolean> {
+  const probe = await server.getHarnessBrokerController().seatProbe(runtimeId)
   if (!probe.ok || probe.response.seat.state !== 'turn-active') return false
   const manifest = await server
     .getHarnessBrokerController()
-    .turnManifest(runtime.runtimeId, probe.response.seat.turnId)
+    .turnManifest(runtimeId, probe.response.seat.turnId)
   if (!manifest.ok) return false
   const manifestIds = new Set(manifest.response.submissionIds)
   return storedAdmissionRequestsForSubmissionIds(
-    server.db.brokerInvocationEvents.listByInvocationId(runtime.activeInvocationId),
+    server.db.brokerInvocationEvents.listByInvocationId(activeInvocationId),
     manifestIds
   ).some(
     (origin) =>
@@ -396,16 +442,22 @@ export async function handleSubmission(
     })
     session = staleRotation.session
   }
-  if (
-    door === 'preempt' &&
-    !(await preemptAuthorized(this, session, body as PreemptSubmissionRequest))
-  ) {
-    return json({
-      submissionId: `hrc-rejected-${randomUUID()}`,
-      admission: 'rejected',
-      reason: 'authority-denied',
-      disposition: { type: 'rejected', reason: 'authority-denied' },
-    } satisfies HrcSubmissionResponse)
+  if (door === 'preempt') {
+    const admission = await preemptAdmission(this, session, body as PreemptSubmissionRequest)
+    if (admission !== 'authorized') {
+      // The reason is the whole point of the refusal: `unsupported:preempt` says
+      // this seat's driver does not implement interruption, `authority-denied`
+      // says this caller may not interrupt it. Both are rejections; only one is
+      // fixable by the caller.
+      const reason =
+        admission === 'preempt-unsupported' ? BROKER_PREEMPT_UNSUPPORTED_REASON : 'authority-denied'
+      return json({
+        submissionId: `hrc-rejected-${randomUUID()}`,
+        admission: 'rejected',
+        reason,
+        disposition: { type: 'rejected', reason },
+      } satisfies HrcSubmissionResponse)
+    }
   }
   if (body.freshContext === true) {
     const rotation = await this.rotateSessionContext(session, {

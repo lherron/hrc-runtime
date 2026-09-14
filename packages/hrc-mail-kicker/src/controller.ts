@@ -3,6 +3,7 @@ import type {
   HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcSessionRecord,
+  PreemptAdmission,
   PreemptSubmissionRequest,
 } from 'hrc-core'
 import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
@@ -112,11 +113,11 @@ export class MailKicker implements MailKickerContext {
     return this.dependencies.dispatchTurn(session, intent, prompt, options)
   }
 
-  preemptAuthorized(
+  preemptAdmission(
     session: HrcSessionRecord,
     request: PreemptSubmissionRequest
-  ): Promise<boolean> {
-    return this.dependencies.preemptAuthorized(session, request)
+  ): Promise<PreemptAdmission> {
+    return this.dependencies.preemptAdmission(session, request)
   }
 
   log(level: KickerLogLevel, event: string, detail: Record<string, unknown>): void {
