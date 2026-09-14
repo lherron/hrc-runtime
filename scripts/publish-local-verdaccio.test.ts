@@ -31,7 +31,8 @@ async function canonicalFixture(): Promise<{ root: string; remote: string; repo:
     identity: { name: 'HRC Test', email: 'hrc-test@example.test' },
   })
   await writeFile(join(root, 'tracked.txt'), 'canonical\n')
-  runGit(repo, ['add', 'tracked.txt'])
+  await writeFile(join(root, 'tracked.ts'), 'export const canonical = true\n')
+  runGit(repo, ['add', 'tracked.txt', 'tracked.ts'])
   runGit(repo, ['commit', '-m', 'canonical source'])
   runGit(repo, ['remote', 'add', 'origin', remote])
   runGit(repo, ['push', '-u', 'origin', 'main'])
@@ -119,6 +120,24 @@ describe('T-06958 canonical package provenance', () => {
         root: uncontained.root,
       })
     ).toThrow('is not contained by freshly fetched origin/main')
+  })
+
+  // porcelain v1 puts the status in the first two COLUMNS, so a modified TRACKED
+  // file is ` M path` — the one shape a trimmed status mangles, reporting
+  // `ocs/state-retention.md` for `docs/state-retention.md`. An untracked file
+  // (`?? path`) starts at column 0 and survives a trim, which is why the older
+  // dirty case never caught it.
+  test('names a modified tracked source path exactly', async () => {
+    const fixture = await canonicalFixture()
+    await writeFile(join(fixture.root, 'tracked.ts'), 'export const canonical = false\n')
+
+    expect(() =>
+      provePublicationSource({
+        canonical: true,
+        canonicalRef: 'origin/main',
+        root: fixture.root,
+      })
+    ).toThrow(/\n\s*tracked\.ts$/)
   })
 
   // The proof is about the bytes that get published, and no build step, pack, or

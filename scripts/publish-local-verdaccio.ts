@@ -225,10 +225,19 @@ function requiredCommandOutput(cmd: string, args: string[], cwd: string): string
   return result.out.trim()
 }
 
-function requiredCommandOutputOrEmpty(cmd: string, args: string[], cwd: string): string {
-  const result = run(cmd, args, cwd)
-  if (result.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${result.out}`)
-  return result.out.trim()
+/**
+ * Raw stdout, untrimmed and without stderr mixed in, for output whose leading
+ * whitespace carries meaning. `git status --porcelain=v1` is exactly that: the
+ * status lives in the first two COLUMNS, so a trim eats the leading space of a
+ * ` M path` line and every parser downstream reads the path one character short.
+ */
+function requiredCommandStdout(cmd: string, args: string[], cwd: string): string {
+  const env = cmd === 'git' ? environmentWithoutGitOverrides() : process.env
+  const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', env })
+  if ((result.status ?? -1) !== 0) {
+    throw new Error(`${cmd} ${args.join(' ')} failed: ${result.stderr || result.stdout}`)
+  }
+  return result.stdout ?? ''
 }
 
 function parseCanonicalRef(canonicalRef: string): { branch: string; remote: string } {
@@ -273,11 +282,7 @@ export function provePublicationSource(input: {
     // than the dirty-worktree guard rather than being folded into it.
     const { source, documentation } = partitionInstallScope(
       parsePorcelainPaths(
-        requiredCommandOutputOrEmpty(
-          'git',
-          ['status', '--porcelain=v1', '--untracked-files=all'],
-          root
-        ),
+        requiredCommandStdout('git', ['status', '--porcelain=v1', '--untracked-files=all'], root),
         { includeUntracked: true }
       )
     )
