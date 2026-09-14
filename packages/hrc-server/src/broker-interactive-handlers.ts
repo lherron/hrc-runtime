@@ -713,15 +713,30 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       resolveAccepted(runtime)
     },
   }).then((runtime) => {
-    // Claude broker dispatch through non-attached surfaces (hrcchat,
-    // agent-loop) starts a tmux TUI with no operator terminal watching it.
-    // Presentation stays best-effort and outside the acceptance boundary.
-    if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-      void this.publishPresentation(runtime, {
-        operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
-        signal: this.runtimeStartPresentationSignal,
-      })
-    }
+    // Broker dispatch through non-attached surfaces (hrcchat, agent-loop)
+    // starts a tmux TUI with no operator terminal watching it. Presentation
+    // stays best-effort and outside the acceptance boundary.
+    //
+    // T-08456: this publish is DRIVER-BLIND on purpose. It was once fenced to
+    // `claude-code-tmux` (T-08012) only because that was then the sole driver
+    // reaching this dispatch door; T-08338 routed Codex here too and inherited
+    // the fence, so a dispatched codex-tui seat published nothing at birth. Its
+    // first presentation then came from whichever later door happened to touch
+    // it — in practice the broker-reuse publish that precedes a SECOND turn.
+    // That is the whole observed defect: seats that got a second input appeared
+    // 0.8-247s late (however long that input took to arrive), and seats that
+    // only ever got one turn never appeared at all, however long they lived.
+    // Both behaviours are this one missing publish, not two causes.
+    //
+    // Nothing here needs to know the driver: publishPresentation derives
+    // `operatorAttachable` from the runtime's hosting state, so a driver with
+    // no attachable TUI publishes `false` and the viewer skips it. Gating by
+    // driver name can only reintroduce the same bug for the next driver routed
+    // through this door.
+    void this.publishPresentation(runtime, {
+      operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+      signal: this.runtimeStartPresentationSignal,
+    })
     if (!acceptedSettled) resolveAccepted(runtime)
     return runtime
   })
