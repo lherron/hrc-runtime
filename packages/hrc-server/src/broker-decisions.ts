@@ -786,13 +786,13 @@ export function shouldBlockForBrokerTurnCompletion(
  * --resume case: strictly gated on (a) the claude-code-tmux driver and (b) a
  * captured session id key.
  *
- * T-04836 Part B: Codex is admitted ONLY when the captured continuation is
- * provider 'openai', kind 'session', and the key is the syntactic UUID reported
- * by its session hook. The codex-app-server compiler turns that key into
- * resumeThreadId without constructing CLI resume argv. The deprecated
- * codex-cli-tmux driver retains its safe explicit-id `codex resume <SESSION_ID>`
- * path until removal. Pi stays blocked. Claude keeps its existing behavior and,
- * when a provider is present on the stored ref, requires 'anthropic'.
+ * T-04836 Part B / T-08342: Codex continuation shape is driver-specific.
+ * codex-app-server emits provider 'codex', kind 'thread', and consumes that UUID
+ * as driver.resumeThreadId without constructing CLI resume argv. The deprecated
+ * codex-cli-tmux driver emits provider 'openai', kind 'session', and retains its
+ * safe explicit-id `codex resume <SESSION_ID>` path until removal. Pi stays
+ * blocked. Claude keeps its existing behavior and, when a provider is present
+ * on the stored ref, requires 'anthropic'.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -815,13 +815,26 @@ export function decideInteractiveTmuxBrokerContinuation(options: {
     return continuation
   }
 
-  if (
-    options.allowedBrokerDriver === 'codex-app-server' ||
-    options.allowedBrokerDriver === 'codex-cli-tmux'
-  ) {
-    // Codex: only an observed OpenAI session UUID is safe. The deprecated tmux
-    // driver compiles it to `codex resume <uuid>`; codex-app-server compiles the
-    // same continuation key to driver.resumeThreadId without a resume argv.
+  if (options.allowedBrokerDriver === 'codex-app-server') {
+    // App server: only the driver's native Codex thread UUID is safe. The
+    // compiler passes it to driver.resumeThreadId; no CLI resume argv is built.
+    // Broker-native continuation authority is currently wider than the legacy
+    // HrcProvider type used by this persisted record.
+    if ((continuation.provider as string) !== 'codex') {
+      return undefined
+    }
+    if (continuation.kind !== 'thread') {
+      return undefined
+    }
+    if (!UUID_RE.test(continuation.key)) {
+      return undefined
+    }
+    return continuation
+  }
+
+  if (options.allowedBrokerDriver === 'codex-cli-tmux') {
+    // Deprecated CLI-tmux: only its hook-reported OpenAI session UUID is safe;
+    // the compiler places it in `codex resume <uuid>`.
     if (continuation.provider !== 'openai') {
       return undefined
     }

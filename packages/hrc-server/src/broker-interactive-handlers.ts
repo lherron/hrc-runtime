@@ -1378,7 +1378,7 @@ export async function startInteractiveTmuxBrokerRuntime(
               // TUI on a "choose working directory to resume" picker (commit 120eb7a).
               // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
               //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
-              //   - codex-app-server + an openai/kind:session/UUID continuation ⇒
+              //   - codex-app-server + a codex/kind:thread/UUID continuation ⇒
               //     compiler-owned `resumeThreadId` (no `codex resume` argv).
               // The deprecated codex-cli-tmux path retains its explicit-id
               // resume support until that driver is removed.

@@ -225,11 +225,16 @@ describe('Phase C — shouldBlockForBrokerTurnCompletion convention (headless pa
 describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
   const captured: HrcContinuationRef = { provider: 'anthropic', key: 'session-uuid-1234' }
   const codexSessionUuid = '018fe9d5-992c-7cc8-a4bc-9c0c04c4f919'
-  const codexCaptured = {
+  const codexCliCaptured = {
     provider: 'openai',
     kind: 'session',
     key: codexSessionUuid,
   } as HrcContinuationRef & { kind: 'session' }
+  const codexAppServerCaptured = {
+    provider: 'codex',
+    kind: 'thread',
+    key: codexSessionUuid,
+  } as HrcContinuationRef & { kind: 'thread' }
 
   it('claude-code-tmux + captured session id => resume with the captured continuation', () => {
     expect(
@@ -262,18 +267,18 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
     expect(
       api.decideInteractiveTmuxBrokerContinuation!({
         allowedBrokerDriver: 'codex-cli-tmux',
-        sessionContinuation: codexCaptured,
+        sessionContinuation: codexCliCaptured,
       })
-    ).toEqual(codexCaptured)
+    ).toEqual(codexCliCaptured)
   })
 
-  it('codex-app-server + openai session UUID => compiler continuation key', () => {
+  it('codex-app-server + codex thread UUID => compiler resumeThreadId', () => {
     expect(
       api.decideInteractiveTmuxBrokerContinuation!({
         allowedBrokerDriver: 'codex-app-server',
-        sessionContinuation: codexCaptured,
+        sessionContinuation: codexAppServerCaptured,
       })
-    ).toEqual(codexCaptured)
+    ).toEqual(codexAppServerCaptured)
   })
 
   it('codex-cli-tmux rejects non-session or non-UUID continuations so no-arg picker resume is unreachable', () => {
@@ -294,12 +299,12 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
     }
   })
 
-  it('codex-app-server refuses non-session and non-UUID continuation keys', () => {
+  it('codex-app-server refuses non-thread, non-codex, and non-UUID continuation keys', () => {
     const badContinuations = [
-      { provider: 'openai', key: codexSessionUuid },
-      { provider: 'openai', kind: 'thread', key: codexSessionUuid },
-      { provider: 'openai', kind: 'session', key: 'not-a-thread-uuid' },
-      { provider: 'anthropic', kind: 'session', key: codexSessionUuid },
+      { provider: 'codex', key: codexSessionUuid },
+      { provider: 'codex', kind: 'session', key: codexSessionUuid },
+      { provider: 'codex', kind: 'thread', key: 'not-a-thread-uuid' },
+      { provider: 'openai', kind: 'session', key: codexSessionUuid },
     ] as Array<HrcContinuationRef & { kind?: string }>
 
     for (const sessionContinuation of badContinuations) {
@@ -316,7 +321,7 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
     expect(
       api.decideInteractiveTmuxBrokerContinuation!({
         allowedBrokerDriver: 'pi-tui-tmux',
-        sessionContinuation: codexCaptured,
+        sessionContinuation: codexCliCaptured,
       })
     ).toBeUndefined()
   })
