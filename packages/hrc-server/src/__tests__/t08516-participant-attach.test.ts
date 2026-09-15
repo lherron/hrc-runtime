@@ -393,6 +393,27 @@ describe('T-08516 participant attachment', () => {
     ).toBe(`${fixture.tmpDir}/broker.sock`)
   })
 
+  test('a classless join never fabricates a class into its lifecycle policy', async () => {
+    const identity = await join()
+    const profile = await composeProfile(identity)
+    await attach({
+      registrationId: identity.registrationId,
+      attemptId: identity.attemptId,
+      attachEpoch: identity.attachEpoch,
+      profile,
+    })
+
+    // The route id is interpolated from the class, and a classless direct join
+    // has none. A live run froze `policy-route-participant:undefined` into the
+    // lifecycle policy id, which is a fabricated identifier travelling into an
+    // immutable tuple.
+    const intent = JSON.parse(readAttempt(identity.attemptId)['hosting_intent_json'] as string) as {
+      lifecyclePolicy: { policyId: string }
+    }
+    expect(intent.lifecyclePolicy.policyId).not.toContain('undefined')
+    expect(intent.lifecyclePolicy.policyId).toContain('participant:direct')
+  })
+
   test('a participant-served attachment without any endpoint is refused', async () => {
     const identity = await join()
     const profile = await composeProfile(identity)

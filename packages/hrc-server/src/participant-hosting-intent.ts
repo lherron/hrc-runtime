@@ -93,8 +93,13 @@ export async function createParticipantHostingIntent(
   attempt: ParticipantAttempt,
   profile: BrokerExecutionProfile
 ): Promise<ParticipantHostingIntent> {
+  // A classless direct join has no class to name, and interpolating an absent
+  // one produced the literal route `participant:undefined` -- a fabricated
+  // identifier of exactly the kind R7.1 forbids, which then travelled into the
+  // frozen lifecycle policy id. `direct` is the real grouping for a participant
+  // that declared no class.
   const lifecyclePolicy = resolveLifecyclePolicyOverlay({
-    routeId: `participant:${registration.classId}`,
+    routeId: `participant:${registration.classId ?? 'direct'}`,
     brokerRoute: true,
   })
   if (lifecyclePolicy === undefined) {

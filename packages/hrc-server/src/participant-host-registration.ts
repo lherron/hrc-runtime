@@ -222,6 +222,25 @@ export async function registerDirectParticipant(
     }
   }
 
+  // One host incarnation holds at most one address. The database enforces that
+  // with a unique index, but a constraint reaching the wire as an internal
+  // error tells a participant nothing -- and this is a case a real host hits by
+  // simply asking for a second address, so it gets its own typed outcome and
+  // the address it already holds is named.
+  const heldElsewhere =
+    server.db.participantHostBindings.getBindingByHostIncarnationId(hostIncarnationId)
+  if (heldElsewhere !== null) {
+    const heldReservation = server.db.participantHostBindings.getReservationById(
+      heldElsewhere.reservationId
+    )
+    return {
+      outcome: 'refused',
+      status: 'rejected',
+      reason: 'participant_host_incarnation_bound_elsewhere',
+      detail: `host incarnation ${hostIncarnationId} already holds ${heldReservation?.scopeRef ?? heldElsewhere.reservationId}; one incarnation holds at most one address`,
+    }
+  }
+
   const claim = await claimParticipantAddress(server, {
     scopeRef,
     laneRef,

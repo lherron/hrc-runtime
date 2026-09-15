@@ -284,6 +284,28 @@ describe('T-08516 direct protocol join', () => {
     )
   })
 
+  test('one incarnation cannot hold a second address', async () => {
+    await start()
+    await join({})
+    const before = readStore()
+
+    // The unique index already refuses this, but a raw constraint violation
+    // reaching the wire as a 500 tells a real host nothing -- and a real host
+    // reaches this simply by asking for another address.
+    const second = await observe(await join({ requestedSessionRef: OTHER_SCOPE }))
+    expect(second.status).toBe(409)
+    expect(second.body).toMatchObject({
+      status: 'rejected',
+      reason: 'participant_host_incarnation_bound_elsewhere',
+    })
+    expect(second.body['detail']).toContain(SCOPE)
+
+    const after = readStore()
+    expect(after.registrations).toEqual(before.registrations)
+    expect(after.bindings).toEqual(before.bindings)
+    expect(after.reservations).toEqual(before.reservations)
+  })
+
   test('redirects to the address home and commits nothing locally', async () => {
     await start()
     const now = new Date().toISOString()
