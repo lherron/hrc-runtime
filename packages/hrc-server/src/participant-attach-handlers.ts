@@ -9,6 +9,7 @@ import {
 } from 'spaces-runtime-contracts'
 
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
+import { persistHostingIntentIfRequired } from './participant-registration-handlers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { json, timestamp } from './server-util.js'
 
@@ -349,6 +350,26 @@ export async function handleAttachParticipant(
     )
   }
 
+  // A participant-served registration cannot be hosted without its endpoint.
+  // R6.4 lets that endpoint arrive at registration or here, so this checks the
+  // union of the two rather than the request alone, and refuses in a typed way
+  // instead of failing deeper where the hosting intent is composed.
+  if (
+    registration.join === 'participant-served' &&
+    registration.socketPath === undefined &&
+    body.socketPath === undefined
+  ) {
+    return json(
+      {
+        status: 'rejected',
+        reason: 'participant_serving_endpoint_missing',
+        detail:
+          'a participant-served registration needs its broker endpoint at registration or on this attachment',
+      } satisfies AttachParticipantResponse,
+      409
+    )
+  }
+
   const now = timestamp()
   const profileJson = serializedJson(body.profile)
   const dispatchEnvJson = serializedJson(body.dispatchEnv)
@@ -363,6 +384,13 @@ export async function handleAttachParticipant(
       updatedAt: now,
     })
     if (!didAttach) return false
+    if (body.socketPath !== undefined) {
+      this.db.participantRegistrations.setServingSocketPathIfAbsent({
+        registrationId: registration.registrationId,
+        socketPath: body.socketPath,
+        updatedAt: now,
+      })
+    }
     if (attempt.hostBindingId !== undefined) {
       this.db.participantHostBindings.transitionBinding({
         bindingId: attempt.hostBindingId,
@@ -374,7 +402,7 @@ export async function handleAttachParticipant(
     return true
   })()
 
-  const persisted = this.db.participantRegistrations.getAttempt(attempt.attemptId)
+  let persisted = this.db.participantRegistrations.getAttempt(attempt.attemptId)
   if (!attached) {
     // Zero rows changed means the attempt was already prepared. A retry that
     // carries the same bytes converges; different bytes are a replacement
@@ -403,7 +431,31 @@ export async function handleAttachParticipant(
     )
   }
 
+  // The same hosting-intent step the key-scoped path takes, for the same
+  // reason: the establishment worker refuses an attempt without one, so an
+  // attachment that skipped it would arm work that could only exhaust.
   if (persisted !== null) {
+    const current =
+      this.db.participantRegistrations.getRegistrationById(registration.registrationId) ??
+      registration
+    // A hosting-intent failure is a delivery-configuration problem, not a
+    // reason to 500: the profile is already durable, so the truthful answer is
+    // that the participant is attached-but-not-yet-hostable and its work waits.
+    const withIntent = await persistHostingIntentIfRequired(this, current, persisted).catch(
+      () => null
+    )
+    if (withIntent === null) {
+      return json(
+        {
+          status: 'pending',
+          reason: 'participant_hosting_intent_unavailable',
+          detail:
+            'the attached profile is durable but HRC could not persist its hosting intent; addressed work stays pending',
+        } satisfies AttachParticipantResponse,
+        200
+      )
+    }
+    persisted = withIntent
     scheduleParticipantEstablishment(this, registration, persisted)
   }
   return json({

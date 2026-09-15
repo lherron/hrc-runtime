@@ -198,7 +198,16 @@ function activationClassification(
     : 'resume'
 }
 
-async function persistHostingIntentIfRequired(
+/**
+ * Persist HRC's hosting intent for a prepared attempt.
+ *
+ * Exported because attachment reuses this exact step rather than growing a
+ * second one: R6.4 says an attachment reuses the established work chain, and
+ * the establishment worker refuses an attempt with no hosting intent. A live
+ * Arris attach exhausted its whole retry budget on "participant attempt is
+ * missing hosting intent" before this was shared.
+ */
+export async function persistHostingIntentIfRequired(
   server: HrcServerInstanceForHandlers,
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt

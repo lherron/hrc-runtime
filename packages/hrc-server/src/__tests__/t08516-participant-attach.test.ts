@@ -146,8 +146,17 @@ describe('T-08516 participant attachment', () => {
     )
   }
 
+  /**
+   * A participant-served attachment always carries its broker endpoint, because
+   * a real one does: the join in this suite supplies no socketPath, so this is
+   * R6.4's "or later through POST /v1/participants/attach" path.
+   */
   function attach(body: Record<string, unknown>): Promise<Response> {
-    return fixture.postJson('/v1/participants/attach', body)
+    // A resume report is not a profile attachment and carries no endpoint; the
+    // parser refuses the combination, which is the shape difference itself.
+    const endpoint =
+      body['resumeUnsupported'] === undefined ? { socketPath: `${fixture.tmpDir}/broker.sock` } : {}
+    return fixture.postJson('/v1/participants/attach', { ...endpoint, ...body })
   }
 
   test('a valid attachment freezes the profile and arms the existing work', async () => {
@@ -354,6 +363,54 @@ describe('T-08516 participant attachment', () => {
     // The registration is untouched and its addressed work stays pending.
     expect(stored['state']).toBe('IDENTITY_MINTED')
     expect(stored['establishment_work_state']).toBe('pending')
+  })
+
+  test('attachment persists the endpoint and the hosting intent it needs', async () => {
+    const identity = await join()
+    const profile = await composeProfile(identity)
+
+    // A live Arris attach exhausted its whole retry budget on "participant
+    // attempt is missing hosting intent" because attachment armed the work
+    // without taking the chain step that work requires. Both halves are
+    // asserted here: the endpoint this attachment supplied became the
+    // registration's durable serving socket, and the intent exists.
+    const attached = await observe(
+      await attach({
+        registrationId: identity.registrationId,
+        attemptId: identity.attemptId,
+        attachEpoch: identity.attachEpoch,
+        profile,
+      })
+    )
+    expect(attached.body).toMatchObject({ status: 'attached', prepared: true })
+
+    const stored = readAttempt(identity.attemptId)
+    expect(stored['hosting_intent_json']).toBeString()
+    expect(
+      withStore(
+        (db) => db.participantRegistrations.getRegistrationById(identity.registrationId)?.socketPath
+      )
+    ).toBe(`${fixture.tmpDir}/broker.sock`)
+  })
+
+  test('a participant-served attachment without any endpoint is refused', async () => {
+    const identity = await join()
+    const profile = await composeProfile(identity)
+
+    // Neither the join nor this attachment names an endpoint, and a
+    // participant-served registration cannot be hosted without one. It is a
+    // typed delivery-configuration refusal, not a crash deeper in the chain.
+    const refused = await observe(
+      await fixture.postJson('/v1/participants/attach', {
+        registrationId: identity.registrationId,
+        attemptId: identity.attemptId,
+        attachEpoch: identity.attachEpoch,
+        profile,
+      })
+    )
+    expect(refused.status).toBe(409)
+    expect(refused.body['reason']).toBe('participant_serving_endpoint_missing')
+    expect(readAttempt(identity.attemptId)['prepared_profile_json']).toBeNull()
   })
 
   test('an unattached participant is not runnable establishment work', async () => {

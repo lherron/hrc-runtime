@@ -646,6 +646,28 @@ export class ParticipantRegistrationRepository {
   }
 
   /**
+   * Record the participant-served broker endpoint when the registration has
+   * none yet. R6.4 lets a participant supply its endpoint at registration OR
+   * later at attachment, and the hosting intent needs it wherever it came from.
+   * `IS NULL` in the predicate keeps this from silently relocating an endpoint
+   * an earlier attachment already froze.
+   */
+  setServingSocketPathIfAbsent(input: {
+    registrationId: string
+    socketPath: string
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registrations
+            SET serving_socket_path = ?, updated_at = ?
+          WHERE registration_id = ? AND serving_socket_path IS NULL`
+      )
+      .run(input.socketPath, input.updatedAt, input.registrationId)
+    return result.changes === 1
+  }
+
+  /**
    * Advances the retained known continuity evidence. Only the initial-activation
    * transaction may call this, so an unactivated candidate never replaces the
    * baseline that a later attempt is classified against.
