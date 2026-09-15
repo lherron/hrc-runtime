@@ -1,15 +1,137 @@
-# Host participant lifecycle — revision 6 proposal
+# Host participant lifecycle — revision 7 implementation contract
 
-**Status: architecture review requested; implementation PAUSED.**
-Owner/editor: Astra. Operator direction: P-00517 C-22843, relayed in EN-12442,
-2026-09-15: **“If something speaks HRC, it can join HRC. Period.”**
-Source baseline: accepted generic foundation `0e5a0557`; T-08504 has unlanded
-work that must be reconciled before release. Revision 5 is retained below as
-reference. The amendments R6.1–R6.9 replace every contrary requirement in that
-reference, including its scenario and ownership tables. Its former approval does
-not approve revision 6. Daedalus reviews architecture; Mable brings this proposal
-to Lance before revised implementation dispatch. No source implementation or
-active-law amendment is made by this document edit.
+**Status: released by Astra under Lance's direct instruction, 2026-09-15.**
+Lance: “We are not going back to daedalus, I need you to take ownership of the
+issue and drive it to completion.” This supersedes the review/dispatch hold.
+The protocol-join direction C-22843 remains controlling. EN-12457's four
+functional gaps are resolved below; this is not a claim of Daedalus approval.
+Astra owns implementation decisions and installed acceptance. Clod/Cody implement.
+No further architecture-review round is a prerequisite for this work.
+
+Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.5 below.
+Those amendments control any conflicting revision-6 or historical revision-5
+text. Source baseline is accepted foundation 0e5a0557 plus current published
+ASP pin 57b58166. Parked source is reusable work, not an accepted implementation.
+
+## R7.1 Honest storage before attachment (EN-12457 F1)
+
+Migrate `participant_registrations` once, preserving existing registration IDs,
+keys, addresses, sessions and all referencing attempts. Add explicit
+`registration_mode` (`legacy` for existing rows; `direct` for protocol joins).
+Allow class_id, adapter_id, workspace_cwd and preparation_json to be NULL when
+not supplied/known. No fabricated adapter, empty workspace, synthetic evidence
+or pretend preparation. Existing rows retain their values unchanged. Keep
+join_direction required: direct defaults to participant-served/external as an
+actual ownership policy, not an inferred claim about a driver. Store the resolved
+address/continuity/ownership policy with the registration so direct lookups never
+require a class or adapter lookup. A supplied unknown class is metadata only.
+
+The durable registration_id is primary identity. Preserve existing legacy
+(class_id, participant_key) uniqueness for legacy rows. Direct duplicate lookup
+is the canonical address plus its current host binding/incarnation, independent
+of optional class/key. Keep one registration owner per scope using the existing
+scope uniqueness and reservation ownership; H2 advances that registration's
+current session/generation under the existing transaction rather than making a
+second owner for the same scope. Retired bindings retain their own historical
+session/generation/attempt linkage. Null optional values must remain null through
+repository reads, API inspection and post-join preparation. Test migrating
+legacy active and unattached rows, not only an empty store.
+
+New keyless legacy requests are creation requests, not idempotent retries; a
+caller needs the returned key to retry. Do not describe a lost keyless creation
+reply as convergent. Direct requests always contain address/incarnation and
+therefore have a stable retry identity without an additional token.
+
+## R7.2 Attachment is the durable work trigger (EN-12457 F2)
+
+An IDENTITY_MINTED attempt with NULL profile/environment is not runnable
+establishment work. Enforce this predicate in both startup work enumeration and
+the worker immediately before effects. It consumes no retries, records no
+profile-missing failure and cannot exhaust merely by waiting for a participant.
+The same exclusion applies to callback-local scheduling; no timer can bypass it.
+
+The attachment transaction rechecks the current attempt/epoch, persists the
+validated profile/environment and endpoint, transitions to PREPARED, and arms
+the existing establishment work as pending in the SAME transaction. Only this
+first successful preparation resets its not-yet-used establishment retry budget.
+An identical attachment retry never resets an already-running/exhausted prepared
+attempt's budget. A daemon loss after commit is recovered by normal startup
+enumeration; loss before commit leaves attachment pending and can be retried.
+A failed validation changes neither preparation nor runnable state. Successor
+replacement-intent work remains a separate existing runnable reason: the new
+predicate must not strand it just because a new candidate is not prepared.
+
+## R7.3 Continuation handoff is explicit (EN-12457 F3)
+
+Persist HRC's selected continuation and selection reason on the attempt in the
+same transaction that selects its session/identity. Include it in the registered
+response as `continuation: {carried, reason, selected, resumeState}` where selected
+is the existing HRC continuation object or null. resumeState is one of
+`not_requested`, `requested`, `unsupported`, `indeterminate`. These describe a
+request/result, never proof that native model context was successfully restored.
+There is no new claim of native-resume success based on joining, HELLO or an ACK.
+
+If carried is true, the supplied profile's existing
+`harnessInvocation.startRequest.spec.continuation` MUST express exactly the
+selected continuation in the existing published continuation format. If false,
+that field must be absent. Validate before freezing the profile; do not modify a
+frozen profile or recompute its hashes to conceal a different start request.
+Reject a mismatching attachment with `participant_continuation_mismatch`, leaving
+the registration and its selected record intact and delivery pending. Repeat
+registration returns the same selection. Recheck HRC clear/disabled-reuse barriers
+at attachment; a newer barrier returns `participant_continuation_invalidated`
+and requires a newly composed attachment without continuation before freezing.
+A clear arriving after freeze follows existing cancellation/fencing rules, not
+an in-place mutation of the immutable start tuple.
+
+The participant receives the selection over the protocol and can compose its
+profile directly. Do not depend on the withdrawn ASP admission extension. A
+post-join prepare helper may only serve a selected continuation when its real
+published preparation interface can carry it; otherwise report unsupported and
+use the direct attachment path. No HRC-local substitute producer declaration.
+A direct attach may instead use exact fields `{registrationId, attemptId,
+attachEpoch, resumeUnsupported: true, reason}` with a nonempty reason; persist unsupported, retain the selected record,
+keep addressed input pending, and return a truthful attachment outcome. This is
+not an eligibility veto over the address. A retry cannot silently replace that
+selection with a fresh start. Fresh start requires the existing explicit clear/
+discard operation. Indeterminate broker start remains indeterminate under the
+existing durable receipt contract. No native lineage invention is in scope.
+
+## R7.4 Home-node handoff is a redirect, not forwarding (EN-12457 F4)
+
+No new peer RPC or transparent proxy. A registration sent to the wrong node
+returns HTTP 409 with `status: 'rejected'`, the existing reason
+`participant_scope_bound_elsewhere` or
+`participant_scope_birth_designated_elsewhere` as appropriate, and
+`observed.homeNodeId`. These preserve the existing typed placement outcomes. No local registration/session/
+attempt is committed. An unreachable registry/home is retryable pending with
+the existing placement-unavailable reason, never a local fallback mint.
+
+The participant/helper resolves that home through existing federation discovery
+and retries the same address/incarnation request there. The receiver rechecks
+home authority and the same identity/claim transaction; a lost response converges
+at that home. The runbook must show the two requests and response shape. A
+redirect is successful routing information, not a completed registration; tests
+must prove no row at the wrong node and one durable owner at the correct node.
+No new authentication, token, provenance or security condition is added.
+
+## R7.5 Delivery boundary
+
+Complete T-08504's external join functionality: direct address registration,
+no adapter admission, delayed attachment, queue/steer, duplicate/restart recovery,
+wrong-home redirect, existing H1/H2 conflict/fence behavior and HRC continuation
+handoff. Managed application provisioning remains T-08507 and is not a gate to
+external join. Native cross-incarnation Arris thread restoration is not invented;
+its unsupported outcome is explicit and does not bar registration.
+
+Restore and reconcile the parked task files against the current branch, preserving
+unrelated changes and the current dependency pin. Implement the corrections in
+this task rather than opening a new task per finding. No return to Daedalus.
+Astra grades from pushed source and an independent real installed HRC+published
+ASP+headless Arris run. Do not substitute a fixture-only happy path. HRC ownership
+covers HRC; route a demonstrated producer/helper gap to Mable immediately and
+continue independent work. Shared activation follows the corrected clean pushed
+release and real validation; no allow-dirty release or fleet expansion is implied.
 
 ## R6.1 Joining is a protocol operation
 
@@ -19,7 +141,7 @@ evidence file, load an adapter to approve identity, or require adapter availabil
 before joining. This applies to existing generic key-scoped registration as well
 as new host-incarnation registration. Legacy EPR remains separate and unchanged.
 
-HRC still parses the message, routes it to the canonical home, and serializes the
+HRC still parses the message, names the canonical home by redirect, and serializes the
 address claim. Syntax errors, a conflict with an existing occupant, an unsupported
 protocol operation, and an unavailable home are concrete protocol outcomes. They
 are not a second application's permission to join. There is no per-product join
@@ -197,7 +319,7 @@ or restore an adapter eligibility gate to hide it.
 
 ## R6.7 Durable-law changes requested for architecture review
 
-Amend `hrc-runtime.participant-session-lifecycle` explicitly on approval:
+Amend `hrc-runtime.participant-session-lifecycle` explicitly under Lance's revision-7 direction:
 replace static-adapter admission before identity allocation with protocol
 registration before attachment; allow preparation-pending durable attempts;
 remove processToken admission semantics and adapter continuation eligibility;
@@ -205,7 +327,7 @@ permit registry-first selected-address mint during registration without separate
 provisioning; retain home authority, uniqueness, claim conflicts, external
 ownership, frozen attachment tuples, stale-input fences and replacement/recovery
 law. Review corresponding T-08344 C.2 / ADAPTER-SEAM requirements as superseded
-for admission only. No automatic amendment is implied by editing this proposal.
+for admission only. The accompanying active-record update records that authority explicitly.
 
 Revision 5 managed save/stop, launchId correlation and host-aware lifecycle guard
 remain unchanged. Managed launch is still unsupported until that implementation
@@ -232,16 +354,11 @@ adapter permission path is intentionally removed for those consumers too.
    neither its registration nor its delivery path. Managed external-no-kill
    negatives remain mandatory.
 
-## R6.9 Delivery sequence and ownership
+## R6.9 Delivery sequence and ownership (superseded by R7.5)
 
-T-08504 is paused pending this architecture ruling and Lance's review via Mable.
-Astra owns contract revisions and HRC dispatch; Clod/Cody implement. T-08515 is
-cancelled. T-08503 driver/control delivery stays accepted; any necessary
-post-join profile helper adjustment is separately coordinated with Mable, never
-implemented inside HRC as a substitute ASP type. The revised work must include
-removal of the generic T-08349 admit call; its earlier acceptance described the
-previous contract and does not exempt it from this operator-directed change.
-No implementation or shared activation is authorized by this draft.
+The former implementation hold is withdrawn by Lance's direct instruction.
+T-08515 stays cancelled. No adapter-admission work is required. Astra owns the
+remaining functional decisions and dispatch under R7.5.
 
 ---
 

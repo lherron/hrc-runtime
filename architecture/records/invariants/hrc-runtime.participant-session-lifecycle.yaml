@@ -4,19 +4,29 @@ status: active
 owner_project: hrc-runtime
 scope: generic participant registration, observer attempts, session continuity, and recovery under T-08344
 predicate: >
-  HRC owns generic process hosting, registration addresses, sessions, attempt
-  identity, and activation; ASP adapters and brokers own harness discovery,
-  admission, native identity, normalization, and native lifetime evidence.
-  A trusted static ASP adapter registry supplies admission before HRC allocates
-  identity; unavailable adapters return pending without allocation. Admission
-  may discover read-only evidence but cannot spawn, write native input, assign
-  HRC identity, or authorize replacement. HRC commits the admitted key, workspace,
-  and opaque JSON preparation with its attempt identity before requesting
-  preparation. Adapter preparation returns only the existing broker execution
-  profile and optional dispatch environment, never runtime handles or lifecycle
-  policy. HRC verifies structure, identity, and hashes without harness-specific
-  selector predicates. The existing brokerOwnership field must agree with join:
-  hrc-owned-process for hosted and participant-owned-process for participant-served.
+  HRC owns protocol registration, addresses, sessions, attempt identity and
+  activation. A participant's own registration message creates an available
+  address without ASP admit, adapter availability, or descriptor/evidence-file
+  prerequisites. Direct registration requires no configured class. Missing class,
+  adapter, workspace and preparation are represented as NULL, never invented;
+  existing keyed registration identities survive migration. Resolved ownership
+  and address policy are durable independently of adapter lookup. Registry-first
+  local registration returns a durable address before driver attachment. A wrong
+  node returns the canonical home for caller retry, with no local allocation or
+  new forwarding protocol. HRC reserves runtime identity before attachment but
+  materializes the runtime row only after real profile and broker facts exist.
+  An unprepared IDENTITY_MINTED attempt is non-runnable, consumes no establishment
+  retries and survives daemon loss. Attachment atomically freezes validated profile
+  and environment, transitions to PREPARED and arms existing durable work;
+  duplicate attachment does not reset a running or exhausted retry budget.
+  Replacement-intent work remains independently discoverable. ASP preparation
+  is optional post-join driver configuration, not authority to register. It
+  returns only the existing execution profile and optional dispatch environment,
+  never HRC runtime handles or lifecycle policy. Existing profile structure,
+  identity and hash checks apply at attachment without new security requirements.
+  Broker ownership must agree with the resolved join direction; external process
+  ownership is the direct default, and managed ownership requires HRC's committed
+  launch record and host-aware guard, never a class name alone.
   Three boundaries remain distinct: freeze the validated ASP result before
   hosting; persist HRC hosting intent including its selected lifecycle policy
   before realization, then persist actual or rediscovered leases; finally compose
@@ -45,8 +55,8 @@ predicate: >
   binding state, transfers rather than releases at succession, survives operator
   eviction, and is freed only by explicit attributed release. Mail to an absent
   bound host remains pending and never births a substitute. processToken is opaque
-  adapter admission input, not persisted HRC identity, an HRC comparison key, or
-  replacement authority. Registration remains durable when observation is
+  compatibility input ignored for joining, not persisted HRC identity, an HRC
+  comparison key, or replacement authority. Registration remains durable when observation is
   unavailable. Each durable attempt has one invocation identity. Identity
   installation, hello, resident
   invocation establishment, attach confirmation, and activation are distinct.
@@ -98,9 +108,15 @@ predicate: >
   control authority, repairing its ledger, or mutating retention acknowledgements.
   A recovered producer terminal is distinct from broker loss with unknown native
   outcome. Automatic continuation reuse at host succession respects explicit clear
-  barriers, disabled reuse, and an explicit adapter eligibility verdict; absent
-  verdicts are not eligibility, and explicit historical resume is not the automatic
-  selector. External process-fate law follows durable lifecycle ownership, while
+  barriers and disabled reuse using HRC's own records, not an adapter verdict.
+  The selected continuation and selection reason are durable and returned to the
+  participant. Attachment must express that selection in the existing continuation
+  field before profile freeze; mismatch cannot silently become a fresh start.
+  A newer clearing barrier is rechecked before freeze. Resume request states
+  not_requested, requested, unsupported and indeterminate are persisted separately
+  from carried history; joining or broker hello never proves native resume success.
+  Unsupported resume preserves history and pending input until explicit disposition.
+  Explicit historical resume is not the automatic selector. External process-fate law follows durable lifecycle ownership, while
   acknowledgement ownership follows the controlling client. Legacy observers
   without native lifetime capability remain not-activated and emit no invented
   resume. A managed host launch persists a unique non-secret launchId before spawn
@@ -115,10 +131,10 @@ predicate: >
   federation control contract; interrupt and preempt are not advertised, and
   internal children mint no HRC seat or satisfy the parent's obligation. EPR grant
   behavior and the direct agent-harness resource-loader boundary
-  remain unchanged. This architecture approval does not authorize implementation
-  or accept final-tail loss; Phase 5 completeness requires its separately verified
+  remain unchanged. Revision 7 is operator-authorized implementation work, not
+  implementation acceptance and does not accept final-tail loss; Phase 5 completeness requires its separately verified
   retention and catch-up contract without dependence on a future user resume.
-authority: Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15
+authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15
 source:
   - wrkq:T-08344
   - wrkq:T-08501
@@ -137,7 +153,11 @@ source:
   - packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
-  - T-08344 adapter seam rejects unknown adapters foreign identity hash mismatches ownership mismatches and adapter runtime or lifecycle-policy fields before effects
+  - T-08504 classless join persists before attachment with no admit call or file prerequisite and legacy keyed rows survive migration
+  - T-08504 unprepared boot consumes no retries and attachment atomically arms establishment without duplicate retry-budget resets
+  - T-08504 HRC continuation selection is exposed and bound into the frozen request with mismatch clear-barrier and unsupported-resume proof
+  - T-08504 wrong-home redirect and same-request retry allocate one canonical owner only
+  - T-08344 post-join profile validation rejects foreign identity hash mismatches ownership mismatches and runtime or lifecycle-policy fields before effects
   - T-08344 hosted presentation discriminator persists actual HRC lease IDs and selected lifecycle policy before ensure while crash retries preserve token bytes full dispatch and ensure digest and missing leases block
   - T-08344 both join directions register establish a resident invocation attach terminate and resume through the generic path
   - T-08344 C.5.1 concurrent duplicate lost-response request-conflict and crash-boundary receipt gates preserve at-most-once driver start and truthful indeterminate outcomes
@@ -154,12 +174,12 @@ required_tests:
   - T-08505 queue and steer use the ordinary participant broker contract and internal children mint no HRC seat
   - T-08507 managed launch adoption uses the precommitted launchId exactly once while host-aware lifecycle refusal and save exit readbacks preserve process ownership
   - T-08508 external-host regression proves no launch kill reap dispose or substitute birth after managed support lands
-  - T-08504 existing key-scoped participants and legacy EPR remain unchanged across every delivery slice
+  - T-08504 existing keyed identities and EPR remain unchanged while generic pre-identity adapter admission is removed
 last_verified:
   date: 2026-09-15
-  evidence: T-08344 rev6 and adapter seam rev2 remain approved; host participant lifecycle revision 5 at 0c1fecaa was approved by source and record reading in reply to EN-12283; implementation gates were not run, T-08349 foundation closure remains open, and Phase 5 completeness remains withheld
+  evidence: Revision 7 records Lance operator direction and Astra functional resolutions of EN-12457; not Daedalus approval. T-08349 accepted at 0e5a0557 under its previous contract; T-08504 implementation and installed proof remain pending. Phase 5 completeness remains withheld.
 reopen_when:
-  - adapter registry admission preparation ownership or the pre-hosting post-realization and pre-ensure persistence boundaries change
+  - protocol join optional post-join preparation or the pre-hosting post-realization and pre-ensure persistence boundaries change
   - registration policy session identity or HRC versus adapter authority changes
   - resident-invocation receipt idempotency hosting rediscovery or uncertain-start recovery changes
   - successor admission irreversible retirement pending-input exclusion or epoch fencing changes
