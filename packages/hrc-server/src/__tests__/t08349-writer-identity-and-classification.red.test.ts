@@ -41,6 +41,7 @@ import type {
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { isAbsorbingParticipantAttempt } from '../participant-writer-evidence.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 type GenericParticipantClass = {
@@ -80,10 +81,6 @@ type ContinuityToken = 'first' | 'same' | 'changed'
 
 function evidenceFor(token: ContinuityToken): { kind: 'controlled-continuity/v1'; token: string } {
   return { kind: 'controlled-continuity/v1', token }
-}
-
-function serializedEvidence(token: ContinuityToken): string {
-  return JSON.stringify(evidenceFor(token))
 }
 
 async function body(response: Response): Promise<Record<string, unknown>> {
@@ -654,219 +651,232 @@ describe('T-08349 exact writer identity', () => {
 })
 
 /**
- * SUPERSEDED by host-participant-lifecycle contract revision 7, and skipped
- * rather than deleted so the replacement has something to be graded against.
+ * REPLACES the five superseded `activation-owned known continuity evidence`
+ * cases, which classified continuity from the `continuityEvidence` an adapter
+ * returned from `admit`. R6.1 removes the `admit` call and R6.2 makes
+ * `processToken` and `evidence` accepted compatibility fields that are ignored
+ * for joining, identity, retry matching and continuation, so there is no
+ * producer input left for those expectations to read.
  *
- * Every case below classifies continuity from the `continuityEvidence` an
- * adapter returned from `admit`. R6.1 removes the `admit` call, and R6.2 states
- * that `evidence` "remain[s] an accepted optional compatibility field and [is]
- * ignored for joining, identity, retry matching and continuation" -- so there
- * is no longer any producer input for these assertions to classify. R6.6
- * replaces the mechanism outright: HRC selects continuation from its OWN stored
- * predecessor record plus its clear/disabled-reuse barriers, and records
- * `carried`/`no_continuation`/`continuation_invalidated`/`reuse_disabled`.
+ * Replacement mapping, one active case per obsolete claim:
+ *   registration alone never advances the accepted known evidence
+ *   + an unactivated candidate never advances the accepted known evidence
+ *     -> 'a varied compatibility token changes nothing about the registration'
+ *   an unknown attempt preserves the retained known baseline for a replacement
+ *   + ... for a resume
+ *   + resumes exactly once across repeated activation of the same known evidence
+ *     -> 'a changed compatibility token alone cannot replace the writer'
  *
- * The replacement coverage for HRC-owned selection belongs with the succession
- * slice (T-08517), which is what creates a predecessor to carry from. T-08516
- * covers the first-join half of R7.3 in `t08516-participant-attach.test.ts`:
- * a join selects nothing, the selection is durable, and a profile that carries
- * a continuation HRC did not select is refused rather than frozen.
+ * Five mechanically equivalent cases are not five facts. The obsolete bodies
+ * are removed rather than left dormant; the absorbing-attempt retirement and
+ * recovery negatives they were adjacent to remain active above, and full
+ * predecessor selection/clear/reuse coverage belongs to T-08517.
  */
-describe.skip('T-08349 activation-owned known continuity evidence', () => {
+describe('T-08349 compatibility fields after admission withdrawal', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
+  let asked: WriterRef[]
+  let admitCalls: number
 
   beforeEach(async () => {
-    fixture = await createHrcTestFixture('t08349-classification-')
+    fixture = await createHrcTestFixture('t08349-compat-')
+    admitCalls = 0
   })
 
   afterEach(async () => {
     await server?.stop()
+    server = undefined
     await fixture.cleanup()
   })
 
-  async function startServed(): Promise<void> {
+  /**
+   * An adapter that counts `admit` AND fails the request if it is reached.
+   *
+   * A counter alone is satisfied by an adapter that was never reachable, so it
+   * cannot tell "never called" from "never wired". Throwing makes the
+   * difference observable in the response.
+   */
+  async function startCountingAdmit(): Promise<void> {
+    const capturing = capturingAdapter(servedClass.adapterId, fixture.tmpDir, {
+      writePath: { state: 'unknown', reason: 'bridge writer not inspected' },
+      liveness: { state: 'live', reason: 'bridge process still running' },
+      priorRecovery: { state: 'outstanding', reason: 'replay not drained' },
+    })
+    asked = capturing.asked
     server = await createHrcServer(
       fixture.serverOpts({
         otelListenerEnabled: false,
         registrationClasses: [servedClass] as unknown as readonly RegistrationClassConfig[],
         participantAdapterRegistry: new ParticipantAdapterRegistry([
-          createControlledParticipantAdapter({
-            adapterId: servedClass.adapterId,
-            workspaceCwd: fixture.tmpDir,
-            writerEvidence: {
-              observedAt: FIXED_NOW,
-              writePath: { state: 'retired', reason: 'bridge writer retired' },
-              liveness: { state: 'dead', reason: 'bridge process exited' },
-              priorRecovery: { state: 'recovered', reason: 'replay drained' },
+          {
+            ...capturing.adapter,
+            admit: () => {
+              admitCalls += 1
+              throw new Error('admit must never be called after R6.1')
             },
-          }),
+          } as ParticipantAdapter,
         ]),
       })
     )
   }
 
-  function withDb<T>(read: (db: HrcDatabase) => T): T {
+  function register(patch: Record<string, unknown>): Promise<Response> {
+    return fixture.postJson('/v1/participants/register', {
+      classId: servedClass.classId,
+      participantKey: 'compat-key',
+      socketPath: `${fixture.tmpDir}/compat.sock`,
+      workspaceCwd: fixture.tmpDir,
+      ...patch,
+    })
+  }
+
+  /**
+   * The current durable identity of the one registration under test.
+   *
+   * Deliberately excludes the attempt's `state`: the establishment worker
+   * advances that on its own timeline, so including it would make this snapshot
+   * assert the worker's progress rather than the registration's identity. The
+   * nonabsorbing precondition is checked separately, where it is the claim.
+   */
+  function identity(): Record<string, unknown> {
     const db = openHrcDatabase(fixture.dbPath, { migrate: false })
     try {
-      return read(db)
+      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
+        servedClass.classId,
+        'compat-key'
+      )
+      const attempt =
+        registration === null
+          ? null
+          : db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
+      return {
+        registrationId: registration?.registrationId,
+        hostSessionId: registration?.hostSessionId,
+        generation: registration?.generation,
+        attemptId: attempt?.attemptId,
+        attachEpoch: attempt?.attachEpoch,
+        continuation: attempt?.continuation,
+        attemptCount: db.participantRegistrations.listAttemptsByRegistrationId(
+          registration?.registrationId ?? ''
+        ).length,
+      }
     } finally {
       db.close()
     }
   }
 
-  /**
-   * Registers, waits for durable exhaustion, then gives the resulting attempt a
-   * committed broker identity so the next call can ask about a real writer.
-   */
-  async function register(
-    key: string,
-    token: ContinuityToken | 'unknown',
-    nonce: string
-  ): Promise<SettledAttempt> {
-    await body(
-      await fixture.postJson('/v1/participants/register', {
-        classId: servedClass.classId,
-        processToken: `process-${nonce}`,
-        workspaceCwd: fixture.tmpDir,
-        participantKey: key,
-        socketPath: `${fixture.tmpDir}/${key}-${nonce}.sock`,
-        ...(token === 'unknown' ? {} : { evidence: evidenceFor(token) }),
-      })
-    )
-    const current = await settled(fixture.dbPath, servedClass.classId, key)
-    withDb((db) => {
-      db.participantRegistrations.setSnapshotIfAbsent(
-        current.attemptId,
-        'brokerIdentityJson',
-        JSON.stringify({ brokerInstanceId: `bridge-${nonce}` }),
-        FIXED_NOW
-      )
-    })
-    return current
-  }
-
-  /** An unknown successor only exists after the prior attempt is absorbing. */
-  function absorb(attemptId: string): void {
-    withDb((db) => {
-      const attempt = db.participantRegistrations.getAttempt(attemptId)
-      if (attempt === null) throw new Error('attempt disappeared before absorption')
-      expect(
-        db.participantRegistrations.transitionAttempt(
-          attemptId,
-          [attempt.state],
-          'ABANDONED',
-          FIXED_NOW,
-          'fixture-absorbed'
-        )
-      ).toBe(true)
-    })
-  }
-
-  /** The commit activation owns; an allocated attempt must never do this itself. */
-  function activate(key: string): void {
-    withDb((db) => {
+  /** The precondition R6.2's "ignored" claim is scoped to. */
+  function currentAttemptIsAbsorbing(): boolean {
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
       const registration = db.participantRegistrations.getRegistrationByClassAndKey(
         servedClass.classId,
-        key
+        'compat-key'
       )
+      const attempt =
+        registration === null
+          ? null
+          : db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
+      return attempt === null ? false : isAbsorbingParticipantAttempt(attempt)
+    } finally {
+      db.close()
+    }
+  }
+
+  test('a varied compatibility token changes nothing about the registration', async () => {
+    await startCountingAdmit()
+
+    expect(await body(await register({ processToken: 'first-token' }))).toMatchObject({
+      status: 'registered',
+      created: true,
+    })
+    const first = identity()
+    expect(first.attemptCount).toBe(1)
+    expect(currentAttemptIsAbsorbing()).toBe(false)
+
+    // Same explicit key, every compatibility permutation R6.2 names. While the
+    // current attempt is nonabsorbing, none of these may move the registration,
+    // its session, its attempt, its epoch, or its continuation selection.
+    for (const patch of [
+      { processToken: 'a-different-token' },
+      {
+        processToken: 'first-token',
+        evidence: { kind: 'controlled-continuity/v1', token: 'same' },
+      },
+      { evidence: { kind: 'controlled-continuity/v1', token: 'changed' } },
+      {},
+    ]) {
+      const repeat = await body(await register(patch))
+      expect(repeat).toMatchObject({ status: 'registered', created: false })
+      expect(identity()).toEqual(first)
+    }
+
+    // Never asked for permission, and never asked about a writer: with no
+    // successor requested there is nothing to replace.
+    expect(admitCalls).toBe(0)
+    expect(asked).toHaveLength(0)
+  })
+
+  test('a changed compatibility token alone cannot replace the writer', async () => {
+    await startCountingAdmit()
+    await body(await register({ processToken: 'first-token' }))
+    const before = identity()
+
+    // The controlled writer above is live with an unknown write path and
+    // outstanding recovery -- the exact state the retirement gate must refuse.
+    // A changed token must not reach that gate at all, let alone pass it.
+    const changed = await body(
+      await register({
+        processToken: 'successor-token',
+        evidence: { kind: 'controlled-continuity/v1', token: 'changed' },
+      })
+    )
+
+    expect(changed).toMatchObject({ status: 'registered', created: false })
+    // No successor: still one attempt, same epoch, same runtime identity.
+    expect(currentAttemptIsAbsorbing()).toBe(false)
+    expect(identity()).toEqual(before)
+    expect(admitCalls).toBe(0)
+  })
+
+  test('an absent workspace registers durably with attachment pending', async () => {
+    await startCountingAdmit()
+
+    // R6.2: `workspaceCwd` is optional metadata, and HRC does not inspect its
+    // files during join. Its absence is neither an admission rejection nor a
+    // reason to invent one -- the participant is registered and unattached, and
+    // a driver that needs a workspace reports that at attachment.
+    const registered = await body(
+      await fixture.postJson('/v1/participants/register', {
+        classId: servedClass.classId,
+        participantKey: 'no-workspace-key',
+        socketPath: `${fixture.tmpDir}/no-workspace.sock`,
+        processToken: 'first-token',
+      })
+    )
+    expect(registered).toMatchObject({
+      status: 'registered',
+      created: true,
+      observation: { state: 'attachment_pending' },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
+        servedClass.classId,
+        'no-workspace-key'
+      )
+      expect(registration).not.toBeNull()
+      // Absent stays absent all the way through the repository read.
+      expect(registration?.workspaceCwd).toBeUndefined()
       const attempt = db.participantRegistrations.getAttemptByRegistrationId(
         registration?.registrationId ?? ''
       )
-      if (registration === null || attempt?.continuityEvidenceJson === undefined) {
-        throw new Error('no candidate evidence to accept')
-      }
-      expect(
-        db.participantRegistrations.acceptContinuityEvidence({
-          registrationId: registration.registrationId,
-          continuityEvidenceJson: attempt.continuityEvidenceJson,
-          updatedAt: FIXED_NOW,
-        })
-      ).toBe(true)
-    })
-  }
-
-  function classification(key: string): string | undefined {
-    return withDb((db) => {
-      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
-        servedClass.classId,
-        key
-      )
-      return db.participantRegistrations.getAttemptByRegistrationId(
-        registration?.registrationId ?? ''
-      )?.activationClassification
-    })
-  }
-
-  function accepted(key: string): string | undefined {
-    return withDb(
-      (db) =>
-        db.participantRegistrations.getRegistrationByClassAndKey(servedClass.classId, key)
-          ?.continuityEvidenceJson
-    )
-  }
-
-  test('registration alone never advances the accepted known evidence', async () => {
-    await startServed()
-    await register('accept-gate-key', 'first', '1')
-
-    expect(accepted('accept-gate-key')).toBeUndefined()
-    expect(classification('accept-gate-key')).toBe('attached')
-  }, 60_000)
-
-  test('an unknown attempt preserves the retained known baseline for a replacement', async () => {
-    await startServed()
-    const first = await register('a-unknown-a-key', 'first', '1')
-    activate('a-unknown-a-key')
-    absorb(first.attemptId)
-
-    await register('a-unknown-a-key', 'unknown', '2')
-    expect(classification('a-unknown-a-key')).toBe('attached_unknown')
-    expect(accepted('a-unknown-a-key')).toBe(serializedEvidence('first'))
-
-    await register('a-unknown-a-key', 'first', '3')
-    expect(classification('a-unknown-a-key')).toBe('replacement')
-  }, 60_000)
-
-  test('an unknown attempt preserves the retained known baseline for a resume', async () => {
-    await startServed()
-    const first = await register('a-unknown-b-key', 'first', '1')
-    activate('a-unknown-b-key')
-    absorb(first.attemptId)
-
-    await register('a-unknown-b-key', 'unknown', '2')
-    expect(classification('a-unknown-b-key')).toBe('attached_unknown')
-
-    await register('a-unknown-b-key', 'changed', '3')
-    expect(classification('a-unknown-b-key')).toBe('resume')
-  }, 60_000)
-
-  test('an unactivated candidate never advances the accepted known evidence', async () => {
-    await startServed()
-    await register('unactivated-key', 'first', '1')
-    activate('unactivated-key')
-
-    await register('unactivated-key', 'changed', '2')
-    expect(classification('unactivated-key')).toBe('resume')
-    // The candidate was allocated but never activated.
-    expect(accepted('unactivated-key')).toBe(serializedEvidence('first'))
-
-    await register('unactivated-key', 'first', '3')
-    expect(classification('unactivated-key')).toBe('replacement')
-    expect(accepted('unactivated-key')).toBe(serializedEvidence('first'))
-  }, 60_000)
-
-  test('resumes exactly once across repeated activation of the same known evidence', async () => {
-    await startServed()
-    await register('resume-once-key', 'first', '1')
-    activate('resume-once-key')
-
-    const second = await register('resume-once-key', 'changed', '2')
-    expect(classification('resume-once-key')).toBe('resume')
-    activate('resume-once-key')
-    absorb(second.attemptId)
-
-    await register('resume-once-key', 'changed', '3')
-    expect(classification('resume-once-key')).toBe('replacement')
-  }, 60_000)
+      expect(attempt).toMatchObject({ state: 'IDENTITY_MINTED', establishmentWorkState: 'pending' })
+      expect(attempt?.preparedProfileJson).toBeUndefined()
+    } finally {
+      db.close()
+    }
+    expect(admitCalls).toBe(0)
+  })
 })
