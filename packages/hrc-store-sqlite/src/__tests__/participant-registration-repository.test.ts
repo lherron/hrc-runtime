@@ -52,6 +52,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
       expect(db.migrations.applied).toContain('0065_participant_broker_identity')
       expect(db.migrations.applied).toContain('0066_participant_recovery_and_work')
       expect(db.migrations.applied).toContain('0067_participant_activation_work_repair')
+      expect(db.migrations.applied).toContain('0068_participant_successor_evidence')
       expect(db.migrations.applied).toContain('0056_participant_runtime_ownership_repair')
       db.sqlite.transaction(() => {
         db.participantRegistrations.insertRegistration(registration())

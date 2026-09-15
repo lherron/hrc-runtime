@@ -21,6 +21,11 @@ export type ParticipantAttemptState =
 
 export type ParticipantRecoveryDisposition = 'unresolved' | 'reconciled' | 'abandoned'
 export type ParticipantEstablishmentWorkState = 'pending' | 'retry_wait' | 'exhausted' | 'completed'
+export type ParticipantActivationClassification =
+  | 'attached'
+  | 'replacement'
+  | 'resume'
+  | 'attached_unknown'
 
 /**
  * C.7 is a graph, not a rank. In particular, a detached participant returns
@@ -96,6 +101,12 @@ export type ParticipantAttempt = {
   dispatchJson?: string | undefined
   /** Immutable broker acknowledgement after INSTALL -> HELLO succeeds. */
   brokerIdentityJson?: string | undefined
+  /** Opaque admission evidence for this exact attempt. */
+  continuityEvidenceJson?: string | undefined
+  /** Classification frozen when this attempt identity is allocated. */
+  activationClassification?: ParticipantActivationClassification | undefined
+  /** Exact validated producer receipt for the prior writer. */
+  writerEvidenceJson?: string | undefined
   /** Marks the one initial activation whose classification may release replay. */
   initialActivationConfirmedAt?: string | undefined
   /** Independent C.8 disposition for recovery of this attempt by a successor. */
@@ -144,6 +155,9 @@ type ParticipantAttemptRow = {
   realized_hosting_json: string | null
   dispatch_json: string | null
   broker_identity_json: string | null
+  continuity_evidence_json: string | null
+  activation_classification: ParticipantActivationClassification | null
+  writer_evidence_json: string | null
   initial_activation_confirmed_at: string | null
   recovery_disposition: ParticipantRecoveryDisposition
   recovery_reason: string | null
@@ -165,6 +179,7 @@ const ATTEMPT_COLUMNS = `
   attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
   realized_hosting_json, dispatch_json, broker_identity_json, initial_activation_confirmed_at,
+  continuity_evidence_json, activation_classification, writer_evidence_json,
   recovery_disposition, recovery_reason, establishment_work_state, establishment_attempt_count,
   establishment_next_attempt_at, establishment_last_error,
   disposition_reason, created_at, updated_at`
@@ -213,6 +228,13 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
       : { realizedHostingJson: row.realized_hosting_json }),
     ...(row.dispatch_json === null ? {} : { dispatchJson: row.dispatch_json }),
     ...(row.broker_identity_json === null ? {} : { brokerIdentityJson: row.broker_identity_json }),
+    ...(row.continuity_evidence_json === null
+      ? {}
+      : { continuityEvidenceJson: row.continuity_evidence_json }),
+    ...(row.activation_classification === null
+      ? {}
+      : { activationClassification: row.activation_classification }),
+    ...(row.writer_evidence_json === null ? {} : { writerEvidenceJson: row.writer_evidence_json }),
     ...(row.initial_activation_confirmed_at === null
       ? {}
       : { initialActivationConfirmedAt: row.initial_activation_confirmed_at }),
@@ -331,7 +353,7 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -347,6 +369,9 @@ export class ParticipantRegistrationRepository {
       record.dispatchJson ?? null,
       record.brokerIdentityJson ?? null,
       record.initialActivationConfirmedAt ?? null,
+      record.continuityEvidenceJson ?? null,
+      record.activationClassification ?? null,
+      record.writerEvidenceJson ?? null,
       record.recoveryDisposition,
       record.recoveryReason ?? null,
       record.establishmentWorkState,
@@ -367,6 +392,57 @@ export class ParticipantRegistrationRepository {
       )
       .get(attemptId)
     return row === null ? null : mapAttempt(row)
+  }
+
+  getAttemptByInvocationId(invocationId: string): ParticipantAttempt | null {
+    const row = this.db
+      .query<ParticipantAttemptRow, [string]>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts WHERE invocation_id = ?`
+      )
+      .get(invocationId)
+    return row === null ? null : mapAttempt(row)
+  }
+
+  recordWriterEvidence(
+    attemptId: string,
+    attachEpoch: number,
+    writerEvidenceJson: string,
+    updatedAt: string
+  ): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET writer_evidence_json = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ?`
+      )
+      .run(writerEvidenceJson, updatedAt, attemptId, attachEpoch)
+    return result.changes === 1
+  }
+
+  updateRegistrationForSuccessor(input: {
+    registrationId: string
+    workspaceCwd: string
+    socketPath?: string | undefined
+    preparationJson: string
+    continuityEvidenceJson?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registrations
+            SET workspace_cwd = ?, serving_socket_path = ?, preparation_json = ?,
+                continuity_evidence_json = COALESCE(?, continuity_evidence_json), updated_at = ?
+          WHERE registration_id = ?`
+      )
+      .run(
+        input.workspaceCwd,
+        input.socketPath ?? null,
+        input.preparationJson,
+        input.continuityEvidenceJson ?? null,
+        input.updatedAt,
+        input.registrationId
+      )
+    return result.changes === 1
   }
 
   listEstablishmentWork(): ParticipantAttempt[] {

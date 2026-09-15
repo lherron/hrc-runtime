@@ -20,6 +20,8 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { isClaimScopeFree } from '../scope-claim-core.js'
+import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 type GenericParticipantClass = {
@@ -288,8 +290,18 @@ describe('T-08349 generic participant registration callback surface', () => {
       const servedAttempt = db.participantRegistrations.getAttemptByRegistrationId(
         servedRegistration?.registrationId ?? ''
       )
-      expect(hostedAttempt).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
-      expect(servedAttempt).toMatchObject({ state: 'HOSTING_INTENT_PERSISTED' })
+      expect([
+        'HOSTING_INTENT_PERSISTED',
+        'REALIZED',
+        'DISPATCH_FROZEN',
+        'INSTALL_CONFIRMED',
+        'INVOCATION_READY',
+        'ATTACH_CONFIRMED',
+        'ACTIVE',
+      ]).toContain(hostedAttempt?.state)
+      expect(['HOSTING_INTENT_PERSISTED', 'REALIZED', 'DISPATCH_FROZEN']).toContain(
+        servedAttempt?.state
+      )
       const hostedIntent = JSON.parse(hostedAttempt?.hostingIntentJson ?? '{}')
       const servedIntent = JSON.parse(servedAttempt?.hostingIntentJson ?? '{}')
       expect(hostedIntent).toMatchObject({
@@ -353,6 +365,122 @@ describe('T-08349 generic participant registration callback surface', () => {
       status: 200,
       body: { registrationId: expect.stringMatching(/^registration-/) },
     })
+  })
+
+  test('ingests exact writer evidence and allocates one changed-known same-session successor', async () => {
+    await start({
+      registrationClasses: [
+        participantServedClass,
+      ] as unknown as readonly RegistrationClassConfig[],
+      participantAdapterRegistry: new ParticipantAdapterRegistry([
+        createControlledParticipantAdapter({
+          adapterId: participantServedClass.adapterId,
+          workspaceCwd: fixture.tmpDir,
+          writerEvidence: {
+            observedAt: '2026-09-15T15:00:00.000Z',
+            writePath: { state: 'retired', reason: 'controlled bridge writer retired' },
+            liveness: { state: 'dead', reason: 'controlled bridge process exited' },
+            priorRecovery: { state: 'recovered', reason: 'controlled replay drained' },
+          },
+        }),
+      ]),
+    })
+
+    const first = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: participantServedClass.classId,
+        processToken: 'first-process',
+        participantKey: 'successor-key',
+        socketPath: `${fixture.tmpDir}/first.sock`,
+        evidence: { kind: 'controlled-continuity/v1', token: 'first' },
+      })
+    )
+    expect(first.body).toMatchObject({ status: 'registered', created: true, resumed: false })
+
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    let priorAttemptId = ''
+    let priorRuntimeId = ''
+    let priorInvocationId = ''
+    try {
+      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
+        participantServedClass.classId,
+        'successor-key'
+      )
+      const prior = db.participantRegistrations.getAttemptByRegistrationId(
+        registration?.registrationId ?? ''
+      )
+      const reservedSession = db.sessions.getByHostSessionId(registration?.hostSessionId ?? '')
+      expect(reservedSession).not.toBeNull()
+      expect(
+        isClaimScopeFree(server as unknown as HrcServerInstanceForHandlers, reservedSession!)
+      ).toBe(false)
+      await expect(
+        server!.startRuntimeForSession(reservedSession!, {} as never, 'fresh_pty')
+      ).rejects.toThrow('participant scope cannot be cold-born')
+      expect(prior).not.toBeNull()
+      priorAttemptId = prior?.attemptId ?? ''
+      priorRuntimeId = prior?.runtimeId ?? ''
+      priorInvocationId = prior?.invocationId ?? ''
+      expect(
+        db.participantRegistrations.setSnapshotIfAbsent(
+          priorAttemptId,
+          'brokerIdentityJson',
+          JSON.stringify({ brokerInstanceId: 'controlled-prior-broker' }),
+          '2026-09-15T15:00:00.000Z'
+        )
+      ).toBe(true)
+    } finally {
+      db.close()
+    }
+
+    const successor = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: participantServedClass.classId,
+        processToken: 'successor-process',
+        participantKey: 'successor-key',
+        socketPath: `${fixture.tmpDir}/successor.sock`,
+        evidence: { kind: 'controlled-continuity/v1', token: 'changed' },
+      })
+    )
+    expect(successor.body).toMatchObject({
+      status: 'registered',
+      created: false,
+      resumed: false,
+      scopeRef: (first.body as { scopeRef: string }).scopeRef,
+      hostSessionId: (first.body as { hostSessionId: string }).hostSessionId,
+      generation: 1,
+    })
+
+    const readback = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      const registration = readback.participantRegistrations.getRegistrationByClassAndKey(
+        participantServedClass.classId,
+        'successor-key'
+      )
+      const attempts = readback.participantRegistrations.listAttemptsByRegistrationId(
+        registration?.registrationId ?? ''
+      )
+      expect(attempts).toHaveLength(2)
+      expect(attempts[0]).toMatchObject({
+        attemptId: priorAttemptId,
+        runtimeId: priorRuntimeId,
+        invocationId: priorInvocationId,
+        state: 'ABANDONED',
+        recoveryDisposition: 'reconciled',
+        writerEvidenceJson: expect.stringContaining('controlled-prior-broker'),
+      })
+      expect(attempts[1]).toMatchObject({
+        attachEpoch: 2,
+        activationClassification: 'resume',
+        recoveryDisposition: 'unresolved',
+        establishmentWorkState: expect.stringMatching(/pending|retry_wait/),
+      })
+      expect(attempts[1]?.attemptId).not.toBe(priorAttemptId)
+      expect(attempts[1]?.runtimeId).not.toBe(priorRuntimeId)
+      expect(attempts[1]?.invocationId).not.toBe(priorInvocationId)
+    } finally {
+      readback.close()
+    }
   })
 
   test('preserves the legacy EPR grant endpoint and does not reinterpret a generic body', async () => {

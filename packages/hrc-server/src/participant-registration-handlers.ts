@@ -7,9 +7,13 @@ import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqli
 import {
   type BrokerExecutionProfile,
   type JsonValue,
+  type ParticipantAdapter,
   type ParticipantAdapterPreparationRequest,
+  type WriterEvidence,
+  type WriterRef,
   validateParticipantAdapterAdmission,
   validateParticipantAdapterPreparation,
+  validateWriterEvidence,
 } from 'spaces-runtime-contracts'
 
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
@@ -35,7 +39,7 @@ export type RegisterParticipantResponse =
       hostSessionId: string
       generation: number
       created: boolean
-      resumed: false
+      resumed: boolean
       observation: { state: 'prepared'; detail: string }
     }
   | {
@@ -82,7 +86,9 @@ function registeredResponse(
     hostSessionId: registration.hostSessionId,
     generation: registration.generation,
     created,
-    resumed: false,
+    resumed:
+      attempt.activationClassification === 'resume' &&
+      attempt.initialActivationConfirmedAt !== undefined,
     observation: {
       state: 'prepared',
       detail:
@@ -91,6 +97,101 @@ function registeredResponse(
           : 'participant registration, adapter preparation, and HRC hosting intent are durable',
     },
   }
+}
+
+const ABSORBING_ATTEMPT_STATES = new Set(['SUPERSEDED', 'ABANDONED', 'TERMINAL'])
+
+function isAbsorbingAttempt(attempt: ParticipantAttempt): boolean {
+  return ABSORBING_ATTEMPT_STATES.has(attempt.state)
+}
+
+function hasAbsorbingDisposition(attempt: ParticipantAttempt): boolean {
+  return isAbsorbingAttempt(attempt) && (attempt.dispositionReason?.trim().length ?? 0) > 0
+}
+
+function recoverySatisfied(attempt: ParticipantAttempt, evidence: WriterEvidence): boolean {
+  return (
+    (evidence.priorRecovery.state === 'recovered' &&
+      attempt.recoveryDisposition === 'reconciled') ||
+    (attempt.recoveryDisposition === 'abandoned' &&
+      (attempt.recoveryReason?.trim().length ?? 0) > 0)
+  )
+}
+
+function activationClassification(
+  prior: ParticipantAttempt | null,
+  continuityEvidenceJson: string | undefined
+): NonNullable<ParticipantAttempt['activationClassification']> {
+  if (continuityEvidenceJson === undefined) return 'attached_unknown'
+  if (prior === null || prior.continuityEvidenceJson === undefined) return 'attached'
+  return prior.continuityEvidenceJson === continuityEvidenceJson ? 'replacement' : 'resume'
+}
+
+function writerRef(
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): WriterRef | null {
+  if (attempt.brokerIdentityJson === undefined) return null
+  let brokerInstanceId: string
+  try {
+    const parsed = JSON.parse(attempt.brokerIdentityJson) as {
+      brokerInstanceId?: unknown
+    }
+    if (typeof parsed.brokerInstanceId !== 'string' || parsed.brokerInstanceId.length === 0)
+      return null
+    brokerInstanceId = parsed.brokerInstanceId
+  } catch {
+    return null
+  }
+  return {
+    subject: registration.join === 'participant-served' ? 'bridge' : 'host',
+    classId: registration.classId,
+    participantKey: registration.participantKey,
+    attemptId: attempt.attemptId,
+    invocationId: attempt.invocationId as WriterRef['invocationId'],
+    attachEpoch: attempt.attachEpoch,
+    ...(registration.join === 'participant-served'
+      ? { brokerInstanceId }
+      : { hostIncarnationId: brokerInstanceId }),
+  }
+}
+
+async function obtainWriterEvidence(
+  adapter: ParticipantAdapter,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): Promise<WriterEvidence | null> {
+  const exactWriter = writerRef(registration, attempt)
+  if (exactWriter === null) return null
+  const request = { writerRef: exactWriter }
+  let raw: unknown
+  try {
+    raw = isAbsorbingAttempt(attempt)
+      ? adapter.inspectWriter === undefined
+        ? adapter.retireWriter === undefined
+          ? undefined
+          : await adapter.retireWriter({
+              ...request,
+              reason: 'successor-registration',
+            })
+        : await adapter.inspectWriter(request)
+      : adapter.retireWriter === undefined
+        ? adapter.inspectWriter === undefined
+          ? undefined
+          : await adapter.inspectWriter(request)
+        : await adapter.retireWriter({
+            ...request,
+            reason: 'successor-registration',
+          })
+  } catch {
+    return null
+  }
+  if (raw === undefined) return null
+  const validated = validateWriterEvidence(
+    isAbsorbingAttempt(attempt) ? request : { ...request, reason: 'successor-registration' },
+    raw
+  )
+  return validated.ok ? validated.value : null
 }
 
 async function persistHostingIntentIfRequired(
@@ -246,6 +347,10 @@ export async function handleRegisterParticipant(
           ? null
           : this.db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
       let created = false
+      const admittedContinuityEvidenceJson =
+        admitted.continuityEvidence === undefined
+          ? undefined
+          : serializedJson(admitted.continuityEvidence)
 
       if (registration === null) {
         if (
@@ -285,9 +390,9 @@ export async function handleRegisterParticipant(
           workspaceCwd: admitted.workspaceCwd,
           ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
           preparationJson: serializedJson(admitted.preparation),
-          ...(admitted.continuityEvidence === undefined
+          ...(admittedContinuityEvidenceJson === undefined
             ? {}
-            : { continuityEvidenceJson: serializedJson(admitted.continuityEvidence) }),
+            : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
           createdAt: now,
           updatedAt: now,
         }
@@ -300,6 +405,10 @@ export async function handleRegisterParticipant(
           invocationId,
           runtimeId,
           state: 'IDENTITY_MINTED',
+          ...(admittedContinuityEvidenceJson === undefined
+            ? {}
+            : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
+          activationClassification: activationClassification(null, admittedContinuityEvidenceJson),
           recoveryDisposition: 'unresolved',
           establishmentWorkState: 'pending',
           establishmentAttemptCount: 0,
@@ -330,6 +439,156 @@ export async function handleRegisterParticipant(
         registration = newRegistration
         attempt = newAttempt
         created = true
+      } else if (attempt !== null) {
+        const successorRequested =
+          isAbsorbingAttempt(attempt) ||
+          (admittedContinuityEvidenceJson !== undefined &&
+            admittedContinuityEvidenceJson !== attempt.continuityEvidenceJson)
+        if (successorRequested) {
+          const evidence = await obtainWriterEvidence(adapter, registration, attempt)
+          if (evidence === null) {
+            return {
+              status: 'pending',
+              reason: 'host_retirement_unproven',
+              detail: 'the exact prior writer has no valid owner-produced retirement evidence',
+            }
+          }
+          const now = timestamp()
+          const retirementSatisfied =
+            evidence.writePath.state === 'retired' || evidence.liveness.state === 'dead'
+          this.db.participantRegistrations.recordWriterEvidence(
+            attempt.attemptId,
+            attempt.attachEpoch,
+            serializedJson(evidence),
+            now
+          )
+          if (!retirementSatisfied) {
+            return {
+              status:
+                evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
+                  ? 'rejected'
+                  : 'pending',
+              reason:
+                evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
+                  ? 'host_binding_conflict'
+                  : 'host_retirement_unproven',
+              detail: 'the exact prior writer remains writable/live or has unknown retirement',
+            }
+          }
+          if (!isAbsorbingAttempt(attempt)) {
+            const abandoned = this.db.participantRegistrations.transitionAttempt(
+              attempt.attemptId,
+              [attempt.state],
+              'ABANDONED',
+              now,
+              evidence.writePath.state === 'retired'
+                ? `writer-retired:${evidence.writePath.reason}`
+                : `writer-dead:${evidence.liveness.reason}`
+            )
+            if (!abandoned) {
+              return {
+                status: 'pending',
+                reason: 'participant_prior_disposition_unresolved',
+                detail: 'the prior participant attempt could not record its absorbing disposition',
+              }
+            }
+            attempt = this.db.participantRegistrations.getAttempt(attempt.attemptId)
+          }
+          if (attempt === null || !hasAbsorbingDisposition(attempt)) {
+            return {
+              status: 'pending',
+              reason: 'participant_prior_disposition_unresolved',
+              detail: 'the prior participant attempt has no absorbing disposition',
+            }
+          }
+          if (
+            attempt.recoveryDisposition === 'unresolved' &&
+            evidence.priorRecovery.state === 'recovered'
+          ) {
+            this.db.participantRegistrations.recordRecoveryDisposition(
+              attempt.attemptId,
+              'reconciled',
+              `writer-evidence:${evidence.priorRecovery.reason}`,
+              now
+            )
+            attempt = this.db.participantRegistrations.getAttempt(attempt.attemptId)
+          }
+          if (attempt === null || !recoverySatisfied(attempt, evidence)) {
+            return {
+              status: 'pending',
+              reason: 'participant_prior_recovery_unresolved',
+              detail:
+                'the prior invocation recovery is neither reconciled nor explicitly abandoned',
+            }
+          }
+
+          const successor: ParticipantAttempt = {
+            attemptId: `participant-attempt-${randomUUID()}`,
+            registrationId: registration.registrationId,
+            attachEpoch: attempt.attachEpoch + 1,
+            requestId: `req-${randomUUID()}`,
+            operationId: `op-${randomUUID()}`,
+            invocationId: `inv-${randomUUID()}`,
+            runtimeId: `rt-${randomUUID()}`,
+            state: 'IDENTITY_MINTED',
+            ...(admittedContinuityEvidenceJson === undefined
+              ? {}
+              : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
+            activationClassification: activationClassification(
+              attempt,
+              admittedContinuityEvidenceJson
+            ),
+            recoveryDisposition: 'unresolved',
+            establishmentWorkState: 'pending',
+            establishmentAttemptCount: 0,
+            createdAt: now,
+            updatedAt: now,
+          }
+          const priorAttemptId = attempt.attemptId
+          const registrationId = registration.registrationId
+          const allocated = this.db.sqlite.transaction(() => {
+            const currentPrior = this.db.participantRegistrations.getAttempt(priorAttemptId)
+            const latestPrior =
+              this.db.participantRegistrations.getAttemptByRegistrationId(registrationId)
+            if (
+              currentPrior === null ||
+              latestPrior?.attemptId !== currentPrior.attemptId ||
+              !hasAbsorbingDisposition(currentPrior) ||
+              !recoverySatisfied(currentPrior, evidence) ||
+              currentPrior.writerEvidenceJson !== serializedJson(evidence)
+            ) {
+              return false
+            }
+            if (
+              !this.db.participantRegistrations.updateRegistrationForSuccessor({
+                registrationId,
+                workspaceCwd: admitted.workspaceCwd,
+                ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
+                preparationJson: serializedJson(admitted.preparation),
+                ...(admittedContinuityEvidenceJson === undefined
+                  ? {}
+                  : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
+                updatedAt: now,
+              })
+            ) {
+              throw new Error('participant successor registration update raced')
+            }
+            this.db.participantRegistrations.insertAttempt(successor)
+            return true
+          })()
+          if (!allocated) {
+            return {
+              status: 'pending',
+              reason: 'participant_successor_gate_changed',
+              detail: 'the prior writer or recovery gate changed before successor allocation',
+            }
+          }
+          registration = this.db.participantRegistrations.getRegistrationById(
+            registration.registrationId
+          )
+          attempt = successor
+          created = false
+        }
       }
 
       if (registration === null || attempt === null) {

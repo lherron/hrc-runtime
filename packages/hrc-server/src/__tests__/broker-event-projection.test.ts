@@ -349,6 +349,37 @@ describe('projection mapping (ordered sequence)', () => {
     const mapper = harness.makeMapper()
     const db = harness.fixture.db
 
+    db.participantRegistrations.insertRegistration({
+      registrationId: 'preg-projection',
+      classId: 'controlled-participant',
+      adapterId: 'controlled-participant',
+      join: 'hrc-hosted',
+      participantKey: 'projection-key',
+      scopeRef: 'agent:test:project:test:task:participant-projection',
+      laneRef: 'main',
+      hostSessionId: HOST_SESSION_ID,
+      generation: 1,
+      workspaceCwd: '/tmp',
+      preparationJson: '{}',
+      createdAt: ts(0),
+      updatedAt: ts(0),
+    })
+    db.participantRegistrations.insertAttempt({
+      attemptId: 'patt-projection',
+      registrationId: 'preg-projection',
+      attachEpoch: 1,
+      requestId: 'req-projection',
+      operationId: 'op-projection',
+      invocationId: INVOCATION_ID,
+      runtimeId: RUNTIME_ID,
+      state: 'ACTIVE',
+      recoveryDisposition: 'unresolved',
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+      createdAt: ts(0),
+      updatedAt: ts(0),
+    })
+
     mapper.apply(envelope('invocation.started', 1, { command: 'codex', args: [], cwd: '/tmp' }))
     expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.activeInvocationId).toBe(INVOCATION_ID)
 
@@ -361,6 +392,11 @@ describe('projection mapping (ordered sequence)', () => {
     let invocation = db.brokerInvocations.getByInvocationId(INVOCATION_ID)!
     expect(invocation.invocationState).toBe('exited')
     expect(invocation.lifecycleTerminalReason).toBe('idle-ttl')
+    expect(db.participantRegistrations.getAttempt('patt-projection')).toMatchObject({
+      state: 'TERMINAL',
+      dispositionReason: 'producer-terminal:idle-ttl',
+      recoveryDisposition: 'unresolved',
+    })
 
     mapper.apply(
       envelope('invocation.failed', 10, {

@@ -510,7 +510,10 @@ test('retries replay failure after activation CAS without reclassification or de
   } as unknown as HrcServerInstanceForHandlers
   try {
     const hostedRegistration = registration('hrc-hosted')
-    const hostedAttempt = attempt(hostedRegistration.registrationId, 'rt-stage')
+    const hostedAttempt = {
+      ...attempt(hostedRegistration.registrationId, 'rt-stage'),
+      activationClassification: 'resume' as const,
+    }
     const hostedProfile = await profileFor('hrc-hosted', hostedAttempt)
     const hostedIntent = await createParticipantHostingIntent(
       server,
@@ -614,9 +617,18 @@ test('retries replay failure after activation CAS without reclassification or de
       participantActivation: {
         attemptId: hostedAttempt.attemptId,
         attachEpoch: hostedAttempt.attachEpoch,
-        classification: 'attached_unknown',
+        classification: 'resume',
       },
     })
+    expect(
+      db.hrcEvents
+        .listByKind('runtime.ensured')
+        .filter(
+          (event) =>
+            event.runtimeId === hostedAttempt.runtimeId &&
+            event.payload?.['source'] === 'participant-activation'
+        )
+    ).toHaveLength(1)
 
     // An ordinary retry in the owning controller is a no-op: no extra attach
     // and, critically, no activation attempt without a staged candidate.

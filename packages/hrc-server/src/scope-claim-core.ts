@@ -161,6 +161,12 @@ export function isClaimScopeFree(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord
 ): boolean {
+  // Generic participant addresses are permanent reservations. They remain
+  // occupied when their runtime is absent, detached, terminal, or between
+  // same-session attempts; only the participant registration path may reuse it.
+  if (server.db.participantRegistrations.getRegistrationByScopeRef(session.scopeRef) !== null) {
+    return false
+  }
   if (server.runtimeStartOperations.has(session.hostSessionId)) return false
   return server.db.runtimes
     .listByHostSessionId(session.hostSessionId)

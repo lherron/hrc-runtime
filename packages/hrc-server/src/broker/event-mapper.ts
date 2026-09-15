@@ -1232,6 +1232,21 @@ export class BrokerEventMapper {
           lifecycleTerminalReason: payload.reason ?? 'process-exit',
           updatedAt: now,
         })
+        const participantAttempt = db.participantRegistrations.getAttemptByInvocationId(
+          String(invocationId)
+        )
+        if (
+          participantAttempt !== null &&
+          !['SUPERSEDED', 'ABANDONED', 'TERMINAL'].includes(participantAttempt.state)
+        ) {
+          db.participantRegistrations.transitionAttempt(
+            participantAttempt.attemptId,
+            [participantAttempt.state],
+            'TERMINAL',
+            now,
+            `producer-terminal:${payload.reason ?? 'process-exit'}`
+          )
+        }
         // T-07235: the harness process is gone, so the exit reason already owns
         // this generation's outcome. Disarm rather than let the watchdog
         // reclassify an exit failure as a liveness trip.

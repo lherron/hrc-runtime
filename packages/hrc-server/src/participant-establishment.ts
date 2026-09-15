@@ -656,12 +656,6 @@ async function stageExistingParticipantAttachment(
   return confirmed
 }
 
-function participantActivationClassification(
-  registration: ParticipantRegistration
-): 'attached' | 'attached_unknown' {
-  return registration.continuityEvidenceJson === undefined ? 'attached_unknown' : 'attached'
-}
-
 export function assertPriorParticipantRecoveryDisposition(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt
@@ -719,7 +713,7 @@ export async function activateStagedParticipant(
       const runtime = server.db.runtimes.getByRuntimeId(current.runtimeId)
       if (runtime === null)
         throw new Error('participant runtime bookkeeping disappeared before activation')
-      const classification = participantActivationClassification(registration)
+      const classification = current.activationClassification ?? 'attached_unknown'
       server.db.runtimes.update(current.runtimeId, {
         runtimeStateJson: {
           ...(runtime.runtimeStateJson ?? {}),

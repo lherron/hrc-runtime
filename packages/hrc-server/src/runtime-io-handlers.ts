@@ -292,6 +292,19 @@ export async function startRuntimeForSession(
   // address. This is the single door every start path shares, and HRC's own
   // desktop observer does not use it.
   assertDesktopScopeNotColdBorn(this.db, session.scopeRef)
+  // Generic participant scopes are likewise permanent externally-owned
+  // addresses. Establishment enters through the participant broker path, so an
+  // ordinary cold-start here would create a competing HRC-owned writer.
+  const participantRegistration = this.db.participantRegistrations.getRegistrationByScopeRef(
+    session.scopeRef
+  )
+  if (participantRegistration !== null) {
+    throw new HrcRuntimeUnavailableError('participant scope cannot be cold-born', {
+      scopeRef: session.scopeRef,
+      registrationId: participantRegistration.registrationId,
+      reason: 'participant_address_reserved',
+    })
+  }
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
     const runtime = await existingOperation

@@ -24,6 +24,7 @@ export type {
 export { ParticipantRegistrationRepository } from './participant-registration-repository.js'
 export type {
   ParticipantAttempt,
+  ParticipantActivationClassification,
   ParticipantAttemptState,
   ParticipantRegistration,
 } from './participant-registration-repository.js'

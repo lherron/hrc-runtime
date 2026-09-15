@@ -3147,6 +3147,34 @@ const participantActivationWorkRepairMigration: HrcMigration = {
   },
 }
 
+/** Per-attempt continuity/classification plus the exact producer writer receipt. */
+const participantSuccessorEvidenceMigration: HrcMigration = {
+  id: '0068_participant_successor_evidence',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE participant_registration_attempts ADD COLUMN continuity_evidence_json TEXT;
+      ALTER TABLE participant_registration_attempts ADD COLUMN activation_classification TEXT
+        CHECK (activation_classification IN ('attached', 'replacement', 'resume', 'attached_unknown'));
+      ALTER TABLE participant_registration_attempts ADD COLUMN writer_evidence_json TEXT;
+
+      UPDATE participant_registration_attempts
+        SET continuity_evidence_json = (
+          SELECT continuity_evidence_json
+            FROM participant_registrations
+           WHERE registration_id = participant_registration_attempts.registration_id
+        ),
+            activation_classification = CASE
+              WHEN (SELECT continuity_evidence_json
+                      FROM participant_registrations
+                     WHERE registration_id = participant_registration_attempts.registration_id) IS NULL
+                THEN 'attached_unknown'
+              ELSE 'attached'
+            END
+        WHERE attach_epoch = 1;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3210,4 +3238,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   participantBrokerIdentityMigration,
   participantRecoveryAndWorkMigration,
   participantActivationWorkRepairMigration,
+  participantSuccessorEvidenceMigration,
 ]
