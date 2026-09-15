@@ -350,6 +350,14 @@ describe('T-08516 direct protocol join', () => {
     // SAME address and incarnation at the home it was given, ending with
     // exactly one durable owner there -- so this drives both legs against two
     // separate servers with separate stores.
+    //
+    // Scope, stated rather than implied: the wrong node's reservation is SEEDED
+    // directly into its store, and the retry target is chosen by this test. No
+    // registry propagated the reservation and no discovery resolved the home.
+    // What is real is the registration path, the placement logic and the
+    // durable rows in two separate stores, so this is redirect-and-retry
+    // evidence and NOT evidence of federation discovery or registry
+    // propagation.
     await start()
     const now = new Date().toISOString()
     const db = openHrcDatabase(fixture.dbPath, { migrate: false })
@@ -394,6 +402,9 @@ describe('T-08516 direct protocol join', () => {
       // A lost response converges at that home instead of minting a second owner.
       const retried = await observe(await home.postJson('/v1/participants/register', request))
       expect(retried.body['created']).toBe(false)
+      // Both halves: comparing two ABSENT identities is vacuously equal, which
+      // would let a pair of rejections satisfy this.
+      expect(accepted.body['identity']).toBeDefined()
       expect(retried.body['identity']).toEqual(accepted.body['identity'])
 
       const homeDb = openHrcDatabase(home.dbPath, { migrate: false })
