@@ -429,6 +429,17 @@ describe('T-08349 generic participant registration callback surface', () => {
           '2026-09-15T15:00:00.000Z'
         )
       ).toBe(true)
+      // Only an activation accepts known evidence. Without this commit the
+      // prior attempt holds an unaccepted candidate, and a changed successor
+      // correctly attaches instead of resuming; the resume below is asserted
+      // against a baseline that was genuinely activated.
+      expect(
+        db.participantRegistrations.acceptContinuityEvidence({
+          registrationId: registration?.registrationId ?? '',
+          continuityEvidenceJson: prior?.continuityEvidenceJson ?? '',
+          updatedAt: '2026-09-15T15:00:00.000Z',
+        })
+      ).toBe(true)
     } finally {
       db.close()
     }

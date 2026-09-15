@@ -419,29 +419,52 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  /**
+   * Successor allocation refreshes only the adapter-supplied boundary. It
+   * deliberately cannot touch `continuity_evidence_json`: that column is the
+   * last ACTIVATED known evidence, and an allocated attempt has not activated.
+   * The attempt's own column carries the candidate until then.
+   */
   updateRegistrationForSuccessor(input: {
     registrationId: string
     workspaceCwd: string
     socketPath?: string | undefined
     preparationJson: string
-    continuityEvidenceJson?: string | undefined
     updatedAt: string
   }): boolean {
     const result = this.db
       .query(
         `UPDATE participant_registrations
-            SET workspace_cwd = ?, serving_socket_path = ?, preparation_json = ?,
-                continuity_evidence_json = COALESCE(?, continuity_evidence_json), updated_at = ?
+            SET workspace_cwd = ?, serving_socket_path = ?, preparation_json = ?, updated_at = ?
           WHERE registration_id = ?`
       )
       .run(
         input.workspaceCwd,
         input.socketPath ?? null,
         input.preparationJson,
-        input.continuityEvidenceJson ?? null,
         input.updatedAt,
         input.registrationId
       )
+    return result.changes === 1
+  }
+
+  /**
+   * Advances the retained known continuity evidence. Only the initial-activation
+   * transaction may call this, so an unactivated candidate never replaces the
+   * baseline that a later attempt is classified against.
+   */
+  acceptContinuityEvidence(input: {
+    registrationId: string
+    continuityEvidenceJson: string
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registrations
+            SET continuity_evidence_json = ?, updated_at = ?
+          WHERE registration_id = ?`
+      )
+      .run(input.continuityEvidenceJson, input.updatedAt, input.registrationId)
     return result.changes === 1
   }
 

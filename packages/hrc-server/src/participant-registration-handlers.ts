@@ -7,17 +7,18 @@ import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqli
 import {
   type BrokerExecutionProfile,
   type JsonValue,
-  type ParticipantAdapter,
   type ParticipantAdapterPreparationRequest,
   type WriterEvidence,
-  type WriterRef,
   validateParticipantAdapterAdmission,
   validateParticipantAdapterPreparation,
-  validateWriterEvidence,
 } from 'spaces-runtime-contracts'
 
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
 import { createParticipantHostingIntent } from './participant-hosting-intent.js'
+import {
+  isAbsorbingParticipantAttempt,
+  obtainParticipantWriterEvidence,
+} from './participant-writer-evidence.js'
 import { isParticipantRegistrationClass } from './registration-classes-config.js'
 import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -99,14 +100,10 @@ function registeredResponse(
   }
 }
 
-const ABSORBING_ATTEMPT_STATES = new Set(['SUPERSEDED', 'ABANDONED', 'TERMINAL'])
-
-function isAbsorbingAttempt(attempt: ParticipantAttempt): boolean {
-  return ABSORBING_ATTEMPT_STATES.has(attempt.state)
-}
-
 function hasAbsorbingDisposition(attempt: ParticipantAttempt): boolean {
-  return isAbsorbingAttempt(attempt) && (attempt.dispositionReason?.trim().length ?? 0) > 0
+  return (
+    isAbsorbingParticipantAttempt(attempt) && (attempt.dispositionReason?.trim().length ?? 0) > 0
+  )
 }
 
 function recoverySatisfied(attempt: ParticipantAttempt, evidence: WriterEvidence): boolean {
@@ -118,80 +115,23 @@ function recoverySatisfied(attempt: ParticipantAttempt, evidence: WriterEvidence
   )
 }
 
+/**
+ * C.8 classification. The comparison is against the registration's retained
+ * known evidence — the last evidence an activation accepted — never against
+ * whatever candidate the immediately prior attempt happened to carry. An
+ * unknown attempt therefore preserves the baseline rather than erasing it, and
+ * a candidate that never activated never becomes the baseline it is compared
+ * against.
+ */
 function activationClassification(
-  prior: ParticipantAttempt | null,
-  continuityEvidenceJson: string | undefined
+  acceptedContinuityEvidenceJson: string | undefined,
+  candidateContinuityEvidenceJson: string | undefined
 ): NonNullable<ParticipantAttempt['activationClassification']> {
-  if (continuityEvidenceJson === undefined) return 'attached_unknown'
-  if (prior === null || prior.continuityEvidenceJson === undefined) return 'attached'
-  return prior.continuityEvidenceJson === continuityEvidenceJson ? 'replacement' : 'resume'
-}
-
-function writerRef(
-  registration: ParticipantRegistration,
-  attempt: ParticipantAttempt
-): WriterRef | null {
-  if (attempt.brokerIdentityJson === undefined) return null
-  let brokerInstanceId: string
-  try {
-    const parsed = JSON.parse(attempt.brokerIdentityJson) as {
-      brokerInstanceId?: unknown
-    }
-    if (typeof parsed.brokerInstanceId !== 'string' || parsed.brokerInstanceId.length === 0)
-      return null
-    brokerInstanceId = parsed.brokerInstanceId
-  } catch {
-    return null
-  }
-  return {
-    subject: registration.join === 'participant-served' ? 'bridge' : 'host',
-    classId: registration.classId,
-    participantKey: registration.participantKey,
-    attemptId: attempt.attemptId,
-    invocationId: attempt.invocationId as WriterRef['invocationId'],
-    attachEpoch: attempt.attachEpoch,
-    ...(registration.join === 'participant-served'
-      ? { brokerInstanceId }
-      : { hostIncarnationId: brokerInstanceId }),
-  }
-}
-
-async function obtainWriterEvidence(
-  adapter: ParticipantAdapter,
-  registration: ParticipantRegistration,
-  attempt: ParticipantAttempt
-): Promise<WriterEvidence | null> {
-  const exactWriter = writerRef(registration, attempt)
-  if (exactWriter === null) return null
-  const request = { writerRef: exactWriter }
-  let raw: unknown
-  try {
-    raw = isAbsorbingAttempt(attempt)
-      ? adapter.inspectWriter === undefined
-        ? adapter.retireWriter === undefined
-          ? undefined
-          : await adapter.retireWriter({
-              ...request,
-              reason: 'successor-registration',
-            })
-        : await adapter.inspectWriter(request)
-      : adapter.retireWriter === undefined
-        ? adapter.inspectWriter === undefined
-          ? undefined
-          : await adapter.inspectWriter(request)
-        : await adapter.retireWriter({
-            ...request,
-            reason: 'successor-registration',
-          })
-  } catch {
-    return null
-  }
-  if (raw === undefined) return null
-  const validated = validateWriterEvidence(
-    isAbsorbingAttempt(attempt) ? request : { ...request, reason: 'successor-registration' },
-    raw
-  )
-  return validated.ok ? validated.value : null
+  if (candidateContinuityEvidenceJson === undefined) return 'attached_unknown'
+  if (acceptedContinuityEvidenceJson === undefined) return 'attached'
+  return acceptedContinuityEvidenceJson === candidateContinuityEvidenceJson
+    ? 'replacement'
+    : 'resume'
 }
 
 async function persistHostingIntentIfRequired(
@@ -390,9 +330,9 @@ export async function handleRegisterParticipant(
           workspaceCwd: admitted.workspaceCwd,
           ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
           preparationJson: serializedJson(admitted.preparation),
-          ...(admittedContinuityEvidenceJson === undefined
-            ? {}
-            : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
+          // The registration's continuity evidence is the last ACTIVATED known
+          // evidence. A fresh registration has activated nothing, so it starts
+          // with no accepted baseline; the candidate lives on the attempt.
           createdAt: now,
           updatedAt: now,
         }
@@ -408,7 +348,10 @@ export async function handleRegisterParticipant(
           ...(admittedContinuityEvidenceJson === undefined
             ? {}
             : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
-          activationClassification: activationClassification(null, admittedContinuityEvidenceJson),
+          activationClassification: activationClassification(
+            undefined,
+            admittedContinuityEvidenceJson
+          ),
           recoveryDisposition: 'unresolved',
           establishmentWorkState: 'pending',
           establishmentAttemptCount: 0,
@@ -441,11 +384,16 @@ export async function handleRegisterParticipant(
         created = true
       } else if (attempt !== null) {
         const successorRequested =
-          isAbsorbingAttempt(attempt) ||
+          isAbsorbingParticipantAttempt(attempt) ||
           (admittedContinuityEvidenceJson !== undefined &&
             admittedContinuityEvidenceJson !== attempt.continuityEvidenceJson)
         if (successorRequested) {
-          const evidence = await obtainWriterEvidence(adapter, registration, attempt)
+          const evidence = await obtainParticipantWriterEvidence(
+            this,
+            adapter,
+            registration,
+            attempt
+          )
           if (evidence === null) {
             return {
               status: 'pending',
@@ -475,7 +423,7 @@ export async function handleRegisterParticipant(
               detail: 'the exact prior writer remains writable/live or has unknown retirement',
             }
           }
-          if (!isAbsorbingAttempt(attempt)) {
+          if (!isAbsorbingParticipantAttempt(attempt)) {
             const abandoned = this.db.participantRegistrations.transitionAttempt(
               attempt.attemptId,
               [attempt.state],
@@ -535,7 +483,7 @@ export async function handleRegisterParticipant(
               ? {}
               : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
             activationClassification: activationClassification(
-              attempt,
+              registration.continuityEvidenceJson,
               admittedContinuityEvidenceJson
             ),
             recoveryDisposition: 'unresolved',
@@ -565,9 +513,6 @@ export async function handleRegisterParticipant(
                 workspaceCwd: admitted.workspaceCwd,
                 ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
                 preparationJson: serializedJson(admitted.preparation),
-                ...(admittedContinuityEvidenceJson === undefined
-                  ? {}
-                  : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
                 updatedAt: now,
               })
             ) {

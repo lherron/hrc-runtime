@@ -710,6 +710,20 @@ export async function activateStagedParticipant(
       if (!server.db.participantRegistrations.confirmInitialActivation(current.attemptId, now)) {
         throw new Error('participant activation compare-and-set lost')
       }
+      // C.8: known evidence is accepted here and nowhere else. Allocation only
+      // snapshots a candidate on the attempt, so an attempt that never reaches
+      // this transaction leaves the retained baseline exactly as it was. An
+      // unknown candidate advances nothing and emits no resume.
+      if (
+        current.continuityEvidenceJson !== undefined &&
+        !server.db.participantRegistrations.acceptContinuityEvidence({
+          registrationId: current.registrationId,
+          continuityEvidenceJson: current.continuityEvidenceJson,
+          updatedAt: now,
+        })
+      ) {
+        throw new Error('participant activation could not accept its known continuity evidence')
+      }
       const runtime = server.db.runtimes.getByRuntimeId(current.runtimeId)
       if (runtime === null)
         throw new Error('participant runtime bookkeeping disappeared before activation')
