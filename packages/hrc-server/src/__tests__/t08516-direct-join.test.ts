@@ -1,0 +1,355 @@
+/**
+ * T-08516 (8504A) — protocol join: a participant registers its own address.
+ *
+ * Contract `architecture/contracts/host-participant-lifecycle.md` revision 7,
+ * R6.1-R6.4 and R7.1-R7.4. Most cases here run with NO participant adapter
+ * registered at all, because that is exactly R6.1's claim: joining is a
+ * protocol operation, so HRC must not call `admit`, read a host descriptor,
+ * request an evidence file or need an adapter to be loadable before it will
+ * record an address.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+
+import { openHrcDatabase } from 'hrc-store-sqlite'
+import type { ParticipantAdapter } from 'spaces-runtime-contracts'
+
+import { createHrcServer } from '../index.js'
+import type { HrcServer, HrcServerOptions, RegistrationClassConfig } from '../index.js'
+import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+
+const SCOPE = 'agent:arris:project:hrc-runtime:task:T-08516'
+const OTHER_SCOPE = 'agent:arris:project:hrc-runtime:task:T-08516-other'
+
+type Observed = { status: number; body: Record<string, unknown> }
+
+async function observe(response: Response): Promise<Observed> {
+  const text = await response.text()
+  let body: unknown = text
+  try {
+    body = JSON.parse(text)
+  } catch {
+    // Keep the literal payload: a missing route answers text/plain, and that
+    // difference is exactly what a routing regression should show.
+  }
+  return { status: response.status, body: body as Record<string, unknown> }
+}
+
+/**
+ * An adapter that fails loudly if anything touches it during a join.
+ *
+ * R6.8 case 2 wants proof that `admit` is never called, and the discriminating
+ * way to prove it is an adapter that would make the request fail if it were:
+ * a spy that merely records a zero call count is also satisfied by an adapter
+ * that was never reachable in the first place. `prepare` throws for the same
+ * reason -- joining must not run the post-join helper either.
+ */
+function createExplodingAdapter(adapterId: string): ParticipantAdapter {
+  return {
+    adapterId,
+    admit() {
+      throw new Error('admit must never be called on a join path')
+    },
+    prepare() {
+      throw new Error('prepare must never be called during registration')
+    },
+  } as unknown as ParticipantAdapter
+}
+
+describe('T-08516 direct protocol join', () => {
+  let fixture: HrcServerTestFixture
+  let server: HrcServer | undefined
+
+  beforeEach(async () => {
+    fixture = await createHrcTestFixture('t08516-direct-join-')
+  })
+
+  afterEach(async () => {
+    await server?.stop()
+    server = undefined
+    await fixture.cleanup()
+  })
+
+  async function start(options: Partial<HrcServerOptions> = {}): Promise<void> {
+    server = await createHrcServer(
+      fixture.serverOpts({ otelListenerEnabled: false, registrationClasses: [], ...options })
+    )
+  }
+
+  function join(body: Record<string, unknown>): Promise<Response> {
+    return fixture.postJson('/v1/participants/register', {
+      registrationMode: 'direct',
+      requestedSessionRef: SCOPE,
+      hostIncarnationId: 'incarnation-alpha',
+      ...body,
+    })
+  }
+
+  /** Read the durable rows directly, without going back through the API. */
+  function readStore(): {
+    registrations: Record<string, unknown>[]
+    attempts: Record<string, unknown>[]
+    reservations: Record<string, unknown>[]
+    bindings: Record<string, unknown>[]
+    runtimes: Record<string, unknown>[]
+  } {
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      const all = (sql: string): Record<string, unknown>[] =>
+        db.sqlite.query<Record<string, unknown>, []>(sql).all()
+      return {
+        registrations: all('SELECT * FROM participant_registrations'),
+        attempts: all('SELECT * FROM participant_registration_attempts'),
+        reservations: all('SELECT * FROM participant_address_reservations'),
+        bindings: all('SELECT * FROM participant_host_bindings'),
+        runtimes: all('SELECT * FROM runtimes'),
+      }
+    } finally {
+      db.close()
+    }
+  }
+
+  test('a classless participant joins with no adapter installed at all', async () => {
+    await start()
+
+    const registered = await observe(await join({}))
+
+    expect(registered.status).toBe(200)
+    expect(registered.body).toMatchObject({
+      status: 'registered',
+      scopeRef: SCOPE,
+      generation: 1,
+      created: true,
+      resumed: false,
+      observation: { state: 'attachment_pending' },
+      continuation: { carried: false, reason: 'no_continuation', selected: null },
+    })
+    const identity = registered.body['identity'] as Record<string, string>
+    for (const field of ['registrationId', 'runtimeId', 'attemptId', 'invocationId'] as const) {
+      expect(typeof identity[field]).toBe('string')
+    }
+    expect(registered.body['hostSessionId']).toBeString()
+    expect(identity['attachEpoch']).toBe(1)
+  })
+
+  test('stores the join truthfully: null optional fields and no runtime row', async () => {
+    await start()
+    await join({})
+
+    const stored = readStore()
+    expect(stored.registrations).toHaveLength(1)
+    const registration = stored.registrations[0] as Record<string, unknown>
+    expect(registration['registration_mode']).toBe('direct')
+    expect(registration['host_incarnation_id']).toBe('incarnation-alpha')
+    // R7.1: nothing was fabricated for what the participant did not supply.
+    expect(registration['class_id']).toBeNull()
+    expect(registration['adapter_id']).toBeNull()
+    expect(registration['participant_key']).toBeNull()
+    expect(registration['workspace_cwd']).toBeNull()
+    expect(registration['preparation_json']).toBeNull()
+    // R6.2's resolved defaults, stored so a lookup needs no class or adapter.
+    expect(registration['address_policy']).toBe('selected-scope')
+    expect(registration['continuity_policy']).toBe('host-incarnation')
+    expect(registration['lifecycle_owner']).toBe('externally-owned')
+
+    expect(stored.attempts).toHaveLength(1)
+    const attempt = stored.attempts[0] as Record<string, unknown>
+    expect(attempt['state']).toBe('IDENTITY_MINTED')
+    expect(attempt['prepared_profile_json']).toBeNull()
+    expect(attempt['adapter_dispatch_env_json']).toBeNull()
+    expect(attempt['establishment_work_state']).toBe('pending')
+    expect(attempt['host_binding_id']).toBe(stored.bindings[0]?.['binding_id'])
+
+    // R6.3: the runtimeId is reserved as an identifier. Materializing the row
+    // would require transport/harness/provider, which are NOT NULL and all
+    // profile-derived, so it cannot exist honestly before attachment.
+    expect(stored.runtimes).toHaveLength(0)
+
+    expect(stored.reservations).toHaveLength(1)
+    expect(stored.reservations[0]?.['state']).toBe('held')
+    expect(stored.reservations[0]?.['class_id']).toBeNull()
+    expect(stored.bindings).toHaveLength(1)
+    expect(stored.bindings[0]?.['state']).toBe('BINDING')
+  })
+
+  test('never calls admit or prepare, even with a configured class and adapter', async () => {
+    const participantClass = {
+      classId: 't08516-class',
+      adapterId: 't08516-adapter',
+      join: 'participant-served',
+      address: 'permanent-keyed',
+      continuity: 'key-scoped',
+      replaySemantics: 'full-source-replay',
+      scopeTemplate: { agent: 'arris', project: 'hrc-runtime' },
+      maxInstances: 4,
+      defaultTtl: 60,
+    }
+    await start({
+      registrationClasses: [participantClass] as unknown as readonly RegistrationClassConfig[],
+      participantAdapterRegistry: new ParticipantAdapterRegistry([
+        createExplodingAdapter('t08516-adapter'),
+      ]),
+    })
+
+    // A direct join naming the class for delivery defaults still never loads it
+    // for permission: an adapter identifier is not admission authority.
+    const registered = await observe(await join({ classId: 't08516-class' }))
+    expect(registered.status).toBe(200)
+    expect(registered.body['status']).toBe('registered')
+
+    // And the legacy key-scoped path no longer calls admit either (R6.1/R6.9).
+    const legacy = await observe(
+      await fixture.postJson('/v1/participants/register', {
+        classId: 't08516-class',
+        processToken: 'ignored-compatibility-token',
+        participantKey: 'legacy-key',
+        // The one join-specific shape rule T-08349 already enforced survives.
+        socketPath: `${fixture.tmpDir}/legacy-broker.sock`,
+      })
+    )
+    expect(legacy.status).toBe(200)
+    expect(legacy.body).toMatchObject({
+      status: 'registered',
+      observation: { state: 'attachment_pending' },
+    })
+  })
+
+  test('a duplicate direct request returns the same identities', async () => {
+    await start()
+    const first = await observe(await join({}))
+    const second = await observe(await join({}))
+
+    expect(second.body['created']).toBe(false)
+    expect(second.body['identity']).toEqual(first.body['identity'])
+    expect(second.body['hostSessionId']).toBe(first.body['hostSessionId'] as string)
+    expect(readStore().registrations).toHaveLength(1)
+  })
+
+  test('registered-but-unattached survives a daemon restart and stays pending', async () => {
+    await start()
+    const first = await observe(await join({}))
+    await server?.stop()
+    server = undefined
+
+    // A second daemon over the same store: the address, its identities and its
+    // pending work are read back from disk, not from anything in memory.
+    await start()
+    const afterRestart = await observe(await join({}))
+    expect(afterRestart.body['created']).toBe(false)
+    expect(afterRestart.body['identity']).toEqual(first.body['identity'])
+    expect(afterRestart.body['observation']).toMatchObject({ state: 'attachment_pending' })
+
+    const stored = readStore()
+    expect(stored.attempts[0]?.['establishment_work_state']).toBe('pending')
+    // R7.2: waiting for a participant burns no retries.
+    expect(stored.attempts[0]?.['establishment_attempt_count']).toBe(0)
+    expect(stored.attempts[0]?.['establishment_last_error']).toBeNull()
+    expect(stored.runtimes).toHaveLength(0)
+  })
+
+  test('refuses a second incarnation at an occupied address without touching it', async () => {
+    await start()
+    await join({})
+    const before = readStore()
+
+    const intruder = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
+    expect(intruder.status).toBe(200)
+    expect(intruder.body).toMatchObject({
+      status: 'pending',
+      reason: 'participant_host_replacement_unsupported',
+    })
+
+    // Speaking the protocol transfers nothing. The occupant's binding, its
+    // registration and its identities are exactly as they were.
+    const after = readStore()
+    expect(after.registrations).toEqual(before.registrations)
+    expect(after.bindings).toEqual(before.bindings)
+    expect(after.attempts).toEqual(before.attempts)
+  })
+
+  test('a second participant at a different address gets its own reservation', async () => {
+    await start()
+    await join({})
+    const second = await observe(
+      await join({ requestedSessionRef: OTHER_SCOPE, hostIncarnationId: 'incarnation-gamma' })
+    )
+
+    expect(second.body['status']).toBe('registered')
+    const stored = readStore()
+    expect(stored.reservations).toHaveLength(2)
+    expect(stored.bindings).toHaveLength(2)
+    expect(new Set(stored.registrations.map((row) => row['scope_ref']))).toEqual(
+      new Set([SCOPE, OTHER_SCOPE])
+    )
+  })
+
+  test('redirects to the address home and commits nothing locally', async () => {
+    await start()
+    const now = new Date().toISOString()
+    // An address this node holds for another home is the observable half of
+    // R7.4: the request is answered with where to go, not forwarded there.
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      db.sqlite
+        .query(
+          `INSERT INTO participant_address_reservations (
+             reservation_id, class_id, scope_ref, lane_ref, home_node_id, state,
+             created_at, updated_at)
+           VALUES ('resv-elsewhere', NULL, ?, 'main', 'some-other-node', 'held', ?, ?)`
+        )
+        .run(OTHER_SCOPE, now, now)
+    } finally {
+      db.close()
+    }
+
+    const redirected = await observe(
+      await join({ requestedSessionRef: OTHER_SCOPE, hostIncarnationId: 'incarnation-delta' })
+    )
+
+    expect(redirected.status).toBe(409)
+    expect(redirected.body).toMatchObject({
+      status: 'rejected',
+      reason: 'participant_scope_bound_elsewhere',
+      observed: { homeNodeId: 'some-other-node' },
+    })
+
+    // "No local registration/session/attempt is committed" is the part worth
+    // asserting: a redirect that quietly minted a local row would still look
+    // like a redirect from the outside.
+    const stored = readStore()
+    expect(stored.registrations).toHaveLength(0)
+    expect(stored.attempts).toHaveLength(0)
+    expect(stored.bindings).toHaveLength(0)
+  })
+
+  test('separates an unparseable address from one policy refuses', async () => {
+    await start()
+
+    const malformed = await observe(await join({ requestedSessionRef: 'arris@hrc-runtime:T-1' }))
+    expect(malformed.status).toBe(400)
+    expect(malformed.body).toMatchObject({
+      error: { code: 'malformed_request', detail: { field: 'requestedSessionRef' } },
+    })
+
+    const unknownField = await observe(await join({ provisioner: { name: 'belongs-to-epr' } }))
+    expect(unknownField.status).toBe(400)
+    expect(unknownField.body).toMatchObject({
+      error: { code: 'malformed_request', detail: { field: 'provisioner' } },
+    })
+  })
+
+  test('a reserved address is never given a substitute birth', async () => {
+    await start()
+    await join({})
+
+    // R-4.3.1/R-4.3.2: the scope is not free, and an ordinary session birth at
+    // it is refused rather than served by a newly minted generic runtime.
+    const ensured = await observe(
+      await fixture.postJson('/v1/sessions/ensure', { sessionRef: `${SCOPE}#main` })
+    )
+    expect(ensured.status).toBeGreaterThanOrEqual(400)
+    const stored = readStore()
+    expect(stored.runtimes).toHaveLength(0)
+  })
+})

@@ -64,6 +64,7 @@ import {
   parseMessageFilter,
   parseSemanticDmRequest,
 } from './messages.js'
+import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { isBrokerRuntimeInputDispatchable, requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
 import {
@@ -505,6 +506,10 @@ async function createNotifiedSessionSuccessor(
   // it again at this spawn boundary and persist the normalized intent on the
   // new generation. Federated ingress remains verbatim because its placement
   // contract is localized separately from origin-node absolute paths.
+  // R-4.3.2. A reserved host address is never given a substitute birth: the
+  // address belongs to its own incarnation whether or not one is attached, and
+  // mail to an absent host stays a truthful open obligation (R-4.3.3).
+  assertReservedAddressAllowsBirth(server, session.scopeRef, session.laneRef)
   const capabilityIntent = normalizeLocalProjectSuccessorIntent(
     session.scopeRef,
     intent ?? session.lastAppliedIntentJson,
@@ -602,6 +607,8 @@ function createHistoricalResumeSuccessor(
   parsedScopeJson: Record<string, unknown> | undefined,
   claimAuthority: TaskClaimAuthority | undefined
 ): HrcSessionRecord {
+  // R-4.3.2, the historical-resume door.
+  assertReservedAddressAllowsBirth(server, current.scopeRef, current.laneRef)
   const liveRuntime = server.db.runtimes
     .listByHostSessionId(current.hostSessionId)
     .find((runtime) => !isRuntimeUnavailableStatus(runtime.status))

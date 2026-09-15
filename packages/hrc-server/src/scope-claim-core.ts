@@ -167,6 +167,15 @@ export function isClaimScopeFree(
   if (server.db.participantRegistrations.getRegistrationByScopeRef(session.scopeRef) !== null) {
     return false
   }
+  // R-4.3.1. A HELD reservation makes a selected address not free even when no
+  // incarnation has ever registered and no binding row exists, so the address
+  // survives its host's absence. Runtime status is the wrong signal here:
+  // `terminated` and `detached` are both "unavailable", and an absent external
+  // host is exactly a terminated runtime whose address must be protected. Only
+  // an explicit attributed release frees it (R-4.3.4).
+  if (server.db.participantHostBindings.hasHeldReservationForScope(session.scopeRef)) {
+    return false
+  }
   if (server.runtimeStartOperations.has(session.hostSessionId)) return false
   return server.db.runtimes
     .listByHostSessionId(session.hostSessionId)

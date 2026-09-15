@@ -60,25 +60,87 @@ function allowsParticipantAttemptTransition(
   return true
 }
 
+/**
+ * How this registration came to exist. `legacy` is the key-scoped request
+ * shape that predates protocol join and keeps every one of its identity
+ * columns; `direct` is a participant declaring its own address (R7.1).
+ */
+export type ParticipantRegistrationMode = 'legacy' | 'direct'
+
+export type ParticipantAddressPolicy = 'permanent-keyed' | 'selected-scope'
+export type ParticipantContinuityPolicy = 'key-scoped' | 'host-incarnation'
+export type ParticipantLifecycleOwner = 'hrc-managed' | 'externally-owned'
+export type ParticipantReplaySemantics = 'none' | 'full-source-replay'
+
+/**
+ * The resolved policy a direct join answers for itself.
+ *
+ * R7.1 stores it on the registration so a direct lookup never needs a class or
+ * an adapter to say what an address is. A legacy registration leaves it absent:
+ * its class is still the authority, and no such value was ever recorded for it.
+ */
+export type ParticipantRegistrationPolicy = {
+  addressPolicy: ParticipantAddressPolicy
+  continuityPolicy: ParticipantContinuityPolicy
+  lifecycleOwner: ParticipantLifecycleOwner
+  replaySemantics: ParticipantReplaySemantics
+}
+
 export type ParticipantRegistration = {
   registrationId: string
-  classId: string
-  adapterId: string
+  registrationMode: ParticipantRegistrationMode
+  /**
+   * Every optional field below is optional because a direct join may genuinely
+   * have no value for it. R7.1 forbids a fabricated adapter, an empty
+   * workspace or a pretend preparation, so absent stays absent through the
+   * repository, the API and post-join preparation. A legacy row still has all
+   * five, and the database CHECK keeps it that way.
+   */
+  classId?: string | undefined
+  adapterId?: string | undefined
   join: 'hrc-hosted' | 'participant-served'
-  participantKey: string
+  participantKey?: string | undefined
   scopeRef: string
   laneRef: string
   hostSessionId: string
   generation: number
-  workspaceCwd: string
+  workspaceCwd?: string | undefined
   /** Participant-owned broker endpoint; absent for HRC-hosted participants. */
   socketPath?: string | undefined
   /** Opaque, JSON-serialized adapter admission output. */
-  preparationJson: string
+  preparationJson?: string | undefined
   /** Opaque, JSON-serialized continuity evidence, when the adapter supplied it. */
   continuityEvidenceJson?: string | undefined
+  /** Present exactly when `registrationMode` is `direct`. */
+  policy?: ParticipantRegistrationPolicy | undefined
+  /**
+   * The participant's declared current host identity. HRC records the
+   * declaration; it never certifies it, parses a PID out of it, or asks
+   * another component to vouch for it (R6.1).
+   */
+  hostIncarnationId?: string | undefined
   createdAt: string
   updatedAt: string
+}
+
+/** R7.3: why HRC's continuation selection came out the way it did. */
+export type ParticipantContinuationReason =
+  | 'carried'
+  | 'no_continuation'
+  | 'continuation_invalidated'
+  | 'reuse_disabled'
+
+/**
+ * R7.3: what the driver was asked for and what it said, never a claim that
+ * native model context was actually restored.
+ */
+export type ParticipantResumeState = 'not_requested' | 'requested' | 'unsupported' | 'indeterminate'
+
+export type ParticipantContinuationSelection = {
+  carried: boolean
+  reason: ParticipantContinuationReason
+  /** The HRC continuation object carried into this attempt, when one was. */
+  selectedJson?: string | undefined
 }
 
 export type ParticipantAttempt = {
@@ -89,6 +151,12 @@ export type ParticipantAttempt = {
   operationId: string
   invocationId: string
   runtimeId: string
+  /**
+   * The host binding this attempt serves. NULL for a legacy key-scoped
+   * attempt, which therefore owns its runtime exclusively; attempts that share
+   * a runtime must share this binding (R6.5, enforced by trigger).
+   */
+  hostBindingId?: string | undefined
   state: ParticipantAttemptState
   /** The first validated adapter profile/request snapshot, before any spawn. */
   preparedProfileJson?: string | undefined
@@ -117,6 +185,14 @@ export type ParticipantAttempt = {
   establishmentAttemptCount: number
   establishmentNextAttemptAt?: string | undefined
   establishmentLastError?: string | undefined
+  /** The participant-served broker endpoint this exact attempt attached on. */
+  attachSocketPath?: string | undefined
+  /** HRC's own continuation decision, frozen with this attempt's identity. */
+  continuation?: ParticipantContinuationSelection | undefined
+  resumeState?: ParticipantResumeState | undefined
+  resumeReason?: string | undefined
+  /** Durable replacement request carried on the existing attempt row. */
+  replacementIntentJson?: string | undefined
   dispositionReason?: string | undefined
   createdAt: string
   updatedAt: string
@@ -124,18 +200,24 @@ export type ParticipantAttempt = {
 
 type ParticipantRegistrationRow = {
   registration_id: string
-  class_id: string
-  adapter_id: string
+  registration_mode: ParticipantRegistrationMode
+  class_id: string | null
+  adapter_id: string | null
   join_direction: 'hrc-hosted' | 'participant-served'
-  participant_key: string
+  participant_key: string | null
   scope_ref: string
   lane_ref: string
   host_session_id: string
   generation: number
-  workspace_cwd: string
+  workspace_cwd: string | null
   serving_socket_path: string | null
-  preparation_json: string
+  preparation_json: string | null
   continuity_evidence_json: string | null
+  address_policy: ParticipantAddressPolicy | null
+  continuity_policy: ParticipantContinuityPolicy | null
+  lifecycle_owner: ParticipantLifecycleOwner | null
+  replay_semantics: ParticipantReplaySemantics | null
+  host_incarnation_id: string | null
   created_at: string
   updated_at: string
 }
@@ -148,6 +230,7 @@ type ParticipantAttemptRow = {
   operation_id: string
   invocation_id: string
   runtime_id: string
+  host_binding_id: string | null
   state: ParticipantAttemptState
   prepared_profile_json: string | null
   adapter_dispatch_env_json: string | null
@@ -165,42 +248,95 @@ type ParticipantAttemptRow = {
   establishment_attempt_count: number
   establishment_next_attempt_at: string | null
   establishment_last_error: string | null
+  attach_socket_path: string | null
+  continuation_carried: number | null
+  continuation_reason: ParticipantContinuationReason | null
+  continuation_selected_json: string | null
+  continuation_resume_state: ParticipantResumeState | null
+  continuation_resume_reason: string | null
+  replacement_intent_json: string | null
   disposition_reason: string | null
   created_at: string
   updated_at: string
 }
 
 const REGISTRATION_COLUMNS = `
-  registration_id, class_id, adapter_id, join_direction, participant_key,
+  registration_id, registration_mode, class_id, adapter_id, join_direction, participant_key,
   scope_ref, lane_ref, host_session_id, generation, workspace_cwd,
-  serving_socket_path, preparation_json, continuity_evidence_json, created_at, updated_at`
+  serving_socket_path, preparation_json, continuity_evidence_json,
+  address_policy, continuity_policy, lifecycle_owner, replay_semantics,
+  host_incarnation_id, created_at, updated_at`
 
 const ATTEMPT_COLUMNS = `
-  attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
+  attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id,
+  host_binding_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
   realized_hosting_json, dispatch_json, broker_identity_json, initial_activation_confirmed_at,
   continuity_evidence_json, activation_classification, writer_evidence_json,
   recovery_disposition, recovery_reason, establishment_work_state, establishment_attempt_count,
-  establishment_next_attempt_at, establishment_last_error,
+  establishment_next_attempt_at, establishment_last_error, attach_socket_path,
+  continuation_carried, continuation_reason, continuation_selected_json,
+  continuation_resume_state, continuation_resume_reason, replacement_intent_json,
   disposition_reason, created_at, updated_at`
 
+/**
+ * R7.2's non-runnable establishment work, in SQL. Kept beside the column lists
+ * so the enumeration query and `isNonRunnableEstablishmentAttempt` below stay
+ * two spellings of one rule rather than two rules.
+ */
+const NON_RUNNABLE_ATTEMPT_PREDICATE = `
+  state = 'IDENTITY_MINTED'
+  AND prepared_profile_json IS NULL
+  AND replacement_intent_json IS NULL`
+
+/**
+ * The same predicate for a row already in hand. The worker re-applies it
+ * immediately before effects, because enumeration and execution are separated
+ * by time in which an attempt can stop being runnable.
+ */
+export function isNonRunnableEstablishmentAttempt(attempt: ParticipantAttempt): boolean {
+  return (
+    attempt.state === 'IDENTITY_MINTED' &&
+    attempt.preparedProfileJson === undefined &&
+    attempt.replacementIntentJson === undefined
+  )
+}
+
 function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistration {
+  // The four policy columns are written together or not at all (the CHECK on
+  // registration_mode = 'direct' enforces it), so one non-null value is enough
+  // to know the whole record is there.
+  const policy: ParticipantRegistrationPolicy | null =
+    row.address_policy === null ||
+    row.continuity_policy === null ||
+    row.lifecycle_owner === null ||
+    row.replay_semantics === null
+      ? null
+      : {
+          addressPolicy: row.address_policy,
+          continuityPolicy: row.continuity_policy,
+          lifecycleOwner: row.lifecycle_owner,
+          replaySemantics: row.replay_semantics,
+        }
   return {
     registrationId: row.registration_id,
-    classId: row.class_id,
-    adapterId: row.adapter_id,
+    registrationMode: row.registration_mode,
+    ...(row.class_id === null ? {} : { classId: row.class_id }),
+    ...(row.adapter_id === null ? {} : { adapterId: row.adapter_id }),
     join: row.join_direction,
-    participantKey: row.participant_key,
+    ...(row.participant_key === null ? {} : { participantKey: row.participant_key }),
     scopeRef: row.scope_ref,
     laneRef: row.lane_ref,
     hostSessionId: row.host_session_id,
     generation: row.generation,
-    workspaceCwd: row.workspace_cwd,
+    ...(row.workspace_cwd === null ? {} : { workspaceCwd: row.workspace_cwd }),
     ...(row.serving_socket_path === null ? {} : { socketPath: row.serving_socket_path }),
-    preparationJson: row.preparation_json,
+    ...(row.preparation_json === null ? {} : { preparationJson: row.preparation_json }),
     ...(row.continuity_evidence_json === null
       ? {}
       : { continuityEvidenceJson: row.continuity_evidence_json }),
+    ...(policy === null ? {} : { policy }),
+    ...(row.host_incarnation_id === null ? {} : { hostIncarnationId: row.host_incarnation_id }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -215,6 +351,7 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
     operationId: row.operation_id,
     invocationId: row.invocation_id,
     runtimeId: row.runtime_id,
+    ...(row.host_binding_id === null ? {} : { hostBindingId: row.host_binding_id }),
     state: row.state,
     ...(row.prepared_profile_json === null
       ? {}
@@ -248,6 +385,27 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
     ...(row.establishment_last_error === null
       ? {}
       : { establishmentLastError: row.establishment_last_error }),
+    ...(row.attach_socket_path === null ? {} : { attachSocketPath: row.attach_socket_path }),
+    ...(row.continuation_carried === null || row.continuation_reason === null
+      ? {}
+      : {
+          continuation: {
+            carried: row.continuation_carried === 1,
+            reason: row.continuation_reason,
+            ...(row.continuation_selected_json === null
+              ? {}
+              : { selectedJson: row.continuation_selected_json }),
+          },
+        }),
+    ...(row.continuation_resume_state === null
+      ? {}
+      : { resumeState: row.continuation_resume_state }),
+    ...(row.continuation_resume_reason === null
+      ? {}
+      : { resumeReason: row.continuation_resume_reason }),
+    ...(row.replacement_intent_json === null
+      ? {}
+      : { replacementIntentJson: row.replacement_intent_json }),
     ...(row.disposition_reason === null ? {} : { dispositionReason: row.disposition_reason }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -269,20 +427,26 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registrations (${REGISTRATION_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.registrationId,
-      record.classId,
-      record.adapterId,
+      record.registrationMode,
+      record.classId ?? null,
+      record.adapterId ?? null,
       record.join,
-      record.participantKey,
+      record.participantKey ?? null,
       record.scopeRef,
       record.laneRef,
       record.hostSessionId,
       record.generation,
-      record.workspaceCwd,
+      record.workspaceCwd ?? null,
       record.socketPath ?? null,
-      record.preparationJson,
+      record.preparationJson ?? null,
       record.continuityEvidenceJson ?? null,
+      record.policy?.addressPolicy ?? null,
+      record.policy?.continuityPolicy ?? null,
+      record.policy?.lifecycleOwner ?? null,
+      record.policy?.replaySemantics ?? null,
+      record.hostIncarnationId ?? null,
       record.createdAt,
       record.updatedAt
     )
@@ -308,6 +472,24 @@ export class ParticipantRegistrationRepository {
         `SELECT ${REGISTRATION_COLUMNS} FROM participant_registrations WHERE scope_ref = ?`
       )
       .get(scopeRef)
+    return row === null ? null : mapRegistration(row)
+  }
+
+  /**
+   * R7.1's direct duplicate lookup: the canonical address plus the declared
+   * incarnation, independent of any optional class or key. A direct request
+   * always carries both, which is why it needs no extra retry token.
+   */
+  getDirectRegistrationByAddressAndIncarnation(
+    scopeRef: string,
+    hostIncarnationId: string
+  ): ParticipantRegistration | null {
+    const row = this.db
+      .query<ParticipantRegistrationRow, [string, string]>(
+        `SELECT ${REGISTRATION_COLUMNS} FROM participant_registrations
+         WHERE registration_mode = 'direct' AND scope_ref = ? AND host_incarnation_id = ?`
+      )
+      .get(scopeRef, hostIncarnationId)
     return row === null ? null : mapRegistration(row)
   }
 
@@ -353,7 +535,8 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -361,6 +544,7 @@ export class ParticipantRegistrationRepository {
       record.operationId,
       record.invocationId,
       record.runtimeId,
+      record.hostBindingId ?? null,
       record.state,
       record.preparedProfileJson ?? null,
       record.adapterDispatchEnvJson ?? null,
@@ -378,6 +562,13 @@ export class ParticipantRegistrationRepository {
       record.establishmentAttemptCount,
       record.establishmentNextAttemptAt ?? null,
       record.establishmentLastError ?? null,
+      record.attachSocketPath ?? null,
+      record.continuation === undefined ? null : record.continuation.carried ? 1 : 0,
+      record.continuation?.reason ?? null,
+      record.continuation?.selectedJson ?? null,
+      record.resumeState ?? null,
+      record.resumeReason ?? null,
+      record.replacementIntentJson ?? null,
       record.dispositionReason ?? null,
       record.createdAt,
       record.updatedAt
@@ -427,21 +618,27 @@ export class ParticipantRegistrationRepository {
    */
   updateRegistrationForSuccessor(input: {
     registrationId: string
-    workspaceCwd: string
+    workspaceCwd?: string | undefined
     socketPath?: string | undefined
-    preparationJson: string
+    preparationJson?: string | undefined
     updatedAt: string
   }): boolean {
+    // COALESCE, not assignment: with adapter admission gone these three arrive
+    // from the request or not at all, and a successor request that omits one
+    // must leave the stored value alone rather than blank it.
     const result = this.db
       .query(
         `UPDATE participant_registrations
-            SET workspace_cwd = ?, serving_socket_path = ?, preparation_json = ?, updated_at = ?
+            SET workspace_cwd = COALESCE(?, workspace_cwd),
+                serving_socket_path = COALESCE(?, serving_socket_path),
+                preparation_json = COALESCE(?, preparation_json),
+                updated_at = ?
           WHERE registration_id = ?`
       )
       .run(
-        input.workspaceCwd,
+        input.workspaceCwd ?? null,
         input.socketPath ?? null,
-        input.preparationJson,
+        input.preparationJson ?? null,
         input.updatedAt,
         input.registrationId
       )
@@ -468,15 +665,135 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  /**
+   * Startup work enumeration, with R7.2's non-runnable exclusion applied in
+   * SQL rather than after the read.
+   *
+   * An `IDENTITY_MINTED` attempt with no profile is a participant that has
+   * joined and not attached. Handing it to the worker would burn a retry and
+   * record a profile-missing failure for doing nothing wrong, and enough of
+   * those exhaust the budget purely by waiting. The replacement-intent clause
+   * is the exception R7.2 names: successor work is a separate runnable reason
+   * and must not be stranded because its candidate is not prepared yet.
+   */
   listEstablishmentWork(): ParticipantAttempt[] {
     const rows = this.db
       .query<ParticipantAttemptRow, []>(
         `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
          WHERE establishment_work_state IN ('pending', 'retry_wait')
+           AND NOT (${NON_RUNNABLE_ATTEMPT_PREDICATE})
          ORDER BY COALESCE(establishment_next_attempt_at, created_at), attempt_id`
       )
       .all()
     return rows.map(mapAttempt)
+  }
+
+  /**
+   * R7.2's attachment transaction, as one conditional UPDATE.
+   *
+   * The guard is what makes "only the first successful preparation resets the
+   * budget" true: it requires the profile columns to still be NULL, so a
+   * retry against an already-prepared attempt changes zero rows and cannot
+   * reach the `establishment_attempt_count = 0` this statement performs. The
+   * epoch is rechecked in the same predicate, so a stale attach never lands.
+   */
+  attachPreparedProfile(input: {
+    attemptId: string
+    attachEpoch: number
+    preparedProfileJson: string
+    adapterDispatchEnvJson: string
+    attachSocketPath?: string | undefined
+    resumeState?: ParticipantResumeState | undefined
+    resumeReason?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET prepared_profile_json = ?,
+                adapter_dispatch_env_json = ?,
+                attach_socket_path = COALESCE(?, attach_socket_path),
+                continuation_resume_state = COALESCE(?, continuation_resume_state),
+                continuation_resume_reason = COALESCE(?, continuation_resume_reason),
+                state = 'PREPARED',
+                establishment_work_state = 'pending',
+                establishment_attempt_count = 0,
+                establishment_next_attempt_at = NULL,
+                establishment_last_error = NULL,
+                updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ?
+            AND state = 'IDENTITY_MINTED'
+            AND prepared_profile_json IS NULL
+            AND adapter_dispatch_env_json IS NULL`
+      )
+      .run(
+        input.preparedProfileJson,
+        input.adapterDispatchEnvJson,
+        input.attachSocketPath ?? null,
+        input.resumeState ?? null,
+        input.resumeReason ?? null,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch
+      )
+    return result.changes === 1
+  }
+
+  /**
+   * R7.3: the selection is frozen with the attempt's identity, so a repeat
+   * registration returns the same answer rather than recomputing one. Write
+   * once; a second write would be a silent replacement of what was promised.
+   */
+  recordContinuationSelectionIfAbsent(input: {
+    attemptId: string
+    selection: ParticipantContinuationSelection
+    resumeState: ParticipantResumeState
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET continuation_carried = ?, continuation_reason = ?,
+                continuation_selected_json = ?, continuation_resume_state = ?,
+                updated_at = ?
+          WHERE attempt_id = ? AND continuation_carried IS NULL`
+      )
+      .run(
+        input.selection.carried ? 1 : 0,
+        input.selection.reason,
+        input.selection.selectedJson ?? null,
+        input.resumeState,
+        input.updatedAt,
+        input.attemptId
+      )
+    return result.changes === 1
+  }
+
+  /**
+   * A driver reporting that it cannot resume native state. It records an
+   * outcome; it never retracts the selection, which stays exactly as promised.
+   */
+  recordResumeOutcome(input: {
+    attemptId: string
+    attachEpoch: number
+    resumeState: ParticipantResumeState
+    reason?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET continuation_resume_state = ?, continuation_resume_reason = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ?`
+      )
+      .run(
+        input.resumeState,
+        input.reason ?? null,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch
+      )
+    return result.changes === 1
   }
 
   recordEstablishmentFailure(input: {

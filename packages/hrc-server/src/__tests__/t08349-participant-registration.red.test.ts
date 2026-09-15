@@ -108,6 +108,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: 't08349-not-configured',
         processToken: 'opaque-process-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'permanent-key',
       })
     )
@@ -126,6 +127,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: 't08349-not-configured',
         processToken: 'opaque-process-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'permanent-key',
         provisioner: { name: 'belongs-only-to-epr' },
       })
@@ -168,6 +170,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'opaque-hosted-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'hosted-permanent-key',
         socketPath: `${fixture.tmpDir}/must-be-forbidden.sock`,
       })
@@ -181,6 +184,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: participantServedClass.classId,
         processToken: 'opaque-served-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'served-permanent-key',
       })
     )
@@ -196,6 +200,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'opaque-hosted-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'hosted-permanent-key',
         evidence: { kind: 'controlled-continuity/v1', token: 'first' },
       })
@@ -217,6 +222,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: participantServedClass.classId,
         processToken: 'opaque-served-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'served-permanent-key',
         socketPath: `${fixture.tmpDir}/participant-served.sock`,
         evidence: { kind: 'controlled-continuity/v1', token: 'same' },
@@ -236,6 +242,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'opaque-hosted-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'hosted-permanent-key',
         evidence: { kind: 'controlled-continuity/v1', token: 'first' },
       })
@@ -325,7 +332,7 @@ describe('T-08349 generic participant registration callback surface', () => {
     }
   })
 
-  test('keeps unavailable adapters pending without allocating or taking down EPR', async () => {
+  test('joins without an adapter present, and never takes down EPR', async () => {
     await start({
       registrationClasses: [hostedClass, eprClass] as unknown as readonly RegistrationClassConfig[],
     })
@@ -334,22 +341,36 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'opaque-hosted-token',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'unavailable-adapter-key',
       })
     )
+    // R6.1 inverts this case. HRC "does not ... load an adapter to approve
+    // identity, or require adapter availability before joining", so an absent
+    // adapter no longer refuses the address -- it only means no post-join
+    // preparation helper exists and the participant must attach for itself.
     expect(unavailable).toMatchObject({
       status: 200,
-      body: { status: 'pending', reason: 'participant_adapter_unavailable' },
+      body: { status: 'registered', observation: { state: 'attachment_pending' } },
     })
 
     const db = openHrcDatabase(fixture.dbPath, { migrate: false })
     try {
-      expect(
-        db.participantRegistrations.getRegistrationByClassAndKey(
-          hostedClass.classId,
-          'unavailable-adapter-key'
-        )
-      ).toBeNull()
+      const registration = db.participantRegistrations.getRegistrationByClassAndKey(
+        hostedClass.classId,
+        'unavailable-adapter-key'
+      )
+      expect(registration).not.toBeNull()
+      // Registered, attachment pending: identity is durable and no profile was
+      // fabricated to stand in for the adapter that was not there.
+      const attempt = db.participantRegistrations.getAttemptByRegistrationId(
+        registration?.registrationId ?? ''
+      )
+      expect(attempt).toMatchObject({
+        state: 'IDENTITY_MINTED',
+        establishmentWorkState: 'pending',
+      })
+      expect(attempt?.preparedProfileJson).toBeUndefined()
     } finally {
       db.close()
     }
@@ -390,6 +411,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: participantServedClass.classId,
         processToken: 'first-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'successor-key',
         socketPath: `${fixture.tmpDir}/first.sock`,
         evidence: { kind: 'controlled-continuity/v1', token: 'first' },
@@ -433,12 +455,17 @@ describe('T-08349 generic participant registration callback surface', () => {
       // prior attempt holds an unaccepted candidate, and a changed successor
       // correctly attaches instead of resuming; the resume below is asserted
       // against a baseline that was genuinely activated.
+      // R6.2 makes `evidence` ignored for continuation, so the successor is now
+      // requested by the prior attempt reaching an absorbing disposition. The
+      // writer-retirement and recovery gate it must pass is unchanged.
       expect(
-        db.participantRegistrations.acceptContinuityEvidence({
-          registrationId: registration?.registrationId ?? '',
-          continuityEvidenceJson: prior?.continuityEvidenceJson ?? '',
-          updatedAt: '2026-09-15T15:00:00.000Z',
-        })
+        db.participantRegistrations.transitionAttempt(
+          priorAttemptId,
+          [prior?.state ?? 'REGISTERED'],
+          'ABANDONED',
+          '2026-09-15T15:00:00.000Z',
+          'prior participant attempt abandoned by the fixture'
+        )
       ).toBe(true)
     } finally {
       db.close()
@@ -448,6 +475,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: participantServedClass.classId,
         processToken: 'successor-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'successor-key',
         socketPath: `${fixture.tmpDir}/successor.sock`,
         evidence: { kind: 'controlled-continuity/v1', token: 'changed' },
@@ -482,7 +510,10 @@ describe('T-08349 generic participant registration callback surface', () => {
       })
       expect(attempts[1]).toMatchObject({
         attachEpoch: 2,
-        activationClassification: 'resume',
+        // With the adapter's continuity candidate withdrawn (R6.6) there is no
+        // known baseline to compare against, so a successor is classified as
+        // what it honestly is rather than as a resume nobody proved.
+        activationClassification: 'attached_unknown',
         recoveryDisposition: 'unresolved',
         establishmentWorkState: expect.stringMatching(/pending|retry_wait/),
       })
@@ -517,6 +548,7 @@ describe('T-08349 generic participant registration callback surface', () => {
       await fixture.postJson('/v1/registrations', {
         classId: eprClass.classId,
         processToken: 'must-not-be-reinterpreted',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'must-not-be-reinterpreted',
       })
     )

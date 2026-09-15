@@ -11,6 +11,9 @@ import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const registration = (): ParticipantRegistration => ({
   registrationId: 'preg-1',
+  // Every pre-protocol-join registration is `legacy`, and keeps every one of
+  // its identity columns (R7.1).
+  registrationMode: 'legacy',
   classId: 'controlled-participant',
   adapterId: 'controlled-participant',
   join: 'hrc-hosted',

@@ -351,6 +351,7 @@ describe('projection mapping (ordered sequence)', () => {
 
     db.participantRegistrations.insertRegistration({
       registrationId: 'preg-projection',
+      registrationMode: 'legacy',
       classId: 'controlled-participant',
       adapterId: 'controlled-participant',
       join: 'hrc-hosted',

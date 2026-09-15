@@ -1,19 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 
-import { buildScopeRef, parseScopeRef } from 'agent-scope'
+import { buildScopeRef, parseScopeRef, validateScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 import {
   type BrokerExecutionProfile,
   type JsonValue,
+  type ParticipantAdapter,
   type ParticipantAdapterPreparationRequest,
   type WriterEvidence,
-  validateParticipantAdapterAdmission,
   validateParticipantAdapterPreparation,
 } from 'spaces-runtime-contracts'
 
 import { scheduleParticipantEstablishment } from './participant-establishment.js'
+import {
+  type DirectJoinRequest,
+  registerDirectParticipant,
+} from './participant-host-registration.js'
 import { createParticipantHostingIntent } from './participant-hosting-intent.js'
 import {
   isAbsorbingParticipantAttempt,
@@ -24,14 +28,28 @@ import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { createHostSessionId, json, timestamp } from './server-util.js'
 
-/** The callback contract in T-08344 C.2; adapter-owned fields remain opaque. */
-export type RegisterParticipantRequest = {
+/**
+ * The key-scoped request shape. `processToken` and `evidence` remain accepted
+ * for compatibility and are ignored for joining, identity, retry matching and
+ * continuation (R6.2) -- they were admission inputs, and there is no admission.
+ * Requiring a field HRC no longer reads would refuse a join for nothing.
+ */
+export type LegacyRegisterParticipantRequest = {
+  mode: 'legacy'
   classId: string
-  processToken: string
-  evidence?: JsonValue
-  socketPath?: string
-  participantKey?: string
+  processToken?: string | undefined
+  evidence?: JsonValue | undefined
+  socketPath?: string | undefined
+  participantKey?: string | undefined
+  workspaceCwd?: string | undefined
 }
+
+/** R6.2's direct request: the participant's own declaration of its address. */
+export type DirectRegisterParticipantRequest = { mode: 'direct' } & DirectJoinRequest
+
+export type RegisterParticipantRequest =
+  | LegacyRegisterParticipantRequest
+  | DirectRegisterParticipantRequest
 
 export type RegisterParticipantResponse =
   | {
@@ -41,12 +59,35 @@ export type RegisterParticipantResponse =
       generation: number
       created: boolean
       resumed: boolean
-      observation: { state: 'prepared'; detail: string }
+      /**
+       * `attachment_pending` is not a degraded `prepared`. It is the honest
+       * answer for a participant whose address exists and whose execution
+       * profile does not: `registered` means the address exists, never that
+       * input was delivered or a model ran (R6.4).
+       */
+      observation: { state: 'prepared' | 'attachment_pending' | 'attached'; detail: string }
+      /** Present for a direct join: everything needed to compose an attachment. */
+      identity?:
+        | {
+            registrationId: string
+            laneRef: string
+            runtimeId: string
+            attemptId: string
+            invocationId: string
+            attachEpoch: number
+          }
+        | undefined
+      /** R7.3's explicit handoff. Never a claim that native state was restored. */
+      continuation?:
+        | { carried: boolean; reason: string; selected: unknown; resumeState: string }
+        | undefined
     }
   | {
       status: 'pending' | 'rejected'
       reason: string
       detail: string
+      /** R7.4's redirect target, when the address's home is another node. */
+      observed?: { homeNodeId?: string | undefined } | undefined
     }
 
 function malformed(message: string, field?: string): never {
@@ -81,6 +122,23 @@ function registeredResponse(
   created: boolean,
   attempt: ParticipantAttempt
 ): RegisterParticipantResponse {
+  // The observation reports what is actually durable. With admission gone a
+  // registration can legitimately have no execution profile yet, and calling
+  // that `prepared` would assert a frozen start tuple that does not exist.
+  const observation: { state: 'prepared' | 'attachment_pending'; detail: string } =
+    attempt.preparedProfileJson === undefined
+      ? {
+          state: 'attachment_pending',
+          detail:
+            'participant registration and reserved identities are durable; no execution profile is attached yet',
+        }
+      : {
+          state: 'prepared',
+          detail:
+            attempt.hostingIntentJson === undefined
+              ? 'participant registration and immutable adapter preparation are durable'
+              : 'participant registration, adapter preparation, and HRC hosting intent are durable',
+        }
   return {
     status: 'registered',
     scopeRef: registration.scopeRef,
@@ -90,12 +148,14 @@ function registeredResponse(
     resumed:
       attempt.activationClassification === 'resume' &&
       attempt.initialActivationConfirmedAt !== undefined,
-    observation: {
-      state: 'prepared',
-      detail:
-        attempt.hostingIntentJson === undefined
-          ? 'participant registration and immutable adapter preparation are durable'
-          : 'participant registration, adapter preparation, and HRC hosting intent are durable',
+    observation,
+    identity: {
+      registrationId: registration.registrationId,
+      laneRef: registration.laneRef,
+      runtimeId: attempt.runtimeId,
+      attemptId: attempt.attemptId,
+      invocationId: attempt.invocationId,
+      attachEpoch: attempt.attachEpoch,
     },
   }
 }
@@ -169,46 +229,368 @@ async function persistHostingIntentIfRequired(
   return server.db.participantRegistrations.getAttempt(attempt.attemptId)
 }
 
+function optionalNonEmptyString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.trim().length === 0 || value.includes('\0')) {
+    malformed(`${field} must be a non-empty string when provided`, field)
+  }
+  return value.trim()
+}
+
+function optionalSocketPath(value: unknown): string | undefined {
+  const socketPath = optionalNonEmptyString(value, 'socketPath')
+  if (socketPath !== undefined && !isAbsolute(socketPath)) {
+    malformed('socketPath must be an absolute unix socket path when provided', 'socketPath')
+  }
+  return socketPath
+}
+
+const LEGACY_FIELDS = [
+  'classId',
+  'processToken',
+  'evidence',
+  'socketPath',
+  'participantKey',
+  'workspaceCwd',
+]
+
+const DIRECT_FIELDS = [
+  'registrationMode',
+  'requestedSessionRef',
+  'hostIncarnationId',
+  'laneRef',
+  'classId',
+  'participantKey',
+  'workspaceCwd',
+  'socketPath',
+  'processToken',
+  'evidence',
+]
+
+function rejectUnsupportedFields(body: Record<string, unknown>, allowed: readonly string[]): void {
+  const unsupported = Object.keys(body).find((field) => !allowed.includes(field))
+  if (unsupported !== undefined) {
+    malformed(`unsupported participant registration field "${unsupported}"`, unsupported)
+  }
+}
+
 export function parseRegisterParticipantRequest(input: unknown): RegisterParticipantRequest {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     malformed('request body must be an object')
   }
   const body = input as Record<string, unknown>
-  const allowed = new Set(['classId', 'processToken', 'evidence', 'socketPath', 'participantKey'])
-  const unsupported = Object.keys(body).find((field) => !allowed.has(field))
-  if (unsupported !== undefined) {
-    malformed(`unsupported participant registration field "${unsupported}"`, unsupported)
+
+  // R6.2: absence of `registrationMode` selects the existing key-scoped request
+  // shape for compatibility -- not its old admit gate, which is gone from both.
+  const registrationMode = body['registrationMode']
+  if (registrationMode !== undefined && registrationMode !== 'direct') {
+    malformed('registrationMode must be "direct" when provided', 'registrationMode')
   }
+
+  if (registrationMode === 'direct') {
+    rejectUnsupportedFields(body, DIRECT_FIELDS)
+    const requestedSessionRef = requiredNonEmptyString(
+      body['requestedSessionRef'],
+      'requestedSessionRef'
+    )
+    // An unparseable address is a malformed message; an address that policy or
+    // occupancy refuses is a typed rejection further down. Keeping the two
+    // apart is what lets a participant tell a typo from a conflict.
+    const validation = validateScopeRef(requestedSessionRef)
+    if (!validation.ok) {
+      malformed(
+        `requestedSessionRef must be a valid ScopeRef: ${validation.error}`,
+        'requestedSessionRef'
+      )
+    }
+    const evidence = body['evidence']
+    if (evidence !== undefined && !isJsonValue(evidence)) {
+      malformed('evidence must be JSON-serializable when provided', 'evidence')
+    }
+    return {
+      mode: 'direct',
+      requestedSessionRef,
+      hostIncarnationId: requiredNonEmptyString(body['hostIncarnationId'], 'hostIncarnationId'),
+      laneRef: optionalNonEmptyString(body['laneRef'], 'laneRef') ?? 'main',
+      ...(optionalNonEmptyString(body['classId'], 'classId') === undefined
+        ? {}
+        : { classId: optionalNonEmptyString(body['classId'], 'classId') }),
+      ...(optionalNonEmptyString(body['participantKey'], 'participantKey') === undefined
+        ? {}
+        : { participantKey: optionalNonEmptyString(body['participantKey'], 'participantKey') }),
+      ...(optionalNonEmptyString(body['workspaceCwd'], 'workspaceCwd') === undefined
+        ? {}
+        : { workspaceCwd: optionalNonEmptyString(body['workspaceCwd'], 'workspaceCwd') }),
+      ...(optionalSocketPath(body['socketPath']) === undefined
+        ? {}
+        : { socketPath: optionalSocketPath(body['socketPath']) }),
+    }
+  }
+
+  rejectUnsupportedFields(body, LEGACY_FIELDS)
   const classId = requiredNonEmptyString(body['classId'], 'classId')
-  const processToken = requiredNonEmptyString(body['processToken'], 'processToken')
   const evidence = body['evidence']
   if (evidence !== undefined && !isJsonValue(evidence)) {
     malformed('evidence must be JSON-serializable when provided', 'evidence')
   }
-  const participantKey = body['participantKey']
-  if (
-    participantKey !== undefined &&
-    (typeof participantKey !== 'string' || participantKey.trim().length === 0)
-  ) {
-    malformed('participantKey must be a non-empty string when provided', 'participantKey')
-  }
-  const socketPath = body['socketPath']
-  if (
-    socketPath !== undefined &&
-    (typeof socketPath !== 'string' ||
-      socketPath.trim().length === 0 ||
-      socketPath.includes('\0') ||
-      !isAbsolute(socketPath.trim()))
-  ) {
-    malformed('socketPath must be an absolute unix socket path when provided', 'socketPath')
-  }
+  const processToken = optionalNonEmptyString(body['processToken'], 'processToken')
+  const participantKey = optionalNonEmptyString(body['participantKey'], 'participantKey')
+  const workspaceCwd = optionalNonEmptyString(body['workspaceCwd'], 'workspaceCwd')
+  const socketPath = optionalSocketPath(body['socketPath'])
   return {
+    mode: 'legacy',
     classId,
-    processToken,
+    ...(processToken === undefined ? {} : { processToken }),
     ...(evidence === undefined ? {} : { evidence }),
-    ...(socketPath === undefined ? {} : { socketPath: socketPath.trim() }),
-    ...(participantKey === undefined ? {} : { participantKey: participantKey.trim() }),
+    ...(socketPath === undefined ? {} : { socketPath }),
+    ...(participantKey === undefined ? {} : { participantKey }),
+    ...(workspaceCwd === undefined ? {} : { workspaceCwd }),
   }
+}
+
+/**
+ * R6.1-R6.4's direct join, as an HTTP answer.
+ *
+ * A redirect is 409 with `observed.homeNodeId`: successful routing information,
+ * not a completed registration, and emphatically not a forwarded request. The
+ * participant resolves that home through existing federation discovery and
+ * retries the same address and incarnation there.
+ */
+async function handleDirectRegistration(
+  server: HrcServerInstanceForHandlers,
+  body: DirectRegisterParticipantRequest
+): Promise<Response> {
+  const result = await registerDirectParticipant(server, {
+    requestedSessionRef: body.requestedSessionRef,
+    hostIncarnationId: body.hostIncarnationId,
+    laneRef: body.laneRef,
+    ...(body.classId === undefined ? {} : { classId: body.classId }),
+    ...(body.participantKey === undefined ? {} : { participantKey: body.participantKey }),
+    ...(body.workspaceCwd === undefined ? {} : { workspaceCwd: body.workspaceCwd }),
+    ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
+  })
+
+  if (result.outcome === 'redirect') {
+    return json(
+      {
+        status: 'rejected',
+        reason: result.reason,
+        detail: result.detail,
+        observed: { ...(result.homeNodeId === undefined ? {} : { homeNodeId: result.homeNodeId }) },
+      } satisfies RegisterParticipantResponse,
+      409
+    )
+  }
+  if (result.outcome === 'refused') {
+    return json(
+      {
+        status: result.status,
+        reason: result.reason,
+        detail: result.detail,
+      } satisfies RegisterParticipantResponse,
+      result.status === 'rejected' ? 409 : 200
+    )
+  }
+
+  const { identity, continuation } = result
+  return json({
+    status: 'registered',
+    scopeRef: identity.scopeRef,
+    hostSessionId: identity.hostSessionId,
+    generation: identity.generation,
+    created: result.created,
+    // A join carries nothing forward, so it never reports a resume. That stays
+    // true whatever the driver later says about its own native state.
+    resumed: false,
+    observation: result.attached
+      ? {
+          state: 'attached',
+          detail: 'the participant address and its execution profile are durable',
+        }
+      : {
+          state: 'attachment_pending',
+          detail:
+            'the participant address and reserved identities are durable; attach a broker endpoint and profile to make its work runnable',
+        },
+    identity: {
+      registrationId: identity.registrationId,
+      laneRef: identity.laneRef,
+      runtimeId: identity.runtimeId,
+      attemptId: identity.attemptId,
+      invocationId: identity.invocationId,
+      attachEpoch: identity.attachEpoch,
+    },
+    continuation,
+  } satisfies RegisterParticipantResponse)
+}
+
+/**
+ * Allocate a successor attempt for a key-scoped registration.
+ *
+ * Extracted from the registration mutex so the two halves stay separately
+ * readable: everything here is the writer-retirement and recovery gate, which
+ * R6.5 keeps required for REPLACEMENT of an existing writer even though R6.1
+ * removed admission from first join. It returns a refusal response, or the new
+ * attempt for the caller to adopt.
+ */
+async function allocateKeyedSuccessor(
+  server: HrcServerInstanceForHandlers,
+  adapter: ParticipantAdapter | undefined,
+  registration: ParticipantRegistration,
+  priorAttempt: ParticipantAttempt,
+  body: LegacyRegisterParticipantRequest
+): Promise<{ successor: ParticipantAttempt } | { refusal: RegisterParticipantResponse }> {
+  let attempt: ParticipantAttempt | null = priorAttempt
+  // The retirement/recovery gate is producer-owned evidence, so it
+  // needs the adapter that owns the prior writer. Removing admit did
+  // not make HRC able to retire someone else's write path, and an
+  // absent adapter is an unproven retirement, not a free pass.
+  const evidence =
+    adapter === undefined
+      ? null
+      : await obtainParticipantWriterEvidence(server, adapter, registration, attempt)
+  if (evidence === null) {
+    return {
+      refusal: {
+        status: 'pending',
+        reason: 'host_retirement_unproven',
+        detail: 'the exact prior writer has no valid owner-produced retirement evidence',
+      },
+    }
+  }
+  const now = timestamp()
+  const retirementSatisfied =
+    evidence.writePath.state === 'retired' || evidence.liveness.state === 'dead'
+  server.db.participantRegistrations.recordWriterEvidence(
+    attempt.attemptId,
+    attempt.attachEpoch,
+    serializedJson(evidence),
+    now
+  )
+  if (!retirementSatisfied) {
+    return {
+      refusal: {
+        status:
+          evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
+            ? 'rejected'
+            : 'pending',
+        reason:
+          evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
+            ? 'host_binding_conflict'
+            : 'host_retirement_unproven',
+        detail: 'the exact prior writer remains writable/live or has unknown retirement',
+      },
+    }
+  }
+  if (!isAbsorbingParticipantAttempt(attempt)) {
+    const abandoned = server.db.participantRegistrations.transitionAttempt(
+      attempt.attemptId,
+      [attempt.state],
+      'ABANDONED',
+      now,
+      evidence.writePath.state === 'retired'
+        ? `writer-retired:${evidence.writePath.reason}`
+        : `writer-dead:${evidence.liveness.reason}`
+    )
+    if (!abandoned) {
+      return {
+        refusal: {
+          status: 'pending',
+          reason: 'participant_prior_disposition_unresolved',
+          detail: 'the prior participant attempt could not record its absorbing disposition',
+        },
+      }
+    }
+    attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  }
+  if (attempt === null || !hasAbsorbingDisposition(attempt)) {
+    return {
+      refusal: {
+        status: 'pending',
+        reason: 'participant_prior_disposition_unresolved',
+        detail: 'the prior participant attempt has no absorbing disposition',
+      },
+    }
+  }
+  if (
+    attempt.recoveryDisposition === 'unresolved' &&
+    evidence.priorRecovery.state === 'recovered'
+  ) {
+    server.db.participantRegistrations.recordRecoveryDisposition(
+      attempt.attemptId,
+      'reconciled',
+      `writer-evidence:${evidence.priorRecovery.reason}`,
+      now
+    )
+    attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  }
+  if (attempt === null || !recoverySatisfied(attempt, evidence)) {
+    return {
+      refusal: {
+        status: 'pending',
+        reason: 'participant_prior_recovery_unresolved',
+        detail: 'the prior invocation recovery is neither reconciled nor explicitly abandoned',
+      },
+    }
+  }
+
+  const successor: ParticipantAttempt = {
+    attemptId: `participant-attempt-${randomUUID()}`,
+    registrationId: registration.registrationId,
+    attachEpoch: attempt.attachEpoch + 1,
+    requestId: `req-${randomUUID()}`,
+    operationId: `op-${randomUUID()}`,
+    invocationId: `inv-${randomUUID()}`,
+    runtimeId: `rt-${randomUUID()}`,
+    state: 'IDENTITY_MINTED',
+    activationClassification: activationClassification(
+      registration.continuityEvidenceJson,
+      undefined
+    ),
+    recoveryDisposition: 'unresolved',
+    establishmentWorkState: 'pending',
+    establishmentAttemptCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+  const priorAttemptId = attempt.attemptId
+  const registrationId = registration.registrationId
+  const allocated = server.db.sqlite.transaction(() => {
+    const currentPrior = server.db.participantRegistrations.getAttempt(priorAttemptId)
+    const latestPrior =
+      server.db.participantRegistrations.getAttemptByRegistrationId(registrationId)
+    if (
+      currentPrior === null ||
+      latestPrior?.attemptId !== currentPrior.attemptId ||
+      !hasAbsorbingDisposition(currentPrior) ||
+      !recoverySatisfied(currentPrior, evidence) ||
+      currentPrior.writerEvidenceJson !== serializedJson(evidence)
+    ) {
+      return false
+    }
+    if (
+      !server.db.participantRegistrations.updateRegistrationForSuccessor({
+        registrationId,
+        ...(body.workspaceCwd === undefined ? {} : { workspaceCwd: body.workspaceCwd }),
+        ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
+        updatedAt: now,
+      })
+    ) {
+      throw new Error('participant successor registration update raced')
+    }
+    server.db.participantRegistrations.insertAttempt(successor)
+    return true
+  })()
+  if (!allocated) {
+    return {
+      refusal: {
+        status: 'pending',
+        reason: 'participant_successor_gate_changed',
+        detail: 'the prior writer or recovery gate changed before successor allocation',
+      },
+    }
+  }
+  return { successor }
 }
 
 export async function handleRegisterParticipant(
@@ -222,6 +604,11 @@ export async function handleRegisterParticipant(
     malformed('request body must be valid JSON')
   }
   const body = parseRegisterParticipantRequest(rawBody)
+
+  if (body.mode === 'direct') {
+    return await handleDirectRegistration(this, body)
+  }
+
   const registrationClass = this.options.registrationClasses?.find(
     (candidate) => candidate.classId === body.classId
   )
@@ -239,40 +626,17 @@ export async function handleRegisterParticipant(
     malformed('socketPath is required for a participant-served participant', 'socketPath')
   }
 
+  // R6.1/R6.9 remove the admit call from this pre-existing generic path too.
+  // An adapter is a delivery mechanism, not admission authority, so its absence
+  // no longer refuses a join -- it only means no post-join preparation helper
+  // is available and the participant must attach for itself.
   const adapter = this.options.participantAdapterRegistry?.get(registrationClass.adapterId)
-  if (adapter === undefined) {
-    // createHrcServer rejects this composition error. Retain a truthful local
-    // refusal for embedded instances that did not pass through construction.
-    return json({
-      status: 'pending',
-      reason: 'participant_adapter_unavailable',
-      detail: `configured participant adapter "${registrationClass.adapterId}" is unavailable`,
-    } satisfies RegisterParticipantResponse)
-  }
 
-  const admission = validateParticipantAdapterAdmission(
-    await adapter.admit({
-      classId: registrationClass.classId,
-      join: registrationClass.join,
-      ...(body.participantKey === undefined ? {} : { participantKey: body.participantKey }),
-      ...(body.evidence === undefined ? {} : { evidence: body.evidence }),
-    })
-  )
-  if (!admission.ok) {
-    return json({
-      status: 'pending',
-      reason: 'participant_adapter_admission_invalid',
-      detail: admission.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
-    } satisfies RegisterParticipantResponse)
-  }
-  const admitted = admission.value
-  if (admitted.status !== 'admitted') {
-    return json({
-      status: admitted.status,
-      reason: admitted.reason,
-      detail: `participant adapter ${admitted.status} registration admission`,
-    } satisfies RegisterParticipantResponse)
-  }
+  // HRC no longer discovers a permanent key by running adapter code. A supplied
+  // key is used; otherwise HRC allocates one and returns it, and the caller must
+  // retain it. A new keyless request is a CREATION, not an idempotent retry --
+  // a caller that loses this reply has not converged, it has no key.
+  const participantKey = body.participantKey ?? `participant-key-${randomUUID()}`
 
   const result = await withScopeClaimMutex(
     this,
@@ -280,17 +644,13 @@ export async function handleRegisterParticipant(
     async (): Promise<RegisterParticipantResponse> => {
       let registration = this.db.participantRegistrations.getRegistrationByClassAndKey(
         registrationClass.classId,
-        admitted.participantKey
+        participantKey
       )
       let attempt =
         registration === null
           ? null
           : this.db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
       let created = false
-      const admittedContinuityEvidenceJson =
-        admitted.continuityEvidence === undefined
-          ? undefined
-          : serializedJson(admitted.continuityEvidence)
 
       if (registration === null) {
         if (
@@ -322,14 +682,17 @@ export async function handleRegisterParticipant(
           classId: registrationClass.classId,
           adapterId: registrationClass.adapterId,
           join: registrationClass.join,
-          participantKey: admitted.participantKey,
+          registrationMode: 'legacy',
+          participantKey,
           scopeRef,
           laneRef: 'main',
           hostSessionId,
           generation: 1,
-          workspaceCwd: admitted.workspaceCwd,
+          // Optional metadata now, not an adapter-certified fact. A driver
+          // that needs a workspace reports an attachment error if it is absent;
+          // HRC does not inspect its files during join (R6.2).
+          ...(body.workspaceCwd === undefined ? {} : { workspaceCwd: body.workspaceCwd }),
           ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
-          preparationJson: serializedJson(admitted.preparation),
           // The registration's continuity evidence is the last ACTIVATED known
           // evidence. A fresh registration has activated nothing, so it starts
           // with no accepted baseline; the candidate lives on the attempt.
@@ -345,13 +708,7 @@ export async function handleRegisterParticipant(
           invocationId,
           runtimeId,
           state: 'IDENTITY_MINTED',
-          ...(admittedContinuityEvidenceJson === undefined
-            ? {}
-            : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
-          activationClassification: activationClassification(
-            undefined,
-            admittedContinuityEvidenceJson
-          ),
+          activationClassification: activationClassification(undefined, undefined),
           recoveryDisposition: 'unresolved',
           establishmentWorkState: 'pending',
           establishmentAttemptCount: 0,
@@ -383,155 +740,24 @@ export async function handleRegisterParticipant(
         attempt = newAttempt
         created = true
       } else if (attempt !== null) {
-        const successorRequested =
-          isAbsorbingParticipantAttempt(attempt) ||
-          (admittedContinuityEvidenceJson !== undefined &&
-            admittedContinuityEvidenceJson !== attempt.continuityEvidenceJson)
-        if (successorRequested) {
-          const evidence = await obtainParticipantWriterEvidence(
+        // R6.6 withdrew the adapter's continuity candidate, which was the
+        // other half of this signal. What remains is the already-landed keyed
+        // behavior: an attempt that has reached an absorbing disposition is the
+        // one case where a retry is asking for a successor, and it still has to
+        // pass the whole writer-retirement and recovery gate below.
+        if (isAbsorbingParticipantAttempt(attempt)) {
+          const allocation = await allocateKeyedSuccessor(
             this,
             adapter,
             registration,
-            attempt
+            attempt,
+            body
           )
-          if (evidence === null) {
-            return {
-              status: 'pending',
-              reason: 'host_retirement_unproven',
-              detail: 'the exact prior writer has no valid owner-produced retirement evidence',
-            }
-          }
-          const now = timestamp()
-          const retirementSatisfied =
-            evidence.writePath.state === 'retired' || evidence.liveness.state === 'dead'
-          this.db.participantRegistrations.recordWriterEvidence(
-            attempt.attemptId,
-            attempt.attachEpoch,
-            serializedJson(evidence),
-            now
-          )
-          if (!retirementSatisfied) {
-            return {
-              status:
-                evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
-                  ? 'rejected'
-                  : 'pending',
-              reason:
-                evidence.writePath.state === 'writable' && evidence.liveness.state === 'live'
-                  ? 'host_binding_conflict'
-                  : 'host_retirement_unproven',
-              detail: 'the exact prior writer remains writable/live or has unknown retirement',
-            }
-          }
-          if (!isAbsorbingParticipantAttempt(attempt)) {
-            const abandoned = this.db.participantRegistrations.transitionAttempt(
-              attempt.attemptId,
-              [attempt.state],
-              'ABANDONED',
-              now,
-              evidence.writePath.state === 'retired'
-                ? `writer-retired:${evidence.writePath.reason}`
-                : `writer-dead:${evidence.liveness.reason}`
-            )
-            if (!abandoned) {
-              return {
-                status: 'pending',
-                reason: 'participant_prior_disposition_unresolved',
-                detail: 'the prior participant attempt could not record its absorbing disposition',
-              }
-            }
-            attempt = this.db.participantRegistrations.getAttempt(attempt.attemptId)
-          }
-          if (attempt === null || !hasAbsorbingDisposition(attempt)) {
-            return {
-              status: 'pending',
-              reason: 'participant_prior_disposition_unresolved',
-              detail: 'the prior participant attempt has no absorbing disposition',
-            }
-          }
-          if (
-            attempt.recoveryDisposition === 'unresolved' &&
-            evidence.priorRecovery.state === 'recovered'
-          ) {
-            this.db.participantRegistrations.recordRecoveryDisposition(
-              attempt.attemptId,
-              'reconciled',
-              `writer-evidence:${evidence.priorRecovery.reason}`,
-              now
-            )
-            attempt = this.db.participantRegistrations.getAttempt(attempt.attemptId)
-          }
-          if (attempt === null || !recoverySatisfied(attempt, evidence)) {
-            return {
-              status: 'pending',
-              reason: 'participant_prior_recovery_unresolved',
-              detail:
-                'the prior invocation recovery is neither reconciled nor explicitly abandoned',
-            }
-          }
-
-          const successor: ParticipantAttempt = {
-            attemptId: `participant-attempt-${randomUUID()}`,
-            registrationId: registration.registrationId,
-            attachEpoch: attempt.attachEpoch + 1,
-            requestId: `req-${randomUUID()}`,
-            operationId: `op-${randomUUID()}`,
-            invocationId: `inv-${randomUUID()}`,
-            runtimeId: `rt-${randomUUID()}`,
-            state: 'IDENTITY_MINTED',
-            ...(admittedContinuityEvidenceJson === undefined
-              ? {}
-              : { continuityEvidenceJson: admittedContinuityEvidenceJson }),
-            activationClassification: activationClassification(
-              registration.continuityEvidenceJson,
-              admittedContinuityEvidenceJson
-            ),
-            recoveryDisposition: 'unresolved',
-            establishmentWorkState: 'pending',
-            establishmentAttemptCount: 0,
-            createdAt: now,
-            updatedAt: now,
-          }
-          const priorAttemptId = attempt.attemptId
-          const registrationId = registration.registrationId
-          const allocated = this.db.sqlite.transaction(() => {
-            const currentPrior = this.db.participantRegistrations.getAttempt(priorAttemptId)
-            const latestPrior =
-              this.db.participantRegistrations.getAttemptByRegistrationId(registrationId)
-            if (
-              currentPrior === null ||
-              latestPrior?.attemptId !== currentPrior.attemptId ||
-              !hasAbsorbingDisposition(currentPrior) ||
-              !recoverySatisfied(currentPrior, evidence) ||
-              currentPrior.writerEvidenceJson !== serializedJson(evidence)
-            ) {
-              return false
-            }
-            if (
-              !this.db.participantRegistrations.updateRegistrationForSuccessor({
-                registrationId,
-                workspaceCwd: admitted.workspaceCwd,
-                ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
-                preparationJson: serializedJson(admitted.preparation),
-                updatedAt: now,
-              })
-            ) {
-              throw new Error('participant successor registration update raced')
-            }
-            this.db.participantRegistrations.insertAttempt(successor)
-            return true
-          })()
-          if (!allocated) {
-            return {
-              status: 'pending',
-              reason: 'participant_successor_gate_changed',
-              detail: 'the prior writer or recovery gate changed before successor allocation',
-            }
-          }
+          if ('refusal' in allocation) return allocation.refusal
           registration = this.db.participantRegistrations.getRegistrationById(
             registration.registrationId
           )
-          attempt = successor
+          attempt = allocation.successor
           created = false
         }
       }
@@ -561,12 +787,30 @@ export async function handleRegisterParticipant(
         return registeredResponse(resolvedRegistration, created, withHostingIntent)
       }
 
+      // R6.4: a locally configured `prepare` helper may compose the profile
+      // AFTER join, from the participant's supplied metadata and the identities
+      // HRC already allocated. It is not required, has no admit call and no
+      // authority to undo the registration -- so when it or its inputs are
+      // absent, the participant stays registered with its work pending and
+      // attaches for itself. Fabricating a workspace to reach the helper is
+      // exactly what R7.1 forbids.
+      if (
+        adapter === undefined ||
+        resolvedRegistration.classId === undefined ||
+        resolvedRegistration.participantKey === undefined ||
+        resolvedRegistration.workspaceCwd === undefined
+      ) {
+        return registeredResponse(resolvedRegistration, created, resolvedAttempt)
+      }
       const preparationRequest = {
         classId: resolvedRegistration.classId,
         join: resolvedRegistration.join,
         participantKey: resolvedRegistration.participantKey,
         workspaceCwd: resolvedRegistration.workspaceCwd,
-        preparation: JSON.parse(resolvedRegistration.preparationJson) as JsonValue,
+        preparation:
+          resolvedRegistration.preparationJson === undefined
+            ? null
+            : (JSON.parse(resolvedRegistration.preparationJson) as JsonValue),
         identity: {
           requestId: resolvedAttempt.requestId,
           operationId: resolvedAttempt.operationId,

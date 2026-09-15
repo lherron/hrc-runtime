@@ -21,6 +21,7 @@ import {
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
+import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
 import { handleSdkDispatchTurn } from './selector-message-handlers/sdk-dispatch.js'
@@ -245,6 +246,8 @@ export async function ensureTargetSession(
   const normalized = normalizeTargetSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
   assertLocalPersonaAllowed(this, scopeRef)
+  // R-4.3.2, the selector-message successor door.
+  assertReservedAddressAllowsBirth(this, scopeRef, laneRef)
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
     const now = timestamp()

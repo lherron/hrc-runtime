@@ -179,6 +179,10 @@ import {
   startOtlpListener,
 } from './otel-ingest.js'
 import { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
+import {
+  type ParticipantAttachHandlersMethods,
+  participantAttachHandlersMethods,
+} from './participant-attach-handlers.js'
 import { recoverParticipantEstablishmentWork } from './participant-establishment.js'
 import {
   type ParticipantRegistrationHandlersMethods,
@@ -812,6 +816,7 @@ interface HrcServerInstance
     ExactClaimHandlersMethods,
     RegistrationGcHandlersMethods,
     ParticipantRegistrationHandlersMethods,
+    ParticipantAttachHandlersMethods,
     RegistrationHandlersMethods,
     DesktopRegistrationHandlersMethods,
     DesktopObserverHandlersMethods,
@@ -925,6 +930,8 @@ class HrcServerInstance implements HrcServer {
       this.handleRetireRegistrationScopes(request),
     [exactRouteKey('POST', '/v1/registrations')]: (request) =>
       this.handleCreateExternalRegistration(request),
+    [exactRouteKey('POST', '/v1/participants/attach')]: (request) =>
+      this.handleAttachParticipant(request),
     [exactRouteKey('POST', '/v1/participants/register')]: (request) =>
       this.handleRegisterParticipant(request),
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
@@ -2948,6 +2955,7 @@ Object.assign(
   exactClaimHandlersMethods,
   registrationGcHandlersMethods,
   participantRegistrationHandlersMethods,
+  participantAttachHandlersMethods,
   registrationHandlersMethods,
   desktopRegistrationHandlersMethods,
   desktopObserverHandlersMethods
@@ -3116,8 +3124,34 @@ export type {
   CreateExternalRegistrationRequest,
   CreateExternalRegistrationResponse,
 } from './registration-handlers.js'
+// T-08504 / T-08516 protocol join (contract revision 7, slice A).
+export {
+  assertReservedAddressAllowsBirth,
+  claimParticipantAddress,
+  localParticipantHomeNodeId,
+  reservedAddressBirthRefusal,
+} from './participant-address-provisioning.js'
+export type {
+  ClaimParticipantAddressInput,
+  ParticipantAddressClaim,
+  ParticipantAddressClaimRefusal,
+} from './participant-address-provisioning.js'
+export { DIRECT_JOIN_POLICY, registerDirectParticipant } from './participant-host-registration.js'
+export type {
+  DirectJoinContinuation,
+  DirectJoinIdentity,
+  DirectJoinRequest,
+  DirectJoinResult,
+} from './participant-host-registration.js'
+export { parseAttachParticipantRequest } from './participant-attach-handlers.js'
+export type {
+  AttachParticipantRequest,
+  AttachParticipantResponse,
+} from './participant-attach-handlers.js'
 export { parseRegisterParticipantRequest } from './participant-registration-handlers.js'
 export type {
+  DirectRegisterParticipantRequest,
+  LegacyRegisterParticipantRequest,
   RegisterParticipantRequest,
   RegisterParticipantResponse,
 } from './participant-registration-handlers.js'

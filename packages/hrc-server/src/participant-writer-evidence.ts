@@ -46,6 +46,10 @@ export function participantWriterRef(
   if (identity === null) return null
   const { brokerInstanceId } = identity
   if (typeof brokerInstanceId !== 'string' || brokerInstanceId.length === 0) return null
+  // A `WriterRef` is identified by class and key. A direct protocol join may
+  // have neither, and this evidence path is the key-scoped one, so an absent
+  // pair means there is no ref to mint -- not a ref with placeholder parts.
+  if (registration.classId === undefined || registration.participantKey === undefined) return null
   return {
     subject: 'bridge',
     classId: registration.classId,

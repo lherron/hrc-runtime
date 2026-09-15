@@ -21,12 +21,34 @@ export type {
   ExternalRegistrationMint,
   IssueExternalRegistrationGrantResult,
 } from './external-registration-grant-repository.js'
-export { ParticipantRegistrationRepository } from './participant-registration-repository.js'
+export {
+  allowsParticipantHostBindingTransition,
+  ParticipantHostBindingRepository,
+} from './participant-host-binding-repository.js'
+export type {
+  ParticipantAddressReservation,
+  ParticipantHostBinding,
+  ParticipantHostBindingState,
+  ParticipantReservationState,
+} from './participant-host-binding-repository.js'
+export {
+  ParticipantRegistrationRepository,
+  isNonRunnableEstablishmentAttempt,
+} from './participant-registration-repository.js'
 export type {
   ParticipantAttempt,
   ParticipantActivationClassification,
   ParticipantAttemptState,
+  ParticipantAddressPolicy,
+  ParticipantContinuationReason,
+  ParticipantContinuationSelection,
+  ParticipantContinuityPolicy,
+  ParticipantLifecycleOwner,
   ParticipantRegistration,
+  ParticipantRegistrationMode,
+  ParticipantRegistrationPolicy,
+  ParticipantReplaySemantics,
+  ParticipantResumeState,
 } from './participant-registration-repository.js'
 export type { SqliteSlowStatement } from './statement-telemetry.js'
 export {

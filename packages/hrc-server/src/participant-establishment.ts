@@ -1,7 +1,11 @@
 import { readFile } from 'node:fs/promises'
 
 import type { HrcProvider, HrcRuntimeSnapshot } from 'hrc-core'
-import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
+import {
+  type ParticipantAttempt,
+  type ParticipantRegistration,
+  isNonRunnableEstablishmentAttempt,
+} from 'hrc-store-sqlite'
 import type { BrokerClient } from 'spaces-harness-broker-client'
 import type {
   BrokerEnsureInvocationResponse,
@@ -839,6 +843,15 @@ async function runParticipantEstablishment(
     )
     return
   }
+  // R7.2. Re-read here, immediately before effects, and not only at
+  // enumeration: an attempt can stop being runnable in the gap between the two.
+  // Returning without touching the row is the whole point -- this consumes no
+  // retry, records no profile-missing failure, and therefore cannot exhaust a
+  // participant's budget merely by making it wait. It is deliberately NOT
+  // `markEstablishmentCompleted`: the work is not done, it is not yet startable.
+  if (isNonRunnableEstablishmentAttempt(current)) {
+    return
+  }
   const controller = server.harnessBrokerController
   if (
     current.state === 'ACTIVE' &&
@@ -877,7 +890,11 @@ export function scheduleParticipantEstablishment(
     server.stopping ||
     server.participantEstablishmentOperations.has(attempt.attemptId) ||
     attempt.establishmentWorkState === 'completed' ||
-    attempt.establishmentWorkState === 'exhausted'
+    attempt.establishmentWorkState === 'exhausted' ||
+    // R7.2's third site. Without this a registration-time schedule would arm a
+    // timer against an unattached participant, and the predicate would only be
+    // consulted after the timer had already fired.
+    isNonRunnableEstablishmentAttempt(attempt)
   ) {
     return
   }

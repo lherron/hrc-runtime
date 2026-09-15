@@ -111,6 +111,7 @@ function fakeTmux() {
 function registration(joinDirection: ParticipantRegistration['join']): ParticipantRegistration {
   return {
     registrationId: `registration-${joinDirection}`,
+    registrationMode: 'legacy',
     classId: `class-${joinDirection}`,
     adapterId: 'controlled-participant',
     join: joinDirection,

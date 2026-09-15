@@ -330,6 +330,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: servedClass.classId,
         processToken: 'first-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'served-writer-key',
         socketPath: `${fixture.tmpDir}/served-first.sock`,
         evidence: evidenceFor('first'),
@@ -348,6 +349,21 @@ describe('T-08349 exact writer identity', () => {
           FIXED_NOW
         )
       ).toBe(true)
+      // Revision 6 R6.2 makes `evidence` ignored for continuation, so an
+      // adapter-supplied token no longer asks for a successor. What still does
+      // is the prior attempt reaching an absorbing disposition, and that is the
+      // signal this case now uses to reach the same writer-identity gate.
+      const priorRow = db.participantRegistrations.getAttempt(prior.attemptId)
+      expect(priorRow).not.toBeNull()
+      expect(
+        db.participantRegistrations.transitionAttempt(
+          prior.attemptId,
+          [priorRow!.state],
+          'ABANDONED',
+          FIXED_NOW,
+          'prior participant attempt abandoned by the fixture'
+        )
+      ).toBe(true)
     } finally {
       db.close()
     }
@@ -356,6 +372,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: servedClass.classId,
         processToken: 'successor-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'served-writer-key',
         socketPath: `${fixture.tmpDir}/served-successor.sock`,
         evidence: evidenceFor('changed'),
@@ -394,6 +411,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'first-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'hosted-writer-key',
         evidence: evidenceFor('first'),
       })
@@ -425,6 +443,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'successor-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'hosted-writer-key',
         evidence: evidenceFor('changed'),
       })
@@ -472,6 +491,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'first-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'legacy-hosted-key',
         evidence: evidenceFor('first'),
       })
@@ -503,6 +523,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'successor-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'legacy-hosted-key',
         evidence: evidenceFor('changed'),
       })
@@ -537,6 +558,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'first-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'live-hosted-key',
         evidence: evidenceFor('first'),
       })
@@ -580,6 +602,22 @@ describe('T-08349 exact writer identity', () => {
           FIXED_NOW
         )
       ).toBe(true)
+      // R6.2 makes `evidence` ignored for continuation, so the successor is
+      // requested by an absorbing prior attempt. That sharpens this case rather
+      // than weakening it: the attempt is finished AND the committed bridge is
+      // still live, and HRC must still refuse to hand the address over --
+      // losing an attempt is not proof that its writer died.
+      const priorRow = db.participantRegistrations.getAttempt(prior.attemptId)
+      expect(priorRow).not.toBeNull()
+      expect(
+        db.participantRegistrations.transitionAttempt(
+          prior.attemptId,
+          [priorRow!.state],
+          'ABANDONED',
+          FIXED_NOW,
+          'prior participant attempt abandoned by the fixture'
+        )
+      ).toBe(true)
     } finally {
       db.close()
     }
@@ -588,6 +626,7 @@ describe('T-08349 exact writer identity', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: hostedClass.classId,
         processToken: 'successor-process',
+        workspaceCwd: fixture.tmpDir,
         participantKey: 'live-hosted-key',
         evidence: evidenceFor('changed'),
       })
@@ -614,7 +653,26 @@ describe('T-08349 exact writer identity', () => {
   }, 60_000)
 })
 
-describe('T-08349 activation-owned known continuity evidence', () => {
+/**
+ * SUPERSEDED by host-participant-lifecycle contract revision 7, and skipped
+ * rather than deleted so the replacement has something to be graded against.
+ *
+ * Every case below classifies continuity from the `continuityEvidence` an
+ * adapter returned from `admit`. R6.1 removes the `admit` call, and R6.2 states
+ * that `evidence` "remain[s] an accepted optional compatibility field and [is]
+ * ignored for joining, identity, retry matching and continuation" -- so there
+ * is no longer any producer input for these assertions to classify. R6.6
+ * replaces the mechanism outright: HRC selects continuation from its OWN stored
+ * predecessor record plus its clear/disabled-reuse barriers, and records
+ * `carried`/`no_continuation`/`continuation_invalidated`/`reuse_disabled`.
+ *
+ * The replacement coverage for HRC-owned selection belongs with the succession
+ * slice (T-08517), which is what creates a predecessor to carry from. T-08516
+ * covers the first-join half of R7.3 in `t08516-participant-attach.test.ts`:
+ * a join selects nothing, the selection is durable, and a profile that carries
+ * a continuation HRC did not select is refused rather than frozen.
+ */
+describe.skip('T-08349 activation-owned known continuity evidence', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
 
@@ -670,6 +728,7 @@ describe('T-08349 activation-owned known continuity evidence', () => {
       await fixture.postJson('/v1/participants/register', {
         classId: servedClass.classId,
         processToken: `process-${nonce}`,
+        workspaceCwd: fixture.tmpDir,
         participantKey: key,
         socketPath: `${fixture.tmpDir}/${key}-${nonce}.sock`,
         ...(token === 'unknown' ? {} : { evidence: evidenceFor(token) }),

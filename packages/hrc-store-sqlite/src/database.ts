@@ -17,6 +17,7 @@ import { HrcMailFederatedOriginRepository } from './mail/federated-origin-reposi
 import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { appliedMigrationIds, listAppliedMigrations, runMigrations } from './migrations.js'
+import { ParticipantHostBindingRepository } from './participant-host-binding-repository.js'
 import { ParticipantRegistrationRepository } from './participant-registration-repository.js'
 import { AcpBridgeEmissionRepository } from './repositories/acp-bridge-emission-repository.js'
 import {
@@ -95,6 +96,7 @@ export type HrcDatabase = {
   desktopThreadRegistrations: DesktopThreadRegistrationRepository
   externalRegistrationGrants: ExternalRegistrationGrantRepository
   participantRegistrations: ParticipantRegistrationRepository
+  participantHostBindings: ParticipantHostBindingRepository
   appManagedSessions: AppManagedSessionRepository
   appSessions: AppSessionRepository
   runtimes: RuntimeRepository
@@ -210,6 +212,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     desktopThreadRegistrations: new DesktopThreadRegistrationRepository(sqlite),
     externalRegistrationGrants: new ExternalRegistrationGrantRepository(sqlite),
     participantRegistrations: new ParticipantRegistrationRepository(sqlite),
+    participantHostBindings: new ParticipantHostBindingRepository(sqlite),
     appManagedSessions: new AppManagedSessionRepository(sqlite),
     appSessions: new AppSessionRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite),
