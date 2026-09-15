@@ -1,3 +1,232 @@
+# Host participant lifecycle — revision 6 proposal
+
+**Status: architecture review requested; implementation PAUSED.**
+Owner/editor: Astra. Operator direction: P-00517 C-22843, relayed in EN-12442,
+2026-09-15: **“If something speaks HRC, it can join HRC. Period.”**
+Source baseline: accepted generic foundation `0e5a0557`; T-08504 has unlanded
+work that must be reconciled before release. Revision 5 is retained below as
+reference. The amendments R6.1–R6.9 replace every contrary requirement in that
+reference, including its scenario and ownership tables. Its former approval does
+not approve revision 6. Daedalus reviews architecture; Mable brings this proposal
+to Lance before revised implementation dispatch. No source implementation or
+active-law amendment is made by this document edit.
+
+## R6.1 Joining is a protocol operation
+
+`POST /v1/participants/register` accepts the participant's own declaration.
+HRC does not call `ParticipantAdapter.admit`, read a host descriptor, request an
+evidence file, load an adapter to approve identity, or require adapter availability
+before joining. This applies to existing generic key-scoped registration as well
+as new host-incarnation registration. Legacy EPR remains separate and unchanged.
+
+HRC still parses the message, routes it to the canonical home, and serializes the
+address claim. Syntax errors, a conflict with an existing occupant, an unsupported
+protocol operation, and an unavailable home are concrete protocol outcomes. They
+are not a second application's permission to join. There is no per-product join
+allowlist. Configured classes select defaults and delivery settings; an adapter
+identifier is never admission authority.
+
+For the direct host mode, `requestedSessionRef` and `hostIncarnationId` are the
+participant's declared address and current host identity. An address is not a PID,
+workspace, thread or helper process. HRC records these declarations directly and
+uses its existing uniqueness constraints and predecessor comparisons. It does not
+ask another component to certify them. Numeric PID is optional observation only.
+No new token, signature, file, hash, provenance check or challenge is introduced.
+
+## R6.2 Request and compatibility
+
+The existing endpoint gains `registrationMode: 'direct'`. Absence selects the
+existing key-scoped request shape for compatibility, **not** its old admit gate.
+The direct request contains:
+
+- `registrationMode: 'direct'`;
+- `requestedSessionRef: string` and `hostIncarnationId: string`;
+- optional `classId` (delivery defaults only), `participantKey`, `workspaceCwd`,
+  and `socketPath` (the participant-served broker endpoint, not an evidence file);
+- optional `expectedPredecessor`, with revision 5's exact predecessor tuple;
+- optional `launchId` only for an HRC-precommitted managed launch, when supported.
+
+A direct participant needs no configured class. Without one, HRC uses the generic
+selected-scope, host-incarnation, externally owned, participant-served defaults.
+An unknown class is a delivery configuration problem recorded after joining; it
+cannot refuse allocation. A class cannot grant process ownership: managed mode
+still requires HRC's own committed launch record and implemented lifecycle guard.
+
+For legacy requests, `participantKey` is used when supplied; otherwise HRC
+allocates and returns a key, which the caller must retain for retries. HRC no
+longer discovers a permanent key by running adapter code. Existing registrations
+retain their stored keys, sessions, generations, attempts and frozen profiles.
+A retry that cannot identify an existing registration cannot silently claim it.
+`processToken` and `evidence` remain accepted optional compatibility fields and
+are ignored for joining, identity, retry matching and continuation. They are not
+required in direct mode and are not passed to a permission callback.
+`workspaceCwd` is optional metadata; HRC does not inspect its files during join.
+A driver that needs a workspace reports an attachment error if it is absent.
+
+## R6.3 Address allocation is part of registration
+
+A direct registration at a virgin selected address performs the existing
+registry-first `withSummonAuthority` / `establishLocalPlacement` operation before
+local allocation. Separate pre-provisioning remains usable, but is not required
+for joining. The home validates mutation authority, then atomically writes the
+reservation, session, runtime and current binding/attempt identities. No generic
+Codex harness is launched by this mint callback. The registered response follows
+the durable commit, without waiting for driver readiness.
+
+Revision 5 §4's registry authority, lock/crash convergence, uniqueness, reservation
+survival and refuse-rather-than-evict requirements still apply. Its mandatory
+pre-reservation and class selectableTasks admission conditions are withdrawn.
+An existing compatible reservation is reused; a conflicting occupant is refused.
+A process can join under an available address; speaking the protocol does not
+transfer another live process's address. Registration at an occupied address
+with a different incarnation follows the existing explicit succession procedure.
+
+The registration and attempt storage must represent **registered, attachment
+pending** without a prepared execution profile. Implement this as a distinct
+preparation-pending attempt phase; do not fabricate a profile, call it PREPARED,
+or run model execution to finish the registration transaction. A schema
+migration preserves all existing prepared/active attempts. Duplicate direct
+requests for the same address/incarnation return the existing identities and
+attachment status, including after daemon loss before attachment begins.
+
+## R6.4 Attachment follows joining
+
+The registered response includes `registrationId`, the durable address/session/
+generation/runtime identity, and current `attemptId`, `invocationId`, `attachEpoch`.
+Its observation is `attachment_pending` until normal broker establishment and
+activation finish, then `attached`. `registered` means the address exists, not
+that input was delivered or a model ran.
+
+A participant can supply `socketPath` at registration or later through
+`POST /v1/participants/attach`, with exact fields `{registrationId, attemptId,
+attachEpoch, socketPath, profile}`. `profile` is the existing published
+`BrokerExecutionProfile`, composed using the identities already returned by HRC.
+This message is scoped to the current attempt. A byte-equivalent retry converges;
+a conflicting profile or endpoint cannot overwrite a frozen current attempt.
+Changing a bridge after activation uses H1, not an in-place replacement.
+
+HRC validates the existing profile/identity/ownership contract and persists it
+before install/ensure/attach/activation, reusing the established work chain and
+frozen-start semantics. Invalid or unsupported delivery configuration leaves the
+participant registered with an attachment error and pending addressed work. It
+never births an unrelated generic harness at the reserved address.
+
+A locally configured ASP `prepare` helper may still compose the profile **after
+join** from the participant's supplied metadata and allocated identity. It has no
+admit call or authority to undo the registration. The Arris helper/driver may read
+its existing descriptor to locate its control socket at this stage. Alternatively
+the participant supplies its broker endpoint/profile directly. HRC need not know
+the application control protocol. Queue, steer, truthful host execution admission,
+capture and events remain the ordinary broker/driver contract. No thread APIs,
+interrupt or preempt requirement is added.
+
+## R6.5 Reattachment and replacement remain distinct
+
+HRC alone decides current address ownership from durable registration facts.
+Same host/controller retry reuses registration and replay state. H1 bridge
+replacement preserves runtime/session/generation; H2 host replacement advances
+runtime/session generation. Internal subagents and native thread changes remain
+private to the host. Revision 5's subject-specific writer retirement/recovery,
+ABANDONED versus producer TERMINAL, absorbing-state rules, durable replacement
+intent and TX-D/TX-6 crash boundaries remain required for **replacement of an
+existing writer**, not first-join admission. Removing admit does not authorize
+live takeover or make transport loss proof of death.
+
+The existing writer observation/retirement methods remain a post-join lifecycle
+mechanism for participants that use them, not permission to register. Missing
+retirement/recovery information holds replacement of an occupied address; it
+does not bar first registration or ordinary same-host reconnection. No external
+host inspection, launch, kill, signal or reap authority is introduced.
+
+The existing global UNIQUE constraint on attempt `runtime_id` must be narrowed
+for H1. Preserve unique runtime ownership across registrations/bindings and for
+legacy key-scoped attempts; allow multiple attempts to reference the same runtime
+only when they reference the same host binding. Keep invocation_id globally
+unique and (registration_id, attach_epoch) unique. Enforce this in the database,
+not only in the handler: rebuilding the old attempt table/index is a migration
+requirement. Existing rows and foreign keys must survive the migration, and
+cross-binding runtime reuse must still fail. Replacing the runtime index merely
+with (host_binding_id, attach_epoch) is insufficient because it would permit
+unrelated bindings to claim the same runtime.
+
+
+## R6.6 HRC owns continuation decisions
+
+Revision 5 §3.3 is withdrawn, including its request/result additions and
+`continuationEligibility`. No producer admission extension is required.
+Automatic continuation selection uses HRC's stored predecessor continuation,
+existing clearing/invalidation barriers, and disabled-reuse record. If a stored
+candidate exists and neither barrier applies, HRC carries it into the successor
+session and records `carried:true`; otherwise it records `carried:false` with
+`no_continuation`, `continuation_invalidated`, or `reuse_disabled` respectively.
+It does not ask the adapter for eligibility and does not infer native lineage.
+
+Carrying HRC's continuation record is distinct from a driver successfully
+resuming native state. The driver may report that its native continuation cannot
+be resumed; that becomes an explicit attachment/resume outcome with the retained
+candidate, not a retrospective rejection of joining or silent native restart.
+No model input is silently delivered into a fresh context while HRC reports a
+successful resume. Explicit operator discard/fresh-start and historical resume
+retain their existing meanings. Same-host reconnect/H1 do not clear continuation.
+
+For the current Arris incarnation-scoped continuation key, HRC retains/carries
+its record under this rule. Native cross-incarnation resume is not supplied by
+that driver today. The integration must expose that limitation as a resume
+outcome; it must not manufacture thread lineage, erase the predecessor record,
+or restore an adapter eligibility gate to hide it.
+
+## R6.7 Durable-law changes requested for architecture review
+
+Amend `hrc-runtime.participant-session-lifecycle` explicitly on approval:
+replace static-adapter admission before identity allocation with protocol
+registration before attachment; allow preparation-pending durable attempts;
+remove processToken admission semantics and adapter continuation eligibility;
+permit registry-first selected-address mint during registration without separate
+provisioning; retain home authority, uniqueness, claim conflicts, external
+ownership, frozen attachment tuples, stale-input fences and replacement/recovery
+law. Review corresponding T-08344 C.2 / ADAPTER-SEAM requirements as superseded
+for admission only. No automatic amendment is implied by editing this proposal.
+
+Revision 5 managed save/stop, launchId correlation and host-aware lifecycle guard
+remain unchanged. Managed launch is still unsupported until that implementation
+exists. A registration cannot turn an externally launched process into an
+HRC-owned process. Existing key-scoped identity semantics remain; the old
+adapter permission path is intentionally removed for those consumers too.
+
+## R6.8 Required implementation proof
+
+1. A direct participant with no adapter installed joins from its POST; response,
+   durable address and restart/retry readback agree before any driver exists.
+2. An adapter whose admit throws/refuses is never called during either direct or
+   legacy join. No descriptor/evidence file is read on that path.
+3. Registry-first virgin claim, wrong-home routing, concurrent conflict and
+   reconnect converge; no duplicate address and no generic cold birth.
+4. Registered-but-unattached work survives daemon restart and stays pending;
+   later real broker attachment enables queue and steer without another join.
+5. Exact attachment retry, stale epoch, incompatible profile and unavailable
+   driver preserve registration and never repeat model input.
+6. H1/H2 and prior-writer recovery obey the surviving replacement contract.
+7. HRC continuation carry/clear/disabled-reuse cases use only its own records;
+   unsupported native resume is an explicit outcome, never fabricated success.
+8. Existing key-scoped consumers retain recorded identities; legacy EPR regresses
+   neither its registration nor its delivery path. Managed external-no-kill
+   negatives remain mandatory.
+
+## R6.9 Delivery sequence and ownership
+
+T-08504 is paused pending this architecture ruling and Lance's review via Mable.
+Astra owns contract revisions and HRC dispatch; Clod/Cody implement. T-08515 is
+cancelled. T-08503 driver/control delivery stays accepted; any necessary
+post-join profile helper adjustment is separately coordinated with Mable, never
+implemented inside HRC as a substitute ASP type. The revised work must include
+removal of the generic T-08349 admit call; its earlier acceptance described the
+previous contract and does not exempt it from this operator-directed change.
+No implementation or shared activation is authorized by this draft.
+
+---
+
+# Revision 5 reference — subject to R6 amendments above
+
 # Host participant lifecycle — HRC architecture contract
 
 **Revision 5 — APPROVED by Daedalus, EN-12285 (2026-09-15).** The reviewed
