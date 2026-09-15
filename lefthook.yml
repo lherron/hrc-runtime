@@ -14,6 +14,13 @@ pre-commit:
     # changed-scope heuristic to decide whether to look (T-07412).
     lock-hygiene:
       run: bun scripts/check-lock-hygiene.ts
+    # Unconditional, and deliberately not wrapped: it costs ~20ms, and it is the
+    # ONLY gate that grades `architecture/` — `test:fast` never loads a record
+    # and Biome parses neither .yaml nor .jsonl. Those paths are in `.hookignore`
+    # precisely so they stop buying the code suites, so the check that does apply
+    # to them must not sit behind the same scope heuristic that skips those.
+    architecture-records:
+      run: bun scripts/check-architecture-records.ts
     lint:
       run: bun scripts/run-if-code-changed.ts pre-commit -- bun run lint
       stage_fixed: true
@@ -43,8 +50,13 @@ pre-push:
     lock-hygiene:
       priority: 1
       run: bun scripts/check-lock-hygiene.ts
-    code-validation:
+    # Same reasoning as pre-commit: the gate that actually applies to the paths
+    # `.hookignore` excuses runs on every push, ahead of the suites it replaces.
+    architecture-records:
       priority: 2
+      run: bun scripts/check-architecture-records.ts
+    code-validation:
+      priority: 3
       use_stdin: true
       # TMPDIR=/tmp is load-bearing on macOS: the default
       # /var/folders/.../T/ prefix is 49 chars, which puts hrc-server's test

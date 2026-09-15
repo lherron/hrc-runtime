@@ -48,6 +48,10 @@ function resolveWorkspaceBinary(name: string): string {
 
 const lefthookBinary = resolveWorkspaceBinary('lefthook')
 const scopeScript = join(repoRoot, 'scripts', 'run-if-code-changed.ts')
+const scopeIgnoreLibrary = join(repoRoot, 'scripts', 'lib', 'hook-scope-ignore.ts')
+// The fixture copies the REAL list rather than inventing one, so these
+// boundaries grade the allowance this repository actually ships.
+const scopeIgnoreList = join(repoRoot, '.hookignore')
 const codeOnlyPreCommitCommands = [
   'lint',
   'boundaries',
@@ -68,6 +72,10 @@ const codeOnlyPreCommitCommands = [
 const unconditionalPreCommitCommands: Record<string, string> = {
   gitleaks: 'gitleaks protect --staged --redact',
   'lock-hygiene': 'bun scripts/check-lock-hygiene.ts',
+  // `.hookignore` excuses `architecture/` from the code suites, which never
+  // graded those records anyway. This is the gate that does, so it cannot sit
+  // behind the scope heuristic that lets those paths through.
+  'architecture-records': 'bun scripts/check-architecture-records.ts',
 }
 const temporaryRoots: string[] = []
 
@@ -146,8 +154,13 @@ printf '%s\\n' "$*" >> "$HOOK_INVOCATIONS"
   run(['git', 'remote', 'add', 'origin', remote], work)
   run(['git', 'push', '-u', 'origin', 'main'], work)
 
-  await mkdir(join(work, 'scripts'), { recursive: true })
+  await mkdir(join(work, 'scripts', 'lib'), { recursive: true })
   await writeFile(join(work, 'scripts', 'run-if-code-changed.ts'), await readFile(scopeScript))
+  await writeFile(
+    join(work, 'scripts', 'lib', 'hook-scope-ignore.ts'),
+    await readFile(scopeIgnoreLibrary)
+  )
+  await writeFile(join(work, '.hookignore'), await readFile(scopeIgnoreList))
   await writeFile(
     join(work, 'lefthook.yml'),
     `min_version: "2.1.10"
@@ -206,6 +219,14 @@ describe('lefthook v2 configuration', () => {
     run([lefthookBinary, 'validate'], repoRoot)
   })
 
+  test('ships the scope allowance as a tracked file', async () => {
+    // An untracked `.hookignore` would skip validation on this machine and on
+    // no other, which is the host-dependent gate this repository already paid
+    // for once (T-07506).
+    run(['git', 'ls-files', '--error-unmatch', '.hookignore'], repoRoot)
+    expect((await readFile(scopeIgnoreList, 'utf8')).trim()).not.toBe('')
+  })
+
   test('keeps the unconditional gates unwrapped and wraps every code check', async () => {
     const commands = (await readConfig())['pre-commit'].commands
 
@@ -233,9 +254,13 @@ describe('lefthook v2 configuration', () => {
       priority: 1,
       run: 'bun scripts/check-lock-hygiene.ts',
     })
+    expect(prePush.commands['architecture-records']).toEqual({
+      priority: 2,
+      run: 'bun scripts/check-architecture-records.ts',
+    })
     const codeValidation = prePush.commands['code-validation']
     expect(codeValidation.use_stdin).toBeTrue()
-    expect(codeValidation.priority).toBe(2)
+    expect(codeValidation.priority).toBe(3)
     expect(codeValidation.run).toContain('refs=$(cat)')
     expect(codeValidation.run).toContain('bun scripts/run-if-code-changed.ts pre-push -- sh -c')
     expect(codeValidation.run).toContain('bun scripts/install-workspace-deps.ts')
@@ -257,6 +282,37 @@ describe('lefthook v2 real pre-commit boundaries', () => {
     for (const file of files) await writeFile(join(fixture.work, file), 'documentation\n')
 
     expect(await commit(fixture, 'documentation files', files, true)).toEqual(['gitleaks'])
+  })
+
+  test('runs only secret scanning for an architecture record and its projections', async () => {
+    const fixture = await makeHookFixture()
+    await mkdir(join(fixture.work, 'architecture', 'records', 'invariants'), { recursive: true })
+    const files = [
+      'architecture/records/invariants/hrc-runtime.example.yaml',
+      'architecture/index.jsonl',
+      'architecture/INVARIANTS.md',
+    ]
+    for (const file of files) await writeFile(join(fixture.work, file), 'record: example\n')
+
+    expect(await commit(fixture, 'architecture records', files, true)).toEqual(['gitleaks'])
+  })
+
+  test('runs code checks when an architecture change is mixed with code', async () => {
+    const fixture = await makeHookFixture()
+    await mkdir(join(fixture.work, 'architecture'), { recursive: true })
+    await writeFile(join(fixture.work, 'architecture', 'index.jsonl'), '{}\n')
+    await writeFile(join(fixture.work, 'src', 'app.ts'), 'export const mixed = true\n')
+
+    expect(
+      (
+        await commit(
+          fixture,
+          'architecture and code',
+          ['architecture/index.jsonl', 'src/app.ts'],
+          true
+        )
+      ).sort()
+    ).toEqual(['code', 'gitleaks'])
   })
 
   test('runs code checks for a code deletion', async () => {
@@ -296,6 +352,33 @@ describe('lefthook v2 real pre-push boundaries', () => {
     await commit(fixture, 'branch docs update', ['README.md'])
 
     expect(await push(fixture, ['origin', 'docs-only'])).toEqual([])
+  })
+
+  test('skips an architecture-only push', async () => {
+    const fixture = await makeHookFixture()
+    await mkdir(join(fixture.work, 'architecture', 'records', 'invariants'), { recursive: true })
+    const files = [
+      'architecture/records/invariants/hrc-runtime.example.yaml',
+      'architecture/index.jsonl',
+    ]
+    for (const file of files) await writeFile(join(fixture.work, file), 'record: example\n')
+    await commit(fixture, 'architecture records', files)
+
+    expect(await push(fixture)).toEqual([])
+  })
+
+  test('runs validation once when any commit in an architecture-heavy push changes code', async () => {
+    // The shape that bought a full suite for nothing: pre-push scope is the
+    // UNION over unpushed commits, so one code commit among many documentation
+    // ones still pays — and one documentation commit among code ones still must.
+    const fixture = await makeHookFixture()
+    await mkdir(join(fixture.work, 'architecture'), { recursive: true })
+    await writeFile(join(fixture.work, 'architecture', 'index.jsonl'), '{}\n')
+    await commit(fixture, 'architecture records', ['architecture/index.jsonl'])
+    await writeFile(join(fixture.work, 'src', 'app.ts'), 'export const later = true\n')
+    await commit(fixture, 'code update', ['src/app.ts'])
+
+    expect(await push(fixture)).toEqual(['validation'])
   })
 
   test('runs validation for a code update', async () => {

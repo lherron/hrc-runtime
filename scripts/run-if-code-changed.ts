@@ -1,4 +1,9 @@
-const documentationExtensions = new Set(['.md', '.markdown', '.html', '.htm', '.txt'])
+import {
+  HOOK_SCOPE_IGNORE_FILE,
+  loadHookScopeIgnore,
+  worktreeRoot,
+} from './lib/hook-scope-ignore.ts'
+
 const oidPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 type HookName = 'pre-commit' | 'pre-push'
@@ -113,13 +118,6 @@ async function prePushScope(): Promise<ChangeScope> {
   }
 }
 
-function isDocumentation(path: string): boolean {
-  const slash = path.lastIndexOf('/')
-  const basename = slash === -1 ? path : path.slice(slash + 1)
-  const dot = basename.lastIndexOf('.')
-  return dot !== -1 && documentationExtensions.has(basename.slice(dot).toLowerCase())
-}
-
 async function changeScope(hook: HookName): Promise<ChangeScope> {
   try {
     return hook === 'pre-commit' ? preCommitScope() : await prePushScope()
@@ -147,9 +145,14 @@ async function main(): Promise<number> {
     console.log('[hook-scope] skipping validation for a deletion-only push')
     return 0
   }
-  if (!scope.ambiguous && scope.paths.length > 0 && scope.paths.every(isDocumentation)) {
+  const ignore = loadHookScopeIgnore(worktreeRoot())
+  if (
+    !scope.ambiguous &&
+    scope.paths.length > 0 &&
+    scope.paths.every((path) => ignore.ignores(path))
+  ) {
     console.log(
-      `[hook-scope] skipping code validation for ${scope.paths.length} documentation file(s)`
+      `[hook-scope] skipping code validation for ${scope.paths.length} path(s) covered by ${HOOK_SCOPE_IGNORE_FILE}`
     )
     return 0
   }

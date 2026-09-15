@@ -16,6 +16,12 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
 - Isolated-daemon smoke: [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md).
 - Enablement lessons: [docs/agent-enablement-changelog.md](docs/agent-enablement-changelog.md#retro-cadence).
 - Standalone HTML specs go in `docs/html/` (`just serve-docs`).
+- `.hookignore` (gitignore syntax) lists the paths that cannot change what code
+  validation proves — `docs/`, `architecture/`, and prose extensions. A change
+  confined to them skips the lefthook code suites; anything else pays. The list
+  is an explicit allowance, so a new top-level directory is code until someone
+  adds it. `architecture-records` runs unconditionally because it is the only
+  gate that grades `architecture/`.
 ### Commands that answer confidently while checking nothing
 
 The failure below has four shapes and they all read as a clean result. A probe

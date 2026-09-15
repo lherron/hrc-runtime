@@ -1,0 +1,32 @@
+# Paths that cannot change what code validation proves.
+#
+# `scripts/run-if-code-changed.ts` reads this file to decide whether a staged
+# set (pre-commit) or a pushed commit range (pre-push) is worth spending the
+# build/typecheck/test suites on. A path NOT matched here is code: the list is
+# an explicit allowance, never a default, so a new top-level directory pays for
+# validation until someone decides otherwise.
+#
+# Syntax is gitignore-shaped and documented in scripts/lib/hook-scope-ignore.ts.
+# Matching is case-insensitive. `!` re-includes a path and forces validation.
+#
+# This list governs HOOK SCOPE only. The install gates answer a different
+# question and keep their own classifier in scripts/lib/install-source-scope.ts;
+# widening one is not evidence for widening the other.
+
+# Prose and durable records ABOUT the system rather than inputs to it. No build
+# step reads them, no package packs them, and no installed command changes when
+# they do. `architecture/` holds the invariant and risk records plus their
+# generated INVARIANTS.md and index.jsonl projections; those are graded by the
+# unconditional `architecture-records` hook command, not by the code suites.
+docs/
+architecture/
+
+# Prose wherever it sits, including beside the code it describes. No tracked
+# file with one of these extensions is loaded at runtime or packed into a
+# published package; if that ever changes, the file stops being documentation
+# and this list stops covering it.
+*.md
+*.markdown
+*.html
+*.htm
+*.txt
