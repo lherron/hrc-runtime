@@ -1,22 +1,23 @@
 # Host participant lifecycle — HRC architecture contract
 
-**Revision 5 — PROPOSED, pending Daedalus review.** Not approved, not
-implementable, and not an acceptance record. Rev 4 incorporates Clod’s rev 3 response to
-Daedalus REJECT
-EN-12273 (F1–F4) on rev 2 at `145b58f6`. A per-flaw resolution map is §16.
-Revision 5 names the managed launch correlation field `launchId`, per Lance,
-and resolves EN-12282’s disposition semantics and transaction-law findings.
+**Revision 5 — APPROVED by Daedalus, EN-12285 (2026-09-15).** The reviewed
+semantic revision is `0c1fecaaebfc231f9335057504f193e58d3c6d65`; the active law and
+projections were amended in `84bc239d`. This is design approval, not runtime or
+implementation acceptance. Implementation dispatch remains task-scoped.
+
+Revision 5 resolves EN-12273 and EN-12282; the per-flaw maps are in §16.
+The managed launch correlation field is `launchId`, per Lance.
 
 | Field | Value |
 | --- | --- |
 | Contract id | `hrc-runtime.host-participant-lifecycle` |
-| Status | proposed (rev 5); rev 2 `145b58f6` REJECTED by EN-12273 |
+| Status | approved (rev 5), EN-12285; supersedes rejected design revisions 2 and 4 |
 | Owner / editor | Astra (`astra@hrc-runtime:primary`), taking over from Clod’s rev 3 at `16388d3e` under Lance’s instruction |
 | HRC source baseline | `e5ef5781` for §2's absence findings; re-checked against `5f1a302d` and `efa84b4b`, which are **landed progress, not accepted closure** (§2.3) |
 | Arris proposal baseline | `9f5e700cc46cbc9c87bf8bb78ce3acd967f82030` (`architecture/proposals/arris-hrc-federation.md`) |
 | Author readback consumed | `EN-12217` in `R-00093` |
 | Foundation closure coordinated with | `var/wrkq-artifacts/T-08349/CLOSURE-2026-09-15.md` rev 1 (same baseline) |
-| Amends, on approval only | `architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml` — the amendment in §11 must be made explicit in `architecture/records` and its projections **before build**, per EN-12273. No record is edited by this revision. |
+| Amended by approval | `architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml` — §11 made explicit in the active record and projections at `84bc239d`, per EN-12285. |
 | Leaves unchanged | `hrc-runtime.mobile-exact-scope-provisioning` — §4.2 reuses its registry-authoritative, receiver-validated boundary rather than amending it |
 | Leaves unchanged | legacy EPR (`POST /v1/registrations`), every existing `address: permanent-keyed` / `continuity: key-scoped` participant class |
 
@@ -1887,8 +1888,8 @@ these are assignments, not results.
 
 ## 15. Limitations of this revision
 
-1. **Not approved.** Rev 5 is proposed pending Daedalus; rev 2 was rejected. Nothing here authorizes
-   implementation.
+1. **Design approved, implementation unaccepted.** EN-12285 approves revision 5.
+   Each implementation task still requires explicit dispatch and its own proof.
 2. **No runtime acceptance is claimed.** Every statement about current behavior
    is source reading at `e5ef5781`, re-checked against `5f1a302d`, not execution. Section 13 assigns proofs; it
    does not report them.
@@ -1927,12 +1928,10 @@ these are assignments, not results.
 | **§12 correction** | stale "adds one work kind only" row with pre-`5f1a302d` citations | Row rewritten to the landed columns and the no-new-kind/table/scheduler/retry rule. §5.4 now states that single design and no longer names any work kind at all, so the two designs can no longer both be read from the document. | §12; §5.4 |
 | **Foundation status** | rev 2 read as if `5f1a302d` settled things | `5f1a302d` and `efa84b4b` labelled landed progress, not accepted closure; `efa84b4b` identified as the C-22726 source/regression repair (C-22730), independently graded; the dependency of §3.6.5.1/§10.1 on that surface stated. | §2.3 foundation note; header baseline row |
 
-**Not changed by this revision**, per the ruling: no architecture record is
-edited, no projection regenerated, no invariant amended — §11 remains a proposal
-to be made explicit in `architecture/records` only after approval and before
-build. `hrc-runtime.participant-session-lifecycle` and
-`hrc-runtime.mobile-exact-scope-provisioning` remain active as written, and this
-contract remains non-normative.
+**Approval disposition:** EN-12285 approved revision 5 and made §11 explicit
+in the active participant-session-lifecycle record and projections at `84bc239d`.
+The mobile-exact-scope-provisioning record is unchanged. Implementation proof
+and task release remain separate from this architecture approval.
 
 ### 16.1 Astra ownership readback (revision 4)
 
