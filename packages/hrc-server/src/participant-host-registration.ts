@@ -60,6 +60,15 @@ export type DirectJoinIdentity = {
   attemptId: string
   invocationId: string
   attachEpoch: number
+  /**
+   * Returned because the participant cannot compose a valid profile without
+   * them. The published `validateParticipantAdapterPreparation` requires the
+   * profile's observability correlation to carry HRC's requestId and
+   * operationId, and a real external participant has no other way to learn
+   * them -- a live Arris join failed on exactly this before they were here.
+   */
+  requestId: string
+  operationId: string
 }
 
 export type DirectJoinContinuation = {
@@ -164,6 +173,8 @@ function identityOf(
     attemptId: attempt.attemptId,
     invocationId: attempt.invocationId,
     attachEpoch: attempt.attachEpoch,
+    requestId: attempt.requestId,
+    operationId: attempt.operationId,
   }
 }
 

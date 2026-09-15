@@ -75,6 +75,8 @@ export type RegisterParticipantResponse =
             attemptId: string
             invocationId: string
             attachEpoch: number
+            requestId: string
+            operationId: string
           }
         | undefined
       /** R7.3's explicit handoff. Never a claim that native state was restored. */
@@ -156,6 +158,8 @@ function registeredResponse(
       attemptId: attempt.attemptId,
       invocationId: attempt.invocationId,
       attachEpoch: attempt.attachEpoch,
+      requestId: attempt.requestId,
+      operationId: attempt.operationId,
     },
   }
 }
@@ -419,6 +423,8 @@ async function handleDirectRegistration(
       attemptId: identity.attemptId,
       invocationId: identity.invocationId,
       attachEpoch: identity.attachEpoch,
+      requestId: identity.requestId,
+      operationId: identity.operationId,
     },
     continuation,
   } satisfies RegisterParticipantResponse)

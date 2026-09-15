@@ -28,6 +28,8 @@ type Identity = {
   attemptId: string
   invocationId: string
   attachEpoch: number
+  requestId: string
+  operationId: string
 }
 
 async function observe(response: Response): Promise<Observed> {
@@ -58,6 +60,9 @@ describe('T-08516 participant attachment', () => {
     await fixture.cleanup()
   })
 
+  /** The host session id HRC returned for the current join. */
+  let hostSessionId = ''
+
   async function join(hostIncarnationId = 'incarnation-alpha'): Promise<Identity> {
     const registered = await observe(
       await fixture.postJson('/v1/participants/register', {
@@ -67,20 +72,36 @@ describe('T-08516 participant attachment', () => {
       })
     )
     expect(registered.body['status']).toBe('registered')
-    return registered.body['identity'] as Identity
+    hostSessionId = registered.body['hostSessionId'] as string
+    const identity = registered.body['identity'] as Identity
+    // R6.4's response must carry everything the profile is validated against;
+    // without these a participant cannot compose a valid attachment at all.
+    for (const field of ['requestId', 'operationId'] as const) {
+      expect(identity[field]).toBeString()
+      expect(identity[field].length).toBeGreaterThan(0)
+    }
+    return identity
   }
 
-  /** A profile the published adapter composed against HRC's own allocation. */
+  /**
+   * A profile the published adapter composed from what HRC ACTUALLY RETURNED.
+   *
+   * Every identity below comes from the register response, never from a store
+   * read. That distinction is the test: a real external participant has only
+   * the response, and an earlier version of this helper sourced requestId and
+   * operationId from the database, which let it compose a profile no real
+   * participant could. A live Arris join is what exposed that, and reading
+   * them here keeps the same gap from reopening.
+   */
   async function composeProfile(
     identity: Identity,
-    hostSessionId = 1
+    generation = 1
   ): Promise<BrokerExecutionProfile> {
     const adapter = createControlledParticipantAdapter({
       adapterId: 't08516-attach-adapter',
       workspaceCwd: fixture.tmpDir,
       driver: 'noop-driver',
     })
-    const registration = readRegistration(identity.registrationId)
     const prepared = await adapter.prepare({
       classId: 't08516-attach-class',
       join: 'participant-served',
@@ -90,10 +111,10 @@ describe('T-08516 participant attachment', () => {
       workspaceCwd: fixture.tmpDir,
       preparation: null,
       identity: {
-        requestId: registration.request_id,
-        operationId: registration.operation_id,
-        hostSessionId: registration.host_session_id,
-        generation: hostSessionId,
+        requestId: identity.requestId,
+        operationId: identity.operationId,
+        hostSessionId: hostSessionId,
+        generation,
         runtimeId: identity.runtimeId,
         invocationId: identity.invocationId as never,
       },
@@ -112,22 +133,6 @@ describe('T-08516 participant attachment', () => {
     } finally {
       db.close()
     }
-  }
-
-  /** The attempt joined to its registration, as one flat row for assertions. */
-  function readRegistration(registrationId: string): Record<string, string> {
-    return withStore(
-      (db) =>
-        db.sqlite
-          .query<
-            Record<string, string>,
-            [string]
-          >(`SELECT r.host_session_id, r.generation, a.request_id, a.operation_id
-             FROM participant_registrations r
-             JOIN participant_registration_attempts a ON a.registration_id = r.registration_id
-             WHERE r.registration_id = ?`)
-          .get(registrationId) as Record<string, string>
-    )
   }
 
   function readAttempt(attemptId: string): Record<string, unknown> {
