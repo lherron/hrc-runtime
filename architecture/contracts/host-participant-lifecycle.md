@@ -1,14 +1,15 @@
 # Host participant lifecycle — HRC architecture contract
 
-**Revision 3 — PROPOSED, pending Daedalus review.** Not approved, not
-implementable, and not an acceptance record. Rev 3 answers Daedalus REJECT
+**Revision 4 — PROPOSED, pending Daedalus review.** Not approved, not
+implementable, and not an acceptance record. Rev 4 incorporates Clod’s rev 3 response to
+Daedalus REJECT
 EN-12273 (F1–F4) on rev 2 at `145b58f6`. A per-flaw resolution map is §16.
 
 | Field | Value |
 | --- | --- |
 | Contract id | `hrc-runtime.host-participant-lifecycle` |
-| Status | proposed (rev 3); rev 2 `145b58f6` REJECTED by EN-12273 |
-| Author | Clod, under T-08501, for `astra@hrc-runtime:primary` |
+| Status | proposed (rev 4); rev 2 `145b58f6` REJECTED by EN-12273 |
+| Owner / editor | Astra (`astra@hrc-runtime:primary`), taking over from Clod’s rev 3 at `16388d3e` under Lance’s instruction |
 | HRC source baseline | `e5ef5781` for §2's absence findings; re-checked against `5f1a302d` and `efa84b4b`, which are **landed progress, not accepted closure** (§2.3) |
 | Arris proposal baseline | `9f5e700cc46cbc9c87bf8bb78ce3acd967f82030` (`architecture/proposals/arris-hrc-federation.md`) |
 | Author readback consumed | `EN-12217` in `R-00093` |
@@ -640,7 +641,7 @@ retirementRefused   = writePath === 'writable' && liveness === 'live'
 // anything else HOLDS.
 
 // (2) the prior attempt's DURABLE STATE, read fresh, never assumed:
-priorAbsorbing      = prior.state ∈ { 'TERMINAL', 'ABANDONED' }
+priorAbsorbing      = prior.state ∈ { 'TERMINAL', 'ABANDONED', 'SUPERSEDED' }
                       && prior.dispositionReason is non-empty
 
 // (3) recovery, on the declared object discriminants:
@@ -667,15 +668,14 @@ actually having been committed; recovery is a third fact neither implies. Phase 
 re-reads all three from the store, so a receipt obtained but never acted on, or a
 disposition committed but a recovery never resolved, both hold rather than admit.
 
-**`SUPERSEDED` is not used by this contract.** It has no inbound edge in the
-source transition graph (`participant-registration-repository.ts:26-41` — it
-appears only as a type member and with an empty outbound list), and this contract
-neither writes it nor proposes an inbound edge for it. The absorbing states this
-contract uses are `TERMINAL` and `ABANDONED`, both of which are already reachable
-from every non-absorbing state and both of which already require a
-`dispositionReason` (`allowsParticipantAttemptTransition`). **No new transition
-law is proposed.** If the T-08349 closure later wants a `SUPERSEDED` inbound
-edge for its own purposes, that is its ruling to seek; nothing here depends on it.
+**Existing absorbing dispositions are preserved.** This policy does not write
+`SUPERSEDED` or propose an inbound edge for it. If an existing prior is already
+`TERMINAL`, `ABANDONED` or `SUPERSEDED`, preserve its state and reason verbatim;
+obtain current matching writer evidence and record recovery separately. Do not
+require that an earlier legitimate terminal reason match a newly invented
+replacement reason. An already-absorbing prior skips A1 and goes to B only after
+evidence is recorded. Reachable non-absorbing states and the existing edges this
+policy uses are listed in §5.3.1; no absorbing outbound edge is permitted.
 
 #### 3.6.5.1 The recovery trace — all three exits
 
@@ -1053,11 +1053,11 @@ out of an absorbing state, and no new inbound edge is proposed.
 
 | Phase | Actor | Precondition | Effect | Transaction |
 | --- | --- | --- | --- | --- |
-| **A0 — evidence** | HRC asks the prior writer's owner | prior attempt is in a **non-absorbing** state: `INVOCATION_READY`, `ATTACH_CONFIRMED`, `ACTIVE` or `DETACHED` | `retireWriter` / `inspectWriter` returns `WriterEvidence` for the matching subject | none — a call, nothing written |
-| **A1 — disposition** | HRC | A0 returned `retirementSatisfied` (§3.6.4) **and** the prior attempt is still in the same non-absorbing state | prior attempt → **`TERMINAL`** with a `dispositionReason` naming the subject and the satisfying axis; prior binding `BOUND`/`DETACHED` → `RETIRING` with `retirement_receipt_json` = the evidence verbatim | **TX-D**, its own transaction |
-| **A1′ — abandonment** | HRC | A0 satisfied **and** the prior attempt never activated (`INVOCATION_READY` / `ATTACH_CONFIRMED`, `initialActivationConfirmedAt` absent) | prior attempt → **`ABANDONED`** with a `dispositionReason` | **TX-D** |
+| **A0 — evidence** | HRC asks the prior writer’s owner | durable replacement intent (§5.4.1) matches the current predecessor; prior may already be absorbing | `retireWriter` / `inspectWriter` returns matching `WriterEvidence`, persisted on that intent; an already-absorbing prior skips A1 and retains its state/reason | evidence call outside transaction; receipt stored under identity/epoch fence |
+| **A1 — disposition** | HRC | A0 returned `retirementSatisfied` (§3.6.4) **and** the prior attempt is still in the same non-absorbing state | prior attempt → **`TERMINAL`** with a `dispositionReason` naming the subject and the satisfying axis; for **H2 only**, prior binding `BOUND`/`DETACHED` → `RETIRING` with `retirement_receipt_json` = the evidence verbatim; H1 leaves host binding state unchanged | **TX-D**, its own transaction |
+| **A1′ — abandonment** | HRC | A0 satisfied **and** the prior attempt never activated (`INVOCATION_READY` / `ATTACH_CONFIRMED`, `initialActivationConfirmedAt` absent) | prior attempt → **`ABANDONED`** with a `dispositionReason`; H2 binding/receipt bookkeeping as in A1, H1 binding unchanged | **TX-D** |
 | **B — gate** | HRC | — | re-reads the three independent conditions of §3.6.5 from the store | read-only |
-| **C — allocation** | HRC | B admitted | H2: TX-6 (§5.4). H1: the same shape without a session successor (§6.1.1) | **TX-6 / TX-6′** |
+| **C — allocation** | HRC | B admitted; re-read the same gate and predecessor/receipt/epoch fences inside the allocation transaction | H2: TX-6 (§5.4). H1: the same shape without a session successor (§6.1.1) | **TX-6 / TX-6′** |
 | **D — replay** | HRC | C committed **and** activation committed | staged replay released | existing activation path |
 
 **Edges used, all pre-existing** (`participant-registration-repository.ts:26-41`,
@@ -1070,7 +1070,7 @@ guard `allowsParticipantAttemptTransition`):
 | `ACTIVE` | `TERMINAL`, `ABANDONED` | yes |
 | `DETACHED` | `TERMINAL`, `ABANDONED` | yes |
 
-Every non-absorbing state an established participant can occupy already has both
+The four non-absorbing states listed above already have both
 edges, and both already demand a `dispositionReason`. **No absorbing outbound
 edge is used, proposed or implied**, and `SUPERSEDED` is not written (§3.6.5).
 
@@ -1083,7 +1083,7 @@ edge is used, proposed or implied**, and `SUPERSEDED` is not written (§3.6.5).
 | `bridge_write_path_retired` | A1 | bridge | `writePath: 'retired'` |
 | `bridge_writer_dead` | A1 | bridge | `liveness: 'dead'` |
 | `establishment_abandoned_before_activation` | A1′ | either | either |
-| `operator_retirement` | A1 | either | explicit operator action, attributed |
+| `operator_retirement` | A1 | either | explicit attributed action **plus matching retired/dead evidence**; operator request alone does not bypass A0 or authorize killing an external host |
 
 Each reason carries the evidence's `observedAt` and its `writerRef`, so the
 disposition records which evidence authorized it. That is what lets a retry tell
@@ -1095,10 +1095,10 @@ deliberately separate transactions, so the window is real and is specified:
 | Crash point | Durable state afterwards | Recovery behavior |
 | --- | --- | --- |
 | before TX-D commits | prior non-absorbing; binding `BOUND`/`DETACHED`; reservation **held** | the work chain re-drives from A0. Re-asking is safe: `retireWriter` is idempotent and a second `retired` is the same fact |
-| TX-D committed, before B | prior **absorbing** with reason; binding `RETIRING` with receipt; **no successor**; reservation **held** | the work chain re-drives from **B, not A1**. A re-run MUST NOT re-attempt the transition — it would fail the from-state check and must not be read as an error. The rule: *a prior already absorbing whose `dispositionReason` names this subject and cites a receipt is phase A complete.* |
+| TX-D committed, before B | prior **absorbing** with reason and intent receipt; H2 binding `RETIRING`, H1 binding unchanged; **no successor**; reservation **held** | the work chain re-drives from **B, not A1**. A re-run MUST NOT re-attempt the transition — it would fail the from-state check and must not be read as an error. The prior disposition stays unchanged; fresh matching evidence is stored on the replacement intent, separately from that original reason. |
 | B held (any of the three conditions) | unchanged from the row above | re-drives at B on the next work-chain attempt; the registration response names which condition held |
 | TX-6/TX-6′ partially applied | impossible — one transaction | — |
-| after C, before activation | successor binding `BINDING`; replay **staged, unreleased** | existing activation path; §10.1's release gate still applies |
+| after C, before activation | H2 successor binding `BINDING`, H1 existing binding unchanged; successor attempt replay **staged, unreleased** | existing activation path; §10.1's release gate still applies |
 
 At no point in any row is the reservation released, and at no point is the
 address observably free (§4.3.4, §5.4 TX-6).
@@ -1148,7 +1148,7 @@ Named atomic units. TX-2 … TX-5 exist today and are unchanged.
 | TX-4 | persist realized hosting, then frozen dispatch | unchanged |
 | TX-5 | install acknowledgement, then activation CAS + runtime state + `runtime.ensured` | unchanged; §10.1 adds a precondition |
 | **TX-D disposition** | phase A1/A1′ (§5.3.1): prior attempt → `TERMINAL` or `ABANDONED` with its `dispositionReason`, using a pre-existing edge out of a non-absorbing state; for H2 the prior binding `BOUND`/`DETACHED` → `RETIRING` with `retirement_receipt_json` | **its own transaction**, before the gate. It writes no successor and allocates no identity. |
-| **TX-6 succession (H2)** | **all of**: predecessor runtime → terminal `host_replaced`; predecessor binding `RETIRING`→`RETIRED` with `disposition_reason`; **reservation transferred** — the same `reservation_id` row stays `held` throughout and the successor binding takes the partial-unique slot the predecessor vacates in the same statement sequence; successor session via `createSessionSuccessorFromContinuation` (generation + 1); continuation carried iff §9 eligible; successor binding → `BINDING` with a fresh `runtime_id`; successor attempt identity; the successor attempt created with `establishment_work_state: 'pending'` | **one SQLite transaction**, inside the same `roster:<agent>:<project>` mutex. It does **not** transition the prior attempt — TX-D already did, and the prior is absorbing by then. Partial application is forbidden and the address is never observably free. |
+| **TX-6 succession (H2)** | **all of**: predecessor runtime → terminal `host_replaced`; predecessor binding `RETIRING`→`RETIRED` with `disposition_reason` (an already `RETIRED` binding is preserved without transition); **reservation transferred** — the same `reservation_id` row stays `held` throughout and the successor binding takes the partial-unique slot the predecessor vacates in the same statement sequence; successor session via `createSessionSuccessorFromContinuation` (generation + 1); continuation carried iff §9 eligible; successor binding → `BINDING` with a fresh `runtime_id`; successor attempt identity; the successor attempt created with `establishment_work_state: 'pending'` | **one SQLite transaction**, inside the same `roster:<agent>:<project>` mutex. It does **not** transition the prior attempt — TX-D already did, and the prior is absorbing by then. Partial application is forbidden and the address is never observably free. |
 | **TX-6′ bridge replacement (H1)** | new attempt for the same binding: `attachEpoch + 1`, new `invocationId`/`operationId`, **same `runtime_id`**, same session, same generation, `establishment_work_state: 'pending'`; binding stays `BOUND` | **one SQLite transaction**, same mutex. No session successor, no generation change, no reservation movement, no prior-attempt transition. |
 
 **Durable work chain — the one that landed.** At `5f1a302d` the closure's item 3
@@ -1160,11 +1160,54 @@ landed as durable columns on the attempt row rather than a separate outbox table
 `idx_participant_attempts_establishment_work`, with
 `recoverParticipantEstablishmentWork(server)` invoked at daemon startup
 (migration `0066_participant_recovery_and_work`; `index.ts`). **TX-6 and TX-6′
-both enqueue by creating the new attempt with `establishment_work_state:
-'pending'` on that same chain.** That is the whole mechanism: **no new work kind,
+both transfer work to the new attempt with `establishment_work_state:
+'pending'` on that same chain.** Before allocation, §5.4.1 makes the accepted
+replacement request durable on the predecessor. There is **no new work kind,
 no second table, no second scheduler and no second retry policy.** This is the
 only design this contract states for durable work. Exhaustion exhausts the work only; it never abandons the binding, never
 releases the reservation and never authorizes a forced retirement.
+
+#### 5.4.1 Durable work before successor allocation
+
+The existing attempt columns alone do not remember a candidate replacement.
+T-08504 adds nullable `replacement_intent_json` to the **existing attempt row**;
+no separate outbox/table or scheduler. It stores a validated, immutable request:
+operation identity, H1/H2, old writer identity/epoch, expected binding, candidate
+host identity (H2), admission/preparation snapshot and endpoint, matching writer
+receipt, and allocated successor attempt id when available. It excludes
+`processToken`, which remains ephemeral admission input. Receipt updates must
+match that immutable identity. A conflict cannot overwrite an outstanding intent.
+
+Before A0 can have a retirement effect or the endpoint acknowledges an accepted
+pending replacement, a transaction stores the intent and re-arms the predecessor's
+existing work columns to `pending`. Identical retries converge without resetting
+retry counts; conflicting candidates return the existing precondition/conflict
+outcome. Missing/expired admission facts hold for renewed admission; boot recovery
+must not invent them. This is new T-08504 consumer logic, not a claim about the
+already-landed scheduler.
+
+The existing scheduler checks for an outstanding replacement intent **before**
+its ACTIVE-client shortcut or ordinary attach path. It re-drives A0/B/C under the
+same attempt/epoch fences; an absorbing predecessor is never reattached. Work
+metadata and recovery evidence may advance without changing its absorbing
+lifecycle state. TX-D preserves the pending work, so a crash after disposition
+still leaves startup-discoverable work. H1 stores its receipt here because the
+host binding itself stays unchanged. For an already-absorbing H2 prior, persist
+the receipt and mark its still-current BOUND/DETACHED host binding RETIRING without rewriting
+the attempt; an already RETIRED binding remains retired.
+
+TX-6/TX-6′ atomically records the successor id on the old intent, completes its
+work, and creates the successor's pending establishment work. Replays return that
+recorded result. No gap exists where both sides lack outstanding durable work.
+Failures use the existing bounded retry/exhaustion policy; exhaustion leaves the
+reservation and absorbing disposition untouched. A renewed authorized request
+may explicitly re-arm exhausted work with a recorded reason; duplicate retries
+alone cannot reset the budget.
+
+Required crash checks: after intent commit before A0; after retirement effect
+before receipt persistence; after TX-D before B; and after successor commit
+before response. All restart without another registration and converge or remain
+truthfully held, with no old-writer reattach, lost candidate, or second successor.
 
 **Idempotency.** A duplicate succession request naming the same
 `expectedPredecessor` and the same `hostIncarnationId` returns the committed
@@ -1824,7 +1867,7 @@ these are assignments, not results.
 
 ## 15. Limitations of this revision
 
-1. **Not approved.** Rev 3 is proposed pending Daedalus; rev 2 was rejected. Nothing here authorizes
+1. **Not approved.** Rev 4 is proposed pending Daedalus; rev 2 was rejected. Nothing here authorizes
    implementation.
 2. **No runtime acceptance is claimed.** Every statement about current behavior
    is source reading at `e5ef5781`, re-checked against `5f1a302d`, not execution. Section 13 assigns proofs; it
@@ -1857,7 +1900,7 @@ these are assignments, not results.
 
 | Flaw | Where it was | Resolution | Where it now is |
 | --- | --- | --- | --- |
-| **F1** — the successor transition cannot legally execute: the gate demanded an already-absorbing prior and TX-6 then transitioned that same prior to `SUPERSEDED`, which has no inbound edge and no outbound edges; H1 had no disposition path at all | rev 2 §3.6.5:599-606 and §5.4 TX-6:892 | An ordered path with the disposition **first**, out of a non-absorbing state, on **pre-existing** edges: A0 evidence → A1 `ACTIVE`/`DETACHED`/`ATTACH_CONFIRMED`/`INVOCATION_READY` → `TERMINAL` (or A1′ → `ABANDONED`) with a required reason, in its own **TX-D**; then the gate re-reads three independent conditions; then TX-6 (H2) or TX-6′ (H1). **`SUPERSEDED` is withdrawn entirely** — not written, and no inbound edge proposed. No absorbing state is ever transitioned out of. H1 gets the identical path with `subject: 'bridge'`. Crash/retry between A1 and C, reservation retention, and the executable S6/S4 walks are specified. | §5.3.1 (path, edge table, reason vocabulary, crash table, both walks); §3.6.5 (gate, independence, `SUPERSEDED` withdrawal); §5.4 TX-D / TX-6 / TX-6′; §6.1.1; §5.2.3 |
+| **F1** — the successor transition cannot legally execute: the gate demanded an already-absorbing prior and TX-6 then transitioned that same prior to `SUPERSEDED`, which has no inbound edge and no outbound edges; H1 had no disposition path at all | rev 2 §3.6.5:599-606 and §5.4 TX-6:892 | An ordered path with the disposition **first**, out of a non-absorbing state, on **pre-existing** edges: A0 evidence → A1 `ACTIVE`/`DETACHED`/`ATTACH_CONFIRMED`/`INVOCATION_READY` → `TERMINAL` (or A1′ → `ABANDONED`) with a required reason, in its own **TX-D**; then the gate re-reads three independent conditions; then TX-6 (H2) or TX-6′ (H1). **`SUPERSEDED` is not written**, and no inbound edge proposed; an existing absorbing prior remains eligible without rewriting its state/reason. No absorbing state is ever transitioned out of. H1 gets the identical path with `subject: 'bridge'`. Crash/retry between A1 and C, reservation retention, and the executable S6/S4 walks are specified. | §5.3.1 (path, edge table, reason vocabulary, crash table, both walks); §3.6.5 (gate, independence, existing absorbing states preserved); §5.4 TX-D / TX-6 / TX-6′; §6.1.1; §5.2.3 |
 | **F2** — `priorRecovery` declared as an object but compared as a scalar, making the `reconciled` exit unreachable | rev 2 §3.6.3:470-477 vs §3.6.5:602 | Compares `evidence.priorRecovery.state === 'recovered'`. Both exits traced end to end — producer verdict, durable recording, gate result, replay release — with the `unresolved` hold and the unreachable-by-construction combination named. Producer vocabulary (`recovered`/`outstanding`/`unknown`) and HRC vocabulary (`unresolved`/`reconciled`/`abandoned`) are kept distinct throughout. | §3.6.5 predicate; §3.6.5.1 trace table; §3.5.1 row 20; S6i/S6j/S6k |
 | **F3** — the reservation was never connected to collective authority: `resolveImplicitScopeHome` establishes nothing, so a virgin selected scope could be durably reserved while remaining collectively unbound | rev 2 §4.2, §5.2, R-4.3.1/R-4.3.4 | Establishment moved to **provisioning** and performed registry-first through the existing `withSummonAuthority` → `establishLocalPlacement` path, reused exactly as `scope-claim-core.ts:320` uses it. All four outcomes plus refused/unreachable mapped to response rows. Crash boundary tabulated against `establishment.ts`'s own convergence contract. The one residual interval is named, bounded to a crash inside the summon lock, shown not to be a cross-authority split, and given a refuse-don't-evict rule. No second registry, no invented cross-node transaction, no external host launched. | §4.2.1–§4.2.5; §5.2.1 `home_node_id`; §3.5.1 rows 5/6/7/17; S13–S13f; §11 clause 3 |
 | **F4** — contradictory and missing wire outcomes | rev 2 §3.1:179 vs §3.5:387; missing `participant_prior_disposition_unresolved` and `managed_launch_nonce_unknown` | One exhaustive 22-row vocabulary. The syntax/policy split is explicit: unparseable `requestedSessionRef` → `malformed_request`; parseable-but-disallowed → `rejected / participant_scope_not_selectable`. Both missing reasons are present (rows 19 and 11), as are the establishment outcomes. Every other table and scenario reconciled to it. | §3.5.1; §3.1 `requestedSessionRef` row; S21a |
@@ -1870,3 +1913,11 @@ to be made explicit in `architecture/records` only after approval and before
 build. `hrc-runtime.participant-session-lifecycle` and
 `hrc-runtime.mobile-exact-scope-provisioning` remain active as written, and this
 contract remains non-normative.
+
+### 16.1 Astra ownership readback (revision 4)
+
+Astra owns subsequent edits and direct Daedalus resubmission. Revision 4 also
+makes H1 binding bookkeeping explicit, preserves already-absorbing priors,
+rechecks admission within allocation, and supplies the durable pre-allocation
+request missing from rev 3's crash table (§5.4.1). These are proposed contract
+corrections only; implementation and active architecture records remain unchanged.
