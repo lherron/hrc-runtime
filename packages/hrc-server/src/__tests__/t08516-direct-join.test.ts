@@ -345,6 +345,78 @@ describe('T-08516 direct protocol join', () => {
     expect(stored.bindings).toHaveLength(0)
   })
 
+  test('the redirected request succeeds at the home it named', async () => {
+    // A 409 is half a route. R7.4 also requires the participant to retry THE
+    // SAME address and incarnation at the home it was given, ending with
+    // exactly one durable owner there -- so this drives both legs against two
+    // separate servers with separate stores.
+    await start()
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      db.sqlite
+        .query(
+          `INSERT INTO participant_address_reservations (
+             reservation_id, class_id, scope_ref, lane_ref, home_node_id, state,
+             created_at, updated_at)
+           VALUES ('resv-elsewhere', NULL, ?, 'main', 'some-other-node', 'held', ?, ?)`
+        )
+        .run(OTHER_SCOPE, now, now)
+    } finally {
+      db.close()
+    }
+
+    const redirected = await observe(
+      await join({ requestedSessionRef: OTHER_SCOPE, hostIncarnationId: 'incarnation-router' })
+    )
+    expect(redirected.status).toBe(409)
+    const homeNodeId = (redirected.body['observed'] as { homeNodeId: string }).homeNodeId
+    expect(homeNodeId).toBe('some-other-node')
+    expect(readStore().registrations).toHaveLength(0)
+
+    // The home the participant was told to use. The request it sends there is
+    // byte-identical to the one that was redirected.
+    const home = await createHrcTestFixture('t08516-direct-join-home-')
+    let homeServer: HrcServer | undefined
+    try {
+      homeServer = await createHrcServer(
+        home.serverOpts({ otelListenerEnabled: false, registrationClasses: [] })
+      )
+      const request = {
+        registrationMode: 'direct',
+        requestedSessionRef: OTHER_SCOPE,
+        hostIncarnationId: 'incarnation-router',
+      }
+      const accepted = await observe(await home.postJson('/v1/participants/register', request))
+      expect(accepted.status).toBe(200)
+      expect(accepted.body).toMatchObject({ status: 'registered', created: true })
+
+      // A lost response converges at that home instead of minting a second owner.
+      const retried = await observe(await home.postJson('/v1/participants/register', request))
+      expect(retried.body['created']).toBe(false)
+      expect(retried.body['identity']).toEqual(accepted.body['identity'])
+
+      const homeDb = openHrcDatabase(home.dbPath, { migrate: false })
+      try {
+        expect(
+          homeDb.sqlite
+            .query<{ n: number }, [string]>(
+              'SELECT COUNT(*) AS n FROM participant_registrations WHERE scope_ref = ?'
+            )
+            .get(OTHER_SCOPE)?.n
+        ).toBe(1)
+      } finally {
+        homeDb.close()
+      }
+    } finally {
+      await homeServer?.stop()
+      await home.cleanup()
+    }
+
+    // And still nothing at the node that routed it.
+    expect(readStore().registrations).toHaveLength(0)
+  })
+
   test('separates an unparseable address from one policy refuses', async () => {
     await start()
 
