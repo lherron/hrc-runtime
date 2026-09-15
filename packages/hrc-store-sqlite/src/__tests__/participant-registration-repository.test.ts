@@ -34,6 +34,9 @@ const attempt = (overrides: Partial<ParticipantAttempt> = {}): ParticipantAttemp
   invocationId: 'inv-participant-1',
   runtimeId: 'rt-participant-1',
   state: 'REGISTERED',
+  recoveryDisposition: 'unresolved',
+  establishmentWorkState: 'pending',
+  establishmentAttemptCount: 0,
   createdAt: '2026-09-09T21:10:00.000Z',
   updatedAt: '2026-09-09T21:10:00.000Z',
   ...overrides,
@@ -45,6 +48,7 @@ describe('T-08349 generic participant persistence boundaries', () => {
     try {
       expect(db.migrations.applied).toContain('0064_participant_registration_lifecycle')
       expect(db.migrations.applied).toContain('0065_participant_broker_identity')
+      expect(db.migrations.applied).toContain('0066_participant_recovery_and_work')
       db.sqlite.transaction(() => {
         db.participantRegistrations.insertRegistration(registration())
         db.participantRegistrations.insertAttempt(attempt())
@@ -194,6 +198,97 @@ describe('T-08349 generic participant persistence boundaries', () => {
           '2026-09-09T21:10:09.000Z'
         )
       ).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  test('persists restart-discoverable retries and exhausts work without abandoning ownership', () => {
+    const db = openHrcDatabase(':memory:')
+    try {
+      db.participantRegistrations.insertRegistration(registration())
+      db.participantRegistrations.insertAttempt(attempt())
+
+      expect(db.participantRegistrations.listEstablishmentWork()).toHaveLength(1)
+      expect(
+        db.participantRegistrations.recordEstablishmentFailure({
+          attemptId: 'patt-1',
+          attachEpoch: 1,
+          failedAt: '2026-09-15T14:00:00.000Z',
+          nextAttemptAt: '2026-09-15T14:00:00.100Z',
+          error: 'transient broker refusal',
+          maxAttempts: 2,
+        })
+      ).toMatchObject({
+        state: 'REGISTERED',
+        establishmentWorkState: 'retry_wait',
+        establishmentAttemptCount: 1,
+        establishmentNextAttemptAt: '2026-09-15T14:00:00.100Z',
+        recoveryDisposition: 'unresolved',
+      })
+      expect(
+        db.participantRegistrations.recordEstablishmentFailure({
+          attemptId: 'patt-1',
+          attachEpoch: 1,
+          failedAt: '2026-09-15T14:00:00.100Z',
+          nextAttemptAt: '2026-09-15T14:00:00.200Z',
+          error: 'still unavailable',
+          maxAttempts: 2,
+        })
+      ).toMatchObject({
+        state: 'REGISTERED',
+        establishmentWorkState: 'exhausted',
+        establishmentAttemptCount: 2,
+        recoveryDisposition: 'unresolved',
+      })
+      expect(db.participantRegistrations.listEstablishmentWork()).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  test('records recovery only for an absorbing attempt and requires a nonempty reason', () => {
+    const db = openHrcDatabase(':memory:')
+    try {
+      db.participantRegistrations.insertRegistration(registration())
+      db.participantRegistrations.insertAttempt(attempt({ state: 'ACTIVE' }))
+      expect(
+        db.participantRegistrations.recordRecoveryDisposition(
+          'patt-1',
+          'reconciled',
+          'validated ledger',
+          '2026-09-15T14:30:00.000Z'
+        )
+      ).toBe(false)
+      expect(
+        db.participantRegistrations.transitionAttempt(
+          'patt-1',
+          ['ACTIVE'],
+          'TERMINAL',
+          '2026-09-15T14:30:01.000Z',
+          'producer-authored-terminal-projected'
+        )
+      ).toBe(true)
+      expect(
+        db.participantRegistrations.recordRecoveryDisposition(
+          'patt-1',
+          'abandoned',
+          '   ',
+          '2026-09-15T14:30:02.000Z'
+        )
+      ).toBe(false)
+      expect(
+        db.participantRegistrations.recordRecoveryDisposition(
+          'patt-1',
+          'abandoned',
+          'validated history unavailable',
+          '2026-09-15T14:30:03.000Z'
+        )
+      ).toBe(true)
+      expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
+        recoveryDisposition: 'abandoned',
+        recoveryReason: 'validated history unavailable',
+      })
     } finally {
       db.close()
     }

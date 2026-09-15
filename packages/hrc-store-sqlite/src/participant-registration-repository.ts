@@ -19,6 +19,9 @@ export type ParticipantAttemptState =
   | 'ABANDONED'
   | 'TERMINAL'
 
+export type ParticipantRecoveryDisposition = 'unresolved' | 'reconciled' | 'abandoned'
+export type ParticipantEstablishmentWorkState = 'pending' | 'retry_wait' | 'exhausted' | 'completed'
+
 /**
  * C.7 is a graph, not a rank. In particular, a detached participant returns
  * through current attach confirmation; it does not mint a new user resume.
@@ -95,6 +98,14 @@ export type ParticipantAttempt = {
   brokerIdentityJson?: string | undefined
   /** Marks the one initial activation whose classification may release replay. */
   initialActivationConfirmedAt?: string | undefined
+  /** Independent C.8 disposition for recovery of this attempt by a successor. */
+  recoveryDisposition: ParticipantRecoveryDisposition
+  recoveryReason?: string | undefined
+  /** Durable, restart-discoverable establishment delivery state. */
+  establishmentWorkState: ParticipantEstablishmentWorkState
+  establishmentAttemptCount: number
+  establishmentNextAttemptAt?: string | undefined
+  establishmentLastError?: string | undefined
   dispositionReason?: string | undefined
   createdAt: string
   updatedAt: string
@@ -134,6 +145,12 @@ type ParticipantAttemptRow = {
   dispatch_json: string | null
   broker_identity_json: string | null
   initial_activation_confirmed_at: string | null
+  recovery_disposition: ParticipantRecoveryDisposition
+  recovery_reason: string | null
+  establishment_work_state: ParticipantEstablishmentWorkState
+  establishment_attempt_count: number
+  establishment_next_attempt_at: string | null
+  establishment_last_error: string | null
   disposition_reason: string | null
   created_at: string
   updated_at: string
@@ -148,6 +165,8 @@ const ATTEMPT_COLUMNS = `
   attempt_id, registration_id, attach_epoch, request_id, operation_id, invocation_id, runtime_id, state,
   prepared_profile_json, adapter_dispatch_env_json, hosting_intent_json,
   realized_hosting_json, dispatch_json, broker_identity_json, initial_activation_confirmed_at,
+  recovery_disposition, recovery_reason, establishment_work_state, establishment_attempt_count,
+  establishment_next_attempt_at, establishment_last_error,
   disposition_reason, created_at, updated_at`
 
 function mapRegistration(row: ParticipantRegistrationRow): ParticipantRegistration {
@@ -197,6 +216,16 @@ function mapAttempt(row: ParticipantAttemptRow): ParticipantAttempt {
     ...(row.initial_activation_confirmed_at === null
       ? {}
       : { initialActivationConfirmedAt: row.initial_activation_confirmed_at }),
+    recoveryDisposition: row.recovery_disposition,
+    ...(row.recovery_reason === null ? {} : { recoveryReason: row.recovery_reason }),
+    establishmentWorkState: row.establishment_work_state,
+    establishmentAttemptCount: row.establishment_attempt_count,
+    ...(row.establishment_next_attempt_at === null
+      ? {}
+      : { establishmentNextAttemptAt: row.establishment_next_attempt_at }),
+    ...(row.establishment_last_error === null
+      ? {}
+      : { establishmentLastError: row.establishment_last_error }),
     ...(row.disposition_reason === null ? {} : { dispositionReason: row.disposition_reason }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -260,6 +289,15 @@ export class ParticipantRegistrationRepository {
     return row === null ? null : mapRegistration(row)
   }
 
+  getRegistrationById(registrationId: string): ParticipantRegistration | null {
+    const row = this.db
+      .query<ParticipantRegistrationRow, [string]>(
+        `SELECT ${REGISTRATION_COLUMNS} FROM participant_registrations WHERE registration_id = ?`
+      )
+      .get(registrationId)
+    return row === null ? null : mapRegistration(row)
+  }
+
   getAttemptByRegistrationId(registrationId: string): ParticipantAttempt | null {
     const row = this.db
       .query<ParticipantAttemptRow, [string]>(
@@ -293,7 +331,7 @@ export class ParticipantRegistrationRepository {
     execute(
       this.db,
       `INSERT INTO participant_registration_attempts (${ATTEMPT_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.attemptId,
       record.registrationId,
       record.attachEpoch,
@@ -309,6 +347,12 @@ export class ParticipantRegistrationRepository {
       record.dispatchJson ?? null,
       record.brokerIdentityJson ?? null,
       record.initialActivationConfirmedAt ?? null,
+      record.recoveryDisposition,
+      record.recoveryReason ?? null,
+      record.establishmentWorkState,
+      record.establishmentAttemptCount,
+      record.establishmentNextAttemptAt ?? null,
+      record.establishmentLastError ?? null,
       record.dispositionReason ?? null,
       record.createdAt,
       record.updatedAt
@@ -323,6 +367,85 @@ export class ParticipantRegistrationRepository {
       )
       .get(attemptId)
     return row === null ? null : mapAttempt(row)
+  }
+
+  listEstablishmentWork(): ParticipantAttempt[] {
+    const rows = this.db
+      .query<ParticipantAttemptRow, []>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
+         WHERE establishment_work_state IN ('pending', 'retry_wait')
+         ORDER BY COALESCE(establishment_next_attempt_at, created_at), attempt_id`
+      )
+      .all()
+    return rows.map(mapAttempt)
+  }
+
+  recordEstablishmentFailure(input: {
+    attemptId: string
+    attachEpoch: number
+    failedAt: string
+    nextAttemptAt: string
+    error: string
+    maxAttempts: number
+  }): ParticipantAttempt | null {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET establishment_attempt_count = establishment_attempt_count + 1,
+                establishment_work_state = CASE
+                  WHEN establishment_attempt_count + 1 >= ? THEN 'exhausted'
+                  ELSE 'retry_wait'
+                END,
+                establishment_next_attempt_at = CASE
+                  WHEN establishment_attempt_count + 1 >= ? THEN NULL
+                  ELSE ?
+                END,
+                establishment_last_error = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ?
+            AND establishment_work_state IN ('pending', 'retry_wait')`
+      )
+      .run(
+        input.maxAttempts,
+        input.maxAttempts,
+        input.nextAttemptAt,
+        input.error,
+        input.failedAt,
+        input.attemptId,
+        input.attachEpoch
+      )
+    return result.changes === 1 ? this.getAttempt(input.attemptId) : null
+  }
+
+  recordRecoveryDisposition(
+    attemptId: string,
+    disposition: Exclude<ParticipantRecoveryDisposition, 'unresolved'>,
+    reason: string,
+    updatedAt: string
+  ): boolean {
+    const normalizedReason = reason.trim()
+    if (normalizedReason.length === 0) return false
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET recovery_disposition = ?, recovery_reason = ?, updated_at = ?
+          WHERE attempt_id = ? AND recovery_disposition = 'unresolved'
+            AND state IN ('SUPERSEDED', 'ABANDONED', 'TERMINAL')`
+      )
+      .run(disposition, normalizedReason, updatedAt, attemptId)
+    return result.changes === 1
+  }
+
+  markEstablishmentCompleted(attemptId: string, attachEpoch: number, updatedAt: string): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET establishment_work_state = 'completed',
+                establishment_next_attempt_at = NULL, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ?
+            AND establishment_work_state IN ('pending', 'retry_wait')`
+      )
+      .run(updatedAt, attemptId, attachEpoch)
+    return result.changes === 1
   }
 
   /**
@@ -379,7 +502,9 @@ export class ParticipantRegistrationRepository {
     const result = this.db
       .query(
         `UPDATE participant_registration_attempts
-            SET state = 'ACTIVE', initial_activation_confirmed_at = ?, updated_at = ?
+            SET state = 'ACTIVE', initial_activation_confirmed_at = ?,
+                establishment_work_state = 'completed', establishment_next_attempt_at = NULL,
+                updated_at = ?
           WHERE attempt_id = ?
             AND state = 'ATTACH_CONFIRMED'
             AND initial_activation_confirmed_at IS NULL`
@@ -396,7 +521,8 @@ export class ParticipantRegistrationRepository {
     const result = this.db
       .query(
         `UPDATE participant_registration_attempts
-            SET state = 'ACTIVE', updated_at = ?
+            SET state = 'ACTIVE', establishment_work_state = 'completed',
+                establishment_next_attempt_at = NULL, updated_at = ?
           WHERE attempt_id = ?
             AND state = 'ATTACH_CONFIRMED'
             AND initial_activation_confirmed_at IS NOT NULL`

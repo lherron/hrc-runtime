@@ -310,8 +310,8 @@ export async function ensureParticipantInvocation(
   return { attempt: persisted, receipt: response.receipt, hello: installed.hello }
 }
 
-function participantLifecycleOwner(registration: ParticipantRegistration): 'external' | undefined {
-  return registration.join === 'participant-served' ? 'external' : undefined
+function participantLifecycleOwner(): 'external' {
+  return 'external'
 }
 
 function participantTransport(realized: ParticipantRealizedHosting): 'headless' | 'tmux' {
@@ -380,7 +380,7 @@ function materializeParticipantBrokerBookkeeping(
       ? dispatch.startRequest.spec.harness.provider
       : ('participant-adapter' as HrcProvider)
   const now = timestamp()
-  const lifecycleOwner = participantLifecycleOwner(registration)
+  const lifecycleOwner = participantLifecycleOwner()
   server.db.sqlite.transaction(() => {
     const existingRuntime = server.db.runtimes.getByRuntimeId(attempt.runtimeId)
     if (existingRuntime !== null) {
@@ -412,7 +412,7 @@ function materializeParticipantBrokerBookkeeping(
           hostSessionId: registration.hostSessionId,
           generation: registration.generation,
           status: 'starting',
-          ...(lifecycleOwner === undefined ? {} : { lifecycleOwner }),
+          lifecycleOwner,
           participantRegistration: {
             registrationId: registration.registrationId,
             attemptId: attempt.attemptId,
@@ -653,7 +653,7 @@ function participantActivationClassification(
   return registration.continuityEvidenceJson === undefined ? 'attached_unknown' : 'attached'
 }
 
-function assertPriorParticipantRecoveryDisposition(
+export function assertPriorParticipantRecoveryDisposition(
   server: HrcServerInstanceForHandlers,
   attempt: ParticipantAttempt
 ): void {
@@ -661,7 +661,10 @@ function assertPriorParticipantRecoveryDisposition(
     attempt.registrationId
   )) {
     if (prior.attachEpoch >= attempt.attachEpoch) continue
-    if (!['ABANDONED', 'SUPERSEDED', 'TERMINAL'].includes(prior.state)) {
+    if (
+      prior.recoveryDisposition !== 'reconciled' &&
+      !(prior.recoveryDisposition === 'abandoned' && prior.recoveryReason?.trim())
+    ) {
       throw new Error('participant prior-invocation recovery disposition is unresolved')
     }
   }
@@ -774,46 +777,139 @@ export async function activateStagedParticipant(
  * every effect re-reads its durable boundary before acting, and a restart can
  * reconnect through the same attempt without reclassifying user continuity.
  */
+const PARTICIPANT_ESTABLISHMENT_MAX_ATTEMPTS = 5
+const PARTICIPANT_ESTABLISHMENT_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const
+
+function participantRetryDelayMs(attemptCount: number): number {
+  return (
+    PARTICIPANT_ESTABLISHMENT_RETRY_DELAYS_MS[
+      Math.min(attemptCount, PARTICIPANT_ESTABLISHMENT_RETRY_DELAYS_MS.length - 1)
+    ] ?? 1_000
+  )
+}
+
+async function runParticipantEstablishment(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): Promise<void> {
+  const current = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  if (
+    current === null ||
+    current.attachEpoch !== attempt.attachEpoch ||
+    current.establishmentWorkState === 'completed' ||
+    current.establishmentWorkState === 'exhausted'
+  ) {
+    return
+  }
+  const latest = server.db.participantRegistrations.getAttemptByRegistrationId(
+    current.registrationId
+  )
+  if (
+    latest === null ||
+    latest.attemptId !== current.attemptId ||
+    latest.attachEpoch !== current.attachEpoch
+  ) {
+    server.db.participantRegistrations.markEstablishmentCompleted(
+      current.attemptId,
+      current.attachEpoch,
+      timestamp()
+    )
+    return
+  }
+  const controller = server.harnessBrokerController
+  if (
+    current.state === 'ACTIVE' &&
+    controller?.activeClientInvocationId(current.runtimeId) === current.invocationId
+  ) {
+    server.db.participantRegistrations.markEstablishmentCompleted(
+      current.attemptId,
+      current.attachEpoch,
+      timestamp()
+    )
+    return
+  }
+  const staged =
+    current.state === 'ACTIVE' ||
+    current.state === 'DETACHED' ||
+    current.state === 'ATTACH_CONFIRMED'
+      ? await stageExistingParticipantAttachment(server, registration, current)
+      : await ensureAndStageParticipantAttach(server, registration, current)
+  if (staged.state === 'ACTIVE') {
+    server.db.participantRegistrations.markEstablishmentCompleted(
+      staged.attemptId,
+      staged.attachEpoch,
+      timestamp()
+    )
+    return
+  }
+  await activateStagedParticipant(server, registration, staged)
+}
+
 export function scheduleParticipantEstablishment(
   server: HrcServerInstanceForHandlers,
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt
 ): void {
-  if (server.stopping || server.participantEstablishmentOperations.has(attempt.attemptId)) return
-  const operation = new Promise<void>((resolve) => setTimeout(resolve, 0))
+  if (
+    server.stopping ||
+    server.participantEstablishmentOperations.has(attempt.attemptId) ||
+    attempt.establishmentWorkState === 'completed' ||
+    attempt.establishmentWorkState === 'exhausted'
+  ) {
+    return
+  }
+  const dueAt = attempt.establishmentNextAttemptAt
+    ? Date.parse(attempt.establishmentNextAttemptAt)
+    : Date.now()
+  const delayMs = Number.isFinite(dueAt) ? Math.max(0, dueAt - Date.now()) : 0
+  let retry: ParticipantAttempt | null = null
+  const operation = new Promise<void>((resolve) => setTimeout(resolve, delayMs))
     .then(async () => {
       if (server.stopping) return
-      const current = server.db.participantRegistrations.getAttempt(attempt.attemptId) ?? attempt
-      const controller = server.harnessBrokerController
-      if (
-        current.state === 'ACTIVE' &&
-        controller?.activeClientInvocationId(current.runtimeId) === current.invocationId
-      ) {
-        return
-      }
-      const staged =
-        current.state === 'ACTIVE' ||
-        current.state === 'DETACHED' ||
-        current.state === 'ATTACH_CONFIRMED'
-          ? await stageExistingParticipantAttachment(server, registration, current)
-          : await ensureAndStageParticipantAttach(server, registration, current)
-      // A same-process active binding has no staged candidate to release. A
-      // restart or candidate loss reaches ATTACH_CONFIRMED above and stages a
-      // fresh attachment before activation, so it cannot take this no-op path.
-      if (staged.state === 'ACTIVE') return
-      await activateStagedParticipant(server, registration, staged)
+      await runParticipantEstablishment(server, registration, attempt)
     })
     .catch((error: unknown) => {
+      const failedAt = timestamp()
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      retry = server.db.participantRegistrations.recordEstablishmentFailure({
+        attemptId: attempt.attemptId,
+        attachEpoch: attempt.attachEpoch,
+        failedAt,
+        nextAttemptAt: new Date(
+          Date.parse(failedAt) + participantRetryDelayMs(attempt.establishmentAttemptCount)
+        ).toISOString(),
+        error: errorMessage,
+        maxAttempts: PARTICIPANT_ESTABLISHMENT_MAX_ATTEMPTS,
+      })
       // Failed establishment is deliberately non-terminal and leaves the
-      // immutable attempt for the next scheduled retry/recovery. In particular,
-      // neither an ensure failure nor a dropped candidate is writer-death or
-      // retirement evidence.
+      // immutable attempt for durable retry/recovery. Retry exhaustion exhausts
+      // only this work item; it is never writer-death or retirement evidence.
       writeServerLog('WARN', 'participant.establishment.pending', {
         registrationId: registration.registrationId,
         attemptId: attempt.attemptId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
+        workState: retry?.establishmentWorkState ?? 'stale',
+        attemptCount: retry?.establishmentAttemptCount,
       })
     })
-    .finally(() => server.participantEstablishmentOperations.delete(attempt.attemptId))
+    .finally(() => {
+      server.participantEstablishmentOperations.delete(attempt.attemptId)
+      if (retry?.establishmentWorkState === 'retry_wait' && !server.stopping) {
+        scheduleParticipantEstablishment(server, registration, retry)
+      }
+    })
   server.participantEstablishmentOperations.set(attempt.attemptId, operation)
+}
+
+/** Re-arms every durable participant effect after broker warmup on daemon boot. */
+export function recoverParticipantEstablishmentWork(server: HrcServerInstanceForHandlers): void {
+  for (const attempt of server.db.participantRegistrations.listEstablishmentWork()) {
+    const registration = server.db.participantRegistrations.getRegistrationById(
+      attempt.registrationId
+    )
+    if (registration !== null) {
+      scheduleParticipantEstablishment(server, registration, attempt)
+    }
+  }
 }

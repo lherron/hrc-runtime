@@ -3091,6 +3091,50 @@ const participantBrokerIdentityMigration: HrcMigration = {
   },
 }
 
+/** Durable recovery gate and restart-discoverable participant establishment work. */
+const participantRecoveryAndWorkMigration: HrcMigration = {
+  id: '0066_participant_recovery_and_work',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE participant_registration_attempts
+        ADD COLUMN recovery_disposition TEXT NOT NULL DEFAULT 'unresolved'
+          CHECK (recovery_disposition IN ('unresolved', 'reconciled', 'abandoned'));
+      ALTER TABLE participant_registration_attempts ADD COLUMN recovery_reason TEXT;
+      ALTER TABLE participant_registration_attempts
+        ADD COLUMN establishment_work_state TEXT NOT NULL DEFAULT 'pending'
+          CHECK (establishment_work_state IN ('pending', 'retry_wait', 'exhausted', 'completed'));
+      ALTER TABLE participant_registration_attempts
+        ADD COLUMN establishment_attempt_count INTEGER NOT NULL DEFAULT 0
+          CHECK (establishment_attempt_count >= 0);
+      ALTER TABLE participant_registration_attempts ADD COLUMN establishment_next_attempt_at TEXT;
+      ALTER TABLE participant_registration_attempts ADD COLUMN establishment_last_error TEXT;
+
+      UPDATE participant_registration_attempts
+        SET establishment_work_state = 'completed'
+        WHERE state IN ('ACTIVE', 'SUPERSEDED', 'ABANDONED', 'TERMINAL');
+
+      CREATE INDEX idx_participant_attempts_establishment_work
+        ON participant_registration_attempts(establishment_work_state, establishment_next_attempt_at);
+
+      CREATE TRIGGER participant_recovery_reason_insert
+      BEFORE INSERT ON participant_registration_attempts
+      WHEN NEW.recovery_disposition != 'unresolved'
+        AND length(trim(COALESCE(NEW.recovery_reason, ''))) = 0
+      BEGIN
+        SELECT RAISE(ABORT, 'participant recovery disposition requires a reason');
+      END;
+
+      CREATE TRIGGER participant_recovery_reason_update
+      BEFORE UPDATE OF recovery_disposition, recovery_reason ON participant_registration_attempts
+      WHEN NEW.recovery_disposition != 'unresolved'
+        AND length(trim(COALESCE(NEW.recovery_reason, ''))) = 0
+      BEGIN
+        SELECT RAISE(ABORT, 'participant recovery disposition requires a reason');
+      END;
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3152,4 +3196,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   desktopThreadRegistrationsMigration,
   participantRegistrationLifecycleMigration,
   participantBrokerIdentityMigration,
+  participantRecoveryAndWorkMigration,
 ]

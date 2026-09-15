@@ -14,9 +14,11 @@ import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { HarnessBrokerController } from '../broker/controller.js'
 import {
+  assertPriorParticipantRecoveryDisposition,
   ensureAndStageParticipantAttach,
   ensureParticipantInvocation,
   installAndHelloParticipantBroker,
+  recoverParticipantEstablishmentWork,
   scheduleParticipantEstablishment,
 } from '../participant-establishment.js'
 import { createParticipantHostingIntent } from '../participant-hosting-intent.js'
@@ -135,6 +137,9 @@ function attempt(registrationId: string, runtimeId: string): ParticipantAttempt 
     invocationId: `inv-${runtimeId}`,
     runtimeId,
     state: 'HOSTING_INTENT_PERSISTED',
+    recoveryDisposition: 'unresolved',
+    establishmentWorkState: 'pending',
+    establishmentAttemptCount: 0,
     createdAt: '2026-09-09T22:30:00.000Z',
     updatedAt: '2026-09-09T22:30:00.000Z',
   }
@@ -539,7 +544,10 @@ test('stages a current ensured participant without projection, ACK, or active pu
       activeOperationId: hostedAttempt.operationId,
       activeInvocationId: hostedAttempt.invocationId,
       status: 'starting',
-      runtimeStateJson: { control: { brokerAttached: false } },
+      runtimeStateJson: {
+        lifecycleOwner: 'external',
+        control: { brokerAttached: false },
+      },
     })
     expect(db.runtimeOperations.getByOperationId(hostedAttempt.operationId)).toMatchObject({
       startupMethod: 'broker.ensureInvocation',
@@ -584,6 +592,161 @@ test('stages a current ensured participant without projection, ACK, or active pu
     expect(replayCalls).toBe(1)
   } finally {
     controller.shutdown()
+    db.close()
+  }
+})
+
+test('holds successor replay until prior recovery has an independent durable disposition', () => {
+  const db = openHrcDatabase(':memory:')
+  try {
+    const durableRegistration = registration('hrc-hosted')
+    db.participantRegistrations.insertRegistration(durableRegistration)
+    const prior = {
+      ...attempt(durableRegistration.registrationId, 'rt-prior-recovery'),
+      state: 'TERMINAL' as const,
+      dispositionReason: 'producer-authored-terminal-projected',
+    }
+    const successor = {
+      ...attempt(durableRegistration.registrationId, 'rt-successor-recovery'),
+      attemptId: 'attempt-successor-recovery',
+      attachEpoch: 2,
+      state: 'ATTACH_CONFIRMED' as const,
+    }
+    db.participantRegistrations.insertAttempt(prior)
+    db.participantRegistrations.insertAttempt(successor)
+    const server = { db } as unknown as HrcServerInstanceForHandlers
+
+    expect(() => assertPriorParticipantRecoveryDisposition(server, successor)).toThrow(
+      'participant prior-invocation recovery disposition is unresolved'
+    )
+    expect(
+      db.participantRegistrations.recordRecoveryDisposition(
+        prior.attemptId,
+        'reconciled',
+        'validated immutable prior ledger snapshot',
+        '2026-09-15T14:00:00.000Z'
+      )
+    ).toBe(true)
+    expect(() => assertPriorParticipantRecoveryDisposition(server, successor)).not.toThrow()
+  } finally {
+    db.close()
+  }
+})
+
+test('startup recovery discovers durable work without another participant callback', async () => {
+  const db = openHrcDatabase(':memory:')
+  try {
+    const durableRegistration = registration('hrc-hosted')
+    const activeAttempt = {
+      ...attempt(durableRegistration.registrationId, 'rt-boot-recovery'),
+      state: 'ACTIVE' as const,
+      initialActivationConfirmedAt: '2026-09-15T14:10:00.000Z',
+    }
+    db.participantRegistrations.insertRegistration(durableRegistration)
+    db.participantRegistrations.insertAttempt(activeAttempt)
+    const server = {
+      db,
+      stopping: false,
+      participantEstablishmentOperations: new Map<string, Promise<void>>(),
+      harnessBrokerController: {
+        activeClientInvocationId: () => activeAttempt.invocationId,
+      },
+    } as unknown as HrcServerInstanceForHandlers
+
+    recoverParticipantEstablishmentWork(server)
+    await server.participantEstablishmentOperations.get(activeAttempt.attemptId)
+    expect(db.participantRegistrations.getAttempt(activeAttempt.attemptId)).toMatchObject({
+      state: 'ACTIVE',
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+  } finally {
+    db.close()
+  }
+})
+
+test('startup recovery fences durable work from an older attempt epoch', async () => {
+  const db = openHrcDatabase(':memory:')
+  try {
+    const durableRegistration = registration('hrc-hosted')
+    const stale = {
+      ...attempt(durableRegistration.registrationId, 'rt-stale-work'),
+      state: 'DETACHED' as const,
+    }
+    const current = {
+      ...attempt(durableRegistration.registrationId, 'rt-current-work'),
+      attemptId: 'attempt-current-work',
+      attachEpoch: 2,
+      state: 'ACTIVE' as const,
+      initialActivationConfirmedAt: '2026-09-15T14:15:00.000Z',
+    }
+    db.participantRegistrations.insertRegistration(durableRegistration)
+    db.participantRegistrations.insertAttempt(stale)
+    db.participantRegistrations.insertAttempt(current)
+    const server = {
+      db,
+      stopping: false,
+      participantEstablishmentOperations: new Map<string, Promise<void>>(),
+      harnessBrokerController: { activeClientInvocationId: () => current.invocationId },
+    } as unknown as HrcServerInstanceForHandlers
+
+    recoverParticipantEstablishmentWork(server)
+    await Promise.all([...server.participantEstablishmentOperations.values()])
+    expect(db.participantRegistrations.getAttempt(stale.attemptId)).toMatchObject({
+      state: 'DETACHED',
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(db.participantRegistrations.getAttempt(current.attemptId)).toMatchObject({
+      state: 'ACTIVE',
+      establishmentWorkState: 'completed',
+    })
+  } finally {
+    db.close()
+  }
+})
+
+test('bounded retries become durably inert without abandoning a possibly-live writer', async () => {
+  const db = openHrcDatabase(':memory:')
+  try {
+    const durableRegistration = registration('hrc-hosted')
+    const activeAttempt = {
+      ...attempt(durableRegistration.registrationId, 'rt-retry-exhaustion'),
+      state: 'ACTIVE' as const,
+      initialActivationConfirmedAt: '2026-09-15T14:20:00.000Z',
+    }
+    db.participantRegistrations.insertRegistration(durableRegistration)
+    db.participantRegistrations.insertAttempt(activeAttempt)
+    const server = {
+      db,
+      stopping: false,
+      participantEstablishmentOperations: new Map<string, Promise<void>>(),
+      harnessBrokerController: { activeClientInvocationId: () => undefined },
+    } as unknown as HrcServerInstanceForHandlers
+
+    scheduleParticipantEstablishment(server, durableRegistration, activeAttempt)
+    const deadline = Date.now() + 5_000
+    while (
+      db.participantRegistrations.getAttempt(activeAttempt.attemptId)?.establishmentWorkState !==
+        'exhausted' &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    const exhausted = db.participantRegistrations.getAttempt(activeAttempt.attemptId)
+    expect(exhausted).toMatchObject({
+      state: 'DETACHED',
+      establishmentWorkState: 'exhausted',
+      establishmentAttemptCount: 5,
+      recoveryDisposition: 'unresolved',
+    })
+    const attemptsBefore = exhausted?.establishmentAttemptCount
+    scheduleParticipantEstablishment(server, durableRegistration, exhausted ?? activeAttempt)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(
+      db.participantRegistrations.getAttempt(activeAttempt.attemptId)?.establishmentAttemptCount
+    ).toBe(attemptsBefore)
+  } finally {
     db.close()
   }
 })

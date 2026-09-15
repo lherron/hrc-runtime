@@ -300,6 +300,9 @@ export async function handleRegisterParticipant(
           invocationId,
           runtimeId,
           state: 'IDENTITY_MINTED',
+          recoveryDisposition: 'unresolved',
+          establishmentWorkState: 'pending',
+          establishmentAttemptCount: 0,
           createdAt: now,
           updatedAt: now,
         }

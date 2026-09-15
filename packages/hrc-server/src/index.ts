@@ -179,6 +179,7 @@ import {
   startOtlpListener,
 } from './otel-ingest.js'
 import { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
+import { recoverParticipantEstablishmentWork } from './participant-establishment.js'
 import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
@@ -3059,6 +3060,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // wrong-node candidate cannot be fenced stale and then promoted back to
     // ready by a late warmup completion.
     await server.brokerWarmupComplete
+    recoverParticipantEstablishmentWork(server)
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
     if (server.turnAdmissionGate.snapshot().state === 'closed') {
       const prior = server.turnAdmissionGate.snapshot()
