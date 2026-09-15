@@ -1,20 +1,20 @@
 # Host participant lifecycle — HRC architecture contract
 
-**Revision 2 — PROPOSED, pending Daedalus review.** Not approved, not
-implementable, and not an acceptance record. Rev 2 resolves the navigator
-findings in EN-12258 and EN-12261 and re-baselines the consumed foundations onto
-`5f1a302d`.
+**Revision 3 — PROPOSED, pending Daedalus review.** Not approved, not
+implementable, and not an acceptance record. Rev 3 answers Daedalus REJECT
+EN-12273 (F1–F4) on rev 2 at `145b58f6`. A per-flaw resolution map is §16.
 
 | Field | Value |
 | --- | --- |
 | Contract id | `hrc-runtime.host-participant-lifecycle` |
-| Status | proposed (rev 2) |
+| Status | proposed (rev 3); rev 2 `145b58f6` REJECTED by EN-12273 |
 | Author | Clod, under T-08501, for `astra@hrc-runtime:primary` |
-| HRC source baseline | `e5ef5781c5ad531279afa6f5632beb32e16c653d` for §2's absence findings; re-checked against `5f1a302d` (T-08349 closure items 2 and 3 landed), which this revision consumes rather than restates |
+| HRC source baseline | `e5ef5781` for §2's absence findings; re-checked against `5f1a302d` and `efa84b4b`, which are **landed progress, not accepted closure** (§2.3) |
 | Arris proposal baseline | `9f5e700cc46cbc9c87bf8bb78ce3acd967f82030` (`architecture/proposals/arris-hrc-federation.md`) |
 | Author readback consumed | `EN-12217` in `R-00093` |
 | Foundation closure coordinated with | `var/wrkq-artifacts/T-08349/CLOSURE-2026-09-15.md` rev 1 (same baseline) |
-| Amends | `architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml` |
+| Amends, on approval only | `architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml` — the amendment in §11 must be made explicit in `architecture/records` and its projections **before build**, per EN-12273. No record is edited by this revision. |
+| Leaves unchanged | `hrc-runtime.mobile-exact-scope-provisioning` — §4.2 reuses its registry-authoritative, receiver-validated boundary rather than amending it |
 | Leaves unchanged | legacy EPR (`POST /v1/registrations`), every existing `address: permanent-keyed` / `continuity: key-scoped` participant class |
 
 This contract is **product-neutral**. It names no application, no vendor and no
@@ -115,7 +115,7 @@ open and that its prior writer is terminated.
 | Continuation reuse suppression column | `hrc-store-sqlite/src/repositories/session-repositories.ts:435-465` (`setContinuationReuseDisabled`, `isContinuationReuseDisabled`) | consumed by §9 |
 | Status-neutral explicit resume selector | `session-resume-continuation.ts:300-334` (`selectResumeContinuationCandidate`) | **explicitly not** the automatic selector (§9.3) |
 | Successor session minting | `session-successor.ts:6-44` (`createSessionSuccessorFromContinuation`) | called from inside §5's transaction, never on its own |
-| Placement home resolution used by exact claim | `exact-claim.ts:99-110`; `federation/summon-gate-server.ts:251-281` (`resolveImplicitScopeHome`) | required by §4.2 |
+| Registry-first establishment under summon authority | `federation/establishment.ts:38-74` (`establishLocalPlacement`), `federation/summon-gate-server.ts:1141-1167` (`withSummonAuthority`), used at `scope-claim-core.ts:320` | reused verbatim by §4.2.1. `resolveImplicitScopeHome` (`:246-281`) resolves **without establishing or mutating anything** and is not sufficient on its own |
 | Shared claim FREE predicate | `scope-claim-core.ts:152-173` (`isClaimScopeFree`) | extended by §4.3 |
 | Durable establishment work chain with boot rediscovery | landed at `5f1a302d`: `establishment_work_*` columns on the attempt row, `idx_participant_attempts_establishment_work`, `recoverParticipantEstablishmentWork` at startup | successor work is enqueued on this chain (§5.4); no second scheduler |
 | Durable recovery disposition | landed at `5f1a302d`: `recovery_disposition` / `recovery_reason` with DB-enforced non-empty reason | read by §3.6.5 and §10.1; no second record |
@@ -147,17 +147,26 @@ below may implement them.** They are consumed as preconditions:
 | Absent item | Owner | How this contract consumes it |
 | --- | --- | --- |
 | A1 | closure item 1 — ownership becomes `external` for existing generic classes in **both** joins | §3.2 defines the only declared way ownership becomes something else (`hostLifecycleOwner: 'hrc-managed'`). After the closure lands, "external" is the default and "managed" is an explicit opt-in. |
-| A2 | closure item 2 — **landed at `5f1a302d`**: `recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a DB-enforced non-empty reason | §10.1 and §3.6.5 read that column. This contract defines no second disposition record. |
-| A3 | closure item 3 — **landed at `5f1a302d`**: durable `establishment_work_*` columns plus `recoverParticipantEstablishmentWork` at startup | §5.4 enqueues successor work on that same chain. No second scheduler, no second table. |
+| A2 | closure item 2 — source landed at `5f1a302d` (**landed progress, not accepted closure**): `recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a DB-enforced non-empty reason | §10.1 and §3.6.5.1 read that column. This contract defines no second disposition record. |
+| A3 | closure item 3 — source landed at `5f1a302d` (**landed progress, not accepted closure**): durable `establishment_work_*` columns plus `recoverParticipantEstablishmentWork` at startup | §5.4 enqueues successor and replacement work on that same chain. No new work kind, table, scheduler or retry policy. |
+
+**Foundation status, stated precisely.** `5f1a302d` and `efa84b4b` are landed
+source progress, not accepted closure. EN-12273 does not accept either as T-08349
+closure, does not accept an installed path, and releases no dependent
+implementation; `efa84b4b` repairs C-22726 at source/regression level (C-22730),
+which is independently graded foundation work still in flight. This contract
+therefore *reads the shapes those commits introduced* and *does not assume the
+behavior they will be accepted for*. If the C-22726 ownership repair moves the
+`recovery_disposition` surface, §3.6.5.1 and §10.1 move with it.
 | **A4** (classification) | closure item 4 — `none→known` attaches, `same known` replaces, `changed known` resumes exactly once, unknown preserves and emits no resume | §5.1 row **L**. This contract adds only the host-succession classification, not a second classifier. |
-| **A5** (`SUPERSEDED` unreachable) | closure item 4 — "old attempts remain absorbing" is unreachable without an inbound edge | this contract requires the edge but does not specify or implement it. |
+| **A5** (`SUPERSEDED` unreachable) | closure item 4, if that closure wants it | **this contract no longer needs it.** Rev 3 withdraws `SUPERSEDED` and disposes priors to `TERMINAL`/`ABANDONED` on pre-existing edges (§5.3.1), so nothing here depends on an inbound edge being added. |
 | same-session successor (**new runtime + new invocation**, same scope/session/generation) | closure item 4 | §5.1 row **L**. This contract does not redefine it and does not change its runtime allocation. |
 | permanent-keyed address reservation vs exact/suffix claim and cold start | closure item 5 | §4.3 adds the selected-scope case to the *same* predicate. If the closure's predicate is already registration-aware, §4.3 is a data change only. |
 
 A6, A7, A8, A10, A11 and A12 are **not** in the closure and are settled by this
 contract. A4 and A5 were previously listed here as ours; that was wrong, and
-correcting it also removes a prerequisite correction this draft had claimed for
-the `SUPERSEDED` edge, which belongs to the closure.
+correcting it also removes a prerequisite correction an earlier draft claimed for
+the `SUPERSEDED` edge; rev 3 needs no such edge at all.
 
 ---
 
@@ -176,7 +185,7 @@ grows by three keys.
 | `evidence` | JsonValue | no | existing: JSON-serializable |
 | `socketPath` | string | conditional | existing: absolute, required iff `join: 'participant-served'`, forbidden otherwise |
 | `participantKey` | string | no | existing: non-empty when present |
-| `requestedSessionRef` | string | conditional | **new.** Required iff `address: 'selected-scope'`; forbidden otherwise. Parsed as `<scopeRef>[/lane:<lane>]`. Its `agentId`/`projectId` must equal `scopeTemplate`; its `taskId` must be a member of `selectableTasks`; `roleName` is forbidden. A malformed or out-of-policy value is `malformed_request` on `requestedSessionRef`. |
+| `requestedSessionRef` | string | conditional | **new.** Required iff `address: 'selected-scope'`; forbidden otherwise. **Unparseable** as `<scopeRef>[/lane:<lane>]` → `malformed_request`. **Parseable but out of policy** — agent/project not `scopeTemplate`, task not in `selectableTasks`, or a `roleName` present → `rejected / participant_scope_not_selectable` (§3.5.1 rows 1 and 4). The two are different outcomes and never substitute for one another. |
 | `hostIncarnationId` | string | conditional | **new.** Required iff `continuity: 'host-incarnation'`; forbidden otherwise. Non-empty, trimmed, no NUL, ≤ 200 bytes. Opaque to HRC — never parsed for a PID, a path or a timestamp. |
 | `expectedPredecessor` | object | no | **new.** Only permitted with `continuity: 'host-incarnation'`. Exact keys `{ hostIncarnationId: string; runtimeId: string; generation: number }`, all required when the object is present. Any extra key is `malformed_request`. |
 | `launchNonce` | string | conditional | **new.** Required iff the class declares `hostLifecycleOwner: 'hrc-managed'`; **forbidden** otherwise, so an external class can never be handed one. Non-empty, trimmed, no NUL. Correlates the registration with HRC's pre-committed launch record (§8.3). |
@@ -379,19 +388,52 @@ host-incarnation cases:
 | **H2** host succession carrying continuation | `true` |
 | **H2** host succession not carrying continuation | `false` |
 
-New `reason` values, all within the existing `'pending' | 'rejected'` union:
+#### 3.5.1 The exhaustive outcome vocabulary
 
-| `status` | `reason` | Meaning |
-| --- | --- | --- |
-| rejected | `participant_scope_not_home` | placement resolved another node; `detail` names `homeNodeId` |
-| rejected | `participant_scope_not_selectable` | `requestedSessionRef` outside `scopeTemplate`/`selectableTasks` |
-| rejected | `host_binding_conflict` | a different incarnation is live at this address |
-| rejected | `host_binding_precondition_failed` | `expectedPredecessor` does not match the observed binding; `detail` names observed values |
-| rejected | `participant_host_evidence_invalid` | adapter's `hostIncarnation` failed structural validation |
-| pending | `participant_host_evidence_absent` | adapter returned no `hostIncarnation` for a host-incarnation class |
-| pending | `host_retirement_unproven` | succession requested, retirement receipt not yet present (§5.3) |
-| pending | `participant_prior_recovery_unresolved` | T-08349's recovery disposition is still unresolved (§10.1) |
-| pending | `managed_host_not_ready` | managed host launched, readiness not yet reported (§8.3) |
+Every externally observable outcome of `POST /v1/participants/register` appears
+here. No other table, section or scenario in this contract may name a status or
+reason not in this list, and none may give a listed reason a different status.
+
+**The syntax/policy split.** Malformed *shape* is `malformed_request`
+(HTTP 400, the existing `HrcBadRequestError` path). A **well-formed** value that
+class policy disallows is `rejected` with its policy reason. A field's syntax and
+a field's permissibility are different failures with different fixes, and
+`requestedSessionRef` obeys this split like every other field.
+
+| # | Status | Reason | Trigger |
+| --- | --- | --- | --- |
+| 1 | `malformed_request` | — | body is not an object; an unsupported key is present; a required key is absent; a string is empty, untrimmable or contains NUL; `socketPath` is not absolute; `evidence` is not JSON-serializable; `requestedSessionRef` is **not parseable** as `<scopeRef>[/lane:<lane>]`; `expectedPredecessor` is present with a missing or extra key |
+| 2 | `malformed_request` | — | a field is present that its class policy forbids: `socketPath` on `hrc-hosted`, `requestedSessionRef` on `permanent-keyed`, `hostIncarnationId` or `expectedPredecessor` on `key-scoped`, `launchNonce` on an `external` class |
+| 3 | `rejected` | `unknown_registration_class` | `classId` is not configured (existing `HrcNotFoundError`) |
+| 4 | `rejected` | `participant_scope_not_selectable` | `requestedSessionRef` **parses** but its agent/project is not `scopeTemplate`, its task is not in `selectableTasks`, or it carries a `roleName`. **Well-formed but disallowed — never `malformed_request`.** |
+| 5 | `rejected` | `participant_scope_not_reserved` | the selected address has no held reservation on this node (§4.3) |
+| 6 | `rejected` | `participant_scope_bound_elsewhere` | the registry binds this scope to another node; `detail` names `homeNodeId` (§4.2) |
+| 7 | `rejected` | `participant_scope_birth_designated_elsewhere` | registry birth designation names another node; `detail` names `homeNodeId` (§4.2) |
+| 8 | `rejected` | `participant_host_evidence_invalid` | adapter `hostIncarnation` failed structural validation or echoed a different id |
+| 9 | `rejected` | `host_binding_conflict` | a different incarnation holds the address, or the retirement truth table **refuses** (`writable` + `live`) |
+| 10 | `rejected` | `host_binding_precondition_failed` | `expectedPredecessor` does not match the observed binding; `detail` names the observed values |
+| 11 | `rejected` | `managed_launch_nonce_unknown` | `launchNonce` names no committed launch record, or a managed class registration carries none (§8.3) |
+| 12 | `pending` | `participant_adapter_unavailable` | existing — configured adapter is not composed |
+| 13 | `pending` | `participant_adapter_admission_invalid` | existing |
+| 14 | `pending` | `participant_adapter_preparation_invalid` | existing |
+| 15 | `pending` | `participant_registration_capacity_exhausted` | existing |
+| 16 | `pending` | `participant_host_evidence_absent` | adapter returned no `hostIncarnation` for a host-incarnation class |
+| 17 | `pending` | `participant_scope_registry_unavailable` | the binding registry is unreachable or refused; nothing was minted (§4.2) |
+| 18 | `pending` | `host_retirement_unproven` | the retirement truth table **holds** (§3.6.4) |
+| 19 | `pending` | `participant_prior_disposition_unresolved` | the prior attempt is not yet absorbing (§5.3.1) |
+| 20 | `pending` | `participant_prior_recovery_unresolved` | `recoveryDisposition` is `unresolved` (§3.6.5, §10.1) |
+| 21 | `pending` | `managed_host_not_ready` | managed host launched, readiness not yet reported (§8.3) |
+| 22 | `registered` | — | admitted |
+
+Rows 18, 19 and 20 are the three **independent** gate conditions of §3.6.5 and
+each has its own reason, so a held registration always says which condition is
+outstanding. They are never collapsed into one.
+
+This table is exhaustive for **this endpoint**. Two other vocabularies exist and
+are deliberately separate, and neither may appear as a register reason: mail and
+kicker delivery outcomes (`host_absent`, R-4.3.3), and attempt disposition
+reasons (`host_incarnation_write_path_retired` and the rest, §5.3.1). A
+disposition reason is a durable audit field, never a wire status.
 
 `pending` means *retry this later, nothing has been lost*. `rejected` means *do
 not retry unchanged*. A host that receives `host_binding_conflict` must not
@@ -587,21 +629,24 @@ may state a different rule.
 
 #### 3.6.5 The successor-admission gate
 
-One predicate, used by **both** policies and by both subjects. It differs only in
-which `writerRef.subject` the evidence must carry (§3.6.4 item 8).
+This gate runs at **phase B** of the ordered disposition path (§5.3.1). It never
+performs a disposition itself; it reads three **independent** conditions and
+admits only when all three hold.
 
 ```
-// §3.6.4's truth table, expressed once:
+// (1) §3.6.4's truth table, expressed once:
 retirementSatisfied = writePath === 'retired' || liveness === 'dead'
 retirementRefused   = writePath === 'writable' && liveness === 'live'
 // anything else HOLDS.
 
-priorAbsorbing      = prior attempt state is absorbing — SUPERSEDED | ABANDONED |
-                      TERMINAL, each with its required disposition reason (C.4)
+// (2) the prior attempt's DURABLE STATE, read fresh, never assumed:
+priorAbsorbing      = prior.state ∈ { 'TERMINAL', 'ABANDONED' }
+                      && prior.dispositionReason is non-empty
 
-recoverySatisfied   = (evidence.priorRecovery === 'recovered'
-                       && attempt.recoveryDisposition === 'reconciled')
-                   || attempt.recoveryDisposition === 'abandoned'   // non-empty reason
+// (3) recovery, on the declared object discriminants:
+recoverySatisfied   = (evidence.priorRecovery.state === 'recovered'
+                       && prior.recoveryDisposition === 'reconciled')
+                   || prior.recoveryDisposition === 'abandoned'   // non-empty reason
 
 admitSuccessor      = retirementSatisfied && priorAbsorbing && recoverySatisfied
 ```
@@ -609,32 +654,61 @@ admitSuccessor      = retirementSatisfied && priorAbsorbing && recoverySatisfied
 | Condition | Outcome |
 | --- | --- |
 | `retirementRefused` | **refuse** — `rejected / host_binding_conflict` |
-| not `retirementSatisfied` and not refused | **hold** — `pending / host_retirement_unproven` |
+| not `retirementSatisfied`, not refused | **hold** — `pending / host_retirement_unproven` |
 | not `priorAbsorbing` | **hold** — `pending / participant_prior_disposition_unresolved` |
 | not `recoverySatisfied` | **hold** — `pending / participant_prior_recovery_unresolved` |
 | all three | admit |
 
-`priorAbsorbing` is C.4's absorbing-disposition requirement stated explicitly:
-retirement evidence alone is not admission. An absorbing prior and a satisfied
-retirement branch are independent conditions and both must hold.
+**Why these are independent, and why the receipt cannot substitute for the
+state.** Retiring a write path proves nothing about terminality and nothing
+about recovery. The receipt is what *authorizes* phase A's disposition
+transition; the absorbing state is the *durable consequence* of that transition
+actually having been committed; recovery is a third fact neither implies. Phase B
+re-reads all three from the store, so a receipt obtained but never acted on, or a
+disposition committed but a recovery never resolved, both hold rather than admit.
 
-**HRC's disposition record is the one that landed**, not a new one. At
-`5f1a302d` the attempt row carries
-`recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a
-database-enforced non-empty `recovery_reason` for the two non-default values
-(migration `0066_participant_recovery_and_work`, repository field
+**`SUPERSEDED` is not used by this contract.** It has no inbound edge in the
+source transition graph (`participant-registration-repository.ts:26-41` — it
+appears only as a type member and with an empty outbound list), and this contract
+neither writes it nor proposes an inbound edge for it. The absorbing states this
+contract uses are `TERMINAL` and `ABANDONED`, both of which are already reachable
+from every non-absorbing state and both of which already require a
+`dispositionReason` (`allowsParticipantAttemptTransition`). **No new transition
+law is proposed.** If the T-08349 closure later wants a `SUPERSEDED` inbound
+edge for its own purposes, that is its ruling to seek; nothing here depends on it.
+
+#### 3.6.5.1 The recovery trace — all three exits
+
+`priorRecovery.state` (producer, an object discriminant) and
+`recoveryDisposition` (HRC, the landed column) are different vocabularies and are
+never conflated:
+
+| Producer `priorRecovery.state` | HRC `recoveryDisposition` | Durable recording | Gate | Replay release |
+| --- | --- | --- | --- | --- |
+| `recovered` | `unresolved` | producer said the tail is delivered; the authorized recovery path has not yet recorded its verdict | **hold** (row 20) | withheld |
+| `recovered` | `reconciled` (reason recorded) | the authorized recovery path wrote `reconciled` + non-empty `recovery_reason` citing the evidence | **satisfied** | released after activation |
+| `outstanding` / `unknown` | `unresolved` | nothing recorded | **hold** (row 20) | withheld |
+| `outstanding` / `unknown` | `abandoned` (reason recorded) | the authorized recovery path wrote `abandoned` + non-empty `recovery_reason` + attributed actor | **satisfied** | released after activation |
+| any | `reconciled` without producer `recovered` | **not reachable** — `reconciled` requires the producer verdict; writing it otherwise is a defect, not a policy | — | — |
+
+Both exits are valid and neither substitutes for the other. The `reconciled`
+branch is the *normal* exit and is reachable: it requires only that the producer
+report `priorRecovery.state === 'recovered'` and that the recovery path record
+`reconciled`. The `abandoned` branch exists so an MVP whose producer honestly
+reports `unknown` is not blocked forever, and so Phase 4's full historical reader
+is **not** dragged into the MVP merely to define this gate.
+
+**HRC's disposition record is the one that landed**, not a new one: the attempt
+row's `recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a
+database trigger enforcing a non-empty `recovery_reason` for both non-default
+values (migration `0066_participant_recovery_and_work`; repository fields
 `recoveryDisposition` / `recoveryReason`). This contract reads that column and
 defines no second record.
 
 **Explicit recorded abandonment is a distinct authorized disposition, not a
 producer answer.** It is written by the authorized recovery path with a non-empty
 reason and an attributed actor; it is never inferred, never a fallback from a
-timeout, and never something an adapter can return. It exists precisely so the
-full historical reader — Phase 4 — is **not** dragged into the MVP merely to
-define this gate: an MVP whose producer honestly reports
-`priorRecovery: 'unknown'` reaches the successor exit only through an explicit,
-attributed, reasoned abandonment, and that abandonment is visible as such
-forever.
+timeout, and never something an adapter can return.
 
 #### 3.6.6 Delivery slice and ordering
 
@@ -676,24 +750,113 @@ One class may serve several selectable tasks; each selected scope is an
 independent address with its own binding. `maxInstances` continues to cap
 registrations per class.
 
-### 4.2 Canonical placement
+### 4.2 Establishing a selected address in the collective registry
 
-A selected scope is an ordinary scope and therefore has a federation home. Before
-allocating anything, registration resolves it exactly as exact claim does:
+**Resolving a home is not establishing authority.** `resolveImplicitScopeHome`
+is documented as resolving "without establishing or mutating anything"
+(`summon-gate-server.ts:246-249`), so a contract that only resolves can durably
+reserve an address the collective has never bound. Another node, under policy
+skew or a later policy edit, would then resolve the same scope as **virgin** and
+establish it, because absence of a local row is explicitly not the virgin
+predicate (`federation/establishment.ts:49-50`). Rev 2 made exactly that mistake.
+
+#### 4.2.1 Establishment happens at provisioning, not at registration
+
+A selected address is established **when its reservation is provisioned**, not
+when a host arrives. This is what removes the window: by the time any host can
+register, the address is already bound in the registry and already reserved
+locally, and both facts were written under one authority.
+
+Provisioning reuses the existing mechanism verbatim — the same one
+`mintClaimedSession` uses at `scope-claim-core.ts:320`:
 
 ```
-resolveImplicitScopeHome(server, { scopeRef, capabilityHint })   // summon-gate-server.ts:251
+withSummonAuthority(server, { scopeRef, laneRef, path: 'resolve-session',
+                              intent: 'explicit_local', capabilityHint },
+  () => db.transaction(() => { insert reservation row (state 'held') })())
 ```
 
-- home === this node → proceed.
-- home !== this node → `rejected / participant_scope_not_home`, `detail` naming
-  the `homeNodeId`. HRC **does not** proxy the registration and **does not**
-  mint a local alternate identity. The callback surface is node-local by trust;
-  a host registering against the wrong node is told where its home is.
-- placement refuses → surface the refusal unchanged.
+`withSummonAuthority` takes the scope summon lock, runs the gate, and the gate's
+`commitAuthorizedEstablishment` calls `establishLocalPlacement`, which is
+**registry-first by construction**: `registry.establish` precedes any ledger read
+or write, and only then is `ledger.installActive(binding)` performed
+(`establishment.ts:51-69`). The reservation insert runs inside the `mint`
+callback, i.e. **after** collective authority is won and **under** the same
+scope-summon and session-mint locks the claim path uses. No second registry is
+created, and no cross-node atomic SQLite transaction is invented or implied.
+
+#### 4.2.2 Outcome mapping
+
+Every `establishLocalPlacement` outcome, and every way the call can fail, maps to
+one §3.5.1 row. The provisioning operation surfaces the same outcomes to its
+operator.
+
+| `establishLocalPlacement` result | Meaning | Provisioning outcome | Registration outcome if reached |
+| --- | --- | --- | --- |
+| `established` | this node won a virgin binding | reservation committed | — |
+| `already-established` | the winning binding is already ours; convergence after a crash | reservation committed (idempotent) | — |
+| `bound-elsewhere` | another node holds the binding; a real birth happened there | refuse, naming `binding.homeNodeId`; **no local row** | row 6 `participant_scope_bound_elsewhere` |
+| `designation-mismatch` | the registry designated a different node; **nothing was written** (`establishment.ts:59-61`, T-07655 fence) | refuse, naming `designation.homeNodeId`; **no local row** | row 7 `participant_scope_birth_designated_elsewhere` |
+| `RegistryRefusedError` | registry refused this node's bearer/peer entry | refuse, **retryable: false**, naming the peer/token diagnostic | row 17 `participant_scope_registry_unavailable` |
+| registry unreachable | transport failure | refuse, **retryable: true**; nothing minted | row 17 `participant_scope_registry_unavailable` |
+
+`bound-elsewhere` and `designation-mismatch` are deliberately distinct, exactly
+as the source keeps them: the first means a birth happened elsewhere, the second
+means no birth happened at all. Collapsing them would send an operator looking
+for a binding that does not exist.
+
+#### 4.2.3 The crash boundary and its convergence
+
+`establishLocalPlacement`'s own contract states the boundary: "If the process
+stops between those writes, the registry remains authoritative and the same call
+converges by installing that exact winning binding on retry"
+(`establishment.ts:31-35`).
+
+| Crash point | Collective state | Local state | Convergence |
+| --- | --- | --- | --- |
+| before `registry.establish` returns | unbound, or bound and the reply lost | nothing | re-run: `established` or `already-established`; idempotent |
+| after registry bound, before `installActive` | **bound to this node** | no ledger row, no reservation | re-run returns `already-established` and installs the same binding; the registry, not the local row, is authority |
+| after `installActive`, before the reservation insert | bound to this node | ledger row, **no reservation** | re-run returns `already-established`; the reservation insert is then committed. **This is the one real window**, and §4.2.4 states what it exposes |
+| after the reservation insert | bound | ledger row + held reservation | steady state |
+
+#### 4.2.4 The named residual, stated rather than papered over
+
+Between winning registry authority and committing the local reservation, the
+scope is **collectively bound to this node** and **locally unreserved**. During
+that interval a local claim path could still birth an ordinary runtime on this
+scope, because R-4.3.1's predicate reads the reservation row that does not yet
+exist.
+
+This is bounded and honest, and it is **not** the cross-authority split F3
+names — both the registry binding and any local claim would be on the *same*
+node, so one address is never reachable from two authorities:
+
+- The interval is inside a single `withSummonAuthority` call holding the scope
+  summon lock, which is the same lock every claim path takes
+  (`scope-claim-core.ts:320`, `withScopeSummonLock`). A concurrent claim on this
+  node therefore **blocks**, it does not race.
+- The window is only reachable by a **process crash** inside that call.
+- On recovery the provisioning re-run returns `already-established`. If a local
+  claim won the scope during the crash window, provisioning **refuses** with the
+  scope occupied rather than displacing a live runtime, and the operator
+  re-provisions or retires the occupant. HRC never evicts a live claim to install
+  a reservation.
+
+No generic cold-birth race exists outside that crash window, because outside it
+the reservation row exists and R-4.3.1 refuses.
+
+#### 4.2.5 Registration-time requirement
+
+Registration does **not** establish. It requires an already-held reservation:
+
+- held reservation, home is this node → proceed.
+- no reservation → row 5 `participant_scope_not_reserved`. HRC does not
+  self-provision an address a host asked for; provisioning is an operator act.
+- registry says bound elsewhere → row 6, naming the node. HRC does not proxy the
+  registration and does not mint a local alternate identity.
 
 `address: 'permanent-keyed'` classes are unaffected: they keep today's
-mutex-only allocation.
+mutex-only allocation and acquire no registry step from this contract.
 
 ### 4.3 Reservation against cold birth
 
@@ -791,7 +954,7 @@ anything registers.
 | `reservation_id` | no | primary key |
 | `class_id` | no | the class that may serve this address |
 | `scope_ref`, `lane_ref` | no | **unique together** — the address |
-| `home_node_id` | no | resolved at provisioning (§4.2); an address is reserved on its home only |
+| `home_node_id` | no | **established** at provisioning through `establishLocalPlacement` (§4.2.1), never merely resolved; equals the registry binding's `homeNodeId` |
 | `state` | no | `'held'` \| `'released'` |
 | `released_at`, `released_by`, `release_reason` | yes | set together, only by the explicit release operation |
 
@@ -835,8 +998,8 @@ application logic:
 | `BINDING` | `RETIRED` | establishment abandoned | attempt `ABANDONED`; reservation **held** |
 | `BOUND` | `DETACHED` | controller or bridge lost | **no** host-death inference |
 | `DETACHED` | `BOUND` | same incarnation reattached | §6.1 |
-| `BOUND`/`DETACHED` | `RETIRING` | a different incarnation admitted | matching `expectedPredecessor` **and** a §5.3 receipt |
-| `RETIRING` | `RETIRED` | TX-6 committed | atomic with the successor's `BINDING` row and the reservation transfer |
+| `BOUND`/`DETACHED` | `RETIRING` | phase A1 (§5.3.1), in TX-D | matching `expectedPredecessor` **and** a receipt satisfying §3.6.4; committed together with the prior attempt's disposition, **before** the §3.6.5 gate runs |
+| `RETIRING` | `RETIRED` | TX-6 committed | atomic with the successor's `BINDING` row and the reservation transfer; the prior attempt is already absorbing at this point |
 | `BOUND`/`DETACHED`/`RETIRING` | `RETIRED` | operator retirement | explicit, attributed, reason recorded; reservation **held** |
 | `RETIRED` | — | terminal | — |
 
@@ -878,6 +1041,101 @@ on the opaque incarnation id only, so PID reuse cannot be mistaken for
 continuity. Conversely a host that keeps its PID across an application-internal
 runtime replacement keeps its incarnation id and stays the same binding.
 
+#### 5.3.1 The ordered disposition path — executable for H1 and H2
+
+This is the ordered path a replacement actually walks. It is the same path for
+**H2** (host succession) and **H1** (same-host bridge replacement); only the
+`writerRef.subject` and the terminal effect differ.
+
+**The rule that makes it executable: the disposition happens FIRST, out of a
+non-absorbing state, and the gate reads the result.** Nothing ever transitions
+out of an absorbing state, and no new inbound edge is proposed.
+
+| Phase | Actor | Precondition | Effect | Transaction |
+| --- | --- | --- | --- | --- |
+| **A0 — evidence** | HRC asks the prior writer's owner | prior attempt is in a **non-absorbing** state: `INVOCATION_READY`, `ATTACH_CONFIRMED`, `ACTIVE` or `DETACHED` | `retireWriter` / `inspectWriter` returns `WriterEvidence` for the matching subject | none — a call, nothing written |
+| **A1 — disposition** | HRC | A0 returned `retirementSatisfied` (§3.6.4) **and** the prior attempt is still in the same non-absorbing state | prior attempt → **`TERMINAL`** with a `dispositionReason` naming the subject and the satisfying axis; prior binding `BOUND`/`DETACHED` → `RETIRING` with `retirement_receipt_json` = the evidence verbatim | **TX-D**, its own transaction |
+| **A1′ — abandonment** | HRC | A0 satisfied **and** the prior attempt never activated (`INVOCATION_READY` / `ATTACH_CONFIRMED`, `initialActivationConfirmedAt` absent) | prior attempt → **`ABANDONED`** with a `dispositionReason` | **TX-D** |
+| **B — gate** | HRC | — | re-reads the three independent conditions of §3.6.5 from the store | read-only |
+| **C — allocation** | HRC | B admitted | H2: TX-6 (§5.4). H1: the same shape without a session successor (§6.1.1) | **TX-6 / TX-6′** |
+| **D — replay** | HRC | C committed **and** activation committed | staged replay released | existing activation path |
+
+**Edges used, all pre-existing** (`participant-registration-repository.ts:26-41`,
+guard `allowsParticipantAttemptTransition`):
+
+| From (non-absorbing) | To | Reason required? |
+| --- | --- | --- |
+| `INVOCATION_READY` | `TERMINAL`, `ABANDONED` | yes |
+| `ATTACH_CONFIRMED` | `TERMINAL`, `ABANDONED` | yes |
+| `ACTIVE` | `TERMINAL`, `ABANDONED` | yes |
+| `DETACHED` | `TERMINAL`, `ABANDONED` | yes |
+
+Every non-absorbing state an established participant can occupy already has both
+edges, and both already demand a `dispositionReason`. **No absorbing outbound
+edge is used, proposed or implied**, and `SUPERSEDED` is not written (§3.6.5).
+
+**Disposition reasons** — a bounded vocabulary, each naming subject and axis:
+
+| Reason | Phase | Subject | Satisfying axis |
+| --- | --- | --- | --- |
+| `host_incarnation_write_path_retired` | A1 | host | `writePath: 'retired'` |
+| `host_incarnation_writer_dead` | A1 | host | `liveness: 'dead'` |
+| `bridge_write_path_retired` | A1 | bridge | `writePath: 'retired'` |
+| `bridge_writer_dead` | A1 | bridge | `liveness: 'dead'` |
+| `establishment_abandoned_before_activation` | A1′ | either | either |
+| `operator_retirement` | A1 | either | explicit operator action, attributed |
+
+Each reason carries the evidence's `observedAt` and its `writerRef`, so the
+disposition records which evidence authorized it. That is what lets a retry tell
+"already disposed by this evidence" from "disposed by something else".
+
+**Crash and retry between A1 and C.** The disposition and the allocation are
+deliberately separate transactions, so the window is real and is specified:
+
+| Crash point | Durable state afterwards | Recovery behavior |
+| --- | --- | --- |
+| before TX-D commits | prior non-absorbing; binding `BOUND`/`DETACHED`; reservation **held** | the work chain re-drives from A0. Re-asking is safe: `retireWriter` is idempotent and a second `retired` is the same fact |
+| TX-D committed, before B | prior **absorbing** with reason; binding `RETIRING` with receipt; **no successor**; reservation **held** | the work chain re-drives from **B, not A1**. A re-run MUST NOT re-attempt the transition — it would fail the from-state check and must not be read as an error. The rule: *a prior already absorbing whose `dispositionReason` names this subject and cites a receipt is phase A complete.* |
+| B held (any of the three conditions) | unchanged from the row above | re-drives at B on the next work-chain attempt; the registration response names which condition held |
+| TX-6/TX-6′ partially applied | impossible — one transaction | — |
+| after C, before activation | successor binding `BINDING`; replay **staged, unreleased** | existing activation path; §10.1's release gate still applies |
+
+At no point in any row is the reservation released, and at no point is the
+address observably free (§4.3.4, §5.4 TX-6).
+
+**Why S6 (H2) is executable**, end to end:
+
+```
+prior attempt ACTIVE, binding BOUND, reservation held
+  A0  inspectWriter{subject:'host'} -> writePath:'retired'          [nothing written]
+  A1  ACTIVE -> TERMINAL(host_incarnation_write_path_retired)       [TX-D, existing edge]
+      binding BOUND -> RETIRING(receipt)
+  B   retirementSatisfied ✓  priorAbsorbing ✓ (TERMINAL + reason)
+      recoverySatisfied ✓ (reconciled or abandoned)                 [read-only]
+  C   TX-6: binding RETIRING -> RETIRED; reservation transferred;
+      successor session generation+1; successor binding BINDING
+  D   activation, then replay release
+```
+
+**Why S4 (H1) is executable**, end to end — same shape, no session successor:
+
+```
+old bridge attempt ACTIVE, binding BOUND, host incarnation UNCHANGED
+  A0  retireWriter{subject:'bridge', brokerInstanceId:<old>} -> liveness:'dead'
+  A1  ACTIVE -> TERMINAL(bridge_writer_dead)                        [TX-D, existing edge]
+      binding stays BOUND — the HOST did not change, so the binding
+      does not enter RETIRING and no successor session is minted
+  B   same three conditions, subject 'bridge'                       [read-only]
+  C   TX-6': new attempt, attachEpoch+1, new invocationId/operationId,
+      SAME runtimeId, same session, same generation
+  D   activation, then replay release
+```
+
+The H1 row that rev 2 left unexecutable is exactly A1: the old bridge's attempt
+now has a named, authorized, pre-existing transition into `TERMINAL` before the
+replacement is admitted, so §3.6.5's `priorAbsorbing` condition is satisfiable
+rather than vacuous.
+
 ### 5.4 Transaction and work-chain boundaries
 
 Named atomic units. TX-2 … TX-5 exist today and are unchanged.
@@ -889,21 +1147,23 @@ Named atomic units. TX-2 … TX-5 exist today and are unchanged.
 | TX-3 | persist hosting intent | `setSnapshotIfAbsent('hostingIntentJson')` |
 | TX-4 | persist realized hosting, then frozen dispatch | unchanged |
 | TX-5 | install acknowledgement, then activation CAS + runtime state + `runtime.ensured` | unchanged; §10.1 adds a precondition |
-| **TX-6 succession** | **all of**: predecessor attempt → `SUPERSEDED`(reason); predecessor runtime → terminal `host_replaced`; predecessor binding `RETIRING`→`RETIRED` with receipt and `disposition_reason`; **reservation transferred** — the same `reservation_id` row stays `held` throughout and the successor binding takes the partial-unique slot the predecessor vacates in the same statement sequence; successor session via `createSessionSuccessorFromContinuation` (generation + 1); continuation carried iff §9 eligible; successor binding → `BINDING` with a fresh `runtime_id`; successor attempt identity; one durable work record for the successor's establishment | **one SQLite transaction**, inside the same `roster:<agent>:<project>` mutex. Partial application is forbidden: a crash mid-way must leave either the whole predecessor bound or the whole successor binding, and the address is never observably free at any point. |
+| **TX-D disposition** | phase A1/A1′ (§5.3.1): prior attempt → `TERMINAL` or `ABANDONED` with its `dispositionReason`, using a pre-existing edge out of a non-absorbing state; for H2 the prior binding `BOUND`/`DETACHED` → `RETIRING` with `retirement_receipt_json` | **its own transaction**, before the gate. It writes no successor and allocates no identity. |
+| **TX-6 succession (H2)** | **all of**: predecessor runtime → terminal `host_replaced`; predecessor binding `RETIRING`→`RETIRED` with `disposition_reason`; **reservation transferred** — the same `reservation_id` row stays `held` throughout and the successor binding takes the partial-unique slot the predecessor vacates in the same statement sequence; successor session via `createSessionSuccessorFromContinuation` (generation + 1); continuation carried iff §9 eligible; successor binding → `BINDING` with a fresh `runtime_id`; successor attempt identity; the successor attempt created with `establishment_work_state: 'pending'` | **one SQLite transaction**, inside the same `roster:<agent>:<project>` mutex. It does **not** transition the prior attempt — TX-D already did, and the prior is absorbing by then. Partial application is forbidden and the address is never observably free. |
+| **TX-6′ bridge replacement (H1)** | new attempt for the same binding: `attachEpoch + 1`, new `invocationId`/`operationId`, **same `runtime_id`**, same session, same generation, `establishment_work_state: 'pending'`; binding stays `BOUND` | **one SQLite transaction**, same mutex. No session successor, no generation change, no reservation movement, no prior-attempt transition. |
 
 **Durable work chain — the one that landed.** At `5f1a302d` the closure's item 3
-landed as durable columns on the attempt row rather than a separate outbox table:
+landed as durable columns on the attempt row rather than a separate outbox table
+(landed progress, not accepted closure — §2.3):
 `establishment_work_state ∈ ('pending','retry_wait','exhausted','completed')`,
 `establishment_attempt_count`, `establishment_next_attempt_at`,
 `establishment_last_error`, indexed by
 `idx_participant_attempts_establishment_work`, with
 `recoverParticipantEstablishmentWork(server)` invoked at daemon startup
-(migration `0066_participant_recovery_and_work`; `index.ts`). TX-6's successor
-work is enqueued by creating the successor attempt in `establishment_work_state:
-'pending'` on that same chain. **No second table, no second scheduler, no second
-retry policy and no new work-kind column** — the earlier draft's
-`host_succession_establish` kind is withdrawn as unnecessary against the landed
-shape. Exhaustion exhausts the work only; it never abandons the binding, never
+(migration `0066_participant_recovery_and_work`; `index.ts`). **TX-6 and TX-6′
+both enqueue by creating the new attempt with `establishment_work_state:
+'pending'` on that same chain.** That is the whole mechanism: **no new work kind,
+no second table, no second scheduler and no second retry policy.** This is the
+only design this contract states for durable work. Exhaustion exhausts the work only; it never abandons the binding, never
 releases the reservation and never authorizes a forced retirement.
 
 **Idempotency.** A duplicate succession request naming the same
@@ -957,18 +1217,20 @@ changes **no** continuation.
 Two live bridges under one host are as dangerous as two live hosts, and the
 generic old-*runtime* fence cannot help here because the runtime is the same.
 
-The old bridge is therefore displaced through the **same §3.6 gate**, with a
-`WriterRef` whose `brokerInstanceId` and `attemptId`/`invocationId`/`attachEpoch`
-name the **old bridge**, and whose `hostIncarnationId` is unchanged:
+The old bridge is displaced through the **same ordered disposition path**
+(§5.3.1), with `writerRef.subject: 'bridge'`, `brokerInstanceId` naming the
+**old bridge**, and `hostIncarnationId` unchanged:
 
-| Old-bridge evidence | Outcome |
-| --- | --- |
-| `writePath: 'retired'` **or** `liveness: 'dead'` | replacement admitted |
-| both `unknown` | **hold** — `pending / host_retirement_unproven`; the old attempt stays `ACTIVE`/`DETACHED`; nothing is lost |
-| `writePath: 'writable'` **and** `liveness: 'live'` | **refuse** — `rejected / host_binding_conflict`; the incoming bridge must not write |
+| Old-bridge evidence at A0 | A1 | Gate outcome |
+| --- | --- | --- |
+| `writePath: 'retired'` **or** `liveness: 'dead'` | old attempt `ACTIVE`/`DETACHED` → **`TERMINAL`** with `bridge_write_path_retired` / `bridge_writer_dead` (pre-existing edge, reason required) | admitted once §3.6.5's other two conditions also hold |
+| both `unknown` | **not performed** — no authorized transition | **hold** — `pending / host_retirement_unproven`; the old attempt stays `ACTIVE`/`DETACHED`; nothing is lost |
+| `writePath: 'writable'` **and** `liveness: 'live'` | **not performed** | **refuse** — `rejected / host_binding_conflict`; the incoming bridge must not write |
 
-The recovery gate applies unchanged: `recoverySatisfied` (§3.6.5) must hold
-before the new attempt's staged replay is released.
+All three of §3.6.5's conditions apply, with their own reasons: retirement
+(row 18), the old attempt now being absorbing (row 19), and recovery (row 20).
+The binding does **not** enter `RETIRING` — the host did not change — so H1's
+TX-D writes only the attempt disposition, and allocation is TX-6′ (§5.4).
 
 #### 6.1.2 Late events from the old invocation
 
@@ -1348,9 +1610,9 @@ this contract only reads it and defines no second record. Until it exists,
 registration returns `pending / participant_prior_recovery_unresolved` and the
 address stays reserved.
 
-A lifecycle state is not a disposition. `TERMINAL`, `ABANDONED` and `SUPERSEDED`
-each say what happened to an attempt; none of them says the prior invocation's
-evidence was recovered. The current gate at
+A lifecycle state is not a disposition. `TERMINAL` and `ABANDONED` each say what
+happened to an attempt; neither says the prior invocation's evidence was
+recovered. The current gate at
 `participant-establishment.ts:654-666` conflates the two and is A2.
 
 ### 10.2 Unresolved writes
@@ -1387,8 +1649,12 @@ is explicitly scoped to `continuity: 'key-scoped'`.
    host incarnation. One live address has at most one host incarnation and one
    host incarnation has at most one address; both directions are enforced by
    durable constraint.
-3. A selected address resolves its canonical placement home before allocation
-   and is refused, naming the home, when that home is another node.
+3. A selected address is **established in the collective binding registry**
+   before any local reservation, session or binding exists, through the existing
+   registry-first establishment path under summon authority. Resolving a home
+   establishes nothing and is never sufficient. A refused, unreachable,
+   bound-elsewhere or designation-mismatched establishment writes nothing
+   locally.
 4. An address reservation is an address-level fact independent of any
    incarnation. A reserved address is not free regardless of runtime status or
    binding state, is transferred rather than released at succession, survives
@@ -1447,15 +1713,15 @@ managed host-aware guard, or the queue/steer advertised class set changes.
 | class policy validator | `registration-classes-config.ts:29-40, 78-160` | hrc-runtime | amend additively (§3.2) — T-08504 |
 | `lifecycleOwner` selection | `participant-establishment.ts:313-315` | hrc-runtime | **T-08349 closure item 1** — not T-08504 |
 | prior-recovery disposition | `participant-establishment.ts:654-666` | hrc-runtime | **T-08349 closure item 2** — consumed at §10.1 |
-| durable establishment work chain, boot rediscovery | `participant-establishment.ts:777-819`, `index.ts:847` | hrc-runtime | **T-08349 closure item 3** — T-08504 adds one work kind only |
+| durable establishment work chain, boot rediscovery | landed at `5f1a302d`: `establishment_work_*` columns, `idx_participant_attempts_establishment_work`, `recoverParticipantEstablishmentWork` (migration `0066`) | hrc-runtime | **T-08349 closure item 3** — successor and replacement work is enqueued on this same chain; **no new work kind, table, scheduler or retry policy** (§5.4) |
 | same-session successor (**new runtime + invocation**) and classification (A4) | `participant-establishment.ts:648-652` and repo CAS | hrc-runtime | **T-08349 closure item 4** — §5.1 row L; not redefined here |
-| `SUPERSEDED` unreachable in the transition table (A5) | `participant-registration-repository.ts:26-41` | hrc-runtime | **T-08349 closure item 4** — "old attempts remain absorbing" requires the edge |
+| `SUPERSEDED` unreachable in the transition table (A5) | `participant-registration-repository.ts:26-41` | hrc-runtime | **not required by this contract.** Rev 3 uses only the pre-existing `TERMINAL`/`ABANDONED` edges; whether the closure adds a `SUPERSEDED` inbound edge is its own ruling to seek |
 | permanent-keyed address reservation | `scope-claim-core.ts:160-173` | hrc-runtime | **T-08349 closure item 5**; §4.3 adds the selected-scope case to the same predicate |
 | `runtime_id` attempt-scoped → incarnation-scoped **for host-incarnation classes only** | `participant-registration-handlers.ts:243`; `participant-registration-repository.ts:82` | hrc-runtime | **prerequisite correction P-6.1.a** — T-08504; key-scoped allocation unchanged |
 | `assertExistingParticipantRuntime` refuses invocation movement | `participant-establishment.ts:322-340` | hrc-runtime | **prerequisite correction P-6.1.b** — T-08504 |
 | `participant_address_reservations` + `participant_host_bindings`, both unique directions | new | hrc-runtime | new (§5.2) — T-08504 |
 | **writer evidence seam** — `WriterRef`, `WriterEvidence`, three state unions, `validateWriterEvidence`, `ParticipantAdapter.retireWriter` / `inspectWriter` | **absent at locked `0.1.1-dev.20260914194358`** (§3.6.1) | agent-spaces | **T-08510** — prerequisite is **approved T-08501 only**; see §3.6.6 |
-| placement resolution on registration | `summon-gate-server.ts:251-281`; pattern at `exact-claim.ts:99` | hrc-runtime | new call site (§4.2) — T-08504 |
+| registry-first establishment of a selected address | `federation/establishment.ts:38-74` (`establishLocalPlacement`), reached through `withSummonAuthority` exactly as `scope-claim-core.ts:320` does | hrc-runtime | new call site at **provisioning**, not registration (§4.2.1) — T-08504. `resolveImplicitScopeHome` (`summon-gate-server.ts:246-281`) establishes nothing and is **not** sufficient |
 | succession transaction TX-6 | `session-successor.ts:6-44` composed with new binding writes | hrc-runtime | new (§5.4) — T-08504 |
 | continuation eligibility predicate | `session-resume-continuation.ts:63-102`; `session-repositories.ts:454-465` | hrc-runtime | new composition (§9.1) — T-08504 |
 | adapter admission `processToken` + `hostIncarnation` | `spaces-runtime-contracts/participant-adapter.d.ts` | agent-spaces | new public exports (§3.3) — T-08503; coherent published/pulled tuple required before HRC compiles |
@@ -1484,10 +1750,16 @@ these are assignments, not results.
 | S4b | Bridge replacement while the old bridge is `writable` + `live` | `rejected / host_binding_conflict`; no second live bridge writer exists at any instant | T-08504 | isolated, negative |
 | S4c | Late events from the old invocation under the same runtime | ingested and attributed to the **old** `invocationId`; the current invocation's run, obligation and continuation are unchanged | T-08504 | isolated |
 | S5 | Controller restart (HRC daemon) | same binding; ACK resumes from the durable high-water mark; no duplicate projection | T-08504 | isolated installed daemon |
-| S6 | Host succession with receipt | generation + 1; predecessor attempt `SUPERSEDED` with reason; predecessor runtime terminal `host_replaced`; binding `RETIRED`; continuation carried per §9.1 | T-08504 | isolated installed daemon |
+| S6 | Host succession with receipt | generation + 1; predecessor attempt **`TERMINAL`** with its disposition reason (written in TX-D, before the gate); predecessor runtime terminal `host_replaced`; binding `RETIRED`; continuation carried per §9.1 | T-08504 | isolated installed daemon |
 | S6a | Bridge-subject evidence offered for a host succession | **refused as invalid evidence**; `subject: 'bridge'` never authorizes host replacement, even when the bridge is provably dead | T-08504 | isolated, negative — the subject-confusion gate |
 | S6b | Retirement truth table | each of §3.6.4's nine cells produces its stated satisfy / hold / refuse outcome, including **retired + live → satisfied** and **unknown + dead → satisfied** | T-08504 + T-08510 | isolated, one case per cell, driven by the controlled adapter |
-| S6c | Retirement satisfied but prior attempt not absorbing | **held** at `pending / participant_prior_disposition_unresolved`; evidence alone does not admit | T-08504 | isolated, negative |
+| S6c | Retirement satisfied but phase A1 not yet committed | **held** at `pending / participant_prior_disposition_unresolved`; a receipt alone never admits | T-08504 | isolated, negative |
+| S6f | Ordered disposition path, H2 | the exact A0→A1→B→C→D walk of §5.3.1 executes: `ACTIVE → TERMINAL(reason)` on a pre-existing edge, then the gate, then TX-6. **No transition out of any absorbing state occurs and `SUPERSEDED` is never written** | T-08504 | isolated, state-by-state assertion |
+| S6g | Ordered disposition path, H1 | same walk with `subject: 'bridge'`; old attempt reaches `TERMINAL`, binding stays `BOUND`, TX-6′ keeps runtime/session/generation | T-08504 | isolated |
+| S6h | Crash between TX-D and the gate | prior absorbing with its reason, binding `RETIRING` with receipt, no successor, reservation held; recovery resumes at **B**, does not re-attempt A1, and does not treat the refused from-state as an error | T-08504 | isolated, **crash** injection |
+| S6i | Recovery exit — reconciled | producer `priorRecovery.state === 'recovered'` **and** `recoveryDisposition === 'reconciled'` with a recorded reason admits and releases replay after activation | T-08504 | isolated — the branch rev 2 made unreachable |
+| S6j | Recovery exit — abandoned | producer `priorRecovery.state === 'unknown'` with `recoveryDisposition === 'abandoned'` plus non-empty reason and attributed actor admits; the abandonment stays visible | T-08504 | isolated |
+| S6k | Recovery hold | `recoveryDisposition === 'unresolved'` holds at `pending / participant_prior_recovery_unresolved` regardless of the producer's value | T-08504 | isolated, negative |
 | S6d | Adapter without `retireWriter`/`inspectWriter` | daemon starts normally; every non-evidence path behaves as today; the successor exit holds at `pending` indefinitely and never gains authority | T-08510 + T-08504 | isolated, negative — the no-migration-break gate |
 | S6e | Receipt freshness per axis | a later `liveness: 'live'` does **not** void a receipt resting on `writePath: 'retired'`; a later `writePath: 'writable'` does | T-08504 | isolated, both directions |
 | S7 | Succession attempted without a receipt | `pending / host_retirement_unproven`; address stays reserved; predecessor stays bound; **nothing** succeeds | T-08504 | isolated, negative |
@@ -1498,7 +1770,13 @@ these are assignments, not results.
 | S12 | No cold birth at a reserved absent address | exact claim, roster claim, target-message birth and selector successor each refuse/skip; mail is pending with `host_absent`; no substitute runtime | T-08504 | isolated, all four doors |
 | S12a | Reservation survives every non-release event | after establishment failure, retry exhaustion, binding terminal, operator **eviction**, and daemon restart, the address is still not free and still not cold-birthable; only the explicit release operation frees it | T-08504 | isolated, one case per row of R-4.3.4 |
 | S12b | Succession never frees the address | no observable instant between predecessor `RETIRED` and successor `BINDING` at which a concurrent claim sees the scope free | T-08504 | isolated, concurrent claim against TX-6 |
-| S13 | Wrong-home registration | `rejected / participant_scope_not_home` naming `homeNodeId`; no local identity minted | T-08504 | isolated |
+| S13 | Registration for a scope the registry binds elsewhere | `rejected / participant_scope_bound_elsewhere` naming `homeNodeId`; no local identity minted | T-08504 | isolated, negative |
+| S13a | Registration with no held reservation | `rejected / participant_scope_not_reserved`; HRC self-provisions nothing | T-08504 | isolated, negative |
+| S13b | Provisioning against a registry that refuses or is unreachable | refused; **no** local reservation, ledger row or session exists afterwards; refused is non-retryable, unreachable is retryable | T-08504 | isolated, negative — both failure modes |
+| S13c | Provisioning hits `designation-mismatch` | refused naming the designated node; **nothing written** anywhere, and the outcome is distinct from `bound-elsewhere` | T-08504 | isolated, negative |
+| S13d | Crash after registry establish, before the reservation insert | re-run returns `already-established` and converges to exactly the winning binding; no second binding, no duplicate reservation | T-08504 | isolated, **crash** injection at §4.2.3's named boundary |
+| S13e | A local claim won the scope inside the crash window | provisioning **refuses** as occupied; the live claim is never evicted to install a reservation | T-08504 | isolated, negative |
+| S13f | Two nodes provision the same virgin selected scope | exactly one gets `established`; the other gets `bound-elsewhere` and writes nothing locally; the address is never reachable from two authorities | T-08504 | isolated, two-node |
 | S14 | Daemon lost between acknowledgement and activation | the acknowledged registration is rediscovered at startup with no timer; establishment completes | **T-08349** | isolated installed daemon |
 | S15 | Managed launch failure | launch intent persisted before spawn; a lost reply or crash reconciles against the persisted identity before any retry; exactly one host process and one bridge exist afterwards | T-08507 | isolated installed |
 | S16 | Managed graceful stop, save succeeds | `stopped`; state present at `saveDestination` | T-08507 | isolated installed |
@@ -1511,6 +1789,7 @@ these are assignments, not results.
 | S19 | Managed restart | S16/S17 semantics, then a managed launch that is an ordinary succession (generation + 1) | T-08507 | isolated installed |
 | S20 | External-mode regression after managed lands | no kill, no dispose, no reap, no substitute birth, continuation preserved for `hostLifecycleOwner: 'external'` | T-08508 | live installed |
 | S21 | Existing key-scoped participants unchanged | both joins still register, establish, attach, activate and survive a native restart with the same scope/session/generation | T-08504, every slice | regression |
+| S21a | Response vocabulary is exhaustive | every outcome a conforming producer can provoke appears in §3.5.1; an unparseable `requestedSessionRef` is `malformed_request` and a parseable out-of-policy one is `rejected / participant_scope_not_selectable` — never swapped | T-08504 | isolated, one case per §3.5.1 row |
 | S22 | Legacy EPR unchanged | grant/credential/TTL/handshake behavior identical; a generic participant body is still refused by `/v1/registrations` | every slice | regression |
 | S23 | No helper mints a seat | a TUI, a tool child and an internal subagent produce no HRC session, address or generation; child events close no root turn | T-08505 | live installed |
 
@@ -1545,7 +1824,7 @@ these are assignments, not results.
 
 ## 15. Limitations of this revision
 
-1. **Not approved.** Rev 2 is proposed pending Daedalus. Nothing here authorizes
+1. **Not approved.** Rev 3 is proposed pending Daedalus; rev 2 was rejected. Nothing here authorizes
    implementation.
 2. **No runtime acceptance is claimed.** Every statement about current behavior
    is source reading at `e5ef5781`, re-checked against `5f1a302d`, not execution. Section 13 assigns proofs; it
@@ -1571,3 +1850,23 @@ these are assignments, not results.
    the closure's scope narrows, the items in §2.3 revert to being absent and this
    contract's dependent sections (§4.3, §5.4, §10.1) need re-scoping rather than
    silent adoption.
+
+---
+
+## 16. Per-flaw resolution map — EN-12273
+
+| Flaw | Where it was | Resolution | Where it now is |
+| --- | --- | --- | --- |
+| **F1** — the successor transition cannot legally execute: the gate demanded an already-absorbing prior and TX-6 then transitioned that same prior to `SUPERSEDED`, which has no inbound edge and no outbound edges; H1 had no disposition path at all | rev 2 §3.6.5:599-606 and §5.4 TX-6:892 | An ordered path with the disposition **first**, out of a non-absorbing state, on **pre-existing** edges: A0 evidence → A1 `ACTIVE`/`DETACHED`/`ATTACH_CONFIRMED`/`INVOCATION_READY` → `TERMINAL` (or A1′ → `ABANDONED`) with a required reason, in its own **TX-D**; then the gate re-reads three independent conditions; then TX-6 (H2) or TX-6′ (H1). **`SUPERSEDED` is withdrawn entirely** — not written, and no inbound edge proposed. No absorbing state is ever transitioned out of. H1 gets the identical path with `subject: 'bridge'`. Crash/retry between A1 and C, reservation retention, and the executable S6/S4 walks are specified. | §5.3.1 (path, edge table, reason vocabulary, crash table, both walks); §3.6.5 (gate, independence, `SUPERSEDED` withdrawal); §5.4 TX-D / TX-6 / TX-6′; §6.1.1; §5.2.3 |
+| **F2** — `priorRecovery` declared as an object but compared as a scalar, making the `reconciled` exit unreachable | rev 2 §3.6.3:470-477 vs §3.6.5:602 | Compares `evidence.priorRecovery.state === 'recovered'`. Both exits traced end to end — producer verdict, durable recording, gate result, replay release — with the `unresolved` hold and the unreachable-by-construction combination named. Producer vocabulary (`recovered`/`outstanding`/`unknown`) and HRC vocabulary (`unresolved`/`reconciled`/`abandoned`) are kept distinct throughout. | §3.6.5 predicate; §3.6.5.1 trace table; §3.5.1 row 20; S6i/S6j/S6k |
+| **F3** — the reservation was never connected to collective authority: `resolveImplicitScopeHome` establishes nothing, so a virgin selected scope could be durably reserved while remaining collectively unbound | rev 2 §4.2, §5.2, R-4.3.1/R-4.3.4 | Establishment moved to **provisioning** and performed registry-first through the existing `withSummonAuthority` → `establishLocalPlacement` path, reused exactly as `scope-claim-core.ts:320` uses it. All four outcomes plus refused/unreachable mapped to response rows. Crash boundary tabulated against `establishment.ts`'s own convergence contract. The one residual interval is named, bounded to a crash inside the summon lock, shown not to be a cross-authority split, and given a refuse-don't-evict rule. No second registry, no invented cross-node transaction, no external host launched. | §4.2.1–§4.2.5; §5.2.1 `home_node_id`; §3.5.1 rows 5/6/7/17; S13–S13f; §11 clause 3 |
+| **F4** — contradictory and missing wire outcomes | rev 2 §3.1:179 vs §3.5:387; missing `participant_prior_disposition_unresolved` and `managed_launch_nonce_unknown` | One exhaustive 22-row vocabulary. The syntax/policy split is explicit: unparseable `requestedSessionRef` → `malformed_request`; parseable-but-disallowed → `rejected / participant_scope_not_selectable`. Both missing reasons are present (rows 19 and 11), as are the establishment outcomes. Every other table and scenario reconciled to it. | §3.5.1; §3.1 `requestedSessionRef` row; S21a |
+| **§12 correction** | stale "adds one work kind only" row with pre-`5f1a302d` citations | Row rewritten to the landed columns and the no-new-kind/table/scheduler/retry rule. §5.4 now states that single design and no longer names any work kind at all, so the two designs can no longer both be read from the document. | §12; §5.4 |
+| **Foundation status** | rev 2 read as if `5f1a302d` settled things | `5f1a302d` and `efa84b4b` labelled landed progress, not accepted closure; `efa84b4b` identified as the C-22726 source/regression repair (C-22730), independently graded; the dependency of §3.6.5.1/§10.1 on that surface stated. | §2.3 foundation note; header baseline row |
+
+**Not changed by this revision**, per the ruling: no architecture record is
+edited, no projection regenerated, no invariant amended — §11 remains a proposal
+to be made explicit in `architecture/records` only after approval and before
+build. `hrc-runtime.participant-session-lifecycle` and
+`hrc-runtime.mobile-exact-scope-provisioning` remain active as written, and this
+contract remains non-normative.
