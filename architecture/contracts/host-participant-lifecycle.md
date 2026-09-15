@@ -1,14 +1,16 @@
 # Host participant lifecycle — HRC architecture contract
 
-**Revision 1 — PROPOSED, pending Daedalus review.** Not approved, not
-implementable, and not an acceptance record.
+**Revision 2 — PROPOSED, pending Daedalus review.** Not approved, not
+implementable, and not an acceptance record. Rev 2 resolves the navigator
+findings in EN-12258 and EN-12261 and re-baselines the consumed foundations onto
+`5f1a302d`.
 
 | Field | Value |
 | --- | --- |
 | Contract id | `hrc-runtime.host-participant-lifecycle` |
-| Status | proposed (rev 1) |
+| Status | proposed (rev 2) |
 | Author | Clod, under T-08501, for `astra@hrc-runtime:primary` |
-| HRC source baseline | `e5ef5781c5ad531279afa6f5632beb32e16c653d` |
+| HRC source baseline | `e5ef5781c5ad531279afa6f5632beb32e16c653d` for §2's absence findings; re-checked against `5f1a302d` (T-08349 closure items 2 and 3 landed), which this revision consumes rather than restates |
 | Arris proposal baseline | `9f5e700cc46cbc9c87bf8bb78ce3acd967f82030` (`architecture/proposals/arris-hrc-federation.md`) |
 | Author readback consumed | `EN-12217` in `R-00093` |
 | Foundation closure coordinated with | `var/wrkq-artifacts/T-08349/CLOSURE-2026-09-15.md` rev 1 (same baseline) |
@@ -115,7 +117,8 @@ open and that its prior writer is terminated.
 | Successor session minting | `session-successor.ts:6-44` (`createSessionSuccessorFromContinuation`) | called from inside §5's transaction, never on its own |
 | Placement home resolution used by exact claim | `exact-claim.ts:99-110`; `federation/summon-gate-server.ts:251-281` (`resolveImplicitScopeHome`) | required by §4.2 |
 | Shared claim FREE predicate | `scope-claim-core.ts:152-173` (`isClaimScopeFree`) | extended by §4.3 |
-| Durable outbox precedent (enqueue / retry-schedule / dead-letter) | `hrc-store-sqlite/src/federation-outbox-repository.ts:13-51` | the shape T-08349's durable work chain should follow |
+| Durable establishment work chain with boot rediscovery | landed at `5f1a302d`: `establishment_work_*` columns on the attempt row, `idx_participant_attempts_establishment_work`, `recoverParticipantEstablishmentWork` at startup | successor work is enqueued on this chain (§5.4); no second scheduler |
+| Durable recovery disposition | landed at `5f1a302d`: `recovery_disposition` / `recovery_reason` with DB-enforced non-empty reason | read by §3.6.5 and §10.1; no second record |
 
 ### 2.2 Absent — confirmed by reading, with the discriminator used
 
@@ -144,8 +147,8 @@ below may implement them.** They are consumed as preconditions:
 | Absent item | Owner | How this contract consumes it |
 | --- | --- | --- |
 | A1 | closure item 1 — ownership becomes `external` for existing generic classes in **both** joins | §3.2 defines the only declared way ownership becomes something else (`hostLifecycleOwner: 'hrc-managed'`). After the closure lands, "external" is the default and "managed" is an explicit opt-in. |
-| A2 | closure item 2 — durable recovery disposition, unresolved by default | §10.1 and §3.6.5 make that disposition a precondition. This contract defines no second disposition record. |
-| A3 | closure item 3 — durable work chain with boot rediscovery and bounded recorded backoff | §5.4 adds exactly one new work *kind*. No second scheduler. |
+| A2 | closure item 2 — **landed at `5f1a302d`**: `recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a DB-enforced non-empty reason | §10.1 and §3.6.5 read that column. This contract defines no second disposition record. |
+| A3 | closure item 3 — **landed at `5f1a302d`**: durable `establishment_work_*` columns plus `recoverParticipantEstablishmentWork` at startup | §5.4 enqueues successor work on that same chain. No second scheduler, no second table. |
 | **A4** (classification) | closure item 4 — `none→known` attaches, `same known` replaces, `changed known` resumes exactly once, unknown preserves and emits no resume | §5.1 row **L**. This contract adds only the host-succession classification, not a second classifier. |
 | **A5** (`SUPERSEDED` unreachable) | closure item 4 — "old attempts remain absorbing" is unreachable without an inbound edge | this contract requires the edge but does not specify or implement it. |
 | same-session successor (**new runtime + new invocation**, same scope/session/generation) | closure item 4 | §5.1 row **L**. This contract does not redefine it and does not change its runtime allocation. |
@@ -176,6 +179,7 @@ grows by three keys.
 | `requestedSessionRef` | string | conditional | **new.** Required iff `address: 'selected-scope'`; forbidden otherwise. Parsed as `<scopeRef>[/lane:<lane>]`. Its `agentId`/`projectId` must equal `scopeTemplate`; its `taskId` must be a member of `selectableTasks`; `roleName` is forbidden. A malformed or out-of-policy value is `malformed_request` on `requestedSessionRef`. |
 | `hostIncarnationId` | string | conditional | **new.** Required iff `continuity: 'host-incarnation'`; forbidden otherwise. Non-empty, trimmed, no NUL, ≤ 200 bytes. Opaque to HRC — never parsed for a PID, a path or a timestamp. |
 | `expectedPredecessor` | object | no | **new.** Only permitted with `continuity: 'host-incarnation'`. Exact keys `{ hostIncarnationId: string; runtimeId: string; generation: number }`, all required when the object is present. Any extra key is `malformed_request`. |
+| `launchNonce` | string | conditional | **new.** Required iff the class declares `hostLifecycleOwner: 'hrc-managed'`; **forbidden** otherwise, so an external class can never be handed one. Non-empty, trimmed, no NUL. Correlates the registration with HRC's pre-committed launch record (§8.3). |
 
 Validation ordering is unchanged and matters: shape → class lookup → join/socket
 coherence → adapter availability → adapter admission → **placement (§4.2)** →
@@ -436,16 +440,24 @@ Collapsing any two of these is the defect this section exists to prevent.
 Names are this contract's proposal; the producing repository settles them.
 
 ```ts
+/** WHICH writer is being asked about. Without this the same tuple could answer
+ *  "the bridge died" to a question about the host, and bridge death would
+ *  authorize host replacement. The subject is required and never inferred. */
+export type WriterSubject = 'host' | 'bridge'
+
 /** Identifies the writer being asked about. Product-neutral, and sufficient for
  *  BOTH the key-scoped same-session policy and the host-incarnation policy. */
 export type WriterRef = {
+  subject: WriterSubject
   classId: string
   participantKey: string
   attemptId: string
   invocationId: InvocationId
   attachEpoch: number
-  brokerInstanceId?: string | undefined    // once a bridge was established
-  hostIncarnationId?: string | undefined   // host-incarnation classes only
+  /** Required when subject === 'bridge'; identifies WHICH bridge. */
+  brokerInstanceId?: string | undefined
+  /** Required when subject === 'host' for a host-incarnation class. */
+  hostIncarnationId?: string | undefined
 }
 
 export type WriterPathState  = 'retired' | 'writable' | 'unknown'
@@ -477,37 +489,68 @@ export interface ParticipantAdapter {
   admit(...): ...        // unchanged
   prepare(...): ...      // unchanged
 
-  /** Ask the owner to close every remaining path by which `writerRef` can
-   *  produce a NEW native write, then report the RESULTING state. Idempotent.
+  /** OPTIONAL. Ask the owner to close every remaining path by which `writerRef`
+   *  can produce a NEW native write, then report the RESULTING state. Idempotent.
    *  Never signals, never kills, never touches a process. A `writePath.state`
    *  of `'retired'` is an assertion about the state after the attempt, not an
    *  acknowledgement that the request was received. */
-  retireWriter(request: WriterRetirementRequest): Promise<WriterEvidence> | WriterEvidence
+  retireWriter?(request: WriterRetirementRequest): Promise<WriterEvidence> | WriterEvidence
 
-  /** Report what the owner currently knows, changing nothing. */
-  inspectWriter(request: WriterInspectionRequest): Promise<WriterEvidence> | WriterEvidence
+  /** OPTIONAL. Report what the owner currently knows, changing nothing. */
+  inspectWriter?(request: WriterInspectionRequest): Promise<WriterEvidence> | WriterEvidence
 }
 ```
 
-`retireWriter` and `inspectWriter` are **required** for any adapter serving a
-class whose policy can reach a successor exit. The existing startup composition
-check that already validates the adapter registry enforces this; a class that can
-succeed with an adapter lacking either method is a configuration error refused at
-daemon start, not at succession time.
+**Both methods are optional, and their absence breaks nothing.** This is an
+additive capability, not a migration:
+
+| Adapter | Daemon startup | Effect |
+| --- | --- | --- |
+| existing adapter, neither method | **starts normally** — no refusal, no config change | every path that does not need evidence behaves exactly as today |
+| existing adapter, neither method, successor exit reached | **starts normally** | the exit **holds** at `pending / host_retirement_unproven` forever until the adapter gains a method — it never silently gains authority, and it never fails closed into a forced outcome |
+| adapter with the methods | starts normally | the gate can be satisfied |
+
+A missing method is read as `unknown` for every axis (§3.6.4 item 2), which is
+the hold state. It is never read as `retired`, `dead`, or an error.
+
+**No startup refusal is added for successor-capable classes.** The only
+capability requirement this contract imposes at startup is on the **newly
+declared** policy — `continuity: 'host-incarnation'` is new configuration that
+cannot exist before this contract, so requiring its adapter to expose both
+methods changes no existing class and breaks no existing deployment. Existing
+`key-scoped` classes keep their current startup behavior unconditionally.
 
 #### 3.6.4 Uncertainty semantics
 
-1. **Unknown holds.** `unknown` on `writePath` or `liveness` blocks the successor
-   exit. The registration returns `pending / host_retirement_unproven`, the
-   address stays reserved, the predecessor stays bound, and nothing is lost. An
-   indefinitely unknown answer is a truthful indefinite stall.
+**The retirement truth table.** This is the single authority; nothing elsewhere
+may state a different rule.
+
+| `writePath` | `liveness` | Retirement branch | Rationale |
+| --- | --- | --- | --- |
+| `retired` | `dead` | **satisfied** | both |
+| `retired` | `live` | **satisfied** | a quiesced but living writer is legitimately retired |
+| `retired` | `unknown` | **satisfied** | the write path is closed; liveness is then irrelevant |
+| `unknown` | `dead` | **satisfied** | a dead writer has no write path whatever the owner can assert |
+| `writable` | `dead` | **satisfied** | death dominates a stale write-path reading |
+| `unknown` | `unknown` | **hold** | nothing is known |
+| `writable` | `unknown` | **hold** | a write path may be open |
+| `unknown` | `live` | **hold** | a live writer with an unknown write path |
+| `writable` | `live` | **refuse** | a healthy live writer; §5.5 |
+
+1. **`retired` OR `dead` satisfies; neither-and-some-unknown holds; writable AND
+   live refuses.** `unknown` never satisfies and never refuses.
 2. **`unknown` is never an error and never a default-to-safe-looking value.** An
-   adapter that cannot answer must answer `unknown` with a `reason`; it must not
-   answer `retired` or `dead` to unblock a caller, and HRC must not read a thrown
-   error, a timeout or an absent method as any state.
-3. **HRC performs no native probing.** HRC never reads a PID, a lock file, a
-   socket, a native store or a process table to derive any of the three facts,
-   and never calls `invocation.status { probeLiveness: true }` for this purpose.
+   owner that cannot answer answers `unknown` with a `reason`; it must not answer
+   `retired` or `dead` to unblock a caller, and HRC must not read a thrown error,
+   a timeout or an absent method as any state.
+3. **Process inspection boundary.** HRC may verify a process **it launched and
+   owns** against its own committed launch identity — this is the HRC-owned
+   broker-process evidence the T-08349 closure explicitly permits, and this
+   contract does not withdraw it. HRC must **not** inspect a process it does not
+   own: no PID, lock file, socket, native store or process table of an external
+   host or a participant-owned bridge, and no
+   `invocation.status { probeLiveness: true }` used to derive host fate. External
+   native evidence is adapter-owned; HRC's own children are HRC's to verify.
 4. **Receipts are not proof.** `accepted: true`, `disposed: true`, a `2xx`, a
    delivered notification and a successful RPC round-trip are acknowledgements of
    *requests*. The evidence is the owner's separate assertion about the resulting
@@ -517,47 +560,77 @@ daemon start, not at succession time.
    retry exhaustion, an empty unresolved-write store, a changed attach token, a
    superseded epoch, a `seat.probe` of `terminal`, `continuityEvidence`, and the
    absence of any of the above.
-6. **Freshness.** HRC persists the consumed evidence verbatim as the retirement
-   receipt and re-reads it inside the succession transaction. The receipt must be
-   the most recent evidence HRC holds for that `writerRef`; any later evidence
-   reporting `writable` or `live` voids an uncommitted succession, which returns
-   to `pending`.
+6. **Freshness, per axis.** HRC persists the consumed evidence verbatim as the
+   retirement receipt and re-reads it inside the succession transaction. Later
+   evidence voids an uncommitted succession **only on the axis the receipt rested
+   on**:
+
+   | Receipt rested on | Voided by later | Not voided by later |
+   | --- | --- | --- |
+   | `writePath: 'retired'` | `writePath: 'writable'` | `liveness: 'live'` — retired-but-live is valid |
+   | `liveness: 'dead'` | `liveness: 'live'` | `writePath: 'writable'` — irrelevant to a dead writer |
+
+   A voided succession returns to `pending`, never to a forced outcome.
 7. **Asymmetric durability.** `retired` and `dead` are durable once observed —
    a retired write path does not reopen and a dead writer does not revive. HRC
-   may therefore persist them. `writable`, `live` and every `unknown` are
-   point-in-time only and are never cached as a verdict.
+   may persist them. `writable`, `live` and every `unknown` are point-in-time only
+   and are never cached as a verdict.
+8. **Subject discipline.** Evidence answers only about its `writerRef.subject`.
+   `subject: 'bridge'` evidence may authorize a bridge replacement (§6.1.1) and
+   **never** a host succession; `subject: 'host'` evidence may authorize a host
+   succession (§5.3) and is not required for a bridge replacement. A request
+   whose response echoes a different subject is invalid evidence.
+9. **Asking is not authority.** Calling `retireWriter` against a healthy live
+   writer neither retires it nor licenses displacing it. The owner is free to
+   answer `writable` + `live`, and that answer refuses (§5.5). There is no
+   takeover of a healthy live host or bridge.
 
 #### 3.6.5 The successor-admission gate
 
-One predicate, used by **both** policies. For the key-scoped policy the writer is
-the prior attempt's writer; for the host-incarnation policy it is additionally
-the prior host incarnation. The predicate does not change between them.
+One predicate, used by **both** policies and by both subjects. It differs only in
+which `writerRef.subject` the evidence must carry (§3.6.4 item 8).
 
 ```
-retirementSatisfied = evidence.writePath.state === 'retired'
-                   || evidence.liveness.state  === 'dead'
+// §3.6.4's truth table, expressed once:
+retirementSatisfied = writePath === 'retired' || liveness === 'dead'
+retirementRefused   = writePath === 'writable' && liveness === 'live'
+// anything else HOLDS.
 
-recoverySatisfied   = (evidence.priorRecovery.state === 'recovered'
-                       && hrcDisposition === 'reconciled')
-                   || hrcDisposition === 'abandoned'      // with non-empty reason
+priorAbsorbing      = prior attempt state is absorbing — SUPERSEDED | ABANDONED |
+                      TERMINAL, each with its required disposition reason (C.4)
 
-admitSuccessor      = retirementSatisfied && recoverySatisfied
+recoverySatisfied   = (evidence.priorRecovery === 'recovered'
+                       && attempt.recoveryDisposition === 'reconciled')
+                   || attempt.recoveryDisposition === 'abandoned'   // non-empty reason
+
+admitSuccessor      = retirementSatisfied && priorAbsorbing && recoverySatisfied
 ```
 
-- `retirementSatisfied` false because either axis is `unknown` → **hold**
-  (`pending / host_retirement_unproven`).
-- `writePath: 'writable'` **and** `liveness: 'live'` → **refuse**
-  (`rejected / host_binding_conflict`): another writer is live.
-- `recoverySatisfied` false → **hold**
-  (`pending / participant_prior_recovery_unresolved`).
-- `hrcDisposition` is the durable record owned by **T-08349 closure item 2**.
-  This contract defines no second record.
+| Condition | Outcome |
+| --- | --- |
+| `retirementRefused` | **refuse** — `rejected / host_binding_conflict` |
+| not `retirementSatisfied` and not refused | **hold** — `pending / host_retirement_unproven` |
+| not `priorAbsorbing` | **hold** — `pending / participant_prior_disposition_unresolved` |
+| not `recoverySatisfied` | **hold** — `pending / participant_prior_recovery_unresolved` |
+| all three | admit |
+
+`priorAbsorbing` is C.4's absorbing-disposition requirement stated explicitly:
+retirement evidence alone is not admission. An absorbing prior and a satisfied
+retirement branch are independent conditions and both must hold.
+
+**HRC's disposition record is the one that landed**, not a new one. At
+`5f1a302d` the attempt row carries
+`recovery_disposition ∈ ('unresolved','reconciled','abandoned')` with a
+database-enforced non-empty `recovery_reason` for the two non-default values
+(migration `0066_participant_recovery_and_work`, repository field
+`recoveryDisposition` / `recoveryReason`). This contract reads that column and
+defines no second record.
 
 **Explicit recorded abandonment is a distinct authorized disposition, not a
 producer answer.** It is written by the authorized recovery path with a non-empty
 reason and an attributed actor; it is never inferred, never a fallback from a
-timeout, and never something an adapter can return. It exists precisely so that
-the full historical reader — Phase 4 — is **not** dragged into the MVP merely to
+timeout, and never something an adapter can return. It exists precisely so the
+full historical reader — Phase 4 — is **not** dragged into the MVP merely to
 define this gate: an MVP whose producer honestly reports
 `priorRecovery: 'unknown'` reaches the successor exit only through an explicit,
 attributed, reasoned abandonment, and that abandonment is visible as such
@@ -572,8 +645,9 @@ resident driver — those depend on **it**.
 
 | Item | Package | Owner | Blocking |
 | --- | --- | --- | --- |
-| `WriterRef`, `WriterEvidence`, the three state unions, `validateWriterEvidence`, `ParticipantAdapter.retireWriter` / `inspectWriter` | `spaces-runtime-contracts` | **T-08510**, agent-spaces | **blocks T-08349's participant-served successor acceptance and T-08503's resident driver**, and the successor exit of both policies |
-| adapter implementations of the two methods | consumer product adapter | T-08502 / T-08503 | downstream of T-08510 |
+| `WriterSubject`, `WriterRef`, `WriterEvidence`, the three state unions, `validateWriterEvidence`, optional `ParticipantAdapter.retireWriter` / `inspectWriter` | `spaces-runtime-contracts` | **T-08510**, agent-spaces | **blocks T-08349's participant-served successor acceptance and T-08503's resident driver**, and the successor exit of both policies |
+| **a controlled reference adapter implementing both methods**, able to produce each cell of §3.6.4's truth table on demand for **both** subjects (`host` and `bridge`) and each `priorRecovery` value | `spaces-runtime-contracts` test/controlled-adapter surface | **T-08510** | **required inside T-08510.** Exported interfaces alone are not a usable gate: T-08349's installed both-join proof needs a real adapter that can answer, and it must not have to wait on the consumer product's host (T-08502) or resident driver (T-08503) to get one. The controlled adapter is what breaks that cycle. |
+| product adapter implementations of the two methods | consumer product adapter | T-08502 / T-08503 | downstream of T-08510; **not** a prerequisite of T-08349's proof |
 | broker-side `broker.writerEvidence` returning the same `WriterEvidence` | `spaces-harness-broker-protocol` | agent-spaces | **deferred, not in the minimum slice.** For `join: 'hrc-hosted'` HRC already has committed instance evidence, which the T-08349 closure names as sufficient for that join. Recorded here so nobody builds it speculatively; it becomes necessary only if an HRC-owned writer must assert retirement it cannot assert from committed instance facts. If added it is additive (`BrokerMethodV5`), keeping the negotiated protocol version unchanged exactly as `broker.installIdentity` / `broker.ensureInvocation` did. |
 
 **Acyclic ordering.** This contract may be reviewed and closed before the slice
@@ -817,13 +891,20 @@ Named atomic units. TX-2 … TX-5 exist today and are unchanged.
 | TX-5 | install acknowledgement, then activation CAS + runtime state + `runtime.ensured` | unchanged; §10.1 adds a precondition |
 | **TX-6 succession** | **all of**: predecessor attempt → `SUPERSEDED`(reason); predecessor runtime → terminal `host_replaced`; predecessor binding `RETIRING`→`RETIRED` with receipt and `disposition_reason`; **reservation transferred** — the same `reservation_id` row stays `held` throughout and the successor binding takes the partial-unique slot the predecessor vacates in the same statement sequence; successor session via `createSessionSuccessorFromContinuation` (generation + 1); continuation carried iff §9 eligible; successor binding → `BINDING` with a fresh `runtime_id`; successor attempt identity; one durable work record for the successor's establishment | **one SQLite transaction**, inside the same `roster:<agent>:<project>` mutex. Partial application is forbidden: a crash mid-way must leave either the whole predecessor bound or the whole successor binding, and the address is never observably free at any point. |
 
-**Durable work chain.** TX-6's work record is enqueued on the durable chain that
-the T-08349 closure (item 3) builds — the same enqueue/retry-schedule/dead-letter
-shape as `federation-outbox-repository.ts`, rediscovered at daemon startup even
-if no timer ran. This contract adds exactly one new work **kind**,
-`host_succession_establish`, and no second scheduler, no second table and no
-second retry policy. Exhaustion exhausts the work only; it never abandons the
-binding and never authorizes a forced retirement.
+**Durable work chain — the one that landed.** At `5f1a302d` the closure's item 3
+landed as durable columns on the attempt row rather than a separate outbox table:
+`establishment_work_state ∈ ('pending','retry_wait','exhausted','completed')`,
+`establishment_attempt_count`, `establishment_next_attempt_at`,
+`establishment_last_error`, indexed by
+`idx_participant_attempts_establishment_work`, with
+`recoverParticipantEstablishmentWork(server)` invoked at daemon startup
+(migration `0066_participant_recovery_and_work`; `index.ts`). TX-6's successor
+work is enqueued by creating the successor attempt in `establishment_work_state:
+'pending'` on that same chain. **No second table, no second scheduler, no second
+retry policy and no new work-kind column** — the earlier draft's
+`host_succession_establish` kind is withdrawn as unnecessary against the landed
+shape. Exhaustion exhausts the work only; it never abandons the binding, never
+releases the reservation and never authorizes a forced retirement.
 
 **Idempotency.** A duplicate succession request naming the same
 `expectedPredecessor` and the same `hostIncarnationId` returns the committed
@@ -1110,7 +1191,7 @@ Graceful stop (`force` absent) — **no forced loss by default**:
 | `saved` | `unknown` | `indeterminate` | `no` | state is safe; process fate unknown; HRC does not force and does not claim a stop |
 | `nothing-to-save` | `exited` | `stopped` | `no` | |
 | `nothing-to-save` | `running` / `unknown` | `stop_refused` / `indeterminate` | `no` | as above |
-| `save-failed` / `save-refused` | any | `stop_refused` | `unknown` | **host left alone**; failure detail reported |
+| `save-failed` / `save-refused` | any | `stop_refused` | `unknown` | **host left alone**; failure detail reported; `unknown` not `yes` |
 | `unknown` (incl. `gracefulTimeoutMs` elapsed) | `unknown` | `indeterminate` | `unknown` | **HRC learned nothing.** It does not claim the host is running, does not claim it stopped, does not force, and does not retry blindly — it reports and holds |
 
 `exit.state: 'exited'` requires a real exit observation of the launched process
@@ -1124,8 +1205,12 @@ never a fallback from `stop_refused`, and never implied by a timeout or an
 | Save readback before forcing | `dataLoss.unsaved` |
 | --- | --- |
 | `saved` / `nothing-to-save` | `no` |
-| `save-failed` / `save-refused` | `yes` |
-| `unknown` | **`unknown`** — HRC must not assert `yes`; it does not know |
+| `save-failed` / `save-refused` | **`unknown`** — a failed or refused save does not establish that unsaved state existed; it establishes only that HRC has no confirmation |
+| `unknown` | **`unknown`** |
+| host explicitly reports discarded unsaved state | `yes` — the **only** source of `'yes'` |
+
+HRC never derives `'yes'` from a failure, a refusal or a timeout. Certainty about
+data loss comes from the host saying so, or not at all.
 
 Silent discard is forbidden, and **terminal model output is never persistence
 evidence**.
@@ -1167,6 +1252,40 @@ behavior rather than mechanism:
 Until a reader is proven host-aware, its current external refusal is the correct
 conservative behavior, and extending "not external" to mean "freely disposable"
 is the specific regression this section exists to prevent.
+
+### 8.7 Managed callable surface — minimal operation shapes
+
+Readiness and stop were prose in rev 1. Their minimal shapes are fixed here so
+the managed half is reviewable rather than deferred-by-vagueness.
+
+**Ownership.** HRC owns the operations and their durable records. The host owns
+every answer. No operation carries a signal, and none has a force default.
+
+| Operation | Direction | Request | Response |
+| --- | --- | --- | --- |
+| **readiness report** | host → HRC, on the existing node-local callback surface | `{ launchNonce, hostIncarnationId, ready: true }` | `{ acknowledged: true }` |
+| **readiness query** | HRC → host, through the bridge | `{ }` | `{ ready: boolean; reason: string }` |
+| **save + stop** | HRC → host, through the bridge | `{ saveDestination; gracefulTimeoutMs; force?: true }` | `ManagedStopResult` (§8.4) |
+| **exit observation** | HRC-local | — | `ExitReadback` from HRC's own launched-process identity only (§3.6.4 item 3) |
+
+Rules:
+
+- The readiness report is the **only** thing that moves a managed launch to
+  ready. HRC never infers readiness from a socket appearing, a process existing
+  or a bridge connecting.
+- The readiness query is advisory and may answer `false` with a reason; it never
+  makes a host ready.
+- `save + stop` without `force` can only ever return `stopped`, `stop_refused` or
+  `indeterminate` (§8.4). `force: true` is per call and is never defaulted.
+- A response HRC cannot parse or that omits a required readback is `unknown` on
+  that axis — never a substituted value.
+
+**Review scope.** §8.2 – §8.7 are the managed half. They are specified now so the
+external MVP cannot foreclose them, and they are **unsupported** until §8.6's
+guard exists (§3.2 rule 6). If the reviewer prefers, the managed half can be
+ruled on separately from §§1–7 and §§9–13, which are complete and independently
+implementable for the external mode; this contract does not require the managed
+half to be approved for the external mode to proceed.
 
 ## 9. Continuation: clearing and eligibility
 
@@ -1223,8 +1342,9 @@ the **successor** case:
 **R-10.1.** A successor's staged replay is released only after the predecessor's
 recovery disposition is either `reconciled` (with evidence) or
 `abandoned(reason)` (with a non-empty reason recorded by the authorized recovery
-path). That disposition record is **T-08349 closure item 2's deliverable**; this
-contract only consumes it and defines no second record. Until it exists,
+path). That disposition record **landed at `5f1a302d`** as
+`participant_registration_attempts.recovery_disposition` / `recovery_reason`;
+this contract only reads it and defines no second record. Until it exists,
 registration returns `pending / participant_prior_recovery_unresolved` and the
 address stays reserved.
 
@@ -1276,6 +1396,10 @@ is explicitly scoped to `continuity: 'key-scoped'`.
    to an absent bound host is pending, never a substitute birth.
 5. `processToken` is adapter admission input. It is not persisted as identity,
    not compared by HRC, and not replacement authority.
+6a. Writer evidence answers only about its declared subject. Bridge evidence
+    never authorizes host replacement and host evidence is not required for a
+    bridge replacement. HRC may verify a process it launched and owns; it never
+    inspects a process it does not own.
 6. A bridge incarnation change under an unchanged host incarnation preserves
    scope, session, generation and runtime, advances the attach epoch, and emits
    no resume. It requires the same writer evidence as any other displacement: a
@@ -1361,6 +1485,11 @@ these are assignments, not results.
 | S4c | Late events from the old invocation under the same runtime | ingested and attributed to the **old** `invocationId`; the current invocation's run, obligation and continuation are unchanged | T-08504 | isolated |
 | S5 | Controller restart (HRC daemon) | same binding; ACK resumes from the durable high-water mark; no duplicate projection | T-08504 | isolated installed daemon |
 | S6 | Host succession with receipt | generation + 1; predecessor attempt `SUPERSEDED` with reason; predecessor runtime terminal `host_replaced`; binding `RETIRED`; continuation carried per §9.1 | T-08504 | isolated installed daemon |
+| S6a | Bridge-subject evidence offered for a host succession | **refused as invalid evidence**; `subject: 'bridge'` never authorizes host replacement, even when the bridge is provably dead | T-08504 | isolated, negative — the subject-confusion gate |
+| S6b | Retirement truth table | each of §3.6.4's nine cells produces its stated satisfy / hold / refuse outcome, including **retired + live → satisfied** and **unknown + dead → satisfied** | T-08504 + T-08510 | isolated, one case per cell, driven by the controlled adapter |
+| S6c | Retirement satisfied but prior attempt not absorbing | **held** at `pending / participant_prior_disposition_unresolved`; evidence alone does not admit | T-08504 | isolated, negative |
+| S6d | Adapter without `retireWriter`/`inspectWriter` | daemon starts normally; every non-evidence path behaves as today; the successor exit holds at `pending` indefinitely and never gains authority | T-08510 + T-08504 | isolated, negative — the no-migration-break gate |
+| S6e | Receipt freshness per axis | a later `liveness: 'live'` does **not** void a receipt resting on `writePath: 'retired'`; a later `writePath: 'writable'` does | T-08504 | isolated, both directions |
 | S7 | Succession attempted without a receipt | `pending / host_retirement_unproven`; address stays reserved; predecessor stays bound; **nothing** succeeds | T-08504 | isolated, negative |
 | S8 | Two live conflicting hosts | second gets `rejected / host_binding_conflict` naming the live incarnation; partial unique index holds; second writes nothing | T-08504 | isolated, negative |
 | S9 | PID reuse | a new incarnation id at a reused PID is treated as a new incarnation (succession path); an unchanged incarnation id across an application-internal runtime replacement is treated as the same binding | T-08504 | isolated, both directions |
@@ -1416,10 +1545,10 @@ these are assignments, not results.
 
 ## 15. Limitations of this revision
 
-1. **Not approved.** Rev 1 is proposed pending Daedalus. Nothing here authorizes
+1. **Not approved.** Rev 2 is proposed pending Daedalus. Nothing here authorizes
    implementation.
 2. **No runtime acceptance is claimed.** Every statement about current behavior
-   is source reading at `e5ef5781`, not execution. Section 13 assigns proofs; it
+   is source reading at `e5ef5781`, re-checked against `5f1a302d`, not execution. Section 13 assigns proofs; it
    does not report them.
 3. **The ASP surfaces in §3.3 and §3.6 do not exist.** Verified against the
    published tarballs of the locked tuple `0.1.1-dev.20260914194358`, not against
