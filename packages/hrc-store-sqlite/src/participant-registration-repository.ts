@@ -502,9 +502,7 @@ export class ParticipantRegistrationRepository {
     const result = this.db
       .query(
         `UPDATE participant_registration_attempts
-            SET state = 'ACTIVE', initial_activation_confirmed_at = ?,
-                establishment_work_state = 'completed', establishment_next_attempt_at = NULL,
-                updated_at = ?
+            SET state = 'ACTIVE', initial_activation_confirmed_at = ?, updated_at = ?
           WHERE attempt_id = ?
             AND state = 'ATTACH_CONFIRMED'
             AND initial_activation_confirmed_at IS NULL`
@@ -521,8 +519,7 @@ export class ParticipantRegistrationRepository {
     const result = this.db
       .query(
         `UPDATE participant_registration_attempts
-            SET state = 'ACTIVE', establishment_work_state = 'completed',
-                establishment_next_attempt_at = NULL, updated_at = ?
+            SET state = 'ACTIVE', updated_at = ?
           WHERE attempt_id = ?
             AND state = 'ATTACH_CONFIRMED'
             AND initial_activation_confirmed_at IS NOT NULL`

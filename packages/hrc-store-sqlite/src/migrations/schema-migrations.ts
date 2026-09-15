@@ -3135,6 +3135,18 @@ const participantRecoveryAndWorkMigration: HrcMigration = {
   },
 }
 
+/** Re-arm participant rows written before activation and establishment completion were split. */
+const participantActivationWorkRepairMigration: HrcMigration = {
+  id: '0067_participant_activation_work_repair',
+  apply(db) {
+    db.exec(`
+      UPDATE participant_registration_attempts
+        SET establishment_work_state = 'pending', establishment_next_attempt_at = NULL
+        WHERE state = 'ACTIVE' AND establishment_work_state = 'completed';
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3197,4 +3209,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   participantRegistrationLifecycleMigration,
   participantBrokerIdentityMigration,
   participantRecoveryAndWorkMigration,
+  participantActivationWorkRepairMigration,
 ]

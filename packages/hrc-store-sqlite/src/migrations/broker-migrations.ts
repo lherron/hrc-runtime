@@ -951,6 +951,34 @@ const askBracketScanIndexMigration: HrcMigration = {
   },
 }
 
+/** Backfill external ownership only for runtimes proven to be generic participant rows. */
+const participantRuntimeOwnershipRepairMigration: HrcMigration = {
+  id: '0056_participant_runtime_ownership_repair',
+  apply(db) {
+    db.exec(`
+      UPDATE runtimes
+        SET runtime_state_json = json_set(
+          CASE
+            WHEN json_valid(runtime_state_json) THEN COALESCE(runtime_state_json, '{}')
+            ELSE '{}'
+          END,
+          '$.lifecycleOwner',
+          'external'
+        )
+        WHERE EXISTS (
+          SELECT 1
+          FROM participant_registration_attempts AS attempt
+          WHERE attempt.runtime_id = runtimes.runtime_id
+        )
+          AND CASE
+            WHEN json_valid(runtime_state_json)
+              THEN COALESCE(json_extract(runtime_state_json, '$.lifecycleOwner'), '')
+            ELSE ''
+          END != 'external';
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -973,4 +1001,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   transcriptTurnIndexMigration,
   brokerTurnAttributionMigration,
   askBracketScanIndexMigration,
+  participantRuntimeOwnershipRepairMigration,
 ]

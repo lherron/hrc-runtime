@@ -385,6 +385,15 @@ function materializeParticipantBrokerBookkeeping(
     const existingRuntime = server.db.runtimes.getByRuntimeId(attempt.runtimeId)
     if (existingRuntime !== null) {
       assertExistingParticipantRuntime(existingRuntime, registration, attempt, profile)
+      if (existingRuntime.runtimeStateJson?.['lifecycleOwner'] !== lifecycleOwner) {
+        server.db.runtimes.update(existingRuntime.runtimeId, {
+          runtimeStateJson: {
+            ...(existingRuntime.runtimeStateJson ?? {}),
+            lifecycleOwner,
+          },
+          updatedAt: now,
+        })
+      }
     } else {
       server.db.runtimes.insert({
         runtimeId: attempt.runtimeId,
@@ -764,6 +773,11 @@ export async function activateStagedParticipant(
     attachToken,
   })
   if (!replay.ok) throw replay.error
+  server.db.participantRegistrations.markEstablishmentCompleted(
+    attempt.attemptId,
+    attempt.attachEpoch,
+    timestamp()
+  )
   const active = server.db.participantRegistrations.getAttempt(attempt.attemptId)
   if (active === null || active.state !== 'ACTIVE') {
     throw new Error('participant activation state disappeared before replay release')

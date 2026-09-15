@@ -6,6 +6,8 @@ import type {
   ParticipantAttemptState,
   ParticipantRegistration,
 } from '../index.js'
+import { brokerMigrations } from '../migrations/broker-migrations.js'
+import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const registration = (): ParticipantRegistration => ({
   registrationId: 'preg-1',
@@ -49,6 +51,8 @@ describe('T-08349 generic participant persistence boundaries', () => {
       expect(db.migrations.applied).toContain('0064_participant_registration_lifecycle')
       expect(db.migrations.applied).toContain('0065_participant_broker_identity')
       expect(db.migrations.applied).toContain('0066_participant_recovery_and_work')
+      expect(db.migrations.applied).toContain('0067_participant_activation_work_repair')
+      expect(db.migrations.applied).toContain('0056_participant_runtime_ownership_repair')
       db.sqlite.transaction(() => {
         db.participantRegistrations.insertRegistration(registration())
         db.participantRegistrations.insertAttempt(attempt())
@@ -149,6 +153,95 @@ describe('T-08349 generic participant persistence boundaries', () => {
       expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
         state: 'ACTIVE',
         initialActivationConfirmedAt: '2026-09-09T21:10:03.000Z',
+        establishmentWorkState: 'pending',
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('repairs only generic participant ACTIVE work and runtime lifecycle ownership', () => {
+    const db = openHrcDatabase(':memory:')
+    try {
+      db.participantRegistrations.insertRegistration(registration())
+      db.participantRegistrations.insertAttempt(
+        attempt({ state: 'ACTIVE', establishmentWorkState: 'completed' })
+      )
+      db.sessions.insert({
+        hostSessionId: 'hsid-participant-1',
+        scopeRef: registration().scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: '2026-09-09T21:10:00.000Z',
+        updatedAt: '2026-09-09T21:10:00.000Z',
+        ancestorScopeRefs: [],
+      })
+      db.sessions.insert({
+        hostSessionId: 'hsid-unrelated',
+        scopeRef: 'agent:test:project:hrc-runtime:task:unrelated',
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: '2026-09-09T21:10:00.000Z',
+        updatedAt: '2026-09-09T21:10:00.000Z',
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.insert({
+        runtimeId: 'rt-participant-1',
+        hostSessionId: 'hsid-participant-1',
+        scopeRef: registration().scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        runtimeStateJson: { kind: 'harness-broker' },
+        createdAt: '2026-09-09T21:10:00.000Z',
+        updatedAt: '2026-09-09T21:10:00.000Z',
+      })
+      db.runtimes.insert({
+        runtimeId: 'rt-unrelated',
+        hostSessionId: 'hsid-unrelated',
+        scopeRef: 'agent:test:project:hrc-runtime:task:unrelated',
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        runtimeStateJson: { kind: 'harness-broker' },
+        createdAt: '2026-09-09T21:10:00.000Z',
+        updatedAt: '2026-09-09T21:10:00.000Z',
+      })
+
+      const repair = schemaMigrations.find(
+        (migration) => migration.id === '0067_participant_activation_work_repair'
+      )
+      if (repair === undefined) throw new Error('participant activation repair migration missing')
+      repair.apply(db.sqlite)
+      const ownershipRepair = brokerMigrations.find(
+        (migration) => migration.id === '0056_participant_runtime_ownership_repair'
+      )
+      if (ownershipRepair === undefined) {
+        throw new Error('participant runtime ownership repair migration missing')
+      }
+      ownershipRepair.apply(db.sqlite)
+
+      expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
+        state: 'ACTIVE',
+        establishmentWorkState: 'pending',
+      })
+      expect(db.runtimes.getByRuntimeId('rt-participant-1')?.runtimeStateJson).toMatchObject({
+        lifecycleOwner: 'external',
+      })
+      expect(db.runtimes.getByRuntimeId('rt-unrelated')?.runtimeStateJson).toEqual({
+        kind: 'harness-broker',
       })
     } finally {
       db.close()

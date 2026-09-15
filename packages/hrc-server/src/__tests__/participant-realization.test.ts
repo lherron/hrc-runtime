@@ -385,7 +385,7 @@ test('persists actual HRC leases then freezes the unchanged start request before
   }
 })
 
-test('stages a current ensured participant without projection, ACK, or active publication', async () => {
+test('retries replay failure after activation CAS without reclassification or destructive lifecycle', async () => {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 't08349-stage-'))
   temporaryRoots.push(runtimeRoot)
   const db = openHrcDatabase(':memory:')
@@ -393,6 +393,7 @@ test('stages a current ensured participant without projection, ACK, or active pu
   let attachCalls = 0
   let replayCalls = 0
   let ackCalls = 0
+  let failReplayAfterActivationOnce = true
   const brokerUnixClientFactory = async () =>
     ({
       installIdentity: async (identity: {
@@ -477,6 +478,10 @@ test('stages a current ensured participant without projection, ACK, or active pu
       }),
       eventsSince: async () => {
         replayCalls += 1
+        if (failReplayAfterActivationOnce) {
+          failReplayAfterActivationOnce = false
+          throw new Error('injected replay failure after activation CAS')
+        }
         return { events: [], currentSeq: 3, retentionFloorSeq: 1 }
       },
       ackEvents: async () => {
@@ -562,15 +567,48 @@ test('stages a current ensured participant without projection, ACK, or active pu
     // Losing an unactivated candidate leaves the durable attempt staged. Its
     // next callback must reconnect that same attempt instead of rerunning
     // ensure or trying to release a missing candidate.
+    const legacyRuntime = db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)
+    if (legacyRuntime === null) throw new Error('expected participant runtime bookkeeping')
+    const legacyRuntimeState = Object.fromEntries(
+      Object.entries(legacyRuntime.runtimeStateJson ?? {}).filter(
+        ([key]) => key !== 'lifecycleOwner'
+      )
+    )
+    db.runtimes.update(hostedAttempt.runtimeId, {
+      runtimeStateJson: legacyRuntimeState,
+      updatedAt: '2026-09-15T14:30:00.000Z',
+    })
     await controller.discardStagedParticipantAttach(hostedAttempt.attemptId)
     scheduleParticipantEstablishment(server, hostedRegistration, staged)
-    await server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    const failedActivation = server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    await failedActivation
+    const retrying = db.participantRegistrations.getAttempt(hostedAttempt.attemptId)
+    expect(retrying).toMatchObject({
+      state: 'ACTIVE',
+      initialActivationConfirmedAt: expect.any(String),
+      establishmentWorkState: 'retry_wait',
+      establishmentAttemptCount: 1,
+    })
+    expect(db.participantRegistrations.listEstablishmentWork()).toContainEqual(retrying)
+    expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)).toMatchObject({
+      status: expect.not.stringMatching(/^(stale|terminated)$/),
+      runtimeStateJson: {
+        lifecycleOwner: 'external',
+        control: { brokerAttached: false },
+      },
+    })
+
+    const retry = server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
+    expect(retry).toBeDefined()
+    await retry
     expect(db.participantRegistrations.getAttempt(hostedAttempt.attemptId)).toMatchObject({
       state: 'ACTIVE',
       initialActivationConfirmedAt: expect.any(String),
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 1,
     })
-    expect(attachCalls).toBe(3)
-    expect(replayCalls).toBe(1)
+    expect(attachCalls).toBe(5)
+    expect(replayCalls).toBe(2)
     expect(ackCalls).toBe(0)
     expect(db.runtimes.getByRuntimeId(hostedAttempt.runtimeId)?.runtimeStateJson).toMatchObject({
       participantActivation: {
@@ -588,8 +626,8 @@ test('stages a current ensured participant without projection, ACK, or active pu
       db.participantRegistrations.getAttempt(hostedAttempt.attemptId) ?? hostedAttempt
     )
     await server.participantEstablishmentOperations.get(hostedAttempt.attemptId)
-    expect(attachCalls).toBe(3)
-    expect(replayCalls).toBe(1)
+    expect(attachCalls).toBe(5)
+    expect(replayCalls).toBe(2)
   } finally {
     controller.shutdown()
     db.close()
