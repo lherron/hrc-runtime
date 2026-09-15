@@ -48,6 +48,12 @@ The direct request contains:
 
 A direct participant needs no configured class. Without one, HRC uses the generic
 selected-scope, host-incarnation, externally owned, participant-served defaults.
+No new classless participant count limit is introduced by this revision. Existing
+configured-class limits retain their existing scope; revision 5
+`participant_registration_capacity_exhausted` is not emitted for a classless
+direct join. Actual persistence failure must fail the transaction explicitly,
+never return registered without its durable records. A new default capacity
+policy is a separate operator choice, not inferred from the removal of admit.
 An unknown class is a delivery configuration problem recorded after joining; it
 cannot refuse allocation. A class cannot grant process ownership: managed mode
 still requires HRC's own committed launch record and implemented lifecycle guard.
@@ -69,7 +75,11 @@ A direct registration at a virgin selected address performs the existing
 registry-first `withSummonAuthority` / `establishLocalPlacement` operation before
 local allocation. Separate pre-provisioning remains usable, but is not required
 for joining. The home validates mutation authority, then atomically writes the
-reservation, session, runtime and current binding/attempt identities. No generic
+reservation, session and current binding/attempt identities. It allocates the
+future runtimeId as an identifier on the binding/attempt, but does not insert a
+`runtimes` row before attachment supplies the required transport, harness and
+provider. The existing materialization step inserts that row after broker hello;
+no nullable runtime columns or invented profile values are introduced. No generic
 Codex harness is launched by this mint callback. The registered response follows
 the durable commit, without waiting for driver readiness.
 
@@ -82,18 +92,28 @@ transfer another live process's address. Registration at an occupied address
 with a different incarnation follows the existing explicit succession procedure.
 
 The registration and attempt storage must represent **registered, attachment
-pending** without a prepared execution profile. Implement this as a distinct
-preparation-pending attempt phase; do not fabricate a profile, call it PREPARED,
-or run model execution to finish the registration transaction. A schema
-migration preserves all existing prepared/active attempts. Duplicate direct
+pending** without a prepared execution profile. Use the existing
+`REGISTERED -> IDENTITY_MINTED` transition during identity allocation and retain
+`IDENTITY_MINTED` while preparation is pending; do not fabricate a profile or call it PREPARED,
+or run model execution to finish the registration transaction. One schema
+migration rebuilds the attempt table to narrow runtime_id uniqueness as specified
+in R6.5. Both states already exist in migration 0064; no state CHECK extension
+is needed. Preserve the existing
+paired-NULL profile/environment CHECK: both values remain NULL before preparation.
+If another required attempt-table constraint change is identified, combine it
+with this rebuild rather than rebuilding the same table twice. Preserve all existing
+rows, indexes, triggers and foreign-key relationships, including prepared/active
+attempts; migration validation must exercise those states. Duplicate direct
 requests for the same address/incarnation return the existing identities and
 attachment status, including after daemon loss before attachment begins.
 
 ## R6.4 Attachment follows joining
 
 The registered response includes `registrationId`, the durable address/session/
-generation/runtime identity, and current `attemptId`, `invocationId`, `attachEpoch`.
-Its observation is `attachment_pending` until normal broker establishment and
+generation identity, reserved runtimeId, and current `attemptId`, `invocationId`, `attachEpoch`.
+The reserved runtimeId does not assert a materialized/running runtime. Address
+lookup and mail retention use the registration/binding until that runtime row
+exists. Its observation is `attachment_pending` until normal broker establishment and
 activation finish, then `attached`. `registered` means the address exists, not
 that input was delivered or a model ran.
 
