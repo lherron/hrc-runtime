@@ -51,7 +51,7 @@ source:
 required_tests:
   - just architecture-records
   - T-08542 configured aspd route bypasses every override root bundled PATH current and source resolver while all other routes retain the existing precedence and status projection
-  - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload, and node-default tmux-tui with no request choice keeps the resolver-governed facade route
+  - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload, and, with HRC_ASPD_SOCKET unset, node-default tmux-tui with no request choice keeps the resolver-governed facade route
   - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation while an unset endpoint keeps the facade for every presentation
   - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths

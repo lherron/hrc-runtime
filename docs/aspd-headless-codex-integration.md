@@ -294,79 +294,77 @@ ordinary Codex births on a configured node now depend on aspd:
 `aspd_unavailable` refuses a NEW execution before any hosting effect. Live
 workers, reattach and control never need aspd (§6, unchanged).
 
-**Established runtime.** In this section a scope's *established interactive
-Codex runtime* is the runtime the interactive dispatch selector
-(`selectDispatchInteractiveRuntime`) would hand to interactive admission: a
-`harness-broker` runtime with `transport: tmux`, provider `openai`, broker driver
-`codex-app-server` or `codex-cli-tmux`, and status neither unavailable nor
-`failed`. Its *established headless broker runtime* is the latest
-`harness-broker` runtime with `transport: headless`, provider `openai` and a
-Codex harness id, with the same status test. Neither definition looks at invocation
-state. A runtime whose active invocation is `starting` or `stopping` (T-05358)
-is still established. Whether it is reused, joined as an in-flight birth
-(T-07693), refused (T-07397) or replaced through its fenced stale-and-reprovision
-is decided by the admission of ITS OWN transport, exactly as that admission
-decides it today. §1.3 selects which admission runs. It never decides reuse
-versus replacement, and it never starts a runtime of the other transport beside
-an established one.
+**Where the precedence applies.** Rules 3–5 below apply only on a node whose
+Codex redirect control is OFF. On a node with the control on, which is every
+node's default and the state of svc, lab and hrcdev (fleet plist readback
+2026-09-16), the start and dispatch doors keep their pre-T-08555 code path for
+Codex requests, including the de85ff26 reusable-headless check, the
+`shouldDeferHeadlessToInteractiveBrokerReuse` deferral and the high-risk and
+`responseFormat` handling. Nothing about those paths changes there.
 
-**Precedence for a Codex request (first match wins).**
+**Established runtime.** In this section a scope's *established runtime* is the
+most recently created runtime of its host session whose `controllerKind` is
+`harness-broker` and whose status is neither unavailable nor `failed`. It can be
+of ANY provider, harness or driver, and its invocation state is ignored. A
+runtime whose active invocation is `starting` or `stopping` (T-05358) is still
+established, and so is a Claude, Pi or `agent-harness` runtime left by an earlier
+harness choice for the same scope. §1.3 selects which admission runs for it. It
+never decides reuse versus replacement, and no rule starts a runtime of the other
+transport beside it.
+
+**Precedence for a Codex request on a redirect-off node (first match wins).**
 1. The intent arrives interactive (`harness.interactive: true` or
    `preferredMode: interactive`). This is an explicit interactive request:
-   interactive broker admission (standalone codex-tui), unchanged and
-   independent of the redirect flag. Door sources are `hrc run`, a cold
+   interactive broker admission (standalone codex-tui), independent of the
+   redirect flag (decision 1). Door sources are `hrc run`, a cold
    `hrc attach <scope>`, an API caller, or a door that replays a stored session
    intent persisted interactive (below). `presentation.operator` on such an
    intent stays refused (§1.1).
 2. An explicit `presentation.operator` (`none` | `tmux-tui`). Validation and
    `presentation_conflict` against every live runtime run exactly as in
-   §1.1–§1.2 (the conflict test is status-based, so a transitional runtime
-   presenting something else refuses). A matching live runtime receives the
-   request. Otherwise the request runs headless codex-app-server, source
-   `request`.
-3. The scope has an established interactive Codex runtime. The request is
-   normalized to the interactive shape and handed to interactive admission,
-   whatever carries it: omitted choice, `responseFormat`, a caller surface-reuse
-   refusal, or a high-risk actuator split. The outcomes are exactly those of
-   today's redirect-on node:
-   - An omitted choice is reused or replaced by admission.
-   - A `responseFormat` rides the interactive input turn as it does today when
-     `shouldDeferHeadlessToInteractiveBrokerReuse` defers it.
-   - A reuse refusal becomes admission's `runtime-unavailable`, with nothing
-     mutated.
-   - A high-risk actuator split is refused by the existing actuator-split route
-     admission (`high-risk-route-requires-headless-codex-broker`) before any
-     effect.
+   §1.1–§1.2 (the conflict test is status-based and harness-independent). A
+   matching live runtime receives the request. Otherwise the request runs
+   headless codex-app-server, source `request`.
+3. The established runtime has `transport: tmux`, whatever its provider or
+   driver. The request is normalized to the interactive Codex shape and handed
+   to interactive admission, whatever carries it: omitted choice,
+   `responseFormat`, a caller surface-reuse refusal, or a high-risk actuator
+   split. Admission alone decides the outcome:
+   - It reuses a matching, input-dispatchable Codex broker.
+   - It joins a birth (T-07693).
+   - It refuses a surface-reuse refusal as `runtime-unavailable` with nothing
+     mutated (T-07397).
+   - Otherwise (a transitional runtime, or one of another provider or driver) it
+     applies its existing fenced stale-and-reprovision into codex-tui.
 
-   Two behaviors change on every node, not only max3. Before, a high-risk request
-   or a reuse-refusing `responseFormat` request against a live TUI went to the
-   headless route beside it; now it is refused. A `responseFormat` request against
-   an established TUI whose row lacks a surface projection also changes: it no
-   longer goes headless beside that TUI. Both changes close existing
-   second-writer paths.
-4. The scope has an established headless broker runtime. The request stays
-   headless and never takes the redirect. The headless route's own reuse or
-   fenced reprovision applies. This widens the de85ff26 predicate from
-   "reusable" to "established", so a transitional headless runtime no longer
-   lets a redirect-on node start a TUI beside it.
-   If a scope has both kinds established, the most recently created runtime
-   decides.
+   A `responseFormat` rides the interactive input turn. A high-risk actuator
+   split is refused by the existing actuator-split route admission
+   (`high-risk-route-requires-headless-codex-broker`) before any effect.
+4. The established runtime has `transport: headless`.
+   - Provider `openai` and the request's harness id (absent counts as
+     `codex-cli`): the request stays headless and the headless route's own reuse
+     or fenced reprovision applies.
+   - Any other provider or harness: refused `runtime_unavailable` with reason
+     `established_runtime_harness_mismatch` before any runtime, operation or
+     hosting effect, runtime untouched. The headless start door stale-marks only
+     a same-harness runtime, so proceeding would start a second writer, and there
+     is no admission that replaces a foreign headless broker. The caller
+     terminates it explicitly.
 5. Nothing established. `responseFormat` (T-08338) or a high-risk actuator split
-   goes headless (unchanged). Otherwise, redirect flag on → interactive codex-tui
-   (unchanged). Flag off → headless codex-app-server with the node presentation
-   default; with aspd configured that prepares through aspd with source
-   `node-default`.
+   goes headless as today. Otherwise the request runs headless codex-app-server
+   with the node presentation default; with aspd configured that prepares
+   through aspd with source `node-default`.
 
 Rules 3 and 4 use one shared predicate at both the start door
 (`startRuntimeForSession`) and the turn dispatch door (`dispatchTurn`). It reads
-the runtime rows after the door's existing tmux liveness reconcile. A start
-already in flight for the host session (`runtimeStartOperations`) is awaited
-before the predicate runs, so the runtime it births counts as established. The
-start door already joins it first. The dispatch door adds this await ahead of
-rule selection, while its later T-07693 interactive join and invoke rendezvous
-keep their places.
-Every message door (hrcchat/wrkc submissions, the mail kicker cold birth,
-selector and target messages, ACP) enters through that dispatch door.
+the runtime rows after the door's existing tmux liveness reconcile. On a
+redirect-off node, a start already in flight for the host session
+(`runtimeStartOperations`) is awaited before the predicate runs, so the runtime
+it births is established. The start door already joins it first. The dispatch
+door adds this await ahead of rule selection, while its later T-07693
+interactive join and invoke rendezvous keep their places. Every message door
+(hrcchat/wrkc submissions, the mail kicker cold birth, selector and target
+messages, ACP) enters through that dispatch door.
 
 **Doors.**
 - `hrc start <scope> [-p …]` builds a non-interactive intent. Rules 2–5 apply,
@@ -402,17 +400,17 @@ intent `presentation.operator` absent, route decision
 The frozen-preparation resume rule (§1.1) is unchanged: a same-key retry
 launches the frozen record and never re-evaluates the node defaults.
 
-**Node scope and configuration.** The code change is node-neutral. Behavior
-changes only on a node that sets `HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0`
-(decision 1 and rule 5) and, for aspd preparation, `HRC_ASPD_SOCKET` (decision 2).
-- On nodes keeping the redirect on (default-on), omitted-choice Codex requests
-  with nothing established are redirected exactly as before. The rule 3–4
-  second-writer closures apply on every node.
-- A node with the redirect on and `HRC_ASPD_SOCKET` set moves only its
-  non-redirected node-default `tmux-tui` executions (`responseFormat` dispatches)
-  from facade to aspd. Today that is max3 alone.
-- On a node with the flag already `0`, explicit interactive Codex becomes
-  admissible where it was refused.
+**Node scope and configuration.** The code is deployed only to max3, and every
+behavior it changes is gated by node configuration that only max3 carries:
+- Decision 1 (explicit interactive admission independent of the flag) and rules
+  3–5 only change anything where `HRC_CODEX_CLI_TMUX_BROKER_ENABLED` is off.
+  With the flag on, admission was already allowed and the doors keep their
+  pre-change path.
+- Decision 2 only changes anything where `HRC_ASPD_SOCKET` is configured.
+- Fleet readback 2026-09-16: svc and lab (mini `com.praesidium.hrc-server`,
+  `com.praesidium.lab.hrc-server`) and hrcdev all have the flag `1` and no
+  aspd socket. A later fleet deploy of this code therefore changes no behavior
+  on them until their configuration changes, which needs its own authority.
 
 max3 delivery sets `HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0` in the installed
 `com.praesidium.hrc-server` plist, with `HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION=tmux-tui`
@@ -423,9 +421,11 @@ other node or ACP changes.
 **Rollback.** There is one coherent pair per direction: binary and configuration
 move together, never a release alone.
 - *Default only* (keep the new release): restore the plist backup (flag `1`),
-  then `bootout`/`bootstrap`. The new release with flag `1` behaves like
-  redirect-on today, plus the rule 3–4 second-writer closures. Runtimes born
-  under the default stay live and keep receiving input (rule 4).
+  then `bootout`/`bootstrap`. The new release with flag `1` takes the
+  pre-change door path. Only decision 2 remains: a non-redirected node-default
+  viewer, meaning a `responseFormat` dispatch, prepares through aspd on max3.
+  Runtimes born under the default stay live and keep receiving input through
+  the de85ff26 headless delivery.
 - *Full* (prior release): restore the plist backup (flag `1`) FIRST, repoint
   `~/.bun/install/hrc-runtime-current` to the recorded prior release
   (`release-20260916213952226-61246`, HRC `3229f86c`), then
@@ -436,8 +436,10 @@ move together, never a release alone.
   attach and live codex-tui reuse.
 - The aspd release is not touched by this change in either direction.
 
-**Refusals.** No new refusal code. Rule 3 routes two existing requests to existing
-refusals (listed there). Explicit-value validation, `presentation_conflict`,
+**Refusals.** One new reason, on redirect-off nodes only:
+`established_runtime_harness_mismatch` (rule 4, `runtime_unavailable`, no
+effect). Rule 3 sends high-risk and surface-refusing requests to existing
+refusals. Explicit-value validation, `presentation_conflict`,
 `presentation_operator_unsupported`, `aspd_unavailable` and every §4–§6 refusal
 are unchanged. The default-selected path is subject to the same no-fallback
 refusals as an explicit request.
@@ -670,34 +672,28 @@ the endpoint unset, the resolver governs every presentation as before.
 covers node-default `tmux-tui` as well as explicit choices, and records
 `operatorPresentationSource: node-default` for it.
 
-The Codex interactive redirect control decides only one thing: whether a
-non-interactive Codex request with no explicit presentation, no responseFormat,
-no high-risk actuator split and no established broker runtime in its scope is
-normalized to the interactive codex-tui broker. It never decides whether an
-explicit interactive Codex intent is admissible or an interactive Codex runtime
-is reusable.
+The Codex interactive redirect control no longer decides whether an explicit
+interactive Codex intent is admissible. With the control on, Codex start and
+dispatch routing is otherwise unchanged. With it off, a non-interactive Codex
+request without an explicit presentation is routed by the scope's established
+runtime before `responseFormat`, actuator-split or node defaults are
+considered. The established runtime is the most recent harness-broker runtime
+of the host session whose status is neither unavailable nor failed, of any
+provider, harness, driver or invocation state, with an in-flight start awaited
+first.
+- A tmux transport selects interactive admission, which alone decides reuse,
+  birth join, refusal or fenced replacement; high-risk requests are refused by
+  actuator-split route admission.
+- A headless transport of the same provider and harness selects the headless
+  route.
+- A headless transport of any other provider or harness refuses
+  `established_runtime_harness_mismatch` with no effect.
 
-For a non-interactive Codex request without an explicit presentation, the
-scope's established runtime decides which admission runs, before responseFormat,
-actuator-split or node defaults. An established runtime is a harness-broker
-runtime of that scope whose status is neither unavailable nor failed, whatever
-its invocation state; the most recent one decides.
-- Established interactive Codex runtime: interactive admission, including for
-  responseFormat, surface-reuse refusals and high-risk actuator splits, which
-  that admission or the actuator-split route admission refuses without effect.
-- Established headless runtime: the headless route.
-
-That admission alone decides reuse, birth join, refusal or its fenced
-replacement. No runtime of the other transport is started beside an established
-one.
-
-With the redirect off and nothing established, the request runs headless
-codex-app-server with the node presentation default on this route. An intent
-that arrives interactive keeps the standalone interactive backend.
-
-Explicit `presentation.operator` precedence, validation and conflict laws are
-unchanged. A rollback never pairs a release that gates interactive Codex
-admission on the redirect control with that control off.
+No rule starts a runtime of another transport beside an established one. With
+nothing established, the request runs headless codex-app-server with the node
+presentation default on this route. An intent that arrives interactive keeps the
+standalone interactive backend. No rollback pairs a release that gates
+interactive Codex admission on the redirect control with that control off.
 
 ## 9. Deliberate limits
 
@@ -832,8 +828,12 @@ Ghostty via ghostmux, and the real CLI.
    interactive runtime and a transitional established headless runtime each
    get only their own transport's admission, with no cross-transport start.
    `responseFormat`, surface-reuse refusal and high-risk against an established
-   TUI go to interactive admission or its refusal. Flag `0` keeps explicit
-   interactive Codex admissible. These run at both the start and dispatch doors.
+   TUI go to interactive admission or its refusal. A foreign-harness established
+   runtime (tmux Claude → interactive admission's fenced replacement; headless
+   `agent-harness` → `established_runtime_harness_mismatch`, untouched). Flag `0`
+   keeps explicit interactive Codex admissible. With the flag ON the doors
+   are unchanged (existing redirect/deferral regression tests stay green). These
+   run at both the start and dispatch doors.
 8. aspd stopped: a fresh omitted-choice start refuses `aspd_unavailable` with
    no facade process and no op row, while live default viewer runtimes keep
    taking turns.
