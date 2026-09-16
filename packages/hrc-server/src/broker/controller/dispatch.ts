@@ -10,6 +10,8 @@
 import type { HrcBrokerInvocationRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
+import type { AspcExecutionRelease } from 'spaces-aspc-protocol'
+import { BrokerRpcError } from 'spaces-harness-broker-client'
 import type {
   BrokerHealthResponse,
   InvocationEventEnvelope,
@@ -21,6 +23,7 @@ import type {
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
 
+import { workerHelloRefusal } from '../../agent-spaces-adapter/aspd-execution-release'
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
 import {
   type AspToolchainBinarySelection,
@@ -64,6 +67,7 @@ import { failReplayStale } from './lifecycle'
 import type { LifecycleContext } from './lifecycle'
 import {
   buildRuntimeStateJson,
+  markAspdStartOutcome,
   markStartedInvocationFailed,
   persistStartGraph,
 } from './persistence'
@@ -343,6 +347,26 @@ export async function startController(
   let client: BrokerClientLike | undefined
   let tmuxAllocation: BrokerTmuxAllocation | undefined
   let spawnedSelection: AspToolchainBinarySelection | undefined
+  let invocationStartSent = false
+  if (
+    input.aspdExecution !== undefined &&
+    (input.brokerClient !== undefined ||
+      !usesHeadlessBrokerSubstrate(input.profile) ||
+      isTmuxTuiRoute(input))
+  ) {
+    return {
+      ok: false,
+      error: new BrokerControllerError(
+        'aspd_route_profile_mismatch',
+        'an aspd-prepared execution launches only on the ordinary headless broker substrate',
+        {
+          runtimeId: String(input.identity.runtimeId),
+          operationId: input.aspdExecution.operationId,
+          brokerDriver: input.profile.brokerDriver,
+        }
+      ),
+    }
+  }
   try {
     // T-01812 Phase 3 — for an interactive broker-tmux profile, allocate the
     // per-runtime btmux lease UP FRONT. A durable allocator launches a 'broker'
@@ -427,6 +451,35 @@ export async function startController(
       capabilities: { permissionRequests: true },
     })
     markPhase('broker-hello')
+    // T-08542: an aspd-prepared worker must BE the frozen release before any
+    // invocation work. The lease it runs in never carried invocation.start, so
+    // HRC releases it; the prepared operation stays resumable.
+    if (input.aspdExecution !== undefined) {
+      const refusal = workerHelloRefusal(input.aspdExecution.release, hello)
+      if (refusal !== undefined) {
+        const detail = {
+          ...refusal.detail,
+          runtimeId: String(input.identity.runtimeId),
+          operationId: input.aspdExecution.operationId,
+        }
+        ctx.logger.warn?.('aspd worker hello refused before invocation.start', {
+          code: refusal.code,
+          ...detail,
+        })
+        ctx.markBrokerClosing(String(input.identity.runtimeId), refusal.code, client)
+        await client.close().catch(() => undefined)
+        if (tmuxAllocation !== undefined) {
+          await ctx
+            .allocationContext()
+            .headlessSubstrateAllocator?.release?.(tmuxAllocation)
+            .catch(() => undefined)
+        }
+        return {
+          ok: false,
+          error: new BrokerControllerError(refusal.code, refusal.message, detail),
+        }
+      }
+    }
     const toolchainSelection = tmuxAllocation?.aspToolchainSelection ?? spawnedSelection
     if (toolchainSelection !== undefined) {
       observeAspToolchainHello(toolchainSelection, {
@@ -627,6 +680,7 @@ export async function startController(
     }
     // The lifecycle overlay rides ONLY on the dispatch options envelope —
     // never on input.startRequest (INV-14.4 compiler closure).
+    invocationStartSent = true
     const startResult = input.lifecyclePolicy
       ? await client.startInvocationFromRequest(input.startRequest, {
           dispatchEnv,
@@ -753,6 +807,17 @@ export async function startController(
   } catch (error) {
     const controllerError = toControllerError('broker_start_failed', error)
     const identity = input.identity
+    if (input.aspdExecution !== undefined && invocationStartSent) {
+      // Once the start graph committed, a failed start result never authorizes a
+      // replay. A broker error reply is a known outcome; anything else leaves the
+      // native start uncertain, and it stays recorded as such.
+      markAspdStartOutcome(
+        ctx.persistenceContext(),
+        input.aspdExecution.operationId,
+        error instanceof BrokerRpcError ? 'rejected' : 'uncertain',
+        controllerError
+      )
+    }
     const hostSessionId = String(identity.hostSessionId)
     const session = ctx.db.sessions.getByHostSessionId(hostSessionId)
     if (client) {
@@ -773,6 +838,39 @@ export async function startController(
       cwd: input.profile.harnessInvocation.startRequest.spec.process.cwd,
     })
     return { ok: false, error: controllerError }
+  }
+}
+
+/** The frozen execution release a runtime was started from, when aspd-prepared. */
+export function persistedAspdExecutionRelease(
+  runtime: HrcRuntimeSnapshot
+): AspcExecutionRelease | undefined {
+  const record = runtime.runtimeStateJson?.['executionRelease']
+  if (typeof record !== 'object' || record === null) return undefined
+  const value = record as Record<string, unknown>
+  const worker = value['worker'] as Record<string, unknown> | undefined
+  if (
+    value['source'] !== 'aspd' ||
+    typeof value['releaseId'] !== 'string' ||
+    typeof value['sourceCommit'] !== 'string' ||
+    typeof value['builtAt'] !== 'string' ||
+    typeof value['releaseRoot'] !== 'string' ||
+    typeof worker?.['protocol'] !== 'string' ||
+    typeof worker['executable'] !== 'string' ||
+    !Array.isArray(worker['argvPrefix'])
+  ) {
+    return undefined
+  }
+  return {
+    releaseId: value['releaseId'],
+    sourceCommit: value['sourceCommit'],
+    builtAt: value['builtAt'],
+    releaseRoot: value['releaseRoot'],
+    worker: {
+      protocol: worker['protocol'] as AspcExecutionRelease['worker']['protocol'],
+      executable: worker['executable'],
+      argvPrefix: worker['argvPrefix'] as string[],
+    },
   }
 }
 
@@ -847,6 +945,28 @@ export async function attachAndReplay(
     ctx.handleBrokerClose(runtime.runtimeId, error, input.client)
   })
   try {
+    // T-08542: an aspd-prepared worker is reattached only after it proves, on
+    // this candidate connection, that it is still the frozen release. No aspd
+    // and no preparation participate in reattachment.
+    const frozenRelease = persistedAspdExecutionRelease(runtime)
+    if (frozenRelease !== undefined) {
+      const hello = await input.client.hello({
+        clientInfo: { name: 'hrc-server' },
+        protocolVersions: [frozenRelease.worker.protocol],
+      })
+      const refusal = workerHelloRefusal(frozenRelease, hello)
+      if (refusal !== undefined) {
+        throw new BrokerControllerError(
+          'broker_reattach_release_mismatch',
+          `reattach refused: ${refusal.message}`,
+          { ...refusal.detail, refusal: refusal.code, runtimeId: runtime.runtimeId }
+        )
+      }
+      trace('release.verified', {
+        releaseId: frozenRelease.releaseId,
+        protocolVersion: hello.protocolVersion,
+      })
+    }
     trace('attach.begin', { lastProjectedSeq })
     const attach = await input.client.attach({
       runtimeId: runtime.runtimeId,

@@ -164,6 +164,7 @@ export type {
   HrcBrokerEventProjectionStatus,
   HrcCompiledRuntimePlanRecord,
   HrcRuntimeOperationRecord,
+  HrcAspdServiceStatus,
   HrcBrokerInvocationRecord,
   HrcBrokerInvocationEventRecord,
   HrcRuntimeArtifactRecord,

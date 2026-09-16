@@ -78,7 +78,7 @@ export function persistStartGraph(
     createdAt: input.plan.createdAt,
   })
 
-  ctx.db.runtimeOperations.insert({
+  const operation = {
     operationId: String(identity.operationId),
     runtimeId: String(identity.runtimeId),
     ...(identity.runId !== undefined ? { runId: String(identity.runId) } : {}),
@@ -102,7 +102,32 @@ export function persistStartGraph(
     createdAt: now,
     startedAt: now,
     updatedAt: now,
-  })
+  } as const
+  if (input.aspdExecution !== undefined) {
+    // T-08542: boundary P already committed this operation as `prepared`. The
+    // start graph moves exactly that row to `starting`; any other state means
+    // the frozen attempt is not the never-submitted one being launched.
+    const prepared = ctx.db.runtimeOperations.getByOperationId(input.aspdExecution.operationId)
+    if (
+      prepared === null ||
+      prepared.status !== 'prepared' ||
+      prepared.operationId !== operation.operationId
+    ) {
+      throw new BrokerControllerError(
+        'aspd_preparation_not_prepared',
+        `aspd preparation ${input.aspdExecution.operationId} is not a never-submitted prepared operation`,
+        {
+          operationId: input.aspdExecution.operationId,
+          status: prepared?.status,
+        }
+      )
+    }
+    const { operationId: _operationId, createdAt: _createdAt, ...patch } = operation
+    // error_code/error_message keep the last pre-start refusal, if any, as history.
+    ctx.db.runtimeOperations.update(operation.operationId, patch)
+  } else {
+    ctx.db.runtimeOperations.insert(operation)
+  }
 
   // T-01874 Ph3 — public/API transport tracks the PROFILE, not the substrate.
   // A headless durable runtime now carries a leased-tmux substrate
@@ -146,6 +171,9 @@ export function persistStartGraph(
       // close handler and to every sweep the moment it exists (T-08294).
       ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
       ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
+      ...(input.aspdExecution !== undefined
+        ? { executionRelease: executionReleaseState(input, hello) }
+        : {}),
       ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
         ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
         : {}),
@@ -336,6 +364,9 @@ export function buildRuntimeStateJson(
     // here or a successful start would erase what the insert established.
     ...(input.lifecycleOwner !== undefined ? { lifecycleOwner: input.lifecycleOwner } : {}),
     ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
+    ...(input.aspdExecution !== undefined
+      ? { executionRelease: executionReleaseState(input, hello) }
+      : {}),
     createdAt: now,
     updatedAt: now,
     compile: {
@@ -385,6 +416,71 @@ export function buildRuntimeStateJson(
       pendingDepth: 0,
     },
   }
+}
+
+/**
+ * T-08542 — the per-runtime ATTEMPT execution release: the release the attempt
+ * was frozen against plus the identity the worker reported at hello. Reattach
+ * verifies a candidate worker against this record.
+ */
+export function executionReleaseState(
+  input: BrokerControllerStartInput,
+  hello: BrokerHelloResponse
+): Record<string, unknown> {
+  const execution = input.aspdExecution
+  if (execution === undefined) return {}
+  const { release } = execution
+  return {
+    source: 'aspd',
+    operationId: execution.operationId,
+    releaseId: release.releaseId,
+    sourceCommit: release.sourceCommit,
+    builtAt: release.builtAt,
+    releaseRoot: release.releaseRoot,
+    worker: {
+      protocol: release.worker.protocol,
+      executable: execution.executable,
+      argvPrefix: release.worker.argvPrefix,
+    },
+    ...(hello.release !== undefined
+      ? {
+          helloRelease: {
+            releaseId: hello.release.releaseId,
+            sourceCommit: hello.release.sourceCommit,
+            builtAt: hello.release.builtAt,
+          },
+        }
+      : {}),
+  }
+}
+
+/**
+ * T-08542 — record what is known about an aspd-prepared invocation.start that
+ * did not return a result. `uncertain` is never converted into a retry.
+ */
+export function markAspdStartOutcome(
+  ctx: PersistenceContext,
+  operationId: string,
+  outcome: 'rejected' | 'uncertain',
+  error: BrokerControllerError
+): void {
+  const operation = ctx.db.runtimeOperations.getByOperationId(operationId)
+  if (operation?.preparationJson === undefined) return
+  let preparation: Record<string, unknown>
+  try {
+    preparation = JSON.parse(operation.preparationJson) as Record<string, unknown>
+  } catch {
+    return
+  }
+  ctx.db.runtimeOperations.update(operationId, {
+    preparationJson: JSON.stringify({
+      ...preparation,
+      startOutcome: outcome,
+      startOutcomeAt: ctx.now(),
+      startOutcomeError: { code: error.code, message: error.message },
+    }),
+    updatedAt: ctx.now(),
+  })
 }
 
 export function markStartedInvocationFailed(

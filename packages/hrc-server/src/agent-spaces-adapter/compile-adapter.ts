@@ -218,7 +218,7 @@ function toHarnessFamily(
   return provider === 'openai' ? 'codex' : 'claude-code'
 }
 
-function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | undefined {
+export function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | undefined {
   if (intent.harness.interactive === true) {
     const runtime = toPreferredHarnessRuntime(intent.harness.id)
     if (runtime === 'claude-code-cli') {

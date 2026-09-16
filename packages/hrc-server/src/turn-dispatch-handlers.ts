@@ -36,6 +36,7 @@ import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
+import { findPreparedAspdAttemptForRetry } from './aspd-headless-start.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -1033,7 +1034,7 @@ export async function handleDispatchTurn(
     trigger: 'dispatch-turn',
   })
   const waitFor = resolvePublicWaitStage(body)
-  const runId = `run-${randomUUID()}`
+  let runId = `run-${randomUUID()}`
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
     session,
@@ -1054,6 +1055,16 @@ export async function handleDispatchTurn(
         waitFor,
         true
       )
+    }
+  }
+
+  // T-08542: a same-key retry of a never-submitted aspd preparation carries its
+  // frozen run identity, so the launch resumes that attempt instead of preparing
+  // a new one. No run row exists yet for a prepared attempt.
+  if (idempotencyKey !== undefined) {
+    const resumable = findPreparedAspdAttemptForRetry(this, session.hostSessionId, idempotencyKey)
+    if (resumable !== undefined) {
+      runId = resumable.runId
     }
   }
 

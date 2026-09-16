@@ -1,7 +1,7 @@
 # HRC headless Codex preparation through aspd (T-08542)
 
-Status: implementation spec for T-08542, pending Daedalus architecture
-verification. Governing design: `asp-hrc-split-proposal.md` at `bf3e539e`
+Status: implementation spec for T-08542; Daedalus APPROVE EN-12902 (records
+`248138b9`). Governing design: `asp-hrc-split-proposal.md` at `bf3e539e`
 (Daedalus APPROVE EN-12789, R-00095), migration step 3 ("prove one complete
 execution path with frozen HRC"). Producer prerequisite: agent-spaces T-08539
 (`docs/aspd.md`, scope EN-12854/EN-12856, acceptance C-23052). Brief: EN-12894.
@@ -60,7 +60,7 @@ Reused records; one additive column. No new table, no universal lifecycle.
 | Last pre-start refusal of a frozen preparation | `runtime_operations.error_code/error_message` while status stays `prepared` | On refusal |
 | Plan projection | `compiled_runtime_plans` (existing insert, now at P for this route) | P |
 | Runtime/run/invocation start graph, hosting endpoint/substrate, negotiated protocol | existing `persistStartGraph` rows | B4 (existing position: after hello, before `invocation.start`) |
-| Per-runtime execution release (frozen release + actual worker hello release) | `runtimes.runtime_state_json.broker.executionRelease` | B4, then the post-start runtime state write |
+| Per-runtime execution release (frozen release + actual worker hello release) | `runtimes.runtime_state_json.executionRelease` (`source: 'aspd'`) | B4, then the post-start runtime state write |
 | Uncertain start | `preparation_json.startOutcome = 'uncertain'` in addition to the existing failure projection | When `invocation.start` fails at transport level after being sent |
 
 Status of a frozen attempt is therefore read from durable rows only:
@@ -126,7 +126,7 @@ database; nothing prepared in memory is passed through.
    capability, response-format and lifecycle-policy admission follow unchanged.
 4. **Boundary B4 — freeze complete dispatch (existing).** `persistStartGraph`
    with the op row UPDATED (not inserted) to `starting`, plus
-   `runtime_state_json.broker.executionRelease`. The existing `onAccepted`
+   `runtime_state_json.executionRelease`. The existing `onAccepted`
    hook runs here.
 5. **Establish (existing).** `invocation.start` with the frozen
    `startRequest`, the frozen dispatch env and lifecycle policy overlay, then
@@ -151,7 +151,7 @@ refused `release_unavailable` again and stays visible.
   use the persisted endpoint exactly as today. None touches aspd.
 - Daemon-restart and dispatch-time reattach use persisted endpoint, attach
   token ref, identity fences and projection cursor (unchanged). For a runtime
-  whose `runtime_state_json.broker.executionRelease` exists, reattach first sends
+  whose `runtime_state_json.executionRelease` exists, reattach first sends
   `broker.hello` on the candidate connection and requires the same protocol and
   release identity; a mismatch refuses attachment with
   `broker_reattach_release_mismatch` (existing stale-classification path), never
@@ -166,7 +166,7 @@ refused `release_unavailable` again and stays visible.
   `aspc.hello` probe. This is the **active preparation release**. The existing
   `aspToolchain` projection (bundled/root/override selection for other routes)
   is unchanged and distinct.
-- Per runtime, `runtime_state_json.broker.executionRelease` (frozen release,
+- Per runtime, `runtime_state_json.executionRelease` (frozen release,
   `releaseRoot`, worker executable, `helloRelease`) is the **attempt execution
   release**, visible in existing runtime inspect/list JSON.
 - Frozen preparations are readable from `runtime_operations.preparation_json`

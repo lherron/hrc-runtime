@@ -696,6 +696,9 @@ export type HrcRuntimeOperationKind =
   | string
 
 export type HrcRuntimeOperationStatus =
+  // T-08542: an aspd-prepared attempt frozen before any hosting effect; proves
+  // no invocation.start was submitted.
+  | 'prepared'
   | 'accepted'
   | 'admitted'
   | 'starting'
@@ -765,6 +768,12 @@ export type HrcRuntimeOperationRecord = {
   updatedAt: string
   errorCode?: string | undefined
   errorMessage?: string | undefined
+  /**
+   * T-08542: the frozen aspd preparation (complete compile response, execution
+   * release, launch description, dispatch env, lifecycle overlay, identity,
+   * idempotency key). Present only on the aspd-prepared headless codex route.
+   */
+  preparationJson?: string | undefined
 }
 
 export type HrcBrokerInvocationRecord = {
@@ -1171,6 +1180,22 @@ export type HrcAspToolchainStatus = {
   }>
 }
 
+/**
+ * T-08542 — the ACTIVE PREPARATION RELEASE: the node-local aspd endpoint this
+ * daemon is configured with and what a bounded `aspc.hello` probe read back.
+ * Distinct from `aspToolchain` (resolver-governed routes) and from each
+ * runtime's frozen `runtimeStateJson.executionRelease`.
+ */
+export type HrcAspdServiceStatus = {
+  configured: boolean
+  endpoint?: string | undefined
+  reachable?: boolean | undefined
+  protocolVersion?: string | undefined
+  release?: { releaseId: string; sourceCommit: string; builtAt: string } | undefined
+  error?: { code: string; message: string } | undefined
+  probedAt?: string | undefined
+}
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -1184,6 +1209,7 @@ export type HrcCapabilityStatus = {
   packagePath: string
   release: HrcReleaseStatus
   aspToolchain: HrcAspToolchainStatus
+  aspd: HrcAspdServiceStatus
   sessionCount: number
   runtimeCount: number
   apiVersion: string

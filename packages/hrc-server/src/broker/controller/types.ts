@@ -13,6 +13,7 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { AspcExecutionRelease } from 'spaces-aspc-protocol'
 import type { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import type {
@@ -289,7 +290,15 @@ export type BrokerTmuxAllocator = {
     brokerDriver: string
     /** Process-only environment for the broker binary; never persisted or sent on the wire. */
     brokerEnv?: Record<string, string> | undefined
+    /** T-08542 — frozen aspd worker launch; bypasses ASP toolchain selection entirely. */
+    workerLaunch?: { executable: string; argv: string[] } | undefined
   }): Promise<BrokerTmuxAllocation>
+  /**
+   * T-08542 — release a lease this allocator realized that never carried
+   * invocation.start (a worker refused at hello). Optional; absent allocators
+   * leave cleanup to the orphan lease sweep.
+   */
+  release?(allocation: BrokerTmuxAllocation): Promise<void>
 }
 
 export type BrokerAttachedLaunchInput = {
@@ -517,6 +526,13 @@ export type BrokerControllerStartInput = {
    */
   lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
   /**
+   * T-08542 — the frozen aspd-prepared execution this start launches. The
+   * `runtime_operations` row `operationId` already exists with status
+   * `prepared`; the worker is launched only from `executable`/`argv`, its hello
+   * must match `release`, and the start graph UPDATES that row.
+   */
+  aspdExecution?: BrokerAspdExecution | undefined
+  /**
    * Fires after the complete start graph is durable and before the potentially
    * long invocation-start RPC. Detached callers use this as their truthful
    * acceptance boundary.
@@ -528,6 +544,13 @@ export type BrokerControllerStartInput = {
         invocation: HrcBrokerInvocationRecord
       }) => Promise<void> | void)
     | undefined
+}
+
+export type BrokerAspdExecution = {
+  operationId: string
+  release: AspcExecutionRelease
+  executable: string
+  argv: string[]
 }
 
 export type BrokerControllerStartResult =

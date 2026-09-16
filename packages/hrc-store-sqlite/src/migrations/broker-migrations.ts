@@ -979,6 +979,28 @@ const participantRuntimeOwnershipRepairMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08542: the frozen aspd preparation for the HRC-hosted headless codex route.
+ * Nullable and additive: every existing operation row keeps NULL, and an index
+ * keeps the same-key retry lookup bounded to one host session's prepared rows.
+ */
+const runtimeOperationAspPreparationMigration: HrcMigration = {
+  id: '0071_runtime_operation_asp_preparation',
+  apply(db) {
+    const columns = db
+      .query<{ name: string }, []>('PRAGMA table_info(runtime_operations)')
+      .all()
+      .map((column) => column.name)
+    if (!columns.includes('preparation_json')) {
+      db.exec('ALTER TABLE runtime_operations ADD COLUMN preparation_json TEXT;')
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtime_operations_host_session_status
+        ON runtime_operations(host_session_id, status);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -1002,4 +1024,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   brokerTurnAttributionMigration,
   askBracketScanIndexMigration,
   participantRuntimeOwnershipRepairMigration,
+  runtimeOperationAspPreparationMigration,
 ]

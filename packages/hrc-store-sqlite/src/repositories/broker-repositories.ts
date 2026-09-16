@@ -176,6 +176,7 @@ const RUNTIME_OPERATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeOperati
   { key: 'updatedAt', column: 'updated_at' },
   { key: 'errorCode', column: 'error_code' },
   { key: 'errorMessage', column: 'error_message' },
+  { key: 'preparationJson', column: 'preparation_json' },
 ]
 
 export class RuntimeOperationRepository {
@@ -207,8 +208,9 @@ export class RuntimeOperationRepository {
           completed_at,
           updated_at,
           error_code,
-          error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          error_message,
+          preparation_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.operationId,
       record.runtimeId,
@@ -231,7 +233,8 @@ export class RuntimeOperationRepository {
       record.completedAt ?? null,
       record.updatedAt,
       record.errorCode ?? null,
-      record.errorMessage ?? null
+      record.errorMessage ?? null,
+      record.preparationJson ?? null
     )
 
     return requireRecord(
@@ -248,6 +251,22 @@ export class RuntimeOperationRepository {
       .get(operationId)
 
     return row ? mapRuntimeOperationRow(row) : null
+  }
+
+  /**
+   * T-08542: never-submitted aspd preparations for one host session, newest
+   * first. The dispatch idempotency key lives inside the frozen preparation.
+   */
+  listPreparedByHostSession(hostSessionId: string): HrcRuntimeOperationRecord[] {
+    const rows = this.db
+      .query<RuntimeOperationRow, [string]>(
+        `SELECT ${RUNTIME_OPERATION_COLUMNS} FROM runtime_operations
+          WHERE host_session_id = ? AND status = 'prepared' AND preparation_json IS NOT NULL
+          ORDER BY created_at DESC, operation_id DESC`
+      )
+      .all(hostSessionId)
+
+    return rows.map(mapRuntimeOperationRow)
   }
 
   listByRuntimeId(runtimeId: string): HrcRuntimeOperationRecord[] {

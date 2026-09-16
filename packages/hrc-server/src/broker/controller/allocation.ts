@@ -72,6 +72,13 @@ export async function allocateHeadlessSubstrate(
   if (ctx.headlessSubstrateAllocator) {
     return allocateSubstrateVia(ctx, ctx.headlessSubstrateAllocator, input)
   }
+  if (input.aspdExecution !== undefined) {
+    throw new BrokerControllerError(
+      'broker_headless_allocator_unavailable',
+      'an aspd-prepared worker launch requires the HRC headless substrate allocator',
+      { runtimeId: String(input.identity.runtimeId) }
+    )
+  }
   const runtimeId = String(input.identity.runtimeId)
   const driver = input.profile.brokerDriver
   const runtimeRoot = ctx.env?.['HRC_RUNTIME_ROOT'] ?? '/tmp/hrc-runtime'
@@ -137,6 +144,14 @@ export async function allocateSubstrateVia(
     generation: input.identity.generation,
     brokerDriver: input.profile.brokerDriver,
     ...(input.brokerEnv !== undefined ? { brokerEnv: input.brokerEnv } : {}),
+    ...(input.aspdExecution !== undefined
+      ? {
+          workerLaunch: {
+            executable: input.aspdExecution.executable,
+            argv: input.aspdExecution.argv,
+          },
+        }
+      : {}),
   })
   if (allocation.socketPath.length === 0) {
     throw new BrokerControllerError(

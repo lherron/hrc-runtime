@@ -42,6 +42,7 @@ import type { TranscriptIndexer } from 'hrc-transcript-index'
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase, SqliteSlowStatement } from 'hrc-store-sqlite'
 import { AcpEventBridge } from './acp-event-bridge.js'
+import { projectAspdServiceStatus } from './agent-spaces-adapter/aspd-preparation-client.js'
 import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
@@ -2786,6 +2787,7 @@ class HrcServerInstance implements HrcServer {
     const aspToolchain = projectAspToolchainStatus(
       release.mode === 'atomic' ? release.aspBuild : undefined
     )
+    const aspd = await projectAspdServiceStatus()
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
       const tmuxStatus = await detectTmuxBackend()
@@ -2802,6 +2804,7 @@ class HrcServerInstance implements HrcServer {
         packagePath: HRC_SERVER_PACKAGE_PATH,
         release,
         aspToolchain,
+        aspd,
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
@@ -2855,6 +2858,7 @@ class HrcServerInstance implements HrcServer {
       packagePath: HRC_SERVER_PACKAGE_PATH,
       release,
       aspToolchain,
+      aspd,
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,

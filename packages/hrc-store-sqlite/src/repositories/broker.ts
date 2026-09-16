@@ -56,6 +56,7 @@ export type RuntimeOperationRow = {
   updated_at: string
   error_code: string | null
   error_message: string | null
+  preparation_json: string | null
 }
 
 export type BrokerInvocationRow = {
@@ -177,7 +178,8 @@ export const RUNTIME_OPERATION_COLUMNS = `
   completed_at,
   updated_at,
   error_code,
-  error_message`
+  error_message,
+  preparation_json`
 
 export const BROKER_INVOCATION_COLUMNS = `
   invocation_id,
@@ -308,6 +310,7 @@ export function mapRuntimeOperationRow(row: RuntimeOperationRow): HrcRuntimeOper
     updatedAt: row.updated_at,
     ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
     ...(row.error_message !== null ? { errorMessage: row.error_message } : {}),
+    ...(row.preparation_json !== null ? { preparationJson: row.preparation_json } : {}),
   }
 }
 

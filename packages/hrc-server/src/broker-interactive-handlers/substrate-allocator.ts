@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 
 import { dirname, isAbsolute, join } from 'node:path'
 
@@ -109,6 +109,47 @@ export type AllocateBrokerSubstrateInput = {
   observerSocketPath?: string | undefined
   /** Process-only credential channel for the broker binary; never persisted. */
   brokerEnv?: Record<string, string> | undefined
+  /**
+   * T-08542 — the frozen worker launch of an aspd-prepared attempt. When set the
+   * broker is launched EXACTLY as `executable argv…`; no ASP toolchain selection
+   * runs. Any lease server left for this runtime id by an interrupted earlier
+   * launch of the same never-submitted attempt is released first.
+   */
+  workerLaunch?: FrozenWorkerLaunch | undefined
+}
+
+export type FrozenWorkerLaunch = {
+  executable: string
+  argv: string[]
+}
+
+/** The deterministic HRC-owned hosting paths for one broker runtime. */
+export type BrokerSubstratePaths = {
+  brokerIpcSocketPath: string
+  ipcDir: string
+  btmuxSocketPath: string
+  sessionName: string
+  attachTokenPath: string
+  eventLedgerPath: string
+  brokerStderrPath: string
+}
+
+export function describeBrokerSubstratePaths(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  driverKind: string,
+  runtimeId: string
+): BrokerSubstratePaths {
+  const brokerIpcSocketPath = getBrokerIpcSocketPath(options, driverKind, runtimeId)
+  const ipcDir = dirname(brokerIpcSocketPath)
+  return {
+    brokerIpcSocketPath,
+    ipcDir,
+    btmuxSocketPath: getBrokerTmuxSocketPath(options as HrcServerOptions, driverKind, runtimeId),
+    sessionName: `hrc-${driverKind}-${runtimeId}`,
+    attachTokenPath: join(ipcDir, 'attach.token'),
+    eventLedgerPath: join(ipcDir, 'events.ndjson'),
+    brokerStderrPath: join(ipcDir, 'broker.err'),
+  }
 }
 
 export type BrokerSubstrateAllocation = {
@@ -121,7 +162,8 @@ export type BrokerSubstrateAllocation = {
   /** Raw attach-token secret — used in-process only, NEVER persisted. */
   attachToken: string
   brokerCommand: string
-  aspToolchainSelection: AspToolchainBinarySelection
+  /** Absent for a frozen aspd worker launch, which performs no toolchain selection. */
+  aspToolchainSelection?: AspToolchainBinarySelection | undefined
   /**
    * T-04921 — the HRC-owned read-only observer socket path the broker SERVES
    * (present only when `observerSocketPath` was requested). Echoed onto the
@@ -150,17 +192,23 @@ export async function allocateBrokerSubstrate(
   const now = deps.now ?? timestamp
   const { runtimeId, hostSessionId, generation, driverKind, presentation } = input
 
-  const brokerIpcSocketPath = getBrokerIpcSocketPath(options, driverKind, runtimeId)
+  const paths = describeBrokerSubstratePaths(options, driverKind, runtimeId)
+  const brokerIpcSocketPath = paths.brokerIpcSocketPath
   // HARD preflight BEFORE any tmux spawn / IPC dir creation: an over-long
   // sockaddr_un path fails EARLY with a readable error, never a later
   // bind/connect errno.
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
 
-  const brokerBinary = resolveBrokerBinary(driverKind)
-  const aspToolchainSelection = describeAspToolchainCommand(
-    brokerDriverToolchainKind(driverKind),
-    brokerBinary
-  )
+  const workerLaunch = input.workerLaunch
+  // T-08542: a frozen aspd worker launch never reaches the toolchain resolver.
+  const brokerBinary = workerLaunch?.executable ?? resolveBrokerBinary(driverKind)
+  const aspToolchainSelection =
+    workerLaunch === undefined
+      ? describeAspToolchainCommand(brokerDriverToolchainKind(driverKind), brokerBinary)
+      : undefined
+  if (workerLaunch !== undefined) {
+    assertFrozenWorkerArgvHosting(workerLaunch.argv, paths, input)
+  }
   if (isAbsolute(brokerBinary)) {
     try {
       await access(brokerBinary, constants.X_OK)
@@ -171,12 +219,8 @@ export async function allocateBrokerSubstrate(
     }
   }
 
-  const btmuxSocketPath = getBrokerTmuxSocketPath(
-    options as HrcServerOptions,
-    driverKind,
-    runtimeId
-  )
-  const ipcDir = dirname(brokerIpcSocketPath)
+  const btmuxSocketPath = paths.btmuxSocketPath
+  const ipcDir = paths.ipcDir
   await mkdir(dirname(btmuxSocketPath), { recursive: true })
   // Owner-only broker IPC dir (0700). mkdir mode is umask-masked, so chmod the
   // leaf explicitly to guarantee rwx------.
@@ -190,6 +234,12 @@ export async function allocateBrokerSubstrate(
   await writeFile(attachTokenPath, attachToken, { mode: 0o600 })
 
   const tmux = deps.tmuxManagerFactory({ socketPath: btmuxSocketPath })
+  if (workerLaunch !== undefined) {
+    // Status `prepared` proves no invocation.start was ever sent for this
+    // attempt, so a lease left by an interrupted earlier launch holds no native
+    // invocation and is HRC's to reclaim before the relaunch.
+    await releaseBrokerLeaseServer(deps, btmuxSocketPath, brokerIpcSocketPath)
+  }
   await tmux.initialize()
 
   const sessionName = `hrc-${driverKind}-${runtimeId}`
@@ -212,7 +262,10 @@ export async function allocateBrokerSubstrate(
   // trace. Redirecting fd2 BEFORE the shell `exec`s into the broker preserves the
   // crash/panic output across the exec into this file.
   const brokerStderrPath = join(ipcDir, 'broker.err')
-  const brokerCommand = `exec ${shellQuote(brokerBinary)} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
+  const brokerCommand =
+    workerLaunch !== undefined
+      ? `exec ${[brokerBinary, ...workerLaunch.argv].map(shellQuote).join(' ')} 2>${brokerStderrPath}`
+      : `exec ${shellQuote(brokerBinary)} run --transport unix --socket ${brokerIpcSocketPath} --event-ledger ${eventLedgerPath} --runtime-id ${runtimeId} --host-session-id ${hostSessionId} --generation ${generation} --attach-token-file ${attachTokenPath}${observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : ''} 2>${brokerStderrPath}`
   const brokerWindow = await tmux.createWindowWithCommand({
     sessionName,
     windowName: 'broker',
@@ -263,7 +316,7 @@ export async function allocateBrokerSubstrate(
     allocatedAt: now(),
     attachToken,
     brokerCommand,
-    aspToolchainSelection,
+    ...(aspToolchainSelection !== undefined ? { aspToolchainSelection } : {}),
     ...(observerSocketPath !== undefined ? { observerSocketPath } : {}),
     ...(brokerPid !== undefined ? { brokerPid } : {}),
     brokerWindow,
@@ -413,7 +466,9 @@ function projectBaseAllocation(sub: BrokerSubstrateAllocation): BrokerTmuxAlloca
       ? { attachTokenRef: sub.endpoint.attachTokenRef }
       : {}),
     brokerCommand: sub.brokerCommand,
-    aspToolchainSelection: sub.aspToolchainSelection,
+    ...(sub.aspToolchainSelection !== undefined
+      ? { aspToolchainSelection: sub.aspToolchainSelection }
+      : {}),
     ...(sub.observerSocketPath !== undefined ? { observerSocketPath: sub.observerSocketPath } : {}),
     ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
     brokerWindow: sub.brokerWindow,
@@ -493,6 +548,7 @@ export function createBrokerDurableHeadlessAllocator(
       brokerDriver,
       generation,
       brokerEnv,
+      workerLaunch,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -502,10 +558,61 @@ export function createBrokerDurableHeadlessAllocator(
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'none',
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
+        ...(workerLaunch !== undefined ? { workerLaunch } : {}),
       })
       // No lease / tuiWindow: presentation='none' has no operator pane.
       return projectBaseAllocation(sub)
     },
+    release: async (allocation) => {
+      await releaseBrokerLeaseServer(deps, allocation.socketPath, allocation.brokerIpcSocketPath)
+    },
+  }
+}
+
+/**
+ * Stop a per-runtime lease server and remove its broker socket node. Tolerates an
+ * absent server/socket. Used only for leases that never carried invocation.start.
+ */
+async function releaseBrokerLeaseServer(
+  deps: BrokerDurableTmuxAllocatorDeps,
+  btmuxSocketPath: string,
+  brokerIpcSocketPath: string | undefined
+): Promise<void> {
+  const tmux = deps.tmuxManagerFactory({
+    socketPath: btmuxSocketPath,
+  }) as DurableTmuxManagerLike & {
+    killServer?: () => Promise<void>
+  }
+  await tmux.killServer?.().catch(() => undefined)
+  if (brokerIpcSocketPath !== undefined && brokerIpcSocketPath.length > 0) {
+    await rm(brokerIpcSocketPath, { force: true })
+  }
+}
+
+/** The frozen argv must name exactly HRC's deterministic hosting resources. */
+function assertFrozenWorkerArgvHosting(
+  argv: readonly string[],
+  paths: BrokerSubstratePaths,
+  input: Pick<AllocateBrokerSubstrateInput, 'runtimeId' | 'hostSessionId' | 'generation'>
+): void {
+  const flag = (name: string): string | undefined => {
+    const index = argv.indexOf(name)
+    return index >= 0 ? argv[index + 1] : undefined
+  }
+  const expected: Record<string, string> = {
+    '--socket': paths.brokerIpcSocketPath,
+    '--event-ledger': paths.eventLedgerPath,
+    '--runtime-id': input.runtimeId,
+    '--host-session-id': input.hostSessionId,
+    '--generation': String(input.generation),
+    '--attach-token-file': paths.attachTokenPath,
+  }
+  for (const [name, value] of Object.entries(expected)) {
+    if (flag(name) !== value) {
+      throw new Error(
+        `frozen worker argv ${name}=${String(flag(name))} does not match HRC hosting ${value}`
+      )
+    }
   }
 }
 

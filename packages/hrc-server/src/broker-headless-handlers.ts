@@ -29,6 +29,13 @@ import {
   prepareActuatorSplitIntent,
 } from './actuator-split.js'
 import {
+  aspdHeadlessCodexEndpoint,
+  findPreparedAspdAttemptForRetry,
+  launchAspdPreparedAttempt,
+  prepareAspdHeadlessAttempt,
+  readAspdPreparation,
+} from './aspd-headless-start.js'
+import {
   decideCodexAppServerPresentation,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
@@ -558,6 +565,19 @@ export async function startHeadlessBrokerRuntime(
   assertParticipantAddressNotSubstituted(this, session)
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  // T-08542: a node that declares an aspd endpoint prepares ordinary headless
+  // codex-app-server there, with no facade/toolchain fallback.
+  const aspdEndpoint = aspdHeadlessCodexEndpoint(requestedTurnIntent)
+  if (aspdEndpoint !== undefined) {
+    return await startAspdHeadlessBrokerRuntime(
+      this,
+      session,
+      requestedTurnIntent,
+      runId,
+      aspdEndpoint,
+      options
+    )
+  }
   // Resolve every approval/artifact/base/path fact before opening the compiler
   // facade or allocating a broker substrate. Actuator prompts are replaced here
   // with the deterministic apply request, so free-form caller text never enters
@@ -684,82 +704,15 @@ export async function startHeadlessBrokerRuntime(
     })
 
     if (!result.ok) {
-      const acceptedRun = this.db.runs.getByRunId(runId)
-      if (acceptedRun !== null) {
-        const failedAt = timestamp()
-        this.db.runs.markCompleted(runId, {
-          status: 'failed',
-          completedAt: failedAt,
-          updatedAt: failedAt,
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-          errorMessage: result.error.message,
-        })
-        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
-          invocationState: 'failed',
-          updatedAt: failedAt,
-        })
-        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
-          status: 'failed',
-          completedAt: failedAt,
-          updatedAt: failedAt,
-          errorCode: result.error.code,
-          errorMessage: result.error.message,
-        })
-        this.db.runtimes.update(runtimeId, {
-          status: 'failed',
-          statusChangedAt: failedAt,
-          activeRunId: runId,
-          updatedAt: failedAt,
-          runtimeStateJson: {
-            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
-            status: 'failed',
-            updatedAt: failedAt,
-            startFailure: {
-              code: result.error.code,
-              message: result.error.message,
-            },
-          },
-        })
-        const failedEvent = appendHrcEvent(this.db, 'turn.failed', {
-          ts: failedAt,
-          hostSessionId: session.hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
-          runId,
-          runtimeId,
-          transport: 'headless',
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-          payload: {
-            code: result.error.code,
-            message: result.error.message,
-            phase: 'broker-invocation-start',
-          },
-        })
-        this.notifyEvent(failedEvent)
-      }
-      if (
-        result.error.code === 'unsupported_capability' &&
-        options.responseFormat?.kind === 'json_schema'
-      ) {
-        throw new HrcUnprocessableEntityError(
-          HrcErrorCode.UNSUPPORTED_CAPABILITY,
-          result.error.message,
-          result.error.detail
-        )
-      }
-      const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
-      throw new HrcRuntimeUnavailableError(
-        externalToolchainFailure ? result.error.message : 'headless broker start failed',
-        {
-          hostSessionId: session.hostSessionId,
-          runId,
-          code: result.error.code,
-          message: result.error.message,
-          route: 'broker',
-          ...result.error.detail,
-        }
-      )
+      settleFailedHeadlessBrokerStart(this, {
+        session,
+        runId,
+        runtimeId,
+        invocationId: String(compiled.identity.invocationId),
+        operationId: String(compiled.identity.operationId),
+        error: result.error,
+        responseFormat: options.responseFormat,
+      })
     }
 
     // `lastAppliedIntentJson` is materialization authority for automatic queued
@@ -774,6 +727,174 @@ export async function startHeadlessBrokerRuntime(
     }
     throw error
   }
+}
+
+/**
+ * T-08542 — the aspd-prepared headless codex start. A same-host-session,
+ * same-idempotency-key retry whose frozen run identity this dispatch reused
+ * launches the never-submitted preparation; anything else prepares anew. Both
+ * paths launch only from the persisted operation.
+ */
+async function startAspdHeadlessBrokerRuntime(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  requestedTurnIntent: HrcRuntimeIntent,
+  runId: string,
+  endpoint: string,
+  options: DispatchRunPersistenceOptions & {
+    allowCompilerInitialInputWithoutIdentity?: boolean | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+  }
+): Promise<HrcRuntimeSnapshot> {
+  const resumable =
+    options.dispatchIdempotencyKey !== undefined
+      ? findPreparedAspdAttemptForRetry(
+          server,
+          session.hostSessionId,
+          options.dispatchIdempotencyKey
+        )
+      : undefined
+  let operationId: string
+  if (resumable !== undefined && resumable.runId === runId) {
+    operationId = resumable.operationId
+    writeServerLog('INFO', 'aspd.preparation.resume', {
+      operationId,
+      runId,
+      hostSessionId: session.hostSessionId,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    })
+  } else {
+    const preparedActuatorSplit = await prepareActuatorSplitIntent(requestedTurnIntent)
+    operationId = await prepareAspdHeadlessAttempt(server, {
+      session,
+      intent: preparedActuatorSplit.intent,
+      preparedAuthority: preparedActuatorSplit.authority,
+      runId,
+      endpoint,
+      allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
+      responseFormat: options.responseFormat,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    })
+  }
+  const { runtime, intent } = await launchAspdPreparedAttempt(server, operationId, {
+    ...dispatchRunPersistence(options),
+    ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
+    settleFailure: (error) => {
+      const { record } = readAspdPreparation(server, operationId)
+      return settleFailedHeadlessBrokerStart(server, {
+        session,
+        runId: record.runId,
+        runtimeId: record.runtimeId,
+        invocationId: String(record.admission.identity.invocationId),
+        operationId,
+        error,
+        responseFormat: options.responseFormat,
+      })
+    },
+  })
+  // Same authority rule as the facade route: commit the applied intent only
+  // after the controller launched exactly this frozen intent.
+  server.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
+  return runtime
+}
+
+/**
+ * Project a controller start failure onto the accepted run graph (when the start
+ * graph exists) and throw the caller-facing error. Shared by the facade-compiled
+ * and the aspd-prepared (T-08542) headless routes.
+ */
+export function settleFailedHeadlessBrokerStart(
+  server: HrcServerInstanceForHandlers,
+  input: {
+    session: HrcSessionRecord
+    runId: string
+    runtimeId: string
+    invocationId: string
+    operationId: string
+    error: { code: string; message: string; detail: Record<string, unknown> }
+    responseFormat?: HrcTurnResponseFormat | undefined
+  }
+): never {
+  const { session, runId, runtimeId } = input
+  const result = { error: input.error }
+  const options = { responseFormat: input.responseFormat }
+  const acceptedRun = server.db.runs.getByRunId(runId)
+  if (acceptedRun !== null) {
+    const failedAt = timestamp()
+    server.db.runs.markCompleted(runId, {
+      status: 'failed',
+      completedAt: failedAt,
+      updatedAt: failedAt,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: result.error.message,
+    })
+    server.db.brokerInvocations.update(input.invocationId, {
+      invocationState: 'failed',
+      updatedAt: failedAt,
+    })
+    server.db.runtimeOperations.update(input.operationId, {
+      status: 'failed',
+      completedAt: failedAt,
+      updatedAt: failedAt,
+      errorCode: result.error.code,
+      errorMessage: result.error.message,
+    })
+    server.db.runtimes.update(runtimeId, {
+      status: 'failed',
+      statusChangedAt: failedAt,
+      activeRunId: runId,
+      updatedAt: failedAt,
+      runtimeStateJson: {
+        ...(server.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+        status: 'failed',
+        updatedAt: failedAt,
+        startFailure: {
+          code: result.error.code,
+          message: result.error.message,
+        },
+      },
+    })
+    const failedEvent = appendHrcEvent(server.db, 'turn.failed', {
+      ts: failedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId,
+      transport: 'headless',
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      payload: {
+        code: result.error.code,
+        message: result.error.message,
+        phase: 'broker-invocation-start',
+      },
+    })
+    server.notifyEvent(failedEvent)
+  }
+  if (
+    result.error.code === 'unsupported_capability' &&
+    options.responseFormat?.kind === 'json_schema'
+  ) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.UNSUPPORTED_CAPABILITY,
+      result.error.message,
+      result.error.detail
+    )
+  }
+  const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
+  throw new HrcRuntimeUnavailableError(
+    externalToolchainFailure ? result.error.message : 'headless broker start failed',
+    {
+      hostSessionId: session.hostSessionId,
+      runId,
+      code: result.error.code,
+      message: result.error.message,
+      route: 'broker',
+      ...result.error.detail,
+    }
+  )
 }
 
 export async function executeHeadlessBrokerStartTurn(
