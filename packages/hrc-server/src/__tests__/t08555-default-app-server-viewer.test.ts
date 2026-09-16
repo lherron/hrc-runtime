@@ -56,6 +56,7 @@ let releaseA: Release
 let ledger: HostingLedger
 let facadeSpy: ReturnType<typeof spyOn>
 let observed: Observed
+let callerAspHome: string
 const savedEnv: Record<string, string | undefined> = {}
 
 type Observed = { reuse: string[]; interactiveStart: HrcRuntimeIntent[] }
@@ -179,6 +180,8 @@ beforeEach(async () => {
   setEnv('HRC_ASPD_SOCKET', aspdSocket)
   setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
+  callerAspHome = join(scratch, 'caller-asp-home')
+  setEnv('ASP_HOME', callerAspHome)
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   await bootServer(false)
   facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
@@ -405,6 +408,10 @@ describe('T-08555 default cold launch', () => {
     })
     expect(record.hosting.presentation).toBe('tmux-tui')
     expect(record.intent.presentation?.operator).toBeUndefined()
+    // HRC's own ASP_HOME rides the compile, so the worker's codex home is the one
+    // every other route resolves, never the aspd daemon's environment.
+    expect(aspd.compileAspHomes).toEqual([callerAspHome])
+    expect(record.dispatch.routeDecision.aspHome).toBe(callerAspHome)
     expect(ledger.commands.at(-1) ?? '').toContain(join(releaseA.releaseRoot, 'harness-broker'))
   })
 

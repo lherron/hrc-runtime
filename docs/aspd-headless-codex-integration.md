@@ -432,6 +432,21 @@ Continuation selection for that execution is unchanged
 (`automaticContinuationForSession`). No runtime is stale-marked, rotated or
 terminated by this change, and no migration job runs.
 
+**Codex home (continuation store).** A Codex continuation is a thread whose
+rollout lives under `<ASP_HOME>/codex-homes/<project>_<agent>`. The standalone
+backend resolves that from HRC's `ASP_HOME`. Before this amendment, an
+aspd-prepared worker resolved it from the aspd daemon's own `ASP_HOME`, because
+HRC never sent `aspHome` on the compile. A scope whose continuation was minted on
+one route could then fail on the other (`no rollout found for thread id`,
+`broker_start_failed`) whenever the two daemons' configurations differed. Found
+in T-08555 isolation, where bun's cwd `.env.local` autoload gave HRC a different
+`ASP_HOME` than aspd; max3 happens to configure both as `var/spaces-repo`.
+Therefore every aspd route compile carries HRC's resolved `ASP_HOME`
+(`getAspHome()`) as the existing `AspcCompileHarnessInvocationRequest.aspHome`
+field, which aspd already honors. No wire, verb or version change. The value is
+recorded in the preparation's route decision as `aspHome`. Both routes then use
+one continuation store by construction, not by configuration equality.
+
 **Persistence and readback.** A default-selected execution records applied
 intent `presentation.operator` absent, route decision
 `operatorPresentation: 'tmux-tui'` with `operatorPresentationSource:

@@ -65,6 +65,8 @@ export function executionReleaseOf(release: Release): AspcExecutionRelease {
 export type AspdDouble = {
   serving: Release
   compileCalls: number
+  /** `aspHome` carried by each compile request, in order (T-08555). */
+  compileAspHomes: Array<string | undefined>
   openConnections: number
   helloOverride?: Record<string, unknown> | undefined
   omitExecutionRelease?: boolean | undefined
@@ -75,6 +77,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
   const state: AspdDouble = {
     serving,
     compileCalls: 0,
+    compileAspHomes: [],
     openConnections: 0,
     stop: () => listener.stop(true),
   }
@@ -139,7 +142,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
             })
           } else if (message.method === 'aspc.compileHarnessInvocation') {
             state.compileCalls += 1
-
+            state.compileAspHomes.push(message.params?.aspHome)
             const identity = message.params.compileRequest.identity as RuntimeIdentityAllocation
             const { profile, startRequest } = makeBrokerProfile(identity, {
               initialInputText: message.params.compileRequest.materialization.initialPrompt,

@@ -27,6 +27,7 @@ import type {
   AspcCompileHarnessInvocationResponse,
   AspcExecutionRelease,
 } from 'spaces-aspc-protocol'
+import { getAspHome } from 'spaces-config'
 import type {
   BrokerLifecyclePolicyOverlay,
   InvocationStartRequest,
@@ -234,6 +235,7 @@ export async function prepareAspdHeadlessAttempt(
   })
 
   let prepared: AspdPreparationResult | undefined
+  const aspHome = getAspHome()
   const compiled = await compileBrokerRuntimePlan(
     {
       intent,
@@ -245,8 +247,12 @@ export async function prepareAspdHeadlessAttempt(
       responseFormat: input.responseFormat,
     },
     {
+      // T-08555: the worker's codex home hangs off ASP_HOME. Send HRC's own, the
+      // one every other route (standalone codex-tui included) resolves, so a
+      // continuation minted on either route resumes on the other instead of
+      // depending on the aspd daemon's environment matching HRC's.
       compileHarnessInvocation: async (request) => {
-        prepared = await prepareThroughAspd(endpoint, request)
+        prepared = await prepareThroughAspd(endpoint, { ...request, aspHome })
         return prepared.response
       },
       ...(input.timing ? { timing: input.timing } : {}),
@@ -400,6 +406,8 @@ export async function prepareAspdHeadlessAttempt(
         aspdEndpoint: endpoint,
         aspdRelease: prepared.service.release,
         executionReleaseId: release.releaseId,
+        // T-08555: the ASP_HOME the worker's codex home was compiled under.
+        aspHome,
       },
       ...(runtimeAuthority !== undefined ? { runtimeAuthority } : {}),
       ...(requestedResponseFormat !== undefined ? { requestedResponseFormat } : {}),
