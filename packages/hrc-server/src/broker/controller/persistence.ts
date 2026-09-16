@@ -186,6 +186,15 @@ export function persistStartGraph(
           invocationId: String(identity.invocationId),
           dispatchIdempotencyKey: input.dispatchIdempotencyKey,
           ...(initialInputId === undefined ? {} : { dispatchedInputId: String(initialInputId) }),
+          // T-08541: a submission door waits on the run's broker submission
+          // identity. The broker admits a start's initialInput as submission
+          // `initialInput.inputId`, so that identity is known here. Only the
+          // argv launch path (below) learns it later, from submission.executed;
+          // without this a cold codex-app-server invoke outlived its executed
+          // launch turn and answered 503.
+          ...(initialInputId !== undefined && submissionDoorCarriesColdLaunch(input.submissionDoor)
+            ? { brokerSubmissionId: String(initialInputId) }
+            : {}),
           ...dispatchOriginRunFields(input),
         })
       : undefined
