@@ -44,7 +44,7 @@ predicate: >
   replaces a live runtime: a live runtime of the scope whose presentation is not
   none, whether a tmux-tui viewer or an interactive tmux surface, refuses the
   request with presentation_conflict and is left untouched.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus verification pending), 2026-09-16; governing split approval EN-12789, 2026-09-16
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08542
   - wrkq:T-08553
@@ -75,7 +75,7 @@ required_tests:
   - T-08553 existing-scope gates refuse none against a live tmux-tui runtime without delivery stale-marking or reprovision and deliver omitted or matching choices
   - T-08553 shared max3 installed acceptance covers omitted-choice control, no-viewer aspd A, conflict refusal, and fixed-HRC B activation with the A worker still usable
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
-last_verified: 2026-09-16 design approval; implementation and installed evidence pending
+last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927; implementation and installed evidence pending
 reopen_when:
   - the configured route or fallback behavior changes
   - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
