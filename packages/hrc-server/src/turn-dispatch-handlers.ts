@@ -64,6 +64,7 @@ import {
   participantRotationUnsupported,
   resolveParticipantDelivery,
 } from './participant-delivery.js'
+import { reconnectParticipantAttachment } from './participant-establishment.js'
 import {
   brokerRuntimeRefusesAdmissionClass,
   brokerRuntimeSupportsAdmissionClass,
@@ -1523,8 +1524,27 @@ async function dispatchAdmittedTurnForSession(
   // the door every caller shares -- the public submission doors, the addressed
   // mail kicker, the selector and target message paths -- so routing here is
   // what keeps one door from being fixed while the next still births.
-  const participantDelivery = resolveParticipantDelivery(this, session)
+  let participantDelivery = resolveParticipantDelivery(this, session)
   if (participantDelivery !== null) {
+    // Join the one recovery operation, then RE-READ and fence: the linkage that
+    // was current before the await may not be after it, and submitting against
+    // the stale read is exactly how input reaches a different writer.
+    if (participantDelivery.outcome === 'reconnect') {
+      await reconnectParticipantAttachment(
+        this,
+        participantDelivery.registration,
+        participantDelivery.attempt
+      )
+      participantDelivery = resolveParticipantDelivery(this, session)
+    }
+    if (participantDelivery === null || participantDelivery.outcome === 'reconnect') {
+      // Still not restored. Typed pending keeps the mail eligible; it never
+      // falls through to a generic birth.
+      throw new HrcRuntimeUnavailableError(
+        'participant attachment is being restored on this controller; addressed work stays pending',
+        { scopeRef: session.scopeRef, laneRef: session.laneRef, reason: 'participant_reconnecting' }
+      )
+    }
     if (participantDelivery.outcome === 'refused') {
       throw participantDeliveryUnavailable(session, participantDelivery)
     }

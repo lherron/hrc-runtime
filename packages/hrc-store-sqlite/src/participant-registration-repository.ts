@@ -818,6 +818,27 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  /**
+   * Activated attempts, for controller reconnect after a daemon restart.
+   *
+   * Deliberately NOT `listEstablishmentWork`: that one answers "what work is
+   * outstanding", and an activated participant's work is `completed` by
+   * definition. Asking it the reconnect question is what left a live host
+   * unreachable across a restart -- the recovery existed and nothing ever
+   * handed it the row.
+   */
+  listActivatedAttempts(): ParticipantAttempt[] {
+    return this.db
+      .query<ParticipantAttemptRow, []>(
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
+         WHERE state = 'ACTIVE' AND establishment_work_state = 'completed'
+           AND prepared_profile_json IS NOT NULL
+         ORDER BY updated_at`
+      )
+      .all()
+      .map(mapAttempt)
+  }
+
   recordEstablishmentFailure(input: {
     attemptId: string
     attachEpoch: number

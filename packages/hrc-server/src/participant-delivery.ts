@@ -2,6 +2,7 @@ import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+import { participantNeedsReconnect } from './participant-establishment.js'
 import { isAbsorbingParticipantAttempt } from './participant-writer-evidence.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
@@ -62,7 +63,18 @@ export type ParticipantDeliveryRefusal = {
   detail: string
 }
 
-export type ParticipantDelivery = ParticipantDeliveryTarget | ParticipantDeliveryRefusal
+/** Everything is linked, but this controller instance has no client yet. */
+export type ParticipantDeliveryReconnect = {
+  outcome: 'reconnect'
+  registration: ParticipantRegistration
+  attempt: ParticipantAttempt
+  runtime: HrcRuntimeSnapshot
+}
+
+export type ParticipantDelivery =
+  | ParticipantDeliveryTarget
+  | ParticipantDeliveryReconnect
+  | ParticipantDeliveryRefusal
 
 /**
  * Resolve a session to its participant delivery target, or report that it is
@@ -216,6 +228,12 @@ export function resolveParticipantDelivery(
     )
   }
 
+  // The controller instance may be newer than the attachment (§6.2). Report it
+  // as its own outcome so the caller joins ONE recovery operation rather than
+  // pushing input at a seat with no client behind it.
+  if (participantNeedsReconnect(server, attempt)) {
+    return { outcome: 'reconnect', registration, attempt, runtime }
+  }
   return { outcome: 'attached', registration, attempt, runtime }
 }
 

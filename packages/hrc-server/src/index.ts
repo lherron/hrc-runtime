@@ -183,7 +183,10 @@ import {
   type ParticipantAttachHandlersMethods,
   participantAttachHandlersMethods,
 } from './participant-attach-handlers.js'
-import { recoverParticipantEstablishmentWork } from './participant-establishment.js'
+import {
+  reconnectActivatedParticipants,
+  recoverParticipantEstablishmentWork,
+} from './participant-establishment.js'
 import {
   type ParticipantRegistrationHandlersMethods,
   participantRegistrationHandlersMethods,
@@ -3069,6 +3072,11 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // ready by a late warmup completion.
     await server.brokerWarmupComplete
     recoverParticipantEstablishmentWork(server)
+    // §6.2: a restart changes the controller instance and nothing else. An
+    // activated participant's work is already `completed`, so the line above
+    // never reaches it; without this its live host stays unreachable until
+    // something re-attaches, which nothing did.
+    reconnectActivatedParticipants(server)
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
     if (server.turnAdmissionGate.snapshot().state === 'closed') {
       const prior = server.turnAdmissionGate.snapshot()

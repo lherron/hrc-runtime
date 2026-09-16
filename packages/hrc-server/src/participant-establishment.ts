@@ -942,6 +942,106 @@ export function scheduleParticipantEstablishment(
 }
 
 /** Re-arms every durable participant effect after broker warmup on daemon boot. */
+/**
+ * Is this attempt an activated participant whose controller client is missing?
+ *
+ * A daemon restart replaces the controller instance and nothing else (§6.2):
+ * same binding, same runtime, same generation, no resume. But the new instance
+ * holds no broker client, and the ACTIVE attempt's establishment work is
+ * `completed`, so neither startup enumeration nor `scheduleParticipantEstablishment`
+ * will re-drive it -- both filter completed work out before the recovery that
+ * already exists can run. That is the whole gap: an enqueue answered
+ * `no active broker client` forever while the broker, the host, the attempt and
+ * the runtime were all alive and agreeing.
+ */
+export function participantNeedsReconnect(
+  server: HrcServerInstanceForHandlers,
+  attempt: ParticipantAttempt
+): boolean {
+  const controller = server.harnessBrokerController
+  if (controller === undefined) return false
+  // Only a CURRENT activated attempt. Not absorbing, not unattached, not
+  // exhausted: reopening any of those would be a new start wearing recovery's
+  // clothes, and would reset a budget that is deliberately spent.
+  if (attempt.state !== 'ACTIVE') return false
+  if (attempt.establishmentWorkState !== 'completed') return false
+  if (attempt.preparedProfileJson === undefined) return false
+  return controller.activeClientInvocationId(attempt.runtimeId) !== attempt.invocationId
+}
+
+/**
+ * Reconnect one activated participant onto the REQUEST-SERVING controller.
+ *
+ * It drives the SAME routine the durable path already uses --
+ * `stageExistingParticipantAttachment`, which moves ACTIVE -> DETACHED,
+ * reinstalls identity against the retained endpoint and re-activates -- so
+ * there is one reattach routine, not a second one written for boot. Nothing
+ * here resets the attempt, invocation, epoch, session or runtime, recompiles a
+ * profile, calls ensure as a new start, or emits another first activation.
+ *
+ * Single-flight on the existing per-attempt operation map, so startup recovery
+ * and a concurrent delivery join ONE operation rather than minting two.
+ */
+export function reconnectParticipantAttachment(
+  server: HrcServerInstanceForHandlers,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt
+): Promise<void> | undefined {
+  const existing = server.participantEstablishmentOperations.get(attempt.attemptId)
+  if (existing !== undefined) return existing
+  if (server.stopping || !participantNeedsReconnect(server, attempt)) return undefined
+
+  const operation = (async () => {
+    const staged = await stageExistingParticipantAttachment(server, registration, attempt)
+    if (staged.state !== 'ACTIVE') {
+      await activateStagedParticipant(server, registration, staged)
+    }
+  })()
+    .catch((error: unknown) => {
+      // An unavailable host stays unavailable: the attempt keeps its identity,
+      // its mail stays pending, and nothing is cold-born. The next delivery or
+      // the next boot may try again.
+      writeServerLog('WARN', 'participant.reconnect.failed', {
+        registrationId: registration.registrationId,
+        attemptId: attempt.attemptId,
+        runtimeId: attempt.runtimeId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    .finally(() => {
+      if (server.participantEstablishmentOperations.get(attempt.attemptId) === operation) {
+        server.participantEstablishmentOperations.delete(attempt.attemptId)
+      }
+    })
+  server.participantEstablishmentOperations.set(attempt.attemptId, operation)
+  return operation
+}
+
+/**
+ * Boot recovery for activated participants (Astra's ruling on EN-12518, (b)).
+ *
+ * Separate from the generic durable-broker reconcile on purpose: that one
+ * recovers an HRC-OWNED endpoint, and a participant's broker is owned by the
+ * participant. Keeping them apart is what stops one from quietly adopting the
+ * other's runtime.
+ */
+export function reconnectActivatedParticipants(server: HrcServerInstanceForHandlers): void {
+  for (const attempt of server.db.participantRegistrations.listActivatedAttempts()) {
+    if (!participantNeedsReconnect(server, attempt)) continue
+    const registration = server.db.participantRegistrations.getRegistrationById(
+      attempt.registrationId
+    )
+    if (registration === null) continue
+    writeServerLog('INFO', 'participant.reconnect.boot', {
+      registrationId: registration.registrationId,
+      attemptId: attempt.attemptId,
+      runtimeId: attempt.runtimeId,
+      invocationId: attempt.invocationId,
+    })
+    void reconnectParticipantAttachment(server, registration, attempt)
+  }
+}
+
 export function recoverParticipantEstablishmentWork(server: HrcServerInstanceForHandlers): void {
   for (const attempt of server.db.participantRegistrations.listEstablishmentWork()) {
     const registration = server.db.participantRegistrations.getRegistrationById(

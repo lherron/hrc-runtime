@@ -153,6 +153,28 @@ function resolve(
   }
 }
 
+/**
+ * Resolve with a controller present, so the reconnect branch is reachable.
+ * Without one the predicate answers false and every case reads as attached --
+ * which is why the cases above cannot see this branch at all.
+ */
+function resolveWithController(
+  activeInvocationId: string | undefined,
+  patch: Parameters<typeof world>[0] = {}
+): ReturnType<typeof resolveParticipantDelivery> {
+  const { db, server, session } = world(patch)
+  const withController = {
+    ...server,
+    db,
+    harnessBrokerController: { activeClientInvocationId: () => activeInvocationId },
+  } as unknown as HrcServerInstanceForHandlers
+  try {
+    return resolveParticipantDelivery(withController, session as never)
+  } finally {
+    db.close()
+  }
+}
+
 describe('T-08516 participant delivery linkage (R7.6)', () => {
   test('an ordinary session is not a participant and is left alone', () => {
     const { db, server } = world()
@@ -183,6 +205,48 @@ describe('T-08516 participant delivery linkage (R7.6)', () => {
     // so the binding checks must be keyed on presence, not on mode.
     const delivery = resolve({ omitBinding: true })
     expect(delivery?.outcome).toBe('attached')
+  })
+
+  describe('controller reconnect (section 6.2)', () => {
+    test('a controller already serving this invocation delivers directly', () => {
+      const delivery = resolveWithController('inv-delivery')
+      expect(delivery?.outcome).toBe('attached')
+    })
+
+    test('a controller with no client for it needs reconnect, not a refusal', () => {
+      // A restart replaces the controller instance and nothing else. The
+      // attempt stays ACTIVE and its work stays `completed`, which is why
+      // neither startup enumeration nor the establishment scheduler reached it
+      // and a live host stayed unreachable across a restart.
+      const delivery = resolveWithController(undefined)
+      expect(delivery?.outcome).toBe('reconnect')
+    })
+
+    test('a controller holding a client for another invocation also reconnects', () => {
+      // The DURABLE linkage is fine here -- the attempt and the runtime agree.
+      // What is stale is the controller's client, which is the same condition a
+      // restart produces and is repaired the same way. (This case originally
+      // asserted a stale-linkage refusal; that was the test being wrong, not
+      // the code: stale ROW linkage and a stale CONTROLLER client are different
+      // failures with different repairs.)
+      const delivery = resolveWithController('inv-someone-else')
+      expect(delivery?.outcome).toBe('reconnect')
+    })
+
+    test('an unattached attempt is never made reconnectable', () => {
+      const delivery = resolveWithController(undefined, {
+        attempt: { preparedProfileJson: undefined, adapterDispatchEnvJson: undefined },
+      })
+      expect(delivery).toMatchObject({ kind: 'pending', reason: 'participant_attachment_pending' })
+    })
+
+    test('an exhausted attempt is not reopened by reconnect', () => {
+      const delivery = resolveWithController(undefined, {
+        attempt: { establishmentWorkState: 'exhausted' },
+      })
+      // Not `reconnect`: reopening it would reset a budget that is spent.
+      expect(delivery?.outcome).toBe('attached')
+    })
   })
 
   describe('pending, not failed', () => {
