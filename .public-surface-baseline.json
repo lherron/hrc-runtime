@@ -2735,6 +2735,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSubmissionDoor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionDoor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionDoorDowngradeReason",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionDoorDowngradeReason|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubmissionDoorReport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubmissionDoorReport|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSubmissionOrigin",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

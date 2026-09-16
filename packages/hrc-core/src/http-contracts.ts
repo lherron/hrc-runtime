@@ -521,11 +521,36 @@ export type HrcSubmissionTurnTerminal = {
   finalMessage?: string | undefined
 }
 
+export type HrcSubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
+
+/**
+ * Why HRC submitted through a door other than the one requested (T-08536).
+ * `steer_not_supported`: the target invocation positively advertised admission
+ * classes without `steer`, so the body went through enqueue — "now" became
+ * "after". Never silent: the response and `submission.door_downgraded` say so.
+ */
+export type HrcSubmissionDoorDowngradeReason = 'steer_not_supported'
+
+/**
+ * The door the body actually went through. `requestedDoor` and
+ * `downgradeReason` are present exactly when it differs from the one asked for.
+ */
+export type HrcSubmissionDoorReport =
+  | { effectiveDoor: HrcSubmissionDoor; requestedDoor?: undefined; downgradeReason?: undefined }
+  | {
+      effectiveDoor: HrcSubmissionDoor
+      requestedDoor: HrcSubmissionDoor
+      downgradeReason: HrcSubmissionDoorDowngradeReason
+    }
+
 type HrcSubmissionResponseBase = {
   submissionId: string
   reason?: string | undefined
   disposition?: HrcSubmissionDisposition | undefined
   terminal?: HrcSubmissionTurnTerminal | undefined
+  effectiveDoor?: HrcSubmissionDoor | undefined
+  requestedDoor?: HrcSubmissionDoor | undefined
+  downgradeReason?: HrcSubmissionDoorDowngradeReason | undefined
 }
 
 type HrcSubmissionCursorlessDisposition = Extract<

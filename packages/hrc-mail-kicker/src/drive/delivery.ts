@@ -44,6 +44,11 @@ export type DeliveryOutcome = 'submitted' | 'refused' | 'skipped'
  * AND turn-active seats whose driver advertises `steer`. Enqueue remains for a
  * driver without `steer`, a runtime that refused steer at the capability layer,
  * and an envelope whose previous steer was refused unwritten (the fallback).
+ *
+ * The HTTP steer door fails open to enqueue on its own (T-08536), but the
+ * kicker calls `dispatchTurn` directly and never passes through that door, so
+ * the `steerCapable` pre-check stays: it is what keeps the recorded intent door
+ * equal to the door the body actually took.
  */
 type SeatDoor = Extract<HrcMailDeliveryDoor, 'steer' | 'enqueue' | 'preempt'>
 

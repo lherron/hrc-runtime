@@ -18,6 +18,8 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcSubmissionDisposition,
+  HrcSubmissionDoor,
+  HrcSubmissionDoorReport,
   HrcSubmissionResponse,
   HrcTurnResponseFormat,
   InvokeSubmissionRequest,
@@ -126,7 +128,7 @@ const idempotentDispatches = new WeakMap<
   Map<string, InFlightIdempotentDispatch>
 >()
 
-type SubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
+type SubmissionDoor = HrcSubmissionDoor
 type SubmissionDoorRequest =
   | SteerSubmissionRequest
   | EnqueueSubmissionRequest
@@ -449,6 +451,47 @@ async function preemptOriginOwnsActiveTurn(
   )
 }
 
+/**
+ * The steer door fails open (T-08536). When the seat's active invocation
+ * POSITIVELY advertised admission classes without `steer`, the body goes
+ * through enqueue instead of being relayed into the broker's `unsupported:steer`
+ * capability rejection. One behavior, no strict mode: the caller asked for
+ * "now" and gets "after", and the response and the ledger say so.
+ *
+ * Silence is not refusal (`brokerRuntimeRefusesAdmissionClass`): an invocation
+ * that never declared its classes, and a cold seat with no invocation at all,
+ * keep the steer. A cold steer rides the launch turn, which every driver serves.
+ */
+export function submissionDoorReport(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  requestedDoor: SubmissionDoor
+): HrcSubmissionDoorReport & { runtime?: HrcRuntimeSnapshot | undefined } {
+  if (requestedDoor !== 'steer') return { effectiveDoor: requestedDoor }
+  const runtime = activeBrokerRuntimeForSession(server, session)
+  if (runtime === undefined || !brokerRuntimeRefusesAdmissionClass(server.db, runtime, 'steer')) {
+    return { effectiveDoor: requestedDoor }
+  }
+  return {
+    effectiveDoor: 'enqueue',
+    requestedDoor,
+    downgradeReason: 'steer_not_supported',
+    runtime,
+  }
+}
+
+function publicDoorReport(
+  report: ReturnType<typeof submissionDoorReport>
+): HrcSubmissionDoorReport {
+  return report.requestedDoor === undefined
+    ? { effectiveDoor: report.effectiveDoor }
+    : {
+        effectiveDoor: report.effectiveDoor,
+        requestedDoor: report.requestedDoor,
+        downgradeReason: report.downgradeReason,
+      }
+}
+
 export async function handleSubmission(
   this: HrcServerInstanceForHandlers,
   request: Request,
@@ -498,6 +541,7 @@ export async function handleSubmission(
         admission: 'rejected',
         reason,
         disposition: { type: 'rejected', reason },
+        effectiveDoor: door,
       } satisfies HrcSubmissionResponse)
     }
   }
@@ -509,6 +553,11 @@ export async function handleSubmission(
     })
     session = requireSession(this.db, rotation.hostSessionId)
   }
+  // Read AFTER every session choice above (steer: no stale rotation, last
+  // applied intent), so the classes checked belong to the incarnation the body
+  // lands on. Those steer-only choices stay on the REQUESTED door on purpose.
+  const doorReport = submissionDoorReport(this, session, door)
+  const effectiveDoor = doorReport.effectiveDoor
   const runId = `run-${randomUUID()}`
   const sessionBoundBody =
     door === 'steer'
@@ -540,7 +589,7 @@ export async function handleSubmission(
     // submission identity. This may include provisioning a cold seat, but it
     // never waits for turn execution; disposition waiting remains below.
     waitForCompletion: true,
-    submissionDoor: door,
+    submissionDoor: effectiveDoor,
     submissionOrigin: body.origin,
     origin: runOriginFromSubmission(body.origin),
     responseFormat: body.responseFormat,
@@ -554,6 +603,33 @@ export async function handleSubmission(
       : {}),
     requireSubmissionIdentity: true,
   })
+  if (doorReport.requestedDoor !== undefined) {
+    const runtimeId = publicResponse.runtimeId ?? doorReport.runtime?.runtimeId
+    const invocationId =
+      publicResponse.observation?.broker?.selector.invocationId ??
+      doorReport.runtime?.activeInvocationId
+    const payload = {
+      ...(runtimeId !== undefined ? { runtimeId } : {}),
+      ...(invocationId !== undefined ? { invocationId } : {}),
+      ...(publicResponse.submissionId !== undefined
+        ? { submissionId: publicResponse.submissionId }
+        : {}),
+      requestedDoor: doorReport.requestedDoor,
+      effectiveDoor,
+      reason: doorReport.downgradeReason,
+      ...(body.origin.envelopeId !== undefined ? { envelopeId: body.origin.envelopeId } : {}),
+    }
+    appendHrcEvent(this.db, 'submission.door_downgraded', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      ...(runtimeId !== undefined ? { runtimeId } : {}),
+      runId,
+      payload,
+    })
+  }
   const wait = 'wait' in body && body.wait === true
   return await waitForPublicDispatchStage(
     this,
@@ -561,7 +637,8 @@ export async function handleSubmission(
     wait ? 'terminal' : 'accepted',
     false,
     request.signal,
-    true
+    true,
+    publicDoorReport(doorReport)
   )
 }
 
@@ -699,7 +776,9 @@ export async function waitForPublicDispatchStage(
   requested: PublicDispatchWaitStage,
   replayed: boolean,
   signal: AbortSignal = new AbortController().signal,
-  requireSubmissionIdentity = false
+  requireSubmissionIdentity = false,
+  /** Submission doors only: which door the body actually went through (T-08536). */
+  doorReport: HrcSubmissionDoorReport | undefined = undefined
 ): Promise<Response> {
   const invocationId = base.observation?.broker?.selector.invocationId
   // Legacy drivers can report terminal without broker identity. Preserve their
@@ -711,7 +790,7 @@ export async function waitForPublicDispatchStage(
   ) {
     const dispatch = { ...base, replayed }
     return json(
-      projectSubmissionResponse(dispatch, {}, requireSubmissionIdentity),
+      { ...projectSubmissionResponse(dispatch, {}, requireSubmissionIdentity), ...doorReport },
       base.stage === 'accepted' && base.admission !== 'rejected' ? 202 : 200
     )
   }
@@ -738,7 +817,13 @@ export async function waitForPublicDispatchStage(
     ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
     ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
   })
-  return json(projectSubmissionResponse(dispatch, projection, requireSubmissionIdentity), 200)
+  return json(
+    {
+      ...projectSubmissionResponse(dispatch, projection, requireSubmissionIdentity),
+      ...doorReport,
+    },
+    200
+  )
 }
 
 export function projectSubmissionResponse(

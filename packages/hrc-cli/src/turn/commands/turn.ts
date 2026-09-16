@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
+  HrcSubmissionResponse,
   HrcTurnResponseFormat,
   SemanticTurnHandoffPendingResponse,
   SemanticTurnHandoffResponse,
@@ -498,6 +499,20 @@ type PreparedTurnObservation = {
   followSeat?: boolean | undefined
 }
 
+/**
+ * A steer the server downgraded (T-08536) was asked for "now" and delivered
+ * "after". Say so on stderr for every output mode; the JSON response line carries the fields.
+ */
+export function writeDoorDowngrade(
+  response: Pick<HrcSubmissionResponse, 'effectiveDoor' | 'requestedDoor' | 'downgradeReason'>,
+  write: (text: string) => void = (text) => process.stderr.write(text)
+): void {
+  if (response.requestedDoor === undefined || response.effectiveDoor === undefined) return
+  write(
+    `notice: ${response.requestedDoor} downgraded to ${response.effectiveDoor} (${response.downgradeReason ?? 'unknown'}): the message runs after the current turn\n`
+  )
+}
+
 async function prepareDispatchedTurn(
   client: HrcClient,
   opts: TurnOptions,
@@ -586,17 +601,22 @@ async function prepareDispatchedTurn(
     const existing = await client.resolveSession({ sessionRef, create: false })
     if (existing.found) {
       if (waitMode === 'final') {
-        printJsonLine(await client.steer({ ...submissionRequest, wait: true }))
+        const waited = await client.steer({ ...submissionRequest, wait: true })
+        writeDoorDowngrade(waited)
+        printJsonLine(waited)
         return undefined
       }
       const steered = await client.steer(submissionRequest)
+      writeDoorDowngrade(steered)
       if (steered.admission !== 'admitted' || !('runId' in steered)) {
         printJsonLine(steered)
         return undefined
       }
       return {
         resolved,
-        followSeat: true,
+        // A steer downgraded to enqueue (T-08536) waits BEHIND the running turn,
+        // so the seat's next terminal may not be its turn: follow its own run.
+        followSeat: steered.effectiveDoor !== 'enqueue',
         handoff: {
           sessionRef,
           scopeRef: resolved.scopeRef,
