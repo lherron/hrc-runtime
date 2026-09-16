@@ -97,7 +97,7 @@ function coldRuntime(session: HrcSessionRecord, suffix: string): HrcRuntimeSnaps
 }
 
 describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in one launch turn', () => {
-  for (const door of ['enqueue', 'preempt'] as const) {
+  for (const door of ['enqueue', 'preempt', 'steer'] as const) {
     it(`selects priming-plus-caller launch carriage for the cold ${door} door`, async () => {
       const resolved = await fixture.resolveSession(SCOPE)
       const internal = server as unknown as HrcServerInstanceForHandlers
@@ -133,163 +133,167 @@ describe('T-08531 cold enqueue on claude-code-tmux carries priming and caller in
     })
   }
 
-  it('answers the blocking enqueue door with the launch turn submission and never submits the body again', async () => {
-    const resolved = await fixture.resolveSession(SCOPE)
-    const internal = server as unknown as HrcServerInstanceForHandlers
-    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
-    if (session === null) throw new Error('T-08531 fixture session missing')
-    const runtime = coldRuntime(session, 'single-turn')
-    const runId = 'run-t08531-single-turn'
-    const launchSubmissionId = 'human_submission_t08531_1'
-    let independentSubmissions = 0
-    internal.startInteractiveTmuxBrokerRuntime = async (
-      startSession: HrcSessionRecord,
-      _intent: HrcRuntimeIntent,
-      startRunId: string,
-      options
-    ) => {
-      expect(options.coldBirthPrompt).toBe(CALLER)
-      expect(options.includePrimingForColdBirthPrompt).toBe(true)
-      options.onColdBirthPromptRoute?.(true)
-      internal.db.runtimes.insert(runtime)
-      internal.db.runs.insert({
-        runId: startRunId,
-        hostSessionId: startSession.hostSessionId,
-        runtimeId: runtime.runtimeId,
-        scopeRef: startSession.scopeRef,
-        laneRef: startSession.laneRef,
-        generation: startSession.generation,
-        transport: 'tmux',
-        status: 'accepted',
-        acceptedAt: fixture.now(),
-        updatedAt: fixture.now(),
-        invocationId: runtime.activeInvocationId,
-        operationId: runtime.activeOperationId,
-      })
-      await options.onAccepted?.(runtime)
-      // The harness observes the launch turn after boot resolves; the door must
-      // wait for that submission identity instead of minting a second input.
-      setTimeout(() => {
-        try {
-          internal.db.runs.update(startRunId, {
-            brokerSubmissionId: launchSubmissionId,
-            updatedAt: fixture.now(),
-          })
-        } catch {
-          // The test already failed and closed the store.
-        }
-      }, 50)
-      return runtime
-    }
-    internal.executeInteractiveBrokerInputTurn = async () => {
-      independentSubmissions += 1
-      throw new Error('cold caller body was submitted a second time')
-    }
-    internal.publishPresentation = async () => undefined
-
-    const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
-      session,
-      claudeIntent(),
-      CALLER,
-      runId,
-      {
-        flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
-        allowedBrokerDriver: 'claude-code-tmux',
-        waitForCompletion: true,
-        submissionDoor: 'enqueue',
-        coldBirthPromptMode: 'append-to-priming',
+  for (const door of ['enqueue', 'steer'] as const) {
+    it(`answers the ${door} door with the launch turn submission and never submits the body again`, async () => {
+      const resolved = await fixture.resolveSession(SCOPE)
+      const internal = server as unknown as HrcServerInstanceForHandlers
+      const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
+      if (session === null) throw new Error('T-08531 fixture session missing')
+      const runtime = coldRuntime(session, 'single-turn')
+      const runId = `run-t08531-single-turn-${door}`
+      const launchSubmissionId = 'human_submission_t08531_1'
+      let independentSubmissions = 0
+      internal.startInteractiveTmuxBrokerRuntime = async (
+        startSession: HrcSessionRecord,
+        _intent: HrcRuntimeIntent,
+        startRunId: string,
+        options
+      ) => {
+        expect(options.coldBirthPrompt).toBe(CALLER)
+        expect(options.includePrimingForColdBirthPrompt).toBe(true)
+        options.onColdBirthPromptRoute?.(true)
+        internal.db.runtimes.insert(runtime)
+        internal.db.runs.insert({
+          runId: startRunId,
+          hostSessionId: startSession.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          scopeRef: startSession.scopeRef,
+          laneRef: startSession.laneRef,
+          generation: startSession.generation,
+          transport: 'tmux',
+          status: 'accepted',
+          acceptedAt: fixture.now(),
+          updatedAt: fixture.now(),
+          invocationId: runtime.activeInvocationId,
+          operationId: runtime.activeOperationId,
+        })
+        await options.onAccepted?.(runtime)
+        // The harness observes the launch turn after boot resolves; the door must
+        // wait for that submission identity instead of minting a second input.
+        setTimeout(() => {
+          try {
+            internal.db.runs.update(startRunId, {
+              brokerSubmissionId: launchSubmissionId,
+              updatedAt: fixture.now(),
+            })
+          } catch {
+            // The test already failed and closed the store.
+          }
+        }, 50)
+        return runtime
       }
-    )
-    await Bun.sleep(0)
-    const body = (await response.json()) as { submissionId?: string; admission?: string }
+      internal.executeInteractiveBrokerInputTurn = async () => {
+        independentSubmissions += 1
+        throw new Error('cold caller body was submitted a second time')
+      }
+      internal.publishPresentation = async () => undefined
 
-    expect(independentSubmissions).toBe(0)
-    expect(body.submissionId).toBe(launchSubmissionId)
-    expect(body.admission).toBe('admitted')
-  })
+      const response = await internal.handleInteractiveTmuxBrokerDispatchTurn(
+        session,
+        claudeIntent(),
+        CALLER,
+        runId,
+        {
+          flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
+          allowedBrokerDriver: 'claude-code-tmux',
+          waitForCompletion: true,
+          submissionDoor: door,
+          coldBirthPromptMode: 'append-to-priming',
+        }
+      )
+      await Bun.sleep(0)
+      const body = (await response.json()) as { submissionId?: string; admission?: string }
 
-  it('binds the input-less launch bracket to the enqueue run and settles its submission executed', async () => {
-    const resolved = await fixture.resolveSession(SCOPE)
-    const internal = server as unknown as HrcServerInstanceForHandlers & { db: HrcDatabase }
-    const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
-    if (session === null) throw new Error('T-08531 fixture session missing')
-
-    const identity = makeIdentity({
-      hostSessionId: session.hostSessionId as RuntimeIdentityAllocation['hostSessionId'],
-      generation: session.generation,
-      runtimeId: 'rt-t08531-ledger' as RuntimeIdentityAllocation['runtimeId'],
-      invocationId: 'inv-t08531-ledger' as RuntimeIdentityAllocation['invocationId'],
-      operationId: 'op-t08531-ledger' as RuntimeIdentityAllocation['operationId'],
-      runId: 'run-t08531-ledger' as RuntimeIdentityAllocation['runId'],
-      initialInputId: undefined,
+      expect(independentSubmissions).toBe(0)
+      expect(body.submissionId).toBe(launchSubmissionId)
+      expect(body.admission).toBe('admitted')
     })
-    const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
-      launchInitialPrompt: `${PRIMING}\n\n${CALLER}`,
-      withInitialInput: false,
+  }
+
+  for (const door of ['enqueue', 'steer'] as const) {
+    it(`binds the input-less launch bracket to the ${door} run and settles its submission executed`, async () => {
+      const resolved = await fixture.resolveSession(SCOPE)
+      const internal = server as unknown as HrcServerInstanceForHandlers & { db: HrcDatabase }
+      const session = internal.db.sessions.getByHostSessionId(resolved.hostSessionId)
+      if (session === null) throw new Error('T-08531 fixture session missing')
+
+      const identity = makeIdentity({
+        hostSessionId: session.hostSessionId as RuntimeIdentityAllocation['hostSessionId'],
+        generation: session.generation,
+        runtimeId: 'rt-t08531-ledger' as RuntimeIdentityAllocation['runtimeId'],
+        invocationId: 'inv-t08531-ledger' as RuntimeIdentityAllocation['invocationId'],
+        operationId: 'op-t08531-ledger' as RuntimeIdentityAllocation['operationId'],
+        runId: `run-t08531-ledger-${door}` as RuntimeIdentityAllocation['runId'],
+        initialInputId: undefined,
+      })
+      const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
+        launchInitialPrompt: `${PRIMING}\n\n${CALLER}`,
+        withInitialInput: false,
+      })
+      const compileResponse = makeCompileResponse(identity, [profile])
+      if (!compileResponse.ok) throw new Error('T-08531 ledger fixture rejected')
+
+      persistStartGraph(
+        {
+          db: internal.db,
+          now: fixture.now,
+          serverInstanceId: 'srv-t08531',
+        },
+        {
+          plan: compileResponse.plan,
+          profile,
+          startRequest,
+          specHash: profile.harnessInvocation.specHash,
+          startRequestHash: profile.harnessInvocation.startRequestHash,
+          identity,
+          submissionDoor: door,
+        } as Parameters<typeof persistStartGraph>[1],
+        {
+          protocolVersion: 'harness-broker/0.2',
+          capabilities: {},
+          drivers: [],
+        } as unknown as Parameters<typeof persistStartGraph>[2],
+        undefined
+      )
+      const runId = String(identity.runId)
+      expect(isLaunchCarriedInvokeCorrelationJson(internal.db.runs.getCorrelationJson(runId))).toBe(
+        true
+      )
+      internal.db.brokerInvocations.update(String(identity.invocationId), {
+        capabilitiesJson: JSON.stringify({ bracketMintingMode: 'harness-evidence' }),
+        updatedAt: fixture.now(),
+      })
+
+      const mapper = new BrokerEventMapper({ db: internal.db, now: fixture.now })
+      const turnId = 'turn-t08531-ledger'
+      const submissionId = 'human_submission_t08531_1'
+      const started = mapper.apply(
+        brokerEnvelope(String(identity.invocationId), 1, 'turn.started', {
+          turnId,
+          source: 'hook-observed',
+        })
+      )
+      mapper.apply(
+        brokerEnvelope(String(identity.invocationId), 2, 'submission.executed', {
+          submissionId,
+          turnId,
+        })
+      )
+
+      expect(started.lifecycleEvents[0]?.runId).toBe(runId)
+      expect(internal.db.runs.getByRunId(runId)?.brokerSubmissionId).toBe(submissionId)
+
+      mapper.apply(
+        brokerEnvelope(String(identity.invocationId), 3, 'turn.completed', {
+          turnId,
+          status: 'completed',
+        })
+      )
+
+      expect(internal.db.runs.getByRunId(runId)?.status).toBe('completed')
+      expect(
+        internal.db.runtimes.getByRuntimeId(String(identity.runtimeId))?.activeRunId
+      ).toBeUndefined()
     })
-    const compileResponse = makeCompileResponse(identity, [profile])
-    if (!compileResponse.ok) throw new Error('T-08531 ledger fixture rejected')
-
-    persistStartGraph(
-      {
-        db: internal.db,
-        now: fixture.now,
-        serverInstanceId: 'srv-t08531',
-      },
-      {
-        plan: compileResponse.plan,
-        profile,
-        startRequest,
-        specHash: profile.harnessInvocation.specHash,
-        startRequestHash: profile.harnessInvocation.startRequestHash,
-        identity,
-        submissionDoor: 'enqueue',
-      } as Parameters<typeof persistStartGraph>[1],
-      {
-        protocolVersion: 'harness-broker/0.2',
-        capabilities: {},
-        drivers: [],
-      } as unknown as Parameters<typeof persistStartGraph>[2],
-      undefined
-    )
-    const runId = String(identity.runId)
-    expect(isLaunchCarriedInvokeCorrelationJson(internal.db.runs.getCorrelationJson(runId))).toBe(
-      true
-    )
-    internal.db.brokerInvocations.update(String(identity.invocationId), {
-      capabilitiesJson: JSON.stringify({ bracketMintingMode: 'harness-evidence' }),
-      updatedAt: fixture.now(),
-    })
-
-    const mapper = new BrokerEventMapper({ db: internal.db, now: fixture.now })
-    const turnId = 'turn-t08531-ledger'
-    const submissionId = 'human_submission_t08531_1'
-    const started = mapper.apply(
-      brokerEnvelope(String(identity.invocationId), 1, 'turn.started', {
-        turnId,
-        source: 'hook-observed',
-      })
-    )
-    mapper.apply(
-      brokerEnvelope(String(identity.invocationId), 2, 'submission.executed', {
-        submissionId,
-        turnId,
-      })
-    )
-
-    expect(started.lifecycleEvents[0]?.runId).toBe(runId)
-    expect(internal.db.runs.getByRunId(runId)?.brokerSubmissionId).toBe(submissionId)
-
-    mapper.apply(
-      brokerEnvelope(String(identity.invocationId), 3, 'turn.completed', {
-        turnId,
-        status: 'completed',
-      })
-    )
-
-    expect(internal.db.runs.getByRunId(runId)?.status).toBe('completed')
-    expect(
-      internal.db.runtimes.getByRuntimeId(String(identity.runtimeId))?.activeRunId
-    ).toBeUndefined()
-  })
+  }
 })

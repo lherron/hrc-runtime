@@ -193,7 +193,7 @@ export function persistStartGraph(
   // T-08004: compiler-selected interactive tmux profiles deliver their first
   // prompt through launch argv and therefore have no broker `initialInput` to
   // bind. Record the narrower structural fact while the start graph is written:
-  // this exact session-bound run (invoke, or T-08531 enqueue/preempt) supplied
+  // this exact submission-door run (T-08004 invoke, T-08531 every door) supplied
   // the launch prompt. The event mapper uses it to own only the first
   // input-less native bracket; ordinary promptless priming and
   // queued-behind-priming runs remain foreign.

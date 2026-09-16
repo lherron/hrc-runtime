@@ -121,14 +121,18 @@ export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempote
 }
 
 /**
- * Session-bound submission doors whose caller body rides a cold launch-primed
- * interactive seat's launch turn, appended to the priming (T-08004 invoke,
- * T-08531 enqueue/preempt). Steer never births a seat.
+ * Submission doors whose caller body rides a cold launch-primed interactive
+ * seat's launch turn, appended to the priming (T-08004 invoke, T-08531
+ * enqueue/preempt/steer). Every door can reach a cold birth — steer included,
+ * since the steer door resolves an existing session and dispatches through the
+ * same birth route when it has no runtime — and a body submitted separately
+ * into the newborn TUI is lost. A cold steer has no live turn to join, so the
+ * launch turn is the only turn that can carry it.
  */
 export function submissionDoorCarriesColdLaunch(
   door: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
 ): boolean {
-  return door === 'invoke' || door === 'enqueue' || door === 'preempt'
+  return door !== undefined
 }
 
 /**
