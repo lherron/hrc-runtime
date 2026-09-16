@@ -58,7 +58,7 @@ predicate: >
   runtime returns its existing attach descriptor without interactive admission,
   stale-marking or reprovision, and attach, detach and reattach never require
   aspd or change worker identity or execution release.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932), 2026-09-16; governing split approval EN-12789, 2026-09-16
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08542
   - wrkq:T-08553
@@ -97,7 +97,7 @@ required_tests:
   - agent-spaces release worker launches its renderer through its own release executable while checkout and package brokers keep the bun entry launch
   - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing; then shared max3 delivery and independent grade
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
-last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934); T-08554 amendment pending Daedalus verification
+last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940; T-08554 implementation and installed evidence pending
 reopen_when:
   - the configured route or fallback behavior changes
   - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes

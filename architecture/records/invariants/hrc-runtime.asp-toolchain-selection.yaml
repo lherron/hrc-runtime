@@ -31,7 +31,7 @@ predicate: >
   tuple governed by hrc-runtime.observable-release. The root is one
   configuration namespace, not an atomic build-identity boundary, and the
   daemon's in-process ASP imports remain pinned to its release.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
   - wrkq:T-08542
   - wrkq:T-08554
@@ -54,7 +54,7 @@ required_tests:
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates
   - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
-last_verified: 2026-09-16 T-08542 design approval and T-08553 shared acceptance; T-08554 amendment pending Daedalus verification
+last_verified: 2026-09-16 T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940; implementation and T-08554 installed evidence pending
 reopen_when: An ASP child spawn site, aspd-prepared route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
 supersedes: []
 superseded_by: []
