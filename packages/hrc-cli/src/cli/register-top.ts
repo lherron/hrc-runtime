@@ -60,6 +60,10 @@ export function registerTopLevelCommands(program: Command): void {
       '--no-viewer',
       'run headless with no operator viewer or terminal (codex: prepares through aspd when configured); refused if the scope already has a live viewer or TUI'
     )
+    .option(
+      '--app-server-viewer',
+      'run codex on the headless app-server with the attachable tmux renderer viewer (prepares through aspd when configured); refused if the scope already has a live runtime without that viewer'
+    )
     .addOption(
       new Option(
         '--on-conflict <policy>',
@@ -88,6 +92,7 @@ export function registerTopLevelCommands(program: Command): void {
           '--debug',
           '--no-register',
           '--no-viewer',
+          '--app-server-viewer',
           '--json',
         ],
         value: [
@@ -113,7 +118,7 @@ export function registerTopLevelCommands(program: Command): void {
           'on-conflict',
           'wait',
         ],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json', 'app-server-viewer'],
         negatedBooleans: ['register', 'viewer'],
       })
       await cmdStart(args)

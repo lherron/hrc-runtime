@@ -593,7 +593,10 @@ async function releaseBrokerLeaseServer(
 function assertFrozenWorkerArgvHosting(
   argv: readonly string[],
   paths: BrokerSubstratePaths,
-  input: Pick<AllocateBrokerSubstrateInput, 'runtimeId' | 'hostSessionId' | 'generation'>
+  input: Pick<
+    AllocateBrokerSubstrateInput,
+    'runtimeId' | 'hostSessionId' | 'generation' | 'observerSocketPath'
+  >
 ): void {
   const flag = (name: string): string | undefined => {
     const index = argv.indexOf(name)
@@ -613,6 +616,13 @@ function assertFrozenWorkerArgvHosting(
         `frozen worker argv ${name}=${String(flag(name))} does not match HRC hosting ${value}`
       )
     }
+  }
+  // T-08554: a viewer's observer socket is HRC hosting too; present exactly when
+  // this allocation serves one, at HRC's path.
+  if (flag('--experimental-observer-socket') !== input.observerSocketPath) {
+    throw new Error(
+      `frozen worker argv --experimental-observer-socket=${String(flag('--experimental-observer-socket'))} does not match HRC hosting ${String(input.observerSocketPath)}`
+    )
   }
 }
 
@@ -644,6 +654,7 @@ export function createBrokerTmuxTuiAllocator(
       brokerDriver,
       generation,
       brokerEnv,
+      workerLaunch,
     }): Promise<BrokerTmuxAllocation> => {
       // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
       // the broker launch command and the renderer dispatch env never derive it
@@ -658,6 +669,8 @@ export function createBrokerTmuxTuiAllocator(
         presentation: 'tmux-tui',
         observerSocketPath,
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
+        // T-08554: an aspd-prepared viewer launches its frozen release worker.
+        ...(workerLaunch !== undefined ? { workerLaunch } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields (fail-fast on a latent partial) rather than trusting

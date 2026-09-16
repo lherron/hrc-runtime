@@ -176,6 +176,9 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
         '  --no-viewer          Run headless with no operator viewer or terminal (codex:\n' +
         '                       prepares through aspd when configured); refused if the\n' +
         '                       scope already has a live viewer or TUI\n' +
+        '  --app-server-viewer  Run codex on the headless app-server with the attachable\n' +
+        '                       tmux renderer viewer (prepares through aspd when\n' +
+        '                       configured); refused against a live runtime without it\n' +
         '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
         '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''
@@ -591,6 +594,10 @@ export async function cmdStart(args: string[]): Promise<void> {
   if (noViewer && viewerWindow !== undefined) {
     fatal('start --no-viewer declines the viewer, so --viewer-window cannot place one')
   }
+  const appServerViewer = hasFlag(args, '--app-server-viewer')
+  if (noViewer && appServerViewer) {
+    fatal('start --no-viewer and --app-server-viewer choose opposite presentations')
+  }
   const onConflict = parseFlag(args, '--on-conflict')
   if (onConflict !== undefined && onConflict !== 'suffix' && onConflict !== 'reject') {
     fatal('start --on-conflict accepts "suffix" or "reject"')
@@ -611,6 +618,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--cwd',
       '--viewer-window',
       '--no-viewer',
+      '--app-server-viewer',
       '--on-conflict',
     ],
   })
@@ -629,6 +637,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       debug,
       ...(viewerWindow !== undefined ? { viewerWindow } : {}),
       ...(noViewer ? { operatorPresentation: 'none' as const } : {}),
+      ...(appServerViewer ? { operatorPresentation: 'tmux-tui' as const } : {}),
     })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 

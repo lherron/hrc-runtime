@@ -252,6 +252,16 @@ describe('buildManagedStartIntent', () => {
     expect(intent.presentation).toEqual({ operator: 'none' })
     expect(intent.harness.interactive).toBe(false)
   })
+
+  // T-08554: --app-server-viewer selects the headless app-server with its viewer.
+  it('threads --app-server-viewer into presentation.operator tmux-tui on a headless start intent', () => {
+    const intent = buildManagedStartIntent(scope(), {
+      operatorPresentation: 'tmux-tui',
+      viewerWindow: 'work',
+    })
+    expect(intent.presentation).toEqual({ viewerWindow: 'work', operator: 'tmux-tui' })
+    expect(intent.harness.interactive).toBe(false)
+  })
 })
 
 describe('executeManagedStart', () => {

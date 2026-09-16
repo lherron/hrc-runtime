@@ -348,17 +348,18 @@ export async function startController(
   let tmuxAllocation: BrokerTmuxAllocation | undefined
   let spawnedSelection: AspToolchainBinarySelection | undefined
   let invocationStartSent = false
+  // T-08554: the tmux-tui viewer substrate is allowed because the route decision
+  // it is selected by is the frozen preparation's own (launch checks it matches
+  // the frozen hosting presentation).
   if (
     input.aspdExecution !== undefined &&
-    (input.brokerClient !== undefined ||
-      !usesHeadlessBrokerSubstrate(input.profile) ||
-      isTmuxTuiRoute(input))
+    (input.brokerClient !== undefined || !usesHeadlessBrokerSubstrate(input.profile))
   ) {
     return {
       ok: false,
       error: new BrokerControllerError(
         'aspd_route_profile_mismatch',
-        'an aspd-prepared execution launches only on the ordinary headless broker substrate',
+        'an aspd-prepared execution launches only on the headless broker substrate',
         {
           runtimeId: String(input.identity.runtimeId),
           operationId: input.aspdExecution.operationId,

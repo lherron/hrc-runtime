@@ -212,17 +212,18 @@ function parseOptionalPresentationIntent(
       field: 'presentation',
     })
   }
-  // T-08553: the request can only decline the operator viewer; it never selects one.
+  // T-08553/T-08554: the request declines the operator viewer ('none') or selects
+  // the app-server viewer ('tmux-tui').
   const operator = value['operator']
-  if (operator !== undefined && operator !== 'none') {
+  if (operator !== undefined && operator !== 'none' && operator !== 'tmux-tui') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      "presentation.operator accepts only 'none'",
+      "presentation.operator accepts only 'none' or 'tmux-tui'",
       { field: 'presentation.operator' }
     )
   }
   const viewerWindow = value['viewerWindow']
-  if (viewerWindow === undefined) return operator === 'none' ? { operator } : {}
+  if (viewerWindow === undefined) return operator !== undefined ? { operator } : {}
   if (typeof viewerWindow !== 'string' || viewerWindow.trim().length === 0) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -237,7 +238,7 @@ function parseOptionalPresentationIntent(
       { field: 'presentation.operator' }
     )
   }
-  return { viewerWindow: viewerWindow.trim() }
+  return { viewerWindow: viewerWindow.trim(), ...(operator !== undefined ? { operator } : {}) }
 }
 
 function parseOptionalAttachmentRefs(

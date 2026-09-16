@@ -44,7 +44,7 @@ import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
-  requestsNoOperatorViewer,
+  requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
 } from './presentation-operator.js'
 import {
@@ -336,7 +336,7 @@ export async function startRuntimeForSession(
     const codexRedirect =
       this.codexCliTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
-      !requestsNoOperatorViewer(intent) &&
+      !requestsOperatorPresentation(intent) &&
       shouldRedirectCodexToInteractiveBroker(intent) &&
       !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, intent)
     const startIntent = claudeRedirect
@@ -346,7 +346,7 @@ export async function startRuntimeForSession(
         : intent
     // T-08553: refuse an unhonorable or conflicting no-viewer choice before any
     // reuse, stale-marking or reprovision below.
-    if (requestsNoOperatorViewer(startIntent)) {
+    if (requestsOperatorPresentation(startIntent)) {
       assertOperatorPresentationRoutable(startIntent, {
         claudeRedirect,
         headlessTransport: shouldUseHeadlessTransport(startIntent),
@@ -672,6 +672,19 @@ export async function attachRuntimeEffectfully(
     const latestRuntime = await this.reconcileTmuxRuntimeLiveness(
       requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
     )
+
+    // T-08554: a live headless broker runtime that presents the app-server viewer
+    // is attached as it is. Interactive admission below only reuses tmux-transport
+    // brokers and would stale-mark and replace this runtime.
+    if (
+      latestRuntime.controllerKind === 'harness-broker' &&
+      latestRuntime.transport !== 'tmux' &&
+      !isRuntimeUnavailableStatus(latestRuntime.status) &&
+      latestRuntime.status !== 'failed' &&
+      canOperatorAttach(latestRuntime)
+    ) {
+      return this.attachRuntime(latestRuntime)
+    }
 
     const latestIntent =
       session.lastAppliedIntentJson ??

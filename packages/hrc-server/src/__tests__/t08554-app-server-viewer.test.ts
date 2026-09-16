@@ -1,6 +1,6 @@
 /**
- * T-08553 — per-request operator presentation on the aspd headless Codex route
- * (docs/aspd-headless-codex-integration.md §1.1). Shares the T-08542 doubles.
+ * T-08554 — explicit app-server viewer on the aspd headless Codex route
+ * (docs/aspd-headless-codex-integration.md §1.2). Shares the T-08542 doubles.
  *
  * Original T-08542 harness notes: HRC-hosted headless codex-app-server preparation through aspd with a
  * frozen execution release (hrc-runtime.aspd-prepared-execution-release).
@@ -23,9 +23,12 @@ import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
-import { decideCodexAppServerPresentation } from '../broker-decisions'
-import { createBrokerDurableHeadlessAllocator } from '../broker-interactive-handlers/substrate-allocator'
+import {
+  createBrokerDurableHeadlessAllocator,
+  createBrokerTmuxTuiAllocator,
+} from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
+import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { assertNoOperatorPresentationConflict } from '../presentation-operator'
@@ -40,7 +43,7 @@ import {
 } from './fixtures/aspd-route-doubles'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 
-const SCOPE = 'agent:t08553:project:hrc-runtime:task:T-08553'
+const SCOPE = 'agent:t08554:project:hrc-runtime:task:T-08554'
 
 // ── Harness ───────────────────────────────────────────────────────────────────
 
@@ -119,13 +122,17 @@ async function bootServer(overrides: { codexCliTmuxBrokerEnabled?: boolean } = {
       tmuxManagerFactory: tmuxManagerFactory as never,
       generateAttachToken: () => 'attach-token-t08542',
     }),
+    tmuxTuiAllocator: createBrokerTmuxTuiAllocator(internal().options, {
+      tmuxManagerFactory: tmuxManagerFactory as never,
+      generateAttachToken: () => 'attach-token-t08554',
+    }),
     now: () => new Date().toISOString(),
   } as unknown as ConstructorParameters<typeof HarnessBrokerController>[0])
 }
 
 beforeEach(async () => {
-  fixture = await createHrcTestFixture('hrc-t08553-')
-  scratch = await mkdtemp(join(tmpdir(), 't8553-'))
+  fixture = await createHrcTestFixture('hrc-t08554-')
+  scratch = await mkdtemp(join(tmpdir(), 't8554-'))
   releaseA = makeRelease(join(scratch, 'releases'), 'a')
   releaseB = makeRelease(join(scratch, 'releases'), 'b')
   aspdSocket = join(scratch, 'aspd.sock')
@@ -155,18 +162,9 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true })
 })
 
-function operationsFor(hostSessionId: string) {
-  return internal()
-    .db.sqlite.query<{ operation_id: string; status: string; error_code: string | null }, [string]>(
-      `SELECT operation_id, status, error_code FROM runtime_operations
-        WHERE host_session_id = ? ORDER BY created_at ASC`
-    )
-    .all(hostSessionId)
-}
+// ── T-08554 explicit app-server viewer ────────────────────────────────────────
 
-// ── T-08553 per-request operator presentation ────────────────────────────────
-
-describe('T-08553 per-request operator presentation', () => {
+describe('T-08554 explicit app-server viewer', () => {
   type RecordedInteractive = { intent: HrcRuntimeIntent }
 
   /** Max3 shape: Codex interactive redirect on, headless viewer default tmux-tui. */
@@ -175,8 +173,6 @@ describe('T-08553 per-request operator presentation', () => {
     setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
     await bootServer({ codexCliTmuxBrokerEnabled: true })
     const recorded: RecordedInteractive[] = []
-    // The interactive tmux route is observed, not run: it records the intent it
-    // was handed and refuses, so no real tmux is touched.
     ;(server as unknown as Record<string, unknown>)['handleInteractiveTmuxBrokerDispatchTurn'] =
       async (_session: HrcSessionRecord, intent: HrcRuntimeIntent) => {
         recorded.push({ intent })
@@ -188,8 +184,8 @@ describe('T-08553 per-request operator presentation', () => {
     return recorded
   }
 
-  function noViewerIntent(): HrcRuntimeIntent {
-    return { ...headlessIntent(), presentation: { operator: 'none' } }
+  function viewerIntent(): HrcRuntimeIntent {
+    return { ...headlessIntent(), presentation: { operator: 'tmux-tui' } }
   }
 
   async function turn(hostSessionId: string, runtimeIntent: unknown, extra = {}) {
@@ -202,185 +198,135 @@ describe('T-08553 per-request operator presentation', () => {
     })
   }
 
-  function routeDecisions(hostSessionId: string) {
+  function preparations(hostSessionId: string) {
     return internal()
       .db.sqlite.query<
-        { route_decision_json: string | null; preparation_json: string | null },
+        {
+          operation_id: string
+          status: string
+          error_code: string | null
+          preparation_json: string | null
+        },
         [string]
       >(
-        `SELECT route_decision_json, preparation_json FROM runtime_operations
+        `SELECT operation_id, status, error_code, preparation_json FROM runtime_operations
           WHERE host_session_id = ? ORDER BY created_at ASC`
       )
       .all(hostSessionId)
   }
 
-  it('the presentation decision: explicit none overrides the node viewer policy; omitted keeps it', () => {
-    const base = { operatorPresentation: 'tmux-tui', brokerDriver: 'codex-app-server' }
-    expect(decideCodexAppServerPresentation(base)).toBe('tmux-tui')
-    expect(decideCodexAppServerPresentation({ ...base, requestedOperator: 'none' })).toBe('none')
-    expect(decideCodexAppServerPresentation({ ...base, operatorPresentation: undefined })).toBe(
-      'none'
-    )
-  })
-
-  it('omitted choice keeps the node Codex redirect: interactive route, no aspd preparation', async () => {
+  it('explicit tmux-tui stays headless on a redirecting node and freezes the viewer in an aspd preparation', async () => {
     const recorded = await bootMax3Node()
     const s = await session()
-    const response = await turn(s.hostSessionId, headlessIntent())
-    expect(response.status).toBe(503)
-    expect(recorded).toHaveLength(1)
-    expect(recorded[0]?.intent.harness.interactive).toBe(true)
-    expect(aspd.compileCalls).toBe(0)
-    expect(operationsFor(s.hostSessionId)).toEqual([])
-  })
-
-  it('explicit none stays headless on a redirecting node and prepares through aspd with source request', async () => {
-    const recorded = await bootMax3Node()
-    const s = await session()
-    const response = await turn(s.hostSessionId, noViewerIntent())
-    await Bun.sleep(50)
+    const response = await turn(s.hostSessionId, viewerIntent())
+    await Bun.sleep(80)
+    expect(response.status).toBeLessThan(500)
     expect(recorded).toHaveLength(0)
     expect(aspd.compileCalls).toBe(1)
-    const [op] = routeDecisions(s.hostSessionId)
-    const preparation = JSON.parse(op?.preparation_json ?? '{}')
-    expect(preparation.dispatch.routeDecision).toMatchObject({
+    const [op] = preparations(s.hostSessionId)
+    const record = JSON.parse(op?.preparation_json ?? '{}')
+    const observer = record.hosting.paths.observerSocketPath as string
+    expect(observer.endsWith('/observer.sock')).toBe(true)
+    expect(record.hosting.presentation).toBe('tmux-tui')
+    expect(record.hosting.argv.slice(-2)).toEqual(['--experimental-observer-socket', observer])
+    expect(record.dispatch.routeDecision).toMatchObject({
       preparation: 'aspd',
-      operatorPresentation: 'none',
+      operatorPresentation: 'tmux-tui',
       operatorPresentationSource: 'request',
     })
-    expect(preparation.hosting.presentation).toBe('none')
-    expect(preparation.intent.presentation).toEqual({ operator: 'none' })
-    expect(response.status).toBeLessThan(500)
+    expect(record.intent.presentation).toEqual({ operator: 'tmux-tui' })
+    // Launched on the viewer substrate from the frozen release worker.
+    const command = ledger.commands.at(-1) ?? ''
+    expect(command).toContain(join(releaseA.releaseRoot, 'harness-broker'))
+    expect(command).toContain(`--experimental-observer-socket' '${observer}'`)
+    const [runtime] = internal().db.runtimes.listByHostSessionId(s.hostSessionId)
+    expect(runtime && parseBrokerRuntimeHostingState(runtime)?.presentation.kind).toBe('tmux-tui')
+    const state = runtime?.runtimeStateJson as { executionRelease?: { releaseId?: string } }
+    expect(state.executionRelease?.releaseId).toBe(releaseA.releaseId)
+    expect(runtime?.transport).toBe('headless')
   })
 
-  it('refuses unknown values and a viewer placement for none before any effect', async () => {
-    const s = await session()
-    for (const presentation of [
-      // T-08554 made 'tmux-tui' a valid choice; any other value stays malformed.
-      { operator: 'tui' },
-      { operator: 'none', viewerWindow: 'console' },
-    ]) {
-      const response = await turn(s.hostSessionId, { ...headlessIntent(), presentation })
-      expect(response.status).toBe(400)
-      const body = (await response.json()) as { error: { detail: { field: string } } }
-      expect(body.error.detail.field).toBe('presentation.operator')
-    }
-    expect(aspd.compileCalls).toBe(0)
-    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
-  })
-
-  it('refuses an interactive intent and the Claude redirect with presentation_operator_unsupported', async () => {
+  it('a node-default tmux-tui with no request choice keeps the facade viewer route', async () => {
+    setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
     await server.stop()
-    await bootServer({ codexCliTmuxBrokerEnabled: true })
+    await bootServer()
     const s = await session()
-    const interactive = {
-      ...noViewerIntent(),
-      harness: { provider: 'openai', id: 'codex-cli', interactive: true },
-      execution: { preferredMode: 'interactive' },
-    }
-    const claude = {
-      ...noViewerIntent(),
-      harness: { provider: 'anthropic', id: 'claude-code', interactive: false },
-    }
-    const internalServer = server as unknown as { claudeCodeTmuxBrokerEnabled: boolean }
-    Object.defineProperty(internalServer, 'claudeCodeTmuxBrokerEnabled', { value: true })
-    for (const intent of [interactive, claude]) {
-      const response = await turn(s.hostSessionId, intent)
-      expect(response.status).toBe(422)
-      const body = (await response.json()) as { error: { code: string } }
-      expect(body.error.code).toBe('presentation_operator_unsupported')
-    }
-    expect(aspd.compileCalls).toBe(0)
-    expect(operationsFor(s.hostSessionId)).toEqual([])
-    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
-  })
-
-  it('refuses explicit none against a live viewer or interactive surface and leaves it untouched', async () => {
-    const s = await session()
-    const live = [
-      liveRuntime(s, 'rt-t08553-tui', 'headless', 'tmux-tui'),
-      liveRuntime(s, 'rt-t08553-tmux', 'tmux', 'none'),
-    ]
-    for (const runtime of live) {
-      internal().db.runtimes.insert(runtime as never)
-      const before = internal().db.runtimes.getByRuntimeId(runtime.runtimeId)
-      const response = await turn(s.hostSessionId, noViewerIntent())
-      expect(response.status).toBe(409)
-      const body = (await response.json()) as {
-        error: { code: string; detail: { runtimeId: string } }
-      }
-      expect(body.error.code).toBe('presentation_conflict')
-      expect(body.error.detail.runtimeId).toBe(runtime.runtimeId)
-      expect(internal().db.runtimes.getByRuntimeId(runtime.runtimeId)).toEqual(before)
-      internal().db.runtimes.update(runtime.runtimeId, { status: 'terminated' } as never)
-    }
-    expect(aspd.compileCalls).toBe(0)
-    expect(operationsFor(s.hostSessionId)).toEqual([])
-  })
-
-  it('omitted choice is delivered into a live headless runtime, never redirected past it', async () => {
-    const recorded = await bootMax3Node()
-    const s = await session()
-    const runtime = {
-      ...liveRuntime(s, 'rt-t08553-live', 'headless', 'none'),
-      activeInvocationId: 'inv-t08553-live',
-    }
-    internal().db.runtimes.insert(runtime as never)
-    const now = new Date().toISOString()
-    internal().db.brokerInvocations.insert({
-      invocationId: 'inv-t08553-live',
-      operationId: 'op-t08553-live',
-      runtimeId: runtime.runtimeId,
-      brokerProtocol: 'harness-broker/0.2',
-      brokerDriver: 'codex-app-server',
-      invocationState: 'ready',
-      capabilitiesJson: JSON.stringify({ inputQueue: { mode: 'fifo' } }),
-      specHash: 'sha256:t08553-spec',
-      startRequestHash: 'sha256:t08553-request',
-      selectedProfileHash: 'sha256:t08553-profile',
-      createdAt: now,
-      updatedAt: now,
-    } as never)
     await turn(s.hostSessionId, headlessIntent())
     await Bun.sleep(50)
-    expect(recorded).toHaveLength(0)
     expect(aspd.compileCalls).toBe(0)
+    expect(facadeSpy).toHaveBeenCalled()
   })
 
-  it('the conflict predicate: omitted and matching choices never conflict; dead runtimes never count', async () => {
+  it('refuses a viewer request for a driver that has no viewer before any effect', async () => {
+    const s = await session()
+    const response = await turn(s.hostSessionId, {
+      ...viewerIntent(),
+      harness: { provider: 'openai', id: 'pi-sdk', interactive: false },
+    })
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { code: string; detail: { reason: string } } }
+    expect(body.error.code).toBe('presentation_operator_unsupported')
+    expect(body.error.detail.reason).toBe('driver-has-no-viewer')
+    expect(aspd.compileCalls).toBe(0)
+    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toEqual([])
+  })
+
+  it('the conflict predicate compares the requested presentation with the live one', async () => {
     const s = await session()
     const tui = liveRuntime(s, 'rt-a', 'headless', 'tmux-tui') as unknown as HrcRuntimeSnapshot
     const plain = liveRuntime(s, 'rt-b', 'headless', 'none') as unknown as HrcRuntimeSnapshot
-    const dead = { ...tui, status: 'terminated' } as HrcRuntimeSnapshot
-    // A start that failed (e.g. a refused interactive writer) left a tmux row behind.
-    const failed = { ...tui, transport: 'tmux', status: 'failed' } as HrcRuntimeSnapshot
-    const unreadable = { ...plain, runtimeStateJson: { broker: {} } } as HrcRuntimeSnapshot
-    expect(() => assertNoOperatorPresentationConflict(headlessIntent(), [tui])).not.toThrow()
-    expect(() =>
-      assertNoOperatorPresentationConflict(noViewerIntent(), [plain, dead, failed])
-    ).not.toThrow()
-    expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [tui])).toThrow('tmux-tui')
-    expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [unreadable])).toThrow(
-      'unknown'
+    const tmux = liveRuntime(s, 'rt-c', 'tmux', 'none') as unknown as HrcRuntimeSnapshot
+    expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [tui])).not.toThrow()
+    expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [plain])).toThrow("'none'")
+    expect(() => assertNoOperatorPresentationConflict(viewerIntent(), [tmux])).toThrow(
+      "'interactive'"
     )
+    expect(() =>
+      assertNoOperatorPresentationConflict(headlessIntent(), [plain, tmux])
+    ).not.toThrow()
   })
 
-  it('a same-key retry reaches its frozen no-viewer preparation without re-evaluating node defaults', async () => {
-    const recorded = await bootMax3Node()
+  it('launch refuses a frozen viewer preparation whose route decision no longer matches its hosting', async () => {
     const s = await session()
     renameSync(releaseA.releaseRoot, `${releaseA.releaseRoot}.withheld`)
-    const refused = await turn(s.hostSessionId, noViewerIntent(), {
-      idempotencyKey: 'k-t08553',
+    const refused = await turn(s.hostSessionId, viewerIntent(), {
+      idempotencyKey: 'k-t08554',
       waitFor: 'terminal',
     })
     expect(refused.status).toBe(503)
     renameSync(`${releaseA.releaseRoot}.withheld`, releaseA.releaseRoot)
-    // Retry WITHOUT the choice on a node whose defaults would redirect it.
-    await turn(s.hostSessionId, headlessIntent(), { idempotencyKey: 'k-t08553' })
+    const [op] = preparations(s.hostSessionId)
+    const record = JSON.parse(op?.preparation_json ?? '{}')
+    record.dispatch.routeDecision.operatorPresentation = 'none'
+    internal()
+      .db.sqlite.query('UPDATE runtime_operations SET preparation_json = ? WHERE operation_id = ?')
+      .run(JSON.stringify(record), op?.operation_id ?? '')
+    const commandsBefore = ledger.commands.length
+    await turn(s.hostSessionId, viewerIntent(), { idempotencyKey: 'k-t08554' })
     await Bun.sleep(50)
-    expect(recorded).toHaveLength(0)
+    expect(preparations(s.hostSessionId)).toMatchObject([
+      { status: 'prepared', error_code: 'launch_description_mismatch' },
+    ])
+    expect(ledger.commands.length).toBe(commandsBefore)
     expect(aspd.compileCalls).toBe(1)
-    expect(operationsFor(s.hostSessionId)).toMatchObject([{ status: 'completed' }])
+  })
+
+  it('operator attach returns a live headless viewer runtime as it is, never reprovisioning it', async () => {
+    await bootMax3Node()
+    const s = await session()
+    const runtime = liveRuntime(s, 'rt-t08554-viewer', 'headless', 'tmux-tui')
+    internal().db.runtimes.insert(runtime as never)
+    ;(server as unknown as Record<string, unknown>)['reconcileTmuxRuntimeLiveness'] = async (
+      r: HrcRuntimeSnapshot
+    ) => r
+    const before = internal().db.runtimes.getByRuntimeId(runtime.runtimeId)
+    const response = await fixture.postJson('/v1/runtimes/attach', { runtimeId: runtime.runtimeId })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { argv: string[]; bindingFence: { runtimeId: string } }
+    expect(body.bindingFence.runtimeId).toBe(runtime.runtimeId)
+    expect(body.argv.join(' ')).toContain(':tui')
+    expect(internal().db.runtimes.getByRuntimeId(runtime.runtimeId)).toEqual(before)
+    expect(internal().db.runtimes.listByHostSessionId(s.hostSessionId)).toHaveLength(1)
   })
 })
 
@@ -408,8 +354,8 @@ function liveRuntime(
       broker: {
         endpoint: {
           kind: 'unix-jsonrpc-ndjson',
-          socketPath: '/tmp/t08553.sock',
-          attachTokenRef: { kind: 'file', path: '/tmp/t08553.token' },
+          socketPath: '/tmp/t08554.sock',
+          attachTokenRef: { kind: 'file', path: '/tmp/t08554.token' },
         },
         // An interactive surface on an external substrate is not probed for
         // tmux liveness here, so it stays live for the refusal under test.
@@ -418,7 +364,7 @@ function liveRuntime(
             ? { kind: 'external' }
             : {
                 kind: 'leased-tmux',
-                tmuxSocketPath: '/tmp/t08553-tmux.sock',
+                tmuxSocketPath: '/tmp/t08554-tmux.sock',
                 sessionName: 's',
                 brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
                 generation: 1,

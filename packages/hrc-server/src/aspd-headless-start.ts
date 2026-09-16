@@ -60,7 +60,10 @@ import {
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
-import { describeBrokerSubstratePaths } from './broker-interactive-handlers/substrate-allocator.js'
+import {
+  type BrokerSubstratePaths,
+  describeBrokerSubstratePaths,
+} from './broker-interactive-handlers/substrate-allocator.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import type { PrecompileLaunchTimingContext } from './precompile-launch-timing.js'
@@ -74,6 +77,7 @@ import { writeServerLog } from './server-log.js'
 import { type DispatchRunPersistenceOptions, dispatchRunPersistence } from './server-types.js'
 import { timestamp } from './server-util.js'
 import { automaticContinuationForSession } from './session-continuation-reuse.js'
+import { getBrokerObserverSocketPath } from './tmux-socket.js'
 import { toBrokerResponseFormat } from './turn-response-format.js'
 
 export const ASPD_PREPARATION_SCHEMA = 'hrc-aspd-preparation/v1'
@@ -106,10 +110,11 @@ export type AspdPreparationRecord = {
   }
   hosting: {
     driverKind: typeof ASPD_BROKER_DRIVER
-    presentation: 'none'
+    /** T-08554: `tmux-tui` only when the request explicitly selected the viewer. */
+    presentation: AspdHostingPresentation
     executable: string
     argv: string[]
-    paths: ReturnType<typeof describeBrokerSubstratePaths>
+    paths: AspdHostingPaths
   }
   dispatch: {
     dispatchEnv?: Record<string, string> | undefined
@@ -122,15 +127,21 @@ export type AspdPreparationRecord = {
   startOutcome?: 'rejected' | 'uncertain' | undefined
 }
 
+type AspdHostingPresentation = 'none' | 'tmux-tui'
+
+/** HRC's deterministic hosting paths; a viewer adds its observer socket. */
+type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | undefined }
+
 /**
- * The route this module owns: the node declares an aspd endpoint and the intent
- * is ordinary headless codex-app-server with operator presentation `none`.
- * Returns the endpoint, or undefined for every other route.
+ * The operator presentation this route hosts for an intent, or undefined when
+ * the intent is not on this route: effective `none` (request or node default),
+ * or `tmux-tui` selected by an explicit request (T-08554). A node-default
+ * `tmux-tui` with no request choice stays on the facade viewer route.
  */
-export function aspdHeadlessCodexEndpoint(
+function aspdRoutePresentation(
   intent: HrcRuntimeIntent,
-  env: Record<string, string | undefined> = process.env
-): string | undefined {
+  env: Record<string, string | undefined>
+): AspdHostingPresentation | undefined {
   if (intent.harness.interactive === true) return undefined
   if (toProfileSelector(intent)?.brokerDriver !== ASPD_BROKER_DRIVER) return undefined
   const presentation = decideCodexAppServerPresentation({
@@ -138,7 +149,53 @@ export function aspdHeadlessCodexEndpoint(
     brokerDriver: ASPD_BROKER_DRIVER,
     requestedOperator: intent.presentation?.operator,
   })
-  if (presentation !== 'none') return undefined
+  if (presentation === 'none') return 'none'
+  return intent.presentation?.operator === 'tmux-tui' ? 'tmux-tui' : undefined
+}
+
+function describeAspdHostingPaths(
+  options: HrcServerInstanceForHandlers['options'],
+  runtimeId: string,
+  presentation: AspdHostingPresentation
+): AspdHostingPaths {
+  const paths = describeBrokerSubstratePaths(options, ASPD_BROKER_DRIVER, runtimeId)
+  return presentation === 'tmux-tui'
+    ? {
+        ...paths,
+        observerSocketPath: getBrokerObserverSocketPath(options, ASPD_BROKER_DRIVER, runtimeId),
+      }
+    : paths
+}
+
+function aspdWorkerArgv(
+  release: AspcExecutionRelease,
+  record: Pick<AspdPreparationRecord, 'runtimeId' | 'hostSessionId' | 'generation'>,
+  paths: AspdHostingPaths
+): string[] {
+  return buildAspdWorkerArgv(release, {
+    socketPath: paths.brokerIpcSocketPath,
+    eventLedgerPath: paths.eventLedgerPath,
+    runtimeId: record.runtimeId,
+    hostSessionId: record.hostSessionId,
+    generation: record.generation,
+    attachTokenPath: paths.attachTokenPath,
+    ...(paths.observerSocketPath !== undefined
+      ? { observerSocketPath: paths.observerSocketPath }
+      : {}),
+  })
+}
+
+/**
+ * The route this module owns: the node declares an aspd endpoint and the intent
+ * is ordinary headless codex-app-server with operator presentation `none`, or
+ * with the `tmux-tui` viewer selected by an explicit request (T-08554).
+ * Returns the endpoint, or undefined for every other route.
+ */
+export function aspdHeadlessCodexEndpoint(
+  intent: HrcRuntimeIntent,
+  env: Record<string, string | undefined> = process.env
+): string | undefined {
+  if (aspdRoutePresentation(intent, env) === undefined) return undefined
   return configuredAspdEndpoint(env)
 }
 
@@ -283,15 +340,20 @@ export async function prepareAspdHeadlessAttempt(
     brokerRoute: true,
   })
   const operationId = String(compiled.identity.operationId)
-  const paths = describeBrokerSubstratePaths(server.options, ASPD_BROKER_DRIVER, runtimeId)
-  const argv = buildAspdWorkerArgv(release, {
-    socketPath: paths.brokerIpcSocketPath,
-    eventLedgerPath: paths.eventLedgerPath,
-    runtimeId,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    attachTokenPath: paths.attachTokenPath,
-  })
+  const presentation = aspdRoutePresentation(intent, process.env)
+  if (presentation === undefined) {
+    throw aspdStartError(
+      'aspd_route_profile_mismatch',
+      'intent left the aspd route between selection and preparation',
+      { hostSessionId: session.hostSessionId, runId }
+    )
+  }
+  const paths = describeAspdHostingPaths(server.options, runtimeId, presentation)
+  const argv = aspdWorkerArgv(
+    release,
+    { runtimeId, hostSessionId: session.hostSessionId, generation: session.generation },
+    paths
+  )
   const runtimeAuthority = actuatorSplitRuntimeAuthority(actuatorSplitAuthority)
   const requestedResponseFormat = toBrokerResponseFormat(input.responseFormat)
   const preparedAt = timestamp()
@@ -320,7 +382,7 @@ export async function prepareAspdHeadlessAttempt(
     },
     hosting: {
       driverKind: ASPD_BROKER_DRIVER,
-      presentation: 'none',
+      presentation,
       executable: release.worker.executable,
       argv,
       paths,
@@ -334,7 +396,7 @@ export async function prepareAspdHeadlessAttempt(
         selectedBy: 'aspdHeadlessCodexEndpoint',
         headlessRoute: 'durable-leased',
         brokerTransport: 'unix-jsonrpc-ndjson',
-        operatorPresentation: 'none',
+        operatorPresentation: presentation,
         operatorPresentationSource: operatorPresentationSource(intent),
         preparation: 'aspd',
         aspdEndpoint: endpoint,
@@ -513,22 +575,16 @@ export async function launchAspdPreparedAttempt(
     }
     throw error
   }
-  const expectedArgv = buildAspdWorkerArgv(record.executionRelease, {
-    socketPath: record.hosting.paths.brokerIpcSocketPath,
-    eventLedgerPath: record.hosting.paths.eventLedgerPath,
-    runtimeId: record.runtimeId,
-    hostSessionId: record.hostSessionId,
-    generation: record.generation,
-    attachTokenPath: record.hosting.paths.attachTokenPath,
-  })
-  const currentPaths = describeBrokerSubstratePaths(
+  const currentPaths = describeAspdHostingPaths(
     server.options,
-    record.hosting.driverKind,
-    record.runtimeId
+    record.runtimeId,
+    record.hosting.presentation
   )
+  const expectedArgv = aspdWorkerArgv(record.executionRelease, record, currentPaths)
   if (
     JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
-    JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths)
+    JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
+    record.dispatch.routeDecision['operatorPresentation'] !== record.hosting.presentation
   ) {
     refuse('launch_description_mismatch', 'frozen worker launch description no longer matches', {
       frozenArgv: record.hosting.argv,

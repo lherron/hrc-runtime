@@ -29,7 +29,7 @@ import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import {
   assertNoOperatorPresentationConflict,
-  requestsNoOperatorViewer,
+  requestsOperatorPresentation,
 } from './presentation-operator.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -383,7 +383,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     // requested authority; otherwise a rejected request could already be queued.
     // T-08553: an explicit no-viewer request likewise waits to prove the booting
     // runtime does not present a viewer before anything is queued.
-    const admitBeforeBoot = !highRiskActuatorSplit && !requestsNoOperatorViewer(dispatchIntent)
+    const admitBeforeBoot = !highRiskActuatorSplit && !requestsOperatorPresentation(dispatchIntent)
     if (admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',

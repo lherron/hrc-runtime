@@ -71,6 +71,16 @@ Omitting it leaves every node default unchanged. Refused with
 (`presentation_operator_unsupported`), and against a scope whose live runtime
 already has a viewer or TUI (`presentation_conflict`, runtime untouched).
 
+`start --app-server-viewer` (T-08554) selects the headless codex-app-server WITH
+HRC's attachable tmux renderer viewer for that start (`presentation.operator:
+tmux-tui`). Like `--no-viewer` it exempts the Codex interactive TUI redirect;
+with `HRC_ASPD_SOCKET` configured it prepares through aspd and the renderer runs
+from the worker's own ASP release. Attach with `hrc attach <scope>` (tmux client
+detach to leave; the worker keeps running). Omitting it leaves every node
+default unchanged. Refused with `--no-viewer`, for non-codex or interactive
+starts (`presentation_operator_unsupported`), and against a scope whose live
+runtime has no such viewer (`presentation_conflict`, runtime untouched).
+
 A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.

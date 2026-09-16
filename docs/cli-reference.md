@@ -124,6 +124,20 @@ hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
   ```bash
   hrc start cody@hrc-runtime:T-00000 --no-viewer -p "hello" --wait completed --json
   ```
+- **`--app-server-viewer`** — run this Codex start on the headless
+  codex-app-server WITH the attachable tmux renderer viewer (T-08554,
+  `presentation.operator: tmux-tui`). It exempts the interactive TUI redirect
+  like `--no-viewer`; with `HRC_ASPD_SOCKET` configured it prepares through aspd
+  and the renderer runs from the worker's own ASP release. `hrc attach <scope>`
+  opens the viewer; a tmux detach leaves the worker running. Refused together
+  with `--no-viewer`, for non-codex, interactive or Claude-redirected starts
+  (`presentation_operator_unsupported`), and when the scope's live runtime does
+  not already present that viewer (`presentation_conflict`, untouched):
+
+  ```bash
+  hrc start cody@hrc-runtime:T-00000 --app-server-viewer -p "hello" --wait completed --json
+  hrc attach cody@hrc-runtime:T-00000
+  ```
 - **`--viewer-window <key>`** — free-form window key recorded on the session
   intent, so every later viewer respawn lands in the same window. Absent ⇒
   today's single "Headless Sessions" window. Not offered on `hrc run`, whose

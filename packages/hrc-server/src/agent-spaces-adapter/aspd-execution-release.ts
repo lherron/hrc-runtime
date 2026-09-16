@@ -123,6 +123,8 @@ export function buildAspdWorkerArgv(
     hostSessionId: string
     generation: number
     attachTokenPath: string
+    /** T-08554: a tmux-tui viewer's observer socket, served by the worker. */
+    observerSocketPath?: string | undefined
   }
 ): string[] {
   return [
@@ -139,6 +141,9 @@ export function buildAspdWorkerArgv(
     String(hosting.generation),
     '--attach-token-file',
     hosting.attachTokenPath,
+    ...(hosting.observerSocketPath !== undefined
+      ? ['--experimental-observer-socket', hosting.observerSocketPath]
+      : []),
   ]
 }
 

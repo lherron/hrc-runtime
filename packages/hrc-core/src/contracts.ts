@@ -250,8 +250,13 @@ export type HrcPresentationIntent = {
    * defaults apply unchanged. It cannot select a viewer, is refused off the
    * headless broker route or together with `viewerWindow`, and never changes a
    * live runtime (a conflicting live presentation refuses the request).
+   *
+   * T-08554: `'tmux-tui'` selects the headless codex-app-server WITH HRC's tmux-tui
+   * renderer viewer for a new execution: the same redirect exemption as `'none'`,
+   * the viewer regardless of the node default, and (with aspd configured) the
+   * aspd-prepared route. Refused off the headless codex-app-server broker route.
    */
-  operator?: 'none' | undefined
+  operator?: 'none' | 'tmux-tui' | undefined
 }
 
 export type HrcRuntimeIntent = {

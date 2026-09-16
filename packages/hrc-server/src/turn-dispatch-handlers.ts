@@ -71,7 +71,7 @@ import { reconnectParticipantAttachment } from './participant-establishment.js'
 import {
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
-  requestsNoOperatorViewer,
+  requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
   withFrozenOperatorPresentation,
 } from './presentation-operator.js'
@@ -1762,7 +1762,7 @@ async function dispatchAdmittedTurnForSession(
     this.codexCliTmuxBrokerEnabled &&
     !highRiskActuatorSplit &&
     options.responseFormat === undefined &&
-    !requestsNoOperatorViewer(normalizedInputIntent) &&
+    !requestsOperatorPresentation(normalizedInputIntent) &&
     shouldRedirectCodexToInteractiveBroker(normalizedInputIntent) &&
     !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, normalizedInputIntent)
   const intent = claudeRedirect
@@ -1787,7 +1787,7 @@ async function dispatchAdmittedTurnForSession(
   // T-08553: an explicit no-viewer choice is refused, before any delivery,
   // stale-marking or reprovision, when it cannot be honored or when the scope's
   // live runtime already presents a viewer or an interactive surface.
-  if (requestsNoOperatorViewer(intent)) {
+  if (requestsOperatorPresentation(intent)) {
     assertOperatorPresentationRoutable(intent, {
       claudeRedirect,
       headlessTransport: shouldUseHeadlessTransport(intent),

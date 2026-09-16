@@ -416,8 +416,10 @@ export function buildManagedStartIntent(
     /**
      * `--no-viewer` (T-08553). Declines the node's operator viewer and selects
      * headless execution for this start; absent ⇒ node defaults unchanged.
+     * `--app-server-viewer` (T-08554) selects the headless app-server with the
+     * tmux-tui renderer viewer.
      */
-    operatorPresentation?: 'none' | undefined
+    operatorPresentation?: 'none' | 'tmux-tui' | undefined
   } = {}
 ): HrcRuntimeIntent {
   const intent = buildManagedRuntimeIntent(scope, {

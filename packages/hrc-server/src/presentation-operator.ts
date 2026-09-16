@@ -1,13 +1,15 @@
 /**
- * T-08553 — per-request operator presentation (docs/aspd-headless-codex-integration.md
- * §1.1, hrc-runtime.aspd-prepared-execution-release).
+ * T-08553/T-08554 — per-request operator presentation
+ * (docs/aspd-headless-codex-integration.md §1.1–§1.2,
+ * hrc-runtime.aspd-prepared-execution-release).
  *
- * `intent.presentation.operator: 'none'` declines the node's operator viewer for
- * a NEW execution and selects headless execution. It overrides the node's
- * headless presentation default and exempts a Codex dispatch from the node's
- * Codex interactive redirect; an absent choice leaves both node defaults
- * exactly as they were. It can never select a viewer and never changes a live
- * runtime: a scope whose live runtime already presents one refuses the request.
+ * `intent.presentation.operator` chooses the operator presentation of a NEW
+ * headless execution: `'none'` declines the node's viewer, `'tmux-tui'` selects
+ * the codex-app-server renderer viewer. Either overrides the node's headless
+ * presentation default and exempts a Codex dispatch from the node's Codex
+ * interactive redirect; an absent choice leaves both node defaults exactly as
+ * they were. A choice never changes a live runtime: a scope whose live runtime
+ * presents something else refuses the request.
  */
 import {
   HrcConflictError,
@@ -19,25 +21,37 @@ import {
 
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 
 export type OperatorPresentationSource = 'request' | 'node-default'
 
-/** True when the request explicitly declined the operator viewer. */
-export function requestsNoOperatorViewer(intent: HrcRuntimeIntent): boolean {
-  return intent.presentation?.operator === 'none'
+/** The request's explicit operator presentation, if it made a choice. */
+export function requestedOperatorPresentation(
+  intent: HrcRuntimeIntent
+): 'none' | 'tmux-tui' | undefined {
+  return intent.presentation?.operator
+}
+
+/**
+ * True when the request made an explicit operator presentation choice (`none`
+ * or, T-08554, the app-server `tmux-tui` viewer). Either keeps a Codex dispatch
+ * off the node's interactive redirect.
+ */
+export function requestsOperatorPresentation(intent: HrcRuntimeIntent): boolean {
+  return intent.presentation?.operator !== undefined
 }
 
 export function operatorPresentationSource(intent: HrcRuntimeIntent): OperatorPresentationSource {
-  return requestsNoOperatorViewer(intent) ? 'request' : 'node-default'
+  return requestsOperatorPresentation(intent) ? 'request' : 'node-default'
 }
 
 function unsupported(reason: string, detail: Record<string, unknown>): never {
   throw new HrcUnprocessableEntityError(
     HrcErrorCode.PRESENTATION_OPERATOR_UNSUPPORTED,
-    `presentation.operator 'none' is honored only on the headless broker route (${reason})`,
+    `presentation.operator is honored only on the headless broker route (${reason})`,
     { field: 'presentation.operator', reason, ...detail }
   )
 }
@@ -56,8 +70,13 @@ export function assertOperatorPresentationRoutable(
     headlessRoute?: string | undefined
   }
 ): void {
-  if (!requestsNoOperatorViewer(intent)) return
-  const detail = { provider: intent.harness.provider, harnessId: intent.harness.id }
+  const requested = requestedOperatorPresentation(intent)
+  if (requested === undefined) return
+  const detail = {
+    provider: intent.harness.provider,
+    harnessId: intent.harness.id,
+    requested,
+  }
   if (intent.harness.interactive === true || intent.execution?.preferredMode === 'interactive') {
     unsupported('interactive-intent', detail)
   }
@@ -65,6 +84,11 @@ export function assertOperatorPresentationRoutable(
   if (!resolution.headlessTransport) unsupported('not-headless-transport', detail)
   if (resolution.headlessRoute !== undefined && resolution.headlessRoute !== 'broker') {
     unsupported(`headless-route-${resolution.headlessRoute}`, detail)
+  }
+  // The presentation decision is driver-gated; a viewer request on any other
+  // driver would otherwise silently resolve to none.
+  if (requested === 'tmux-tui' && toProfileSelector(intent)?.brokerDriver !== 'codex-app-server') {
+    unsupported('driver-has-no-viewer', detail)
   }
 }
 
@@ -77,8 +101,9 @@ export function withFrozenOperatorPresentation(
   intent: HrcRuntimeIntent,
   frozen: HrcRuntimeIntent | undefined
 ): HrcRuntimeIntent {
-  if (frozen?.presentation?.operator !== 'none') return intent
-  return { ...intent, presentation: { operator: 'none' } }
+  const operator = frozen?.presentation?.operator
+  if (operator === undefined) return intent
+  return { ...intent, presentation: { ...intent.presentation, operator } }
 }
 
 /**
@@ -119,22 +144,23 @@ export function liveRuntimePresentation(
 }
 
 /**
- * An explicit no-viewer request against a scope whose live runtime presents a
- * viewer or an interactive surface is refused before delivery, stale-marking or
- * reprovision; the live runtime is left untouched. Absent or matching choices
- * never conflict.
+ * An explicit operator presentation request against a scope whose live runtime
+ * presents something else (a viewer, no viewer, an interactive surface, or
+ * unreadable hosting) is refused before delivery, stale-marking or reprovision;
+ * the live runtime is left untouched. Absent or matching choices never conflict.
  */
 export function assertNoOperatorPresentationConflict(
   intent: HrcRuntimeIntent,
   runtimes: readonly HrcRuntimeSnapshot[]
 ): void {
-  if (!requestsNoOperatorViewer(intent)) return
+  const requested = requestedOperatorPresentation(intent)
+  if (requested === undefined) return
   for (const runtime of runtimes) {
     const presentation = liveRuntimePresentation(runtime)
-    if (presentation === undefined || presentation === 'none') continue
+    if (presentation === undefined || presentation === requested) continue
     throw new HrcConflictError(
       HrcErrorCode.PRESENTATION_CONFLICT,
-      `scope has a live runtime presenting '${presentation}'; presentation.operator 'none' applies only to a new execution`,
+      `scope has a live runtime presenting '${presentation}'; presentation.operator '${requested}' applies only to a new execution`,
       {
         field: 'presentation.operator',
         runtimeId: runtime.runtimeId,
