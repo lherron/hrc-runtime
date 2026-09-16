@@ -42,6 +42,11 @@ import { assertDesktopScopeNotColdBorn } from './desktop/scope-reservation.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
+  assertNoOperatorPresentationConflict,
+  assertOperatorPresentationRoutable,
+  requestsNoOperatorViewer,
+} from './presentation-operator.js'
+import {
   requireKnownRuntime,
   requireRuntime,
   requireSession,
@@ -309,6 +314,8 @@ export async function startRuntimeForSession(
   if (existingOperation) {
     const runtime = await existingOperation
     assertActuatorSplitRuntimeReuse(intent, runtime)
+    // T-08553: joining a boot is reuse; a conflicting live presentation refuses.
+    assertNoOperatorPresentationConflict(intent, [runtime])
     return runtime
   }
 
@@ -323,15 +330,34 @@ export async function startRuntimeForSession(
       this.claudeCodeTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
       shouldRedirectClaudeToInteractiveBroker(intent)
+    // T-08553: an explicit per-request no-viewer choice keeps the start headless.
     const codexRedirect =
       this.codexCliTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
+      !requestsNoOperatorViewer(intent) &&
       shouldRedirectCodexToInteractiveBroker(intent)
     const startIntent = claudeRedirect
       ? normalizeClaudeInteractiveBrokerIntent(intent)
       : codexRedirect
         ? normalizeCodexInteractiveBrokerIntent(intent)
         : intent
+    // T-08553: refuse an unhonorable or conflicting no-viewer choice before any
+    // reuse, stale-marking or reprovision below.
+    if (requestsNoOperatorViewer(startIntent)) {
+      assertOperatorPresentationRoutable(startIntent, {
+        claudeRedirect,
+        headlessTransport: shouldUseHeadlessTransport(startIntent),
+        headlessRoute: shouldUseHeadlessTransport(startIntent)
+          ? decideHeadlessExecutionRoute(startIntent, {
+              brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+            })
+          : undefined,
+      })
+      assertNoOperatorPresentationConflict(
+        startIntent,
+        this.db.runtimes.listByHostSessionId(session.hostSessionId)
+      )
+    }
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
     const presentationOptions = {
       operatorAttachPending:

@@ -27,6 +27,10 @@ import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
+import {
+  assertNoOperatorPresentationConflict,
+  requestsNoOperatorViewer,
+} from './presentation-operator.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import {
@@ -377,7 +381,10 @@ export async function handleHeadlessBrokerDispatchTurn(
     // Low-risk behavior keeps the established accept-before-wait contract.
     // High-risk work must first prove that the booting runtime has exactly the
     // requested authority; otherwise a rejected request could already be queued.
-    if (!highRiskActuatorSplit) {
+    // T-08553: an explicit no-viewer request likewise waits to prove the booting
+    // runtime does not present a viewer before anything is queued.
+    const admitBeforeBoot = !highRiskActuatorSplit && !requestsNoOperatorViewer(dispatchIntent)
+    if (admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
         responseFormat: options.responseFormat,
@@ -386,8 +393,9 @@ export async function handleHeadlessBrokerDispatchTurn(
     }
     const bootedRuntime = await bootOperation
     assertActuatorSplitRuntimeReuse(dispatchIntent, bootedRuntime)
+    assertNoOperatorPresentationConflict(dispatchIntent, [bootedRuntime])
     await waitForCompilerPrimingTerminal(this, bootedRuntime, this.runtimeStartPresentationSignal)
-    if (highRiskActuatorSplit) {
+    if (!admitBeforeBoot) {
       this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
         source: 'boot',
         responseFormat: options.responseFormat,
@@ -437,6 +445,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   }
   if (reusableRuntime) {
     assertActuatorSplitRuntimeReuse(dispatchIntent, reusableRuntime)
+    assertNoOperatorPresentationConflict(dispatchIntent, [reusableRuntime])
     if (
       reusableRuntime.controllerKind === 'harness-broker' &&
       reusableRuntime.activeInvocationId !== undefined

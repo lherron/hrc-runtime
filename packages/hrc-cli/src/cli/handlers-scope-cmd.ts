@@ -173,6 +173,9 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
   const startOnlyOptions =
     command === 'start'
       ? '  --viewer-window <key> Place the session viewer tab in the keyed window\n' +
+        '  --no-viewer          Run headless with no operator viewer or terminal (codex:\n' +
+        '                       prepares through aspd when configured); refused if the\n' +
+        '                       scope already has a live viewer or TUI\n' +
         '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
         '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''
@@ -584,6 +587,10 @@ export async function cmdStart(args: string[]): Promise<void> {
   const projectRootOverride = parseFlag(args, '--project-root')
   const cwdOverride = parseFlag(args, '--cwd')
   const viewerWindow = parseFlag(args, '--viewer-window')
+  const noViewer = hasFlag(args, '--no-viewer')
+  if (noViewer && viewerWindow !== undefined) {
+    fatal('start --no-viewer declines the viewer, so --viewer-window cannot place one')
+  }
   const onConflict = parseFlag(args, '--on-conflict')
   if (onConflict !== undefined && onConflict !== 'suffix' && onConflict !== 'reject') {
     fatal('start --on-conflict accepts "suffix" or "reject"')
@@ -603,6 +610,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--project-root',
       '--cwd',
       '--viewer-window',
+      '--no-viewer',
       '--on-conflict',
     ],
   })
@@ -620,6 +628,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       prompt,
       debug,
       ...(viewerWindow !== undefined ? { viewerWindow } : {}),
+      ...(noViewer ? { operatorPresentation: 'none' as const } : {}),
     })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 

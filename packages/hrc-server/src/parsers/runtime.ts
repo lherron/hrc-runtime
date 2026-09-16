@@ -212,13 +212,29 @@ function parseOptionalPresentationIntent(
       field: 'presentation',
     })
   }
+  // T-08553: the request can only decline the operator viewer; it never selects one.
+  const operator = value['operator']
+  if (operator !== undefined && operator !== 'none') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      "presentation.operator accepts only 'none'",
+      { field: 'presentation.operator' }
+    )
+  }
   const viewerWindow = value['viewerWindow']
-  if (viewerWindow === undefined) return {}
+  if (viewerWindow === undefined) return operator === 'none' ? { operator } : {}
   if (typeof viewerWindow !== 'string' || viewerWindow.trim().length === 0) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'presentation.viewerWindow must be a non-empty string',
       { field: 'presentation.viewerWindow' }
+    )
+  }
+  if (operator === 'none') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      "presentation.operator 'none' declines the viewer, so presentation.viewerWindow cannot place one",
+      { field: 'presentation.operator' }
     )
   }
   return { viewerWindow: viewerWindow.trim() }

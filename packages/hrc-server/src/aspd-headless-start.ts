@@ -64,6 +64,7 @@ import { describeBrokerSubstratePaths } from './broker-interactive-handlers/subs
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import type { PrecompileLaunchTimingContext } from './precompile-launch-timing.js'
+import { operatorPresentationSource } from './presentation-operator.js'
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
@@ -135,6 +136,7 @@ export function aspdHeadlessCodexEndpoint(
   const presentation = decideCodexAppServerPresentation({
     operatorPresentation: env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
     brokerDriver: ASPD_BROKER_DRIVER,
+    requestedOperator: intent.presentation?.operator,
   })
   if (presentation !== 'none') return undefined
   return configuredAspdEndpoint(env)
@@ -333,6 +335,7 @@ export async function prepareAspdHeadlessAttempt(
         headlessRoute: 'durable-leased',
         brokerTransport: 'unix-jsonrpc-ndjson',
         operatorPresentation: 'none',
+        operatorPresentationSource: operatorPresentationSource(intent),
         preparation: 'aspd',
         aspdEndpoint: endpoint,
         aspdRelease: prepared.service.release,

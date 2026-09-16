@@ -111,6 +111,19 @@ hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
 hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
 ```
 
+- **`--no-viewer`** — run this start HEADLESS with no operator viewer or
+  terminal (T-08553). This selects a different execution route, not a hidden
+  window: a Codex start that the node would send to the interactive TUI or give
+  a `tmux-tui` viewer runs on the headless codex-app-server route instead, and
+  prepares through aspd when `HRC_ASPD_SOCKET` is configured. Omitted ⇒ node
+  defaults unchanged. Refused together with `--viewer-window`, for interactive
+  or Claude-redirected starts (`presentation_operator_unsupported`), and when the
+  scope already has a live runtime with a viewer or TUI (`presentation_conflict`;
+  the live runtime is untouched — terminate it first to start fresh):
+
+  ```bash
+  hrc start cody@hrc-runtime:T-00000 --no-viewer -p "hello" --wait completed --json
+  ```
 - **`--viewer-window <key>`** — free-form window key recorded on the session
   intent, so every later viewer respawn lands in the same window. Absent ⇒
   today's single "Headless Sessions" window. Not offered on `hrc run`, whose

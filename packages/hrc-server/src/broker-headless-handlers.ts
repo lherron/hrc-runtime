@@ -48,6 +48,7 @@ import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-d
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
+import { operatorPresentationSource } from './presentation-operator.js'
 import {
   classifyBrokerInputFailure,
   isRunActive,
@@ -666,6 +667,7 @@ export async function startHeadlessBrokerRuntime(
     const operatorPresentation = decideCodexAppServerPresentation({
       operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
       brokerDriver: compiled.profile.brokerDriver,
+      requestedOperator: turnIntent.presentation?.operator,
     })
     const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
     const result = await controller.start({
@@ -689,6 +691,7 @@ export async function startHeadlessBrokerRuntime(
         // The presenter policy the controller routes on: 'tmux-tui' selects the
         // tmux-tui allocator + observer socket; 'none' is ordinary headless.
         operatorPresentation,
+        operatorPresentationSource: operatorPresentationSource(turnIntent),
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,

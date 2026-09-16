@@ -242,6 +242,16 @@ export type HrcPresentationIntent = {
    * window is created fresh (degraded, never broken).
    */
   viewerWindow?: string | undefined
+  /**
+   * T-08553 per-request operator presentation. `'none'` declines the node's
+   * operator viewer for a NEW execution and selects headless execution: it
+   * overrides the node's headless presentation default and exempts a Codex
+   * dispatch from the node's Codex interactive redirect. Absent ⇒ both node
+   * defaults apply unchanged. It cannot select a viewer, is refused off the
+   * headless broker route or together with `viewerWindow`, and never changes a
+   * live runtime (a conflicting live presentation refuses the request).
+   */
+  operator?: 'none' | undefined
 }
 
 export type HrcRuntimeIntent = {

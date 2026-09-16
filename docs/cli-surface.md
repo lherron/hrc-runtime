@@ -61,6 +61,16 @@ claims exactly the scope you named or refuses with `session_scope_occupied`).
 See `docs/cli-reference.md` for the roster and the one-time console-window
 stamp.
 
+`start --no-viewer` (T-08553) selects HEADLESS execution with no operator viewer
+or terminal for that start. It is not a hidden terminal: on a node that sends
+Codex to the interactive TUI (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED`) or attaches a
+`tmux-tui` viewer by default, the request runs on the headless codex-app-server
+route instead, and with `HRC_ASPD_SOCKET` configured it prepares through aspd.
+Omitting it leaves every node default unchanged. Refused with
+`--viewer-window`, off the headless broker route
+(`presentation_operator_unsupported`), and against a scope whose live runtime
+already has a viewer or TUI (`presentation_conflict`, runtime untouched).
+
 A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is
 not treated as an attach failure.

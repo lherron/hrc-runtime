@@ -244,6 +244,14 @@ describe('buildManagedStartIntent', () => {
   it('omits presentation entirely when no viewer window is requested', () => {
     expect(buildManagedStartIntent(scope()).presentation).toBeUndefined()
   })
+
+  // T-08553: --no-viewer is an explicit per-request choice on the start intent;
+  // its absence leaves the intent exactly as before (node defaults decide).
+  it('threads --no-viewer into presentation.operator none on a headless start intent', () => {
+    const intent = buildManagedStartIntent(scope(), { operatorPresentation: 'none' })
+    expect(intent.presentation).toEqual({ operator: 'none' })
+    expect(intent.harness.interactive).toBe(false)
+  })
 })
 
 describe('executeManagedStart', () => {

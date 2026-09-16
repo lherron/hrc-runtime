@@ -54,7 +54,7 @@ leaves both byte for byte as today:
    driver-gated: any other broker driver already resolves `none`.
 
 **Validation (refusals, before any runtime, operation or hosting effect;
-`invalid_request` with `field: presentation.operator` unless named):**
+`malformed_request` (400) with `field: presentation.operator` unless named):**
 - any value other than `'none'`;
 - `operator: 'none'` together with `presentation.viewerWindow` (a placement for a
   viewer the request declined);

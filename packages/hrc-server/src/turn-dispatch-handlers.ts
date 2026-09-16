@@ -36,7 +36,7 @@ import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
-import { findPreparedAspdAttemptForRetry } from './aspd-headless-start.js'
+import { findPreparedAspdAttemptForRetry, readAspdPreparation } from './aspd-headless-start.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -68,6 +68,12 @@ import {
   resolveParticipantDelivery,
 } from './participant-delivery.js'
 import { reconnectParticipantAttachment } from './participant-establishment.js'
+import {
+  assertNoOperatorPresentationConflict,
+  assertOperatorPresentationRoutable,
+  requestsNoOperatorViewer,
+  withFrozenOperatorPresentation,
+} from './presentation-operator.js'
 import {
   brokerRuntimeRefusesAdmissionClass,
   brokerRuntimeSupportsAdmissionClass,
@@ -1040,7 +1046,7 @@ export async function handleDispatchTurn(
     session,
     runId
   )
-  const intent =
+  let intent =
     body.attachments !== undefined
       ? { ...parsedIntent, attachments: body.attachments }
       : parsedIntent
@@ -1065,6 +1071,13 @@ export async function handleDispatchTurn(
     const resumable = findPreparedAspdAttemptForRetry(this, session.hostSessionId, idempotencyKey)
     if (resumable !== undefined) {
       runId = resumable.runId
+      // T-08553: the frozen preparation already fixed its presentation. Carry
+      // its recorded choice so node defaults (Codex redirect, viewer policy) are
+      // not re-evaluated on the way back to it.
+      intent = withFrozenOperatorPresentation(
+        intent,
+        readAspdPreparation(this, resumable.operationId).record.intent
+      )
     }
   }
 
@@ -1741,10 +1754,13 @@ async function dispatchAdmittedTurnForSession(
   // T-08338: responseFormat is per-turn input. A schema-bearing cold Codex
   // dispatch stays on the headless app-server route, whose turn/start request
   // is the schema vehicle. The stock TUI queue protocol has no schema field.
+  // T-08553: an explicit per-request no-viewer choice keeps the dispatch
+  // headless, exactly as a responseFormat does; absent, the redirect is unchanged.
   const codexRedirect =
     this.codexCliTmuxBrokerEnabled &&
     !highRiskActuatorSplit &&
     options.responseFormat === undefined &&
+    !requestsNoOperatorViewer(normalizedInputIntent) &&
     shouldRedirectCodexToInteractiveBroker(normalizedInputIntent)
   const intent = claudeRedirect
     ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
@@ -1763,6 +1779,25 @@ async function dispatchAdmittedTurnForSession(
     hasLeasedBrokerSubstrate(latestRuntime)
   ) {
     latestRuntime = await this.reconcileTmuxRuntimeLiveness(latestRuntime)
+  }
+
+  // T-08553: an explicit no-viewer choice is refused, before any delivery,
+  // stale-marking or reprovision, when it cannot be honored or when the scope's
+  // live runtime already presents a viewer or an interactive surface.
+  if (requestsNoOperatorViewer(intent)) {
+    assertOperatorPresentationRoutable(intent, {
+      claudeRedirect,
+      headlessTransport: shouldUseHeadlessTransport(intent),
+      headlessRoute: shouldUseHeadlessTransport(intent)
+        ? decideHeadlessExecutionRoute(intent, {
+            brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+          })
+        : undefined,
+    })
+    assertNoOperatorPresentationConflict(
+      intent,
+      this.db.runtimes.listByHostSessionId(session.hostSessionId)
+    )
   }
 
   const dispatchIntent = normalizeRuntimeProvisionIntent(intent)

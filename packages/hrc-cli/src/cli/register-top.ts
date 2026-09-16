@@ -56,6 +56,10 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--cwd <path>', 'set execution cwd without changing the resolved project root')
     .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
     .option('--viewer-window <key>', 'place this session viewer tab in the keyed window')
+    .option(
+      '--no-viewer',
+      'run headless with no operator viewer or terminal (codex: prepares through aspd when configured); refused if the scope already has a live viewer or TUI'
+    )
     .addOption(
       new Option(
         '--on-conflict <policy>',
@@ -83,6 +87,7 @@ export function registerTopLevelCommands(program: Command): void {
           '--dry-run',
           '--debug',
           '--no-register',
+          '--no-viewer',
           '--json',
         ],
         value: [
@@ -109,7 +114,7 @@ export function registerTopLevelCommands(program: Command): void {
           'wait',
         ],
         booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
-        negatedBooleans: ['register'],
+        negatedBooleans: ['register', 'viewer'],
       })
       await cmdStart(args)
     })

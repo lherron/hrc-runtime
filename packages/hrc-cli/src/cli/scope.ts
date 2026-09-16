@@ -413,6 +413,11 @@ export function buildManagedStartIntent(
      * `hrc run`, whose interactive session lives in the invoking terminal.
      */
     viewerWindow?: string | undefined
+    /**
+     * `--no-viewer` (T-08553). Declines the node's operator viewer and selects
+     * headless execution for this start; absent ⇒ node defaults unchanged.
+     */
+    operatorPresentation?: 'none' | undefined
   } = {}
 ): HrcRuntimeIntent {
   const intent = buildManagedRuntimeIntent(scope, {
@@ -429,8 +434,15 @@ export function buildManagedStartIntent(
       // detached request back into an interactive runtime shape deliberately.
       interactive: false,
     },
-    ...(options.viewerWindow !== undefined
-      ? { presentation: { viewerWindow: options.viewerWindow } }
+    ...(options.viewerWindow !== undefined || options.operatorPresentation !== undefined
+      ? {
+          presentation: {
+            ...(options.viewerWindow !== undefined ? { viewerWindow: options.viewerWindow } : {}),
+            ...(options.operatorPresentation !== undefined
+              ? { operator: options.operatorPresentation }
+              : {}),
+          },
+        }
       : {}),
   }
 }

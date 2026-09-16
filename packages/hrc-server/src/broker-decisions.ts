@@ -208,10 +208,17 @@ export type OperatorPresentation = 'tmux-tui' | 'none'
 export function decideCodexAppServerPresentation(input: {
   operatorPresentation: string | undefined
   brokerDriver: string
+  /** T-08553: an explicit per-request `presentation.operator` declines the node policy. */
+  requestedOperator?: 'none' | undefined
 }): OperatorPresentation {
   // Applicability gate: only the codex-app-server driver can host a viewer. A
   // policy aimed at any other driver is inert (the policy is not APPLICABLE).
   if (input.brokerDriver !== 'codex-app-server') {
+    return 'none'
+  }
+  // A request can decline the viewer for its own new execution; absent, the
+  // node policy decides exactly as before.
+  if (input.requestedOperator === 'none') {
     return 'none'
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.

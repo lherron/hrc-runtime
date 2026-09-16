@@ -57,6 +57,14 @@ export const HrcErrorCode = {
   /** `hrc resume` selected a prior whose runtime is still live — attach/terminate first. */
   RESUME_RUNTIME_LIVE: 'resume_runtime_live',
   /**
+   * T-08553: a request declined the operator viewer (`presentation.operator:
+   * 'none'`) for a scope whose live runtime already presents one (a `tmux-tui`
+   * viewer or an interactive tmux surface). The live runtime is left untouched.
+   */
+  PRESENTATION_CONFLICT: 'presentation_conflict',
+  /** T-08553: `presentation.operator: 'none'` on a route that has no separate viewer to decline. */
+  PRESENTATION_OPERATOR_UNSUPPORTED: 'presentation_operator_unsupported',
+  /**
    * Suffix-roster start (T-07118): every slot for the base scope is occupied by
    * a live session. Never destructive — the caller shows "too many open
    * sessions" rather than hijacking a live `:primary`.
@@ -184,6 +192,8 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
   [HrcErrorCode.NO_RESUMABLE_CONTINUATION]: 422,
   [HrcErrorCode.RESUME_RUNTIME_LIVE]: 409,
+  [HrcErrorCode.PRESENTATION_CONFLICT]: 409,
+  [HrcErrorCode.PRESENTATION_OPERATOR_UNSUPPORTED]: 422,
   [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,
   [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
   [HrcErrorCode.SESSION_SCOPE_OCCUPIED]: 409,
@@ -287,6 +297,7 @@ export class HrcConflictError extends HrcDomainError {
       | 'app_session_removed'
       | 'reply_to_scope_mismatch'
       | 'resume_runtime_live'
+      | 'presentation_conflict'
       | 'session_roster_exhausted'
       | 'roster_claim_superseded'
       | 'session_scope_occupied'
@@ -317,6 +328,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
       | 'unsupported_capability'
       | 'missing_session_spec'
       | 'no_resumable_continuation'
+      | 'presentation_operator_unsupported'
     >,
     message: string,
     detail: Record<string, unknown> = {}
