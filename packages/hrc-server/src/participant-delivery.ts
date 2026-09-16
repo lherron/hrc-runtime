@@ -2,6 +2,7 @@ import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
 import type { ParticipantAttempt, ParticipantRegistration } from 'hrc-store-sqlite'
 
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+import { isAbsorbingParticipantAttempt } from './participant-writer-evidence.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 
@@ -24,6 +25,20 @@ import { isRuntimeUnavailableStatus } from './server-util.js'
  * Deliberately NOT `activeBrokerRuntimeForSession`, which takes the latest
  * matching runtime. R7.6 forbids an arbitrary latest runtime, because "latest"
  * is exactly how stale linkage targets a different writer.
+ *
+ * The linkage actually enforced, in order, because a comment that claims more
+ * than the code checks is worse than no comment:
+ *   1. the registration's session and generation match the session addressed;
+ *   2. the attempt has a frozen profile (otherwise: attachment pending);
+ *   3. the attempt is ACTIVE -- a nonterminal runtime alone is NOT activated
+ *      attachment, and an absorbing attempt will never serve;
+ *   4. for a DIRECT join, the attempt's host binding exists, is BOUND, and
+ *      still names the same registration, incarnation, session, generation and
+ *      runtime. A legacy key-scoped attempt has no binding by construction and
+ *      is validated by its attempt linkage alone;
+ *   5. the runtime row exists and is not in an unavailable status;
+ *   6. the runtime is serving THIS attempt's invocation;
+ *   7. the runtime's own session and generation match the registration's.
  */
 
 export type ParticipantDeliveryTarget = {
@@ -90,6 +105,64 @@ export function resolveParticipantDelivery(
     )
   }
 
+  // R7.6: a nonterminal runtime alone is NOT activated attachment. Between the
+  // attach transaction and activation the profile is durable and the host is
+  // not yet serving, so work waits rather than being pushed at a seat that has
+  // not confirmed it. An absorbing attempt is a different answer: that address
+  // is not going to serve this attempt at all.
+  if (isAbsorbingParticipantAttempt(attempt)) {
+    return refuse(
+      'unavailable',
+      'participant_attempt_absorbing',
+      `participant attempt ${attempt.attemptId} is ${attempt.state}; it will not serve addressed work`
+    )
+  }
+  if (attempt.state !== 'ACTIVE') {
+    return refuse(
+      'pending',
+      'participant_activation_pending',
+      `participant attempt ${attempt.attemptId} is ${attempt.state}, not ACTIVE; its broker establishment has not finished activating`
+    )
+  }
+
+  // R7.6: the DIRECT host binding is part of current linkage. A legacy
+  // key-scoped attempt has none by construction and is validated by its attempt
+  // linkage alone, which is why this is keyed on the binding's presence rather
+  // than on the registration mode.
+  if (attempt.hostBindingId !== undefined) {
+    const binding = server.db.participantHostBindings.getBindingById(attempt.hostBindingId)
+    if (binding === null) {
+      return refuse(
+        'unavailable',
+        'participant_linkage_stale',
+        `participant attempt ${attempt.attemptId} names host binding ${attempt.hostBindingId}, which no longer exists`
+      )
+    }
+    if (binding.state !== 'BOUND') {
+      return refuse(
+        binding.state === 'BINDING' ? 'pending' : 'unavailable',
+        'participant_binding_not_bound',
+        `participant host binding ${binding.bindingId} is ${binding.state}, not BOUND`
+      )
+    }
+    // The binding must still describe the same incarnation and the same
+    // session/generation the registration names. A binding that has moved on is
+    // exactly how a stale attempt would address a different writer.
+    if (
+      binding.registrationId !== registration.registrationId ||
+      binding.hostIncarnationId !== registration.hostIncarnationId ||
+      binding.hostSessionId !== registration.hostSessionId ||
+      binding.generation !== registration.generation ||
+      binding.runtimeId !== attempt.runtimeId
+    ) {
+      return refuse(
+        'unavailable',
+        'participant_linkage_stale',
+        `participant host binding ${binding.bindingId} no longer matches the registration's incarnation, session, generation or runtime`
+      )
+    }
+  }
+
   // R7.6: recheck the CURRENT identity at dispatch. A session or generation that
   // has moved on means the linkage in hand describes a different writer.
   if (
@@ -126,6 +199,20 @@ export function resolveParticipantDelivery(
       'unavailable',
       'participant_linkage_stale',
       `participant runtime ${runtime.runtimeId} is serving invocation ${runtime.activeInvocationId ?? '(none)'}, not the current attempt's ${attempt.invocationId}`
+    )
+  }
+  // The runtime's OWN session and generation, not just the registration's.
+  // Checking the registration against the session proves the caller addressed
+  // the right registration; this proves the runtime about to receive the input
+  // belongs to that same incarnation.
+  if (
+    runtime.hostSessionId !== registration.hostSessionId ||
+    runtime.generation !== registration.generation
+  ) {
+    return refuse(
+      'unavailable',
+      'participant_linkage_stale',
+      `participant runtime ${runtime.runtimeId} belongs to session ${runtime.hostSessionId} generation ${runtime.generation}, not the registration's ${registration.hostSessionId} generation ${registration.generation}`
     )
   }
 
