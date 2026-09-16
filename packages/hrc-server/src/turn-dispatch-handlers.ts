@@ -101,7 +101,7 @@ import type {
   DispatchRunPersistenceOptions,
   PendingAttachedRunOperation,
 } from './server-types.js'
-import { dispatchRunPersistence } from './server-types.js'
+import { dispatchRunPersistence, submissionDoorCarriesColdLaunch } from './server-types.js'
 import {
   isRuntimeUnavailableStatus,
   json,
@@ -1917,7 +1917,7 @@ async function dispatchAdmittedTurnForSession(
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
           coldBirthPromptMode: options.launchPromptOnColdBirth
             ? 'replace-priming'
-            : options.submissionDoor === 'invoke'
+            : submissionDoorCarriesColdLaunch(options.submissionDoor)
               ? 'append-to-priming'
               : undefined,
           responseFormat: options.responseFormat,

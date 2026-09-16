@@ -121,6 +121,17 @@ export type DispatchRunPersistenceOptions = Pick<HrcRunRecord, 'dispatchIdempote
 }
 
 /**
+ * Session-bound submission doors whose caller body rides a cold launch-primed
+ * interactive seat's launch turn, appended to the priming (T-08004 invoke,
+ * T-08531 enqueue/preempt). Steer never births a seat.
+ */
+export function submissionDoorCarriesColdLaunch(
+  door: 'steer' | 'enqueue' | 'invoke' | 'preempt' | undefined
+): boolean {
+  return door === 'invoke' || door === 'enqueue' || door === 'preempt'
+}
+
+/**
  * Durable proof that an invoke-door caller rode an interactive broker's launch
  * prompt instead of being submitted as a second broker input (T-08004).
  *

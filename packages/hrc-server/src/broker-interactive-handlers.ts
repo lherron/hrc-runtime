@@ -77,6 +77,7 @@ import {
   type InvokeFirstTurnRendezvous,
   dispatchOriginRunFields,
   dispatchRunPersistence,
+  submissionDoorCarriesColdLaunch,
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import {
@@ -809,10 +810,9 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   }
   const runtime = await bootOperation
   if (promptRodeLaunch) {
-    const submissionId =
-      flagOptions.submissionDoor === 'invoke'
-        ? await waitForLaunchCarriedInvokeSubmission(this, runId, runtime.runtimeId)
-        : undefined
+    const submissionId = submissionDoorCarriesColdLaunch(flagOptions.submissionDoor)
+      ? await waitForLaunchCarriedInvokeSubmission(this, runId, runtime.runtimeId)
+      : undefined
     return json({
       runId,
       hostSessionId: session.hostSessionId,
