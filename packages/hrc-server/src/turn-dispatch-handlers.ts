@@ -348,6 +348,22 @@ function resolvePublicWaitStage(input: {
   return input.waitForCompletion === true ? 'terminal' : 'accepted'
 }
 
+/**
+ * A steer that joined a running turn is settled `coalesced` into the owner run,
+ * which is not a terminal status of its own; its outcome is the joined turn's
+ * (T-08533). Without this the public body reported `failed` for a join whose
+ * turn completed.
+ */
+function joinedOutcome(
+  projection: Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>
+): DispatchTurnTerminalOutcome | undefined {
+  if (projection.disposition?.type !== 'absorbed' || projection.terminal === undefined) {
+    return undefined
+  }
+  const status = projection.terminal.status
+  return status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'cancelled'
+}
+
 function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefined {
   return status === 'completed' ||
     status === 'failed' ||
@@ -714,7 +730,8 @@ export async function waitForPublicDispatchStage(
     waitForTurnTerminal: requested === 'terminal',
   })
   const run = server.db.runs.getByRunId(base.runId)
-  const outcome = run === null ? undefined : terminalOutcome(run.status)
+  const outcome =
+    run === null ? undefined : (terminalOutcome(run.status) ?? joinedOutcome(projection))
   const dispatch = publicDispatchBody(base, requested, {
     replayed,
     ...(outcome !== undefined ? { outcome } : {}),

@@ -230,6 +230,32 @@ describe('broker submission wait follows the disposition ledger', () => {
     })
   })
 
+  it('reports a coalesced join by its joined turn outcome, never as failed', async () => {
+    const submissionId = 'sub-steer-coalesced'
+    const turnId = 'turn-owner-coalesced'
+    append(20, 'submission.absorbed', { submissionId, turnId })
+    append(21, 'turn.completed', { turnId, status: 'completed' })
+    fixture.db.runs.update(Q_RUN_B_ID, {
+      status: 'coalesced',
+      coalescedIntoRunId: 'run_queued_A',
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+
+    const response = await waitForPublicDispatchStage(
+      { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+      terminalBase({ submissionId, invocationId: Q_INVOCATION_ID }),
+      'terminal',
+      false
+    )
+    expect(await response.json()).toMatchObject({
+      status: 'completed',
+      outcome: 'completed',
+      disposition: { type: 'absorbed', turnId },
+      terminal: { turnId, status: 'completed' },
+    })
+  })
+
   it('absorbed without a turn wait resolves on the disposition alone', async () => {
     append(20, 'submission.absorbed', { submissionId: 'sub-absorbed', turnId: 'turn-running' })
     expect(
