@@ -38,7 +38,7 @@ function isDeadTransportError(error: unknown): boolean {
     ) {
       return true
     }
-    current = record?.['cause']
+    current = record?.['cause'] ?? record?.['causeError']
   }
   return false
 }

@@ -36,8 +36,12 @@ describe('T-08526 evidence-less participant transport succession', () => {
     ) => {
       probeCalls.push(options.socketPath)
       if (probeMode === 'dead') {
-        const cause = Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' })
-        throw Object.assign(new Error('Failed to connect to broker unix socket'), { cause })
+        const causeError = Object.assign(new Error('connect refused'), {
+          code: 'ECONNREFUSED',
+        })
+        throw Object.assign(new Error('Failed to connect to broker unix socket'), {
+          causeError,
+        })
       }
       return {
         hello: async () => {
