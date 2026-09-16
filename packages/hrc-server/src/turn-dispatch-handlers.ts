@@ -1454,6 +1454,43 @@ export async function dispatchTurnForSession(
   }
 }
 
+/**
+ * R-4.3.2/R-4.3.3: a reserved participant address is never given a substitute
+ * birth.
+ *
+ * `startRuntimeForSession` already refuses a cold start at a participant
+ * scope, but the broker routes provision their own runtimes and never pass
+ * through it. A live enqueue against a real Arris participant walked straight
+ * past that guard and BORN a second, HRC-owned tmux runtime at the address an
+ * external host already held -- exactly the competing writer the guard exists
+ * to prevent. It was invisible until a real host was on the other end, because
+ * the first attempt died in the ASP compiler on an unrelated model mismatch
+ * and looked like a refusal.
+ *
+ * This is the door every submission shares, so the refusal belongs here rather
+ * than repeated down each route. It refuses a SUBSTITUTE birth, which is not
+ * the same as refusing delivery: routing addressed work to the participant's
+ * own live runtime is what R6.8.4 asks for, and when that lands it must be
+ * decided BEFORE this point, not by weakening it.
+ */
+function assertParticipantAddressNotSubstituted(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord
+): void {
+  const registration = server.db.participantRegistrations.getRegistrationByScopeRef(
+    session.scopeRef
+  )
+  if (registration === null) return
+  throw new HrcRuntimeUnavailableError(
+    'participant address cannot be served by a substitute runtime',
+    {
+      scopeRef: session.scopeRef,
+      registrationId: registration.registrationId,
+      reason: 'participant_address_reserved',
+    }
+  )
+}
+
 async function dispatchAdmittedTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -1462,6 +1499,7 @@ async function dispatchAdmittedTurnForSession(
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  assertParticipantAddressNotSubstituted(this, session)
   const runId = options.runId ?? `run-${randomUUID()}`
   const normalizedInputIntent = normalizeDispatchIntent(inputIntent, session, runId)
   const observationContext: DispatchTurnObservationContext = {

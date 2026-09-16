@@ -457,4 +457,48 @@ describe('T-08516 direct protocol join', () => {
     const stored = readStore()
     expect(stored.runtimes).toHaveLength(0)
   })
+
+  test('nor by a submission door, which provisions its own runtime', async () => {
+    await start()
+    await join({})
+
+    // The session-birth doors above are not the only way a runtime appears at
+    // an address. `startRuntimeForSession` refuses a participant cold start,
+    // but the broker routes provision their own runtimes and never pass
+    // through it -- so a live enqueue against a real Arris participant walked
+    // past that guard and BORN a second, HRC-owned tmux runtime at an address
+    // an external host already held. A fixture could not see it: it took a
+    // real host on the other end and an intent coherent enough to survive the
+    // ASP compiler, because an incoherent one dies earlier and looks like a
+    // refusal.
+    const submitted = await observe(
+      await fixture.postJson('/v1/submissions/enqueue', {
+        target: `${SCOPE}/lane:main`,
+        body: 'this must never reach a substitute runtime',
+        origin: { principalRef: 'agent:clod' },
+        runtimeIntent: {
+          placement: {
+            agentRoot: fixture.tmpDir,
+            projectRoot: fixture.tmpDir,
+            cwd: fixture.tmpDir,
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentName: 'arris', projectRoot: fixture.tmpDir },
+          },
+          harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
+          execution: { preferredMode: 'headless' },
+          provision: { harness: 'codex-cli', model: 'gpt-5.6-sol' },
+        },
+      })
+    )
+
+    expect(submitted.status).toBe(503)
+    expect(submitted.body).toMatchObject({
+      error: {
+        code: 'runtime_unavailable',
+        detail: { reason: 'participant_address_reserved' },
+      },
+    })
+    // The refusal is only half the claim; nothing may have been born.
+    expect(readStore().runtimes).toHaveLength(0)
+  })
 })
