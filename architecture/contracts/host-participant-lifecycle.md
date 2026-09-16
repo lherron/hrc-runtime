@@ -8,7 +8,7 @@ functional gaps are resolved below; this is not a claim of Daedalus approval.
 Astra owns implementation decisions and installed acceptance. Clod/Cody implement.
 No further architecture-review round is a prerequisite for this work.
 
-Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.5 below.
+Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.6 below.
 Those amendments control any conflicting revision-6 or historical revision-5
 text. Source baseline is accepted foundation 0e5a0557 plus current published
 ASP pin 57b58166. Parked source is reusable work, not an accepted implementation.
@@ -132,6 +132,46 @@ ASP+headless Arris run. Do not substitute a fixture-only happy path. HRC ownersh
 covers HRC; route a demonstrated producer/helper gap to Mable immediately and
 continue independent work. Shared activation follows the corrected clean pushed
 release and real validation; no allow-dirty release or fleet expansion is implied.
+
+## R7.6 Resolve participant delivery before runtime intent
+
+Astra implementation ruling on EN-12512 under the operator authority above:
+§7.1 names existing public doors, but their current intent-based runtime
+provisioning does not implement participant delivery. Complete that mapping
+inside A; no new public endpoint or participant runtime intent is required.
+
+Resolve a participant target from its durable registration and current
+attempt/binding before normal runtime-intent requirements, generic stale-session
+rotation or provisioning. For an active attached participant, validate the
+current session/generation, attempt/epoch, runtime and broker invocation linkage,
+then submit to that exact existing runtime through the existing broker submission
+doors. Do not select an arbitrary latest runtime, compile a new launch plan,
+synthesize lastAppliedIntentJson, or change the frozen profile to deliver input.
+Existing generic keyed participants use their durable attempt linkage even when
+they have no direct-host binding. Nonparticipant dispatch keeps its existing path.
+
+Use the existing admission, run/submission accounting, origin, receipt, event,
+wait and replay semantics. This routing must cover both public queue/steer and
+addressed-mail delivery; success at one door does not prove the other. Mail
+pending before attachment remains eligible for delivery after activation through
+the existing durable machinery, without a parallel queue or invented receipt.
+An unavailable/unattached participant yields the existing typed pending or
+unavailable outcome and preserves pending mail. It never falls through to
+generic birth. Recheck current identity at dispatch so stale linkage cannot
+target a different writer.
+
+The substitute-birth guard remains mandatory. Caller-supplied runtime intent
+does not override participant ownership. Fresh-context/rotation requests cannot
+silently rotate a participant or create a new host; refuse unsupported operations
+explicitly. Do not add preempt/exclusive capabilities or H1/H2 execution in A.
+Broker capability and execution-time host admission remain authoritative;
+accepted is not presented, and indeterminate delivery is not safe to resend.
+
+Prove real mail, queue and steer reach the attached Arris host with its own
+receipts; runtime count stays one and its identity remains unchanged. Also prove
+pre-attachment pending mail drains after activation, unavailable host never
+cold-births, stale linkage refuses, duplicate input does not repeat an effect,
+and ordinary nonparticipant submission behavior remains intact.
 
 ## R6.1 Joining is a protocol operation
 
