@@ -407,7 +407,11 @@ beforeEach(async () => {
   setEnv('HRC_HARNESS_BROKER_CMD', '/nonexistent/resolver-selected-harness-broker')
 
   server = await createHrcServer(
-    fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    fixture.serverOpts({
+      headlessCodexBrokerEnabled: true,
+      codexCliTmuxBrokerEnabled: false,
+      otelListenerEnabled: false,
+    })
   )
   ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
   const releases = [releaseA, releaseB]
@@ -757,5 +761,60 @@ describe('T-08542 configured route: prepare, freeze, launch', () => {
     ).rejects.toBeDefined()
     expect(facadeSpy).toHaveBeenCalledTimes(1)
     expect(aspd.compileCalls).toBe(0)
+  })
+})
+
+describe('T-08542 pre-acceptance refusal through the public turn door', () => {
+  // Found live: a blocking (waitFor terminal) cold dispatch whose boot failed
+  // before acceptance left the internal acceptance promise rejected and
+  // unobserved, and the daemon failed fast. Bun reports such a rejection as a
+  // test failure, so each case below fails without the fix.
+  it('answers a frozen-release refusal with 503 and keeps the preparation prepared', async () => {
+    const s = await session()
+    renameSync(releaseA.releaseRoot, `${releaseA.releaseRoot}.withheld`)
+    const response = await fixture.postJson('/v1/turns', {
+      hostSessionId: s.hostSessionId,
+      prompt: 'x',
+      runtimeIntent: headlessIntent(),
+      idempotencyKey: 'public-door-key',
+      waitFor: 'terminal',
+    })
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { detail: { code: string } } }
+    expect(body.error.detail.code).toBe('release_unavailable')
+    await Bun.sleep(20)
+    expect(operationsFor(s.hostSessionId)).toMatchObject([
+      { status: 'prepared', error_code: 'release_unavailable' },
+    ])
+  })
+
+  it('control: a facade-route compile rejection also answers 503 without an unobserved rejection', async () => {
+    setEnv('HRC_ASPD_SOCKET', undefined)
+    facadeSpy.mockRestore()
+    facadeSpy = spyOn(AspcFacadeBrokerClient, 'start').mockImplementation(async () => {
+      return {
+        hello: async () => ({
+          protocolVersion: 'aspc/0.1',
+          facadeInfo: { name: 'aspc-facade', version: 't08542-control' },
+          capabilities: { compileHarnessInvocation: true, cohostedBroker: true },
+        }),
+        compileHarnessInvocation: async () => ({
+          schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+          ok: false,
+          diagnostics: [],
+        }),
+        close: async () => undefined,
+      } as never
+    })
+    const s = await session()
+    const response = await fixture.postJson('/v1/turns', {
+      hostSessionId: s.hostSessionId,
+      prompt: 'x',
+      runtimeIntent: headlessIntent(),
+      idempotencyKey: 'public-door-control',
+      waitFor: 'terminal',
+    })
+    expect(response.status).toBe(503)
+    await Bun.sleep(20)
   })
 })

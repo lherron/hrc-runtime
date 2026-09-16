@@ -932,6 +932,10 @@ export async function executeHeadlessBrokerStartTurn(
     }
     rejectAccepted = reject
   })
+  // A blocking caller awaits `bootOperation`, never `accepted`, so a boot that
+  // fails before acceptance would otherwise leave this rejection unobserved and
+  // fail-fast the whole daemon (T-08542). The detached caller still awaits it.
+  accepted.catch(() => undefined)
   const bootOperation = this.startHeadlessBrokerRuntime(session, promptlessIntent, prompt, runId, {
     // T-07963 (Lance's ruling): the cold boot's FIRST turn IS the delivery of the
     // message that initiated it. The caller prompt rides the compile as
