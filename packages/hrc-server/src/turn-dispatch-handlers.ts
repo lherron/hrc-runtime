@@ -1536,6 +1536,19 @@ async function dispatchAdmittedTurnForSession(
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  const runId = options.runId ?? `run-${randomUUID()}`
+  // Built before the participant branch so its response is enriched the same
+  // way every other route's is. Without the observation block a caller's
+  // explicit `wait: true` cannot find the broker selector and fails with
+  // "dispatch wait requires broker submission identity" -- which is exactly
+  // what my first cut did, because it returned unenriched.
+  const observationContext: DispatchTurnObservationContext = {
+    lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
+    brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
+  }
+  const withObservation = async (response: Response): Promise<Response> =>
+    enrichDispatchTurnResponse(this, response, observationContext)
+
   // R7.6: resolve a participant BEFORE the runtime-intent requirement. This is
   // the door every caller shares -- the public submission doors, the addressed
   // mail kicker, the selector and target message paths -- so routing here is
@@ -1564,22 +1577,14 @@ async function dispatchAdmittedTurnForSession(
     if (participantDelivery.outcome === 'refused') {
       throw participantDeliveryUnavailable(session, participantDelivery)
     }
-    return await deliverIntoAttachedParticipant.call(
-      this,
-      session,
-      participantDelivery,
-      prompt,
-      options
+    return await withObservation(
+      await deliverIntoAttachedParticipant.call(this, session, participantDelivery, prompt, {
+        ...options,
+        runId,
+      })
     )
   }
-  const runId = options.runId ?? `run-${randomUUID()}`
   const normalizedInputIntent = normalizeDispatchIntent(inputIntent, session, runId)
-  const observationContext: DispatchTurnObservationContext = {
-    lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
-    brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
-  }
-  const withObservation = async (response: Response): Promise<Response> =>
-    enrichDispatchTurnResponse(this, response, observationContext)
 
   // T-01770 Phase B: admit ariadne-class (explicit id:claude-code dispatched
   // headless) and SDK-shaped Claude intents into the claude-code-tmux broker
