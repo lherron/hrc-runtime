@@ -102,7 +102,6 @@ type InteractiveTmuxBrokerDriver =
   | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
-  | 'agent-harness-tmux'
 
 type LatestRuntimeAdmissionView = {
   controllerKind: string | undefined
@@ -130,13 +129,11 @@ type InteractiveBrokerAdmissionDecision =
 const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
 const HRC_CODEX_CLI_TMUX_BROKER_ENABLED = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
 const HRC_PI_TUI_TMUX_BROKER_ENABLED = 'HRC_PI_TUI_TMUX_BROKER_ENABLED'
-const HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED = 'HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED'
 
 const BOTH_FLAGS_ON = {
   claudeCodeTmuxBrokerEnabled: true,
   codexCliTmuxBrokerEnabled: true,
   piTuiTmuxBrokerEnabled: true,
-  agentHarnessTmuxBrokerEnabled: true,
 }
 
 // Minimal valid intent factory — only the fields the admission decision reads.
@@ -175,7 +172,6 @@ const decideInteractiveBrokerAdmission = (
         claudeCodeTmuxBrokerEnabled: boolean
         codexCliTmuxBrokerEnabled: boolean
         piTuiTmuxBrokerEnabled: boolean
-        agentHarnessTmuxBrokerEnabled?: boolean | undefined
       }
     ) => InteractiveBrokerAdmissionDecision
   }
@@ -184,12 +180,6 @@ const decideInteractiveBrokerAdmission = (
 const claudeInteractive = intent({ provider: 'anthropic', interactive: true, id: 'claude-code' })
 const codexInteractive = intent({ provider: 'openai', interactive: true, id: 'codex-cli' })
 const piInteractive = intent({ provider: 'openai', interactive: true, id: 'pi' })
-const agentHarnessInteractive = intent({
-  provider: 'openai',
-  interactive: true,
-  id: 'agent-harness',
-})
-
 describe('Wave B admission seam — export exists', () => {
   it('exports decideInteractiveBrokerAdmission', () => {
     expect(typeof decideInteractiveBrokerAdmission).toBe('function')
@@ -233,16 +223,6 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
       flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED,
       allowedBrokerDriver: 'pi-tui-tmux',
     })
-  })
-
-  it('interactive agent-harness → broker-start (agent-harness-tmux)', () => {
-    expect(decideInteractiveBrokerAdmission!(agentHarnessInteractive, null, BOTH_FLAGS_ON)).toEqual(
-      {
-        decision: 'broker-start',
-        flagEnvName: HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED,
-        allowedBrokerDriver: 'agent-harness-tmux',
-      }
-    )
   })
 
   it('id-less anthropic interactive (post T-01770 redirect / ariadne-class) → broker-start, NOT runtime-unavailable', () => {

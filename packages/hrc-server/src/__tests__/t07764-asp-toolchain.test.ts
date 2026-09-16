@@ -42,7 +42,6 @@ const ENV_NAMES = [
   'HRC_ASPC_FACADE_CMD',
   'HRC_HARNESS_BROKER_CMD',
   'HRC_HARNESS_BROKER_PI_CMD',
-  'HRC_AGENT_HARNESS_CMD',
 ] as const
 
 let root = ''
@@ -231,7 +230,6 @@ describe('T-07764 ASP toolchain selection', () => {
           overrideEnv: 'HRC_HARNESS_BROKER_CMD',
         },
         { kind: 'pi-sdk', binary: 'harness-broker-pi', overrideEnv: 'HRC_HARNESS_BROKER_PI_CMD' },
-        { kind: 'agent-harness', binary: 'agent-harness', overrideEnv: 'HRC_AGENT_HARNESS_CMD' },
       ] as const
       for (const driver of drivers) {
         for (const name of ENV_NAMES) Reflect.deleteProperty(process.env, name)

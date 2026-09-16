@@ -234,9 +234,6 @@ function warnProfileProvisioningStripped(
  * "claude-code") to the canonical {@link HrcHarness} id the dispatcher understands.
  */
 export function harnessFrontendToHrcHarness(harness: string | undefined): HrcHarness | undefined {
-  if (harness === 'agent-harness') {
-    return 'agent-harness'
-  }
   return normalizeHarnessFrontend(harness) as HrcHarness | undefined
 }
 

@@ -157,7 +157,6 @@ import {
 } from './local-persona-policy.js'
 import { createServerMailKicker } from './mail-kicker-adapter.js'
 import {
-  resolveAgentHarnessTmuxBrokerEnabled,
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
@@ -903,7 +902,6 @@ class HrcServerInstance implements HrcServer {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
-  readonly agentHarnessTmuxBrokerEnabled: boolean
   readonly hrcMailKickerEnabled: boolean
   readonly hrcMailKickerSweepIntervalMs: number
   readonly hrcTranscriptIndexEnabled: boolean
@@ -1345,7 +1343,6 @@ class HrcServerInstance implements HrcServer {
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
-    this.agentHarnessTmuxBrokerEnabled = resolveAgentHarnessTmuxBrokerEnabled(options)
     this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
     this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
     this.hrcTranscriptIndexEnabled = resolveHrcTranscriptIndexEnabled(options)

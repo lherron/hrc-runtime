@@ -32,7 +32,6 @@ const BINARY_CONFIG: Record<HrcAspToolchainBinaryKind, { name: string; envVar: s
     name: 'harness-broker-pi',
     envVar: 'HRC_HARNESS_BROKER_PI_CMD',
   },
-  'agent-harness': { name: 'agent-harness', envVar: 'HRC_AGENT_HARNESS_CMD' },
 }
 
 export const ASP_TOOLCHAIN_BINARY_KINDS = Object.freeze(
@@ -113,9 +112,6 @@ export function resolveAspToolchainBinary(
 
 export function brokerDriverToolchainKind(driverKind: string): HrcAspToolchainBinaryKind {
   if (driverKind === 'pi-sdk') return 'harness-broker-pi'
-  if (driverKind === 'agent-harness' || driverKind === 'agent-harness-tmux') {
-    return 'agent-harness'
-  }
   return 'harness-broker'
 }
 

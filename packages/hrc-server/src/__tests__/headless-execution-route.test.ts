@@ -66,7 +66,6 @@ type InteractiveTmuxBrokerStartRoute =
         | 'codex-app-server'
         | 'codex-cli-tmux'
         | 'pi-tui-tmux'
-        | 'agent-harness-tmux'
     }
   | { route: 'legacy-tmux' }
 
@@ -122,7 +121,6 @@ const decideInteractiveTmuxBrokerStartRoute = (
         claudeCodeTmuxBrokerEnabled: boolean
         codexCliTmuxBrokerEnabled: boolean
         piTuiTmuxBrokerEnabled?: boolean
-        agentHarnessTmuxBrokerEnabled?: boolean
       }
     ) => InteractiveTmuxBrokerStartRoute
   }
@@ -237,11 +235,6 @@ describe('decideHeadlessExecutionRoute — Codex flag ON', () => {
       expected: 'sdk',
     },
     {
-      name: 'canonical agent-harness → broker',
-      harness: { provider: 'openai', interactive: false, id: 'agent-harness' },
-      expected: 'broker',
-    },
-    {
       name: 'openai pi-sdk → broker',
       harness: { provider: 'openai', interactive: false, id: 'pi-sdk' },
       expected: 'broker',
@@ -264,22 +257,6 @@ describe('decideHeadlessExecutionRoute — Codex flag ON', () => {
       )
     })
   }
-})
-
-describe('decideHeadlessExecutionRoute — agent-harness broker route', () => {
-  const canonical = intent({ provider: 'openai', interactive: false, id: 'agent-harness' })
-  const compatibilityAlias = intent({ provider: 'openai', interactive: false, id: 'pi-sdk' })
-
-  it('selects broker for the canonical id independently of the Codex flag', () => {
-    expect(decideHeadlessExecutionRoute!(canonical, { brokerFlagEnabled: false })).toBe('broker')
-    expect(decideHeadlessExecutionRoute!(canonical, { brokerFlagEnabled: true })).toBe('broker')
-  })
-
-  it('keeps pi-sdk as a compatibility alias', () => {
-    expect(decideHeadlessExecutionRoute!(compatibilityAlias, { brokerFlagEnabled: false })).toBe(
-      'broker'
-    )
-  })
 })
 
 describe('decideHeadlessExecutionRoute — Codex flag ON, interactive/tmux is NEVER broker', () => {
@@ -604,23 +581,6 @@ describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts
         }
       )
     ).toEqual({ route: 'legacy-tmux' })
-  })
-
-  it('selects the agent-harness tmux broker when its flag is enabled', () => {
-    expect(
-      decideInteractiveTmuxBrokerStartRoute!(
-        intent({ provider: 'openai', interactive: true, id: 'agent-harness' }, 'interactive'),
-        {
-          claudeCodeTmuxBrokerEnabled: false,
-          codexCliTmuxBrokerEnabled: false,
-          agentHarnessTmuxBrokerEnabled: true,
-        }
-      )
-    ).toEqual({
-      route: 'broker',
-      flagEnvName: 'HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED',
-      allowedBrokerDriver: 'agent-harness-tmux',
-    })
   })
 })
 

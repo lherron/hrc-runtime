@@ -13,9 +13,6 @@ describe('broker binary mapping', () => {
   it('selects release-relative driver-specific broker binaries', () => {
     expect(isAbsolute(resolveBrokerBinary('pi-sdk'))).toBe(true)
     expect(basename(resolveBrokerBinary('pi-sdk'))).toBe('harness-broker-pi')
-    expect(isAbsolute(resolveBrokerBinary('agent-harness'))).toBe(true)
-    expect(basename(resolveBrokerBinary('agent-harness'))).toBe('agent-harness')
-    expect(resolveBrokerBinary('agent-harness-tmux')).toBe(resolveBrokerBinary('agent-harness'))
   })
 
   for (const driver of ['codex-app-server', 'claude-code-tmux', 'codex-cli-tmux', 'pi-tui-tmux']) {
@@ -27,18 +24,14 @@ describe('broker binary mapping', () => {
   }
 
   it('honors per-binary command overrides', () => {
-    const priorAgentHarness = process.env['HRC_AGENT_HARNESS_CMD']
     const priorPi = process.env['HRC_HARNESS_BROKER_PI_CMD']
     const priorCanonical = process.env['HRC_HARNESS_BROKER_CMD']
     try {
-      process.env['HRC_AGENT_HARNESS_CMD'] = '/overrides/agent-harness'
       process.env['HRC_HARNESS_BROKER_PI_CMD'] = '/overrides/harness-broker-pi'
       process.env['HRC_HARNESS_BROKER_CMD'] = '/overrides/harness-broker'
-      expect(resolveBrokerBinary('agent-harness-tmux')).toBe('/overrides/agent-harness')
       expect(resolveBrokerBinary('pi-sdk')).toBe('/overrides/harness-broker-pi')
       expect(resolveBrokerBinary('codex-cli-tmux')).toBe('/overrides/harness-broker')
     } finally {
-      process.env['HRC_AGENT_HARNESS_CMD'] = priorAgentHarness
       process.env['HRC_HARNESS_BROKER_PI_CMD'] = priorPi
       process.env['HRC_HARNESS_BROKER_CMD'] = priorCanonical
     }

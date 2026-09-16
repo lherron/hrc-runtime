@@ -13,7 +13,6 @@ import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runt
 
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
-  HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
@@ -42,9 +41,6 @@ export function validateEnsureRuntimeIntent(
 export function deriveInteractiveHarness(
   harness: HrcRuntimeIntent['harness']
 ): HrcRuntimeSnapshot['harness'] {
-  if (harness.id === 'agent-harness') {
-    return 'agent-harness'
-  }
   if (harness.id === 'pi') {
     return 'pi'
   }
@@ -75,18 +71,15 @@ export function toRuntimeContinuationRef(
 export function deriveSdkHarness(
   harness: HrcRuntimeIntent['harness']
 ): HrcRuntimeSnapshot['harness'] {
-  if (harness.id === 'agent-harness' || harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
   }
   const frontend = resolveHarnessFrontendForProvider(harness.provider, 'sdk')
-  // spaces-config can name frontends HRC has not admitted yet (e.g.
-  // agent-harness-tui, pending T-07568); only HRC-known harness ids pass
-  // through, anything else keeps the legacy SDK fallback.
+  // Only HRC-known harness ids pass through; anything else keeps the legacy SDK fallback.
   return frontend !== undefined && isHrcHarness(frontend) ? frontend : 'agent-sdk'
 }
 
 const HRC_HARNESS_IDS: ReadonlySet<string> = new Set<HrcHarness>([
-  'agent-harness',
   'agent-sdk',
   'claude-code',
   'codex-cli',
@@ -102,7 +95,7 @@ function isHrcHarness(value: string): value is HrcHarness {
 /**
  * Decide whether a headless dispatch (or start) should select the SDK route
  * rather than the CLI route. Explicit agent-sdk always wins; explicit
- * agent-harness and pi-sdk are broker-owned and never enter the SDK fallback.
+ * pi-sdk is broker-owned and never enters the SDK fallback.
  * Id-less Anthropic intents keep the legacy SDK fallback only after the caller
  * has already selected the headless path.
  *
@@ -130,12 +123,12 @@ export function decideHeadlessExecutionRoute(
     return 'sdk'
   }
 
-  const isHeadlessAgentHarnessCandidate =
+  const isHeadlessPiSdkCandidate =
     shouldUseHeadlessTransport(intent) &&
     intent.harness.interactive !== true &&
-    (intent.harness.id === 'agent-harness' || intent.harness.id === 'pi-sdk')
+    intent.harness.id === 'pi-sdk'
 
-  if (isHeadlessAgentHarnessCandidate) {
+  if (isHeadlessPiSdkCandidate) {
     return 'broker'
   }
 
@@ -230,7 +223,6 @@ export type InteractiveTmuxBrokerDriver =
   | 'codex-app-server'
   | 'codex-cli-tmux'
   | 'pi-tui-tmux'
-  | 'agent-harness-tmux'
 
 export type LatestRuntimeAdmissionView = {
   controllerKind: HrcRuntimeControllerKind | undefined
@@ -390,7 +382,6 @@ export function decideInteractiveBrokerAdmission(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
-    agentHarnessTmuxBrokerEnabled?: boolean | undefined
     /** T-07397 surface-ownership proof carried by the dispatch, if any. */
     establishedBrokerInvocationId?: string | undefined
   }
@@ -475,7 +466,6 @@ export function resolveInteractiveBrokerAdmissionDriver(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
-    agentHarnessTmuxBrokerEnabled?: boolean | undefined
   }
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
   if (
@@ -511,17 +501,6 @@ export function resolveInteractiveBrokerAdmissionDriver(
     }
   }
 
-  if (
-    options.agentHarnessTmuxBrokerEnabled === true &&
-    intent.harness.provider === 'openai' &&
-    intent.harness.id === 'agent-harness'
-  ) {
-    return {
-      flagEnvName: HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
-      allowedBrokerDriver: 'agent-harness-tmux',
-    }
-  }
-
   return undefined
 }
 
@@ -531,7 +510,6 @@ export function decideInteractiveTmuxBrokerStartRoute(
     claudeCodeTmuxBrokerEnabled: boolean
     codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
-    agentHarnessTmuxBrokerEnabled?: boolean | undefined
   }
 ): InteractiveTmuxBrokerStartRoute {
   if (options.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
@@ -555,17 +533,6 @@ export function decideInteractiveTmuxBrokerStartRoute(
       route: 'broker',
       flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
       allowedBrokerDriver: 'pi-tui-tmux',
-    }
-  }
-
-  if (
-    options.agentHarnessTmuxBrokerEnabled === true &&
-    shouldConsiderAgentHarnessTmuxBrokerDispatch(intent)
-  ) {
-    return {
-      route: 'broker',
-      flagEnvName: HRC_AGENT_HARNESS_TMUX_BROKER_ENABLED_ENV,
-      allowedBrokerDriver: 'agent-harness-tmux',
     }
   }
 
@@ -637,10 +604,7 @@ export function extractPiSdkBrokerCredentialEnv(
   dispatchEnv: Record<string, string> | undefined,
   startRequest: InvocationStartRequest
 ): Record<string, string> | undefined {
-  if (
-    dispatchEnv === undefined ||
-    !['pi-sdk', 'agent-harness'].includes(brokerDriverKind(startRequest) ?? '')
-  ) {
+  if (dispatchEnv === undefined || brokerDriverKind(startRequest) !== 'pi-sdk') {
     return undefined
   }
   const credentials = Object.fromEntries(
@@ -650,10 +614,7 @@ export function extractPiSdkBrokerCredentialEnv(
 }
 
 function isPiSdkCredentialEnvKey(key: string, startRequest: InvocationStartRequest): boolean {
-  return (
-    ['pi-sdk', 'agent-harness'].includes(brokerDriverKind(startRequest) ?? '') &&
-    isCredentialEnvKey(key)
-  )
+  return brokerDriverKind(startRequest) === 'pi-sdk' && isCredentialEnvKey(key)
 }
 
 function brokerDriverKind(startRequest: InvocationStartRequest): string | undefined {
@@ -748,7 +709,7 @@ export function normalizeClaudeInteractiveBrokerIntent(intent: HrcRuntimeIntent)
 /**
  * T-08338. Admit dispatched Codex CLI intents into the stock Codex TUI broker
  * path. Keep this separate from the Claude redirect: OpenAI is shared by the
- * Pi, SDK, and agent-harness routes, so the harness id is the discriminant.
+ * Pi and SDK routes, so the harness id is the discriminant.
  *
  * The id-less shape has no broker-era population yet, but the downstream
  * `shouldConsiderCodexCliTmuxBrokerDispatch` contract already admits it. Keep
@@ -897,14 +858,6 @@ export function shouldConsiderPiTuiTmuxBrokerDispatch(intent: HrcRuntimeIntent):
   )
 }
 
-export function shouldConsiderAgentHarnessTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
-  return (
-    isInteractiveTmuxBrokerIntent(intent) &&
-    intent.harness.provider === 'openai' &&
-    intent.harness.id === 'agent-harness'
-  )
-}
-
 export function isInteractiveTmuxBrokerDriver(
   brokerDriver: string | undefined
 ): brokerDriver is InteractiveTmuxBrokerDriver {
@@ -912,8 +865,7 @@ export function isInteractiveTmuxBrokerDriver(
     brokerDriver === 'claude-code-tmux' ||
     brokerDriver === 'codex-app-server' ||
     brokerDriver === 'codex-cli-tmux' ||
-    brokerDriver === 'pi-tui-tmux' ||
-    brokerDriver === 'agent-harness-tmux'
+    brokerDriver === 'pi-tui-tmux'
   )
 }
 

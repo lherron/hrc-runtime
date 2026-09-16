@@ -130,8 +130,7 @@ predicate: >
   authorizes process disposal, reaping, or termination. Queue and steer remain the
   federation control contract; interrupt and preempt are not advertised, and
   internal children mint no HRC seat or satisfy the parent's obligation. EPR grant
-  behavior and the direct agent-harness resource-loader boundary
-  remain unchanged. Revision 7 is operator-authorized implementation work, not
+  behavior remains unchanged. Revision 7 is operator-authorized implementation work, not
   implementation acceptance and does not accept final-tail loss; Phase 5 completeness requires its separately verified
   retention and catch-up contract without dependence on a future user resume.
 authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15
@@ -150,7 +149,6 @@ source:
   - packages/hrc-server/src/desktop/observer-supervisor.ts
   - packages/hrc-server/src/broker/controller/dispatch.ts
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
-  - packages/hrc-server/src/agent-spaces-adapter/direct-agent-harness.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
   - T-08504 classless join persists before attachment with no admit call or file prerequisite and legacy keyed rows survive migration
@@ -164,7 +162,6 @@ required_tests:
   - T-08344 C.5.2 spawn-before-completion recovery preserves credential bytes and exactly one broker process and window
   - T-08344 retirement discriminator rejects old-owner writes before and after successor claim completion while unresolved input remains independently protected
   - T-08344 activation and recovery gates preserve same-session identity attachment-before-resume exactly-once publication durable staged replay and historical-control isolation
-  - T-08344 E.8 direct headless and interactive modes work with ASPC unavailable and no compile RPC preserving drivers resources and continuation
   - T-08344 permanent-address legacy-observer alias and unchanged EPR regression gates
   - T-08510 participant producer retirement seam validates both writer subjects every retirement truth-table cell and every prior-recovery value through the controlled reference adapter
   - T-08504 selected-address provisioning is registry-first reservation-aware and single-authority across refusal crash retry and two-node races
@@ -184,7 +181,7 @@ reopen_when:
   - resident-invocation receipt idempotency hosting rediscovery or uncertain-start recovery changes
   - successor admission irreversible retirement pending-input exclusion or epoch fencing changes
   - activation classification historical recovery replay release or acknowledgement ownership changes
-  - EPR compatibility direct-resource-loader independence or legacy migration semantics change
+  - EPR compatibility or legacy migration semantics change
   - final-tail retention and catch-up design is submitted for Phase 5 completeness verification
   - host lifecycle ownership host incarnation identity selected-address policy or launchId adoption changes
   - writer-evidence subject axes sufficiency process-inspection boundary or recovery independence changes

@@ -526,7 +526,6 @@ export function selectInteractiveTmuxBrokerOptions(
     claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
     codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
     piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
-    agentHarnessTmuxBrokerEnabled: this.agentHarnessTmuxBrokerEnabled,
   })
 
   if (route.route !== 'broker') {
@@ -545,8 +544,7 @@ function isExplicitInteractiveTmuxBrokerStartIntent(intent: HrcRuntimeIntent): b
     (intent.harness.provider === 'openai' &&
       (intent.harness.id === 'codex-cli' ||
         intent.harness.id === 'pi' ||
-        intent.harness.id === 'pi-cli' ||
-        intent.harness.id === 'agent-harness'))
+        intent.harness.id === 'pi-cli'))
   )
 }
 
@@ -684,7 +682,6 @@ export async function attachRuntimeEffectfully(
         claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
         codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
         piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
-        agentHarnessTmuxBrokerEnabled: this.agentHarnessTmuxBrokerEnabled,
       }
     )
     if (admission.decision === 'runtime-unavailable') {

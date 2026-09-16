@@ -1935,7 +1935,6 @@ async function dispatchAdmittedTurnForSession(
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
       codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
-      agentHarnessTmuxBrokerEnabled: this.agentHarnessTmuxBrokerEnabled,
       // T-07397: the caller's proof that it owns this surface. Compared by
       // exact identity against the runtime's ACTIVE invocation; absent means
       // "owns nothing", which can only ever refuse.

@@ -22,10 +22,6 @@ import { executeManagedStart } from '../cli/handlers-scope-cmd'
 import { buildManagedStartIntent, parseScopePrompt, resolveManagedScopeContext } from '../cli/scope'
 
 describe('harnessStringToHarnessId', () => {
-  it('preserves the canonical "agent-harness" selector', () => {
-    expect(harnessStringToHarnessId('agent-harness')).toBe('agent-harness')
-  })
-
   it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
     expect(harnessStringToHarnessId('pi')).toBe('pi-cli')
   })
@@ -197,22 +193,6 @@ describe('buildManagedStartIntent', () => {
 
     expect(intent.harness.interactive).toBe(false)
     expect(intent.execution?.preferredMode).toBe('headless')
-  })
-
-  it('keeps prompted agent-harness start on the non-interactive headless route', () => {
-    const scopeContext = resolveManagedScopeContext(
-      'codex-agent@fixture-project:primary+harness=agent-harness+model=gpt-5.6-sol',
-      { projectRootOverride: projectRoot, registerPolicy: 'never' }
-    )
-    const intent = buildManagedStartIntent(scopeContext, { prompt: 'wake up' })
-
-    expect(intent.harness).toMatchObject({
-      provider: 'openai',
-      id: 'agent-harness',
-      interactive: false,
-    })
-    expect(intent.execution?.preferredMode).toBe('headless')
-    expect(intent.initialPrompt).toBe('wake up')
   })
 
   it('keeps promptless Claude start redirected to the interactive Claude broker', async () => {

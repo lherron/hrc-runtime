@@ -107,7 +107,6 @@ const DISPATCH_DRIVERS: InteractiveTmuxBrokerDriver[] = [
   'codex-app-server',
   'codex-cli-tmux',
   'pi-tui-tmux',
-  'agent-harness-tmux',
 ]
 
 describe('T-08456 dispatch-door birth presentation', () => {

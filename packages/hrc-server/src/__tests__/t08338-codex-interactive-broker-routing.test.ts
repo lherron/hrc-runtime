@@ -36,7 +36,7 @@ describe('T-08338 Codex redirect seam', () => {
   })
 
   it('does not swallow neighboring OpenAI harnesses whose id is the route fence', () => {
-    for (const id of ['agent-harness', 'pi-sdk', 'pi-cli', 'agent-sdk'] as const) {
+    for (const id of ['pi-sdk', 'pi-cli', 'agent-sdk'] as const) {
       expect(
         api.shouldRedirectCodexToInteractiveBroker(
           intent({ provider: 'openai', interactive: false, id })

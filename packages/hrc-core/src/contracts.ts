@@ -7,14 +7,7 @@ import type { HrcSessionRef } from './selectors.js'
 import type { AttachmentRef } from 'spaces-runtime'
 
 export type HrcProvider = 'anthropic' | 'openai'
-export type HrcHarness =
-  | 'agent-harness'
-  | 'agent-sdk'
-  | 'claude-code'
-  | 'codex-cli'
-  | 'pi'
-  | 'pi-cli'
-  | 'pi-sdk'
+export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
 export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux' | 'broker'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
@@ -1152,11 +1145,7 @@ export type HrcReleaseStatus =
       runningEqualsInstalled: false
     }
 
-export type HrcAspToolchainBinaryKind =
-  | 'aspc-facade'
-  | 'harness-broker'
-  | 'harness-broker-pi'
-  | 'agent-harness'
+export type HrcAspToolchainBinaryKind = 'aspc-facade' | 'harness-broker' | 'harness-broker-pi'
 
 export type HrcAspToolchainHelloObservation = {
   name: string

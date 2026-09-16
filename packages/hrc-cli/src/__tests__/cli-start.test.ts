@@ -83,34 +83,6 @@ describe('hrc start', () => {
     }
   })
 
-  for (const testCase of [
-    { name: 'promptless', promptArgs: [] },
-    { name: 'prompted', promptArgs: ['-p', 'probe'] },
-  ]) {
-    it(`renders the real agent-harness broker plan for ${testCase.name} detached startup`, async () => {
-      const result = await runCli(
-        [
-          'start',
-          'rex@agent-spaces:primary+harness=agent-harness+model=gpt-5.6-sol',
-          '--dry-run',
-          ...testCase.promptArgs,
-        ],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_DEFAULT_TASK: 'primary',
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
-
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('brokerPlan:   available')
-      expect(result.stdout).toContain('controller:   harness-broker')
-      expect(result.stdout).toContain('driver:       agent-harness')
-      expect(result.stdout).toContain('interaction:  nonInteractive')
-      expect(result.stdout).not.toContain('spec build failed')
-    })
-  }
-
   it('previews an explicit execution cwd while preserving the resolved project root', async () => {
     const projectRoot = join(projectsRoot, 'agent-spaces')
     const executionCwd = join(projectsRoot, 'target-checkout')

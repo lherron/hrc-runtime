@@ -1,16 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 
-import {
-  type HrcRuntimeIntent,
-  type HrcSessionRecord,
-  type RestartStyle,
-  resolveStateRoot,
-} from 'hrc-core'
+import { type HrcRuntimeIntent, type RestartStyle, resolveStateRoot } from 'hrc-core'
 import { inspectAgentSystemPrompt } from 'spaces-runtime'
 
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
-import { buildDirectAgentHarnessPlan } from './agent-spaces-adapter/direct-agent-harness.js'
 import {
   isInteractiveTmuxBrokerIntent,
   normalizeClaudeInteractiveBrokerIntent,
@@ -173,60 +167,32 @@ export async function buildBrokerRunPreview(
 
   const runtimeId = `dry-rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('preview', runtimeId, resolveStateRoot())
-  const directAgentHarness =
-    shouldUseHeadlessTransport(previewIntent) &&
-    (previewIntent.harness.id === 'agent-harness' || previewIntent.harness.id === 'pi-sdk')
-  const client = directAgentHarness ? undefined : await startAspcFacadeBrokerClient(timing)
+  const client = await startAspcFacadeBrokerClient(timing)
 
   try {
-    const compiled = directAgentHarness
-      ? {
-          admitted: true as const,
-          ...(await buildDirectAgentHarnessPlan({
-            intent: previewIntent,
-            session: {
-              hostSessionId: 'dry-run-host-session',
-              scopeRef:
-                previewIntent.placement.correlation?.sessionRef?.scopeRef ??
-                options.sessionRef.split('/lane:')[0] ??
-                options.sessionRef,
-              laneRef: previewIntent.placement.correlation?.sessionRef?.laneRef ?? 'main',
-              generation: 0,
-            } as HrcSessionRecord,
-            runtimeId,
-            runId: `dry-run-${randomUUID()}`,
-            dispatchEnv: {},
-            now: new Date().toISOString(),
-            resolveProfileYolo: async () => undefined,
-          })),
-          diagnostics: [],
-        }
-      : await compileBrokerRuntimePlan(
-          {
-            intent: previewIntent,
-            hostSessionId: 'dry-run-host-session',
-            generation: 0,
-            continuation: undefined,
-          },
-          {
-            compileHarnessInvocation: (request) => {
-              if (client === undefined) {
-                throw new Error('ASPC facade client is unavailable for broker preview')
-              }
-              return client.compileHarnessInvocation(request)
-            },
-            timing,
-            ids: {
-              requestId: () => `dry-req-${randomUUID()}`,
-              operationId: () => `dry-op-${randomUUID()}`,
-              runtimeId: () => runtimeId,
-              invocationId: () => `dry-inv-${randomUUID()}`,
-              initialInputId: () => `dry-input-${randomUUID()}`,
-              runId: () => `dry-run-${randomUUID()}`,
-              traceId: () => `dry-trace-${randomUUID()}`,
-            },
-          }
-        )
+    const compiled = await compileBrokerRuntimePlan(
+      {
+        intent: previewIntent,
+        hostSessionId: 'dry-run-host-session',
+        generation: 0,
+        continuation: undefined,
+      },
+      {
+        compileHarnessInvocation: (request) => {
+          return client.compileHarnessInvocation(request)
+        },
+        timing,
+        ids: {
+          requestId: () => `dry-req-${randomUUID()}`,
+          operationId: () => `dry-op-${randomUUID()}`,
+          runtimeId: () => runtimeId,
+          invocationId: () => `dry-inv-${randomUUID()}`,
+          initialInputId: () => `dry-input-${randomUUID()}`,
+          runId: () => `dry-run-${randomUUID()}`,
+          traceId: () => `dry-trace-${randomUUID()}`,
+        },
+      }
+    )
 
     if (!compiled.admitted) {
       return undefined
