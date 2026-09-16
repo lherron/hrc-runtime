@@ -134,9 +134,9 @@ type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | u
 
 /**
  * The operator presentation this route hosts for an intent, or undefined when
- * the intent is not on this route: effective `none` (request or node default),
- * or `tmux-tui` selected by an explicit request (T-08554). A node-default
- * `tmux-tui` with no request choice stays on the facade viewer route.
+ * the intent is not on this route: effective `none` or `tmux-tui`, from an
+ * explicit request (T-08553/T-08554) or the node default (T-08555, §1.3
+ * decision 2).
  */
 function aspdRoutePresentation(
   intent: HrcRuntimeIntent,
@@ -144,13 +144,11 @@ function aspdRoutePresentation(
 ): AspdHostingPresentation | undefined {
   if (intent.harness.interactive === true) return undefined
   if (toProfileSelector(intent)?.brokerDriver !== ASPD_BROKER_DRIVER) return undefined
-  const presentation = decideCodexAppServerPresentation({
+  return decideCodexAppServerPresentation({
     operatorPresentation: env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
     brokerDriver: ASPD_BROKER_DRIVER,
     requestedOperator: intent.presentation?.operator,
   })
-  if (presentation === 'none') return 'none'
-  return intent.presentation?.operator === 'tmux-tui' ? 'tmux-tui' : undefined
 }
 
 function describeAspdHostingPaths(
@@ -187,8 +185,8 @@ function aspdWorkerArgv(
 
 /**
  * The route this module owns: the node declares an aspd endpoint and the intent
- * is ordinary headless codex-app-server with operator presentation `none`, or
- * with the `tmux-tui` viewer selected by an explicit request (T-08554).
+ * is ordinary headless codex-app-server, with operator presentation `none` or
+ * the `tmux-tui` viewer, chosen by request or node default (T-08555).
  * Returns the endpoint, or undefined for every other route.
  */
 export function aspdHeadlessCodexEndpoint(

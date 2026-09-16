@@ -48,7 +48,11 @@ import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-d
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
-import { operatorPresentationSource } from './presentation-operator.js'
+import {
+  operatorPresentationSource,
+  recordStartBirth,
+  startBirthOfIntent,
+} from './presentation-operator.js'
 import {
   classifyBrokerInputFailure,
   isRunActive,
@@ -1028,6 +1032,7 @@ export async function executeHeadlessBrokerStartTurn(
   if (runtimeStartOwnership) {
     void bootOperation.then(runtimeStartOwnership.resolve, runtimeStartOwnership.reject)
   } else {
+    recordStartBirth(bootOperation, startBirthOfIntent('headless', intent))
     this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
   }
   void bootOperation.catch((error) => {

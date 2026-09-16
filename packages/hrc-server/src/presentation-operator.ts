@@ -16,12 +16,17 @@ import {
   HrcErrorCode,
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
+  HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
 } from 'hrc-core'
 
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
+import {
+  decideInteractiveBrokerAdmission,
+  toLatestRuntimeAdmissionView,
+} from './broker-decisions.js'
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
@@ -169,4 +174,247 @@ export function assertNoOperatorPresentationConflict(
       }
     )
   }
+}
+
+/**
+ * T-08555 — how an omitted-choice, non-interactive Codex request is routed on a
+ * node whose Codex interactive redirect is OFF
+ * (docs/aspd-headless-codex-integration.md §1.3, rules 3–5). The scope's
+ * established runtime selects the admission; that admission alone decides
+ * reuse, birth join, refusal or fenced replacement. With nothing established,
+ * the request runs headless with the node presentation default.
+ */
+export type RedirectOffCodexRoute = 'interactive' | 'headless'
+
+/**
+ * The most recently created harness-broker runtime of the host session whose
+ * status is neither unavailable nor failed — of any provider, harness, driver or
+ * invocation state (a `starting`/`stopping` runtime is still established).
+ */
+export function findEstablishedBrokerRuntime(
+  runtimes: readonly HrcRuntimeSnapshot[]
+): HrcRuntimeSnapshot | undefined {
+  return runtimes
+    .filter(
+      (runtime) =>
+        runtime.controllerKind === 'harness-broker' &&
+        runtime.status !== 'failed' &&
+        !isRuntimeUnavailableStatus(runtime.status)
+    )
+    .at(-1)
+}
+
+/** True for the Codex requests §1.3 routes: non-interactive openai codex-cli. */
+export function isOmittedChoiceCodexRequest(intent: HrcRuntimeIntent): boolean {
+  return (
+    intent.harness.provider === 'openai' &&
+    (intent.harness.id === undefined || intent.harness.id === 'codex-cli') &&
+    intent.harness.interactive !== true &&
+    intent.execution?.preferredMode !== 'interactive' &&
+    !requestsOperatorPresentation(intent)
+  )
+}
+
+/**
+ * Rules 3–5 for a request `isOmittedChoiceCodexRequest` admits: a tmux
+ * established runtime of any harness selects interactive admission; a headless
+ * one of the same provider and harness selects the headless route; a headless
+ * one of any other provider or harness is refused before any effect, since the
+ * headless start door replaces only a same-harness runtime and proceeding would
+ * start a second writer beside it.
+ */
+export function decideRedirectOffCodexRoute(
+  intent: HrcRuntimeIntent,
+  runtimes: readonly HrcRuntimeSnapshot[]
+): RedirectOffCodexRoute {
+  const established = findEstablishedBrokerRuntime(runtimes)
+  if (established === undefined) return 'headless'
+  if (established.transport === 'tmux') return 'interactive'
+  const requestedHarness = intent.harness.id ?? 'codex-cli'
+  if (established.provider === 'openai' && established.harness === requestedHarness) {
+    return 'headless'
+  }
+  throw new HrcRuntimeUnavailableError(
+    'scope has an established broker runtime of another harness; terminate it before starting codex here',
+    {
+      reason: 'established_runtime_harness_mismatch',
+      runtimeId: established.runtimeId,
+      hostSessionId: established.hostSessionId,
+      establishedProvider: established.provider,
+      establishedHarness: established.harness,
+      establishedTransport: established.transport,
+      requestedHarness,
+    }
+  )
+}
+
+/**
+ * T-08555 — the birth an in-flight start has chosen: its transport AND its
+ * provider/harness. A redirect-off dispatch crossing a start is routed by that
+ * birth exactly as it would be by the established runtime it becomes, except
+ * that a foreign-harness birth refuses (a newborn is never admission-replaced,
+ * T-07693). Only the DECISION is awaited, never the boot, so a same-harness
+ * headless boot still queues a crossing prompt behind itself. A start that
+ * records no birth is not treated as absent: the dispatch awaits its boot and
+ * then routes by the rows it left.
+ */
+export type StartBirth = {
+  transport: 'tmux' | 'headless'
+  provider: string
+  harness: string | undefined
+}
+
+const startBirthDecisions = new WeakMap<
+  Promise<HrcRuntimeSnapshot>,
+  Promise<StartBirth | undefined>
+>()
+
+export type StartBirthDecision = {
+  readonly decided: Promise<StartBirth | undefined>
+  decide(birth: StartBirth | undefined): void
+}
+
+/** A decision a start door settles once it has chosen its birth. */
+export function createStartBirthDecision(): StartBirthDecision {
+  let settle!: (birth: StartBirth | undefined) => void
+  const decided = new Promise<StartBirth | undefined>((resolve) => {
+    settle = resolve
+  })
+  return { decided, decide: (birth) => settle(birth) }
+}
+
+function defaultHarnessFor(provider: string): string | undefined {
+  return provider === 'openai' ? 'codex-cli' : provider === 'anthropic' ? 'claude-code' : undefined
+}
+
+/** The birth an intent starts on a transport. */
+export function startBirthOfIntent(
+  transport: StartBirth['transport'],
+  intent: HrcRuntimeIntent
+): StartBirth {
+  const provider = intent.harness.provider
+  return { transport, provider, harness: intent.harness.id ?? defaultHarnessFor(provider) }
+}
+
+/** The birth a reattach of an existing runtime resumes. */
+export function startBirthOfRuntime(runtime: HrcRuntimeSnapshot): StartBirth {
+  return {
+    transport: runtime.transport === 'tmux' ? 'tmux' : 'headless',
+    provider: runtime.provider,
+    harness: runtime.harness,
+  }
+}
+
+/** Bind a start operation to its birth (known now, or a pending decision). */
+export function recordStartBirth(
+  operation: Promise<HrcRuntimeSnapshot>,
+  birth: StartBirth | Promise<StartBirth | undefined>
+): void {
+  startBirthDecisions.set(operation, Promise.resolve(birth))
+}
+
+/** The in-flight start's chosen birth; undefined when it recorded none. */
+export async function startBirthOf(
+  operation: Promise<HrcRuntimeSnapshot>
+): Promise<StartBirth | undefined> {
+  return await (startBirthDecisions.get(operation) ?? Promise.resolve(undefined))
+}
+
+/**
+ * Rules 3–4 for a dispatch crossing an in-flight birth: a same-harness birth
+ * selects its transport's admission (the T-07693 join or the headless
+ * queue-behind-boot); a foreign-harness birth refuses before any effect.
+ */
+export function decideCrossingBirthRoute(
+  intent: HrcRuntimeIntent,
+  birth: StartBirth
+): RedirectOffCodexRoute {
+  const requestedHarness = intent.harness.id ?? 'codex-cli'
+  if (birth.provider === 'openai' && birth.harness === requestedHarness) {
+    return birth.transport === 'tmux' ? 'interactive' : 'headless'
+  }
+  throw new HrcRuntimeUnavailableError(
+    'scope has a start in flight for another harness; retry once it has settled',
+    {
+      reason:
+        birth.transport === 'headless'
+          ? 'established_runtime_harness_mismatch'
+          : 'start_in_flight_harness_mismatch',
+      birthTransport: birth.transport,
+      birthProvider: birth.provider,
+      birthHarness: birth.harness,
+      requestedHarness,
+    }
+  )
+}
+
+/**
+ * T-08555 — the authority a redirect-off crossing dispatch carries to every
+ * point that joins an in-flight start. The route was classified from one
+ * birth; the operation actually joined may be a later one (turnover), so each
+ * join re-derives the route from the birth it joins and admits a tmux newborn
+ * only through interactive admission.
+ */
+export type RedirectOffBirthJoin = {
+  route: RedirectOffCodexRoute
+  claudeCodeTmuxBrokerEnabled: boolean
+  piTuiTmuxBrokerEnabled: boolean
+  establishedBrokerInvocationId?: string | undefined
+}
+
+/** Before joining: the joined start's recorded birth must route as classified. */
+export async function assertBirthJoinRoute(
+  intent: HrcRuntimeIntent,
+  operation: Promise<HrcRuntimeSnapshot>,
+  join: RedirectOffBirthJoin
+): Promise<void> {
+  const birth = await startBirthOf(operation)
+  if (birth === undefined) {
+    throw new HrcRuntimeUnavailableError(
+      'scope has an unclassified start in flight; retry once it has settled',
+      { reason: 'start_in_flight_unclassified', classifiedRoute: join.route }
+    )
+  }
+  const route = decideCrossingBirthRoute(intent, birth)
+  if (route !== join.route) {
+    throw new HrcRuntimeUnavailableError(
+      'the start in flight changed transport after routing; retry once it has settled',
+      { reason: 'start_in_flight_changed', classifiedRoute: join.route, joinedRoute: route }
+    )
+  }
+}
+
+/** After a tmux birth settles: only interactive admission's broker-reuse joins it. */
+export function assertBirthJoinAdmitted(
+  intent: HrcRuntimeIntent,
+  newborn: HrcRuntimeSnapshot,
+  join: RedirectOffBirthJoin
+): void {
+  const admission = decideInteractiveBrokerAdmission(
+    intent,
+    toLatestRuntimeAdmissionView(newborn, true),
+    {
+      claudeCodeTmuxBrokerEnabled: join.claudeCodeTmuxBrokerEnabled,
+      piTuiTmuxBrokerEnabled: join.piTuiTmuxBrokerEnabled,
+      ...(join.establishedBrokerInvocationId !== undefined
+        ? { establishedBrokerInvocationId: join.establishedBrokerInvocationId }
+        : {}),
+    }
+  )
+  if (admission.decision === 'broker-reuse') return
+  throw new HrcRuntimeUnavailableError(
+    admission.decision === 'runtime-unavailable'
+      ? admission.reason
+      : 'the newborn in flight is not reusable by this request',
+    {
+      reason:
+        admission.decision === 'runtime-unavailable'
+          ? admission.reason
+          : 'start_in_flight_not_reusable',
+      runtimeId: newborn.runtimeId,
+      hostSessionId: newborn.hostSessionId,
+      admissionDecision: admission.decision,
+      route: 'interactive-broker-birth-join',
+    }
+  )
 }

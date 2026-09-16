@@ -28,8 +28,14 @@ import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import {
+  type RedirectOffBirthJoin,
+  assertBirthJoinAdmitted,
+  assertBirthJoinRoute,
   assertNoOperatorPresentationConflict,
+  recordStartBirth,
   requestsOperatorPresentation,
+  startBirthOfIntent,
+  startBirthOfRuntime,
 } from './presentation-operator.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -362,6 +368,8 @@ export async function handleHeadlessBrokerDispatchTurn(
     repairCorrelation?: JsonRepairRunCorrelation | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     coalescedMembers?: readonly CoalescedQueuedMember[] | undefined
+    /** T-08555: a redirect-off crossing re-checks every in-flight start it joins. */
+    redirectOffBirthJoin?: RedirectOffBirthJoin | undefined
   } = {}
 ): Promise<Response> {
   const requestedTurnIntent: HrcRuntimeIntent =
@@ -418,6 +426,9 @@ export async function handleHeadlessBrokerDispatchTurn(
   // the session.
   const bootOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (bootOperation) {
+    if (options.redirectOffBirthJoin !== undefined) {
+      await assertBirthJoinRoute(dispatchIntent, bootOperation, options.redirectOffBirthJoin)
+    }
     return await joinRuntimeStart(bootOperation)
   }
 
@@ -500,9 +511,13 @@ export async function handleHeadlessBrokerDispatchTurn(
     // replacement boot. Crossing callers join it instead of replacing it.
     const crossingOperation = this.runtimeStartOperations.get(session.hostSessionId)
     if (crossingOperation) {
+      if (options.redirectOffBirthJoin !== undefined) {
+        await assertBirthJoinRoute(dispatchIntent, crossingOperation, options.redirectOffBirthJoin)
+      }
       return await joinRuntimeStart(crossingOperation)
     }
     const ownership = createRuntimeStartOwnership()
+    recordStartBirth(ownership.operation, startBirthOfRuntime(durableHeadless))
     this.runtimeStartOperations.set(session.hostSessionId, ownership.operation)
     const releaseOwnership = (): void => {
       if (this.runtimeStartOperations.get(session.hostSessionId) === ownership.operation) {
@@ -624,6 +639,8 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
     joinInFlightRuntimeStart?: boolean | undefined
+    /** T-08555: a redirect-off crossing re-checks every in-flight start it joins. */
+    redirectOffBirthJoin?: RedirectOffBirthJoin | undefined
     coldBirthPromptMode?: 'replace-priming' | 'append-to-priming' | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
@@ -649,8 +666,18 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   if (existingBootOperation) {
     existingInvokeRendezvous?.crossingRunIds.add(runId)
     try {
+      if (flagOptions.redirectOffBirthJoin !== undefined) {
+        await assertBirthJoinRoute(
+          turnIntent,
+          existingBootOperation,
+          flagOptions.redirectOffBirthJoin
+        )
+      }
       const runtime = await existingBootOperation
       assertActuatorSplitRuntimeReuse(turnIntent, runtime)
+      if (flagOptions.redirectOffBirthJoin !== undefined) {
+        assertBirthJoinAdmitted(turnIntent, runtime, flagOptions.redirectOffBirthJoin)
+      }
       return await this.executeInteractiveBrokerInputTurn(session, runtime, prompt, runId, {
         waitForCompletion: flagOptions.waitForCompletion,
         responseFormat: flagOptions.responseFormat,
@@ -756,6 +783,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       this.runtimeStartOperations.delete(session.hostSessionId)
     }
   })
+  recordStartBirth(publishedBootOperation, startBirthOfIntent('tmux', turnIntent))
   this.runtimeStartOperations?.set(session.hostSessionId, publishedBootOperation)
   void publishedBootOperation.catch(() => undefined)
 
@@ -777,6 +805,8 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       crossingRunIds: new Set(),
       settled: false,
     }
+    // T-08555: the rendezvous stands in for this birth at crossing joins.
+    recordStartBirth(invokeOperation, startBirthOfIntent('tmux', turnIntent))
     this.invokeFirstTurnRendezvous.set(session.hostSessionId, rendezvous)
     void invokeOperation
       .then((runtime) => {

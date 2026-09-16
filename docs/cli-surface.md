@@ -66,7 +66,7 @@ or terminal for that start. It is not a hidden terminal: on a node that sends
 Codex to the interactive TUI (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED`) or attaches a
 `tmux-tui` viewer by default, the request runs on the headless codex-app-server
 route instead, and with `HRC_ASPD_SOCKET` configured it prepares through aspd.
-Omitting it leaves every node default unchanged. Refused with
+Omitting it leaves every node default unchanged (see the T-08555 default below). Refused with
 `--viewer-window`, off the headless broker route
 (`presentation_operator_unsupported`), and against a scope whose live runtime
 already has a viewer or TUI (`presentation_conflict`, runtime untouched).
@@ -80,6 +80,20 @@ detach to leave; the worker keeps running). Omitting it leaves every node
 default unchanged. Refused with `--no-viewer`, for non-codex or interactive
 starts (`presentation_operator_unsupported`), and against a scope whose live
 runtime has no such viewer (`presentation_conflict`, runtime untouched).
+
+Node-default Codex route (T-08555, `docs/aspd-headless-codex-integration.md`
+§1.3). On a node that turns the Codex redirect off
+(`HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0`, max3), a plain `hrc start <codex scope>`
+or a cold dispatch or mail birth with nothing established in the scope runs the
+headless codex-app-server with the node presentation default. With
+`HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION=tmux-tui` and `HRC_ASPD_SOCKET` that
+means the aspd-prepared attached viewer, so `--app-server-viewer` is not needed.
+`--no-viewer` stays the headless opt-out. A scope whose established runtime is a
+TUI or headless worker keeps it: input goes to that transport's own admission. A
+foreign-harness headless runtime refuses `established_runtime_harness_mismatch`.
+`hrc run` and a cold `hrc attach` remain the explicit standalone interactive
+Codex backend, admissible whatever the redirect control says. Nodes that keep the
+redirect on are unchanged.
 
 A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); `hrc run` prints a session-summary block on detach and this is

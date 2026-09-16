@@ -69,10 +69,18 @@ import {
 } from './participant-delivery.js'
 import { reconnectParticipantAttachment } from './participant-establishment.js'
 import {
+  type RedirectOffBirthJoin,
+  type RedirectOffCodexRoute,
+  assertBirthJoinAdmitted,
+  assertBirthJoinRoute,
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
+  decideCrossingBirthRoute,
+  decideRedirectOffCodexRoute,
+  isOmittedChoiceCodexRequest,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
+  startBirthOf,
   withFrozenOperatorPresentation,
 } from './presentation-operator.js'
 import {
@@ -1670,6 +1678,50 @@ async function deliverIntoAttachedParticipant(
     : await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, inputTurnOptions)
 }
 
+/**
+ * T-08555 (§1.3 rules 3–5) — route an omitted-choice Codex dispatch on a
+ * redirect-off node, or undefined when the request is not one. A start in
+ * flight contributes the birth it has chosen (its decision is awaited, never its
+ * boot, so a same-harness headless boot still queues this prompt); a start that
+ * recorded no birth is awaited in full, never treated as absent. Rows are judged
+ * after tmux reconcile. The result is the authority every later join re-checks.
+ */
+async function classifyRedirectOffCodexDispatch(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent,
+  options: { establishedBrokerInvocationId?: string | undefined }
+): Promise<RedirectOffBirthJoin | undefined> {
+  if (!isOmittedChoiceCodexRequest(intent)) return undefined
+  const inFlightStart = this.runtimeStartOperations.get(session.hostSessionId)
+  const inFlightBirth = inFlightStart ? await startBirthOf(inFlightStart) : undefined
+  let route: RedirectOffCodexRoute
+  if (inFlightBirth !== undefined) {
+    route = decideCrossingBirthRoute(intent, inFlightBirth)
+  } else {
+    if (inFlightStart !== undefined) await inFlightStart.catch(() => undefined)
+    const dispatchRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
+    if (
+      dispatchRuntime?.controllerKind === 'harness-broker' &&
+      hasLeasedBrokerSubstrate(dispatchRuntime)
+    ) {
+      await this.reconcileTmuxRuntimeLiveness(dispatchRuntime)
+    }
+    route = decideRedirectOffCodexRoute(
+      intent,
+      this.db.runtimes.listByHostSessionId(session.hostSessionId)
+    )
+  }
+  return {
+    route,
+    claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
+    piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+    ...(options.establishedBrokerInvocationId !== undefined
+      ? { establishedBrokerInvocationId: options.establishedBrokerInvocationId }
+      : {}),
+  }
+}
+
 async function dispatchAdmittedTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -1758,13 +1810,22 @@ async function dispatchAdmittedTurnForSession(
   // T-08553: an explicit per-request no-viewer choice keeps the dispatch
   // headless, exactly as a responseFormat does; an omitted one is delivered into
   // the scope's live headless runtime rather than redirected past it.
-  const codexRedirect =
-    this.codexCliTmuxBrokerEnabled &&
-    !highRiskActuatorSplit &&
-    options.responseFormat === undefined &&
-    !requestsOperatorPresentation(normalizedInputIntent) &&
-    shouldRedirectCodexToInteractiveBroker(normalizedInputIntent) &&
-    !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, normalizedInputIntent)
+  //
+  // T-08555: with the redirect off, the scope's established broker runtime (or
+  // in-flight birth) selects the admission BEFORE responseFormat, actuator split
+  // or node defaults; see classifyRedirectOffCodexDispatch.
+  const redirectOffBirthJoin =
+    !this.codexCliTmuxBrokerEnabled && !claudeRedirect
+      ? await classifyRedirectOffCodexDispatch.call(this, session, normalizedInputIntent, options)
+      : undefined
+  const redirectOffRoute = redirectOffBirthJoin?.route
+  const codexRedirect = this.codexCliTmuxBrokerEnabled
+    ? !highRiskActuatorSplit &&
+      options.responseFormat === undefined &&
+      !requestsOperatorPresentation(normalizedInputIntent) &&
+      shouldRedirectCodexToInteractiveBroker(normalizedInputIntent) &&
+      !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, normalizedInputIntent)
+    : redirectOffRoute === 'interactive'
   const intent = claudeRedirect
     ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
     : codexRedirect
@@ -1819,6 +1880,9 @@ async function dispatchAdmittedTurnForSession(
   // a parallel headless run. When no such runtime exists (cron/autonomous
   // dispatch), the Wave C headless route is still taken.
   const liveInteractiveBrokerReusable =
+    // T-08555: on a redirect-off node an established headless runtime owns the
+    // scope; the older tmux deferral must not route past it.
+    redirectOffRoute !== 'headless' &&
     !highRiskActuatorSplit &&
     shouldDeferHeadlessToInteractiveBrokerReuse(
       intent,
@@ -1833,6 +1897,7 @@ async function dispatchAdmittedTurnForSession(
     if (route === 'broker') {
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
+          ...(redirectOffBirthJoin !== undefined ? { redirectOffBirthJoin } : {}),
           waitForCompletion: options.waitForCompletion,
           repairCorrelation: options.repairCorrelation,
           responseFormat: options.responseFormat,
@@ -1941,6 +2006,10 @@ async function dispatchAdmittedTurnForSession(
     // can preserve the shared runtime across that pre-persistence interval.
     invokeRendezvous?.crossingRunIds.add(runId)
     try {
+      // T-08555: the birth joined here must be the one the route was taken from.
+      if (redirectOffBirthJoin !== undefined) {
+        await assertBirthJoinRoute(intent, inFlightBirth, redirectOffBirthJoin)
+      }
       const bornRuntime = await inFlightBirth
       // The headless broker registers its boot in the SAME map for the same host
       // session, and a headless runtime is not deliverable through the
@@ -1954,6 +2023,11 @@ async function dispatchAdmittedTurnForSession(
         // write-capable newborn must not become a route around actuator-split
         // validation.
         assertActuatorSplitRuntimeReuse(intent, bornRuntime)
+        // T-08555: a redirect-off crossing joins a newborn only through
+        // interactive admission (T-07397 caller policy, driver and provider).
+        if (redirectOffBirthJoin !== undefined) {
+          assertBirthJoinAdmitted(intent, bornRuntime, redirectOffBirthJoin)
+        }
         return await withObservation(
           await this.executeInteractiveBrokerInputTurn(session, bornRuntime, prompt, runId, {
             waitForCompletion: options.waitForCompletion,
@@ -1988,7 +2062,6 @@ async function dispatchAdmittedTurnForSession(
     ),
     {
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
-      codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
       // T-07397: the caller's proof that it owns this surface. Compared by
       // exact identity against the runtime's ACTIVE invocation; absent means
@@ -2080,6 +2153,7 @@ async function dispatchAdmittedTurnForSession(
               ? false
               : options.waitForCompletion,
           joinInFlightRuntimeStart: options.joinInFlightRuntimeStart,
+          ...(redirectOffBirthJoin !== undefined ? { redirectOffBirthJoin } : {}),
           coldBirthPromptMode: options.launchPromptOnColdBirth
             ? 'replace-priming'
             : submissionDoorCarriesColdLaunch(options.submissionDoor)

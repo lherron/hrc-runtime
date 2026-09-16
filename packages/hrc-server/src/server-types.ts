@@ -432,7 +432,11 @@ export type HrcServerOptions = {
    */
   claudeCodeTmuxBrokerEnabled?: boolean | undefined
   /**
-   * Cut interactive Codex CLI tmux dispatch over to the Harness Broker. Default on.
+   * Codex interactive redirect: normalize an omitted-choice, non-interactive
+   * Codex request into the interactive codex-tui broker. Default on. Since
+   * T-08555 it no longer gates explicit interactive Codex admission; off, the
+   * scope's established runtime selects the admission and nothing established
+   * runs headless with the node presentation default (aspd viewer on max3).
    *
    * Env override: `HRC_CODEX_CLI_TMUX_BROKER_ENABLED` (`0`/`false` disables).
    */

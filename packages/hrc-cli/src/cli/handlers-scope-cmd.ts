@@ -178,7 +178,8 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
         '                       scope already has a live viewer or TUI\n' +
         '  --app-server-viewer  Run codex on the headless app-server with the attachable\n' +
         '                       tmux renderer viewer (prepares through aspd when\n' +
-        '                       configured); refused against a live runtime without it\n' +
+        '                       configured; the default where the codex redirect is\n' +
+        '                       off); refused against a live runtime without it\n' +
         '  --on-conflict suffix  Claim the next free roster slot instead of :primary\n' +
         '  --on-conflict reject  Claim exactly this scope, or refuse if it is occupied\n'
       : ''

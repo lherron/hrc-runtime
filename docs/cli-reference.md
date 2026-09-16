@@ -138,6 +138,10 @@ hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
   hrc start cody@hrc-runtime:T-00000 --app-server-viewer -p "hello" --wait completed --json
   hrc attach cody@hrc-runtime:T-00000
   ```
+
+  On a node with the Codex redirect off (max3, T-08555) this is also what a plain
+  `hrc start <codex scope> -p …` gives a scope with nothing established; the
+  route decision then records `operatorPresentationSource: node-default`.
 - **`--viewer-window <key>`** — free-form window key recorded on the session
   intent, so every later viewer respawn lands in the same window. Absent ⇒
   today's single "Headless Sessions" window. Not offered on `hrc run`, whose

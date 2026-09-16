@@ -276,12 +276,15 @@ describe('decideInteractiveBrokerAdmission — flag OFF fails closed (test-only 
     expect(decision.decision).toBe('runtime-unavailable')
   })
 
-  it('codex intent with codex flag OFF → runtime-unavailable (no legacy fallback)', () => {
+  // T-08555: the Codex flag governs only the omitted-choice redirect; an explicit
+  // interactive Codex intent stays broker-admissible with it off.
+  it('codex intent is broker-admissible whatever the codex redirect flag says', () => {
     const decision = decideInteractiveBrokerAdmission!(codexInteractive, null, {
       claudeCodeTmuxBrokerEnabled: true,
       codexCliTmuxBrokerEnabled: false,
+      piTuiTmuxBrokerEnabled: false,
     })
-    expect(decision.decision).toBe('runtime-unavailable')
+    expect(decision.decision).toBe('broker-start')
   })
 })
 

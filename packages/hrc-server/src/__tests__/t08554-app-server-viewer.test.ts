@@ -246,8 +246,11 @@ describe('T-08554 explicit app-server viewer', () => {
     expect(runtime?.transport).toBe('headless')
   })
 
-  it('a node-default tmux-tui with no request choice keeps the facade viewer route', async () => {
+  // T-08555: with HRC_ASPD_SOCKET configured a node-default viewer prepares
+  // through aspd (t08555-default-app-server-viewer.test.ts); unset keeps the facade.
+  it('a node-default tmux-tui with no request choice keeps the facade viewer route when HRC_ASPD_SOCKET is unset', async () => {
     setEnv('HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION', 'tmux-tui')
+    setEnv('HRC_ASPD_SOCKET', undefined)
     await server.stop()
     await bootServer()
     const s = await session()

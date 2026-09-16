@@ -387,7 +387,6 @@ export function decideInteractiveBrokerAdmission(
   latestRuntime: LatestRuntimeAdmissionView,
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
-    codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
     /** T-07397 surface-ownership proof carried by the dispatch, if any. */
     establishedBrokerInvocationId?: string | undefined
@@ -481,7 +480,6 @@ export function resolveInteractiveBrokerAdmissionDriver(
   intent: HrcRuntimeIntent,
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
-    codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
   }
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
@@ -496,8 +494,11 @@ export function resolveInteractiveBrokerAdmissionDriver(
     }
   }
 
+  // T-08555: HRC_CODEX_CLI_TMUX_BROKER_ENABLED governs only the omitted-choice
+  // Codex redirect. An explicit interactive Codex intent, and reuse of a live
+  // codex-tui runtime, stay admissible on a node that turns the redirect off
+  // (docs/aspd-headless-codex-integration.md §1.3, decision 1).
   if (
-    options.codexCliTmuxBrokerEnabled &&
     intent.harness.provider === 'openai' &&
     (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
   ) {
@@ -525,7 +526,6 @@ export function decideInteractiveTmuxBrokerStartRoute(
   intent: HrcRuntimeIntent,
   options: {
     claudeCodeTmuxBrokerEnabled: boolean
-    codexCliTmuxBrokerEnabled: boolean
     piTuiTmuxBrokerEnabled: boolean
   }
 ): InteractiveTmuxBrokerStartRoute {
@@ -537,7 +537,8 @@ export function decideInteractiveTmuxBrokerStartRoute(
     }
   }
 
-  if (options.codexCliTmuxBrokerEnabled && shouldConsiderCodexCliTmuxBrokerDispatch(intent)) {
+  // T-08555: independent of the Codex redirect control (§1.3, decision 1).
+  if (shouldConsiderCodexCliTmuxBrokerDispatch(intent)) {
     return {
       route: 'broker',
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,

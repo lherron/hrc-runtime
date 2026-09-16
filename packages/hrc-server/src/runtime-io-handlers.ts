@@ -44,8 +44,13 @@ import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
+  createStartBirthDecision,
+  decideRedirectOffCodexRoute,
+  isOmittedChoiceCodexRequest,
+  recordStartBirth,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
+  startBirthOfIntent,
 } from './presentation-operator.js'
 import {
   requireKnownRuntime,
@@ -320,6 +325,9 @@ export async function startRuntimeForSession(
     return runtime
   }
 
+  // T-08555: a crossing redirect-off dispatch reads this start's chosen birth
+  // (settled below once decided, or undefined on an early exit).
+  const startBirth = createStartBirthDecision()
   const operation = (async () => {
     let existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
     if (existingRuntime) {
@@ -333,17 +341,28 @@ export async function startRuntimeForSession(
       shouldRedirectClaudeToInteractiveBroker(intent)
     // T-08553: an explicit per-request no-viewer choice keeps the start headless,
     // and an omitted one is delivered into the scope's live headless runtime.
-    const codexRedirect =
-      this.codexCliTmuxBrokerEnabled &&
-      !highRiskActuatorSplit &&
-      !requestsOperatorPresentation(intent) &&
-      shouldRedirectCodexToInteractiveBroker(intent) &&
-      !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, intent)
+    // T-08555: with the redirect off, the scope's established broker runtime
+    // selects the admission (§1.3 rules 3–5); nothing established runs headless
+    // with the node presentation default.
+    const codexRedirect = this.codexCliTmuxBrokerEnabled
+      ? !highRiskActuatorSplit &&
+        !requestsOperatorPresentation(intent) &&
+        shouldRedirectCodexToInteractiveBroker(intent) &&
+        !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, intent)
+      : !claudeRedirect &&
+        isOmittedChoiceCodexRequest(intent) &&
+        decideRedirectOffCodexRoute(
+          intent,
+          this.db.runtimes.listByHostSessionId(session.hostSessionId)
+        ) === 'interactive'
     const startIntent = claudeRedirect
       ? normalizeClaudeInteractiveBrokerIntent(intent)
       : codexRedirect
         ? normalizeCodexInteractiveBrokerIntent(intent)
         : intent
+    startBirth.decide(
+      startBirthOfIntent(shouldUseHeadlessTransport(startIntent) ? 'headless' : 'tmux', startIntent)
+    )
     // T-08553: refuse an unhonorable or conflicting no-viewer choice before any
     // reuse, stale-marking or reprovision below.
     if (requestsOperatorPresentation(startIntent)) {
@@ -536,9 +555,11 @@ export async function startRuntimeForSession(
       route: 'interactive-broker',
     })
   })().finally(() => {
+    startBirth.decide(undefined)
     this.runtimeStartOperations.delete(session.hostSessionId)
   })
 
+  recordStartBirth(operation, startBirth.decided)
   this.runtimeStartOperations.set(session.hostSessionId, operation)
   return await operation
 }
@@ -553,7 +574,6 @@ export function selectInteractiveTmuxBrokerOptions(
 
   const route = decideInteractiveTmuxBrokerStartRoute(intent, {
     claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
-    codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
     piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
   })
 
@@ -722,7 +742,6 @@ export async function attachRuntimeEffectfully(
       toLatestRuntimeAdmissionView(latestRuntime),
       {
         claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
-        codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
         piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
       }
     )
