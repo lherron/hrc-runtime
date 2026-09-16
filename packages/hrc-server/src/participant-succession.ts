@@ -33,6 +33,12 @@ type ReplacementIntent = {
     attachEpoch: number
     invocationId: string
   }
+  predecessorWork: {
+    state: ParticipantAttempt['establishmentWorkState']
+    attemptCount: number
+    nextAttemptAt?: string | undefined
+    lastError?: string | undefined
+  }
   candidate: {
     hostIncarnationId: string
     classId?: string | undefined
@@ -116,6 +122,39 @@ function identityResult(
 
 function refusal(status: 'pending' | 'rejected', reason: string, detail: string): DirectJoinResult {
   return { outcome: 'refused', status, reason, detail }
+}
+
+function pauseOrCancelReplacement(
+  server: HrcServerInstanceForHandlers,
+  attempt: ParticipantAttempt,
+  intent: ReplacementIntent,
+  intentJson: string,
+  reason: string
+): void {
+  if (isAbsorbingParticipantAttempt(attempt)) {
+    server.db.participantRegistrations.pauseReplacementWork({
+      attemptId: attempt.attemptId,
+      attachEpoch: attempt.attachEpoch,
+      expectedIntentJson: intentJson,
+      reason,
+      updatedAt: timestamp(),
+    })
+    return
+  }
+  server.db.participantRegistrations.cancelReplacementIntent({
+    attemptId: attempt.attemptId,
+    attachEpoch: attempt.attachEpoch,
+    expectedIntentJson: intentJson,
+    establishmentWorkState: intent.predecessorWork.state,
+    establishmentAttemptCount: intent.predecessorWork.attemptCount,
+    ...(intent.predecessorWork.nextAttemptAt === undefined
+      ? {}
+      : { establishmentNextAttemptAt: intent.predecessorWork.nextAttemptAt }),
+    ...(intent.predecessorWork.lastError === undefined
+      ? {}
+      : { establishmentLastError: intent.predecessorWork.lastError }),
+    updatedAt: timestamp(),
+  })
 }
 
 function dispositionReason(
@@ -237,6 +276,45 @@ export async function driveParticipantReplacement(
 
   const kind: ReplacementKind =
     request.hostIncarnationId === binding.hostIncarnationId ? 'bridge' : 'host'
+  const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
+  if (currentIntent !== null && !sameRequest(currentIntent, request)) {
+    return refusal(
+      'rejected',
+      'host_binding_precondition_failed',
+      'a different durable replacement intent already owns this predecessor'
+    )
+  }
+  const adapter =
+    registration.adapterId === undefined
+      ? undefined
+      : server.options.participantAdapterRegistry?.get(registration.adapterId)
+  const evidenceMethodAvailable = isAbsorbingParticipantAttempt(initialAttempt)
+    ? adapter?.inspectWriter !== undefined
+    : adapter?.retireWriter !== undefined
+  // A producer-less direct registration is a known, stable hold. Do not arm a
+  // replacement work item merely to rediscover that fact five times: no A0
+  // effect is possible and the predecessor's reconnect work remains untouched.
+  if (
+    adapter === undefined ||
+    registration.classId === undefined ||
+    registration.participantKey === undefined ||
+    !evidenceMethodAvailable
+  ) {
+    if (currentIntent !== null && initialAttempt.replacementIntentJson !== undefined) {
+      pauseOrCancelReplacement(
+        server,
+        initialAttempt,
+        currentIntent,
+        initialAttempt.replacementIntentJson,
+        'host_retirement_unproven: producer evidence unavailable'
+      )
+    }
+    return refusal(
+      'pending',
+      'host_retirement_unproven',
+      'producer evidence unavailable: this registration has no resolvable writer-evidence owner or key-capable WriterRef'
+    )
+  }
   const now = timestamp()
   const freshIntent: ReplacementIntent = {
     schemaVersion: 'participant-replacement-intent/v1',
@@ -252,6 +330,16 @@ export async function driveParticipantReplacement(
       attachEpoch: initialAttempt.attachEpoch,
       invocationId: initialAttempt.invocationId,
     },
+    predecessorWork: {
+      state: initialAttempt.establishmentWorkState,
+      attemptCount: initialAttempt.establishmentAttemptCount,
+      ...(initialAttempt.establishmentNextAttemptAt === undefined
+        ? {}
+        : { nextAttemptAt: initialAttempt.establishmentNextAttemptAt }),
+      ...(initialAttempt.establishmentLastError === undefined
+        ? {}
+        : { lastError: initialAttempt.establishmentLastError }),
+    },
     candidate: {
       hostIncarnationId: request.hostIncarnationId,
       ...(request.classId === undefined ? {} : { classId: request.classId }),
@@ -260,14 +348,6 @@ export async function driveParticipantReplacement(
       ...(request.socketPath === undefined ? {} : { socketPath: request.socketPath }),
     },
     createdAt: now,
-  }
-  const currentIntent = parseIntent(initialAttempt.replacementIntentJson)
-  if (currentIntent !== null && !sameRequest(currentIntent, request)) {
-    return refusal(
-      'rejected',
-      'host_binding_precondition_failed',
-      'a different durable replacement intent already owns this predecessor'
-    )
   }
   if (currentIntent === null) {
     const stored = server.db.participantRegistrations.storeReplacementIntent({
@@ -289,21 +369,6 @@ export async function driveParticipantReplacement(
     return refusal('pending', 'participant_successor_gate_changed', 'replacement intent changed')
   }
 
-  const adapter =
-    registration.adapterId === undefined
-      ? undefined
-      : server.options.participantAdapterRegistry?.get(registration.adapterId)
-  if (
-    adapter === undefined ||
-    registration.classId === undefined ||
-    registration.participantKey === undefined
-  ) {
-    return refusal(
-      'pending',
-      'host_retirement_unproven',
-      'producer evidence unavailable: this registration has no resolvable writer-evidence owner or key-capable WriterRef'
-    )
-  }
   const observedEvidence = await observeParticipantWriterEvidence(
     server,
     adapter,
@@ -312,6 +377,15 @@ export async function driveParticipantReplacement(
     kind
   )
   if (observedEvidence.outcome === 'invalid') {
+    if (attempt.replacementIntentJson !== undefined) {
+      pauseOrCancelReplacement(
+        server,
+        attempt,
+        intent,
+        attempt.replacementIntentJson,
+        'participant_host_evidence_invalid'
+      )
+    }
     return refusal(
       'rejected',
       'participant_host_evidence_invalid',
@@ -319,6 +393,15 @@ export async function driveParticipantReplacement(
     )
   }
   if (observedEvidence.outcome === 'unavailable') {
+    if (attempt.replacementIntentJson !== undefined) {
+      pauseOrCancelReplacement(
+        server,
+        attempt,
+        intent,
+        attempt.replacementIntentJson,
+        'host_retirement_unproven: producer evidence unavailable'
+      )
+    }
     return refusal(
       'pending',
       'host_retirement_unproven',
@@ -374,6 +457,15 @@ export async function driveParticipantReplacement(
   }
 
   if (currentDecision !== 'satisfied') {
+    pauseOrCancelReplacement(
+      server,
+      attempt,
+      intent,
+      intentWithReceiptJson,
+      currentDecision === 'refused'
+        ? 'host_binding_conflict: predecessor remains writable and live'
+        : 'host_retirement_unproven: predecessor retirement remains unknown'
+    )
     return refusal(
       currentDecision === 'refused' ? 'rejected' : 'pending',
       currentDecision === 'refused' ? 'host_binding_conflict' : 'host_retirement_unproven',
@@ -449,6 +541,18 @@ export async function driveParticipantReplacement(
     attempt = server.db.participantRegistrations.getAttempt(attempt.attemptId)
   }
   if (attempt === null || !recoverySatisfied(attempt, evidence)) {
+    if (attempt !== null && attempt.replacementIntentJson !== undefined) {
+      const heldIntent = parseIntent(attempt.replacementIntentJson)
+      if (heldIntent !== null) {
+        pauseOrCancelReplacement(
+          server,
+          attempt,
+          heldIntent,
+          attempt.replacementIntentJson,
+          'participant_prior_recovery_unresolved'
+        )
+      }
+    }
     return refusal(
       'pending',
       'participant_prior_recovery_unresolved',
@@ -606,12 +710,20 @@ export function recordParticipantRecoveryDisposition(
   disposition: 'reconciled' | 'abandoned',
   reason: string
 ): boolean {
-  return server.db.participantRegistrations.recordRecoveryDisposition(
+  const recorded = server.db.participantRegistrations.recordRecoveryDisposition(
     attemptId,
     disposition,
     reason,
     timestamp()
   )
+  if (recorded) {
+    server.db.participantRegistrations.rearmReplacementWork({
+      attemptId,
+      reason: `explicit recovery ${disposition}: ${reason}`,
+      updatedAt: timestamp(),
+    })
+  }
+  return recorded
 }
 
 /** Explicit renewed recovery; ordinary duplicate register requests never call this. */

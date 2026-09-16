@@ -656,6 +656,74 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  cancelReplacementIntent(input: {
+    attemptId: string
+    attachEpoch: number
+    expectedIntentJson: string
+    establishmentWorkState: ParticipantEstablishmentWorkState
+    establishmentAttemptCount: number
+    establishmentNextAttemptAt?: string | undefined
+    establishmentLastError?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET replacement_intent_json = NULL, establishment_work_state = ?,
+                establishment_attempt_count = ?, establishment_next_attempt_at = ?,
+                establishment_last_error = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ? AND replacement_intent_json = ?`
+      )
+      .run(
+        input.establishmentWorkState,
+        input.establishmentAttemptCount,
+        input.establishmentNextAttemptAt ?? null,
+        input.establishmentLastError ?? null,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch,
+        input.expectedIntentJson
+      )
+    return result.changes === 1
+  }
+
+  pauseReplacementWork(input: {
+    attemptId: string
+    attachEpoch: number
+    expectedIntentJson: string
+    reason: string
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET establishment_work_state = 'completed', establishment_next_attempt_at = NULL,
+                establishment_last_error = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ? AND replacement_intent_json = ?`
+      )
+      .run(
+        input.reason,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch,
+        input.expectedIntentJson
+      )
+    return result.changes === 1
+  }
+
+  rearmReplacementWork(input: { attemptId: string; reason: string; updatedAt: string }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET establishment_work_state = 'pending', establishment_next_attempt_at = NULL,
+                establishment_last_error = ?, updated_at = ?
+          WHERE attempt_id = ? AND replacement_intent_json IS NOT NULL
+            AND establishment_work_state = 'completed'`
+      )
+      .run(input.reason, input.updatedAt, input.attemptId)
+    return result.changes === 1
+  }
+
   completeReplacementWork(input: {
     attemptId: string
     attachEpoch: number

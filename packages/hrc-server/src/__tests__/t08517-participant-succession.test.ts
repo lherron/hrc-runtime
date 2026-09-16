@@ -1,13 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { createControlledParticipantAdapter } from 'agent-spaces/testing'
-import type {
-  BrokerExecutionProfile,
-  ParticipantAdapter,
-  WriterEvidence,
-  WriterInspectionRequest,
-  WriterRetirementRequest,
-} from 'spaces-runtime-contracts'
+import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 import {
   neutralBrokerExecutionProfileHash,
   neutralSpecHash,
@@ -24,6 +18,11 @@ import type { HrcServer, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
 import { registerDirectParticipant } from '../participant-host-registration.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import {
+  type T08517EvidenceMode,
+  createT08517EvidenceAdapter,
+  storeT08517CrashBoundaryIntent,
+} from './fixtures/t08517-evidence-adapter.fixture.js'
 
 const SCOPE = 'agent:arris:project:hrc-runtime:task:T-08517'
 const ADAPTER_ID = 't08517-controlled'
@@ -42,70 +41,6 @@ const participantClass = {
   defaultTtl: 60,
 }
 
-type EvidenceMode =
-  | 'retired-recovered'
-  | 'retired-unknown'
-  | 'retired-live'
-  | 'retired-dead'
-  | 'unknown-dead'
-  | 'writable-dead'
-  | 'writable-unknown'
-  | 'unknown-live'
-  | 'live'
-  | 'wrong-subject'
-  | 'unknown'
-
-function evidenceAdapter(
-  workspaceCwd: string,
-  mode: () => EvidenceMode,
-  beforeAnswer: () => void
-): ParticipantAdapter {
-  const base = createControlledParticipantAdapter({ adapterId: ADAPTER_ID, workspaceCwd })
-  const answer = (request: WriterRetirementRequest | WriterInspectionRequest): WriterEvidence => {
-    beforeAnswer()
-    const current = mode()
-    return {
-      schemaVersion: 'writer-evidence/v1',
-      writerRef:
-        current === 'wrong-subject'
-          ? {
-              ...request.writerRef,
-              subject: request.writerRef.subject === 'host' ? 'bridge' : 'host',
-            }
-          : request.writerRef,
-      observedAt: '2026-09-16T04:00:00.000Z',
-      writePath: {
-        state: current.startsWith('retired-')
-          ? 'retired'
-          : current === 'live' || current.startsWith('writable-')
-            ? 'writable'
-            : 'unknown',
-        reason: current,
-      },
-      liveness: {
-        state:
-          current === 'live' || current.endsWith('-live')
-            ? 'live'
-            : current.endsWith('-dead')
-              ? 'dead'
-              : 'unknown',
-        reason: current,
-      },
-      priorRecovery: {
-        state: current === 'retired-recovered' ? 'recovered' : 'unknown',
-        reason: current,
-      },
-    }
-  }
-  return {
-    adapterId: base.adapterId,
-    admit: (request) => base.admit(request),
-    prepare: (request) => base.prepare(request),
-    retireWriter: answer,
-    inspectWriter: answer,
-  }
-}
-
 async function json(response: Response): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>
 }
@@ -113,7 +48,7 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 describe('T-08517 host participant succession', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
-  let evidenceMode: EvidenceMode
+  let evidenceMode: T08517EvidenceMode
   let evidenceAnswerHook: (() => void) | undefined
 
   beforeEach(async () => {
@@ -133,7 +68,8 @@ describe('T-08517 host participant succession', () => {
         otelListenerEnabled: false,
         registrationClasses: [participantClass] as unknown as readonly RegistrationClassConfig[],
         participantAdapterRegistry: new ParticipantAdapterRegistry([
-          evidenceAdapter(
+          createT08517EvidenceAdapter(
+            ADAPTER_ID,
             fixture.tmpDir,
             () => evidenceMode,
             () => evidenceAnswerHook?.()
@@ -797,14 +733,102 @@ describe('T-08517 host participant succession', () => {
       reason: 'host_retirement_unproven',
       detail: expect.stringContaining('producer evidence unavailable'),
     })
-    expect(server!.db.participantRegistrations.getAttempt(attempt.attemptId)?.state).toBe('ACTIVE')
+    const heldAttempt = server!.db.participantRegistrations.getAttempt(attempt.attemptId)!
+    expect(heldAttempt).toMatchObject({
+      state: 'ACTIVE',
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(heldAttempt.replacementIntentJson).toBeUndefined()
+    expect(
+      await json(
+        await fixture.postJson('/v1/participants/register', {
+          registrationMode: 'direct',
+          requestedSessionRef: classlessScope,
+          hostIncarnationId: 'arris-real-shape-b',
+          expectedPredecessor: {
+            hostIncarnationId: 'arris-real-shape-a',
+            runtimeId: identity['runtimeId'],
+            generation: 1,
+          },
+        })
+      )
+    ).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
+    const repeatedAttempt = server!.db.participantRegistrations.getAttempt(attempt.attemptId)!
+    expect(repeatedAttempt).toMatchObject({
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(repeatedAttempt.replacementIntentJson).toBeUndefined()
+
+    const mintedScope = `${SCOPE}-classless-minted`
+    const minted = await json(
+      await fixture.postJson('/v1/participants/register', {
+        registrationMode: 'direct',
+        requestedSessionRef: mintedScope,
+        hostIncarnationId: 'arris-minted-a',
+      })
+    )
+    const mintedIdentity = minted['identity'] as Record<string, unknown>
+    expect(
+      await json(
+        await fixture.postJson('/v1/participants/register', {
+          registrationMode: 'direct',
+          requestedSessionRef: mintedScope,
+          hostIncarnationId: 'arris-minted-b',
+          expectedPredecessor: {
+            hostIncarnationId: 'arris-minted-a',
+            runtimeId: mintedIdentity['runtimeId'],
+            generation: 1,
+          },
+        })
+      )
+    ).toMatchObject({ status: 'pending', reason: 'host_retirement_unproven' })
+    const mintedAttempt = server!.db.participantRegistrations.getAttempt(
+      mintedIdentity['attemptId'] as string
+    )!
+    expect(mintedAttempt).toMatchObject({
+      state: 'IDENTITY_MINTED',
+      establishmentWorkState: 'pending',
+      establishmentAttemptCount: 0,
+    })
+    expect(mintedAttempt.replacementIntentJson).toBeUndefined()
+
+    await server!.stop()
+    server = undefined
+    await start()
+    expect(server!.db.participantRegistrations.getAttempt(attempt.attemptId)).toMatchObject({
+      state: 'ACTIVE',
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(server!.db.participantRegistrations.getAttempt(mintedAttempt.attemptId)).toMatchObject({
+      state: 'IDENTITY_MINTED',
+      establishmentWorkState: 'pending',
+      establishmentAttemptCount: 0,
+    })
   })
 
   test('only explicit renewed recovery resets an exhausted replacement budget', async () => {
     await start()
     const prior = await activePredecessor()
-    evidenceMode = 'unknown'
-    await register('host-b', prior.expected)
+    evidenceMode = 'retired-unknown'
+    expect(await register('host-b', prior.expected)).toMatchObject({
+      status: 'pending',
+      reason: 'participant_prior_recovery_unresolved',
+    })
+    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(await register('host-b', prior.expected)).toMatchObject({
+      status: 'pending',
+      reason: 'participant_prior_recovery_unresolved',
+    })
+    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
     server!.db.sqlite
       .query(
         `UPDATE participant_registration_attempts
@@ -813,11 +837,6 @@ describe('T-08517 host participant succession', () => {
       )
       .run(prior.attemptId)
 
-    await register('host-b', prior.expected)
-    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
-      establishmentWorkState: 'exhausted',
-      establishmentAttemptCount: 5,
-    })
     expect(
       renewParticipantReplacementRecovery(
         server!,
@@ -835,11 +854,7 @@ describe('T-08517 host participant succession', () => {
   test('restart after intent commit but before A0 redrives without another registration', async () => {
     await start()
     const prior = await activePredecessor()
-    evidenceMode = 'unknown'
-    expect(await replaceWithoutScheduling('host-b', prior.expected)).toMatchObject({
-      outcome: 'refused',
-      reason: 'host_retirement_unproven',
-    })
+    storeT08517CrashBoundaryIntent(server!, prior, fixture.tmpDir, CLASS_ID, PARTICIPANT_KEY)
     expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
       state: 'ACTIVE',
       establishmentWorkState: 'pending',
@@ -865,16 +880,8 @@ describe('T-08517 host participant succession', () => {
   test('restart after producer retirement but before receipt persistence recovers by inspection', async () => {
     await start()
     const prior = await activePredecessor()
-    evidenceMode = 'unknown'
-    evidenceAnswerHook = () => {
-      evidenceMode = 'retired-recovered'
-      evidenceAnswerHook = undefined
-      throw new Error('simulated daemon loss after producer retirement')
-    }
-    expect(await replaceWithoutScheduling('host-b', prior.expected)).toMatchObject({
-      outcome: 'refused',
-      reason: 'host_retirement_unproven',
-    })
+    storeT08517CrashBoundaryIntent(server!, prior, fixture.tmpDir, CLASS_ID, PARTICIPANT_KEY)
+    evidenceMode = 'retired-recovered'
     const effectBoundary = server!.db.participantRegistrations.getAttempt(prior.attemptId)
     expect(effectBoundary).toMatchObject({
       state: 'ACTIVE',
@@ -926,21 +933,31 @@ describe('T-08517 host participant succession', () => {
     expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)?.state).toBe(
       'RETIRING'
     )
+    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
     await server!.stop()
     server = undefined
 
     evidenceMode = 'retired-recovered'
     await start()
-    const deadline = Date.now() + 2_000
+    await Bun.sleep(100)
     let attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(
       (prior.first['identity'] as Record<string, unknown>)['registrationId'] as string
     )
-    while (attempts.length < 2 && Date.now() < deadline) {
-      await Bun.sleep(20)
-      attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(
-        (prior.first['identity'] as Record<string, unknown>)['registrationId'] as string
-      )
-    }
+    expect(attempts).toHaveLength(1)
+    expect(attempts[0]).toMatchObject({
+      establishmentWorkState: 'completed',
+      establishmentAttemptCount: 0,
+    })
+    expect(await register('host-b', prior.expected)).toMatchObject({
+      status: 'registered',
+      generation: 2,
+    })
+    attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(
+      (prior.first['identity'] as Record<string, unknown>)['registrationId'] as string
+    )
     expect(attempts).toHaveLength(2)
     expect(attempts[0]).toMatchObject({
       state: 'ABANDONED',
