@@ -300,11 +300,15 @@ async function registerDirectParticipantLocked(
       }
     }
     if (request.expectedPredecessor === undefined) {
+      const attemptDetail =
+        predecessorAttempt.state === 'DETACHED'
+          ? `attempt DETACHED, reconnect ${predecessorAttempt.establishmentWorkState}; not evidence of host death or life`
+          : `attempt ${predecessorAttempt.state}`
       return {
         outcome: 'refused',
         status: 'rejected',
         reason: 'host_binding_conflict',
-        detail: `${scopeRef} is held by live host incarnation ${occupant.hostIncarnationId}; an explicit matching expectedPredecessor is required`,
+        detail: `${scopeRef} is held by host incarnation ${occupant.hostIncarnationId} (${attemptDetail}); an explicit matching expectedPredecessor is required`,
       }
     }
     return driveParticipantReplacement(server, predecessorRegistration, predecessorAttempt, request)

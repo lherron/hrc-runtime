@@ -110,6 +110,20 @@ describe('T-08516 direct protocol join', () => {
     }
   }
 
+  function setAttemptState(state: string, workState: string): void {
+    const db = openHrcDatabase(fixture.dbPath, { migrate: false })
+    try {
+      db.sqlite
+        .query(
+          `UPDATE participant_registration_attempts
+              SET state = ?, establishment_work_state = ?`
+        )
+        .run(state, workState)
+    } finally {
+      db.close()
+    }
+  }
+
   test('a classless participant joins with no adapter installed at all', async () => {
     await start()
 
@@ -248,7 +262,7 @@ describe('T-08516 direct protocol join', () => {
     expect(stored.runtimes).toHaveLength(0)
   })
 
-  test('refuses a second incarnation at an occupied address without touching it', async () => {
+  test('IDENTITY_MINTED conflict names the exact predecessor state', async () => {
     await start()
     await join({})
     const before = readStore()
@@ -258,6 +272,7 @@ describe('T-08516 direct protocol join', () => {
     expect(intruder.body).toMatchObject({
       status: 'rejected',
       reason: 'host_binding_conflict',
+      detail: `${SCOPE} is held by host incarnation incarnation-alpha (attempt IDENTITY_MINTED); an explicit matching expectedPredecessor is required`,
     })
 
     // Speaking the protocol transfers nothing. The occupant's binding, its
@@ -266,6 +281,34 @@ describe('T-08516 direct protocol join', () => {
     expect(after.registrations).toEqual(before.registrations)
     expect(after.bindings).toEqual(before.bindings)
     expect(after.attempts).toEqual(before.attempts)
+  })
+
+  test('ACTIVE conflict names the exact predecessor state', async () => {
+    await start()
+    await join({})
+    setAttemptState('ACTIVE', 'completed')
+
+    const intruder = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
+    expect(intruder.status).toBe(409)
+    expect(intruder.body).toMatchObject({
+      status: 'rejected',
+      reason: 'host_binding_conflict',
+      detail: `${SCOPE} is held by host incarnation incarnation-alpha (attempt ACTIVE); an explicit matching expectedPredecessor is required`,
+    })
+  })
+
+  test('DETACHED conflict names reconnect state without inferring liveness', async () => {
+    await start()
+    await join({})
+    setAttemptState('DETACHED', 'exhausted')
+
+    const intruder = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
+    expect(intruder.status).toBe(409)
+    expect(intruder.body).toMatchObject({
+      status: 'rejected',
+      reason: 'host_binding_conflict',
+      detail: `${SCOPE} is held by host incarnation incarnation-alpha (attempt DETACHED, reconnect exhausted; not evidence of host death or life); an explicit matching expectedPredecessor is required`,
+    })
   })
 
   test('a second participant at a different address gets its own reservation', async () => {
