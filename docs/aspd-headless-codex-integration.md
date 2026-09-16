@@ -212,10 +212,13 @@ execution release, never resolved from PATH, a checkout, or HRC's bundled ASP:
   substrate (`aspd_route_profile_mismatch`) narrows to: allowed only when the
   frozen record's presentation is `tmux-tui`.
 - ASP (agent-spaces, artifact change, no wire change): a standalone release
-  worker (launched by its release launcher, which exports `ASP_RELEASE_ROOT`)
-  launches the renderer through its own release executable,
-  `<ASP_RELEASE_ROOT>/harness-broker renderer --driver codex-app-server …`, via a
-  new `harness-broker renderer` subcommand compiled into the same payload.
+  worker launches the renderer through its own release executable,
+  `<releaseRoot>/libexec/harness-broker renderer --driver codex-app-server …`,
+  via a new `harness-broker renderer` subcommand compiled into the same payload.
+  The release entrypoint passes that launcher explicitly (its own
+  `process.execPath` + `renderer`) down to the codex-app-server driver; no
+  environment variable selects it (agent-spaces `515063f6`, proven by running
+  the subcommand from a release built at that commit).
   Today the driver pastes `exec bun <dirname(import.meta.url)>/renderer-entry`,
   which inside a bun-compiled release resolves to `/$bunfs/root/renderer-entry`
   and does not exist (verified against release
