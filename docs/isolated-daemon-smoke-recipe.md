@@ -28,6 +28,22 @@ Let the isolated daemon create a fresh store, then seed only the rows required b
 
 Keep the runtime IDs created by the probe. Run probe commands with the same three exported environment variables so they address the isolated socket and store.
 
+### Driving viewers and attach in isolation
+
+- `hrc attach <scope>` resolves the scope's project root; an isolated pilot
+  project has no wrkq registration, so run it with
+  `ASP_PROJECT_ROOT_OVERRIDE=<project root>`. `hrc attach <rt-id>` prints the
+  attach descriptor JSON instead of attaching.
+- Tmux prefix chords sent through `ghostmux send-keys` do not register as a
+  prefix. Detach a client with `tmux -S <btmux sock> detach-client -t <client tty>`
+  (`list-clients -F '#{client_tty}'`).
+- When enumerating broker tmux servers, glob `run/btmux/*-rt-*.sock` and bound
+  each call with `timeout`. The same directory holds
+  `codex-app-server-renderer-control.*.sock`, which is not a tmux server; `tmux -S`
+  against it hangs.
+- A worker's renderer is a separate pane process; prove which release it came
+  from with `ps` on the `:tui` pane pid (`libexec/harness-broker renderer`).
+
 ## Tear down
 
 Before stopping the foreground server, terminate every probe runtime you spawned:

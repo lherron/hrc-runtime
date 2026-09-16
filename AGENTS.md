@@ -22,6 +22,11 @@ Read `~/praesidium/build_deploy_guide.md` before building, installing, or promot
   is an explicit allowance, so a new top-level directory is code until someone
   adds it. `architecture-records` runs unconditionally because it is the only
   gate that grades `architecture/`.
+- A spec change that moves a boundary must amend EVERY active record that states
+  it. Grep `architecture/records/` for the old premise before submitting to
+  Daedalus: the aspd route boundary lived in two invariants
+  (`aspd-prepared-execution-release` and `asp-toolchain-selection`), and
+  amending only one drew a rejection (T-08554 F1).
 ### Commands that answer confidently while checking nothing
 
 The failure below has four shapes and they all read as a clean result. A probe
@@ -60,6 +65,18 @@ one.
   routine, not exotic. Capture the status: `git push > /tmp/push.log 2>&1; echo
   $?`, and confirm with `git status -sb` showing no `ahead` — an unpushed commit
   does not exist for anyone else.
+- **`runtimes.updated_at` is a heartbeat.** Live runtime rows refresh it every
+  ~5 s with no request in flight, so a before/after diff "changes" even when
+  nothing touched the runtime. Prove "runtime untouched" by `status`,
+  `active_invocation_id`, and `runtime_state_json.broker.brokerPid`.
+- **A warmup count hides which brokers failed.** `broker.warmup.complete`
+  reporting the same `attached`/`total` after a restart says nothing about
+  whether the SAME runtimes are unreachable. Diff the `ipc_unreachable` runtime
+  ids against the known set; a new id at an unchanged count is a regression.
+- **The start response is not turn evidence.** On the headless route
+  `hrc start --wait completed --json` returned `runtime.terminal: null` and no
+  `finalMessage` for a turn that completed. Grade a turn from `hrc_events`: the
+  final `turn.message` content and a `turn.completed` row for that `run_id`.
 
 ## Dependency Pins
 
@@ -112,6 +129,32 @@ work deliberately.
 separate states — record each. After runtime changes: `just install`, `hrc server
 restart`, `hrc server status`; the readback must name the new release in
 `binaryPath` / `packagePath`.
+
+### aspd-prepared Codex route
+
+Spec: [docs/aspd-headless-codex-integration.md](docs/aspd-headless-codex-integration.md).
+With `HRC_ASPD_SOCKET` in the daemon's plist env, headless codex-app-server
+prepares through the node's persistent aspd (launchd `com.praesidium.aspd`, ns
+`~/praesidium/var/aspd`) and the worker runs from the frozen ASP release.
+
+- **Opt-in per request.** Only `hrc start … --no-viewer` (headless, no viewer) or
+  `--app-server-viewer` (headless with the attachable tmux renderer viewer) put a
+  Codex start on this route. An omitted flag keeps max3's default, the
+  interactive codex-tui redirect.
+- **Two activations, never confused.** An HRC release activates by
+  `just install` + `hrc server restart`. An ASP preparation release activates by
+  `cd ~/praesidium/agent-spaces && just aspd-activate ~/praesidium/var/aspd
+  <releaseId>` — no HRC restart. Read back both: `hrc server status --json` →
+  `.api.aspd.release.releaseId`, and `just aspd-status ~/praesidium/var/aspd`
+  (one aspd process, running == selected).
+- **One active preparation release per node; bindings are permanent.** Live
+  workers and never-submitted preparations stay on the release they were frozen
+  to across activations. Retain retired releases; never GC a release a live
+  worker or prepared operation references. A/B activation is a finite acceptance
+  exercise, not a routing mode.
+- **Attach, don't restart, a viewer.** `hrc attach <scope>` on a live
+  `--app-server-viewer` runtime attaches to its `:tui` pane; detaching leaves the
+  worker and renderer running.
 
 ## Fleet Deployment
 
