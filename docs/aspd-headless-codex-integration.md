@@ -368,8 +368,15 @@ would break the headless route's existing queue-behind-boot delivery of a
 crossing prompt (`server-sdk-start` "queues an existing-session prompt behind
 boot").
 - A same-harness (openai, requested harness) birth selects its transport's
-  admission: tmux → interactive (the T-07693 join delivers into the birth),
-  headless → the headless route (queue-behind-boot).
+  admission: tmux → interactive, headless → the headless route
+  (queue-behind-boot). On this path the T-07693 join does not deliver on its
+  own authority. Once the birth settles, it runs `decideInteractiveBrokerAdmission`
+  against the newborn runtime with the caller's intent and
+  `establishedBrokerInvocationId`, and a `runtime-unavailable` decision refuses
+  before delivery. That covers a T-07397 surface-reuse refusal, and an ownership
+  proof that does not name the newborn's active invocation. Only the refusal is
+  taken from that decision: a newborn is joined, never reprovisioned. This check
+  is added only for redirect-off crossings. The redirect-on join is unchanged.
 - A foreign-harness birth refuses before any effect: a headless one with
   `established_runtime_harness_mismatch`, a tmux one with
   `start_in_flight_harness_mismatch`. A newborn is never admission-replaced
