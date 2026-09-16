@@ -11,7 +11,9 @@ migration, a shared-host rollout, or a new lifecycle state machine.
 
 Amendment (T-08553, shared max3 rollout; Lance-selected per-request option,
 EN-12917): §1.1 adds a per-request operator-presentation choice so the route can
-be requested on a node whose default presentation is `tmux-tui`. It changes no
+be requested on a node whose defaults send Codex elsewhere (max3: the Codex
+interactive redirect is enabled and the headless presentation default is
+`tmux-tui`). It changes no
 preparation, persistence-ordering, launch, release-binding or reattach rule
 below.
 
@@ -36,20 +38,30 @@ HTTP API takes `intent.presentation.operator` where it takes
 --no-viewer` (beside the existing `--viewer-window`). It is not offered on
 `hrc run` or attach, which are interactive by definition.
 
-**Precedence.** For the codex-app-server presentation decision (both this route's
-selector `aspdHeadlessCodexEndpoint` and the existing headless handler):
-request `operator: 'none'` → `none`; omitted → the node default, byte for byte
-today's behavior. The decision stays driver-gated: any other broker driver
-already resolves `none`.
+**Precedence.** Two node defaults can keep a Codex request off this route; an
+explicit choice overrides both for that request only, and an omitted choice
+leaves both byte for byte as today:
+1. *Codex interactive redirect* (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED`, the
+   `codexRedirect` normalization in turn dispatch, which rewrites every Codex
+   dispatch without a `responseFormat` into the interactive codex-tui broker
+   shape). `operator: 'none'` exempts the dispatch exactly as T-08338's
+   `responseFormat` already does: the intent stays headless. The Claude
+   interactive redirect is NOT exempted (see validation).
+2. *Headless presentation default* (`HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`,
+   `decideCodexAppServerPresentation`, used by this route's selector
+   `aspdHeadlessCodexEndpoint` and by the existing headless handler):
+   `operator: 'none'` → `none`; omitted → the node default. The decision stays
+   driver-gated: any other broker driver already resolves `none`.
 
 **Validation (refusals, before any runtime, operation or hosting effect;
 `invalid_request` with `field: presentation.operator` unless named):**
 - any value other than `'none'`;
 - `operator: 'none'` together with `presentation.viewerWindow` (a placement for a
   viewer the request declined);
-- `operator: 'none'` on an intent that is, or is normalized by a harness redirect
-  into, an interactive/tmux route (e.g. Claude's interactive broker redirect),
-  where no separate viewer exists to decline: refused
+- `operator: 'none'` on an intent that is interactive (`harness.interactive:
+  true` or `preferredMode: interactive`), or that the Claude interactive broker
+  redirect normalizes into an interactive route, or that otherwise does not
+  resolve to the headless broker route: refused
   `presentation_operator_unsupported`. The choice is honored only on the
   headless broker route.
 
@@ -64,11 +76,13 @@ presentation choice or node default.
 
 **Existing scope.** The choice governs only a NEW execution. It never changes a
 live worker's hosting, frozen release or presentation:
-- request `none`, live runtime whose durable presentation is `tmux-tui`
-  (reuse, warm turn, steer/enqueue): refused `presentation_conflict`, no
-  delivery, no stale-marking, no reprovision, runtime untouched. The caller
-  terminates that runtime explicitly if it wants a no-viewer execution;
-- request `none`, live runtime already `none`: delivered normally;
+- request `none`, live runtime of the scope whose presentation is not `none`
+  — a headless runtime with a `tmux-tui` viewer, or a live interactive tmux
+  broker surface (the runtime the existing headless→interactive reuse deferral
+  would deliver into): refused `presentation_conflict` before delivery, no
+  stale-marking, no reprovision, runtime untouched. The caller terminates that
+  runtime explicitly if it wants a no-viewer execution;
+- request `none`, live headless runtime already `none`: delivered normally;
 - omitted choice: never a conflict; delivered to whatever runtime is live
   (its established presentation is preserved);
 - no live runtime (never started, terminated or unavailable): a new execution
@@ -255,7 +269,9 @@ control never require aspd and verify release identity on hello.
 
 **Amend `hrc-runtime.aspd-prepared-execution-release` (T-08553):** the route is
 selected by EFFECTIVE operator presentation `none`: an explicit per-request
-`presentation.operator: 'none'` takes precedence over the node default, an
+`presentation.operator: 'none'` takes precedence over the node headless
+presentation default and exempts the dispatch from the Codex interactive
+redirect, an
 omitted choice uses the node default unchanged, the choice is refused off the
 headless broker route or with a viewer placement, it is persisted in the applied
 intent and route decision, a live runtime whose presentation differs is refused
@@ -315,12 +331,13 @@ Real shared HRC (launchd `com.praesidium.hrc-server`, node default
 `tmux-tui` unchanged) with `HRC_ASPD_SOCKET` pointing at the persistent,
 launchd-supervised max3 aspd. On one fixed HRC artifact/lock/pid:
 1. Omitted-choice control: `hrc start <fresh scope> -p …` on a codex agent
-   keeps today's headless `tmux-tui` viewer route (no aspd preparation).
+   keeps today's max3 route, the interactive codex-tui broker (transport tmux,
+   no aspd preparation).
 2. `hrc start <fresh scope> --no-viewer -p …` prepares through aspd on A:
    `presentation.kind: none`, `operatorPresentationSource: request`,
    `executionRelease` A, worker hello A, real turn; second warm turn.
-3. `--no-viewer` against the live `tmux-tui` control scope is refused
-   `presentation_conflict` with the runtime untouched.
+3. `--no-viewer` against the live control scope (interactive surface) is
+   refused `presentation_conflict` with the runtime untouched.
 4. Activate B at the persistent endpoint with the same HRC pid: fresh
    `--no-viewer` scope on B (hello B, real turn); the A worker completes another
    turn. Existing non-test brokers stay attached.

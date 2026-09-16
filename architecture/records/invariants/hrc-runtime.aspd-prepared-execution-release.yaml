@@ -34,11 +34,15 @@ predicate: >
   continuation selection, environment ownership, HRC resource ownership, and
   projection-before-acknowledgement laws remain unchanged. Effective operator
   presentation is an explicit per-request presentation.operator none when
-  present, otherwise the node default unchanged; the request choice is accepted
+  present, otherwise the node default unchanged; an explicit none also exempts
+  that Codex dispatch from the node's Codex interactive redirect, as a
+  responseFormat does, while omitted choices keep every redirect unchanged; the
+  request choice is accepted
   only as none, only on the headless broker route and never with a viewer
   placement, is persisted in the applied intent and route decision with its
   source, is never re-evaluated when a frozen preparation resumes, and never
-  replaces a live runtime: a live runtime whose presentation differs refuses the
+  replaces a live runtime: a live runtime of the scope whose presentation is not
+  none, whether a tmux-tui viewer or an interactive tmux surface, refuses the
   request with presentation_conflict and is left untouched.
 authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus verification pending), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
@@ -66,7 +70,7 @@ required_tests:
   - T-08542 start-boundary gates distinguish prepared from transport-uncertain state and never replay an uncertain invocation.start
   - T-08542 installed fixed-HRC A-B rollback and aspd-outage matrix keeps existing A and B workers controllable
   - T-08542 daemon restart with aspd unavailable reattaches A and B only after candidate-connection release identity verification and preserves event continuity and acknowledgement ordering
-  - T-08553 presentation precedence gates prove omitted choice keeps the node default and explicit none selects the aspd route with source request
+  - T-08553 presentation precedence gates prove omitted choice keeps the Codex interactive redirect and node presentation default and explicit none stays headless and selects the aspd route with source request
   - T-08553 presentation validation gates refuse non-none values viewer placement and interactive or redirected routes before any runtime effect
   - T-08553 existing-scope gates refuse none against a live tmux-tui runtime without delivery stale-marking or reprovision and deliver omitted or matching choices
   - T-08553 shared max3 installed acceptance covers omitted-choice control, no-viewer aspd A, conflict refusal, and fixed-HRC B activation with the A worker still usable
