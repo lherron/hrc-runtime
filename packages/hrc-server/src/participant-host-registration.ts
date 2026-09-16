@@ -10,6 +10,9 @@ import type {
 } from 'hrc-store-sqlite'
 
 import { claimParticipantAddress } from './participant-address-provisioning.js'
+import { driveParticipantReplacement } from './participant-succession.js'
+import { isParticipantRegistrationClass } from './registration-classes-config.js'
+import { withScopeClaimMutex } from './scope-claim-core.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { createHostSessionId, timestamp } from './server-util.js'
 
@@ -108,6 +111,12 @@ export type DirectJoinRequest = {
   participantKey?: string | undefined
   workspaceCwd?: string | undefined
   socketPath?: string | undefined
+  /** Compare-and-set identity for an explicit H1/H2 replacement request. */
+  expectedPredecessor?: {
+    hostIncarnationId: string
+    runtimeId: string
+    generation: number
+  }
 }
 
 /**
@@ -187,7 +196,7 @@ function identityOf(
  * being shadowed by an admission-sourced refusal that told it nothing about
  * where its address actually lives.
  */
-export async function registerDirectParticipant(
+async function registerDirectParticipantLocked(
   server: HrcServerInstanceForHandlers,
   request: DirectJoinRequest
 ): Promise<DirectJoinResult> {
@@ -212,6 +221,9 @@ export async function registerDirectParticipant(
         reason: 'participant_attempt_unavailable',
         detail: 'the registered participant has no durable attempt',
       }
+    }
+    if (request.expectedPredecessor !== undefined) {
+      return driveParticipantReplacement(server, existingByIncarnation, attempt, request)
     }
     return {
       outcome: 'registered',
@@ -273,16 +285,29 @@ export async function registerDirectParticipant(
     reservation.reservationId
   )
   if (occupant !== null) {
-    // Speaking the protocol does not transfer another live process's address.
-    // Replacing an occupant is the explicit succession procedure, which this
-    // slice does not implement -- so it is refused, out loud, rather than
-    // performed silently or dressed up as a reconnection that occurred.
-    return {
-      outcome: 'refused',
-      status: 'pending',
-      reason: 'participant_host_replacement_unsupported',
-      detail: `${scopeRef} is held by host incarnation ${occupant.hostIncarnationId} (${occupant.state}); replacing a live incarnation requires the explicit succession procedure, which this HRC release does not yet execute`,
+    const predecessorRegistration = server.db.participantRegistrations.getRegistrationById(
+      occupant.registrationId
+    )
+    const predecessorAttempt = server.db.participantRegistrations.getAttemptByRegistrationId(
+      occupant.registrationId
+    )
+    if (predecessorRegistration === null || predecessorAttempt === null) {
+      return {
+        outcome: 'refused',
+        status: 'pending',
+        reason: 'participant_attempt_unavailable',
+        detail: 'the occupied participant address has no durable predecessor attempt',
+      }
     }
+    if (request.expectedPredecessor === undefined) {
+      return {
+        outcome: 'refused',
+        status: 'rejected',
+        reason: 'host_binding_conflict',
+        detail: `${scopeRef} is held by live host incarnation ${occupant.hostIncarnationId}; an explicit matching expectedPredecessor is required`,
+      }
+    }
+    return driveParticipantReplacement(server, predecessorRegistration, predecessorAttempt, request)
   }
   const retiredHere = server.db.participantHostBindings.listBindingsByReservationId(
     reservation.reservationId
@@ -303,6 +328,16 @@ export async function registerDirectParticipant(
   const attemptId = `participant-attempt-${randomUUID()}`
   const runtimeId = `rt-${randomUUID()}`
   const continuation = selectContinuation(server, null)
+  const configuredClass =
+    request.classId === undefined
+      ? undefined
+      : server.options.registrationClasses?.find(
+          (candidate) => candidate.classId === request.classId
+        )
+  const configuredAdapterId =
+    configuredClass !== undefined && isParticipantRegistrationClass(configuredClass)
+      ? configuredClass.adapterId
+      : undefined
 
   const registration: ParticipantRegistration = {
     registrationId,
@@ -311,6 +346,7 @@ export async function registerDirectParticipant(
     // the participant actually supplied them. R7.1 forbids the placeholders
     // that would otherwise make these columns look answered.
     ...(request.classId === undefined ? {} : { classId: request.classId }),
+    ...(configuredAdapterId === undefined ? {} : { adapterId: configuredAdapterId }),
     join: 'participant-served',
     ...(request.participantKey === undefined ? {} : { participantKey: request.participantKey }),
     scopeRef,
@@ -392,4 +428,17 @@ export async function registerDirectParticipant(
     created: true,
     attached: false,
   }
+}
+
+export async function registerDirectParticipant(
+  server: HrcServerInstanceForHandlers,
+  request: DirectJoinRequest
+): Promise<DirectJoinResult> {
+  const parsed = parseScopeRef(request.requestedSessionRef) as {
+    agentId: string
+    projectId?: string | undefined
+  }
+  return withScopeClaimMutex(server, `roster:${parsed.agentId}:${parsed.projectId ?? ''}`, () =>
+    registerDirectParticipantLocked(server, request)
+  )
 }

@@ -601,9 +601,25 @@ export class BrokerEventMapper {
     // (and semantically the tool_call precedes the awaiting_input it triggers).
     const derivedDescriptors: DerivedTurnDescriptor[] = []
     this.pendingLateStartEvents = []
-    const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
+    const participantAttempt = db.participantRegistrations.getAttemptByInvocationId(
+      String(envelope.invocationId)
+    )
+    const currentParticipantAttempt =
+      participantAttempt === null
+        ? null
+        : db.participantRegistrations.getAttemptByRegistrationId(participantAttempt.registrationId)
+    // H1 deliberately reuses the runtime and session, so the ordinary
+    // generation fence cannot distinguish its predecessor from its successor.
+    // Keep the predecessor's validated envelope in the broker ledger, but
+    // remove its authority over current runtime/run/session state.
+    const participantFenced =
+      participantAttempt !== null &&
+      (currentParticipantAttempt?.attemptId !== participantAttempt.attemptId ||
+        ['SUPERSEDED', 'ABANDONED', 'TERMINAL'].includes(participantAttempt.state))
+    const stale =
+      participantFenced || this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
-    this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
+    this.projectState(persistedEnvelope, ctx, now, stale, participantFenced, derivedDescriptors)
     // A retryable invocation failure is attempt-level evidence. Keep it in the
     // broker ledger for diagnostics/replay, but do not publish a canonical
     // invocation terminal while the harness has explicitly promised to retry.
@@ -1103,8 +1119,39 @@ export class BrokerEventMapper {
     ctx: ProjectionContext,
     now: string,
     stale: boolean,
+    participantFenced: boolean,
     derived: DerivedTurnDescriptor[]
   ): void {
+    if (participantFenced) {
+      // A terminal from a retired participant invocation still closes that
+      // historical invocation. It cannot close the current attempt, change
+      // the shared runtime, satisfy a successor run, or rewrite continuation.
+      if (envelope.type === 'invocation.exited') {
+        const payload = envelope.payload as InvocationExitedPayload
+        this.db.brokerInvocations.update(envelope.invocationId, {
+          invocationState: 'exited',
+          lifecycleTerminalReason: payload.reason ?? 'process-exit',
+          updatedAt: now,
+        })
+      } else if (envelope.type === 'invocation.failed') {
+        const payload = envelope.payload as InvocationFailedPayload
+        this.db.brokerInvocations.update(envelope.invocationId, {
+          invocationState: 'failed',
+          lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',
+          updatedAt: now,
+        })
+      } else if (envelope.type === 'invocation.disposed') {
+        const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+        this.db.brokerInvocations.update(envelope.invocationId, {
+          invocationState: 'disposed',
+          ...(invocation?.lifecycleTerminalReason === undefined
+            ? { lifecycleTerminalReason: 'disposed' }
+            : {}),
+          updatedAt: now,
+        })
+      }
+      return
+    }
     if (stale) {
       if (envelope.type === 'permission.resolved') {
         auditPermissionResolved(this.db, envelope, ctx, now, true)

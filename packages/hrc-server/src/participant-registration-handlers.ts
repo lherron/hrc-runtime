@@ -278,6 +278,7 @@ const DIRECT_FIELDS = [
   'socketPath',
   'processToken',
   'evidence',
+  'expectedPredecessor',
 ]
 
 function rejectUnsupportedFields(body: Record<string, unknown>, allowed: readonly string[]): void {
@@ -320,6 +321,41 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
     if (evidence !== undefined && !isJsonValue(evidence)) {
       malformed('evidence must be JSON-serializable when provided', 'evidence')
     }
+    let expectedPredecessor: DirectJoinRequest['expectedPredecessor']
+    if (body['expectedPredecessor'] !== undefined) {
+      const raw = body['expectedPredecessor']
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        malformed('expectedPredecessor must be an object', 'expectedPredecessor')
+      }
+      const predecessor = raw as Record<string, unknown>
+      const keys = Object.keys(predecessor).sort()
+      if (keys.join(',') !== 'generation,hostIncarnationId,runtimeId') {
+        malformed(
+          'expectedPredecessor must contain exactly hostIncarnationId, runtimeId, and generation',
+          'expectedPredecessor'
+        )
+      }
+      if (
+        !Number.isInteger(predecessor['generation']) ||
+        (predecessor['generation'] as number) < 1
+      ) {
+        malformed(
+          'expectedPredecessor.generation must be a positive integer',
+          'expectedPredecessor'
+        )
+      }
+      expectedPredecessor = {
+        hostIncarnationId: requiredNonEmptyString(
+          predecessor['hostIncarnationId'],
+          'expectedPredecessor.hostIncarnationId'
+        ),
+        runtimeId: requiredNonEmptyString(
+          predecessor['runtimeId'],
+          'expectedPredecessor.runtimeId'
+        ),
+        generation: predecessor['generation'] as number,
+      }
+    }
     return {
       mode: 'direct',
       requestedSessionRef,
@@ -337,6 +373,7 @@ export function parseRegisterParticipantRequest(input: unknown): RegisterPartici
       ...(optionalSocketPath(body['socketPath']) === undefined
         ? {}
         : { socketPath: optionalSocketPath(body['socketPath']) }),
+      ...(expectedPredecessor === undefined ? {} : { expectedPredecessor }),
     }
   }
 
@@ -381,7 +418,23 @@ async function handleDirectRegistration(
     ...(body.participantKey === undefined ? {} : { participantKey: body.participantKey }),
     ...(body.workspaceCwd === undefined ? {} : { workspaceCwd: body.workspaceCwd }),
     ...(body.socketPath === undefined ? {} : { socketPath: body.socketPath }),
+    ...(body.expectedPredecessor === undefined
+      ? {}
+      : { expectedPredecessor: body.expectedPredecessor }),
   })
+
+  if (result.outcome === 'refused' && result.status === 'pending') {
+    const registration = server.db.participantRegistrations.getRegistrationByScopeRef(
+      body.requestedSessionRef
+    )
+    const attempt =
+      registration === null
+        ? null
+        : server.db.participantRegistrations.getAttemptByRegistrationId(registration.registrationId)
+    if (registration !== null && attempt?.replacementIntentJson !== undefined) {
+      scheduleParticipantEstablishment(server, registration, attempt)
+    }
+  }
 
   if (result.outcome === 'redirect') {
     return json(
@@ -412,9 +465,7 @@ async function handleDirectRegistration(
     hostSessionId: identity.hostSessionId,
     generation: identity.generation,
     created: result.created,
-    // A join carries nothing forward, so it never reports a resume. That stays
-    // true whatever the driver later says about its own native state.
-    resumed: false,
+    resumed: identity.generation > 1 && continuation.carried,
     observation: result.attached
       ? {
           state: 'attached',

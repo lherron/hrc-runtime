@@ -3270,6 +3270,10 @@ export {
   parseNodeId,
 } from './federation/node-id.js'
 export type { NodeId } from './federation/node-id.js'
+export {
+  recordParticipantRecoveryDisposition,
+  renewParticipantReplacementRecovery,
+} from './participant-succession.js'
 export { PeerToken, REDACTED_PEER_TOKEN } from './federation/peer-token.js'
 export { constantTimeEqual } from './constant-time.js'
 export { establishLocalPlacement } from './federation/establishment.js'

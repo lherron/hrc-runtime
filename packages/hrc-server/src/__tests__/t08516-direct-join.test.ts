@@ -254,10 +254,10 @@ describe('T-08516 direct protocol join', () => {
     const before = readStore()
 
     const intruder = await observe(await join({ hostIncarnationId: 'incarnation-beta' }))
-    expect(intruder.status).toBe(200)
+    expect(intruder.status).toBe(409)
     expect(intruder.body).toMatchObject({
-      status: 'pending',
-      reason: 'participant_host_replacement_unsupported',
+      status: 'rejected',
+      reason: 'host_binding_conflict',
     })
 
     // Speaking the protocol transfers nothing. The occupant's binding, its
@@ -442,6 +442,17 @@ describe('T-08516 direct protocol join', () => {
     expect(unknownField.body).toMatchObject({
       error: { code: 'malformed_request', detail: { field: 'provisioner' } },
     })
+
+    for (const expectedPredecessor of [
+      { hostIncarnationId: 'host-a', runtimeId: 'rt-a' },
+      { hostIncarnationId: 'host-a', runtimeId: 'rt-a', generation: 1, extra: true },
+    ]) {
+      const invalidPredecessor = await observe(await join({ expectedPredecessor }))
+      expect(invalidPredecessor.status).toBe(400)
+      expect(invalidPredecessor.body).toMatchObject({
+        error: { code: 'malformed_request', detail: { field: 'expectedPredecessor' } },
+      })
+    }
   })
 
   test('a reserved address is never given a substitute birth', async () => {

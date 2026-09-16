@@ -25,6 +25,7 @@ import {
   type ParticipantRealizedHosting,
   realizeAndFreezeParticipantDispatch,
 } from './participant-realization.js'
+import { recoverParticipantReplacement } from './participant-succession.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { timestamp } from './server-util.js'
@@ -323,22 +324,62 @@ function participantTransport(realized: ParticipantRealizedHosting): 'headless' 
 }
 
 function assertExistingParticipantRuntime(
+  server: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
   registration: ParticipantRegistration,
   attempt: ParticipantAttempt,
   profile: BrokerExecutionProfile
-): void {
-  if (
+): 'same' | 'advance' {
+  const stableIdentityConflicts =
     runtime.hostSessionId !== registration.hostSessionId ||
     runtime.scopeRef !== registration.scopeRef ||
     runtime.laneRef !== registration.laneRef ||
-    runtime.generation !== registration.generation ||
-    runtime.activeOperationId !== attempt.operationId ||
-    runtime.activeInvocationId !== attempt.invocationId ||
-    runtime.selectedProfileHash !== profile.profileHash
+    runtime.generation !== registration.generation
+  if (stableIdentityConflicts) {
+    throw new Error('participant runtime bookkeeping conflicts with the committed attempt')
+  }
+  if (
+    runtime.activeOperationId === attempt.operationId &&
+    runtime.activeInvocationId === attempt.invocationId &&
+    runtime.selectedProfileHash === profile.profileHash
+  ) {
+    return 'same'
+  }
+  const prior =
+    runtime.activeInvocationId === undefined
+      ? null
+      : registration.policy?.continuityPolicy === 'host-incarnation'
+        ? // The prior invocation is immutable evidence that the shared runtime
+          // belongs to the same binding; a larger committed attach epoch is the
+          // only operation allowed to advance it.
+          attempt.hostBindingId === undefined
+          ? null
+          : runtime.runtimeStateJson?.['participantRegistration']
+        : null
+  const priorRegistration =
+    typeof prior === 'object' && prior !== null
+      ? (prior as { attemptId?: unknown; attachEpoch?: unknown })
+      : undefined
+  if (
+    priorRegistration?.attemptId === undefined ||
+    typeof priorRegistration.attachEpoch !== 'number' ||
+    attempt.attachEpoch <= priorRegistration.attachEpoch
   ) {
     throw new Error('participant runtime bookkeeping conflicts with the committed attempt')
   }
+  const priorAttempt = server.db.participantRegistrations.getAttempt(
+    String(priorRegistration.attemptId)
+  )
+  if (
+    priorAttempt === null ||
+    priorAttempt.hostBindingId !== attempt.hostBindingId ||
+    priorAttempt.invocationId !== runtime.activeInvocationId ||
+    priorAttempt.operationId !== runtime.activeOperationId ||
+    !['ABANDONED', 'TERMINAL', 'SUPERSEDED'].includes(priorAttempt.state)
+  ) {
+    throw new Error('participant runtime advance lacks an absorbing same-binding predecessor')
+  }
+  return 'advance'
 }
 
 /**
@@ -388,11 +429,43 @@ function materializeParticipantBrokerBookkeeping(
   server.db.sqlite.transaction(() => {
     const existingRuntime = server.db.runtimes.getByRuntimeId(attempt.runtimeId)
     if (existingRuntime !== null) {
-      assertExistingParticipantRuntime(existingRuntime, registration, attempt, profile)
-      if (existingRuntime.runtimeStateJson?.['lifecycleOwner'] !== lifecycleOwner) {
+      const runtimeDisposition = assertExistingParticipantRuntime(
+        server,
+        existingRuntime,
+        registration,
+        attempt,
+        profile
+      )
+      if (runtimeDisposition === 'advance') {
         server.db.runtimes.update(existingRuntime.runtimeId, {
+          activeOperationId: attempt.operationId,
+          activeInvocationId: attempt.invocationId,
+          selectedProfileHash: profile.profileHash,
+          status: 'starting',
+          statusChangedAt: now,
           runtimeStateJson: {
             ...(existingRuntime.runtimeStateJson ?? {}),
+            status: 'starting',
+            participantRegistration: {
+              registrationId: registration.registrationId,
+              attemptId: attempt.attemptId,
+              attachEpoch: attempt.attachEpoch,
+              join: registration.join,
+            },
+            invocation: {
+              invocationId: attempt.invocationId,
+              state: 'ready',
+              driver: profile.brokerDriver,
+            },
+          },
+          updatedAt: now,
+        })
+      }
+      if (existingRuntime.runtimeStateJson?.['lifecycleOwner'] !== lifecycleOwner) {
+        const latestRuntime = server.db.runtimes.getByRuntimeId(existingRuntime.runtimeId)
+        server.db.runtimes.update(existingRuntime.runtimeId, {
+          runtimeStateJson: {
+            ...(latestRuntime?.runtimeStateJson ?? existingRuntime.runtimeStateJson ?? {}),
             lifecycleOwner,
           },
           updatedAt: now,
@@ -827,6 +900,11 @@ async function runParticipantEstablishment(
     current.establishmentWorkState === 'exhausted'
   ) {
     return
+  }
+  if (current.replacementIntentJson !== undefined) {
+    const result = await recoverParticipantReplacement(server, current)
+    if (result.outcome === 'registered') return
+    throw new Error(`${result.reason}: ${result.detail}`)
   }
   const latest = server.db.participantRegistrations.getAttemptByRegistrationId(
     current.registrationId

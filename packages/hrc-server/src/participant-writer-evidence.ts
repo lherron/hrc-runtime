@@ -40,24 +40,32 @@ function parseJson<T>(json: string | undefined): T | null {
  */
 export function participantWriterRef(
   registration: ParticipantRegistration,
-  attempt: ParticipantAttempt
+  attempt: ParticipantAttempt,
+  subject: WriterRef['subject'] = 'bridge'
 ): WriterRef | null {
   const identity = parseJson<{ brokerInstanceId?: unknown }>(attempt.brokerIdentityJson)
-  if (identity === null) return null
-  const { brokerInstanceId } = identity
-  if (typeof brokerInstanceId !== 'string' || brokerInstanceId.length === 0) return null
+  const brokerInstanceId = identity?.brokerInstanceId
+  if (
+    subject === 'bridge' &&
+    (typeof brokerInstanceId !== 'string' || brokerInstanceId.length === 0)
+  ) {
+    return null
+  }
   // A `WriterRef` is identified by class and key. A direct protocol join may
   // have neither, and this evidence path is the key-scoped one, so an absent
   // pair means there is no ref to mint -- not a ref with placeholder parts.
   if (registration.classId === undefined || registration.participantKey === undefined) return null
   return {
-    subject: 'bridge',
+    subject,
     classId: registration.classId,
     participantKey: registration.participantKey,
     attemptId: attempt.attemptId,
     invocationId: attempt.invocationId as WriterRef['invocationId'],
     attachEpoch: attempt.attachEpoch,
-    brokerInstanceId,
+    ...(subject === 'bridge' ? { brokerInstanceId: brokerInstanceId as string } : {}),
+    ...(subject === 'host' && registration.hostIncarnationId !== undefined
+      ? { hostIncarnationId: registration.hostIncarnationId }
+      : {}),
   }
 }
 
@@ -185,13 +193,38 @@ export async function obtainParticipantWriterEvidence(
   server: HrcServerInstanceForHandlers,
   adapter: ParticipantAdapter,
   registration: ParticipantRegistration,
-  attempt: ParticipantAttempt
+  attempt: ParticipantAttempt,
+  subject: WriterRef['subject'] = 'bridge'
 ): Promise<WriterEvidence | null> {
+  const observed = await observeParticipantWriterEvidence(
+    server,
+    adapter,
+    registration,
+    attempt,
+    subject
+  )
+  return observed.outcome === 'evidence' ? observed.evidence : null
+}
+
+export type ParticipantWriterEvidenceObservation =
+  | { outcome: 'evidence'; evidence: WriterEvidence }
+  | { outcome: 'unavailable' }
+  | { outcome: 'invalid' }
+
+/** Detailed form used when invalid producer evidence must be refused distinctly. */
+export async function observeParticipantWriterEvidence(
+  server: HrcServerInstanceForHandlers,
+  adapter: ParticipantAdapter,
+  registration: ParticipantRegistration,
+  attempt: ParticipantAttempt,
+  subject: WriterRef['subject'] = 'bridge'
+): Promise<ParticipantWriterEvidenceObservation> {
   if (registration.join === 'hrc-hosted') {
-    return committedInstanceWriterEvidence(server, registration, attempt)
+    const evidence = await committedInstanceWriterEvidence(server, registration, attempt)
+    return evidence === null ? { outcome: 'unavailable' } : { outcome: 'evidence', evidence }
   }
-  const exactWriter = participantWriterRef(registration, attempt)
-  if (exactWriter === null) return null
+  const exactWriter = participantWriterRef(registration, attempt, subject)
+  if (exactWriter === null) return { outcome: 'unavailable' }
   // An already-absorbing prior writer is only inspected: asking its owner to
   // retire it again would be a fresh effect on someone else's writer rather
   // than an observation. Either method is read as evidence about the same
@@ -208,9 +241,9 @@ export async function obtainParticipantWriterEvidence(
       ? await adapter.inspectWriter?.(request as { writerRef: WriterRef })
       : await adapter.retireWriter?.(request as { writerRef: WriterRef; reason: string })
   } catch {
-    return null
+    return { outcome: 'unavailable' }
   }
-  if (raw === undefined) return null
+  if (raw === undefined) return { outcome: 'unavailable' }
   const validated = validateWriterEvidence(request, raw)
-  return validated.ok ? validated.value : null
+  return validated.ok ? { outcome: 'evidence', evidence: validated.value } : { outcome: 'invalid' }
 }

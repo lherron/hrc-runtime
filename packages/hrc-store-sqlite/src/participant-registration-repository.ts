@@ -610,6 +610,112 @@ export class ParticipantRegistrationRepository {
     return result.changes === 1
   }
 
+  storeReplacementIntent(input: {
+    attemptId: string
+    attachEpoch: number
+    replacementIntentJson: string
+    updatedAt: string
+  }): 'stored' | 'same' | 'conflict' {
+    const current = this.getAttempt(input.attemptId)
+    if (current === null || current.attachEpoch !== input.attachEpoch) return 'conflict'
+    if (current.replacementIntentJson !== undefined) {
+      return current.replacementIntentJson === input.replacementIntentJson ? 'same' : 'conflict'
+    }
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET replacement_intent_json = ?, establishment_work_state = 'pending',
+                establishment_next_attempt_at = NULL, establishment_last_error = NULL,
+                updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ? AND replacement_intent_json IS NULL`
+      )
+      .run(input.replacementIntentJson, input.updatedAt, input.attemptId, input.attachEpoch)
+    return result.changes === 1 ? 'stored' : 'conflict'
+  }
+
+  replaceReplacementIntent(input: {
+    attemptId: string
+    attachEpoch: number
+    expectedJson: string
+    replacementJson: string
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET replacement_intent_json = ?, updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ? AND replacement_intent_json = ?`
+      )
+      .run(
+        input.replacementJson,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch,
+        input.expectedJson
+      )
+    return result.changes === 1
+  }
+
+  completeReplacementWork(input: {
+    attemptId: string
+    attachEpoch: number
+    expectedIntentJson: string
+    completedIntentJson: string
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET replacement_intent_json = ?, establishment_work_state = 'completed',
+                establishment_next_attempt_at = NULL, establishment_last_error = NULL,
+                updated_at = ?
+          WHERE attempt_id = ? AND attach_epoch = ? AND replacement_intent_json = ?`
+      )
+      .run(
+        input.completedIntentJson,
+        input.updatedAt,
+        input.attemptId,
+        input.attachEpoch,
+        input.expectedIntentJson
+      )
+    return result.changes === 1
+  }
+
+  /** Explicit, reasoned recovery only; an ordinary duplicate cannot reset exhaustion. */
+  renewExhaustedReplacement(input: {
+    attemptId: string
+    reason: string
+    updatedAt: string
+  }): boolean {
+    const reason = input.reason.trim()
+    if (reason.length === 0) return false
+    const current = this.getAttempt(input.attemptId)
+    if (
+      current?.replacementIntentJson === undefined ||
+      current.establishmentWorkState !== 'exhausted'
+    ) {
+      return false
+    }
+    let intent: Record<string, unknown>
+    try {
+      intent = JSON.parse(current.replacementIntentJson) as Record<string, unknown>
+    } catch {
+      return false
+    }
+    intent['renewedRecovery'] = { reason, recordedAt: input.updatedAt }
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET replacement_intent_json = ?, establishment_work_state = 'pending',
+                establishment_attempt_count = 0, establishment_next_attempt_at = NULL,
+                establishment_last_error = NULL, updated_at = ?
+          WHERE attempt_id = ? AND establishment_work_state = 'exhausted'
+            AND replacement_intent_json = ?`
+      )
+      .run(JSON.stringify(intent), input.updatedAt, input.attemptId, current.replacementIntentJson)
+    return result.changes === 1
+  }
+
   /**
    * Successor allocation refreshes only the adapter-supplied boundary. It
    * deliberately cannot touch `continuity_evidence_json`: that column is the
@@ -641,6 +747,65 @@ export class ParticipantRegistrationRepository {
         input.preparationJson ?? null,
         input.updatedAt,
         input.registrationId
+      )
+    return result.changes === 1
+  }
+
+  updateDirectRegistrationForHostSuccessor(input: {
+    registrationId: string
+    expectedHostSessionId: string
+    hostSessionId: string
+    generation: number
+    hostIncarnationId: string
+    workspaceCwd?: string | undefined
+    socketPath?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registrations
+            SET host_session_id = ?, generation = ?, host_incarnation_id = ?,
+                workspace_cwd = COALESCE(?, workspace_cwd),
+                serving_socket_path = COALESCE(?, serving_socket_path), updated_at = ?
+          WHERE registration_id = ? AND registration_mode = 'direct'
+            AND host_session_id = ?`
+      )
+      .run(
+        input.hostSessionId,
+        input.generation,
+        input.hostIncarnationId,
+        input.workspaceCwd ?? null,
+        input.socketPath ?? null,
+        input.updatedAt,
+        input.registrationId,
+        input.expectedHostSessionId
+      )
+    return result.changes === 1
+  }
+
+  updateDirectRegistrationForBridgeSuccessor(input: {
+    registrationId: string
+    expectedHostSessionId: string
+    expectedHostIncarnationId: string
+    workspaceCwd?: string | undefined
+    socketPath?: string | undefined
+    updatedAt: string
+  }): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registrations
+            SET workspace_cwd = COALESCE(?, workspace_cwd),
+                serving_socket_path = COALESCE(?, serving_socket_path), updated_at = ?
+          WHERE registration_id = ? AND registration_mode = 'direct'
+            AND host_session_id = ? AND host_incarnation_id = ?`
+      )
+      .run(
+        input.workspaceCwd ?? null,
+        input.socketPath ?? null,
+        input.updatedAt,
+        input.registrationId,
+        input.expectedHostSessionId,
+        input.expectedHostIncarnationId
       )
     return result.changes === 1
   }
