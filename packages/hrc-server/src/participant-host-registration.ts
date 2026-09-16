@@ -240,7 +240,7 @@ async function registerDirectParticipantLocked(
   // simply asking for a second address, so it gets its own typed outcome and
   // the address it already holds is named.
   const heldElsewhere =
-    server.db.participantHostBindings.getBindingByHostIncarnationId(hostIncarnationId)
+    server.db.participantHostBindings.getLiveBindingByHostIncarnationId(hostIncarnationId)
   if (heldElsewhere !== null) {
     const heldReservation = server.db.participantHostBindings.getReservationById(
       heldElsewhere.reservationId

@@ -76,6 +76,8 @@ const bindingTransitions: Readonly<
   RETIRED: [],
 }
 
+const INCARNATION_HOLDING_STATES = "('BINDING', 'BOUND')"
+
 export function allowsParticipantHostBindingTransition(
   from: ParticipantHostBindingState,
   to: ParticipantHostBindingState
@@ -296,6 +298,17 @@ export class ParticipantHostBindingRepository {
     const row = this.db
       .query<BindingRow, [string]>(
         `SELECT ${BINDING_COLUMNS} FROM participant_host_bindings WHERE host_incarnation_id = ?`
+      )
+      .get(hostIncarnationId)
+    return row === null ? null : mapBinding(row)
+  }
+
+  /** Only a binding being established or established counts as this incarnation's held address. */
+  getLiveBindingByHostIncarnationId(hostIncarnationId: string): ParticipantHostBinding | null {
+    const row = this.db
+      .query<BindingRow, [string]>(
+        `SELECT ${BINDING_COLUMNS} FROM participant_host_bindings
+         WHERE host_incarnation_id = ? AND state IN ${INCARNATION_HOLDING_STATES}`
       )
       .get(hostIncarnationId)
     return row === null ? null : mapBinding(row)

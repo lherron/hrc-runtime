@@ -240,6 +240,68 @@ describe('T-08526 evidence-less participant transport succession', () => {
     })
   })
 
+  test('T-08530 retired incarnation stale re-claim reaches the occupied-address CAS refusal', async () => {
+    const scope = 'agent:arris:project:hrc-runtime:task:T-08530-stale'
+    const prior = await activePredecessor(scope)
+    const successor = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(scope, 'host-b', `${fixture.tmpDir}/host-b.sock`, prior.expected)
+    )
+    if (successor.outcome !== 'registered') throw new Error('H2 successor registration refused')
+
+    const stale = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(scope, 'host-a', `${fixture.tmpDir}/host-a-late.sock`, prior.expected)
+    )
+
+    expect(stale).toEqual({
+      outcome: 'refused',
+      status: 'rejected',
+      reason: 'host_binding_precondition_failed',
+      detail: `observed predecessor host-b/${successor.identity.runtimeId}/generation-2; supplied predecessor host-a/${prior.expected.runtimeId}/generation-1 is RETIRED (transport_dead)`,
+    })
+  })
+
+  test('T-08530 retired incarnation can claim a different free address', async () => {
+    const occupiedScope = 'agent:arris:project:hrc-runtime:task:T-08530-old'
+    const freeScope = 'agent:arris:project:hrc-runtime:task:T-08530-free'
+    const prior = await activePredecessor(occupiedScope)
+    const successor = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(occupiedScope, 'host-b', `${fixture.tmpDir}/host-b.sock`, prior.expected)
+    )
+    expect(successor).toMatchObject({ outcome: 'registered', identity: { generation: 2 } })
+
+    const reclaimed = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(freeScope, 'host-a', `${fixture.tmpDir}/host-a-free.sock`)
+    )
+
+    expect(reclaimed).toMatchObject({
+      outcome: 'registered',
+      created: true,
+      identity: { scopeRef: freeScope, generation: 1 },
+    })
+  })
+
+  test('T-08530 live incarnation still cannot claim a second address', async () => {
+    const heldScope = 'agent:arris:project:hrc-runtime:task:T-08530-held'
+    const secondScope = 'agent:arris:project:hrc-runtime:task:T-08530-second'
+    await activePredecessor(heldScope)
+
+    const second = await registerDirectParticipant(
+      server as unknown as HrcServerInstanceForHandlers,
+      request(secondScope, 'host-a', `${fixture.tmpDir}/host-a-second.sock`)
+    )
+
+    expect(second).toEqual({
+      outcome: 'refused',
+      status: 'rejected',
+      reason: 'participant_host_incarnation_bound_elsewhere',
+      detail: `host incarnation host-a already holds ${heldScope}; one incarnation holds at most one address`,
+    })
+  })
+
   test('completed hello is a live conflict and a bare claim never probes', async () => {
     const scope = 'agent:arris:project:hrc-runtime:task:T-08526-live'
     const prior = await activePredecessor(scope)

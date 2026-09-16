@@ -3581,6 +3581,19 @@ const participantProtocolJoinMigration: HrcMigration = {
   },
 }
 
+/** T-08530: a retired incarnation holds history, not an address. */
+const participantLiveIncarnationBindingMigration: HrcMigration = {
+  id: '0070_participant_live_incarnation_binding',
+  apply(db) {
+    db.exec(`
+      DROP INDEX idx_participant_binding_incarnation;
+      CREATE UNIQUE INDEX idx_participant_binding_incarnation
+        ON participant_host_bindings(host_incarnation_id)
+        WHERE state IN ('BINDING', 'BOUND');
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -3646,4 +3659,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   participantActivationWorkRepairMigration,
   participantSuccessorEvidenceMigration,
   participantProtocolJoinMigration,
+  participantLiveIncarnationBindingMigration,
 ]

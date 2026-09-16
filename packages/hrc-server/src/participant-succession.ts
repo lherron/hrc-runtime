@@ -272,10 +272,22 @@ export async function driveParticipantReplacement(
     binding.runtimeId !== expected.runtimeId ||
     binding.generation !== expected.generation
   ) {
+    const suppliedBinding = server.db.participantHostBindings
+      .listBindingsByReservationId(binding.reservationId)
+      .find(
+        (candidate) =>
+          candidate.hostIncarnationId === expected.hostIncarnationId &&
+          candidate.runtimeId === expected.runtimeId &&
+          candidate.generation === expected.generation
+      )
+    const suppliedDetail =
+      suppliedBinding?.state === 'RETIRED'
+        ? `; supplied predecessor ${expected.hostIncarnationId}/${expected.runtimeId}/generation-${expected.generation} is RETIRED (${suppliedBinding.dispositionReason ?? 'reason unavailable'})`
+        : ''
     return refusal(
       'rejected',
       'host_binding_precondition_failed',
-      `observed predecessor ${binding.hostIncarnationId}/${binding.runtimeId}/generation-${binding.generation}`
+      `observed predecessor ${binding.hostIncarnationId}/${binding.runtimeId}/generation-${binding.generation}${suppliedDetail}`
     )
   }
 
