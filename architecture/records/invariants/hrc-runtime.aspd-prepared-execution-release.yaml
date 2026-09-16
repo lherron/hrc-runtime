@@ -61,16 +61,26 @@ predicate: >
   node-default app-server viewer, the route also covers an omitted choice whose
   node default is tmux-tui, recorded with operatorPresentationSource
   node-default, superseding the facade preparation for that case. The Codex
-  interactive redirect control decides only whether an omitted-choice
-  non-interactive Codex request whose scope has nothing live is normalized to
+  interactive redirect control decides only whether a non-interactive Codex
+  request with no explicit presentation, no responseFormat, no high-risk
+  actuator split and no established broker runtime in its scope is normalized to
   the interactive codex-tui broker; it never decides whether an explicit
-  interactive Codex intent is admissible or a live interactive Codex runtime is
-  reusable. Whatever that control says, an omitted-choice Codex request is
-  delivered into its scope's live headless broker runtime or live interactive
-  Codex broker runtime and never creates a second writer beside it, stale-marks,
-  reprovisions or re-presents it; with the redirect off and nothing live it runs
-  headless codex-app-server with the node presentation default on this route; an
-  intent that arrives interactive keeps the standalone interactive backend.
+  interactive Codex intent is admissible or an interactive Codex runtime is
+  reusable. For a non-interactive Codex request without an explicit presentation,
+  the scope's established runtime, meaning its most recent harness-broker
+  runtime whose status is neither unavailable nor failed, whatever its
+  invocation state, selects the admission before responseFormat, actuator-split
+  or node defaults are considered. An established interactive Codex runtime
+  selects interactive admission, including for responseFormat, surface-reuse
+  refusals and high-risk actuator splits, which that admission or the
+  actuator-split route admission refuses without effect. An established headless
+  runtime selects the headless route. That admission alone decides reuse, birth
+  join, refusal or its fenced replacement, and no runtime of the other transport
+  is started beside an established one. With the redirect off and nothing
+  established, the request runs headless codex-app-server with the node
+  presentation default on this route. An intent that arrives interactive keeps
+  the standalone interactive backend. A rollback never pairs a release that gates
+  interactive Codex admission on the redirect control with that control off.
 authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08542
@@ -109,8 +119,8 @@ required_tests:
   - T-08554 operator attach to a live headless tmux-tui runtime returns its attach descriptor with no admission stale-marking or reprovision
   - agent-spaces release worker launches its renderer through its own release executable while checkout and package brokers keep the bun entry launch
   - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing; then shared max3 delivery and independent grade
-  - T-08555 omitted-choice precedence gates prove redirect-off node-default tmux-tui selects aspd with source node-default, redirect-on keeps the redirect, live headless and live interactive Codex runtimes receive omitted input without a second writer at both start and dispatch doors, and explicit interactive Codex stays admissible with the redirect off
-  - T-08555 isolated then shared max3 installed acceptance covers default cold launch through ordinary doors with aspd preparation worker viewer and renderer from the active release, attach detach reattach identity, no-viewer opt-out, conflicts, pre-existing live codex-tui and app-server scopes preserved across the configuration change, aspd-outage refusal of new default executions, rollback record, and independent grade
+  - T-08555 precedence gates at both start and dispatch doors prove redirect-off node-default tmux-tui selects aspd with source node-default, redirect-on keeps the redirect when nothing is established, established interactive (including transitional) receives omitted responseFormat surface-refusing and high-risk requests only through interactive admission or its refusal, established headless (including transitional) stays on the headless route, no cross-transport start occurs, and explicit interactive Codex stays admissible with the redirect off
+  - T-08555 isolated then shared max3 installed acceptance covers default cold launch through ordinary doors with aspd preparation worker viewer and renderer from the active release, attach detach reattach identity, no-viewer opt-out, conflicts, pre-existing live codex-tui and app-server scopes preserved across the configuration change, aspd-outage refusal of new default executions, paired plist-plus-release rollback record, and independent grade
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
 last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940; T-08554 implementation and installed evidence pending
 reopen_when:
