@@ -578,6 +578,14 @@ export async function cmdAdminStatus(args: string[]): Promise<void> {
       `Bundled ASP: ${report.bundledAspBuild.setVersion} (${report.bundledAspBuild.sourceCommit})\n`
     )
   }
+  const aspd = status.aspd
+  if (aspd !== undefined) {
+    process.stdout.write(
+      aspd.configured
+        ? `aspd: ${aspd.endpoint ?? '(invalid)'} ${aspd.reachable ? `serving ${aspd.release?.releaseId ?? '(unidentified)'} ${aspd.protocolVersion ?? ''}`.trimEnd() : `unreachable: ${aspd.error?.code ?? 'unknown'}`}\n`
+        : 'aspd: (not configured)\n'
+    )
+  }
   for (const binary of report.binaries) {
     process.stdout.write(
       `${binary.kind}: ${binary.source} ${binary.path}${binary.available ? '' : ` [unavailable: ${binary.error ?? 'unknown error'}]`}\n`

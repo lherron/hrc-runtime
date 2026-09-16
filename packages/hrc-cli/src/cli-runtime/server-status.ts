@@ -60,7 +60,7 @@ export type ServerRuntimeStatus = {
   tmuxSocketPath: string
   apiHealth: { ok: true } | { ok: false; error: string }
   api?:
-    | Pick<
+    | (Pick<
         HrcStatusResponse,
         | 'startedAt'
         | 'uptime'
@@ -73,7 +73,10 @@ export type ServerRuntimeStatus = {
         | 'binaryPath'
         | 'packagePath'
         | 'release'
-      >
+      > & {
+        /** T-08542: the active aspd preparation release this daemon reads back. */
+        aspd?: HrcStatusResponse['aspd'] | undefined
+      })
     | undefined
   /**
    * Node identity + peer summary from the running daemon (federation §3/§6).
@@ -365,6 +368,7 @@ export async function collectServerRuntimeStatus(
           binaryPath: status.binaryPath,
           packagePath: status.packagePath,
           release: status.release,
+          ...(status.aspd !== undefined ? { aspd: status.aspd } : {}),
         }
         node = status.node
         peerHealth = status.peerHealth
