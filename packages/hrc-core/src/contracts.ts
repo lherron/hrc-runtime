@@ -202,7 +202,8 @@ export type HrcExecutionIntent = {
    * "Autonomous one-shot" was the original framing (the codex "DM lands in the
    * operator's open TUI" reuse); the rule is about SURFACE OWNERSHIP, not turn
    * count. Undefined ⇒ treated as `true` (preserves DM-into-open-TUI for every
-   * existing caller).
+   * existing caller), EXCEPT that a carried `establishedBrokerInvocationId` is
+   * always checked (T-08540): a caller that claims a surface must own it.
    */
   allowInteractiveSurfaceReuse?: boolean | undefined
   /**

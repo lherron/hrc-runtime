@@ -370,6 +370,10 @@ export type DispatchTurnRequest = {
    * `execution.allowInteractiveSurfaceReuse: false` reuse a healthy matching
    * live runtime, and only when it equals that runtime's ACTIVE invocation.
    * Absent ⇒ never reuse (a first turn owns nothing yet).
+   * T-08540: once carried, the proof is checked even when the intent does not
+   * refuse reuse. A non-matching id is refused (runtime_unavailable,
+   * `caller-surface-reuse-refusal`) whenever a healthy matching live runtime
+   * exists; a scope with no such runtime still starts fresh.
    */
   establishedBrokerInvocationId?: string | undefined
   /**

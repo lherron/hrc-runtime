@@ -433,7 +433,17 @@ export function decideInteractiveBrokerAdmission(
     // handled before both the broker-reuse and stale-and-reprovision branches,
     // so no markRuntimeStaleForBrokerReprovision, no runtime.stale, activeRunId
     // and durable status intact, any in-flight operator turn unharmed.
-    if (refusesSurfaceReuse(intent) && !ownsLiveSurface(options, latestRuntime)) {
+    //
+    // T-08540: a carried proof is itself a claim to own this surface, so it is
+    // checked whether or not the intent refuses reuse. Without this a forged or
+    // stale id was ignored whenever `allowInteractiveSurfaceReuse` was absent
+    // and the turn was delivered into a surface the caller claimed, falsely, to
+    // own. No proof and no refusal still reuses (DM-into-open-TUI).
+    const claimsOwnership = options.establishedBrokerInvocationId !== undefined
+    if (
+      (refusesSurfaceReuse(intent) || claimsOwnership) &&
+      !ownsLiveSurface(options, latestRuntime)
+    ) {
       return {
         decision: 'runtime-unavailable',
         reason: CALLER_SURFACE_REUSE_REFUSAL,
