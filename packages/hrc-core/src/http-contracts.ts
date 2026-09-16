@@ -532,8 +532,9 @@ export type HrcSubmissionDoor = 'steer' | 'enqueue' | 'invoke' | 'preempt'
 export type HrcSubmissionDoorDowngradeReason = 'steer_not_supported'
 
 /**
- * The door the body actually went through. `requestedDoor` and
- * `downgradeReason` are present exactly when it differs from the one asked for.
+ * The door the body actually went through, reported by the steer door (the only
+ * door that can change). `requestedDoor` and `downgradeReason` are present
+ * exactly when it differs from the one asked for.
  */
 export type HrcSubmissionDoorReport =
   | { effectiveDoor: HrcSubmissionDoor; requestedDoor?: undefined; downgradeReason?: undefined }

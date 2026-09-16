@@ -480,9 +480,16 @@ export function submissionDoorReport(
   }
 }
 
+/**
+ * Only the steer door reports its door: it is the one door that can change.
+ * Every other door's body stays exactly as ratified (T-07880: `/v1/turns` is a
+ * deep-equal alias of the invoke door).
+ */
 function publicDoorReport(
+  requestedDoor: SubmissionDoor,
   report: ReturnType<typeof submissionDoorReport>
-): HrcSubmissionDoorReport {
+): HrcSubmissionDoorReport | undefined {
+  if (requestedDoor !== 'steer') return undefined
   return report.requestedDoor === undefined
     ? { effectiveDoor: report.effectiveDoor }
     : {
@@ -541,7 +548,6 @@ export async function handleSubmission(
         admission: 'rejected',
         reason,
         disposition: { type: 'rejected', reason },
-        effectiveDoor: door,
       } satisfies HrcSubmissionResponse)
     }
   }
@@ -638,7 +644,7 @@ export async function handleSubmission(
     false,
     request.signal,
     true,
-    publicDoorReport(doorReport)
+    publicDoorReport(door, doorReport)
   )
 }
 
