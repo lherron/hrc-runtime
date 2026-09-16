@@ -95,9 +95,10 @@ predicate: >
   ASP_HOME as the request aspHome and records it in the route decision, so the
   worker's codex home, and therefore continuation resume, is the same store the
   standalone interactive route uses, independent of the aspd daemon environment.
-authority: wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
+authority: wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08555
+  - commit:d9012d25
   - commit:494fef39
   - wrkq:T-08542
   - wrkq:T-08553
