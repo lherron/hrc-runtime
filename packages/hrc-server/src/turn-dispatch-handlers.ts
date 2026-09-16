@@ -72,6 +72,7 @@ import {
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
   requestsNoOperatorViewer,
+  scopeHasLiveHeadlessBrokerRuntime,
   withFrozenOperatorPresentation,
 } from './presentation-operator.js'
 import {
@@ -1755,13 +1756,15 @@ async function dispatchAdmittedTurnForSession(
   // dispatch stays on the headless app-server route, whose turn/start request
   // is the schema vehicle. The stock TUI queue protocol has no schema field.
   // T-08553: an explicit per-request no-viewer choice keeps the dispatch
-  // headless, exactly as a responseFormat does; absent, the redirect is unchanged.
+  // headless, exactly as a responseFormat does; an omitted one is delivered into
+  // the scope's live headless runtime rather than redirected past it.
   const codexRedirect =
     this.codexCliTmuxBrokerEnabled &&
     !highRiskActuatorSplit &&
     options.responseFormat === undefined &&
     !requestsNoOperatorViewer(normalizedInputIntent) &&
-    shouldRedirectCodexToInteractiveBroker(normalizedInputIntent)
+    shouldRedirectCodexToInteractiveBroker(normalizedInputIntent) &&
+    !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, normalizedInputIntent)
   const intent = claudeRedirect
     ? normalizeClaudeInteractiveBrokerIntent(normalizedInputIntent)
     : codexRedirect

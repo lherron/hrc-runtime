@@ -317,15 +317,46 @@ describe('T-08553 per-request operator presentation', () => {
     expect(operationsFor(s.hostSessionId)).toEqual([])
   })
 
+  it('omitted choice is delivered into a live headless runtime, never redirected past it', async () => {
+    const recorded = await bootMax3Node()
+    const s = await session()
+    const runtime = {
+      ...liveRuntime(s, 'rt-t08553-live', 'headless', 'none'),
+      activeInvocationId: 'inv-t08553-live',
+    }
+    internal().db.runtimes.insert(runtime as never)
+    const now = new Date().toISOString()
+    internal().db.brokerInvocations.insert({
+      invocationId: 'inv-t08553-live',
+      operationId: 'op-t08553-live',
+      runtimeId: runtime.runtimeId,
+      brokerProtocol: 'harness-broker/0.2',
+      brokerDriver: 'codex-app-server',
+      invocationState: 'ready',
+      capabilitiesJson: JSON.stringify({ inputQueue: { mode: 'fifo' } }),
+      specHash: 'sha256:t08553-spec',
+      startRequestHash: 'sha256:t08553-request',
+      selectedProfileHash: 'sha256:t08553-profile',
+      createdAt: now,
+      updatedAt: now,
+    } as never)
+    await turn(s.hostSessionId, headlessIntent())
+    await Bun.sleep(50)
+    expect(recorded).toHaveLength(0)
+    expect(aspd.compileCalls).toBe(0)
+  })
+
   it('the conflict predicate: omitted and matching choices never conflict; dead runtimes never count', async () => {
     const s = await session()
     const tui = liveRuntime(s, 'rt-a', 'headless', 'tmux-tui') as unknown as HrcRuntimeSnapshot
     const plain = liveRuntime(s, 'rt-b', 'headless', 'none') as unknown as HrcRuntimeSnapshot
     const dead = { ...tui, status: 'terminated' } as HrcRuntimeSnapshot
+    // A start that failed (e.g. a refused interactive writer) left a tmux row behind.
+    const failed = { ...tui, transport: 'tmux', status: 'failed' } as HrcRuntimeSnapshot
     const unreadable = { ...plain, runtimeStateJson: { broker: {} } } as HrcRuntimeSnapshot
     expect(() => assertNoOperatorPresentationConflict(headlessIntent(), [tui])).not.toThrow()
     expect(() =>
-      assertNoOperatorPresentationConflict(noViewerIntent(), [plain, dead])
+      assertNoOperatorPresentationConflict(noViewerIntent(), [plain, dead, failed])
     ).not.toThrow()
     expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [tui])).toThrow('tmux-tui')
     expect(() => assertNoOperatorPresentationConflict(noViewerIntent(), [unreadable])).toThrow(

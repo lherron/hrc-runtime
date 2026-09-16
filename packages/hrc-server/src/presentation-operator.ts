@@ -17,7 +17,10 @@ import {
   HrcUnprocessableEntityError,
 } from 'hrc-core'
 
+import type { HrcDatabase } from 'hrc-store-sqlite'
+
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
+import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 
 export type OperatorPresentationSource = 'request' | 'node-default'
@@ -79,14 +82,35 @@ export function withFrozenOperatorPresentation(
 }
 
 /**
- * The presentation a live runtime shows its operator; undefined when not live.
+ * An omitted choice is delivered to whatever runtime is live. A scope with a
+ * live headless broker runtime therefore keeps a Codex start or dispatch off the
+ * node's interactive redirect, which would open a competing writer on that
+ * runtime's thread instead of delivering into it.
+ */
+export function scopeHasLiveHeadlessBrokerRuntime(
+  db: HrcDatabase,
+  hostSessionId: string,
+  intent: HrcRuntimeIntent
+): boolean {
+  const runtime = getReusableHeadlessRuntimeForSession(
+    db,
+    hostSessionId,
+    intent.harness.provider,
+    intent.harness.id
+  )
+  return runtime?.controllerKind === 'harness-broker'
+}
+
+/**
+ * The presentation a live runtime shows its operator; undefined when not live
+ * (an unavailable status, or a runtime that failed to start).
  * A live broker runtime whose hosting state cannot be read is `unknown`, which
  * is not provably `none` and therefore conflicts (fail closed).
  */
 export function liveRuntimePresentation(
   runtime: HrcRuntimeSnapshot
 ): 'none' | 'tmux-tui' | 'interactive' | 'unknown' | undefined {
-  if (isRuntimeUnavailableStatus(runtime.status)) return undefined
+  if (isRuntimeUnavailableStatus(runtime.status) || runtime.status === 'failed') return undefined
   if (runtime.transport === 'tmux') return 'interactive'
   if (runtime.controllerKind !== 'harness-broker') return 'none'
   const hosting = parseBrokerRuntimeHostingState(runtime)

@@ -45,6 +45,7 @@ import {
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
   requestsNoOperatorViewer,
+  scopeHasLiveHeadlessBrokerRuntime,
 } from './presentation-operator.js'
 import {
   requireKnownRuntime,
@@ -330,12 +331,14 @@ export async function startRuntimeForSession(
       this.claudeCodeTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
       shouldRedirectClaudeToInteractiveBroker(intent)
-    // T-08553: an explicit per-request no-viewer choice keeps the start headless.
+    // T-08553: an explicit per-request no-viewer choice keeps the start headless,
+    // and an omitted one is delivered into the scope's live headless runtime.
     const codexRedirect =
       this.codexCliTmuxBrokerEnabled &&
       !highRiskActuatorSplit &&
       !requestsNoOperatorViewer(intent) &&
-      shouldRedirectCodexToInteractiveBroker(intent)
+      shouldRedirectCodexToInteractiveBroker(intent) &&
+      !scopeHasLiveHeadlessBrokerRuntime(this.db, session.hostSessionId, intent)
     const startIntent = claudeRedirect
       ? normalizeClaudeInteractiveBrokerIntent(intent)
       : codexRedirect
