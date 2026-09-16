@@ -17,20 +17,31 @@ interactive redirect is enabled and the headless presentation default is
 preparation, persistence-ordering, launch, release-binding or reattach rule
 below.
 
+Amendment (T-08554, Codex app-server viewer on this route; released by Astra
+EN-12934 under Lance's standing authorization EN-12932): §1.2 lets a request
+explicitly select the headless codex-app-server with HRC's existing attached
+`tmux-tui` renderer viewer, prepared through aspd and bound to the same
+execution release as its worker. It is not the standalone interactive Codex
+CLI/tmux backend (the `codexTui` interactive broker), does not change any
+omitted-request default, and adds no ASPC verb, flag or wire field.
+
 ## 1. Route and configuration
 
 **Route.** HRC-hosted headless Codex: a non-interactive runtime intent whose
 compile profile selector is `brokerDriver: codex-app-server`, with EFFECTIVE
-operator presentation `none` (no `tmux-tui` viewer). The effective presentation
-is the request's explicit choice when present (§1.1), otherwise the node default
-`HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`. Nothing else changes route.
+operator presentation `none` (no `tmux-tui` viewer), or (T-08554, §1.2) with
+presentation `tmux-tui` selected by an explicit request. The effective
+presentation is the request's explicit choice when present (§1.1, §1.2),
+otherwise the node default `HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`; a
+node-default `tmux-tui` is not on this route. Nothing else changes route.
 
 ### 1.1 Per-request operator presentation (T-08553)
 
 **Carrier.** The existing `HrcRuntimeIntent.presentation` object
 (`HrcPresentationIntent`, today `{ viewerWindow? }`) gains one optional field,
-`operator?: 'none'`. It is the only accepted value: the request can decline the
-node's viewer, never impose one. No flag, no ASP wire change, no new endpoint.
+`operator?: 'none'`. As amended by T-08554 (§1.2) it also accepts `'tmux-tui'`,
+which selects the app-server viewer; the rules below for `none` are otherwise
+unchanged. No flag, no ASP wire change, no new endpoint.
 
 **Doors.** The same intent every start/dispatch door already accepts, so the
 HTTP API takes `intent.presentation.operator` where it takes
@@ -96,7 +107,8 @@ one, keeps its existing behavior (in-process-spawned stdio `aspc-facade`
 resolved by `hrc-runtime.asp-toolchain-selection`). A relative or empty value
 is a configuration error on this route, not "unset".
 
-Every other route (interactive tmux, the codex `tmux-tui` viewer route, pi-sdk,
+Every other route (interactive tmux, the node-default codex `tmux-tui` viewer
+route — only an explicit §1.2 request moves a viewer onto aspd — pi-sdk,
 participant registration/establishment, previews, catalog/inspection) is
 untouched and keeps its facade/toolchain selection.
 
@@ -105,6 +117,114 @@ unavailability, protocol/capability incompatibility, an unidentified service
 release, or a compile result without `executionRelease` is a named error
 before any hosting effect. HRC never reaches the bundled facade, a toolchain
 root, a per-binary override, or source for this route.
+
+### 1.2 Explicit app-server viewer (T-08554)
+
+**What the viewer is today.** On the headless codex-app-server route with
+effective presentation `tmux-tui`, HRC allocates the leased substrate with two
+windows (`broker`, `tui`), launches the worker with
+`--experimental-observer-socket <bipc/<hash>/observer path>`, dispatches
+`runtime.terminalSurface` = the `tui` pane lease with
+`terminalSurfaceRequired: true` and `HARNESS_BROKER_OBSERVER_SOCKET`, and
+persists `presentation: { kind: 'tmux-tui', tuiWindow, operatorAttachTarget,
+attachCommand }`. The worker's codex-app-server driver launches its read-only
+renderer into that pane (bootstrap `invocation.eventsSince`, live
+`invocation.event`; `/quit` in the pane is the driver's quit intent). The
+public transport stays `headless`. The Ghostty viewer (hrc-viewer) attaches
+from the presentation read model (`tmux attach-session -t <session>:tui`), with
+no server attach call. Today that route is reached only by an omitted choice on a node
+whose default is `tmux-tui` AND whose Codex redirect does not apply (e.g. a
+`responseFormat` dispatch), and it always prepares through the bundled facade.
+
+**Carrier.** `HrcPresentationIntent.operator` accepts one more value:
+`operator?: 'none' | 'tmux-tui'`. `'tmux-tui'` means "run this new execution on
+the headless codex-app-server with the HRC tmux-tui viewer". No new object,
+flag, endpoint or ASP wire field.
+
+**Doors.** The same intent every start/dispatch door already accepts
+(`intent.presentation.operator: 'tmux-tui'` on the HTTP API). CLI: `hrc start
+<scope> --app-server-viewer`, beside `--no-viewer` and `--viewer-window`. The CLI
+refuses `--app-server-viewer` together with `--no-viewer` before any request.
+Not offered on `hrc run`. `--viewer-window` remains accepted with it (it places
+the Ghostty session tab that shows the attach; it is not a second viewer).
+
+**Precedence.** Identical to `none` except the presentation it selects:
+1. *Codex interactive redirect*: an explicit `'tmux-tui'` exempts that dispatch
+   exactly as `'none'` and `responseFormat` do; the intent stays headless.
+2. *Headless presentation default*: explicit `'tmux-tui'` → `tmux-tui`
+   regardless of the node default.
+3. Omitted choice: every node default byte for byte as today, including the
+   Codex redirect and the omitted-choice delivery rule of §1.1 (de85ff26).
+
+**Route selection with aspd configured.** The aspd route (this document)
+covers a headless codex-app-server intent whose effective presentation is
+`none` (explicit or node default), OR is `tmux-tui` by EXPLICIT request
+(`operatorPresentationSource: request`). An omitted choice that resolves to
+`tmux-tui` through the node default keeps its facade preparation unchanged, so
+no existing caller migrates. With `HRC_ASPD_SOCKET` unset, an explicit
+`'tmux-tui'` runs on the existing facade viewer route.
+
+**Validation.** `'tmux-tui'` is refused before any runtime, operation or
+hosting effect exactly where `'none'` is (interactive intent, Claude redirect,
+not the headless broker route: `presentation_operator_unsupported`), and
+additionally when the intent's compile profile selector is not
+`brokerDriver: codex-app-server` (`presentation_operator_unsupported`, reason
+`driver-has-no-viewer`), because the presentation decision is driver-gated and
+would otherwise silently resolve `none`. Any value other than the two:
+`malformed_request`.
+
+**Existing scope.** Generalizes §1.1 to "the request's presentation must equal
+the live runtime's": an explicit `'tmux-tui'` against a live runtime presenting
+`none`, an interactive surface, or unreadable hosting is refused
+`presentation_conflict`, untouched; against a live `tmux-tui` runtime it is
+delivered normally. `'none'` against live `tmux-tui` stays refused. Omitted:
+never a conflict (§1.1). Terminated, unavailable and `failed` runtimes never
+count.
+
+**Persistence.** Applied intent `presentation.operator: 'tmux-tui'`;
+route decision `operatorPresentation: 'tmux-tui'`,
+`operatorPresentationSource: 'request'`; persisted runtime hosting
+`presentation.kind: 'tmux-tui'` (existing shape).
+
+**Operator attach door.** `hrc attach <scope>` must attach to this viewer, not
+replace it. Today `attachRuntimeEffectfully` rewrites the latest intent to
+interactive and runs `decideInteractiveBrokerAdmission`, which only reuses a
+`transport: tmux` broker; a live headless runtime falls through to
+stale-and-reprovision and an interactive codex-tui broker. The amendment: when
+the scope's latest runtime is a live harness-broker runtime that is operator
+attachable (`canOperatorAttach`: persisted `tmux-tui` presentation with an
+attach target), attach returns that runtime's existing attach descriptor
+(`attachRuntime`, tmux attach to `:tui`) with no admission, stale-marking,
+reprovision or intent change. Every other attach case is unchanged. Detach is a
+tmux client detach; reattach is the same door. None of these contacts aspd or
+the worker.
+
+**Release binding of the viewer.** On this route the renderer is part of the
+execution release, never resolved from PATH, a checkout, or HRC's bundled ASP:
+- HRC freezes at boundary P the observer socket path in
+  `hosting.paths.observerSocketPath` and the worker argv
+  `argvPrefix + HRC hosting flags + ['--experimental-observer-socket', path]`,
+  plus `hosting.presentation: 'tmux-tui'` and the route decision above. Launch
+  (§5.1) recomputes and compares these (`launch_description_mismatch`) and
+  allocates with the existing tmux-tui allocator carrying the frozen worker
+  launch (the allocator's frozen-argv hosting check also covers the observer
+  flag). The controller's current refusal of an aspd execution on the tmux-tui
+  substrate (`aspd_route_profile_mismatch`) narrows to: allowed only when the
+  frozen record's presentation is `tmux-tui`.
+- ASP (agent-spaces, artifact change, no wire change): a standalone release
+  worker (launched by its release launcher, which exports `ASP_RELEASE_ROOT`)
+  launches the renderer through its own release executable,
+  `<ASP_RELEASE_ROOT>/harness-broker renderer --driver codex-app-server …`, via a
+  new `harness-broker renderer` subcommand compiled into the same payload.
+  Today the driver pastes `exec bun <dirname(import.meta.url)>/renderer-entry`,
+  which inside a bun-compiled release resolves to `/$bunfs/root/renderer-entry`
+  and does not exist (verified against release
+  `asp-fa4514730cc9-20260916T190607Z-b5f584` and a compiled probe), so without
+  this the viewer cannot start from any aspd release. Checkout/package brokers
+  (facade route) keep the existing `bun <entry>` launch. The same release
+  build and activation produces the A and B releases for acceptance.
+- HRC does not verify the renderer process; the binding is by construction in
+  the release worker and is evidenced by pane process readback.
 
 ## 2. Wire use (existing contract only)
 
@@ -135,6 +255,11 @@ Reused records; one additive column. No new table, no universal lifecycle.
 | Runtime/run/invocation start graph, hosting endpoint/substrate, negotiated protocol | existing `persistStartGraph` rows | B4 (existing position: after hello, before `invocation.start`) |
 | Per-runtime execution release (frozen release + actual worker hello release) | `runtimes.runtime_state_json.executionRelease` (`source: 'aspd'`) | B4, then the post-start runtime state write |
 | Uncertain start | `preparation_json.startOutcome = 'uncertain'` in addition to the existing failure projection | When `invocation.start` fails at transport level after being sent |
+
+T-08554 adds no record: for an explicit app-server viewer the same
+`preparation_json` carries `hosting.presentation: 'tmux-tui'`,
+`hosting.paths.observerSocketPath` and the observer flag in `hosting.argv`; the
+runtime row carries the existing `tmux-tui` presentation projection.
 
 Status of a frozen attempt is therefore read from durable rows only:
 
@@ -229,6 +354,14 @@ refused `release_unavailable` again and stays visible.
   release identity; a mismatch refuses attachment with
   `broker_reattach_release_mismatch` (existing stale-classification path), never
   a silent attach. No preparation and no aspd connection are on this path.
+- T-08554 viewer: attach (`hrc attach`, §1.2 attach door, or the Ghostty
+  viewer), detach (tmux client detach) and
+  reattach are tmux client operations on the persisted `tui` window; they never
+  restart the worker or renderer, never contact aspd, and never change runtime
+  identity or execution release. Renderer death is the driver's existing
+  diagnostic, not a runtime lifecycle input for HRC. After a daemon restart the
+  tmux server holding broker and renderer panes is untouched; reattach is the
+  existing endpoint + release-hello path above.
 - The orphan lease sweep, lease re-association, stale classification and
   cleanup semantics are unchanged.
 
@@ -278,11 +411,26 @@ intent and route decision, a live runtime whose presentation differs is refused
 rather than replaced, and a frozen preparation is resumed without re-evaluating
 the choice.
 
+**Amend `hrc-runtime.aspd-prepared-execution-release` (T-08554):** the route
+also covers an explicit per-request `presentation.operator: 'tmux-tui'` on a
+headless codex-app-server intent (node-default `tmux-tui` with an omitted choice
+keeps its facade preparation); such an attempt freezes its tmux-tui presentation
+and observer socket in the launch description, launches only on the tmux-tui
+substrate from those persisted bytes, and its renderer runs from the same
+execution release as the worker; accepted request values are `none` and
+`tmux-tui`, each refused off the headless codex-app-server broker route, and a
+live runtime whose presentation differs from the request is refused
+`presentation_conflict` and left untouched. Viewer attach, detach and reattach
+never require aspd or change worker identity.
+
 Preserved without amendment: participant lifecycle (not on this route),
 broker admission client (HRC caller policy and submission doors unchanged),
 committed observation control (projection-before-ACK unchanged), continuation
-history (HRC continuation selection unchanged), viewer sidecar (the viewer
-route keeps the facade), observable release (HRC identity unchanged).
+history (HRC continuation selection unchanged), viewer sidecar (HRC still only
+publishes runtime presentation; hrc-viewer/Ghostty actuation is unchanged — the
+T-08554 tmux-tui renderer is a worker-side pane, not the Ghostty viewer; the
+node-default viewer route keeps the facade), observable release (HRC identity
+unchanged).
 
 ## 9. Deliberate limits
 
@@ -295,6 +443,11 @@ route keeps the facade), observable release (HRC identity unchanged).
   removal, extraction, all-harness migration, fleet rollout, flags or release GC.
 - Broker-side enforcement of `executionRelease` remains absent; HRC's
   pre-launch and hello checks enforce the binding.
+
+- T-08554: the standalone interactive Codex CLI/tmux backend (`codexTui`
+  interactive broker, the default max3 Codex route) is not moved to aspd and its
+  entry resolution is unchanged. Hook-bridge and codex-tui wrapper paths used
+  only by that backend are untouched.
 
 ## 10. Acceptance (isolated, installed)
 
@@ -341,3 +494,34 @@ launchd-supervised max3 aspd. On one fixed HRC artifact/lock/pid:
 4. Activate B at the persistent endpoint with the same HRC pid: fresh
    `--no-viewer` scope on B (hello B, real turn); the A worker completes another
    turn. Existing non-test brokers stay attached.
+
+### 10.2 Explicit app-server viewer acceptance (T-08554)
+
+Isolation first (same harness as §10: one linked-worktree HRC artifact under
+`hrc server serve` with isolated state/runtime/socket, isolated aspd namespace
+with staged A and B built from agent-spaces commits carrying the renderer
+subcommand, real Codex, clean Ghostty via ghostmux, real CLI):
+1. `hrc start <fresh> --app-server-viewer -p …`: aspd compile, route decision
+   `operatorPresentation: tmux-tui` source `request`, hosting `tmux-tui`,
+   observer flag in frozen argv, `executionRelease` + worker hello A, turn
+   completes; pane process of `:tui` is `<release A>/libexec/harness-broker
+   renderer` and renders the transcript.
+2. `hrc attach <scope>`: usable viewer; detach; warm turn while detached;
+   reattach shows it; worker pid, runtime id, invocation id, executionRelease
+   unchanged throughout.
+3. Activate B, same HRC pid: attached A viewer/worker still takes a turn and
+   renders it; fresh `--app-server-viewer` scope gets B (hello B, renderer from
+   B) with a working viewer.
+4. Refusals: `--app-server-viewer` against a live `none` runtime and against a
+   live interactive surface → `presentation_conflict`; non-codex agent →
+   `presentation_operator_unsupported`; CLI with `--no-viewer` refused.
+5. Recovery: restart the same HRC artifact with aspd stopped; the A and B
+   viewer runtimes reattach (release hello verified), panes still attached and
+   rendering, real turns complete.
+6. Omitted-choice control on the new artifact: still the interactive redirect
+   (tmux transport, no compile); `--no-viewer` unchanged.
+Then shared max3: guarded install/activation of HRC and of new A/B aspd
+releases (one active preparation release per node, prior releases retained),
+repeat 1–4 and 6 on the fixed HRC pid, final readback, Astra grade. No ACP, no
+other node.
+

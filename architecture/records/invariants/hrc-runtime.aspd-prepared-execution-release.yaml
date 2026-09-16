@@ -43,11 +43,26 @@ predicate: >
   source, is never re-evaluated when a frozen preparation resumes, and never
   replaces a live runtime: a live runtime of the scope whose presentation is not
   none, whether a tmux-tui viewer or an interactive tmux surface, refuses the
-  request with presentation_conflict and is left untouched.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; governing split approval EN-12789, 2026-09-16
+  request with presentation_conflict and is left untouched. As amended for the
+  explicit app-server viewer, presentation.operator also accepts tmux-tui, which
+  exempts that Codex dispatch from the interactive redirect and places the
+  headless codex-app-server with HRC's tmux-tui renderer viewer on this route,
+  while an omitted choice resolving to a node-default tmux-tui keeps its facade
+  preparation; both accepted values are refused off the headless
+  codex-app-server broker route; any request whose presentation differs from
+  the scope's live runtime is refused with presentation_conflict and left
+  untouched. Such an attempt freezes its tmux-tui presentation and observer
+  socket in the launch description, launches only on the tmux-tui substrate from
+  those persisted bytes, and its renderer runs from the same execution release
+  as the worker. Operator attach to a live operator-attachable headless broker
+  runtime returns its existing attach descriptor without interactive admission,
+  stale-marking or reprovision, and attach, detach and reattach never require
+  aspd or change worker identity or execution release.
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08542
   - wrkq:T-08553
+  - wrkq:T-08554
   - commit:e5d2c31f
   - commit:bf3e539e
   - docs/aspd-headless-codex-integration.md
@@ -61,6 +76,8 @@ source:
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/turn-dispatch-handlers.ts
   - packages/hrc-server/src/startup-reconcile.ts
+  - packages/hrc-server/src/runtime-io-handlers.ts
+  - packages/hrc-server/src/presentation-operator.ts
 required_tests:
   - just architecture-records
   - T-08542 configured-route negotiation and no-fallback gates cover unavailable incompatible unidentified and connection-closed aspd plus missing executionRelease
@@ -74,8 +91,13 @@ required_tests:
   - T-08553 presentation validation gates refuse non-none values viewer placement and interactive or redirected routes before any runtime effect
   - T-08553 existing-scope gates refuse none against a live tmux-tui runtime without delivery stale-marking or reprovision and deliver omitted or matching choices
   - T-08553 shared max3 installed acceptance covers omitted-choice control, no-viewer aspd A, conflict refusal, and fixed-HRC B activation with the A worker still usable
+  - T-08554 explicit tmux-tui gates prove redirect exemption, aspd route selection with source request, node-default tmux-tui staying on the facade, driver and route refusals, and presentation_conflict both directions
+  - T-08554 frozen tmux-tui launch description carries presentation and observer socket, launch refuses a mismatch, and the aspd execution launches only on the tmux-tui substrate when frozen so
+  - T-08554 operator attach to a live headless tmux-tui runtime returns its attach descriptor with no admission stale-marking or reprovision
+  - agent-spaces release worker launches its renderer through its own release executable while checkout and package brokers keep the bun entry launch
+  - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing; then shared max3 delivery and independent grade
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
-last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927; implementation and installed evidence pending
+last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934); T-08554 amendment pending Daedalus verification
 reopen_when:
   - the configured route or fallback behavior changes
   - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
