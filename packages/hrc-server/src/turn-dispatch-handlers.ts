@@ -488,15 +488,21 @@ export async function handleSubmission(
     door === 'steer'
       ? undefined
       : (body as EnqueueSubmissionRequest | InvokeSubmissionRequest | PreemptSubmissionRequest)
-  const intent =
-    door === 'steer'
+  // R7.6: resolution precedes runtime-intent validation, and this is where that
+  // validation actually lives. A participant is routed by its durable linkage,
+  // so it has no intent to validate and must not be asked for one -- that
+  // question is what answered `missing_runtime_intent` to every queue, and what
+  // birthed a substitute when a caller answered it.
+  const intent = participantSession
+    ? undefined
+    : door === 'steer'
       ? session.lastAppliedIntentJson
       : normalizeDispatchIntent(
           sessionBoundBody?.runtimeIntent ?? session.lastAppliedIntentJson,
           session,
           runId
         )
-  if (intent === undefined) {
+  if (!participantSession && intent === undefined) {
     throw new HrcRuntimeUnavailableError('submission target has no runtime intent', {
       target: body.target,
       door,
@@ -571,7 +577,8 @@ function publicDispatchBody(
 async function dispatchPublicSubmission(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
-  intent: HrcRuntimeIntent,
+  /** Absent for a participant, which is routed by durable linkage (R7.6). */
+  intent: HrcRuntimeIntent | undefined,
   prompt: string,
   options: DispatchTurnForSessionOptions & { requireSubmissionIdentity?: boolean | undefined }
 ): Promise<DispatchTurnResponse> {
@@ -1453,7 +1460,8 @@ type DispatchTurnForSessionOptions = DispatchRunPersistenceOptions & {
 export async function dispatchTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
-  inputIntent: HrcRuntimeIntent,
+  /** Absent only for a participant, which is routed by durable linkage (R7.6). */
+  inputIntent: HrcRuntimeIntent | undefined,
   prompt: string,
   options: DispatchTurnForSessionOptions = {}
 ): Promise<Response> {
@@ -1506,7 +1514,7 @@ async function deliverIntoAttachedParticipant(
 async function dispatchAdmittedTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
-  inputIntent: HrcRuntimeIntent,
+  inputIntent: HrcRuntimeIntent | undefined,
   prompt: string,
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
