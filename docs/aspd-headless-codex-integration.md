@@ -392,6 +392,16 @@ committed `executionRelease` persisted at boundary P; the per-binary override,
 no fallback. Toolchain status continues to describe the resolver for the other
 routes and is distinct from the aspd service projection.
 
+**Amend `hrc-runtime.asp-toolchain-selection` (T-08554):** the aspd-prepared
+route whose worker is exempt from the resolver is headless codex-app-server with
+effective presentation `none` (explicit or node default) OR `tmux-tui` selected
+by an explicit request (§1.2). For both, the worker comes only from the frozen
+`executionRelease` and the tmux-tui renderer is launched by that worker from its
+own release payload, never selected by HRC; no override, root, bundled, PATH,
+current or source selection and no fallback applies to either. A node-default
+`tmux-tui` with no request choice is not on the aspd route and stays governed by
+the resolver (facade route).
+
 **New `hrc-runtime.aspd-prepared-execution-release`:** for the route above,
 preparation happens only through the configured aspd endpoint with a
 per-preparation connection that negotiates `aspc/0.1` + compile capability +

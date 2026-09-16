@@ -10,13 +10,19 @@ predicate: >
   under an explicitly configured absolute HRC_ASP_TOOLCHAIN_ROOT, then the HRC
   release's resolveHoistedBinary result. No such spawn path, including the
   legacy interactive stdio broker path, independently selects or caches a
-  command; injected constant commands are test seams only. For HRC-hosted
-  headless codex-app-server with operator presentation none and HRC_ASPD_SOCKET
-  configured, HRC spawns no ASP compiler child and launches the worker only from
-  the executionRelease executable and argv prefix committed under
-  hrc-runtime.aspd-prepared-execution-release. That route never consults a
-  per-binary override, HRC_ASP_TOOLCHAIN_ROOT, resolveHoistedBinary, PATH, a
-  moving current link, or source, and it has no fallback to them. A
+  command; injected constant commands are test seams only. With HRC_ASPD_SOCKET
+  configured, the aspd-prepared route is HRC-hosted headless codex-app-server
+  whose effective operator presentation is none (explicit request or node
+  default) or whose presentation is tmux-tui selected by an explicit per-request
+  presentation.operator tmux-tui; a node-default tmux-tui with no request choice
+  is not on that route and keeps this resolver. On the aspd-prepared route, for
+  either presentation, HRC spawns no ASP compiler child and launches the worker
+  only from the executionRelease executable and argv prefix committed under
+  hrc-runtime.aspd-prepared-execution-release, and a tmux-tui viewer renderer is
+  launched by that worker from its own release payload, never selected by HRC.
+  That route never consults a per-binary override, HRC_ASP_TOOLCHAIN_ROOT,
+  resolveHoistedBinary, PATH, a moving current link, or source for the worker or
+  its renderer, and it has no fallback to them. A
   configured-root selection that is missing or not executable fails before
   spawn, and incompatible facade, aspd, or broker protocol/capability hellos
   fail closed before invocation work. Admin status derives effective source and
@@ -25,9 +31,10 @@ predicate: >
   tuple governed by hrc-runtime.observable-release. The root is one
   configuration namespace, not an atomic build-identity boundary, and the
   daemon's in-process ASP imports remain pinned to its release.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
   - wrkq:T-08542
+  - wrkq:T-08554
   - commit:e5d2c31f
   - docs/aspd-headless-codex-integration.md
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
@@ -42,11 +49,12 @@ source:
 required_tests:
   - just architecture-records
   - T-08542 configured aspd route bypasses every override root bundled PATH current and source resolver while all other routes retain the existing precedence and status projection
+  - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload, and node-default tmux-tui with no request choice keeps the resolver-governed facade route
   - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates
   - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
-last_verified: 2026-09-16 T-08542 design approval; implementation and installed gates pending
+last_verified: 2026-09-16 T-08542 design approval and T-08553 shared acceptance; T-08554 amendment pending Daedalus verification
 reopen_when: An ASP child spawn site, aspd-prepared route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
 supersedes: []
 superseded_by: []
