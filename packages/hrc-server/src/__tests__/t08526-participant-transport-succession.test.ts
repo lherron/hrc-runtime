@@ -202,7 +202,7 @@ describe('T-08526 evidence-less participant transport succession', () => {
     })
     expect(server!.db.participantHostBindings.getBindingById(prior.bindingId)).toMatchObject({
       state: 'RETIRED',
-      dispositionReason: 'host_replaced',
+      dispositionReason: 'transport_dead',
     })
     expect(
       server!.db.participantHostBindings.getBindingByHostIncarnationId('host-b')

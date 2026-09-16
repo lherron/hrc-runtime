@@ -630,7 +630,10 @@ export async function driveParticipantReplacement(
           from: [currentBinding.state],
           to: 'RETIRED',
           now: timestamp(),
-          dispositionReason: 'host_replaced',
+          dispositionReason:
+            evidenceSource === 'transport' && authorizingEvidence.liveness.state === 'dead'
+              ? 'transport_dead'
+              : 'host_replaced',
         })
       ) {
         throw new Error('predecessor binding final retirement raced')
