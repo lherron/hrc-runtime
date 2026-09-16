@@ -67,15 +67,21 @@ predicate: >
   request without an explicit presentation is routed by its scope's established
   runtime, meaning the most recent harness-broker runtime of the host session
   whose status is neither unavailable nor failed, of any provider, harness,
-  driver or invocation state, with an in-flight start counted by the birth transport it has chosen (its decision awaited, never its boot), before
+  driver or invocation state, before
   responseFormat, actuator-split or node defaults are considered. A tmux
   transport selects interactive admission, which alone decides reuse, birth
   join, refusal or fenced replacement, and which the actuator-split route
   admission refuses for high-risk requests. A headless transport of the same
   provider and harness selects the headless route. A headless transport of any
   other provider or harness refuses established_runtime_harness_mismatch without
-  effect. No rule starts a runtime of another transport beside an established
-  one. With nothing established, the request runs headless codex-app-server
+  effect. An in-flight start is routed by its recorded birth transport,
+  provider and harness, awaiting only that decision and never the boot: a
+  same-harness birth selects its transport's admission, a foreign-harness birth
+  refuses before effect (established_runtime_harness_mismatch for headless,
+  start_in_flight_harness_mismatch for tmux, since a newborn is never
+  admission-replaced), and a start that recorded no birth is awaited in full and
+  never treated as absent. No rule starts a runtime of another transport beside
+  an established one. With nothing established, the request runs headless codex-app-server
   with the node presentation default on this route. An intent that arrives
   interactive keeps the standalone interactive backend. No rollback pairs a
   release that gates interactive Codex admission on the redirect control with
@@ -120,7 +126,7 @@ required_tests:
   - T-08554 operator attach to a live headless tmux-tui runtime returns its attach descriptor with no admission stale-marking or reprovision
   - agent-spaces release worker launches its renderer through its own release executable while checkout and package brokers keep the bun entry launch
   - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing on a redirect-on node; then shared max3 delivery and independent grade
-  - T-08555 precedence gates at both start and dispatch doors prove configured node-default tmux-tui selects aspd with source node-default; redirect-on doors keep their pre-change routing; with the redirect off an established tmux runtime of any harness (including transitional) receives omitted, responseFormat, surface-refusing and high-risk requests only through interactive admission or its refusal, an established same-harness headless runtime (including transitional) stays on the headless route, a foreign-harness headless runtime refuses established_runtime_harness_mismatch untouched, no cross-transport start occurs, and explicit interactive Codex stays admissible
+  - T-08555 precedence gates at both start and dispatch doors prove configured node-default tmux-tui selects aspd with source node-default; redirect-on doors keep their pre-change routing; with the redirect off an established tmux runtime of any harness (including transitional) receives omitted, responseFormat, surface-refusing and high-risk requests only through interactive admission or its refusal, an established same-harness headless runtime (including transitional) stays on the headless route, a foreign-harness headless runtime refuses established_runtime_harness_mismatch untouched, a crossing same-harness birth takes its transport while a crossing foreign birth of either transport refuses and an unrecorded in-flight start is awaited, the headless queue-behind-boot contract still holds, no cross-transport start occurs, and explicit interactive Codex stays admissible
   - T-08555 isolated then shared max3 installed acceptance covers default cold launch through ordinary doors with aspd preparation worker viewer and renderer from the active release, attach detach reattach identity, no-viewer opt-out, conflicts, pre-existing live codex-tui and app-server scopes preserved across the configuration change, aspd-outage refusal of new default executions, paired plist-plus-release rollback record, and independent grade
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
 last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940; T-08554 implementation and installed evidence pending

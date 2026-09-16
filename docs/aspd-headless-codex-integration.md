@@ -359,17 +359,27 @@ Rules 3 and 4 use one shared predicate at both the start door
 (`startRuntimeForSession`) and the turn dispatch door (`dispatchTurn`). It reads
 the runtime rows after the door's existing tmux liveness reconcile. On a
 redirect-off node, a start already in flight for the host session
-(`runtimeStartOperations`) counts as established with the birth transport it has
-chosen: every start registration records that transport (the start door once its
-route is decided, the headless boot and the interactive birth at registration),
-and a crossing dispatch awaits only that decision, never the boot. Awaiting the
-boot would break the headless route's existing queue-behind-boot delivery of a
+(`runtimeStartOperations`) is routed by the BIRTH it has chosen: its transport,
+provider and harness. Every registration records that birth: the start door
+once its route is decided, the headless boot from its intent, durable-headless
+reattach from its runtime, and the interactive birth from its intent. A crossing
+dispatch awaits only that decision, never the boot, because awaiting the boot
+would break the headless route's existing queue-behind-boot delivery of a
 crossing prompt (`server-sdk-start` "queues an existing-session prompt behind
-boot"). A tmux decision selects interactive admission and a headless decision
-selects the headless route. A registration that records no transport falls back
-to the row predicate. The start door already joins an in-flight start first. The
-dispatch door's later T-07693 interactive join and invoke rendezvous keep their
-places. Every message door
+boot").
+- A same-harness (openai, requested harness) birth selects its transport's
+  admission: tmux → interactive (the T-07693 join delivers into the birth),
+  headless → the headless route (queue-behind-boot).
+- A foreign-harness birth refuses before any effect: a headless one with
+  `established_runtime_harness_mismatch`, a tmux one with
+  `start_in_flight_harness_mismatch`. A newborn is never admission-replaced
+  (T-07693), so interactive admission's fenced replacement is not available for
+  a birth. The caller retries after the birth settles, when the row rules apply.
+- A start that records no birth is never treated as absent. The dispatch awaits
+  that start in full and then applies the row rules to the rows it left.
+
+The start door already joins an in-flight start first. The dispatch door's
+later T-07693 interactive join and invoke rendezvous keep their places. Every message door
 (hrcchat/wrkc submissions, the mail kicker cold birth, selector and target
 messages, ACP) enters through that dispatch door.
 
@@ -443,9 +453,10 @@ move together, never a release alone.
   attach and live codex-tui reuse.
 - The aspd release is not touched by this change in either direction.
 
-**Refusals.** One new reason, on redirect-off nodes only:
-`established_runtime_harness_mismatch` (rule 4, `runtime_unavailable`, no
-effect). Rule 3 sends high-risk and surface-refusing requests to existing
+**Refusals.** Two new reasons, on redirect-off nodes only, both
+`runtime_unavailable` with no effect: `established_runtime_harness_mismatch`
+(rule 4, or a crossing foreign headless birth) and
+`start_in_flight_harness_mismatch` (a crossing foreign tmux birth). Rule 3 sends high-risk and surface-refusing requests to existing
 refusals. Explicit-value validation, `presentation_conflict`,
 `presentation_operator_unsupported`, `aspd_unavailable` and every §4–§6 refusal
 are unchanged. The default-selected path is subject to the same no-fallback
@@ -686,8 +697,10 @@ request without an explicit presentation is routed by the scope's established
 runtime before `responseFormat`, actuator-split or node defaults are
 considered. The established runtime is the most recent harness-broker runtime
 of the host session whose status is neither unavailable nor failed, of any
-provider, harness, driver or invocation state, with an in-flight start counted
-by the birth transport it has chosen (its decision awaited, never its boot).
+provider, harness, driver or invocation state. An in-flight start is routed by
+its recorded birth (transport, provider, harness; decision awaited, never the
+boot): same-harness selects that transport's admission, foreign-harness refuses
+before effect, and an unrecorded start is awaited in full.
 - A tmux transport selects interactive admission, which alone decides reuse,
   birth join, refusal or fenced replacement; high-risk requests are refused by
   actuator-split route admission.
