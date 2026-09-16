@@ -384,6 +384,21 @@ boot").
   a birth. The caller retries after the birth settles, when the row rules apply.
 - A start that records no birth is never treated as absent. The dispatch awaits
   that start in full and then applies the row rules to the rows it left.
+- The route and the joined start stay one authority. A crossing dispatch carries
+  its classified route to every point that joins an in-flight start: the
+  dispatch door's T-07693 join (including the T-08012 invoke rendezvous, which
+  records the same birth), the headless boot join, the durable-headless reattach
+  join, and the interactive handler's `joinInFlightRuntimeStart` join.
+  - Before awaiting, each join re-derives the route from the birth it actually
+    joins. It refuses `start_in_flight_unclassified` when that start recorded no
+    birth, a foreign-harness mismatch (as above) for a foreign birth, and
+    `start_in_flight_changed` when the route differs. A start swapped in after
+    routing is never consumed under the earlier route.
+  - After a tmux birth settles, it is joined only when interactive admission
+    decides `broker-reuse` for the newborn. Any other decision refuses before
+    delivery: `runtime-unavailable` with its reason, or
+    `start_in_flight_not_reusable`. The refusal set is retryable
+    `runtime_unavailable`.
 
 The start door already joins an in-flight start first. The dispatch door's
 later T-07693 interactive join and invoke rendezvous keep their places. Every message door
@@ -463,7 +478,9 @@ move together, never a release alone.
 **Refusals.** Two new reasons, on redirect-off nodes only, both
 `runtime_unavailable` with no effect: `established_runtime_harness_mismatch`
 (rule 4, or a crossing foreign headless birth) and
-`start_in_flight_harness_mismatch` (a crossing foreign tmux birth). Rule 3 sends high-risk and surface-refusing requests to existing
+`start_in_flight_harness_mismatch` (a crossing foreign tmux birth), plus the
+retryable crossing-join refusals `start_in_flight_unclassified`,
+`start_in_flight_changed` and `start_in_flight_not_reusable`. Rule 3 sends high-risk and surface-refusing requests to existing
 refusals. Explicit-value validation, `presentation_conflict`,
 `presentation_operator_unsupported`, `aspd_unavailable` and every §4–§6 refusal
 are unchanged. The default-selected path is subject to the same no-fallback
