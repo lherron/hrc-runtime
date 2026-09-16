@@ -458,7 +458,7 @@ describe('T-08516 direct protocol join', () => {
     expect(stored.runtimes).toHaveLength(0)
   })
 
-  test('nor by a submission door, which provisions its own runtime', async () => {
+  test('an unattached participant holds addressed work instead of birthing', async () => {
     await start()
     await join({})
 
@@ -491,14 +491,43 @@ describe('T-08516 direct protocol join', () => {
       })
     )
 
+    // R7.6: a participant that has joined and not attached is PENDING, not
+    // broken. The work stays eligible and drains once it attaches, and the
+    // caller-supplied intent above does not override participant ownership.
     expect(submitted.status).toBe(503)
     expect(submitted.body).toMatchObject({
       error: {
         code: 'runtime_unavailable',
-        detail: { reason: 'participant_address_reserved' },
+        detail: { reason: 'participant_attachment_pending', kind: 'pending' },
       },
     })
     // The refusal is only half the claim; nothing may have been born.
     expect(readStore().runtimes).toHaveLength(0)
+  })
+
+  test('a fresh-context request cannot rotate an external participant', async () => {
+    await start()
+    await join({})
+    const before = readStore()
+
+    // Rotating would move the address off the incarnation that holds it, which
+    // is a replacement of someone else's process wearing a flag's clothing.
+    const rotated = await observe(
+      await fixture.postJson('/v1/submissions/enqueue', {
+        target: `${SCOPE}/lane:main`,
+        body: 'this must not rotate anyone',
+        origin: { principalRef: 'agent:clod' },
+        freshContext: true,
+      })
+    )
+    expect(rotated.status).toBe(503)
+    expect(rotated.body).toMatchObject({
+      error: { detail: { reason: 'participant_rotation_unsupported' } },
+    })
+
+    const after = readStore()
+    expect(after.registrations).toEqual(before.registrations)
+    expect(after.bindings).toEqual(before.bindings)
+    expect(after.runtimes).toHaveLength(0)
   })
 })

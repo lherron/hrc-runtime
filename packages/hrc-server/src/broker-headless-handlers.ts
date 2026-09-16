@@ -42,6 +42,7 @@ import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { isClosedDbError } from './broker/controller/internal.js'
 import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-doors.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
+import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
   classifyBrokerInputFailure,
@@ -554,6 +555,10 @@ export async function startHeadlessBrokerRuntime(
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
+  // R-4.3.2: never born a substitute runtime at a reserved participant
+  // address. Delivery routes into the participant's own runtime before this
+  // point; this is the backstop at the place a runtime is actually born.
+  assertParticipantAddressNotSubstituted(this, session)
   const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
   // Resolve every approval/artifact/base/path fact before opening the compiler

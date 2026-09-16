@@ -29,6 +29,7 @@ import { submissionOrigin, submitThroughBrokerDoor } from './broker/submission-d
 import { armFirstTurnWatch } from './first-turn-watch.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
+import { assertParticipantAddressNotSubstituted } from './participant-delivery.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import {
@@ -1328,6 +1329,10 @@ export async function startInteractiveTmuxBrokerRuntime(
     onColdBirthPromptRoute?: ((rodeLaunch: boolean) => void) | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
+  // R-4.3.2: never born a substitute runtime at a reserved participant
+  // address. Delivery routes into the participant's own runtime before this
+  // point; this is the backstop at the place a runtime is actually born.
+  assertParticipantAddressNotSubstituted(this, session)
   const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
   const effectiveTurnIntent = preparedActuatorSplit.intent
   const now = timestamp()

@@ -59,6 +59,12 @@ import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
+  type ParticipantDeliveryTarget,
+  participantDeliveryUnavailable,
+  participantRotationUnsupported,
+  resolveParticipantDelivery,
+} from './participant-delivery.js'
+import {
   brokerRuntimeRefusesAdmissionClass,
   brokerRuntimeSupportsAdmissionClass,
   isBrokerRuntimeInputDispatchable,
@@ -438,11 +444,19 @@ export async function handleSubmission(
       door,
     })
   }
-  if (door !== 'steer') {
+  // R7.6: the participant target is resolved BEFORE generic rotation. Rotating
+  // a participant's session would move the address off the incarnation that
+  // holds it, so an external participant is exempt from the stale sweep and a
+  // fresh-context request against one is refused rather than honored quietly.
+  const participantSession = resolveParticipantDelivery(this, session) !== null
+  if (door !== 'steer' && !participantSession) {
     const staleRotation = await this.maybeAutoRotateStaleSession(session, {
       trigger: `submission-${door}`,
     })
     session = staleRotation.session
+  }
+  if (participantSession && body.freshContext === true) {
+    throw participantRotationUnsupported(session, 'fresh-context rotation')
   }
   if (door === 'preempt') {
     const admission = await preemptAdmission(this, session, body as PreemptSubmissionRequest)
@@ -1455,40 +1469,38 @@ export async function dispatchTurnForSession(
 }
 
 /**
- * R-4.3.2/R-4.3.3: a reserved participant address is never given a substitute
- * birth.
+ * Submit into the participant's own existing runtime through the existing
+ * broker input-turn path.
  *
- * `startRuntimeForSession` already refuses a cold start at a participant
- * scope, but the broker routes provision their own runtimes and never pass
- * through it. A live enqueue against a real Arris participant walked straight
- * past that guard and BORN a second, HRC-owned tmux runtime at the address an
- * external host already held -- exactly the competing writer the guard exists
- * to prevent. It was invisible until a real host was on the other end, because
- * the first attempt died in the ASP compiler on an unrelated model mismatch
- * and looked like a refusal.
- *
- * This is the door every submission shares, so the refusal belongs here rather
- * than repeated down each route. It refuses a SUBSTITUTE birth, which is not
- * the same as refusing delivery: routing addressed work to the participant's
- * own live runtime is what R6.8.4 asks for, and when that lands it must be
- * decided BEFORE this point, not by weakening it.
+ * The transport decides which of the two established executors runs, and both
+ * take a runtime that already exists. Nothing new is queued, accounted or
+ * receipted here: run persistence, the user-prompt event, first-turn watch,
+ * broker admission, wait and replay all remain the ones every other turn uses.
  */
-function assertParticipantAddressNotSubstituted(
-  server: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord
-): void {
-  const registration = server.db.participantRegistrations.getRegistrationByScopeRef(
-    session.scopeRef
-  )
-  if (registration === null) return
-  throw new HrcRuntimeUnavailableError(
-    'participant address cannot be served by a substitute runtime',
-    {
-      scopeRef: session.scopeRef,
-      registrationId: registration.registrationId,
-      reason: 'participant_address_reserved',
-    }
-  )
+async function deliverIntoAttachedParticipant(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  target: ParticipantDeliveryTarget,
+  prompt: string,
+  options: DispatchTurnForSessionOptions
+): Promise<Response> {
+  const runId = options.runId ?? `run-${randomUUID()}`
+  const { runtime } = target
+  const inputTurnOptions = {
+    waitForCompletion: options.waitForCompletion,
+    repairCorrelation: options.repairCorrelation,
+    responseFormat: options.responseFormat,
+    ...dispatchRunPersistence(options),
+  }
+  return runtime.transport === 'tmux'
+    ? await this.executeInteractiveBrokerInputTurn(
+        session,
+        runtime,
+        prompt,
+        runId,
+        inputTurnOptions
+      )
+    : await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, inputTurnOptions)
 }
 
 async function dispatchAdmittedTurnForSession(
@@ -1499,7 +1511,23 @@ async function dispatchAdmittedTurnForSession(
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
-  assertParticipantAddressNotSubstituted(this, session)
+  // R7.6: resolve a participant BEFORE the runtime-intent requirement. This is
+  // the door every caller shares -- the public submission doors, the addressed
+  // mail kicker, the selector and target message paths -- so routing here is
+  // what keeps one door from being fixed while the next still births.
+  const participantDelivery = resolveParticipantDelivery(this, session)
+  if (participantDelivery !== null) {
+    if (participantDelivery.outcome === 'refused') {
+      throw participantDeliveryUnavailable(session, participantDelivery)
+    }
+    return await deliverIntoAttachedParticipant.call(
+      this,
+      session,
+      participantDelivery,
+      prompt,
+      options
+    )
+  }
   const runId = options.runId ?? `run-${randomUUID()}`
   const normalizedInputIntent = normalizeDispatchIntent(inputIntent, session, runId)
   const observationContext: DispatchTurnObservationContext = {
