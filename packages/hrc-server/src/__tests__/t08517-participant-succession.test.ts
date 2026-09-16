@@ -22,6 +22,7 @@ import {
 } from '../index.js'
 import type { HrcServer, RegistrationClassConfig } from '../index.js'
 import { ParticipantAdapterRegistry } from '../participant-adapter-registry.js'
+import { registerDirectParticipant } from '../participant-host-registration.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
 
 const SCOPE = 'agent:arris:project:hrc-runtime:task:T-08517'
@@ -54,9 +55,14 @@ type EvidenceMode =
   | 'wrong-subject'
   | 'unknown'
 
-function evidenceAdapter(workspaceCwd: string, mode: () => EvidenceMode): ParticipantAdapter {
+function evidenceAdapter(
+  workspaceCwd: string,
+  mode: () => EvidenceMode,
+  beforeAnswer: () => void
+): ParticipantAdapter {
   const base = createControlledParticipantAdapter({ adapterId: ADAPTER_ID, workspaceCwd })
   const answer = (request: WriterRetirementRequest | WriterInspectionRequest): WriterEvidence => {
+    beforeAnswer()
     const current = mode()
     return {
       schemaVersion: 'writer-evidence/v1',
@@ -108,10 +114,12 @@ describe('T-08517 host participant succession', () => {
   let fixture: HrcServerTestFixture
   let server: HrcServer | undefined
   let evidenceMode: EvidenceMode
+  let evidenceAnswerHook: (() => void) | undefined
 
   beforeEach(async () => {
     fixture = await createHrcTestFixture('t08517-succession-')
     evidenceMode = 'retired-recovered'
+    evidenceAnswerHook = undefined
   })
 
   afterEach(async () => {
@@ -125,7 +133,11 @@ describe('T-08517 host participant succession', () => {
         otelListenerEnabled: false,
         registrationClasses: [participantClass] as unknown as readonly RegistrationClassConfig[],
         participantAdapterRegistry: new ParticipantAdapterRegistry([
-          evidenceAdapter(fixture.tmpDir, () => evidenceMode),
+          evidenceAdapter(
+            fixture.tmpDir,
+            () => evidenceMode,
+            () => evidenceAnswerHook?.()
+          ),
         ]),
       })
     )
@@ -149,6 +161,32 @@ describe('T-08517 host participant succession', () => {
         ...(expectedPredecessor === undefined ? {} : { expectedPredecessor }),
       })
     )
+  }
+
+  function replaceWithoutScheduling(
+    hostIncarnationId: string,
+    expectedPredecessor: { hostIncarnationId: string; runtimeId: string; generation: number }
+  ) {
+    return registerDirectParticipant(server!, {
+      requestedSessionRef: SCOPE,
+      hostIncarnationId,
+      laneRef: 'main',
+      classId: CLASS_ID,
+      participantKey: PARTICIPANT_KEY,
+      workspaceCwd: fixture.tmpDir,
+      socketPath: `${fixture.tmpDir}/${hostIncarnationId}.sock`,
+      expectedPredecessor,
+    })
+  }
+
+  async function waitForAttemptCount(registrationId: string, count: number) {
+    const deadline = Date.now() + 2_000
+    let attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(registrationId)
+    while (attempts.length < count && Date.now() < deadline) {
+      await Bun.sleep(20)
+      attempts = server!.db.participantRegistrations.listAttemptsByRegistrationId(registrationId)
+    }
+    return attempts
   }
 
   async function activePredecessor(scope = SCOPE): Promise<{
@@ -792,6 +830,91 @@ describe('T-08517 host participant succession', () => {
       establishmentAttemptCount: 0,
       replacementIntentJson: expect.stringContaining('producer evidence source restored'),
     })
+  })
+
+  test('restart after intent commit but before A0 redrives without another registration', async () => {
+    await start()
+    const prior = await activePredecessor()
+    evidenceMode = 'unknown'
+    expect(await replaceWithoutScheduling('host-b', prior.expected)).toMatchObject({
+      outcome: 'refused',
+      reason: 'host_retirement_unproven',
+    })
+    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
+      state: 'ACTIVE',
+      establishmentWorkState: 'pending',
+      replacementIntentJson: expect.stringContaining('participant-replacement-intent/v1'),
+    })
+    await server!.stop()
+    server = undefined
+
+    evidenceMode = 'retired-recovered'
+    await start()
+    const registrationId = (prior.first['identity'] as Record<string, unknown>)[
+      'registrationId'
+    ] as string
+    expect(await waitForAttemptCount(registrationId, 2)).toHaveLength(2)
+    expect(
+      server!.db.participantHostBindings.getBindingByHostIncarnationId('host-b')
+    ).toMatchObject({
+      state: 'BINDING',
+      generation: 2,
+    })
+  })
+
+  test('restart after producer retirement but before receipt persistence recovers by inspection', async () => {
+    await start()
+    const prior = await activePredecessor()
+    evidenceMode = 'unknown'
+    evidenceAnswerHook = () => {
+      evidenceMode = 'retired-recovered'
+      evidenceAnswerHook = undefined
+      throw new Error('simulated daemon loss after producer retirement')
+    }
+    expect(await replaceWithoutScheduling('host-b', prior.expected)).toMatchObject({
+      outcome: 'refused',
+      reason: 'host_retirement_unproven',
+    })
+    const effectBoundary = server!.db.participantRegistrations.getAttempt(prior.attemptId)
+    expect(effectBoundary).toMatchObject({
+      state: 'ACTIVE',
+      replacementIntentJson: expect.stringContaining('participant-replacement-intent/v1'),
+    })
+    expect(effectBoundary?.writerEvidenceJson).toBeUndefined()
+    await server!.stop()
+    server = undefined
+
+    await start()
+    const registrationId = (prior.first['identity'] as Record<string, unknown>)[
+      'registrationId'
+    ] as string
+    expect(await waitForAttemptCount(registrationId, 2)).toHaveLength(2)
+    expect(server!.db.participantRegistrations.getAttempt(prior.attemptId)).toMatchObject({
+      state: 'ABANDONED',
+      recoveryDisposition: 'reconciled',
+      writerEvidenceJson: expect.stringContaining('retired-recovered'),
+    })
+  })
+
+  test('restart after successor commit converges a lost response on the same identity', async () => {
+    await start()
+    const prior = await activePredecessor()
+    const committed = await replaceWithoutScheduling('host-b', prior.expected)
+    expect(committed.outcome).toBe('registered')
+    if (committed.outcome !== 'registered') throw new Error('successor was not committed')
+    await server!.stop()
+    server = undefined
+
+    await start()
+    const duplicate = await replaceWithoutScheduling('host-b', prior.expected)
+    expect(duplicate).toMatchObject({ outcome: 'registered', created: false })
+    if (duplicate.outcome !== 'registered') throw new Error('duplicate did not converge')
+    expect(duplicate.identity).toEqual(committed.identity)
+    expect(
+      server!.db.participantRegistrations.listAttemptsByRegistrationId(
+        committed.identity.registrationId
+      )
+    ).toHaveLength(2)
   })
 
   test('daemon restart redrives durable intent and the post-TX-D recovery hold', async () => {
