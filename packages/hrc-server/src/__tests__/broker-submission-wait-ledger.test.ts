@@ -180,6 +180,72 @@ describe('broker submission wait follows the disposition ledger', () => {
     ).toBe(true)
   })
 
+  // T-08533: a steer that JOINS a running turn is absorbed into it. Its wait
+  // follows that turn to terminal, and the final text is the owner run's.
+  it('absorbed waits for the joined turn terminal and projects the owner run final', async () => {
+    const submissionId = 'sub-steer-joined'
+    const turnId = 'turn-owner'
+    append(20, 'submission.absorbed', { submissionId, turnId })
+
+    const subscribers = new Set<(notification: { record: { invocationId: string } }) => void>()
+    const server = { db: fixture.db, rawBrokerSubscribers: subscribers } as never
+    const waiting = waitForSubmissionTerminal(server, {
+      invocationId: Q_INVOCATION_ID,
+      runId: 'run-steer-auxiliary',
+      submissionId,
+      signal: new AbortController().signal,
+    })
+    let settled = false
+    void waiting.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    fixture.db.hrcEvents.append({
+      ts: new Date().toISOString(),
+      hostSessionId: Q_HOST_SESSION_ID,
+      scopeRef: Q_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runId: Q_RUN_B_ID,
+      runtimeId: Q_RUNTIME_ID,
+      category: 'turn',
+      eventKind: 'turn.message',
+      transport: 'tmux',
+      payload: {
+        type: 'message_end',
+        message: { role: 'assistant', content: 'OWNER FINAL' },
+        final: true,
+      },
+    })
+    append(21, 'turn.completed', { turnId, status: 'completed' })
+    for (const subscriber of subscribers) {
+      subscriber({ record: { invocationId: Q_INVOCATION_ID } })
+    }
+
+    expect(await waiting).toEqual({
+      disposition: { type: 'absorbed', turnId },
+      terminal: { turnId, status: 'completed', finalMessage: 'OWNER FINAL' },
+    })
+  })
+
+  it('absorbed without a turn wait resolves on the disposition alone', async () => {
+    append(20, 'submission.absorbed', { submissionId: 'sub-absorbed', turnId: 'turn-running' })
+    expect(
+      await waitForSubmissionTerminal(
+        { db: fixture.db, rawBrokerSubscribers: new Set() } as never,
+        {
+          invocationId: Q_INVOCATION_ID,
+          runId: Q_RUN_B_ID,
+          submissionId: 'sub-absorbed',
+          signal: new AbortController().signal,
+          waitForTurnTerminal: false,
+        }
+      )
+    ).toEqual({ disposition: { type: 'absorbed', turnId: 'turn-running' } })
+  })
+
   it('rejected resolves typed without looking for a reply or turn terminal', async () => {
     append(20, 'submission.rejected', { submissionId: 'sub-rejected', reason: 'seat-busy' })
     expect(await wait('sub-rejected')).toEqual({

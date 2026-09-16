@@ -343,6 +343,48 @@ export function steerRefusalIsPermanent(
 }
 
 /**
+ * Should this unwritten steer refusal send the envelope through enqueue?
+ *
+ * The refusals that survived T-08527 are the ones a retry cannot outwait while
+ * the current turn runs: `capability` (the driver cannot steer), `policy` (the
+ * turn is guarded) and `authority` (this origin may not join this turn). Each is
+ * answered by queueing behind the turn rather than steering into it again
+ * (T-08533). Anything else — `pane_not_quiescent`, `invalid-state:*` — is about
+ * the instant and keeps the transient retry. The layer is read from the
+ * broker's `admission.rejected` when it is committed, and the reason string
+ * covers an admission response that beat its ledger row.
+ */
+const POLICY_OR_AUTHORITY_REFUSALS = new Set(['guarded', 'authority-denied'])
+
+export function steerRefusalFallback(
+  server: MailKickerContext,
+  runtimeId: string,
+  submissionId: string | undefined,
+  reason: string
+): 'capability' | 'turn' | undefined {
+  if (steerRefusalIsPermanent(server, runtimeId, submissionId, reason)) return 'capability'
+  if (POLICY_OR_AUTHORITY_REFUSALS.has(reason)) return 'turn'
+  if (submissionId === undefined) return undefined
+  const layer = server.db.brokerInvocationEvents.findAdmissionRejection(
+    runtimeId,
+    submissionId
+  )?.layer
+  return layer === 'policy' || layer === 'authority' ? 'turn' : undefined
+}
+
+/** Route this envelope's next pass through enqueue, and remember a capability gap. */
+export function recordSteerFallback(
+  server: MailKickerContext,
+  envelopeId: string,
+  runtimeId: string,
+  fallback: 'capability' | 'turn'
+): void {
+  server.mailKickerSteerFallback.add(envelopeId)
+  if (fallback === 'capability') server.mailKickerSteerRefused.add(runtimeId)
+  server.mailKickerDeliveryBackoff.delete(runtimeId)
+}
+
+/**
  * The next wait for a refusal about the MOMENT on this runtime, doubling to the
  * ceiling. Shared by the transient-steer path and the door-threw path, so no
  * refusal path is unpaced (chief, 2026-09-06).
@@ -360,7 +402,11 @@ export function clearRefusedIntent(
   server: MailKickerContext,
   intent: HrcMailDeliveryIntent,
   reason: string,
-  options: { retryInMs?: number | undefined; refusalClass?: string | undefined } = {}
+  options: {
+    retryInMs?: number | undefined
+    refusalClass?: string | undefined
+    fallbackDoor?: 'enqueue' | undefined
+  } = {}
 ): void {
   server.db.mailDelivery.clearIntent(intent.envelopeId)
   server.log('INFO', 'wrkq.kicker.landing_refused', {
@@ -371,6 +417,7 @@ export function clearRefusedIntent(
     ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
     reason,
     ...(options.refusalClass === undefined ? {} : { refusalClass: options.refusalClass }),
+    ...(options.fallbackDoor === undefined ? {} : { fallbackDoor: options.fallbackDoor }),
     ...(options.retryInMs === undefined ? {} : { retryInMs: options.retryInMs }),
   })
   if (options.retryInMs === undefined) {
@@ -471,11 +518,14 @@ export async function chargeNonLandingOutcome(
  * it shows the reader the same message twice, so the third one is where HRC
  * stops rather than where it tries harder.
  *
- * PRE-WRITE refusal → no strike per event, and the classification below still
- * decides the door. A PERMANENT steer refusal memoizes the runtime so the next
- * pass enqueues — the spec's "a refused steer becomes an enqueue". A TRANSIENT
- * one memoizes nothing and re-wakes on a bounded backoff, so the next pass
- * steers again: the door that will work in a moment is the right door.
+ * PRE-WRITE refusal → no strike per event, and the classification below
+ * decides the door. A steer refused for a reason that will not pass while this
+ * turn runs — capability, a guarded turn, authority — becomes an ENQUEUE for
+ * that envelope on its very next pass, queued behind the turn (T-08533: steer is
+ * best effort, mail is not); a capability refusal also memoizes the runtime so
+ * later envelopes skip the steer. A TRANSIENT one memoizes nothing and re-wakes
+ * on a bounded backoff, so the next pass steers again: the door that will work
+ * in a moment is the right door.
  *
  * But a seat that refuses BEFORE writing, every time, would back off forever
  * and strike never — so a run of pre-write refusals spanning one TTL window
@@ -499,14 +549,16 @@ export async function refuseIntent(
     return 'refused'
   }
 
-  if (
-    intent.door === 'steer' &&
-    steerRefusalIsPermanent(server, runtimeId, intent.submissionId, reason)
-  ) {
-    server.mailKickerSteerRefused.add(runtimeId)
-    server.mailKickerDeliveryBackoff.delete(runtimeId)
-    clearRefusedIntent(server, intent, reason, { refusalClass: 'permanent' })
-    return 'refused'
+  if (intent.door === 'steer') {
+    const fallback = steerRefusalFallback(server, runtimeId, intent.submissionId, reason)
+    if (fallback !== undefined) {
+      recordSteerFallback(server, intent.envelopeId, runtimeId, fallback)
+      clearRefusedIntent(server, intent, reason, {
+        refusalClass: fallback === 'capability' ? 'permanent' : 'not_written',
+        fallbackDoor: 'enqueue',
+      })
+      return 'refused'
+    }
   }
   clearRefusedIntent(server, intent, reason, {
     refusalClass: 'not_written',

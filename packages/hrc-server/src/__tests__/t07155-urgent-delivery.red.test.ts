@@ -17,8 +17,17 @@ const base = {
 }
 
 describe('T-07155 delivery claims in the four-door vocabulary', () => {
-  it('steer cannot carry wait, so a caller cannot accidentally turn an absorbed prompt into an obligation', () => {
-    expect(() => parseSubmissionRequest({ ...base, wait: true }, 'steer')).toThrow(
+  // T-08533: steer joins the running turn or starts one, so it has a turn to
+  // wait on. It still cannot carry TTL or a turn policy.
+  it('steer may carry wait, but never TTL or a turn policy', () => {
+    expect(parseSubmissionRequest({ ...base, wait: true }, 'steer')).toEqual({
+      ...base,
+      wait: true,
+    })
+    expect(() => parseSubmissionRequest({ ...base, ttlMs: 30_000 }, 'steer')).toThrow(
+      HrcUnprocessableEntityError
+    )
+    expect(() => parseSubmissionRequest({ ...base, turnPolicy: 'guarded' }, 'steer')).toThrow(
       HrcUnprocessableEntityError
     )
   })
@@ -42,7 +51,8 @@ describe('T-07155 delivery claims in the four-door vocabulary', () => {
     const registration = source('packages/hrc-cli/src/cli/register-top.ts')
     const command = source('packages/hrc-cli/src/turn/commands/turn.ts')
     expect(`${registration}\n${command}`).not.toContain('--' + 'urgent')
-    expect(registration).toContain(".option('--steer'")
+    expect(registration).toMatch(/\.option\(\s*'--steer'/)
+    expect(registration).toMatch(/\.option\(\s*'--queue'/)
     expect(registration).toContain(".option('--preempt'")
     expect(command).toContain('client.steer(')
     expect(command).toContain('client.preempt(')

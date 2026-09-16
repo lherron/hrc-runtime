@@ -162,7 +162,7 @@ export function seatIn(
     return { state, runtimeId: RUNTIME, turnId: 'turn-1', steerCapable }
   }
   if (state === 'turn-observed') return { state, runtimeId: RUNTIME, turnId: 'turn-1' }
-  return { state, runtimeId: RUNTIME }
+  return { state, runtimeId: RUNTIME, steerCapable }
 }
 
 export function brokerRecord(type: string, payload: Record<string, unknown>) {
@@ -260,6 +260,7 @@ export async function createT08094Harness(): Promise<T08094Harness> {
     mailKickerBootReconcilePending: false,
     mailKickerStalledDeliveryAnnounced: new Set(),
     mailKickerSteerRefused: new Set(),
+    mailKickerSteerFallback: new Set(),
     mailKickerDeliveryBackoff: new Map(),
     resolveForeignHome: async () => undefined,
     resolveRuntimeIntent: () => ({}) as never,

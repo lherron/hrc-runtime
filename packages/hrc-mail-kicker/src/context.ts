@@ -69,6 +69,16 @@ export type MailKickerContext = {
    */
   readonly mailKickerSteerRefused: Set<string>
   /**
+   * Envelopes whose last steer was refused WITHOUT being written by a guarded
+   * turn, authority, or capability. Steer is best effort and mail is not: the
+   * next pass for that envelope takes the enqueue door, which queues it behind
+   * the running turn instead of re-trying a steer into a turn that will keep
+   * refusing it (T-08533). Consumed when that pass picks the door;
+   * process-local, because a restart that forgets it only costs one more
+   * refused steer.
+   */
+  readonly mailKickerSteerFallback: Set<string>
+  /**
    * Per-runtime backoff for a refusal that is about the MOMENT rather than the
    * seat: a transient steer refusal, or a door that threw.
    *

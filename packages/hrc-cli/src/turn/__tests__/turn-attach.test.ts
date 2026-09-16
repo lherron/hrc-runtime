@@ -268,6 +268,7 @@ describe('hrc turn --attach', () => {
       [{ new: true }, '--new'],
       [{ dryRun: true }, '--dry-run'],
       [{ steer: true }, '--steer'],
+      [{ queue: true }, '--queue'],
       [{ preempt: true }, '--preempt'],
       [{ wait: 'final' }, '--wait'],
       [{ ttl: '1m' }, '--ttl'],

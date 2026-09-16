@@ -11,11 +11,13 @@
  *  - `delivery = hold` → preempt, under the existing operator-authority gate;
  *    refused authority falls into the queue policy below and the eventual
  *    receipt carries `hold_refused_authority`;
- *  - seat turn-active AND the driver advertises `steer` → the steer door, so
- *    the body lands inside the turn the reader is already in;
- *  - seat turn-active without steer → enqueue, and the harness-local queue
- *    drains it at the boundary;
- *  - seat idle → enqueue, as before;
+ *  - seat idle or turn-active AND the driver advertises `steer` → the steer
+ *    door (T-08533: steer = send now): the body joins the turn the reader is
+ *    already in, or starts one on an idle seat;
+ *  - a steer refused unwritten by a guarded turn, authority or capability →
+ *    that envelope's next pass takes enqueue, queued behind the turn;
+ *  - driver without steer, or a runtime that refused it at the capability
+ *    layer → enqueue, and the harness-local queue drains it at the boundary;
  *  - seat absent → cold birth, and the launch carries the body.
  *
  * ONE address family is exempt from the last rule: a scope permanently reserved

@@ -46,10 +46,11 @@ export type KickerDispatchOptions = {
   /**
    * The broker door this delivery goes through (spec T-08092 D2).
    *
-   * `steer` is the default for a turn-active seat whose driver advertises the
-   * class: the body joins the turn the reader is already inside rather than
-   * waiting for it to end. Every door returns ADMISSION only; the landing is
-   * reported later on the committed broker stream.
+   * `steer` is the default for an idle or turn-active seat whose driver
+   * advertises the class: the body joins the turn the reader is already inside
+   * rather than waiting for it to end, or starts one when none is running
+   * (T-08533). Every door returns ADMISSION only; the landing is reported later
+   * on the committed broker stream.
    */
   submissionDoor: 'steer' | 'enqueue' | 'invoke' | 'preempt'
   ttlMs: number

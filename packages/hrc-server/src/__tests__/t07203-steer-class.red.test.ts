@@ -30,7 +30,7 @@ const common = {
 }
 
 describe('T-07203 steer-class behavior after broker admission adoption', () => {
-  it('strict steer uses only the steer door and never claims a new turn itself', async () => {
+  it('steer uses only the steer door; the broker decides whether it joins or starts a turn', async () => {
     const fake = controllerDouble({ submissionId: 'sub-steer', admission: 'admitted' })
     const result = await submitThroughBrokerDoor(fake.controller, 'steer', common)
 

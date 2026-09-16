@@ -199,6 +199,11 @@ function makeWlClient(
         priorHostSessionId: req.hostSessionId,
       }
     },
+    // No session row: the default steer door births the target through the
+    // semantic handoff, which is the watch loop these characterizations pin.
+    async resolveSession() {
+      return { found: false, hostSessionId: null, generation: null, created: false, session: null }
+    },
     async semanticTurnHandoff() {
       return handoff ?? makeWlHandoff()
     },

@@ -25,19 +25,29 @@ describe('hrc-runtime.harness-broker-admission-client required tests', () => {
     expect(controller).not.toContain('dispatch' + 'Input(')
   })
 
-  it('steer signatures cannot express wait obligation or own-response semantics', () => {
+  it('steer signatures express only a wait on the turn joined or started (T-08533)', () => {
     const parsed = parseSubmissionRequest(
       { target: 'agent:cody/lane:main', body: 'x', origin: { principalRef: 'agent:cody' } },
       'steer'
     )
     expect(Object.keys(parsed).sort()).toEqual(['body', 'origin', 'target'])
+    const waiting = parseSubmissionRequest(
+      {
+        target: 'agent:cody/lane:main',
+        body: 'x',
+        origin: { principalRef: 'agent:cody' },
+        wait: true,
+      },
+      'steer'
+    )
+    expect(Object.keys(waiting).sort()).toEqual(['body', 'origin', 'target', 'wait'])
     expect(() =>
       parseSubmissionRequest(
         {
           target: 'agent:cody/lane:main',
           body: 'x',
           origin: { principalRef: 'agent:cody' },
-          wait: true,
+          turnPolicy: 'guarded',
         },
         'steer'
       )

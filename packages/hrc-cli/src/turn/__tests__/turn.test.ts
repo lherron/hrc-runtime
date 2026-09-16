@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import type {
+  EnqueueSubmissionRequest,
   HrcLifecycleEvent,
+  HrcSubmissionResponse,
+  ResolveSessionRequest,
+  ResolveSessionResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
   SemanticTurnHandoffStartedResponse,
+  SteerSubmissionRequest,
 } from 'hrc-core'
 import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
@@ -80,14 +85,55 @@ function makeLifecycleEvent(
   }
 }
 
+function makeSteerResponse(overrides: Record<string, unknown> = {}): HrcSubmissionResponse {
+  return {
+    submissionId: 'submission_inv-test_1',
+    admission: 'admitted',
+    runId: 'run-steer',
+    hostSessionId: 'hsid-test',
+    runtimeId: 'rt-test',
+    generation: 3,
+    transport: 'tmux',
+    status: 'accepted',
+    observation: {
+      lifecycle: {
+        selector: { runId: 'run-steer', runtimeId: 'rt-test', generation: 3 },
+        fromSeq: 500,
+      },
+    },
+    ...overrides,
+  } as HrcSubmissionResponse
+}
+
 function createTurnClient(options: {
   handoff?: SemanticTurnHandoffResponse
   events?: MockWatchEvents
   handoffCalls?: SemanticTurnHandoffRequest[]
+  /** A warm seat's session row exists; absent means the target was never born. */
+  sessionFound?: boolean
+  steer?: HrcSubmissionResponse
+  steerCalls?: SteerSubmissionRequest[]
+  enqueueCalls?: EnqueueSubmissionRequest[]
 }): HrcClient {
   const handoffCalls = options.handoffCalls ?? []
 
   return {
+    async resolveSession(request: ResolveSessionRequest): Promise<ResolveSessionResponse> {
+      expect(request.create).toBe(false)
+      return (
+        options.sessionFound === true
+          ? { found: true, hostSessionId: 'hsid-test', generation: 3, created: false }
+          : { found: false, hostSessionId: null, generation: null, created: false, session: null }
+      ) as ResolveSessionResponse
+    },
+    async steer(request: SteerSubmissionRequest): Promise<HrcSubmissionResponse> {
+      options.steerCalls?.push(request)
+      return options.steer ?? makeSteerResponse()
+    },
+    async enqueue(request: EnqueueSubmissionRequest): Promise<HrcSubmissionResponse> {
+      options.enqueueCalls?.push(request)
+      return makeSteerResponse({ submissionId: 'submission_inv-test_q' })
+    },
     async semanticTurnHandoff(
       request: SemanticTurnHandoffRequest
     ): Promise<SemanticTurnHandoffResponse> {
@@ -579,7 +625,7 @@ describe('hrcchat turn — --stacked monitor stream', () => {
 
     const result = await runTurnCommand(
       client,
-      { stacked: '1s', replyTo: 'msg-prior-reply' } as TurnOptions,
+      { stacked: '1s', replyTo: 'msg-prior-reply', queue: true } as TurnOptions,
       ['larry@agent-spaces:T-01449', 'follow up']
     )
 
@@ -795,3 +841,136 @@ function waitForAbort(signal?: AbortSignal): Promise<never> {
     })
   })
 }
+
+describe('hrc turn — steer is the default door (T-08533)', () => {
+  it('steers a warm seat and follows the SEAT, not the steer run', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    let capturedWatchOptions: WatchOptions | undefined
+    const client = {
+      ...createTurnClient({ sessionFound: true, steerCalls, handoffCalls }),
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        capturedWatchOptions = options
+        // A joined turn's events belong to the run that owns it.
+        yield makeLifecycleEvent({ eventKind: 'turn.completed', runId: 'run-owner', hrcSeq: 501 })
+      },
+    } as HrcClient
+
+    const result = await runTurnCommand(client, { format: 'ndjson' }, ['cody@agent-spaces', 'now'])
+
+    expect(result.exitCode).toBe(0)
+    expect(handoffCalls).toHaveLength(0)
+    expect(steerCalls).toHaveLength(1)
+    expect(steerCalls[0]).toMatchObject({ body: 'now' })
+    expect(steerCalls[0]).not.toHaveProperty('wait')
+    expect(capturedWatchOptions).toMatchObject({ generation: 3, fromSeq: 500, follow: true })
+    expect(capturedWatchOptions?.runId).toBeUndefined()
+  })
+
+  it('--wait final steers with wait and prints the terminal', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const enqueueCalls: EnqueueSubmissionRequest[] = []
+    const steer = makeSteerResponse({
+      stage: 'terminal',
+      disposition: { type: 'absorbed', turnId: 'turn-running' },
+      terminal: { turnId: 'turn-running', status: 'completed', finalMessage: 'JOINED' },
+    })
+    const client = createTurnClient({ sessionFound: true, steer, steerCalls, enqueueCalls })
+
+    const result = await runTurnCommand(client, { wait: 'final' }, ['cody@agent-spaces', 'join'])
+
+    expect(result.exitCode).toBe(0)
+    expect(enqueueCalls).toHaveLength(0)
+    expect(steerCalls).toEqual([expect.objectContaining({ body: 'join', wait: true })])
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      terminal: { turnId: 'turn-running', finalMessage: 'JOINED' },
+    })
+  })
+
+  it('--steer is accepted as a no-op alias of the default', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const client = createTurnClient({ sessionFound: true, steerCalls })
+    const result = await runTurnCommand(client, { steer: true, wait: 'final' }, [
+      'cody@agent-spaces',
+      'x',
+    ])
+    expect(result.exitCode).toBe(0)
+    expect(steerCalls).toHaveLength(1)
+  })
+
+  it('prints a refused steer instead of watching', async () => {
+    let watchStarted = false
+    const client = {
+      ...createTurnClient({
+        sessionFound: true,
+        steer: {
+          submissionId: 's',
+          admission: 'rejected',
+          reason: 'guarded',
+          disposition: { type: 'rejected', reason: 'guarded' },
+        } as HrcSubmissionResponse,
+      }),
+      async *watch(): AsyncIterable<HrcLifecycleEvent> {
+        watchStarted = true
+        yield* []
+      },
+    } as HrcClient
+    const result = await runTurnCommand(client, {}, ['cody@agent-spaces', 'x'])
+    expect(JSON.parse(result.stdout)).toMatchObject({ admission: 'rejected', reason: 'guarded' })
+    expect(watchStarted).toBe(false)
+  })
+
+  it('births a never-seen target through the handoff instead of steering', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    const client = createTurnClient({ sessionFound: false, steerCalls, handoffCalls })
+    const result = await runTurnCommand(client, {}, ['cody@agent-spaces', 'hello'])
+    expect(result.exitCode).toBe(0)
+    expect(steerCalls).toHaveLength(0)
+    expect(handoffCalls).toHaveLength(1)
+  })
+
+  it('--queue selects enqueue: --wait/--ttl use the enqueue door, never steer', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const enqueueCalls: EnqueueSubmissionRequest[] = []
+    const client = createTurnClient({ sessionFound: true, steerCalls, enqueueCalls })
+    const result = await runTurnCommand(client, { queue: true, wait: 'final', ttl: '5m' }, [
+      'cody@agent-spaces',
+      'after',
+    ])
+    expect(result.exitCode).toBe(0)
+    expect(steerCalls).toHaveLength(0)
+    expect(enqueueCalls).toEqual([
+      expect.objectContaining({ body: 'after', wait: true, turnPolicy: 'guarded', ttlMs: 300_000 }),
+    ])
+  })
+
+  it('--queue without --wait keeps the queued semantic handoff', async () => {
+    const steerCalls: SteerSubmissionRequest[] = []
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    const client = createTurnClient({ sessionFound: true, steerCalls, handoffCalls })
+    const result = await runTurnCommand(client, { queue: true }, ['cody@agent-spaces', 'after'])
+    expect(result.exitCode).toBe(0)
+    expect(steerCalls).toHaveLength(0)
+    expect(handoffCalls).toHaveLength(1)
+  })
+
+  it('rejects conflicting doors and queue-only flags without --queue', async () => {
+    const cases: Array<[TurnOptions, string]> = [
+      [{ queue: true, preempt: true }, '--queue and --preempt select different submission doors'],
+      [{ steer: true, queue: true }, '--steer and --queue select different submission doors'],
+      [{ steer: true, preempt: true }, '--steer and --preempt select different submission doors'],
+      [{ ttl: '1m' }, '--ttl is available only with --queue or --preempt'],
+      [{ replyTo: 'msg-1' }, '--reply-to threads a queued message; pass --queue'],
+      [{ crossScopeReply: true }, '--cross-scope-reply threads a queued message; pass --queue'],
+    ]
+    for (const [opts, message] of cases) {
+      const result = await runTurnCommand(createTurnClient({ sessionFound: true }), opts, [
+        'cody@agent-spaces',
+        'x',
+      ])
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain(message)
+    }
+  })
+})

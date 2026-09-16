@@ -48,8 +48,14 @@ export type TurnOptions = {
    * `--pretty`), whose progress-stream semantics are unchanged.
    */
   wait?: string | undefined
-  /** T-07155 — preempt the target's active turn instead of queueing behind it. */
+  /**
+   * Accepted for compatibility and changes nothing: steer is the default door
+   * (T-08533). Steer = send now: the body joins the running turn, or starts one.
+   */
   steer?: boolean | undefined
+  /** Queue = send after: the body is its own turn, ordered behind the running one. */
+  queue?: boolean | undefined
+  /** T-07155 — preempt the target's active turn instead of queueing behind it. */
   preempt?: boolean | undefined
   /** Admission lifetime for enqueue/preempt. */
   ttl?: string | undefined
@@ -271,6 +277,7 @@ function assertAttachOptionCompatibility(opts: TurnOptions): void {
     [opts.new === true, '--new'],
     [opts.dryRun === true, '--dry-run'],
     [opts.steer === true, '--steer'],
+    [opts.queue === true, '--queue'],
     [opts.preempt === true, '--preempt'],
     [opts.wait !== undefined, '--wait'],
     [opts.ttl !== undefined, '--ttl'],
@@ -396,14 +403,22 @@ async function resolveAttachObservation(
 }
 
 function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
-  if (opts.steer === true && opts.wait !== undefined) {
-    throw new CliUsageError('--steer cannot be combined with --wait; steer has no turn of its own')
+  const doorFlags = [
+    [opts.steer === true, '--steer'],
+    [opts.queue === true, '--queue'],
+    [opts.preempt === true, '--preempt'],
+  ] as const
+  const selected = doorFlags.filter(([present]) => present).map(([, flag]) => flag)
+  if (selected.length > 1) {
+    throw new CliUsageError(`${selected.join(' and ')} select different submission doors`)
   }
-  if (opts.steer === true && opts.preempt === true) {
-    throw new CliUsageError('--steer and --preempt select different submission doors')
+  if (opts.queue !== true && opts.preempt !== true && opts.ttl !== undefined) {
+    throw new CliUsageError('--ttl is available only with --queue or --preempt')
   }
-  if (opts.steer === true && opts.ttl !== undefined) {
-    throw new CliUsageError('--ttl is available only for enqueue and preempt')
+  if (opts.queue !== true && (opts.replyTo !== undefined || opts.crossScopeReply === true)) {
+    throw new CliUsageError(
+      `${opts.replyTo !== undefined ? '--reply-to' : '--cross-scope-reply'} threads a queued message; pass --queue`
+    )
   }
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'final') {
@@ -474,6 +489,13 @@ type PreparedTurnObservation = {
   resolved: ReturnType<typeof resolveScope>
   handoff: StackedHandoff
   catchUpThroughSeq?: number | undefined
+  /**
+   * Follow the seat rather than one run. A steer that joins a running turn is
+   * settled into the run that owns that turn, so its own run carries none of
+   * the turn's events; the first turn terminal on the seat after admission is
+   * the turn it joined or started.
+   */
+  followSeat?: boolean | undefined
 }
 
 async function prepareDispatchedTurn(
@@ -546,10 +568,7 @@ async function prepareDispatchedTurn(
     ...(opts.new === true ? { freshContext: true } : {}),
     ...(responseFormat !== undefined ? { responseFormat } : {}),
   }
-  if (opts.steer === true) {
-    printJsonLine(await client.steer(submissionRequest))
-    return undefined
-  }
+  const queue = opts.queue === true
   if (opts.preempt === true) {
     printJsonLine(
       await client.preempt({
@@ -560,7 +579,38 @@ async function prepareDispatchedTurn(
     )
     return undefined
   }
-  if (waitMode === 'final' || ttlMs !== undefined) {
+  if (!queue) {
+    // Steer = send now (T-08533): join the running turn, or start one. A target
+    // with no session row has no seat to steer yet; its birth turn is the turn
+    // the steer would start, and the handoff below is the door that births it.
+    const existing = await client.resolveSession({ sessionRef, create: false })
+    if (existing.found) {
+      if (waitMode === 'final') {
+        printJsonLine(await client.steer({ ...submissionRequest, wait: true }))
+        return undefined
+      }
+      const steered = await client.steer(submissionRequest)
+      if (steered.admission !== 'admitted' || !('runId' in steered)) {
+        printJsonLine(steered)
+        return undefined
+      }
+      return {
+        resolved,
+        followSeat: true,
+        handoff: {
+          sessionRef,
+          scopeRef: resolved.scopeRef,
+          laneRef: resolved.laneRef,
+          hostSessionId: steered.hostSessionId,
+          runtimeId: steered.runtimeId ?? '',
+          runId: steered.runId,
+          generation: steered.generation,
+          fromSeq: steered.observation?.lifecycle.fromSeq ?? 0,
+        },
+      }
+    }
+  }
+  if (queue && (waitMode === 'final' || ttlMs !== undefined)) {
     printJsonLine(
       await client.enqueue({
         ...submissionRequest,
@@ -635,7 +685,7 @@ export async function cmdTurn(
   if (prepared === undefined) {
     return
   }
-  const { resolved, handoff, catchUpThroughSeq } = prepared
+  const { resolved, handoff, catchUpThroughSeq, followSeat } = prepared
 
   // ── Resolve sink format ──
   // --pretty forces terminal/tree format regardless of TTY detection, so
@@ -753,7 +803,7 @@ export async function cmdTurn(
       for await (const event of client.watch({
         scopeRef: handoff.scopeRef,
         laneRef: handoff.laneRef,
-        runId: handoff.runId,
+        ...(followSeat === true ? {} : { runId: handoff.runId }),
         generation: handoff.generation,
         fromSeq: handoff.fromSeq,
         follow: true,

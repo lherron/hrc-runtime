@@ -649,9 +649,9 @@ export function parseSubmissionRequest(
     'responseFormat',
     'freshContext',
     ...(door === 'enqueue' || door === 'preempt' ? ['ttlMs'] : []),
-    ...(door === 'steer'
-      ? []
-      : ['turnPolicy', 'wait', 'runtimeIntent', 'establishedBrokerInvocationId']),
+    // A steer joins the running turn or starts one, so it has a turn to wait on.
+    'wait',
+    ...(door === 'steer' ? [] : ['turnPolicy', 'runtimeIntent', 'establishedBrokerInvocationId']),
   ]
   rejectUnknownFields(input, allowed)
 
@@ -669,6 +669,7 @@ export function parseSubmissionRequest(
   const envelopeId = readOptionalNonEmptyStringField(originInput, 'envelopeId')
   const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
   const freshContext = readOptionalBooleanField(input, 'freshContext')
+  const wait = readOptionalBooleanField(input, 'wait')
   const common = {
     target,
     body,
@@ -680,7 +681,7 @@ export function parseSubmissionRequest(
     ...(responseFormat !== undefined ? { responseFormat } : {}),
     ...(freshContext !== undefined ? { freshContext } : {}),
   }
-  if (door === 'steer') return common
+  if (door === 'steer') return { ...common, ...(wait !== undefined ? { wait } : {}) }
 
   const turnPolicy = requireOptionalOneOf(
     input['turnPolicy'],
@@ -688,7 +689,6 @@ export function parseSubmissionRequest(
     'turnPolicy must be "open" or "guarded"',
     { field: 'turnPolicy' }
   )
-  const wait = readOptionalBooleanField(input, 'wait')
   const runtimeIntent = input['runtimeIntent']
   const establishedBrokerInvocationId = readOptionalNonEmptyStringField(
     input,

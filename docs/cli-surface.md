@@ -69,7 +69,8 @@ not treated as an attach failure.
 
 `hrc turn <target> [prompt]` is a native `hrc-cli` command. It resolves the
 target, dispatches tracked work, and streams rendered frames without spawning
-the retired `hrcchat` shim. Use `-` for stdin or `--file <path>`. The observe-only
+the retired `hrcchat` shim. Its default door is steer (join the running turn,
+or start one); `--queue` enqueues a separate turn behind it. Use `-` for stdin or `--file <path>`. The observe-only
 form `hrc turn --attach <target>` dispatches no input: it finds the target's
 single admitted active run, catches up from that run's first ledger event, then
 uses the same renderer, terminal predicates, and exit codes. In stacked mode a
@@ -78,7 +79,7 @@ no frame, and the fixed 30-second catch-up deadline exits 3 with no frame.
 
 Options: `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`, `--format`,
 `--pretty`, `--stall-after` (default `1h`), `--stacked`, `--follow`, `--wait`,
-`--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--steer`,
+`--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--queue`, `--steer`,
 `--preempt`, `--ttl`, `--file`, and `--response-format-json-schema`.
 
 Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`,

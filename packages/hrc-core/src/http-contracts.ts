@@ -470,7 +470,13 @@ type HrcSessionBoundSubmissionRequest = HrcSubmissionRequestBase & {
 }
 
 /** Steer is a free-rider: wait, turnPolicy, obligation and reply are unrepresentable. */
-export type SteerSubmissionRequest = HrcSubmissionRequestBase
+/**
+ * Steer = send now: the body joins the running turn, or starts one when none is
+ * running. `wait` blocks until the turn it joined or started is terminal.
+ */
+export type SteerSubmissionRequest = HrcSubmissionRequestBase & {
+  wait?: boolean | undefined
+}
 
 export type EnqueueSubmissionRequest = HrcSessionBoundSubmissionRequest & {
   ttlMs?: number | undefined

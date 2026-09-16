@@ -43,8 +43,9 @@ export const HRC_QUEUED_TO_LIVE_HARNESS_WARNING: HrcDeliveryWarning = {
  * text into the turn, and what the model does with it is the model's business.
  * Consumers must not read this as compliance evidence.
  *
- * A steer produces no turn and no reply of its own, so `mergedIntoRunId` points
- * at the run it joined rather than at a run belonging to this message.
+ * A steer that joins a running turn produces no turn and no reply of its own,
+ * so `mergedIntoRunId` points at the run it joined rather than at a run
+ * belonging to this message. (A steer to an idle seat starts a turn instead.)
  *
  * `presented_to_live_harness` (T-07203) is the WEAKER interactive-route truth:
  * the text was written into the target's live session while the named run was

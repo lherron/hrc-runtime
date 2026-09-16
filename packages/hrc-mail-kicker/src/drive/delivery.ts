@@ -26,7 +26,7 @@ import { KICKER_SUBMISSION_TTL_MS, errorText, parseSessionRef } from '../interna
 import { formatEnvelopePresentations } from '../ledger/presentation.js'
 import type { PresentableEnvelope } from '../ledger/presentation.js'
 import { presentationRuntimeIdFor } from './authority.js'
-import { landLaunchIfStarted } from './landing.js'
+import { landLaunchIfStarted, recordSteerFallback, steerRefusalFallback } from './landing.js'
 import type { ActionableEnvelope } from './presentation.js'
 import { actionableDirectives, senderGenerationFor } from './presentation.js'
 import type { ObservedBrokerSeat } from './seat.js'
@@ -38,23 +38,28 @@ export type DeliveryOutcome = 'submitted' | 'refused' | 'skipped'
  *
  * A stored `hold` is an interruption request and owns its own admission
  * decision; refused authority falls through to the ordinary policy and the
- * eventual receipt says `hold_refused_authority`. Everything else is the rev 4
- * routing rule: steer into a live turn when the driver accepts steering, queue
- * at the boundary when it does not, and enqueue into an idle seat as before.
+ * eventual receipt says `hold_refused_authority`. Everything else follows the
+ * steer ruling (T-08533): steer = send now, enqueue = send after. A steer joins
+ * the running turn, or starts one on an idle seat, so it is the door for idle
+ * AND turn-active seats whose driver advertises `steer`. Enqueue remains for a
+ * driver without `steer`, a runtime that refused steer at the capability layer,
+ * and an envelope whose previous steer was refused unwritten (the fallback).
  */
 type SeatDoor = Extract<HrcMailDeliveryDoor, 'steer' | 'enqueue' | 'preempt'>
 
 function doorFor(
   server: MailKickerContext,
   seat: ObservedBrokerSeat,
+  envelopeId: string,
   isHold: boolean,
   preemptAuthorized: boolean
 ): { door: SeatDoor; deliveryOutcome?: string | undefined } {
   if (isHold && preemptAuthorized) return { door: 'preempt' }
   if (
-    seat.state === 'turn-active' &&
+    (seat.state === 'turn-active' || seat.state === 'idle') &&
     seat.steerCapable &&
-    !server.mailKickerSteerRefused.has(seat.runtimeId)
+    !server.mailKickerSteerRefused.has(seat.runtimeId) &&
+    !server.mailKickerSteerFallback.has(envelopeId)
   ) {
     return isHold ? { door: 'steer', deliveryOutcome: 'hold_refused_authority' } : { door: 'steer' }
   }
@@ -123,9 +128,12 @@ export async function deliverToSeat(
     seat.state === 'absent' ? presentationRuntimeIdFor(server, session) : seat.runtimeId
   const isHold = item.envelope.delivery === 'hold'
 
-  const intentDoorAndOutcome = doorFor(server, seat, isHold, false)
+  const intentDoorAndOutcome = doorFor(server, seat, item.envelope.id, isHold, false)
   let door: SeatDoor = intentDoorAndOutcome.door
   let deliveryOutcome = intentDoorAndOutcome.deliveryOutcome
+  // The fallback is spent by the pass that takes it: a later refusal of the
+  // enqueue is an enqueue problem, and a later envelope steers as usual.
+  if (door === 'enqueue') server.mailKickerSteerFallback.delete(item.envelope.id)
 
   const runtimeIntent =
     session.lastAppliedIntentJson ??
@@ -255,14 +263,27 @@ export async function deliverToSeat(
   const submissionId = body.submissionId ?? body.inputId
   if (body.admission === 'rejected') {
     server.db.mailDelivery.clearIntent(item.envelope.id)
+    const reason = body.reason ?? 'no_submission_identity'
+    // An admission refusal wrote nothing. A steer refused by a guarded turn,
+    // authority or capability is best effort that did not happen, never a lost
+    // envelope: queue this one behind that turn on the very next pass (T-08533).
+    const fallback =
+      door === 'steer' && runtimeId !== undefined
+        ? steerRefusalFallback(server, runtimeId, body.submissionId, reason)
+        : undefined
+    if (fallback !== undefined && runtimeId !== undefined) {
+      recordSteerFallback(server, item.envelope.id, runtimeId, fallback)
+    }
     server.log('WARN', 'wrkq.kicker.landing_refused', {
       targetSessionRef,
       wakeReason,
       envelope: item.envelope.id,
       door,
-      reason: body.reason ?? 'no_submission_identity',
+      reason,
       phase: 'admission',
+      ...(fallback === undefined ? {} : { fallbackDoor: 'enqueue' }),
     })
+    if (fallback !== undefined) server.wake(targetSessionRef, 'insert')
     return 'refused'
   }
   if (submissionId === undefined) {

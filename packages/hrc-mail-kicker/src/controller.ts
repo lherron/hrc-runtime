@@ -65,6 +65,7 @@ export class MailKicker implements MailKickerContext {
   mailKickerBootReconcilePending = true
   readonly mailKickerStalledDeliveryAnnounced = new Set<string>()
   readonly mailKickerSteerRefused = new Set<string>()
+  readonly mailKickerSteerFallback = new Set<string>()
   readonly mailKickerDeliveryBackoff = new Map<string, number>()
 
   constructor(

@@ -131,10 +131,67 @@ describe('D2 — steer first, and the door is chosen by what the seat is doing',
     expect(dispatches[0]?.submissionDoor).toBe('enqueue')
   })
 
-  it('enqueues into an idle seat, as before', async () => {
+  // T-08533: steer = send now. A steer to an idle seat starts a turn.
+  it('steers into an idle seat whose driver advertises the class', async () => {
     const envelope = ledger.say()
-    expect(await deliverOne(seatIn('idle'), envelope)).toBe('submitted')
+    expect(await deliverOne(seatIn('idle', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('steer')
+    expect(dispatches[0]?.submissionOrigin.envelopeId).toBe(envelope.id)
+  })
+
+  it('enqueues into an idle seat whose driver does not', async () => {
+    const envelope = ledger.say()
+    expect(await deliverOne(seatIn('idle', false), envelope)).toBe('submitted')
     expect(dispatches[0]?.submissionDoor).toBe('enqueue')
+  })
+
+  it('enqueues into an idle seat whose runtime refused steer at the capability layer', async () => {
+    const envelope = ledger.say()
+    context.mailKickerSteerRefused.add(RUNTIME)
+    expect(await deliverOne(seatIn('idle', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('enqueue')
+  })
+
+  it('observes steerCapable on an idle seat from the frozen broker hello', async () => {
+    const now = new Date().toISOString()
+    db.brokerInvocations.insert({
+      invocationId: 'inv-idle-caps',
+      operationId: 'op-idle-caps',
+      runtimeId: RUNTIME,
+      brokerProtocol: 'harness-broker/0.2',
+      brokerDriver: 'claude-code-tmux',
+      invocationState: 'ready',
+      capabilitiesJson: JSON.stringify({ admission: { classes: ['steer', 'queue'] } }),
+      specHash: 'spec',
+      startRequestHash: 'sr',
+      selectedProfileHash: 'pf',
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.runtimes.update(RUNTIME, {
+      controllerKind: 'harness-broker',
+      activeInvocationId: 'inv-idle-caps',
+      updatedAt: now,
+    })
+    context = {
+      ...context,
+      broker: {
+        ...context.broker,
+        seatProbe: async () => ({
+          ok: true,
+          response: {
+            invocationId: 'inv-idle-caps' as never,
+            seat: { state: 'idle' },
+            brokerHeldDepth: 0,
+          },
+        }),
+      },
+    }
+    expect(await observeBrokerSeat(context, session)).toEqual({
+      state: 'idle',
+      runtimeId: RUNTIME,
+      steerCapable: true,
+    })
   })
 
   it('reads the steer class off the frozen broker hello, never off driver code', () => {
@@ -427,11 +484,82 @@ describe('D2 — a refused submission is not a failed envelope', () => {
     expect(dispatches[0]?.submissionDoor).toBe('enqueue')
   })
 
+  it('falls to ENQUEUE for this envelope when a guarded turn refuses the steer', async () => {
+    const envelope = ledger.say()
+    await deliverOne(seatIn('turn-active', true), envelope)
+    wakes.length = 0
+    await refuseSteer(envelope, { reason: 'guarded', layer: 'policy' })
+
+    // A fact about the TURN, not the seat: the runtime keeps steer-first...
+    expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
+    expect(context.mailKickerDeliveryBackoff.has(RUNTIME)).toBe(false)
+    // ...but this envelope is re-woken at once and queued behind that turn.
+    expect(wakes).toEqual([TARGET])
+    const refused = logs.find((entry) => entry.event === 'wrkq.kicker.landing_refused')
+    expect(refused?.detail).toMatchObject({ refusalClass: 'not_written', fallbackDoor: 'enqueue' })
+    expect(ledger.failRequests).toEqual([])
+    expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('enqueue')
+
+    // The fallback is spent: a different envelope still steers.
+    const next = ledger.say()
+    dispatches.length = 0
+    expect(await deliverOne(seatIn('turn-active', true), next)).toBe('submitted')
+    expect(dispatches[0]?.submissionDoor).toBe('steer')
+  })
+
+  it('falls to ENQUEUE when the steer is refused at ADMISSION (guarded / authority)', async () => {
+    for (const reason of ['guarded', 'authority-denied']) {
+      const envelope = ledger.say()
+      dispatches.length = 0
+      wakes.length = 0
+      harness.context = {
+        ...context,
+        dispatchTurn: async (_session, _intent, _prompt, options) => {
+          dispatches.push(options)
+          return options.submissionDoor === 'steer'
+            ? ({
+                runId: 'run-refused',
+                hostSessionId: session.hostSessionId,
+                generation: session.generation,
+                runtimeId: RUNTIME,
+                submissionId: `sub-refused-${reason}`,
+                admission: 'rejected',
+                reason,
+              } as never)
+            : ({
+                runId: 'run-queued',
+                hostSessionId: session.hostSessionId,
+                generation: session.generation,
+                runtimeId: RUNTIME,
+                submissionId: `sub-queued-${reason}`,
+                admission: 'admitted',
+              } as never)
+        },
+      }
+      expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('refused')
+      expect(db.mailDelivery.getIntent(envelope.id)).toBeUndefined()
+      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
+      expect(wakes).toEqual([TARGET])
+      expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)
+
+      expect(await deliverOne(seatIn('turn-active', true), envelope)).toBe('submitted')
+      expect(dispatches.map((dispatch) => dispatch.submissionDoor)).toEqual(['steer', 'enqueue'])
+      expect(db.mailDelivery.getIntent(envelope.id)).toMatchObject({
+        door: 'enqueue',
+        submissionId: `sub-queued-${reason}`,
+      })
+      // Admission is not landing: nothing is presented until the queue executes.
+      expect(ledger.envelopes.get(envelope.id)?.state).toBe('pending')
+      harness.context = context
+    }
+  })
+
   it('treats a state-layer refusal as the transient moment it is', async () => {
     const envelope = ledger.say()
     await deliverOne(seatIn('turn-active', true), envelope)
-    // `busy`, `invalid-state:*`, `guarded` — all true about the instant and
-    // false a second later.
+    // `busy`, `invalid-state:*` — true about the instant and false a second
+    // later. (`guarded` is about the whole turn and falls back to enqueue.)
     await refuseSteer(envelope, { reason: 'busy', layer: 'state' })
 
     expect(context.mailKickerSteerRefused.has(RUNTIME)).toBe(false)

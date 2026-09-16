@@ -274,20 +274,29 @@ export async function waitForSubmissionTerminal(
   }
 ): Promise<Pick<HrcSubmissionResponse, 'disposition' | 'terminal'>> {
   const evaluate = (
-    records: ReadonlyArray<{ type: string; brokerEventJson: string }>
+    records: ReadonlyArray<{ type: string; brokerEventJson: string; runId?: string | undefined }>
   ): Pick<HrcSubmissionResponse, 'disposition' | 'terminal'> | undefined => {
     const disposition = records
       .map((record) => submissionDisposition(record, input.submissionId))
       .find((candidate) => candidate !== undefined)
     if (disposition === undefined) return undefined
-    if (disposition.type !== 'executed' || input.waitForTurnTerminal === false) {
+    // An executed submission started its own turn; an absorbed one (a steer
+    // that joined the running turn) has that turn to wait on too.
+    if (
+      (disposition.type !== 'executed' && disposition.type !== 'absorbed') ||
+      input.waitForTurnTerminal === false
+    ) {
       return { disposition }
     }
-    const status = records
-      .map((record) => terminalStatus(record, disposition.turnId))
-      .find((candidate) => candidate !== undefined)
+    const terminalRecord = records.find(
+      (record) => terminalStatus(record, disposition.turnId) !== undefined
+    )
+    const status = terminalRecord && terminalStatus(terminalRecord, disposition.turnId)
     if (status === undefined) return undefined
-    const finalMessage = projectSemanticTurnResponse(server.db, input.runId).body
+    // A joined turn's messages belong to the run that owns it, not to this one.
+    const finalRunId =
+      disposition.type === 'absorbed' ? (terminalRecord?.runId ?? input.runId) : input.runId
+    const finalMessage = projectSemanticTurnResponse(server.db, finalRunId).body
     return {
       disposition,
       terminal: {

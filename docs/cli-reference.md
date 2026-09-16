@@ -336,10 +336,14 @@ hrc turn --attach cody@hrc-runtime:T-08200/smoke --stacked 20s
 ```
 
 `turn` args are `<target> [prompt]`; use `-` for stdin or `--file <path>`.
+The default door is steer (send now): the body joins the target's running turn,
+or starts one when none is running, and `--wait final` waits on that turn.
+`--queue` selects enqueue (send after): the body is its own turn behind the
+running one. `--steer` is a no-op alias of the default.
 Its native options are `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`,
 `--format`, `--pretty`, `--stall-after` (default `1h`), `--stacked`,
 `--follow`, `--wait`, `--timeout`, `--quiet`, `--reply-to`,
-`--cross-scope-reply`, `--steer`, `--preempt`, `--ttl`, `--file`, and
+`--cross-scope-reply`, `--queue`, `--steer`, `--preempt`, `--ttl`, `--file`, and
 `--response-format-json-schema`.
 
 `--attach` is observe-only: it resolves the target with messaging placement

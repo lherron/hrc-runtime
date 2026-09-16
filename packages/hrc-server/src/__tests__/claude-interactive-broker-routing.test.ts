@@ -198,18 +198,17 @@ describe('Phase C — shouldBlockForBrokerTurnCompletion convention (headless pa
   })
 
   /**
-   * T-08108. A steer joins a turn already running and originates none of its
-   * own, so there is no completion to wait for: its run stays `accepted`, the
-   * caller blocks to the 10-minute deadline and then fails
+   * T-08108. A steer that joins a running turn originates none of its own, so
+   * its run has no completion to wait for: it is settled into the owner run,
+   * and blocking on it held the caller to the 10-minute deadline and then failed
    * `interactive broker turn timed out` on a delivery that WORKED. Observed on
-   * max3 2026-09-06 (run-63fe3229): the pane got the text, the turn completed,
-   * the CLI never returned.
+   * max3 2026-09-06 (run-63fe3229).
    */
-  it('never blocks on the steer door, whatever the caller asked for', () => {
+  it('never blocks on the steer run, whatever the caller asked for', () => {
     expect(api.shouldBlockForBrokerTurnCompletion!(undefined, 'steer')).toBe(false)
-    // The forcing IS the claim: an explicit true must not re-enable it. The CLI
-    // already rejects `--steer --wait`, so no legitimate caller holds a blocking
-    // intent here; this puts the rule where a new caller cannot re-break it.
+    // The forcing IS the claim: an explicit true must not re-enable it. A steer
+    // caller that wants to block asks the door for `wait`, which follows the
+    // broker disposition to the turn joined or started (T-08533).
     expect(api.shouldBlockForBrokerTurnCompletion!(true, 'steer')).toBe(false)
   })
 

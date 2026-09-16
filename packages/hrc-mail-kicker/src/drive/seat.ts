@@ -20,7 +20,7 @@ import { isRuntimeUnavailableStatus } from '../internal.js'
 export type ObservedBrokerSeat =
   | { state: 'absent' }
   | { state: 'unavailable'; runtimeId: string }
-  | { state: 'idle'; runtimeId: string }
+  | { state: 'idle'; runtimeId: string; steerCapable: boolean }
   | { state: 'turn-active'; runtimeId: string; turnId: string; steerCapable: boolean }
   | { state: 'turn-observed'; runtimeId: string; turnId: string }
   | { state: 'starting' | 'stopping' | 'terminal'; runtimeId: string }
@@ -76,5 +76,11 @@ export async function observeBrokerSeat(
           runtimeId: runtime.runtimeId,
           turnId: String(seat.turnId),
         }
-      : { state: seat.state, runtimeId: runtime.runtimeId }
+      : seat.state === 'idle'
+        ? {
+            state: 'idle',
+            runtimeId: runtime.runtimeId,
+            steerCapable: runtimeAdvertisesSteer(server, runtime.runtimeId),
+          }
+        : { state: seat.state, runtimeId: runtime.runtimeId }
 }

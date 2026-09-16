@@ -12,16 +12,23 @@ Admission class is selected by the endpoint or CLI flag, never by a policy field
 
 ## CLI matrix
 
+Steer = send now; queue = send after (T-08533). A steer joins the running turn,
+or starts one when none is running. Steer is the default door of `hrc turn`.
+
 | Command | Door | Expected disposition |
 |---|---|---|
-| `hrc turn <target> 'idle enqueue'` | enqueue | `executed{turnId}` and its own terminal |
-| `hrc turn <target> 'boundary enqueue'` while busy | enqueue | `queue.enqueued`, then `executed{turnId}` at the boundary |
-| `hrc turn <target> --steer 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; typed rejection when guarded |
-| `hrc turn <target> --wait final 'guarded work'` | enqueue + guarded | waits for this submission's `executed{turnId}` and that turn's terminal |
+| `hrc turn <target> 'idle steer'` | steer | `executed{turnId}`: the steer starts its own turn |
+| `hrc turn <target> 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; typed rejection when guarded |
+| `hrc turn <target> --wait final 'note'` | steer + wait | waits for `executed` or `absorbed{turnId}` and THAT turn's terminal |
+| `hrc turn <target> --queue 'idle enqueue'` | enqueue | `executed{turnId}` and its own terminal |
+| `hrc turn <target> --queue 'boundary enqueue'` while busy | enqueue | `queue.enqueued`, then `executed{turnId}` at the boundary |
+| `hrc turn <target> --queue --wait final 'guarded work'` | enqueue + guarded | waits for this submission's `executed{turnId}` and that turn's terminal |
 | `hrc turn <target> --preempt 'operator takeover'` | preempt | interrupted active terminal, then the preempting submission's own turn |
 
-`--steer` and `--wait` are mutually exclusive. `--ttl <duration>` is accepted
-only by enqueue and preempt. A non-operator preempt must return
+`--steer` is accepted as a no-op alias of the default. `--ttl <duration>` is
+accepted only with `--queue` or `--preempt`, and `--reply-to` only with
+`--queue`. A target with no session row yet is born through the semantic
+handoff, whose launch turn carries the body. A non-operator preempt must return
 `authority-denied` and produce no `interrupt.*` record.
 
 ## Ledger proof
@@ -41,12 +48,15 @@ Rejected, expired, and cancelled submissions end at their typed disposition and
 do not wait for a message or reply row. The canonical final text comes from the
 identified turn projection.
 
-For a kicker presentation, send an addressed `wrkc say` while the seat is busy.
-The admission class the ledger must show is the one the seat's driver
-advertises (T-08094): `admission.requested(steer)` with `origin.envelopeId`
-followed by `submission.absorbed` on a steer-capable seat, and
-`admission.requested(queue)` with a positive TTL followed by boundary
-`submission.executed` on one without. Either way exactly ONE envelope rides that
+For a kicker presentation, send an addressed `wrkc say` to an idle or busy
+seat. The admission class the ledger must show is the one the seat's driver
+advertises (T-08094, T-08533): `admission.requested(steer)` with
+`origin.envelopeId` followed by `submission.absorbed` (busy) or
+`submission.executed` (idle, the steer started the turn) on a steer-capable
+seat, and `admission.requested(queue)` with a positive TTL followed by boundary
+`submission.executed` on one without. A steer refused unwritten by a guarded
+turn, authority or capability is followed on the next pass by
+`admission.requested(queue)` for the same envelope, executed after that turn. Either way exactly ONE envelope rides that
 submission, the wrkq receipt is written on the landing and not on the admission,
 and no `preempt` admission appears for a queue-intent delivery.
 

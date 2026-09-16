@@ -446,11 +446,18 @@ The output always names the resolved kind and the concrete ID(s).
     .option('--wait <mode>', 'block quietly until terminal, then emit one JSON object')
     .option('--timeout <duration>', 'wait budget for --wait final (default 45m)')
     .option('--quiet', 'suppress all progress output while --wait blocks')
-    .option('--reply-to <id>', 'reply to a specific message ID')
+    .option('--reply-to <id>', 'reply to a specific message ID (with --queue)')
     .option('--cross-scope-reply', 'allow --reply-to to thread across conversation scopes')
-    .option('--steer', 'STRICT steer: deliver into the active turn or fail typed')
+    .option(
+      '--queue',
+      'enqueue: run as its own turn after the active one (default door is steer: join the active turn, or start one)'
+    )
+    .option(
+      '--steer',
+      'steer: join the active turn, or start one (the default; accepted as a no-op)'
+    )
     .option('--preempt', 'interrupt the active turn and start this submission (operator only)')
-    .option('--ttl <duration>', 'admission lifetime for enqueue or preempt')
+    .option('--ttl <duration>', 'admission lifetime for --queue or --preempt')
     .option('--file <path>', 'read prompt from file')
     .option(
       '--response-format-json-schema <schema>',
