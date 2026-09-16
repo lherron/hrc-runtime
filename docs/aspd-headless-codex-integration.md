@@ -9,11 +9,70 @@ execution path with frozen HRC"). Producer prerequisite: agent-spaces T-08539
 This is one production path, validated in isolation. It is not the ASP/HRC
 migration, a shared-host rollout, or a new lifecycle state machine.
 
+Amendment (T-08553, shared max3 rollout; Lance-selected per-request option,
+EN-12917): §1.1 adds a per-request operator-presentation choice so the route can
+be requested on a node whose default presentation is `tmux-tui`. It changes no
+preparation, persistence-ordering, launch, release-binding or reattach rule
+below.
+
 ## 1. Route and configuration
 
 **Route.** HRC-hosted headless Codex: a non-interactive runtime intent whose
-compile profile selector is `brokerDriver: codex-app-server`, with operator
-presentation policy `none` (no `tmux-tui` viewer). Nothing else changes route.
+compile profile selector is `brokerDriver: codex-app-server`, with EFFECTIVE
+operator presentation `none` (no `tmux-tui` viewer). The effective presentation
+is the request's explicit choice when present (§1.1), otherwise the node default
+`HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`. Nothing else changes route.
+
+### 1.1 Per-request operator presentation (T-08553)
+
+**Carrier.** The existing `HrcRuntimeIntent.presentation` object
+(`HrcPresentationIntent`, today `{ viewerWindow? }`) gains one optional field,
+`operator?: 'none'`. It is the only accepted value: the request can decline the
+node's viewer, never impose one. No flag, no ASP wire change, no new endpoint.
+
+**Doors.** The same intent every start/dispatch door already accepts, so the
+HTTP API takes `intent.presentation.operator` where it takes
+`intent.presentation.viewerWindow`. The CLI door is `hrc start <scope>
+--no-viewer` (beside the existing `--viewer-window`). It is not offered on
+`hrc run` or attach, which are interactive by definition.
+
+**Precedence.** For the codex-app-server presentation decision (both this route's
+selector `aspdHeadlessCodexEndpoint` and the existing headless handler):
+request `operator: 'none'` → `none`; omitted → the node default, byte for byte
+today's behavior. The decision stays driver-gated: any other broker driver
+already resolves `none`.
+
+**Validation (refusals, before any runtime, operation or hosting effect;
+`invalid_request` with `field: presentation.operator` unless named):**
+- any value other than `'none'`;
+- `operator: 'none'` together with `presentation.viewerWindow` (a placement for a
+  viewer the request declined);
+- `operator: 'none'` on an intent that is, or is normalized by a harness redirect
+  into, an interactive/tmux route (e.g. Claude's interactive broker redirect),
+  where no separate viewer exists to decline: refused
+  `presentation_operator_unsupported`. The choice is honored only on the
+  headless broker route.
+
+**Persistence.** The choice is part of the applied intent
+(`lastAppliedIntentJson.presentation.operator`). The executed decision is
+recorded in the operation's `route_decision_json` as `operatorPresentation`
+plus `operatorPresentationSource: 'request' | 'node-default'`, and the launched
+runtime's durable hosting state records `presentation.kind: 'none'` (existing).
+On this route the frozen preparation (§3) already fixes the hosting; a same-key
+resume (§5) launches that frozen preparation and does not re-evaluate the
+presentation choice or node default.
+
+**Existing scope.** The choice governs only a NEW execution. It never changes a
+live worker's hosting, frozen release or presentation:
+- request `none`, live runtime whose durable presentation is `tmux-tui`
+  (reuse, warm turn, steer/enqueue): refused `presentation_conflict`, no
+  delivery, no stale-marking, no reprovision, runtime untouched. The caller
+  terminates that runtime explicitly if it wants a no-viewer execution;
+- request `none`, live runtime already `none`: delivered normally;
+- omitted choice: never a conflict; delivered to whatever runtime is live
+  (its established presentation is preserved);
+- no live runtime (never started, terminated or unavailable): a new execution
+  with the effective presentation above.
 
 **Configuration.** `HRC_ASPD_SOCKET` names the node-local aspd Unix endpoint
 (absolute path; the daemon's own environment, read at each preparation, never
@@ -194,6 +253,15 @@ another release, never re-prepared, never auto-launched, and is resumed only by
 a same-key caller retry; an uncertain start stays uncertain; reattach and
 control never require aspd and verify release identity on hello.
 
+**Amend `hrc-runtime.aspd-prepared-execution-release` (T-08553):** the route is
+selected by EFFECTIVE operator presentation `none`: an explicit per-request
+`presentation.operator: 'none'` takes precedence over the node default, an
+omitted choice uses the node default unchanged, the choice is refused off the
+headless broker route or with a viewer placement, it is persisted in the applied
+intent and route decision, a live runtime whose presentation differs is refused
+rather than replaced, and a frozen preparation is resumed without re-evaluating
+the choice.
+
 Preserved without amendment: participant lifecycle (not on this route),
 broker admission client (HRC caller policy and submission doors unchanged),
 committed observation control (projection-before-ACK unchanged), continuation
@@ -240,3 +308,19 @@ Ghostty terminal through ghostmux with real `hrc` CLI operations.
    match and event continuity, and take real turns; a second never-submitted
    preparation frozen before the restart launches from readback after it.
 7. Gates: `just verify` (or its stages), targeted tests, architecture records.
+
+### 10.1 Shared max3 rollout acceptance (T-08553)
+
+Real shared HRC (launchd `com.praesidium.hrc-server`, node default
+`tmux-tui` unchanged) with `HRC_ASPD_SOCKET` pointing at the persistent,
+launchd-supervised max3 aspd. On one fixed HRC artifact/lock/pid:
+1. Omitted-choice control: `hrc start <fresh scope> -p …` on a codex agent
+   keeps today's headless `tmux-tui` viewer route (no aspd preparation).
+2. `hrc start <fresh scope> --no-viewer -p …` prepares through aspd on A:
+   `presentation.kind: none`, `operatorPresentationSource: request`,
+   `executionRelease` A, worker hello A, real turn; second warm turn.
+3. `--no-viewer` against the live `tmux-tui` control scope is refused
+   `presentation_conflict` with the runtime untouched.
+4. Activate B at the persistent endpoint with the same HRC pid: fresh
+   `--no-viewer` scope on B (hello B, real turn); the A worker completes another
+   turn. Existing non-test brokers stay attached.

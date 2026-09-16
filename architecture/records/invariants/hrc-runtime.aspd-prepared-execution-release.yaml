@@ -5,7 +5,7 @@ owner_project: hrc-runtime
 scope: HRC-hosted headless codex-app-server preparation, release binding, launch, and reattachment through configured aspd
 predicate: >
   When HRC_ASPD_SOCKET is configured, an HRC-hosted headless
-  codex-app-server runtime with operator presentation none prepares only through
+  codex-app-server runtime with effective operator presentation none prepares only through
   one per-preparation connection to that absolute node-local endpoint. HRC
   requires aspc/0.1, Unix transport, compileHarnessInvocation capability, and
   service release identity; it neither requires a cohosted broker nor falls back
@@ -32,10 +32,18 @@ predicate: >
   candidate connection before attach. Other harness and presentation routes,
   participant establishment, caller-policy and admission authority,
   continuation selection, environment ownership, HRC resource ownership, and
-  projection-before-acknowledgement laws remain unchanged.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; governing split approval EN-12789, 2026-09-16
+  projection-before-acknowledgement laws remain unchanged. Effective operator
+  presentation is an explicit per-request presentation.operator none when
+  present, otherwise the node default unchanged; the request choice is accepted
+  only as none, only on the headless broker route and never with a viewer
+  placement, is persisted in the applied intent and route decision with its
+  source, is never re-evaluated when a frozen preparation resumes, and never
+  replaces a live runtime: a live runtime whose presentation differs refuses the
+  request with presentation_conflict and is left untouched.
+authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus verification pending), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
   - wrkq:T-08542
+  - wrkq:T-08553
   - commit:e5d2c31f
   - commit:bf3e539e
   - docs/aspd-headless-codex-integration.md
@@ -58,10 +66,15 @@ required_tests:
   - T-08542 start-boundary gates distinguish prepared from transport-uncertain state and never replay an uncertain invocation.start
   - T-08542 installed fixed-HRC A-B rollback and aspd-outage matrix keeps existing A and B workers controllable
   - T-08542 daemon restart with aspd unavailable reattaches A and B only after candidate-connection release identity verification and preserves event continuity and acknowledgement ordering
+  - T-08553 presentation precedence gates prove omitted choice keeps the node default and explicit none selects the aspd route with source request
+  - T-08553 presentation validation gates refuse non-none values viewer placement and interactive or redirected routes before any runtime effect
+  - T-08553 existing-scope gates refuse none against a live tmux-tui runtime without delivery stale-marking or reprovision and deliver omitted or matching choices
+  - T-08553 shared max3 installed acceptance covers omitted-choice control, no-viewer aspd A, conflict refusal, and fixed-HRC B activation with the A worker still usable
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
 last_verified: 2026-09-16 design approval; implementation and installed evidence pending
 reopen_when:
   - the configured route or fallback behavior changes
+  - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
   - preparation connection negotiation or release selection changes
   - boundary-P or start-graph persistence ordering changes
   - prepared retry auto-launch uncertain-start or idempotency semantics change
