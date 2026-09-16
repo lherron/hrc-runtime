@@ -67,7 +67,7 @@ predicate: >
   request without an explicit presentation is routed by its scope's established
   runtime, meaning the most recent harness-broker runtime of the host session
   whose status is neither unavailable nor failed, of any provider, harness,
-  driver or invocation state, with an in-flight start awaited first, before
+  driver or invocation state, with an in-flight start counted by the birth transport it has chosen (its decision awaited, never its boot), before
   responseFormat, actuator-split or node defaults are considered. A tmux
   transport selects interactive admission, which alone decides reuse, birth
   join, refusal or fenced replacement, and which the actuator-split route

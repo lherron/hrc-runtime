@@ -359,10 +359,17 @@ Rules 3 and 4 use one shared predicate at both the start door
 (`startRuntimeForSession`) and the turn dispatch door (`dispatchTurn`). It reads
 the runtime rows after the door's existing tmux liveness reconcile. On a
 redirect-off node, a start already in flight for the host session
-(`runtimeStartOperations`) is awaited before the predicate runs, so the runtime
-it births is established. The start door already joins it first. The dispatch
-door adds this await ahead of rule selection, while its later T-07693
-interactive join and invoke rendezvous keep their places. Every message door
+(`runtimeStartOperations`) counts as established with the birth transport it has
+chosen: every start registration records that transport (the start door once its
+route is decided, the headless boot and the interactive birth at registration),
+and a crossing dispatch awaits only that decision, never the boot. Awaiting the
+boot would break the headless route's existing queue-behind-boot delivery of a
+crossing prompt (`server-sdk-start` "queues an existing-session prompt behind
+boot"). A tmux decision selects interactive admission and a headless decision
+selects the headless route. A registration that records no transport falls back
+to the row predicate. The start door already joins an in-flight start first. The
+dispatch door's later T-07693 interactive join and invoke rendezvous keep their
+places. Every message door
 (hrcchat/wrkc submissions, the mail kicker cold birth, selector and target
 messages, ACP) enters through that dispatch door.
 
@@ -679,8 +686,8 @@ request without an explicit presentation is routed by the scope's established
 runtime before `responseFormat`, actuator-split or node defaults are
 considered. The established runtime is the most recent harness-broker runtime
 of the host session whose status is neither unavailable nor failed, of any
-provider, harness, driver or invocation state, with an in-flight start awaited
-first.
+provider, harness, driver or invocation state, with an in-flight start counted
+by the birth transport it has chosen (its decision awaited, never its boot).
 - A tmux transport selects interactive admission, which alone decides reuse,
   birth join, refusal or fenced replacement; high-risk requests are refused by
   actuator-split route admission.
