@@ -33,8 +33,10 @@ predicate: >
   tuple governed by hrc-runtime.observable-release. The root is one
   configuration namespace, not an atomic build-identity boundary, and the
   daemon's in-process ASP imports remain pinned to its release.
-authority: wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+authority: wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
+  - wrkq:T-08555
+  - commit:494fef39
   - wrkq:T-08542
   - wrkq:T-08554
   - commit:e5d2c31f

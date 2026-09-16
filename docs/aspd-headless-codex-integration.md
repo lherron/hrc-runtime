@@ -26,7 +26,7 @@ CLI/tmux backend (the `codexTui` interactive broker), does not change any
 omitted-request default, and adds no ASPC verb, flag or wire field.
 
 Amendment (T-08555, app-server viewer as the node default; authorized by Lance,
-bearing Astra EN-12947): §1.3 makes the aspd-prepared codex-app-server with the
+bearing Astra EN-12947; Daedalus APPROVE EN-12956 on `494fef39`): §1.3 makes the aspd-prepared codex-app-server with the
 attached `tmux-tui` viewer what an ORDINARY (omitted-choice) Codex request gets
 on a node configured for it, max3 first. It narrows
 `HRC_CODEX_CLI_TMUX_BROKER_ENABLED` to the omitted-choice redirect it is named
