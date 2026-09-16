@@ -130,10 +130,28 @@ export function resolveParticipantDelivery(
     )
   }
   if (attempt.state !== 'ACTIVE') {
+    // A reconnect cycle persists DETACHED before it awaits install/hello, so a
+    // non-ACTIVE attempt is usually a recovery in flight rather than a failure.
+    // Distinguish them: reporting an exhausted cycle as `activation_pending`
+    // reads as "not finished yet" for a state that is not coming back on its
+    // own, which is the kind of pending-shaped verdict that teaches a reader to
+    // ignore the field.
+    if (attempt.establishmentWorkState === 'exhausted') {
+      return refuse(
+        'unavailable',
+        'participant_reconnect_exhausted',
+        `participant attempt ${attempt.attemptId} is ${attempt.state} with an exhausted reconnect budget after ${attempt.establishmentAttemptCount} attempt(s); it needs an explicit re-attach, and its addressed work stays pending meanwhile`
+      )
+    }
+    const recovering =
+      attempt.establishmentWorkState === 'pending' ||
+      attempt.establishmentWorkState === 'retry_wait'
     return refuse(
       'pending',
-      'participant_activation_pending',
-      `participant attempt ${attempt.attemptId} is ${attempt.state}, not ACTIVE; its broker establishment has not finished activating`
+      recovering ? 'participant_reconnect_in_progress' : 'participant_activation_pending',
+      recovering
+        ? `participant attempt ${attempt.attemptId} is ${attempt.state} with a reconnect cycle in progress; addressed work stays pending until it is restored`
+        : `participant attempt ${attempt.attemptId} is ${attempt.state}, not ACTIVE; its broker establishment has not finished activating`
     )
   }
 

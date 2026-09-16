@@ -1496,7 +1496,23 @@ async function deliverIntoAttachedParticipant(
   const runId = options.runId ?? `run-${randomUUID()}`
   const { runtime } = target
   const inputTurnOptions = {
-    waitForCompletion: options.waitForCompletion,
+    // The submission doors pass `waitForCompletion: true` to mean "do not
+    // return until the broker mints a submission identity" -- their own comment
+    // says they never wait for turn EXECUTION. The broker input-turn executors
+    // read the same flag as "wait for the turn to finish". Passing it through
+    // unchanged made a real enqueue return only after 31,442ms, by which point
+    // the host journal already showed turn_started AND turn_completed, so
+    // steering into that turn was impossible by construction.
+    //
+    // Three things make `false` correct here rather than merely shorter. The
+    // executors' early return carries `submissionId` and `admission`, so the
+    // identity still exists when the door answers. `handleSubmission` performs
+    // its OWN terminal wait afterwards via `waitForPublicDispatchStage`, so an
+    // explicit `wait: true` still completes only at terminal. And the
+    // interactive route already does exactly this for its live drivers. Only
+    // door-originated calls are affected; a direct caller (the mail kicker,
+    // app sessions) keeps whatever it asked for.
+    waitForCompletion: options.submissionDoor === undefined ? options.waitForCompletion : false,
     repairCorrelation: options.repairCorrelation,
     responseFormat: options.responseFormat,
     ...dispatchRunPersistence(options),

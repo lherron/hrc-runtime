@@ -830,13 +830,54 @@ export class ParticipantRegistrationRepository {
   listActivatedAttempts(): ParticipantAttempt[] {
     return this.db
       .query<ParticipantAttemptRow, []>(
-        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts
-         WHERE state = 'ACTIVE' AND establishment_work_state = 'completed'
-           AND prepared_profile_json IS NOT NULL
-         ORDER BY updated_at`
+        `SELECT ${ATTEMPT_COLUMNS} FROM participant_registration_attempts a
+         WHERE a.state = 'ACTIVE' AND a.establishment_work_state = 'completed'
+           AND a.prepared_profile_json IS NOT NULL
+           -- Only the CURRENT attempt of its registration. Selecting every
+           -- ACTIVE row would offer recovery to a superseded epoch, which is
+           -- how a reconnect ends up serving a different writer.
+           AND a.attach_epoch = (
+             SELECT MAX(b.attach_epoch) FROM participant_registration_attempts b
+              WHERE b.registration_id = a.registration_id
+           )
+         ORDER BY a.updated_at`
       )
       .all()
       .map(mapAttempt)
+  }
+
+  /**
+   * Durably arm a NEW reconnect cycle before any effect is attempted.
+   *
+   * `stageExistingParticipantAttachment` persists ACTIVE -> DETACHED before it
+   * awaits install/hello. Driving it outside the establishment work machine
+   * left a broker outage, or a crash at that instant, with a row in
+   * DETACHED/`completed` -- which every re-entry door excludes, so it was
+   * stranded permanently: no boot enumeration, no scheduler, and delivery
+   * answering `activation_pending` forever with the host healthy. Arming first
+   * hands the cycle to the bounded retry/failure/recovery machinery that
+   * already exists, and `listEstablishmentWork` finds it again after a crash
+   * whatever intermediate state it stopped in.
+   *
+   * The predicate is the initiation rule itself, so this is idempotent and can
+   * never re-arm an exhausted or already-running cycle or reset its budget.
+   */
+  armParticipantReconnect(attemptId: string, updatedAt: string): boolean {
+    const result = this.db
+      .query(
+        `UPDATE participant_registration_attempts
+            SET establishment_work_state = 'pending',
+                establishment_attempt_count = 0,
+                establishment_next_attempt_at = NULL,
+                establishment_last_error = NULL,
+                updated_at = ?
+          WHERE attempt_id = ?
+            AND state = 'ACTIVE'
+            AND establishment_work_state = 'completed'
+            AND prepared_profile_json IS NOT NULL`
+      )
+      .run(updatedAt, attemptId)
+    return result.changes === 1
   }
 
   recordEstablishmentFailure(input: {

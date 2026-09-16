@@ -265,6 +265,32 @@ describe('T-08516 participant delivery linkage (R7.6)', () => {
       expect(delivery).toMatchObject({ kind: 'pending', reason: 'participant_activation_pending' })
     })
 
+    test('a reconnect in flight is reported as such, not as activation', () => {
+      const delivery = resolve({
+        attempt: { state: 'DETACHED', establishmentWorkState: 'retry_wait' },
+      })
+      expect(delivery).toMatchObject({
+        kind: 'pending',
+        reason: 'participant_reconnect_in_progress',
+      })
+    })
+
+    test('an exhausted reconnect is unavailable, not pending-shaped', () => {
+      // Reporting this as `activation_pending` would read as "not finished
+      // yet" for a cycle that is not coming back without an explicit act.
+      const delivery = resolve({
+        attempt: {
+          state: 'DETACHED',
+          establishmentWorkState: 'exhausted',
+          establishmentAttemptCount: 5,
+        },
+      })
+      expect(delivery).toMatchObject({
+        kind: 'unavailable',
+        reason: 'participant_reconnect_exhausted',
+      })
+    })
+
     test('a binding still in BINDING is pending', () => {
       const delivery = resolve({ binding: { state: 'BINDING' } })
       expect(delivery).toMatchObject({ kind: 'pending', reason: 'participant_binding_not_bound' })

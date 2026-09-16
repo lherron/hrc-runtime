@@ -47,6 +47,121 @@ const attempt = (overrides: Partial<ParticipantAttempt> = {}): ParticipantAttemp
   ...overrides,
 })
 
+describe('T-08516 reconnect arming (R7.6 durable bounded retry)', () => {
+  const armed = (patch: Partial<ParticipantAttempt> = {}) => {
+    const db = openHrcDatabase(':memory:')
+    db.participantRegistrations.insertRegistration(registration())
+    db.participantRegistrations.insertAttempt(
+      attempt({
+        state: 'ACTIVE',
+        preparedProfileJson: '{"kind":"harness-broker"}',
+        adapterDispatchEnvJson: '{}',
+        establishmentWorkState: 'completed',
+        ...patch,
+      })
+    )
+    return db
+  }
+
+  test('arms a new cycle from an activated, completed attempt', () => {
+    const db = armed()
+    try {
+      expect(db.participantRegistrations.armParticipantReconnect('patt-1', 'NOW')).toBe(true)
+      const after = db.participantRegistrations.getAttempt('patt-1')
+      expect(after).toMatchObject({
+        establishmentWorkState: 'pending',
+        establishmentAttemptCount: 0,
+      })
+      expect(after?.establishmentLastError).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  test('is idempotent: a second arm while the cycle runs changes nothing', () => {
+    const db = armed()
+    try {
+      expect(db.participantRegistrations.armParticipantReconnect('patt-1', 'NOW')).toBe(true)
+      // Now `pending`, so the predicate no longer matches and the running
+      // cycle's budget is left alone.
+      expect(db.participantRegistrations.armParticipantReconnect('patt-1', 'LATER')).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  test('never re-arms an exhausted cycle', () => {
+    const db = armed({ establishmentWorkState: 'exhausted', establishmentAttemptCount: 5 })
+    try {
+      expect(db.participantRegistrations.armParticipantReconnect('patt-1', 'NOW')).toBe(false)
+      expect(db.participantRegistrations.getAttempt('patt-1')).toMatchObject({
+        establishmentWorkState: 'exhausted',
+        establishmentAttemptCount: 5,
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  test('an armed cycle stopped mid-flight is found again by establishment work', () => {
+    // The stranding this replaces: `stageExistingParticipantAttachment`
+    // persists ACTIVE -> DETACHED before awaiting install/hello, so a broker
+    // outage or a crash there leaves an intermediate state. Once ARMED, the
+    // row is pending and `listEstablishmentWork` finds it whatever state it
+    // stopped in -- which is exactly what was impossible while it stayed
+    // `completed`.
+    const db = armed()
+    try {
+      db.participantRegistrations.armParticipantReconnect('patt-1', 'NOW')
+      expect(
+        db.participantRegistrations.transitionAttempt('patt-1', ['ACTIVE'], 'DETACHED', 'NOW')
+      ).toBe(true)
+      expect(db.participantRegistrations.listEstablishmentWork().map((a) => a.attemptId)).toContain(
+        'patt-1'
+      )
+    } finally {
+      db.close()
+    }
+  })
+
+  test('a DETACHED attempt left at completed is invisible, which is the bug', () => {
+    const db = armed()
+    try {
+      db.participantRegistrations.transitionAttempt('patt-1', ['ACTIVE'], 'DETACHED', 'NOW')
+      // Not armed: every re-entry door excludes it. This case exists so the
+      // stranding cannot come back silently.
+      expect(db.participantRegistrations.listEstablishmentWork()).toEqual([])
+      expect(db.participantRegistrations.listActivatedAttempts()).toEqual([])
+      expect(db.participantRegistrations.armParticipantReconnect('patt-1', 'NOW')).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  test('only the current attempt of a registration is offered for reconnect', () => {
+    const db = armed()
+    try {
+      db.participantRegistrations.insertAttempt(
+        attempt({
+          attemptId: 'patt-2',
+          attachEpoch: 2,
+          invocationId: 'inv-participant-2',
+          runtimeId: 'rt-participant-2',
+          state: 'ACTIVE',
+          preparedProfileJson: '{"kind":"harness-broker"}',
+          adapterDispatchEnvJson: '{}',
+          establishmentWorkState: 'completed',
+        })
+      )
+      expect(db.participantRegistrations.listActivatedAttempts().map((a) => a.attemptId)).toEqual([
+        'patt-2',
+      ])
+    } finally {
+      db.close()
+    }
+  })
+})
+
 describe('T-08349 generic participant persistence boundaries', () => {
   test('reserves the permanent key and atomically freezes the prepared boundary', () => {
     const db = openHrcDatabase(':memory:')

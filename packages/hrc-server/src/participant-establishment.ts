@@ -991,30 +991,25 @@ export function reconnectParticipantAttachment(
   if (existing !== undefined) return existing
   if (server.stopping || !participantNeedsReconnect(server, attempt)) return undefined
 
-  const operation = (async () => {
-    const staged = await stageExistingParticipantAttachment(server, registration, attempt)
-    if (staged.state !== 'ACTIVE') {
-      await activateStagedParticipant(server, registration, staged)
-    }
-  })()
-    .catch((error: unknown) => {
-      // An unavailable host stays unavailable: the attempt keeps its identity,
-      // its mail stays pending, and nothing is cold-born. The next delivery or
-      // the next boot may try again.
-      writeServerLog('WARN', 'participant.reconnect.failed', {
-        registrationId: registration.registrationId,
-        attemptId: attempt.attemptId,
-        runtimeId: attempt.runtimeId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    })
-    .finally(() => {
-      if (server.participantEstablishmentOperations.get(attempt.attemptId) === operation) {
-        server.participantEstablishmentOperations.delete(attempt.attemptId)
-      }
-    })
-  server.participantEstablishmentOperations.set(attempt.attemptId, operation)
-  return operation
+  // ARM DURABLY BEFORE ANY EFFECT. `stageExistingParticipantAttachment`
+  // persists ACTIVE -> DETACHED before it awaits install/hello, so a broker
+  // outage or a crash at that instant leaves DETACHED/`completed` -- a state
+  // every re-entry door excludes, stranding the row permanently. Reproduced:
+  // restart with the broker down, restore the broker, retry, restart again;
+  // zero boot attempts and `activation_pending` forever with the host healthy.
+  if (!server.db.participantRegistrations.armParticipantReconnect(attempt.attemptId, timestamp())) {
+    return undefined
+  }
+  const armed = server.db.participantRegistrations.getAttempt(attempt.attemptId)
+  if (armed === null) return undefined
+
+  // Hand the cycle to the machinery that already owns bounded retries, durable
+  // failure accounting and crash recovery, rather than calling the reattach
+  // routine directly and catching its failures only to log them. Resuming an
+  // armed cycle after a crash is then just `listEstablishmentWork`, which finds
+  // it whatever intermediate state it stopped in and keeps its spent budget.
+  scheduleParticipantEstablishment(server, registration, armed)
+  return server.participantEstablishmentOperations.get(armed.attemptId)
 }
 
 /**
