@@ -8,6 +8,7 @@ import type {
 import type { WriterEvidence } from 'spaces-runtime-contracts'
 
 import type { DirectJoinRequest, DirectJoinResult } from './participant-host-registration.js'
+import { observeParticipantTransportEvidence } from './participant-transport-evidence.js'
 import {
   isAbsorbingParticipantAttempt,
   observeParticipantWriterEvidence,
@@ -160,8 +161,12 @@ function pauseOrCancelReplacement(
 function dispositionReason(
   kind: ReplacementKind,
   evidence: WriterEvidence,
-  attempt: ParticipantAttempt
+  attempt: ParticipantAttempt,
+  evidenceSource: 'producer' | 'transport'
 ): string {
+  if (evidenceSource === 'transport' && evidence.liveness.state === 'dead') {
+    return `transport_dead:${evidence.observedAt}:${JSON.stringify(evidence.liveness.detail)}`
+  }
   if (attempt.initialActivationConfirmedAt === undefined) {
     return `establishment_abandoned_before_activation:${kind}:${evidence.observedAt}:${JSON.stringify(evidence.writerRef)}`
   }
@@ -291,30 +296,11 @@ export async function driveParticipantReplacement(
   const evidenceMethodAvailable = isAbsorbingParticipantAttempt(initialAttempt)
     ? adapter?.inspectWriter !== undefined
     : adapter?.retireWriter !== undefined
-  // A producer-less direct registration is a known, stable hold. Do not arm a
-  // replacement work item merely to rediscover that fact five times: no A0
-  // effect is possible and the predecessor's reconnect work remains untouched.
-  if (
-    adapter === undefined ||
-    registration.classId === undefined ||
-    registration.participantKey === undefined ||
-    !evidenceMethodAvailable
-  ) {
-    if (currentIntent !== null && initialAttempt.replacementIntentJson !== undefined) {
-      pauseOrCancelReplacement(
-        server,
-        initialAttempt,
-        currentIntent,
-        initialAttempt.replacementIntentJson,
-        'host_retirement_unproven: producer evidence unavailable'
-      )
-    }
-    return refusal(
-      'pending',
-      'host_retirement_unproven',
-      'producer evidence unavailable: this registration has no resolvable writer-evidence owner or key-capable WriterRef'
-    )
-  }
+  const producerEvidenceAvailable =
+    adapter !== undefined &&
+    registration.classId !== undefined &&
+    registration.participantKey !== undefined &&
+    evidenceMethodAvailable
   const now = timestamp()
   const freshIntent: ReplacementIntent = {
     schemaVersion: 'participant-replacement-intent/v1',
@@ -369,13 +355,13 @@ export async function driveParticipantReplacement(
     return refusal('pending', 'participant_successor_gate_changed', 'replacement intent changed')
   }
 
-  const observedEvidence = await observeParticipantWriterEvidence(
-    server,
-    adapter,
-    registration,
-    attempt,
-    kind
-  )
+  const observedEvidence = producerEvidenceAvailable
+    ? await observeParticipantWriterEvidence(server, adapter, registration, attempt, kind)
+    : {
+        outcome: 'evidence' as const,
+        evidence: (await observeParticipantTransportEvidence(server, registration, attempt, kind))
+          .evidence,
+      }
   if (observedEvidence.outcome === 'invalid') {
     if (attempt.replacementIntentJson !== undefined) {
       pauseOrCancelReplacement(
@@ -409,6 +395,7 @@ export async function driveParticipantReplacement(
     )
   }
   const evidence = observedEvidence.evidence
+  const evidenceSource = producerEvidenceAvailable ? 'producer' : 'transport'
   const persistedAttempt = attempt
   const priorIntentJson = persistedAttempt.replacementIntentJson
   if (priorIntentJson === undefined) {
@@ -464,16 +451,20 @@ export async function driveParticipantReplacement(
       intentWithReceiptJson,
       currentDecision === 'refused'
         ? 'host_binding_conflict: predecessor remains writable and live'
-        : 'host_retirement_unproven: predecessor retirement remains unknown'
+        : evidenceSource === 'transport'
+          ? 'host_retirement_unproven: transport_indeterminate'
+          : 'host_retirement_unproven: predecessor retirement remains unknown'
     )
     return refusal(
       currentDecision === 'refused' ? 'rejected' : 'pending',
       currentDecision === 'refused' ? 'host_binding_conflict' : 'host_retirement_unproven',
       currentDecision === 'refused'
         ? 'the exact predecessor remains writable and live'
-        : priorBasis === undefined
-          ? 'predecessor retirement is unknown'
-          : 'later evidence voided the uncommitted succession on its satisfying axis'
+        : evidenceSource === 'transport'
+          ? 'transport_indeterminate: predecessor broker hello did not complete within the bounded probe'
+          : priorBasis === undefined
+            ? 'predecessor retirement is unknown'
+            : 'later evidence voided the uncommitted succession on its satisfying axis'
     )
   }
   const authorizingEvidence = retirementBasis ?? evidence
@@ -490,10 +481,26 @@ export async function driveParticipantReplacement(
           [current.state],
           'ABANDONED',
           timestamp(),
-          dispositionReason(kind, authorizingEvidence, current)
+          dispositionReason(kind, authorizingEvidence, current, evidenceSource)
         )
       ) {
         throw new Error('predecessor disposition raced')
+      }
+    }
+    if (
+      evidenceSource === 'transport' &&
+      authorizingEvidence.liveness.state === 'dead' &&
+      current.recoveryDisposition === 'unresolved'
+    ) {
+      if (
+        !server.db.participantRegistrations.recordRecoveryDisposition(
+          current.attemptId,
+          'abandoned',
+          'transport_dead',
+          timestamp()
+        )
+      ) {
+        throw new Error('predecessor transport-dead recovery disposition raced')
       }
     }
     const currentBinding = server.db.participantHostBindings.getBindingById(binding.bindingId)

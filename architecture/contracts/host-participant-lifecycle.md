@@ -8,7 +8,7 @@ functional gaps are resolved below; this is not a claim of Daedalus approval.
 Astra owns implementation decisions and installed acceptance. Clod/Cody implement.
 No further architecture-review round is a prerequisite for this work.
 
-Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.6 below.
+Revision 7 retains R6.1–R6.8 with the concrete amendments R7.1–R7.7 below.
 Those amendments control any conflicting revision-6 or historical revision-5
 text. Source baseline is accepted foundation 0e5a0557 plus current published
 ASP pin 57b58166. Parked source is reusable work, not an accepted implementation.
@@ -172,6 +172,38 @@ receipts; runtime count stays one and its identity remains unchanged. Also prove
 pre-attachment pending mail drains after activation, unavailable host never
 cold-births, stale linkage refuses, duplicate input does not repeat an effect,
 and ordinary nonparticipant submission behavior remains intact.
+
+## R7.7 Lance ruling 2026-09-16: transport death is host death for evidence-less registrations, provisional
+
+For a direct registration carrying an exact `expectedPredecessor`, when the
+predecessor has no usable producer-evidence path (classless/keyless, or its
+adapter implements neither the required retirement nor inspection method), HRC
+decides succession from its own durable records. It opens a **fresh** connection
+to the predecessor attempt's durable `attach_socket_path`, never a cached broker
+client, and requires the published broker hello within a bounded two-second
+probe. The result is persisted in the existing `WriterEvidence` receipt shape
+before any disposition or successor effect, with `basis: transport`, the probed
+endpoint and `observedAt`.
+
+- A missing/refused/reset transport is **dead**. TX-D abandons the predecessor
+  attempt with the greppable disposition reason `transport_dead`; H2 retires the
+  old binding/runtime and runs the existing fenced TX-6, while H1 runs the
+  existing TX-6-prime bridge replacement. HRC's continuation selection remains
+  based only on its own records and the producer's eventual `resumeState` stays
+  truthful.
+- A connection that completes broker hello is **live** and the request returns
+  `409 host_binding_conflict`; the predecessor remains writable.
+- A connection that succeeds but does not complete broker hello within the
+  bound is **indeterminate** and returns the existing inert
+  `pending / host_retirement_unproven` hold with detail
+  `transport_indeterminate`. Nothing is armed or spent.
+
+The bare-claim door without `expectedPredecessor` still conflicts, and a
+registration with a producer-evidence path retains the evidence-gated truth
+table unchanged. This provisional ruling knowingly permits a live application
+host whose participant-owned broker transport is dead to be retired. Revisit
+the rule if such live-but-disconnected hosts prove common; every authorized
+case remains measurable through the persisted `transport_dead` reason.
 
 ## R6.1 Joining is a protocol operation
 

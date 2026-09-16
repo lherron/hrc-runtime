@@ -692,7 +692,8 @@ describe('T-08517 host participant succession', () => {
     })
 
     // A separate classless address has stable HRC identity but no producer
-    // owner/key pair, so transport loss never becomes inferred death.
+    // owner/key pair. With no attached endpoint its HRC transport probe is
+    // indeterminate, so the existing inert hold remains unchanged.
     const classlessScope = `${SCOPE}-classless`
     const first = await json(
       await fixture.postJson('/v1/participants/register', {
@@ -731,7 +732,7 @@ describe('T-08517 host participant succession', () => {
     expect(held).toMatchObject({
       status: 'pending',
       reason: 'host_retirement_unproven',
-      detail: expect.stringContaining('producer evidence unavailable'),
+      detail: expect.stringContaining('transport_indeterminate'),
     })
     const heldAttempt = server!.db.participantRegistrations.getAttempt(attempt.attemptId)!
     expect(heldAttempt).toMatchObject({
