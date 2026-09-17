@@ -8,9 +8,17 @@ import type { HrcSessionRecord } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { ensureAppSessionFromBody } from '../app-session-handlers'
+import {
+  handleAppSessionCapture,
+  handleAppSessionInterrupt,
+  handleAppSessionTerminate,
+  handleApplyManagedAppSessions,
+  handleListManagedAppSessions,
+  handleRemoveAppSession,
+} from '../app-session-handlers'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { assertLocalPersonaAllowed } from '../local-persona-policy'
 import { listAllSessions } from '../selector-message-handlers'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 import { archiveIdleSessions, handleListTargets } from '../target-message-handlers'
@@ -92,6 +100,176 @@ function handlerInstance(extra: Record<string, unknown> = {}): HrcServerInstance
   } as unknown as HrcServerInstanceForHandlers
 }
 
+const EFFECT_TABLES = [
+  'sessions',
+  'continuities',
+  'session_index',
+  'app_managed_sessions',
+  'runtimes',
+  'runs',
+  'runtime_operations',
+  'broker_invocations',
+  'local_bridges',
+  'surface_bindings',
+  'active_input_deliveries',
+  'hrc_events',
+] as const
+
+function effectCounts(): Record<string, number> {
+  const existing = new Set(
+    db.sqlite
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map(({ name }) => name)
+  )
+  return Object.fromEntries(
+    EFFECT_TABLES.filter((table) => existing.has(table)).map((table) => [
+      table,
+      db.sqlite.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()
+        ?.count ?? 0,
+    ])
+  )
+}
+
+function jsonRequest(path: string, body: unknown): Request {
+  return new Request(`http://hrc${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+async function refusalFrom(
+  call: () => unknown | Promise<unknown>
+): Promise<Record<string, unknown>> {
+  try {
+    await call()
+    return { returned: true }
+  } catch (error) {
+    const value = error as { code?: string; detail?: Record<string, unknown> }
+    return { code: value.code, ...value.detail }
+  }
+}
+
+async function bootPolicyServer(): Promise<string> {
+  db.close()
+  const runtimeRoot = join(root, 'policy-run')
+  const stateRoot = join(root, 'policy-state')
+  await mkdir(runtimeRoot, { recursive: true })
+  await mkdir(stateRoot, { recursive: true })
+  const socketPath = join(runtimeRoot, 'hrc.sock')
+  dbPath = join(stateRoot, 'state.sqlite')
+  server = await createHrcServer({
+    runtimeRoot,
+    stateRoot,
+    socketPath,
+    lockPath: join(runtimeRoot, 'server.lock'),
+    spoolDir: join(runtimeRoot, 'spool'),
+    dbPath,
+    tmuxSocketPath: join(runtimeRoot, 'tmux.sock'),
+    localPersonaAllowlist: ['smokey'],
+  })
+  db = (server as unknown as { db: HrcDatabase }).db
+  return socketPath
+}
+
+async function policyPost(
+  socketPath: string,
+  path: string,
+  body: unknown
+): Promise<{ status: number; body: any }> {
+  const response = await fetch(`http://localhost${path}`, {
+    unix: socketPath,
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: response.status, body: await response.json() }
+}
+
+const policyIntent = {
+  placement: {
+    agentRoot: '/tmp/t08576-agent',
+    projectRoot: '/tmp/t08576-project',
+    cwd: '/tmp/t08576-project',
+    runMode: 'task' as const,
+    bundle: { kind: 'compose' as const, compose: [] },
+    dryRun: true,
+  },
+  harness: { provider: 'anthropic' as const, id: 'claude-code', interactive: true },
+}
+
+const BLOCKED_POLICY_CASES = [
+  {
+    gate: 'ensure',
+    path: '/v1/app-sessions/ensure',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'new' },
+      spec: { kind: 'harness', runtimeIntent: policyIntent },
+    },
+  },
+  {
+    gate: 'ensure dry-run',
+    path: '/v1/app-sessions/ensure',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'new' },
+      spec: { kind: 'harness', runtimeIntent: policyIntent },
+      dryRun: true,
+    },
+  },
+  {
+    gate: 'apply with sessions',
+    path: '/v1/app-sessions/apply',
+    body: {
+      appId: 't08576',
+      sessions: [
+        {
+          appSessionKey: 'new',
+          spec: { kind: 'harness', runtimeIntent: policyIntent },
+        },
+      ],
+    },
+  },
+  {
+    gate: 'turns',
+    path: '/v1/app-sessions/turns',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'assistant' },
+      prompt: 'must not dispatch',
+    },
+  },
+  {
+    gate: 'in-flight input',
+    path: '/v1/app-sessions/in-flight-input',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'assistant' },
+      prompt: 'must not deliver',
+    },
+  },
+  {
+    gate: 'literal input',
+    path: '/v1/app-sessions/literal-input',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'assistant' },
+      text: 'must not send',
+      enter: false,
+    },
+  },
+  {
+    gate: 'app clear-context',
+    path: '/v1/app-sessions/clear-context',
+    body: {
+      selector: { appId: 't08576', appSessionKey: 'assistant' },
+      relaunch: false,
+    },
+  },
+  {
+    gate: 'generic clear-context on app',
+    path: '/v1/clear-context',
+    body: { hostSessionId: 'hsid-t08576-read-app', relaunch: false },
+  },
+] as const
+
 describe('T-08576 app read and policy surfaces', () => {
   it('R-R1 GET /v1/targets excludes active and orphan app rows while serving agents', async () => {
     seedAppRuntime()
@@ -120,40 +298,121 @@ describe('T-08576 app read and policy surfaces', () => {
     })
   })
 
-  it('R-R2 allowlist refuses an app ensure before identity, launch, or entry validation effects', async () => {
+  for (const testCase of BLOCKED_POLICY_CASES) {
+    it(`R-R2 allowlist refuses ${testCase.gate} before every effect`, async () => {
+      const socketPath = await bootPolicyServer()
+      seedAppRuntime()
+      const before = effectCounts()
+      const response = await policyPost(socketPath, testCase.path, testCase.body)
+
+      expect({
+        status: response.status,
+        code: response.body.error?.code,
+        reason: response.body.error?.detail?.reason,
+        effects: effectCounts(),
+      }).toEqual({
+        status: 409,
+        code: 'stale_context',
+        reason: 'app-session-not-allowed',
+        effects: before,
+      })
+    })
+  }
+
+  it('R-R2 exemptions remain allowed while an app allowlist is configured', async () => {
+    seedAppRuntime()
     const calls: string[] = []
     const instance = handlerInstance({
       options: { localPersonaAllowlist: ['smokey'] },
-      notifyEvent: () => calls.push('event'),
-      ensureCommandRuntimeForSession: async () => {
-        calls.push('launch')
-        throw new Error('launch must not be reached')
+      resolveManagedSessionRuntime: () => ({
+        runtime: db.runtimes.getByRuntimeId('rt-t08576-read'),
+      }),
+      captureRuntime: async () => {
+        calls.push('capture')
+        return new Response(JSON.stringify({ ok: true }))
+      },
+      interruptRuntime: async () => {
+        calls.push('interrupt')
+        return new Response(JSON.stringify({ ok: true }))
+      },
+      terminateRuntime: async () => {
+        calls.push('terminate')
+        return new Response(JSON.stringify({ ok: true }))
+      },
+      removeAppSessionFromBody: async () => {
+        calls.push('remove')
+        return new Response(JSON.stringify({ removed: true }))
       },
     })
-    let refusal: Record<string, unknown> = {}
-    try {
-      await ensureAppSessionFromBody.call(instance, {
-        selector: { appId: 't08576', appSessionKey: 'blocked' },
-        spec: { kind: 'command', command: { launchMode: 'exec', argv: ['/bin/true'] } },
-      })
-    } catch (error) {
-      const value = error as { code?: string; detail?: Record<string, unknown> }
-      refusal = { code: value.code, ...value.detail }
-    }
 
-    expect({
-      refusal,
-      calls,
-      sessions: db.sqlite.query('SELECT * FROM sessions').all().length,
-    }).toEqual({
-      refusal: expect.objectContaining({
+    expect(
+      handleListManagedAppSessions.call(instance, new URL('http://hrc/?appId=t08576')).status
+    ).toBe(200)
+    expect(
+      (
+        await handleAppSessionCapture.call(
+          instance,
+          new URL('http://hrc/?appId=t08576&appSessionKey=assistant')
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await handleAppSessionInterrupt.call(
+          instance,
+          jsonRequest('/interrupt', {
+            selector: { appId: 't08576', appSessionKey: 'assistant' },
+          })
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await handleAppSessionTerminate.call(
+          instance,
+          jsonRequest('/terminate', {
+            selector: { appId: 't08576', appSessionKey: 'assistant' },
+          })
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await handleRemoveAppSession.call(
+          instance,
+          jsonRequest('/remove', {
+            selector: { appId: 't08576', appSessionKey: 'assistant' },
+          })
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await handleApplyManagedAppSessions.call(
+          instance,
+          jsonRequest('/apply', { appId: 't08576', sessions: [], pruneMissing: true })
+        )
+      ).status
+    ).toBe(200)
+    expect(calls).toEqual(['capture', 'interrupt', 'terminate', 'remove', 'remove'])
+  })
+
+  it('R-R2 preserves the existing agent allowlist behavior', async () => {
+    const instance = handlerInstance({ options: { localPersonaAllowlist: ['smokey'] } })
+    expect(() =>
+      assertLocalPersonaAllowed(instance, 'agent:smokey:project:hrc-runtime')
+    ).not.toThrow()
+    expect(
+      await refusalFrom(() =>
+        assertLocalPersonaAllowed(instance, 'agent:mable:project:hrc-runtime')
+      )
+    ).toEqual(
+      expect.objectContaining({
         code: 'stale_context',
-        reason: 'app-session-not-allowed',
-        scopeRef: 'app:t08576',
-      }),
-      calls: [],
-      sessions: 0,
-    })
+        reason: 'local-persona-not-allowed',
+        agentId: 'mable',
+      })
+    )
   })
 
   it('R-R3 reports app capabilities false with an allowlist and true without one', async () => {

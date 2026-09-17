@@ -137,6 +137,11 @@ async function post(path: string, body: unknown): Promise<{ status: number; body
   return { status: response.status, body: parsed }
 }
 
+async function get(path: string): Promise<{ status: number; body: any }> {
+  const response = await fetch(`http://localhost${path}`, { unix: socketPath })
+  return { status: response.status, body: await response.json() }
+}
+
 const EFFECT_TABLES = [
   'sessions',
   'continuities',
@@ -388,6 +393,66 @@ describe('T-08576 generic entry refusal matrix', () => {
     })
     expect(response.status).toBe(200)
     expect(response.body).toMatchObject({ found: true, hostSessionId: APP_HOST, created: false })
+  })
+
+  it('R-G9(i) live dispatchable app runtime attach matches the GET attach surface', async () => {
+    const runtimeId = `rt-${randomUUID()}`
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId: APP_HOST,
+        scopeRef: 'app:t08576',
+        laneRef: 'assistant',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        controllerKind: 'harness-broker',
+        supportsInflightInput: true,
+        adopted: false,
+        runtimeStateJson: {
+          broker: {
+            endpoint: {
+              kind: 'unix-jsonrpc-ndjson',
+              socketPath: '/tmp/t08576-viewer.sock',
+              attachTokenRef: { kind: 'file', path: '/tmp/t08576-viewer.token' },
+            },
+            substrate: {
+              kind: 'leased-tmux',
+              tmuxSocketPath: '/tmp/t08576-viewer-tmux.sock',
+              sessionName: 't08576-viewer',
+              brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+              generation: 1,
+            },
+            presentation: {
+              kind: 'tmux-tui',
+              tuiWindow: { sessionId: '$1', windowId: '@2', paneId: '%2' },
+              operatorAttachTarget: true,
+            },
+          },
+        },
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+    } finally {
+      db.close()
+    }
+    ;(server as any).reconcileTmuxRuntimeLiveness = async (runtime: unknown) => runtime
+    const before = effectState()
+    const readAttach = await get(`/v1/attach?runtimeId=${encodeURIComponent(runtimeId)}`)
+    const liveAttach = await post('/v1/runtimes/attach', { runtimeId })
+
+    expect(liveAttach).toEqual(readAttach)
+    expect(liveAttach).toMatchObject({
+      status: 200,
+      body: {
+        transport: 'tmux',
+        bindingFence: { hostSessionId: APP_HOST, runtimeId, generation: 1 },
+      },
+    })
+    expect(effectState()).toEqual(before)
   })
 
   it('R-G9 stale/non-dispatchable attach refuses without reprovision effects', async () => {
