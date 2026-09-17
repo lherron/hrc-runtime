@@ -57,7 +57,7 @@ predicate: >
   count and no sender attribution. On a steer-capable seat that count is zero by
   construction.
   Each hold/preempt request remains an immediate isolated admission decision.
-authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, and wrkq:T-08098 companion design / T-08562 Daedalus approval EN-13532 adds a launch-provenance preservation test without changing the predicate, 2026-09-17
+authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, and wrkq:T-08098 companion design / T-08562 Daedalus approval EN-13574 adds a launch-provenance preservation test without changing the predicate, 2026-09-17
 source:
   - wrkq:T-08562
   - wrkq:T-07843
@@ -100,7 +100,7 @@ required_tests:
   - T-08098 turn-observed seat parsing remains non-idle and holds mail without opening a delivery intent
 last_verified:
   date: 2026-09-17
-  evidence: T-08562 design approval EN-13532 adds only the aspd-prepared Claude launch-provenance preservation gate; the predicate is unchanged and implementation evidence is pending. T-08098 unit gates verify capability-driven invoke-to-queue mapping with distinct visible door and admitted class, preserve direct exclusive invocation, and hold mail on an unattributed turn-observed seat. T-08012 corrected design rev 3 established an invoke-only terminal rendezvous plus registration-to-ledger coverage and run-scoped agent-loop lifecycle cleanup. T-07962 rev 3 established terminal lost-disposition consumption and non-retryable fresh-runtime recovery. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified launch-carried cold summons behavior. T-08094 replaced the HRC-held batch with steer-first one-envelope-per-submission delivery.
+  evidence: T-08562 design approval EN-13574 adds only the aspd-prepared Claude launch-provenance preservation gate; the predicate is unchanged and implementation evidence is pending. T-08098 unit gates verify capability-driven invoke-to-queue mapping with distinct visible door and admitted class, preserve direct exclusive invocation, and hold mail on an unattributed turn-observed seat. T-08012 corrected design rev 3 established an invoke-only terminal rendezvous plus registration-to-ledger coverage and run-scoped agent-loop lifecycle cleanup. T-07962 rev 3 established terminal lost-disposition consumption and non-retryable fresh-runtime recovery. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified launch-carried cold summons behavior. T-08094 replaced the HRC-held batch with steer-first one-envelope-per-submission delivery.
 reopen_when:
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
