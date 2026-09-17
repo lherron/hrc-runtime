@@ -92,7 +92,7 @@ Note (cross-cutting, shipped): the controller participates in the durable-broker
 
 ### 2.6 `launch/` and `agent-spaces-adapter/`
 
-- `launch/` — wrapper-process launch path for headless runtimes: `hook.ts`/`hook-cli.ts` (lifecycle/continuation/event hook callbacks), `env.ts` (launch env), `callback-client.ts`, `codex-otel.ts`, `launch-artifact.ts`, `spool.ts`, `index.ts`. Events from launched wrappers flow back via hooks and OTEL into `hook-lifecycle.ts` / `otel-ingest.ts`.
+- `launch/` — callback spooling and environment hygiene: `env.ts` (tmux/inherited env scrubbing), `callback-client.ts`, `spool.ts`, `desktop-hook.ts`/`desktop-hook-cli.ts` (the installed `hrc-desktop-hook` registration helper), `index.ts`. The former launch-wrapper hook, OTEL and launch-callback ingest (`hook.ts`, `hook-cli.ts`, `codex-otel.ts`, `launch-artifact.ts`, `hook-lifecycle.ts`, `otel-ingest.ts`, `launch-lifecycle-handlers.ts`) was retired in T-08566 stage 1: `/v1/internal/hooks/ingest` and `/v1/internal/launches/:launchId/*` answer 410 `legacy_launch_ingest_retired`, no OTLP listener is bound, and startup quarantines spooled entries for those routes. Harness evidence arrives only as committed broker envelopes through `broker/event-mapper.ts`.
 - `agent-spaces-adapter/` — the seam onto the pinned ASP `spaces-*` packages: `compile-adapter.ts` (`compileBrokerRuntimePlan`), `compile-profile-selector.ts`, `cli-adapter.ts`, `sdk-adapter.ts`, `aspc-facade-client.ts`, `index.ts`.
 
 ### 2.7 Persistence

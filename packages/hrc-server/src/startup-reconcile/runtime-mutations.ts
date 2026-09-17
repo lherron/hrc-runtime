@@ -14,47 +14,6 @@ import { writeServerLog } from '../server-log.js'
 import { timestamp } from '../server-util.js'
 import { USER_INITIATED_CONTINUATION_CLEAR_REASONS } from './types.js'
 
-export function appendMissingHeadlessTurnCompleted(
-  db: HrcDatabase,
-  input: {
-    session: HrcSessionRecord
-    runtime?: HrcRuntimeSnapshot | undefined
-    runId: string
-    launchId: string
-    exitCode?: number | undefined
-    ts: string
-    replayed?: boolean | undefined
-    notify?: ((event: HrcLifecycleEvent) => void) | undefined
-  }
-): void {
-  if (input.runtime?.transport !== 'headless') {
-    return
-  }
-  if (db.hrcEvents.listByRun(input.runId, { eventKind: 'turn.completed' }).length > 0) {
-    return
-  }
-
-  const completedEvent = appendHrcEvent(db, 'turn.completed', {
-    ts: input.ts,
-    hostSessionId: input.session.hostSessionId,
-    scopeRef: input.session.scopeRef,
-    laneRef: input.session.laneRef,
-    generation: input.session.generation,
-    runtimeId: input.runtime.runtimeId,
-    runId: input.runId,
-    launchId: input.launchId,
-    transport: 'headless',
-    ...(input.replayed === true ? { replayed: true } : {}),
-    ...(input.exitCode === 0 ? {} : { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE }),
-    payload: {
-      success: input.exitCode === 0,
-      transport: 'headless',
-      source: 'launch_exit_synthesized',
-    },
-  })
-  input.notify?.(completedEvent)
-}
-
 export function getObservedTmuxSessionName(runtime: HrcRuntimeSnapshot): string | null {
   const sessionId = runtime.tmuxJson?.['sessionId']
   if (typeof sessionId === 'string' && sessionId.length > 0) {

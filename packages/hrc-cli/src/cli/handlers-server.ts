@@ -21,7 +21,6 @@ import {
   isLiveProcess,
   launchctlKickstart,
   listInFlightWork,
-  resolveOtelPreferredPortFromEnv,
   resolveServerMode,
   resolveServerPaths,
   stopServerProcess,
@@ -647,7 +646,6 @@ async function serverForeground(localPersonaAllowlist?: readonly string[]): Prom
     dbPath: paths.dbPath,
     tmuxSocketPath: paths.tmuxSocketPath,
     localPersonaAllowlist,
-    otelPreferredPort: resolveOtelPreferredPortFromEnv(),
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
     registrationClasses: await loadRegistrationClassesFromEnv(),
     // The ONE place that reaches the fleet wrkq ledger. Any other

@@ -2,30 +2,24 @@
  * RED/GREEN tests for hrc-launch (T-00953 / T-00952)
  *
  * Tests the public surface of hrc-launch:
- *   - Launch artifact write/read round-trip
  *   - Spool write/read ordering (multiple callbacks, monotonic seq)
- *   - Hook envelope construction from stdin JSON
  *   - Callback failure triggers spool fallback
  *
+ * T-08566 stage 1 retired the launch artifact and hook envelope helpers; their
+ * round-trip tests went with them. Spool and callback client stay (Desktop hook).
+ *
  * Pass conditions for Curly (T-00952):
- *   1. writeLaunchArtifact writes <dir>/<launchId>.json, readLaunchArtifact round-trips it
  *   2. spoolCallback writes monotonically sequenced files, readSpoolEntries returns them in order
- *   3. buildHookEnvelope attaches launch context to stdin JSON
  *   4. postCallback returns false on connection failure (no throw)
  *   5. Failed callback triggers spool write when integrated
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { HrcLaunchArtifact } from 'hrc-core'
 
 // These imports are the RED gates — they will fail until Curly implements the modules
-import { readLaunchArtifact, writeLaunchArtifact } from '../launch/launch-artifact'
-
 import { readSpoolEntries, spoolCallback } from '../launch/spool'
-
-import { buildHookEnvelope } from '../launch/hook'
 
 import { postCallback } from '../launch/callback-client'
 
@@ -37,167 +31,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
-})
-
-// ---------------------------------------------------------------------------
-// Helper: create a valid HrcLaunchArtifact for testing
-// ---------------------------------------------------------------------------
-function makeArtifact(overrides: Partial<HrcLaunchArtifact> = {}): HrcLaunchArtifact {
-  return {
-    launchId: 'launch-test-001',
-    hostSessionId: 'hsid-test-001',
-    generation: 1,
-    runtimeId: 'rt-test-001',
-    harness: 'claude-code',
-    frontend: 'claude-code',
-    provider: 'anthropic',
-    argv: ['/usr/bin/claude', '--session', 'test'],
-    env: { HOME: '/Users/test', HRC_LAUNCH_ID: 'launch-test-001' },
-    cwd: '/tmp/workspace',
-    callbackSocketPath: '/tmp/hrc.sock',
-    spoolDir: '/tmp/spool',
-    correlationEnv: {
-      HRC_HOST_SESSION_ID: 'hsid-test-001',
-      HRC_GENERATION: '1',
-    },
-    ...overrides,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 1. Launch artifact write/read round-trip
-// ---------------------------------------------------------------------------
-describe('Launch artifact IO', () => {
-  it('writes artifact to <dir>/<launchId>.json and returns the path', async () => {
-    const artifact = makeArtifact()
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-
-    expect(path).toBe(join(tmpDir, 'launch-test-001.json'))
-
-    // Verify file exists and is valid JSON
-    const raw = await readFile(path, 'utf-8')
-    const parsed = JSON.parse(raw)
-    expect(parsed.launchId).toBe('launch-test-001')
-  })
-
-  it('round-trips a full artifact through write/read', async () => {
-    const artifact = makeArtifact({
-      runId: 'run-test-001',
-      launchEnv: { extra: 'value' },
-      hookBridge: { kind: 'agentchat', config: { channel: 'main' } },
-    })
-
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-    const read = await readLaunchArtifact(path)
-
-    expect(read).toEqual(artifact)
-  })
-
-  it('preserves all fields including optional ones', async () => {
-    const artifact = makeArtifact({
-      runId: 'run-002',
-      launchEnv: { PATH_PREFIX: '/opt/bin' },
-      hookBridge: { kind: 'custom', config: { foo: 'bar' } },
-    })
-
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-    const read = await readLaunchArtifact(path)
-
-    expect(read.runId).toBe('run-002')
-    expect(read.launchEnv).toEqual({ PATH_PREFIX: '/opt/bin' })
-    expect(read.hookBridge).toEqual({ kind: 'custom', config: { foo: 'bar' } })
-    expect(read.argv).toEqual(artifact.argv)
-    expect(read.env).toEqual(artifact.env)
-    expect(read.correlationEnv).toEqual(artifact.correlationEnv)
-  })
-
-  it('round-trips the optional otel launch config block', async () => {
-    const authHeaderValue = ['launch-test-001', 'testsecret'].join('_')
-    const artifact = makeArtifact({
-      harness: 'codex-cli',
-      provider: 'openai',
-      otel: {
-        transport: 'otlp-http-json',
-        endpoint: 'http://127.0.0.1:4318/v1/logs',
-        authHeaderName: 'x-hrc-launch-auth',
-        authHeaderValue,
-        secret: 'secret',
-      },
-    })
-
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-    const read = await readLaunchArtifact(path)
-
-    expect(read.otel).toEqual(artifact.otel)
-  })
-
-  it('round-trips structured prompt material on launch artifacts', async () => {
-    const prompts = {
-      system: {
-        content: 'system prompt preserved in artifact',
-        mode: 'append' as const,
-        deliveredVia: 'agents-md' as const,
-        sourcePath: '/tmp/codex-home/AGENTS.md',
-      },
-      priming: {
-        content: 'priming prompt preserved in artifact',
-        deliveredVia: 'argv-flag' as const,
-      },
-    }
-    const artifact = makeArtifact({ prompts } as Partial<HrcLaunchArtifact>)
-
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-    const read = await readLaunchArtifact(path)
-
-    expect(read.prompts).toEqual(prompts)
-  })
-
-  it('requires launch artifacts to persist both internal harness and public frontend', async () => {
-    const path = join(tmpDir, 'missing-frontend.json')
-    const { frontend: _frontend, ...artifactWithoutFrontend } = makeArtifact({
-      launchId: 'missing-frontend',
-      harness: 'pi',
-      provider: 'openai',
-    })
-    await writeFile(path, JSON.stringify(artifactWithoutFrontend, null, 2), 'utf-8')
-
-    await expect(readLaunchArtifact(path)).rejects.toThrow(
-      "Launch artifact missing required field 'frontend'"
-    )
-  })
-
-  it('throws on readLaunchArtifact for non-existent file', async () => {
-    await expect(readLaunchArtifact('/nonexistent/path.json')).rejects.toThrow()
-  })
-
-  it('throws on readLaunchArtifact for malformed JSON', async () => {
-    const badPath = join(tmpDir, 'bad.json')
-    await Bun.write(badPath, '{ not valid json }}}')
-    await expect(readLaunchArtifact(badPath)).rejects.toThrow()
-  })
-
-  it('artifact env carries identity vars matching top-level fields', async () => {
-    const artifact = makeArtifact({
-      launchId: 'launch-id-test',
-      runtimeId: 'rt-id-test',
-      generation: 7,
-      env: {
-        HOME: '/Users/test',
-        HRC_LAUNCH_ID: 'launch-id-test',
-        HRC_RUNTIME_ID: 'rt-id-test',
-        HRC_GENERATION: '7',
-      },
-    })
-
-    const path = await writeLaunchArtifact(artifact, tmpDir)
-    const read = await readLaunchArtifact(path)
-
-    // The three identity vars must be present in env and consistent with
-    // top-level artifact fields — this is the contract T-01538 establishes.
-    expect(read.env['HRC_LAUNCH_ID']).toBe(read.launchId)
-    expect(read.env['HRC_RUNTIME_ID']).toBe(read.runtimeId)
-    expect(read.env['HRC_GENERATION']).toBe(String(read.generation))
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -276,68 +109,6 @@ describe('Spool helpers', () => {
         .map((entry) => (entry.payload as { index: number }).index)
         .sort((left, right) => left - right)
     ).toEqual(Array.from({ length: 25 }, (_, i) => i))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. Hook envelope construction
-// ---------------------------------------------------------------------------
-describe('Hook envelope', () => {
-  it('attaches launch context to stdin JSON', () => {
-    const stdinJson = {
-      event: 'tool_use',
-      tool: 'bash',
-      input: { command: 'ls' },
-    }
-    const env = {
-      launchId: 'launch-hook-1',
-      hostSessionId: 'hsid-hook-1',
-      generation: 3,
-      runtimeId: 'rt-hook-1',
-    }
-
-    const envelope = buildHookEnvelope(stdinJson, env)
-
-    // Envelope must include the original event data under hookData
-    expect(envelope.hookData).toEqual(stdinJson)
-    // Envelope must include launch context
-    expect(envelope.launchId).toBe('launch-hook-1')
-    expect(envelope.hostSessionId).toBe('hsid-hook-1')
-    expect(envelope.generation).toBe(3)
-    expect(envelope.runtimeId).toBe('rt-hook-1')
-  })
-
-  it('handles missing optional runtimeId', () => {
-    const stdinJson = { event: 'start' }
-    const env = {
-      launchId: 'launch-hook-2',
-      hostSessionId: 'hsid-hook-2',
-      generation: 1,
-    }
-
-    const envelope = buildHookEnvelope(stdinJson, env)
-    expect(envelope.launchId).toBe('launch-hook-2')
-    expect(envelope.runtimeId).toBeUndefined()
-    expect(envelope.hookData).toEqual(stdinJson)
-  })
-
-  it('preserves complex nested stdin payloads', () => {
-    const stdinJson = {
-      event: 'tool_result',
-      result: {
-        output: 'line1\nline2',
-        nested: { deep: true },
-        array: [1, 2, 3],
-      },
-    }
-    const env = {
-      launchId: 'launch-hook-3',
-      hostSessionId: 'hsid-hook-3',
-      generation: 1,
-    }
-
-    const envelope = buildHookEnvelope(stdinJson, env)
-    expect(envelope.hookData).toEqual(stdinJson)
   })
 })
 
@@ -435,12 +206,5 @@ describe('n-37: Error-path integration (T-00985)', () => {
     await expect(
       spoolCallback(join(blockingFile, 'subdir'), 'launch-blocked', { step: 'test' })
     ).rejects.toThrow()
-  })
-
-  // --- Artifact read with missing required fields ---
-  it('throws on artifact missing required launchId field', async () => {
-    const badPath = join(tmpDir, 'missing-field.json')
-    await Bun.write(badPath, JSON.stringify({ hostSessionId: 'x', generation: 1 }))
-    await expect(readLaunchArtifact(badPath)).rejects.toThrow()
   })
 })

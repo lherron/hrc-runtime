@@ -367,21 +367,13 @@ export type HrcServerOptions = {
    */
   wrkqLedger?: WrkqLedgerClient | undefined
   /**
-   * Preferred port for the OTLP/HTTP log ingest listener on 127.0.0.1. Falls
-   * back to an OS-chosen ephemeral port if occupied. Defaults to 4318.
+   * @deprecated Retired with the OTLP log listener (T-08566 stage 1). Accepted
+   * and ignored so existing embedders compile; no listener is ever bound.
    */
   otelPreferredPort?: number | undefined
-  /**
-   * Disable the OTLP listener entirely (tests/environments that don't want
-   * Codex OTEL ingest). When false, the server runs without OTEL capture and
-   * `otelEndpoint` is undefined.
-   */
+  /** @deprecated Retired with the OTLP log listener (T-08566 stage 1); ignored. */
   otelListenerEnabled?: boolean | undefined
-  /**
-   * Test-only override: if provided, no listener is started and this string is
-   * stamped into launch artifacts verbatim. Useful for integration tests that
-   * want deterministic URLs without binding a real port.
-   */
+  /** @deprecated Retired with the OTLP log listener (T-08566 stage 1); ignored. */
   otelEndpoint?: string | undefined
   /**
    * Resolved node identity + static peer table (federation spec §3/§6).
@@ -477,8 +469,6 @@ export type HrcServerOptions = {
 
 export type HrcServer = {
   stop(): Promise<void>
-  /** Resolved OTLP/HTTP log ingest URL (e.g. http://127.0.0.1:4318/v1/logs), if the listener is active. */
-  readonly otelEndpoint: string | undefined
   /** F0's narrow authenticated registry URL, present only when federation.json declares registry.bind. */
   readonly federationRegistryEndpoint: string | undefined
   /** F1's narrow authenticated peer URL, present only when peerListener.bind is declared. */

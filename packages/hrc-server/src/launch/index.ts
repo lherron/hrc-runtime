@@ -1,11 +1,9 @@
-// hrc-launch: wrapper for launch artifact exec, hook ingestion, callback spooling
+// hrc-launch: callback spooling and tmux environment hygiene. The launch-wrapper
+// hook, OTEL and artifact plumbing was retired in T-08566 stage 1.
 
-export { readLaunchArtifact, writeLaunchArtifact } from './launch-artifact.js'
 export { postCallback } from './callback-client.js'
 export { CORRUPT_SPOOL_DIRNAME, readSpoolEntries, spoolCallback } from './spool.js'
 export type { CorruptSpoolEntry, ReadSpoolEntriesOptions, SpoolEntry } from './spool.js'
-export { buildHookEnvelope } from './hook.js'
-export type { HookEnvelope, HookEnvelopeEnv } from './hook.js'
 export {
   listInheritedEnvKeysToScrub,
   sanitizeTmuxClientEnv,
@@ -13,4 +11,3 @@ export {
   scrubInheritedEnv,
   shouldScrubInheritedEnvKey,
 } from './env.js'
-export { injectCodexOtelConfig } from './codex-otel.js'

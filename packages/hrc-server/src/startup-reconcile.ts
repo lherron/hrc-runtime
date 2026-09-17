@@ -86,7 +86,6 @@ export type {
   BrokerWarmupSummary,
 } from './startup-reconcile/types.js'
 export {
-  appendMissingHeadlessTurnCompleted,
   getObservedTmuxSessionName,
   markRuntimeDead,
   markRuntimeStale,

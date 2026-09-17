@@ -1,7 +1,7 @@
 {
   "name": "hrc-events",
   "version": "0.1.0",
-  "description": "Hook-derived event types, Zod schemas, and Claude hook normalizer",
+  "description": "Canonical HRC event payload types, Zod schemas, and monitor event schema",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

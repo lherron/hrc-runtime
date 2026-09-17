@@ -149,10 +149,6 @@ import { handleFirstTurnDiagnostics } from './first-turn-diagnostics-handlers.js
 import type { FirstTurnEvalSummary } from './first-turn-eval.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
-  type LaunchLifecycleHandlersMethods,
-  launchLifecycleHandlersMethods,
-} from './launch-lifecycle-handlers.js'
-import {
   assertLocalPersonaAllowed,
   normalizeLocalPersonaAllowlist,
 } from './local-persona-policy.js'
@@ -171,13 +167,6 @@ import {
   resolveStaleGenerationThresholdSec,
   resolveTmuxAgingEnabled,
 } from './option-resolvers.js'
-import {
-  OTLP_DEFAULT_PREFERRED_PORT,
-  type OtlpListenerControl,
-  handleHookIngest,
-  handleOtlpRequest,
-  startOtlpListener,
-} from './otel-ingest.js'
 import { ParticipantAdapterRegistry } from './participant-adapter-registry.js'
 import {
   type ParticipantAttachHandlersMethods,
@@ -773,6 +762,17 @@ function parseSessionTitleWriteInput(value: unknown): SessionTitleWriteInput {
   }
 }
 
+/**
+ * T-08566 stage 1: the launch-wrapper hook, OTEL and launch-callback ingest is
+ * retired. No production component composes these requests, and the hook route
+ * could terminalize a broker run from an unauthenticated native payload.
+ * Refuse with a named 410 and write nothing durable.
+ */
+function legacyLaunchIngestRetired(route: string): Response {
+  writeServerLog('WARN', 'server.legacy_launch_ingest_refused', { route })
+  return json({ error: { code: 'legacy_launch_ingest_retired', route } }, 410)
+}
+
 function decodeSessionTitleHostSessionId(encodedHostSessionId: string): string {
   try {
     const hostSessionId = decodeURIComponent(encodedHostSessionId)
@@ -813,7 +813,6 @@ interface HrcServerInstance
     ExternalRegistrationRendezvousMethods,
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
-    LaunchLifecycleHandlersMethods,
     WrkqStopGateHandlersMethods,
     RosterClaimHandlersMethods,
     ExactClaimHandlersMethods,
@@ -834,8 +833,6 @@ class HrcServerInstance implements HrcServer {
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
   readonly capturedRelease = captureServerRelease(HRC_SERVER_PACKAGE_PATH, this.startedAt)
-  readonly otelListener: OtlpListenerControl | undefined
-  public readonly otelEndpoint: string | undefined
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
   readonly federationRegistryClient: BindingRegistryClient | undefined
   public readonly federationRegistryEndpoint: string | undefined
@@ -1035,8 +1032,9 @@ class HrcServerInstance implements HrcServer {
       this.handleResumeContinuation(request),
     [exactRouteKey('POST', '/v1/sessions/archive-abandoned')]: (request) =>
       this.handleArchiveAbandonedSessions(request),
+    // T-08566 stage 1: the launch-wrapper hook ingest is retired (no producer).
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
-      this.handleHookIngest(request),
+      legacyLaunchIngestRetired(new URL(request.url).pathname),
     // T-08294: private desktop-thread registration. Internal callback socket
     // only — this is integration plumbing for the desktop hook helper, NOT a
     // public operator API, and it deliberately shares no shape with
@@ -1448,30 +1446,6 @@ class HrcServerInstance implements HrcServer {
           error: error instanceof Error ? error.message : String(error),
         })
       })
-
-    if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
-      // Test-only override: caller supplies a fixed endpoint, no listener started.
-      this.otelEndpoint = options.otelEndpoint
-      this.otelListener = undefined
-    } else if (options.otelListenerEnabled === false) {
-      this.otelEndpoint = undefined
-      this.otelListener = undefined
-    } else {
-      try {
-        const preferredPort = options.otelPreferredPort ?? OTLP_DEFAULT_PREFERRED_PORT
-        const control = startOtlpListener(preferredPort, (request) =>
-          this.handleOtlpRequest(request)
-        )
-        this.otelListener = control
-        this.otelEndpoint = control.endpoint.url
-      } catch (error) {
-        // If binding fails entirely (both preferred and ephemeral), log and continue
-        // without OTEL ingest rather than failing daemon startup.
-        writeServerLog('WARN', 'server.start.otel_listener_failed', { error })
-        this.otelListener = undefined
-        this.otelEndpoint = undefined
-      }
-    }
   }
 
   async initializeEventTransport(): Promise<void> {
@@ -1639,13 +1613,6 @@ class HrcServerInstance implements HrcServer {
         this.bindingRegistryEndpoint.stop()
       } catch (error) {
         writeServerLog('WARN', 'server.stop.binding_registry_listener_failed', { error })
-      }
-    }
-    if (this.otelListener) {
-      try {
-        this.otelListener.stop()
-      } catch (error) {
-        writeServerLog('WARN', 'server.stop.otel_listener_stop_failed', { error })
       }
     }
     if (this.zombieSweepTimer) {
@@ -1904,21 +1871,9 @@ class HrcServerInstance implements HrcServer {
         return this.handleGetActiveRunContribution(inputApplicationId)
       }
 
-      const launchSubroute = matchLaunchSubroute(request.method, pathname)
-      if (launchSubroute) {
-        const { launchId, suffix } = launchSubroute
-        switch (suffix) {
-          case 'continuation':
-            return await this.handleContinuation(launchId, request)
-          case 'wrapper-started':
-            return await this.handleWrapperStarted(launchId, request)
-          case 'child-started':
-            return await this.handleChildStarted(launchId, request)
-          case 'event':
-            return await this.handleLaunchEvent(launchId, request)
-          case 'exited':
-            return await this.handleExited(launchId, request)
-        }
+      // T-08566 stage 1: launch-wrapper lifecycle callbacks are retired.
+      if (matchLaunchSubroute(request.method, pathname)) {
+        return legacyLaunchIngestRetired(pathname)
       }
 
       return new Response('Not Found', { status: 404 })
@@ -2524,10 +2479,6 @@ class HrcServerInstance implements HrcServer {
     } satisfies DropContinuationResponse)
   }
 
-  async handleHookIngest(request: Request): Promise<Response> {
-    return handleHookIngest(this.ctx, request)
-  }
-
   /**
    * Private desktop-thread registration (T-08294).
    *
@@ -2550,14 +2501,6 @@ class HrcServerInstance implements HrcServer {
     const parsed = parseDesktopRegistrationRequest(rawBody)
     const response: DesktopRegistrationResponse = await this.registerDesktopThread(parsed)
     return json(response)
-  }
-
-  /**
-   * Dispatches requests on the OTLP TCP listener (separate from the Unix
-   * socket server). Only POST /v1/logs is accepted.
-   */
-  async handleOtlpRequest(request: Request): Promise<Response> {
-    return handleOtlpRequest(this.ctx, request)
   }
 
   handleHealth(): Response {
@@ -2918,13 +2861,11 @@ export type HrcServerInstanceClassBodyMethods = {
     | 'handleDropContinuation'
     | 'handleGetSessionByHost'
     | 'handleHealth'
-    | 'handleHookIngest'
     | 'handleDesktopRegistration'
     | 'handleInterrupt'
     | 'handleListSessions'
     | 'handleSetSessionTitle'
     | 'handleDeleteSessionTitle'
-    | 'handleOtlpRequest'
     | 'handleRequest'
     | 'handleResolveSession'
     | 'handleStatus'
@@ -2952,7 +2893,6 @@ Object.assign(
   externalRegistrationRendezvousMethods,
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
-  launchLifecycleHandlersMethods,
   wrkqStopGateHandlersMethods,
   runtimeInspectHandlersMethods,
   rosterClaimHandlersMethods,
@@ -3061,7 +3001,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       })
     }
     const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
-    await replaySpool(resolvedOptions, db)
+    await replaySpool(resolvedOptions)
     await reconcileStartupState(db, tmux, {
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
