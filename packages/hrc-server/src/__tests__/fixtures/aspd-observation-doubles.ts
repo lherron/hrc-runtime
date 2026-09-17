@@ -29,6 +29,7 @@ export type AspdObservationOptions = {
   inspectNonOk?: boolean
   identityRole?: string
   invalidAgentProfile?: boolean
+  invalidAgentProfileNoTarget?: boolean
   protocolVersion?: string
   capabilities?: Partial<{
     resolveRuntimeDeclaration: boolean
@@ -309,6 +310,46 @@ function resolveInvalidProfileTargetOnlyResponse(
     },
     baselineProvisioning: targetBaselineProvisioning,
     provisioning: targetProvisioning,
+  }
+}
+
+/**
+ * PENDING LIVE CAPTURE on the T-08578 activation #8 release — shaped from the
+ * T-08578 spec (etag 10) degraded ok arm for a malformed profile with no valid
+ * target (project mode none, or root without a selected target): targets
+ * absent, scalars {}, no declared harness. Replace with the live capture.
+ */
+function resolveInvalidProfileNoTargetResponse(
+  context: Record<string, unknown>
+): Record<string, unknown> {
+  const response = resolveOkResponse(context)
+  const source = response['source'] as Record<string, unknown>
+  const root = String(context['agentRoot'] ?? '/tmp/t08564-agent')
+  const diagnostic = {
+    severity: 'error',
+    code: 'agent_profile_invalid',
+    message: 'Invalid agent-profile.toml: fixture profile parse failed',
+    source: 'agent-profile',
+    path: `${root}/agent-profile.toml`,
+  }
+  const defaultOnlyProvisioning = {
+    scalars: {},
+    effectiveHarness: 'claude',
+    frontend: 'claude-code',
+    provider: 'anthropic',
+    family: 'claude',
+    runtime: 'claude-code',
+  }
+  return {
+    ...response,
+    source: {
+      ...source,
+      agentProfile: { state: 'invalid', diagnostics: [diagnostic] },
+      projectTargets: { state: 'absent', code: 'not_declared' },
+      selectedTarget: { state: 'absent', code: 'not_declared' },
+    },
+    baselineProvisioning: defaultOnlyProvisioning,
+    provisioning: defaultOnlyProvisioning,
   }
 }
 
@@ -854,9 +895,11 @@ export function startAspdObservationDouble(
           } else if (message.method === 'aspc.resolveRuntimeDeclaration') {
             const context = (params['context'] ?? {}) as Record<string, unknown>
             const result =
-              options.invalidAgentProfile === true
-                ? resolveInvalidProfileTargetOnlyResponse(context)
-                : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
+              options.invalidAgentProfileNoTarget === true
+                ? resolveInvalidProfileNoTargetResponse(context)
+                : options.invalidAgentProfile === true
+                  ? resolveInvalidProfileTargetOnlyResponse(context)
+                  : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
             reply(socket as never, message.id, result)
           } else if (message.method === 'aspc.inspectRuntimePlacement') {
             const context = (params['context'] ?? {}) as Record<string, unknown>

@@ -209,6 +209,34 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
   })
 })
 
+describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; pending activation #8 capture)', () => {
+  for (const variant of [
+    { name: 'projectless (project mode none)', overrides: { projectRoot: undefined } },
+    { name: 'project root without a selected target', overrides: {} },
+  ]) {
+    test(`${variant.name}: birth proceeds with no harness id, no provision block, and the NO-provisioning WARN`, async () => {
+      await boot({ invalidAgentProfileNoTarget: true })
+      const { response, body } = await post(
+        '/v1/declarations/resolve',
+        resolveRequest({ ...variant.overrides, provision: undefined })
+      )
+
+      expect(response.status).toBe(200)
+      // Today's targetOnly() fallback: provider anthropic, harness undefined,
+      // provision {} — so the intent names no harness id and carries no block.
+      expect(body.intent.harness).toEqual({ provider: 'anthropic', interactive: false })
+      expect(body.intent).not.toHaveProperty('provision')
+      expect(body.declaration.warnings).toHaveLength(1)
+      expect(body.declaration.warnings[0]).toContain(
+        'is being born with NO provisioning at all: no model pin, no harness pin, no yolo, no node'
+      )
+      expect(body.declaration.warnings[0]).toContain(
+        `profile=${agentRoot}/agent-profile.toml error=`
+      )
+    })
+  }
+})
+
 describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
   const previewBody = () => ({
     intent: managedIntent(),
