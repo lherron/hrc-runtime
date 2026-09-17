@@ -145,8 +145,8 @@ export function parseListRunsFilter(url: URL): ListRunsFilter {
 function parseInlineHarness(harness: Record<string, unknown>): HrcRuntimeIntent['harness'] {
   const provider = requireOneOf(
     requireTrimmedStringField(harness, 'provider'),
-    ['anthropic', 'openai'],
-    'harness.provider must be "anthropic" or "openai"',
+    ['anthropic', 'openai', 'meta'],
+    'harness.provider must be "anthropic", "openai", or "meta"',
     { field: 'harness.provider' }
   )
 
