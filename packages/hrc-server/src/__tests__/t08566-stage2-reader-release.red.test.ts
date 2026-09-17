@@ -1,12 +1,13 @@
 /** T-08566 C1/C5/C6/C19/C22: exact-release reader admission and failures. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { readFile, rm } from 'node:fs/promises'
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { type HrcServer, createHrcServer } from '../index'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import {
   type ReaderMode,
+  capturedReaderResponse,
   makeOfflineReaderDouble,
   seedOfflineRuntime,
 } from './fixtures/t08566-offline-reader-double'
@@ -36,6 +37,81 @@ async function recover(mode: ReaderMode, lastProjectedSeq = 0) {
       ? (JSON.parse(text) as Record<string, unknown>)
       : { raw: text },
   }
+}
+
+function projectionState(invocationId: string) {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.sqlite
+      .query<
+        {
+          last_projected_seq: number
+          retained_projected_through_seq: number | null
+          retained_hrc_events: number
+          retained_broker_events: number
+        },
+        [string, string]
+      >(
+        `SELECT bi.last_projected_seq,
+                bi.retained_projected_through_seq,
+                (SELECT COUNT(*) FROM hrc_events WHERE evidence_origin = 'retained') AS retained_hrc_events,
+                (SELECT COUNT(*) FROM broker_invocation_events WHERE invocation_id = ? AND evidence_origin = 'retained') AS retained_broker_events
+           FROM broker_invocations bi
+          WHERE bi.invocation_id = ?`
+      )
+      .get(invocationId, invocationId)
+  } finally {
+    db.close()
+  }
+}
+
+async function installPagedTornReader(
+  seeded: Awaited<ReturnType<typeof seedOfflineRuntime>>
+): Promise<void> {
+  const full = await capturedReaderResponse('full.stdout.json')
+  const torn = await capturedReaderResponse('torn.stdout.json')
+  const fullResult = full['result'] as { events: Array<{ seq: number }> }
+  const tornResult = torn['result'] as Record<string, unknown>
+  const release = seeded.reader.release as {
+    releaseId: string
+    sourceCommit: string
+    builtAt: string
+  }
+  const responsePath = `${seeded.reader.root}/torn-pages.json`
+  await writeFile(
+    responsePath,
+    JSON.stringify({
+      ...torn,
+      release: {
+        releaseId: release.releaseId,
+        sourceCommit: release.sourceCommit,
+        builtAt: release.builtAt,
+      },
+      result: {
+        ...tornResult,
+        events: fullResult.events.filter((event) => event.seq <= 60),
+        currentSeq: 60,
+      },
+    })
+  )
+  await writeFile(
+    seeded.reader.executable,
+    `#!/usr/bin/env bun
+const request = JSON.parse(await new Response(Bun.stdin.stream()).text())
+const response = JSON.parse(await Bun.file(${JSON.stringify(responsePath)}).text())
+const afterSeq = Number(request.afterSeq ?? 0)
+const events = response.result.events
+  .filter((event) => event.seq > afterSeq)
+  .slice(0, 18)
+  .map((event) => ({ ...event, invocationId: request.invocationId }))
+const nextAfterSeq = events.at(-1)?.seq ?? afterSeq
+response.result.events = events
+response.hasMore = nextAfterSeq < response.result.currentSeq
+response.nextAfterSeq = nextAfterSeq
+process.stdout.write(JSON.stringify(response))
+`
+  )
+  await chmod(seeded.reader.executable, 0o755)
 }
 
 describe('T-08566 exact immutable reader release', () => {
@@ -90,8 +166,9 @@ describe('T-08566 exact immutable reader release', () => {
     const db = openHrcDatabase(fixture.dbPath)
     try {
       const runtime = db.runtimes.getByRuntimeId(unbound.runtimeId)!
-      const state = { ...(runtime.runtimeStateJson ?? {}) }
-      delete state['executionRelease']
+      const state = Object.fromEntries(
+        Object.entries(runtime.runtimeStateJson ?? {}).filter(([key]) => key !== 'executionRelease')
+      )
       db.runtimes.update(unbound.runtimeId, { runtimeStateJson: state, updatedAt: fixture.now() })
     } finally {
       db.close()
@@ -133,9 +210,6 @@ describe('T-08566 exact immutable reader release', () => {
   for (const [mode, outcome] of [
     ['release-mismatch', 'reader_release_mismatch'],
     ['overflow', 'reader_contract_violation'],
-    ['exit-one', 'reader_contract_violation'],
-    ['timeout', 'reader_contract_violation'],
-    ['torn', 'recovered_torn_tail'],
     ['corrupt', 'ledger_corrupt'],
     ['duplicate', 'ledger_conflicting_duplicate'],
     ['oversize', 'offline_record_too_large'],
@@ -147,6 +221,82 @@ describe('T-08566 exact immutable reader release', () => {
       expect(body).toMatchObject({ outcome, class: 'incomplete', projectedThroughSeq: 0 })
     })
   }
+
+  test('exit-one records reader_failed retryable with no projection or cursor movement', async () => {
+    const { response, body, seeded } = await recover('exit-one')
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      outcome: 'reader_failed',
+      class: 'retryable',
+      held: true,
+      attempts: 1,
+      projectedThroughSeq: 0,
+    })
+    expect(projectionState(seeded.invocationId)).toEqual({
+      last_projected_seq: 0,
+      retained_projected_through_seq: null,
+      retained_hrc_events: 0,
+      retained_broker_events: 0,
+    })
+  })
+
+  test('timeout records reader_timeout retryable with no projection or cursor movement', async () => {
+    const { response, body, seeded } = await recover('timeout')
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      outcome: 'reader_timeout',
+      class: 'retryable',
+      held: true,
+      attempts: 1,
+      projectedThroughSeq: 0,
+    })
+    expect(projectionState(seeded.invocationId)).toEqual({
+      last_projected_seq: 0,
+      retained_projected_through_seq: null,
+      retained_hrc_events: 0,
+      retained_broker_events: 0,
+    })
+  })
+
+  test('torn tail projects every intact row through seq 60 and preserves integrity detail', async () => {
+    const seeded = await seedOfflineRuntime(fixture, 'torn')
+    await installPagedTornReader(seeded)
+    const response = await fixture.postJson('/v1/capture/recover', {
+      runtimeId: seeded.runtimeId,
+      yes: true,
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
+      outcome: 'recovered_torn_tail',
+      class: 'incomplete',
+      held: true,
+      projectedThroughSeq: 60,
+      currentSeq: 60,
+      detail: {
+        integrity: {
+          status: 'torn_tail',
+          lastIntact: { invocationId: seeded.invocationId, seq: 60 },
+        },
+      },
+    })
+    const projected = projectionState(seeded.invocationId)
+    expect(projected?.last_projected_seq).toBe(60)
+    expect(projected?.retained_projected_through_seq).toBe(60)
+    expect(projected?.retained_hrc_events).toBeGreaterThan(0)
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(
+        db.sqlite
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM hrc_events WHERE evidence_origin = 'retained' AND event_kind = 'turn.completed'"
+          )
+          .get()?.count
+      ).toBe(0)
+    } finally {
+      db.close()
+    }
+  })
 
   test('cursor above currentSeq is held as reader_contract_violation with exact detail', async () => {
     for (const testReader of [
