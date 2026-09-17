@@ -29,17 +29,23 @@ predicate: >
   derived agent identity, or caller identity key. App scopes are excluded from
   agent-addressed enumerations and mail decisions. A configured local persona
   allowlist refuses app minting, birth, dispatch, rotation, and input before
-  effects, and status capabilities report it.
-authority: wrkq:T-08576 revision 6 architecture approval by Daedalus, 2026-09-17
+  effects, and status capabilities report it. An app harness envelope is never
+  a clean operator shell: the HRC host-session and generation keys it carries
+  count as a present server-lifecycle envelope, which without a session
+  reference fails closed.
+authority: wrkq:T-08576 revision 7 D11 amendment approval by Daedalus, 2026-09-17; revision 6 architecture approval by Daedalus, 2026-09-17
 source:
   - wrkq:T-08576
+  - wrkq:T-05999
+  - wrkq:T-06007
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.mobile-session-index.yaml
 required_tests:
   - just architecture-records
   - just verify
   - wrkq:T-08576 in-process and installed no-shim gates
-last_verified: 2026-09-17 revision 6 design approved; implementation and installed evidence pending
-reopen_when: App-session representation, ownership or fencing, route boundary, identity atomicity, birth correlation, persona treatment, run-id ownership, or agent ScopeRef grammar changes.
+  - wrkq:T-08576 lifecycle-envelope classifier and installed scratch-daemon gates
+last_verified: 2026-09-17 revision 7 D11 amendment approved; implementation and installed evidence pending
+reopen_when: App-session representation, ownership or fencing, route boundary, identity atomicity, birth correlation, persona treatment, run-id ownership, agent ScopeRef grammar, or server-lifecycle envelope classification changes.
 supersedes: []
 superseded_by: []
