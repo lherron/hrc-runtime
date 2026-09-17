@@ -269,6 +269,12 @@ export async function evaluatePruneDisposition(
   if (isExternalLifecycleOwner(runtime)) {
     return { prunable: false, reason: 'external_lifecycle_owner' }
   }
+  // T-08566 §4.2: a held runtime reports its hold ahead of every other refusal,
+  // so the dry run names held evidence even when an active run or a status would
+  // also spare it. This changes the reported reason only, never prunability.
+  if (db !== undefined && retainedEvidenceHold(db, runtime).held) {
+    return { prunable: false, reason: 'offline_evidence_held' }
+  }
   if (!isRuntimeUnavailableStatus(runtime.status)) {
     return { prunable: false, reason: `status_not_prunable:${runtime.status}` }
   }
@@ -278,11 +284,6 @@ export async function evaluatePruneDisposition(
   if (db !== undefined && hasUnsettledAbsorbedAuxiliary(db, runtime.runtimeId)) {
     return { prunable: false, reason: 'unsettled_absorbed_auxiliary' }
   }
-  // T-08566 §4.2: bulk prune never implicitly disposes held retained evidence.
-  if (db !== undefined && retainedEvidenceHold(db, runtime).held) {
-    return { prunable: false, reason: 'offline_evidence_held' }
-  }
-
   const trackedPid = runtime.childPid ?? runtime.wrapperPid
   if (trackedPid !== undefined && isLiveProcess(trackedPid)) {
     return { prunable: false, reason: 'live_process' }

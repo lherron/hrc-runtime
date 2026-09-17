@@ -790,6 +790,7 @@ function parseForensicsRow(
     ...(row.runId !== undefined ? { runId: row.runId } : {}),
     ...(row.sourceRef !== undefined ? { sourceRef: row.sourceRef } : {}),
     ...(row.originSeq !== undefined ? { originSeq: row.originSeq } : {}),
+    ...(row.evidenceOrigin !== undefined ? { evidenceOrigin: row.evidenceOrigin } : {}),
     seq: row.seq,
     time: row.time,
     type: row.type,

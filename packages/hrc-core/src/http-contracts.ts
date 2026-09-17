@@ -977,6 +977,8 @@ export type BrokerForensicsEvent = {
   rawPayload?: string | undefined
   sourceRef?: string | undefined
   originSeq?: number | undefined
+  /** T-08566: the stored evidence origin of the broker row; omitted when NULL. */
+  evidenceOrigin?: 'retained' | undefined
 }
 
 export type BrokerForensicsResponse = {
