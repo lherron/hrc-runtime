@@ -24,7 +24,7 @@
  * the §2 boundary rule. The tables frozen at the flag day are the ones holding
  * collaboration — `messages` and the mail ENVELOPE tables — not this one.
  */
-import { sessionRefFor } from 'hrc-core'
+import { parseAppSessionScopeRef, sessionRefFor } from 'hrc-core'
 import { envelopeIdSequence } from 'hrc-mail-kicker'
 import type { HrcMailStopEnvelopeSummary } from 'hrc-store-sqlite'
 
@@ -64,6 +64,10 @@ export async function handleMailStopDecision(
   const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
   if (runtime === null) {
     return json({ decision: 'allow', reason: 'no_runtime' })
+  }
+  // T-08576 D10: an app runtime has no mail address; nothing can block its stop.
+  if (parseAppSessionScopeRef(runtime.scopeRef) !== null) {
+    return json({ decision: 'allow', reason: 'not-mail-addressable', runtimeId })
   }
 
   const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(runtime))
@@ -158,6 +162,10 @@ export async function handleMailHintDecision(
     if (runtime === null) {
       writeHintSuppressed(runtimeId, 'no_runtime')
       return json({})
+    }
+    // T-08576 D10: an app runtime has no mail address, so it never holds mail.
+    if (parseAppSessionScopeRef(runtime.scopeRef) !== null) {
+      return json({ heldCount: 0, reason: 'not-mail-addressable' })
     }
 
     const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(runtime))

@@ -8,12 +8,18 @@ import type {
 } from 'hrc-core'
 import type { AppManagedSessionRecord } from 'hrc-store-sqlite'
 import {
+  assertAppIdentityCurrent,
+  assertAppIdentityOwner,
+  isAppScopedSession,
+} from '../app-session-identity.js'
+import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
 } from '../external-participant-lifecycle.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import {
+  findManagedAppSessionForSession,
   requireContinuity,
   requireManagedAppSession,
   requireSession,
@@ -62,6 +68,7 @@ export async function maybeAutoRotateStaleSession(
   priorHostSessionId?: string | undefined
 }> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  assertAppIdentityOwner(session)
   const createdAtMs = Date.parse(session.createdAt)
   const ageSec = Number.isFinite(createdAtMs)
     ? Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000))
@@ -161,6 +168,13 @@ export async function rotateSessionContext(
   }
 ): Promise<ClearContextResponse> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  // T-08576 D4: app rotation runs under the selector owner, fences the current
+  // incarnation, and resolves the managed row from the store, never the caller.
+  assertAppIdentityOwner(session)
+  assertAppIdentityCurrent(this.db, session)
+  const managed = isAppScopedSession(session)
+    ? (findManagedAppSessionForSession(this.db, session) ?? undefined)
+    : options.managed
   const continuity = requireContinuity(this.db, session)
   if (continuity.activeHostSessionId !== session.hostSessionId) {
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'host session is no longer active', {
@@ -169,11 +183,7 @@ export async function rotateSessionContext(
     })
   }
 
-  const effectiveSpec = resolveClearContextSpec(
-    options.managed,
-    options.relaunchSpec,
-    options.relaunch
-  )
+  const effectiveSpec = resolveClearContextSpec(managed, options.relaunchSpec, options.relaunch)
   const reason = options.reason ?? 'clear-context'
   const now = timestamp()
   const nextSession: HrcSessionRecord = {
@@ -205,24 +215,23 @@ export async function rotateSessionContext(
       activeHostSessionId: nextSession.hostSessionId,
       updatedAt: now,
     })
+    if (managed) {
+      this.db.appManagedSessions.update(managed.appId, managed.appSessionKey, {
+        activeHostSessionId: nextSession.hostSessionId,
+        generation: nextSession.generation,
+        ...(effectiveSpec ? { lastAppliedSpec: effectiveSpec } : {}),
+        updatedAt: now,
+      })
+    }
     options.withinTransaction?.(nextSession)
   })()
 
-  if (options.managed) {
-    this.db.appManagedSessions.update(options.managed.appId, options.managed.appSessionKey, {
-      activeHostSessionId: nextSession.hostSessionId,
-      generation: nextSession.generation,
-      ...(effectiveSpec ? { lastAppliedSpec: effectiveSpec } : {}),
-      updatedAt: now,
-    })
-  }
-
   const clearedEvent = appendHrcEvent(this.db, 'context.cleared', {
     ...sessionEventBase(session, now),
-    ...(options.managed
+    ...(managed
       ? {
-          appId: options.managed.appId,
-          appSessionKey: options.managed.appSessionKey,
+          appId: managed.appId,
+          appSessionKey: managed.appSessionKey,
         }
       : {}),
     payload: {

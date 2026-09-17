@@ -28,6 +28,8 @@ import {
   assertActuatorSplitAdmission,
   prepareActuatorSplitIntent,
 } from './actuator-split.js'
+import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
+import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import {
   aspdHeadlessCodexEndpoint,
   assertPreparedAspdAttemptRoute,
@@ -569,8 +571,17 @@ export async function startHeadlessBrokerRuntime(
   // address. Delivery routes into the participant's own runtime before this
   // point; this is the backstop at the place a runtime is actually born.
   assertParticipantAddressNotSubstituted(this, session)
+  // T-08576 D5: an app birth carries only HRC-owned identity; it consumes its
+  // run grant exactly when its compile identity allocates the run id.
+  const boundIntent = bindAppHarnessBirthIntent(
+    this.db,
+    session,
+    intent,
+    runId,
+    hasInitialUserTurn(prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent)
+  )
   const requestedTurnIntent: HrcRuntimeIntent =
-    prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+    prompt.length > 0 ? { ...boundIntent, initialPrompt: prompt } : boundIntent
   // T-08542: a node that declares an aspd endpoint prepares ordinary headless
   // codex-app-server there, with no facade/toolchain fallback.
   const aspdEndpoint = aspdHeadlessCodexEndpoint(requestedTurnIntent)
@@ -1036,6 +1047,7 @@ export async function executeHeadlessBrokerStartTurn(
         this.runtimeStartOperations.delete(session.hostSessionId)
       }
     })
+  trackAppIdentityOperation(session, bootOperation)
   if (runtimeStartOwnership) {
     void bootOperation.then(runtimeStartOwnership.resolve, runtimeStartOwnership.reject)
   } else {

@@ -44,6 +44,26 @@ export function claimRuntimeTurnOwnership(
     const activeRun = db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && activeRun.completedAt === undefined) return
   }
+  // T-08576 D5 rev 8: projection never runs in the issuing context, so it may
+  // name a run only through the persisted birth tuple. Refuse without throwing:
+  // a throw would roll back the whole envelope's projection.
+  if (
+    !db.runIdOwnership.mayNameActiveRun(runId, {
+      runtimeId: runtime.runtimeId,
+      operationId: runtime.activeOperationId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+    })
+  ) {
+    writeServerLog('WARN', 'broker.run_handle_refused', {
+      runtimeId: runtime.runtimeId,
+      runId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      operationId: runtime.activeOperationId,
+    })
+    return
+  }
 
   const runtimeStateJson = isRecord(runtime.runtimeStateJson) ? runtime.runtimeStateJson : undefined
   db.runtimes.update(ctx.runtimeId, {

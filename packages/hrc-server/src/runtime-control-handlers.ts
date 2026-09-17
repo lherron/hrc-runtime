@@ -9,6 +9,7 @@ import type {
   HrcSessionRecord,
   RestartStyle,
 } from 'hrc-core'
+import { assertAppIdentityOwner } from './app-session-identity.js'
 import {
   deriveInteractiveHarness,
   deriveSdkHarness,
@@ -148,6 +149,7 @@ export async function ensureCommandRuntimeForSession(
   restartStyle: RestartStyle,
   forceRestart: boolean
 ): Promise<HrcRuntimeSnapshot> {
+  assertAppIdentityOwner(session)
   const existingRuntime = findLatestRuntime(this.db, session.hostSessionId)
   let tmuxPane: TmuxPaneState
 

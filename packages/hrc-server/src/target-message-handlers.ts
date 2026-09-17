@@ -9,6 +9,7 @@ import {
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
   isCodexAppOwnedScopeRef,
+  parseAppSessionScopeRef,
 } from 'hrc-core'
 import type {
   DispatchTurnBySelectorResponse,
@@ -35,6 +36,7 @@ import type {
   WaitMessageResponse,
 } from 'hrc-core'
 import { dispatchOriginFromMessageAddress } from './acp-event-bridge.js'
+import { refuseAppScopedSession } from './app-session-identity.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
@@ -112,6 +114,10 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
   const views: HrcTargetView[] = []
 
   for (const session of this.listAllSessions()) {
+    // T-08576 D6: app sessions are not addressable targets; /v1/app-sessions lists them.
+    if (parseAppSessionScopeRef(session.scopeRef) !== null) {
+      continue
+    }
     if (!includeDormant && !isActiveTargetSession(this.db, session)) {
       continue
     }
@@ -232,6 +238,7 @@ export async function handleCreateSessionSuccessor(
       sessionRef,
     })
   }
+  refuseAppScopedSession(prior, 'create-successor')
   if (!prior.continuation?.key) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -384,6 +391,7 @@ export type ArchiveIdleSessionsResult = {
   skippedPrimary: number
   skippedNotIdle: number
   skippedNoContinuation: number
+  skippedApp: number
 }
 
 /**
@@ -411,9 +419,15 @@ export function archiveIdleSessions(
   let skippedPrimary = 0
   let skippedNotIdle = 0
   let skippedNoContinuation = 0
+  let skippedApp = 0
 
   for (const session of server.listAllSessions()) {
     if (session.status !== 'active') {
+      continue
+    }
+    // T-08576 D6: app identity is owned by the app surface, never archived here.
+    if (parseAppSessionScopeRef(session.scopeRef) !== null) {
+      skippedApp += 1
       continue
     }
     if (isPrimaryScopeRef(session.scopeRef)) {
@@ -437,7 +451,7 @@ export function archiveIdleSessions(
     archived += 1
   }
 
-  return { archived, skippedPrimary, skippedNotIdle, skippedNoContinuation }
+  return { archived, skippedPrimary, skippedNotIdle, skippedNoContinuation, skippedApp }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

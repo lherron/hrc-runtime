@@ -18,7 +18,7 @@ import {
   type HrcRuntimeSnapshot,
   type HrcSessionRecord,
   type HrcSurfaceBindingRecord,
-  normalizeSessionRef,
+  formatStoredSessionRef,
 } from 'hrc-core'
 import type {
   ActiveInputDeliveryRow,
@@ -239,7 +239,7 @@ export function fromSqliteBoolean(value: number): boolean {
 }
 
 export function toSessionRef(scopeRef: string, laneRef: string): string {
-  return normalizeSessionRef(`${scopeRef}/lane:${laneRef}`)
+  return formatStoredSessionRef(scopeRef, laneRef)
 }
 
 // ── Canonical SQL column lists ──────────────────────────────────────────

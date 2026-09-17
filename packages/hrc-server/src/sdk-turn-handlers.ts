@@ -14,6 +14,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
+import { refuseAppScopedSession } from './app-session-identity.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   isPendingAskUserQuestionRun,
@@ -131,6 +132,7 @@ export async function handleActiveRunContribution(
                   candidate.laneRef === body.selector.sessionRef.laneRef))
           )
           .at(-1)
+  if (runtime) refuseAppScopedSession(runtime, 'active-run-contribution')
 
   this.db.activeInputDeliveries.createPending({
     request: body,
@@ -292,6 +294,7 @@ export async function handleInFlightInput(
   const body = parseInFlightInputRequest(await parseJsonBody(request))
   const runtime = requireRuntime(this.db, body.runtimeId)
   const session = requireSession(this.db, runtime.hostSessionId)
+  refuseAppScopedSession(session, 'in-flight-input')
   return json(await this.deliverInFlightInputToRuntime(session, runtime, body))
 }
 

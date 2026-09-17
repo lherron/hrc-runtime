@@ -12,6 +12,7 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { refuseAppScopedSession } from './app-session-identity.js'
 import {
   assertNoRetainedProjection,
   awaitRetainedRecoveryOwner,
@@ -306,6 +307,7 @@ async function handleAdoptRuntime(
   if (!runtime) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
   }
+  refuseAppScopedSession(runtime, 'adopt')
   assertNoRetainedProjection(deps.db, runtimeId, 'adopt')
   if (runtime.transport !== 'tmux' && !canOperatorAttach(runtime)) {
     throw new HrcBadRequestError(

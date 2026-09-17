@@ -183,6 +183,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "APP_IDENTITY_ENV_KEYS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|APP_IDENTITY_ENV_KEYS|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "APP_SESSION_SCOPE_PREFIX",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|APP_SESSION_SCOPE_PREFIX|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ApplyAppManagedSessionInput",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -243,6 +259,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|AppSessionFreshnessFence|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "AppSessionSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|AppSessionSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "appSessionSelectorKey",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|appSessionSelectorKey|value",
       "count": 1
     },
     {
@@ -1055,6 +1087,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "formatAppSessionScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|formatAppSessionScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "formatCanonicalScopeRef",
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -1075,6 +1115,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|formatSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatStoredSessionRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|formatStoredSessionRef|value",
       "count": 1
     },
     {
@@ -3399,6 +3447,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "parseAppSessionScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|parseAppSessionScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "parseFence",
       "kind": "value",
       "file": "packages/hrc-core/src/fences.ts",
@@ -4195,6 +4251,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|UnbindSurfaceRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "validateAppSessionSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/app-session-scope.ts",
+      "hash": "hrc-core|validateAppSessionSelector|value",
       "count": 1
     },
     {

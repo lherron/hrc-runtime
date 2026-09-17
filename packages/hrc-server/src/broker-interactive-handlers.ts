@@ -106,6 +106,8 @@ import {
   toBrokerResponseFormat,
 } from './turn-response-format.js'
 
+import { hasInitialUserTurn } from './agent-spaces-adapter/compile-adapter.js'
+import { bindAppHarnessBirthIntent, trackAppIdentityOperation } from './app-session-identity.js'
 import { getHarnessBrokerController } from './broker-interactive-handlers/controller-factory.js'
 
 type DispatchTurnResponseBase = Omit<
@@ -783,6 +785,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     if (!acceptedSettled) resolveAccepted(runtime)
     return runtime
   })
+  trackAppIdentityOperation(session, bootOperation)
   // The ordinary birth singleflight is shared by every admission door and must
   // end at bare boot. In particular, enqueue/mail deliberately reaches the
   // newborn broker while the launch-carried turn is live so its existing
@@ -1377,7 +1380,20 @@ export async function startInteractiveTmuxBrokerRuntime(
   // address. Delivery routes into the participant's own runtime before this
   // point; this is the backstop at the place a runtime is actually born.
   assertParticipantAddressNotSubstituted(this, session)
-  const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
+  // T-08576 D5: an app birth carries only HRC-owned identity; it consumes its
+  // run grant exactly when its compile identity allocates the run id.
+  const boundTurnIntent = bindAppHarnessBirthIntent(
+    this.db,
+    session,
+    turnIntent,
+    diagnosticRunId,
+    hasInitialUserTurn(
+      flagOptions.coldBirthPrompt !== undefined
+        ? { ...turnIntent, initialPrompt: flagOptions.coldBirthPrompt }
+        : turnIntent
+    )
+  )
+  const preparedActuatorSplit = await prepareActuatorSplitIntent(boundTurnIntent)
   const effectiveTurnIntent = preparedActuatorSplit.intent
   // T-08556 (§1.4), T-08560 (§1.5.1), T-08562 (§1.6.2): every door's interactive
   // broker birth prepares through aspd on a configured node and launches from the

@@ -15,6 +15,7 @@ import type {
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
 } from 'hrc-core'
+import { isAppScopedSession, refuseAppScopedSession } from './app-session-identity.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   findActiveBridgesByTarget,
@@ -58,6 +59,10 @@ export async function handleAttachRuntime(
   const runtime = await this.reconcileTmuxRuntimeLiveness(
     requireKnownRuntime(this.db, body.runtimeId)
   )
+  // T-08576 D8.2 G9: an app runtime attaches strictly; never reprovisions or births.
+  if (isAppScopedSession(runtime)) {
+    return await this.attachRuntimeEffectfully(runtime, { strictRuntimeId: true })
+  }
   return await this.attachRuntimeEffectfully(runtime)
 }
 
@@ -204,6 +209,7 @@ export async function handleRegisterBridgeTarget(
 ): Promise<Response> {
   const body = parseBridgeTargetRequest(await parseJsonBody(request))
   const session = resolveBridgeTargetSession(this.db, body)
+  refuseAppScopedSession(session, 'bridge-target')
   const continuity = requireContinuity(this.db, session)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   validateBridgeFence(
@@ -304,6 +310,7 @@ export async function deliverBridgeText(
   }
 
   const session = requireSession(this.db, bridge.hostSessionId)
+  refuseAppScopedSession(session, 'bridge-deliver')
   const continuity = requireContinuity(this.db, session)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
 

@@ -36,6 +36,13 @@ import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
+import {
+  assertAppIdentityOwner,
+  assertAppRunIdUnused,
+  isAppScopedSession,
+  issueAppBirthRunGrant,
+  refuseAppScopedSession,
+} from './app-session-identity.js'
 import { findPreparedAspdAttemptForRetry, readAspdPreparation } from './aspd-headless-start.js'
 import {
   decideHeadlessExecutionRoute,
@@ -516,6 +523,16 @@ function publicDoorReport(
       }
 }
 
+/**
+ * T-08576 G1: the post-resolution entry step for every submission door. App
+ * sessions are app-route-only, refused before participant, admission, rotation
+ * or dispatch effects. Steer resolves through a strict parser that cannot reach
+ * an app scope today; this is its defense in depth.
+ */
+export function admitSubmissionTarget(session: HrcSessionRecord, door: SubmissionDoor): void {
+  refuseAppScopedSession(session, `submission-${door}`)
+}
+
 export async function handleSubmission(
   this: HrcServerInstanceForHandlers,
   request: Request,
@@ -537,6 +554,7 @@ export async function handleSubmission(
       door,
     })
   }
+  admitSubmissionTarget(session, door)
   // R7.6: the participant target is resolved BEFORE generic rotation. Rotating
   // a participant's session would move the address off the incarnation that
   // holds it, so an external participant is exempt from the stale sweep and a
@@ -902,6 +920,7 @@ export async function handleEnsureRuntime(
 ): Promise<Response> {
   const body = parseEnsureRuntimeRequest(await parseJsonBody(request))
   const requested = requireSession(this.db, body.hostSessionId)
+  refuseAppScopedSession(requested, 'runtime-ensure')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'runtime-ensure',
@@ -932,6 +951,7 @@ export async function handleStartRuntime(
     return json(await this.startRoutedExactScopeRuntime(body))
   }
   const requested = requireSession(this.db, body.hostSessionId)
+  refuseAppScopedSession(requested, 'runtime-start')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'runtime-start',
@@ -950,6 +970,7 @@ export async function handleOpenBrokerSession(
 ): Promise<Response> {
   const body = parseOpenBrokerSessionRequest(await parseJsonBody(request))
   const requestedSession = requireSession(this.db, body.hostSessionId)
+  refuseAppScopedSession(requestedSession, 'broker-session-open')
   const continuity = requireContinuity(this.db, requestedSession)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   const fence = validateFence(body.fences, {
@@ -1030,6 +1051,7 @@ export async function handleDispatchTurn(
 ): Promise<Response> {
   const body = parseDispatchTurnRequest(await parseJsonBody(request))
   const requestedSession = requireSession(this.db, body.hostSessionId)
+  refuseAppScopedSession(requestedSession, 'dispatch-turn')
   const continuity = requireContinuity(this.db, requestedSession)
   const activeSession = requireSession(this.db, continuity.activeHostSessionId)
   const fence = validateFence(body.fences, {
@@ -1466,6 +1488,7 @@ export async function handlePrepareAttachedRun(
 ): Promise<Response> {
   const body = parsePrepareAttachedRunRequest(await parseJsonBody(request))
   const requested = requireSession(this.db, body.hostSessionId)
+  refuseAppScopedSession(requested, 'prepare-attached-run')
   const { session } = await this.maybeAutoRotateStaleSession(requested, {
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'prepare-attached-run',
@@ -1762,7 +1785,17 @@ async function dispatchAdmittedTurnForSession(
   options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  if (isAppScopedSession(session)) {
+    // T-08576 D5 backstop: an app run id that is already named cannot identify a
+    // new turn. Then the app dispatch must hold the selector owner, and its run
+    // is reserved under a single-use birth grant before any effect.
+    assertAppRunIdUnused(this.db, options.runId)
+    assertAppIdentityOwner(session)
+  }
   const runId = options.runId ?? `run-${randomUUID()}`
+  if (isAppScopedSession(session)) {
+    issueAppBirthRunGrant(this.db, session, runId)
+  }
   // Built before the participant branch so its response is enriched the same
   // way every other route's is. Without the observation block a caller's
   // explicit `wait: true` cannot find the broker selector and fails with

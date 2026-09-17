@@ -1,4 +1,5 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import { HrcConflictError } from 'hrc-core'
 import type {
   HrcErrorCode,
   HrcLaunchRecord,
@@ -76,8 +77,279 @@ const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
   { key: 'updatedAt', column: 'updated_at' },
 ]
 
-export class RuntimeRepository {
+/**
+ * T-08576 D5 (rev 8): run ids are one database-wide namespace, and a runtime or
+ * steer contribution that names a run as active is a mutation handle every
+ * finalizer trusts. An app birth reserves its run id; the run's authority is
+ * then the exact tuple {runId, runtimeId, operationId, hostSessionId,
+ * generation}. Before the run is sealed (its row bound to a runtime) only the
+ * reservation token may establish that tuple; afterwards the persisted row is
+ * the authority. Host-session equality alone is never authority.
+ */
+export class RunIdReservedError extends HrcConflictError {
+  constructor(runId: string) {
+    super('run_mismatch', `run id "${runId}" is reserved by another app session birth`, {
+      reason: 'run-id-reserved',
+      runId,
+    })
+    this.name = 'RunIdReservedError'
+  }
+}
+
+export class RunIdOwnershipError extends HrcConflictError {
+  constructor(runId: string, refusal: string) {
+    super('run_mismatch', `run id "${runId}" is not owned by this writer`, {
+      reason: 'run-id-not-owned',
+      runId,
+      refusal,
+    })
+    this.name = 'RunIdOwnershipError'
+  }
+}
+
+export type RunIdReservationOutcome = 'reserved' | 'exists' | 'reserved-by-other'
+
+/** The writer tuple a run-id handle write would establish. */
+export type RunHandleWriter = {
+  runtimeId?: string | undefined
+  operationId?: string | undefined
+  hostSessionId: string
+  generation: number
+}
+
+type RunIdReservation = {
+  token: string
+  hostSessionId: string
+  generation: number
+  runtimeId?: string | undefined
+  operationId?: string | undefined
+}
+
+type RunTupleRow = {
+  host_session_id: string
+  generation: number
+  runtime_id: string | null
+  operation_id: string | null
+  scope_ref: string
+}
+
+export class RunIdOwnershipRegistry {
+  readonly #reservations = new Map<string, RunIdReservation>()
+  #tokenReader: (runId: string) => string | undefined = () => undefined
+
   constructor(private readonly db: Database) {}
+
+  /**
+   * Installs the carrier of the holder's reservation token. The daemon supplies
+   * one that answers only inside the owner context holding a grant for exactly
+   * that run id; the tuple checks below still bind whatever it returns.
+   */
+  setReservationTokenReader(reader: (runId: string) => string | undefined): void {
+    this.#tokenReader = reader
+  }
+
+  reserveRunId(
+    runId: string,
+    token: string,
+    hostSessionId: string,
+    generation: number
+  ): RunIdReservationOutcome {
+    const held = this.#reservations.get(runId)
+    if (held !== undefined) return held.token === token ? 'reserved' : 'reserved-by-other'
+    if (this.#handleExists(runId)) return 'exists'
+    this.#reservations.set(runId, { token, hostSessionId, generation })
+    return 'reserved'
+  }
+
+  releaseRunId(runId: string, token: string): void {
+    if (this.#reservations.get(runId)?.token === token) this.#reservations.delete(runId)
+  }
+
+  reservationFor(runId: string): string | undefined {
+    return this.#reservations.get(runId)?.token
+  }
+
+  /** True when a reservation, run row or run-id handle already names the id. */
+  isNamed(runId: string): boolean {
+    return this.#reservations.has(runId) || this.#handleExists(runId)
+  }
+
+  /** Guard for creating a run row; unreserved ids insert exactly as before. */
+  assertCanCreateRun(runId: string, writer: RunHandleWriter): void {
+    const reservation = this.#reservations.get(runId)
+    if (reservation === undefined) return
+    const refusal = this.#tokenRefusal(reservation, writer, this.#tokenReader(runId))
+    if (refusal === 'no-token') throw new RunIdReservedError(runId)
+    if (refusal !== undefined) throw new RunIdOwnershipError(runId, refusal)
+    this.#bind(reservation, writer)
+  }
+
+  /** Guard for a runtime or contribution naming `runId` as its active run. */
+  assertCanNameActiveRun(runId: string | undefined, writer: RunHandleWriter): void {
+    if (runId === undefined) return
+    const refusal = this.#handleRefusal(runId, writer, this.#tokenReader(runId))
+    if (refusal === 'no-token') throw new RunIdReservedError(runId)
+    if (refusal !== undefined) throw new RunIdOwnershipError(runId, refusal)
+  }
+
+  /** Steer contributions carry no runtime or operation tuple: never for app runs. */
+  assertContributionMayNameRun(runId: string): void {
+    if (this.#reservations.has(runId)) throw new RunIdReservedError(runId)
+    if (this.#row(runId)?.scope_ref.startsWith('app:') === true) {
+      throw new RunIdOwnershipError(runId, 'contribution-cannot-name-app-run')
+    }
+  }
+
+  /**
+   * Token-free projection predicate (clauses B/C). Broker event projection is
+   * never inside the issuing context, so it may only follow the persisted row.
+   */
+  mayNameActiveRun(runId: string, writer: RunHandleWriter): boolean {
+    return this.#handleRefusal(runId, writer, undefined) === undefined
+  }
+
+  /** Write-once binding columns of a reserved or app run (runs.update, claimQueued). */
+  assertRunBindingUpdate(
+    runId: string,
+    patch: {
+      runtimeId?: string | undefined
+      operationId?: string | undefined
+      hostSessionId?: string | undefined
+      generation?: number | undefined
+    }
+  ): void {
+    if (
+      patch.runtimeId === undefined &&
+      patch.operationId === undefined &&
+      patch.hostSessionId === undefined &&
+      patch.generation === undefined
+    ) {
+      return
+    }
+    const reservation = this.#reservations.get(runId)
+    const row = this.#row(runId)
+    if (row === null) return
+    if (reservation === undefined && !row.scope_ref.startsWith('app:')) return
+    if (patch.hostSessionId !== undefined && patch.hostSessionId !== row.host_session_id) {
+      throw new RunIdOwnershipError(runId, 'host-session-immutable')
+    }
+    if (patch.generation !== undefined && patch.generation !== row.generation) {
+      throw new RunIdOwnershipError(runId, 'generation-immutable')
+    }
+    if (
+      patch.operationId !== undefined &&
+      row.operation_id !== null &&
+      patch.operationId !== row.operation_id
+    ) {
+      throw new RunIdOwnershipError(runId, 'operation-immutable')
+    }
+    if (patch.runtimeId === undefined) return
+    if (row.runtime_id !== null) {
+      if (patch.runtimeId !== row.runtime_id) {
+        throw new RunIdOwnershipError(runId, 'runtime-immutable')
+      }
+      return
+    }
+    // Sealing an unbound run: only the holder's token, for the reserved tuple.
+    if (reservation === undefined)
+      throw new RunIdOwnershipError(runId, 'unbound-without-reservation')
+    const writer: RunHandleWriter = {
+      runtimeId: patch.runtimeId,
+      operationId: patch.operationId ?? row.operation_id ?? undefined,
+      hostSessionId: row.host_session_id,
+      generation: row.generation,
+    }
+    const refusal = this.#tokenRefusal(reservation, writer, this.#tokenReader(runId))
+    if (refusal === 'no-token') throw new RunIdReservedError(runId)
+    if (refusal !== undefined) throw new RunIdOwnershipError(runId, refusal)
+    this.#bind(reservation, writer)
+  }
+
+  #handleRefusal(
+    runId: string,
+    writer: RunHandleWriter,
+    token: string | undefined
+  ): string | undefined {
+    const reservation = this.#reservations.get(runId)
+    const row = this.#row(runId)
+    // (C) neither reserved nor an app run: unchanged.
+    if (reservation === undefined && (row === null || !row.scope_ref.startsWith('app:'))) {
+      return undefined
+    }
+    const sealed = row !== null && row.runtime_id !== null
+    if (!sealed) {
+      // (A) token, unsealed only.
+      if (reservation === undefined) return 'unbound-without-reservation'
+      const refusal = this.#tokenRefusal(reservation, writer, token)
+      if (refusal === undefined) this.#bind(reservation, writer)
+      return refusal
+    }
+    // (B) exact persisted tuple.
+    if (writer.runtimeId !== row.runtime_id) return 'runtime-mismatch'
+    if (writer.hostSessionId !== row.host_session_id) return 'host-session-mismatch'
+    if (writer.generation !== row.generation) return 'generation-mismatch'
+    if (row.operation_id !== null && writer.operationId !== row.operation_id) {
+      return 'operation-mismatch'
+    }
+    return undefined
+  }
+
+  #tokenRefusal(
+    reservation: RunIdReservation,
+    writer: RunHandleWriter,
+    token: string | undefined
+  ): string | undefined {
+    if (token !== reservation.token) return 'no-token'
+    if (writer.hostSessionId !== reservation.hostSessionId) return 'host-session-mismatch'
+    if (writer.generation !== reservation.generation) return 'generation-mismatch'
+    if (reservation.runtimeId !== undefined && writer.runtimeId !== reservation.runtimeId) {
+      return 'runtime-mismatch'
+    }
+    if (
+      reservation.operationId !== undefined &&
+      writer.operationId !== undefined &&
+      writer.operationId !== reservation.operationId
+    ) {
+      return 'operation-mismatch'
+    }
+    return undefined
+  }
+
+  #bind(reservation: RunIdReservation, writer: RunHandleWriter): void {
+    if (reservation.runtimeId === undefined && writer.runtimeId !== undefined) {
+      reservation.runtimeId = writer.runtimeId
+    }
+    if (reservation.operationId === undefined && writer.operationId !== undefined) {
+      reservation.operationId = writer.operationId
+    }
+  }
+
+  #row(runId: string): RunTupleRow | null {
+    return this.db
+      .query<RunTupleRow, [string]>(
+        'SELECT host_session_id, generation, runtime_id, operation_id, scope_ref FROM runs WHERE run_id = ?'
+      )
+      .get(runId)
+  }
+
+  #handleExists(runId: string): boolean {
+    return (
+      this.db
+        .query<{ found: number }, [string, string, string]>(
+          `SELECT EXISTS (SELECT 1 FROM runs WHERE run_id = ?)
+               OR EXISTS (SELECT 1 FROM runtimes WHERE active_run_id = ?)
+               OR EXISTS (SELECT 1 FROM steer_contributions WHERE active_run_id = ?) AS found`
+        )
+        .get(runId, runId, runId)?.found === 1
+    )
+  }
+}
+
+export class RuntimeRepository {
+  constructor(
+    private readonly db: Database,
+    private readonly runIdOwnership: RunIdOwnershipRegistry = new RunIdOwnershipRegistry(db)
+  ) {}
 
   count(): number {
     const row = this.db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtimes').get()
@@ -85,6 +357,12 @@ export class RuntimeRepository {
   }
 
   insert(record: HrcRuntimeSnapshot): HrcRuntimeSnapshot {
+    this.runIdOwnership.assertCanNameActiveRun(record.activeRunId, {
+      runtimeId: record.runtimeId,
+      operationId: record.activeOperationId,
+      hostSessionId: record.hostSessionId,
+      generation: record.generation,
+    })
     execute(
       this.db,
       `
@@ -224,6 +502,7 @@ export class RuntimeRepository {
         `SELECT DISTINCT scope_ref || '/lane:' || lane_ref AS session_ref
            FROM runtimes
           WHERE status IN ('starting', 'ready', 'busy', 'awaiting_input', 'stopping')
+            AND scope_ref LIKE 'agent:%'
           ORDER BY session_ref ASC`
       )
       .all()
@@ -285,6 +564,14 @@ export class RuntimeRepository {
 
   update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null {
     const current = this.getByRuntimeId(runtimeId)
+    if (current !== null && typeof patch.activeRunId === 'string') {
+      this.runIdOwnership.assertCanNameActiveRun(patch.activeRunId, {
+        runtimeId,
+        operationId: patch.activeOperationId ?? current.activeOperationId,
+        hostSessionId: patch.hostSessionId ?? current.hostSessionId,
+        generation: patch.generation ?? current.generation,
+      })
+    }
     const statusChanged = patch.status !== undefined && current?.status !== patch.status
     const guardedPatch = statusChanged
       ? patch
@@ -324,6 +611,15 @@ export class RuntimeRepository {
     activeRunId: string | undefined,
     updatedAt: string
   ): HrcRuntimeSnapshot | null {
+    const current = activeRunId === undefined ? null : this.getByRuntimeId(runtimeId)
+    if (current !== null) {
+      this.runIdOwnership.assertCanNameActiveRun(activeRunId, {
+        runtimeId,
+        operationId: current.activeOperationId,
+        hostSessionId: current.hostSessionId,
+        generation: current.generation,
+      })
+    }
     execute(
       this.db,
       `
@@ -747,9 +1043,18 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
 ]
 
 export class RunRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly runIdOwnership: RunIdOwnershipRegistry = new RunIdOwnershipRegistry(db)
+  ) {}
 
   insert(record: HrcRunRecord): HrcRunRecord {
+    this.runIdOwnership.assertCanCreateRun(record.runId, {
+      runtimeId: record.runtimeId,
+      operationId: record.operationId,
+      hostSessionId: record.hostSessionId,
+      generation: record.generation,
+    })
     execute(
       this.db,
       `
@@ -1008,6 +1313,10 @@ export class RunRepository {
       'runtimeId' | 'invocationId' | 'operationId' | 'dispatchedInputId' | 'updatedAt'
     >
   ): boolean {
+    this.runIdOwnership.assertRunBindingUpdate(runId, {
+      runtimeId: patch.runtimeId,
+      operationId: patch.operationId,
+    })
     const result = this.db
       .query(
         `UPDATE runs
@@ -1067,6 +1376,7 @@ export class RunRepository {
   }
 
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {
+    this.runIdOwnership.assertRunBindingUpdate(runId, patch)
     // T-07656 run-terminal monotonicity at the store boundary. A run that
     // carries `completed_at` has answered its caller; a later start/accept
     // stamp (a dispatch path racing the zombie sweep or the reconciler) must not

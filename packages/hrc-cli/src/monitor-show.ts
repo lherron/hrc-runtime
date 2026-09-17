@@ -16,6 +16,7 @@ import {
   type InspectRuntimeResponse,
   createMonitorReader,
   monitorSessionMatchKind,
+  parseAppSessionScopeRef,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { HrcStoreSchemaBehindError, openHrcDatabase } from 'hrc-store-sqlite'
@@ -59,13 +60,14 @@ type MonitorShowJson = {
   }
   scope?: {
     scopeRef: string
-    scopeHandle: string
+    /** Absent for an app-owned scope, which has no agent handle (T-08576). */
+    scopeHandle?: string
   }
   session?: {
     scopeRef: string
-    scopeHandle: string
+    scopeHandle?: string
     sessionRef: string
-    sessionHandle: string
+    sessionHandle?: string
     hostSessionId: string
     generation: number
     laneRef: string
@@ -444,14 +446,18 @@ function toMonitorShowJson(
 ): MonitorShowJson {
   const session = snapshot.session
   const scopeRef = session?.scopeRef ?? resolutionScopeRef(snapshot)
-  const scopeHandle = scopeRef ? formatScopeHandle(parseScopeRef(scopeRef)) : undefined
+  // T-08576: an app-owned session has no agent handle; report its refs only.
+  const isAppScope = scopeRef !== undefined && parseAppSessionScopeRef(scopeRef) !== null
+  const scopeHandle =
+    scopeRef && !isAppScope ? formatScopeHandle(parseScopeRef(scopeRef)) : undefined
   const sessionRef = session ? sessionRefFor(session.scopeRef, session.laneRef) : undefined
-  const sessionHandle = session
-    ? formatSessionHandle({
-        scopeRef: session.scopeRef,
-        laneRef: laneRefForHandle(session.laneRef),
-      })
-    : undefined
+  const sessionHandle =
+    session && !isAppScope
+      ? formatSessionHandle({
+          scopeRef: session.scopeRef,
+          laneRef: laneRefForHandle(session.laneRef),
+        })
+      : undefined
   const daemon = snapshot.daemon as MonitorShowJson['daemon']
   const socket = snapshot.socket as MonitorShowJson['socket']
   const tmux = snapshot.tmux as MonitorShowJson['tmux']
@@ -475,14 +481,16 @@ function toMonitorShowJson(
     },
     tmux,
     counts: snapshot.counts,
-    ...(scopeRef && scopeHandle ? { scope: { scopeRef, scopeHandle } } : {}),
-    ...(session && sessionRef && sessionHandle && scopeHandle
+    ...(scopeRef && (scopeHandle || isAppScope)
+      ? { scope: { scopeRef, ...(scopeHandle ? { scopeHandle } : {}) } }
+      : {}),
+    ...(session && sessionRef && ((sessionHandle && scopeHandle) || isAppScope)
       ? {
           session: {
             scopeRef: session.scopeRef,
-            scopeHandle,
+            ...(scopeHandle ? { scopeHandle } : {}),
             sessionRef,
-            sessionHandle,
+            ...(sessionHandle ? { sessionHandle } : {}),
             hostSessionId: session.hostSessionId,
             generation: session.generation,
             laneRef: session.laneRef,

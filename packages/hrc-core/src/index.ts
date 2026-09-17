@@ -54,6 +54,17 @@ export type {
   HrcTargetSelector,
 } from './selectors.js'
 
+export {
+  APP_IDENTITY_ENV_KEYS,
+  APP_SESSION_SCOPE_PREFIX,
+  appSessionSelectorKey,
+  formatAppSessionScopeRef,
+  formatStoredSessionRef,
+  parseAppSessionScopeRef,
+  validateAppSessionSelector,
+} from './app-session-scope.js'
+export type { AppSessionSelector } from './app-session-scope.js'
+
 export { parseFence, validateFence } from './fences.js'
 export type {
   HrcActiveSessionState,

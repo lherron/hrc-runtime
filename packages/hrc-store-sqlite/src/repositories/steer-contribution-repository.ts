@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite'
 import type { HrcSteerContributionRecord, HrcSteerContributionState } from 'hrc-core'
 
+import { RunIdOwnershipRegistry } from './runtime-repositories.js'
 import { execute } from './shared.js'
 
 type SteerContributionRow = {
@@ -51,7 +52,10 @@ function mapRow(row: SteerContributionRow): HrcSteerContributionRecord {
  * never retried, because whether the harness applied it is genuinely unknown.
  */
 export class SteerContributionRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly runIdOwnership: RunIdOwnershipRegistry = new RunIdOwnershipRegistry(db)
+  ) {}
 
   /** Write-ahead insert. Must happen before any actuation. */
   insertAttempting(record: {
@@ -64,6 +68,7 @@ export class SteerContributionRepository {
     inputId: string
     now: string
   }): void {
+    this.runIdOwnership.assertContributionMayNameRun(record.activeRunId)
     execute(
       this.db,
       `
@@ -96,6 +101,7 @@ export class SteerContributionRepository {
     contributionId: string,
     patch: { activeRunId: string; runtimeId: string; invocationId: string; now: string }
   ): boolean {
+    this.runIdOwnership.assertContributionMayNameRun(patch.activeRunId)
     const result = this.db
       .prepare(
         `

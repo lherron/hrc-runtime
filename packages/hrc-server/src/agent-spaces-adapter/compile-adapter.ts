@@ -127,7 +127,7 @@ export type BrokerCompileAdapterResult =
     }
 
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
-function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
+export function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
   return (
     (typeof intent.initialPrompt === 'string' && intent.initialPrompt.length > 0) ||
     (intent.attachments?.length ?? 0) > 0 ||

@@ -40,6 +40,7 @@ import { FirstTurnWatchRepository } from './repositories/first-turn-watch-reposi
 import { RetainedEvidenceOutcomeRepository } from './repositories/retained-evidence-outcome-repository.js'
 import {
   LaunchRepository,
+  RunIdOwnershipRegistry,
   RunRepository,
   RuntimeRepository,
 } from './repositories/runtime-repositories.js'
@@ -126,6 +127,7 @@ export type HrcDatabase = {
   brokerInvocations: BrokerInvocationRepository
   steerContributions: SteerContributionRepository
   retainedEvidenceOutcomes: RetainedEvidenceOutcomeRepository
+  runIdOwnership: RunIdOwnershipRegistry
   brokerInvocationEvents: BrokerInvocationEventRepository
   runtimeArtifacts: RuntimeArtifactRepository
   permissionDecisions: PermissionDecisionRepository
@@ -192,6 +194,7 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     throw error
   }
   const toolResultBlobs = new ToolResultBlobRepository(sqlite, options.onLedgerBlobMiss)
+  const runIdOwnership = new RunIdOwnershipRegistry(sqlite)
 
   return {
     sqlite,
@@ -217,8 +220,8 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     participantHostBindings: new ParticipantHostBindingRepository(sqlite),
     appManagedSessions: new AppManagedSessionRepository(sqlite),
     appSessions: new AppSessionRepository(sqlite),
-    runtimes: new RuntimeRepository(sqlite),
-    runs: new RunRepository(sqlite),
+    runtimes: new RuntimeRepository(sqlite, runIdOwnership),
+    runs: new RunRepository(sqlite, runIdOwnership),
     launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
     hrcEvents: new HrcLifecycleEventRepository(sqlite, toolResultBlobs),
@@ -241,8 +244,9 @@ export function openHrcDatabase(dbPath: string, options: OpenHrcDatabaseOptions 
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
-    steerContributions: new SteerContributionRepository(sqlite),
+    steerContributions: new SteerContributionRepository(sqlite, runIdOwnership),
     retainedEvidenceOutcomes: new RetainedEvidenceOutcomeRepository(sqlite),
+    runIdOwnership,
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite, toolResultBlobs),
     runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
     permissionDecisions: new PermissionDecisionRepository(sqlite),

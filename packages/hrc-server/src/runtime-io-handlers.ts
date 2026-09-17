@@ -14,6 +14,7 @@ import {
   assertActuatorSplitRuntimeReuse,
   normalizeActuatorSplitPolicy,
 } from './actuator-split.js'
+import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -320,6 +321,7 @@ export async function startRuntimeForSession(
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  assertAppIdentityOwner(session)
   const attachedRunAspdSelection =
     options.attachedRunDoor === true && isAttachedRunAspdCodexIntent(intent)
   // T-08294: never boot a runtime onto a Codex desktop conversation's permanent
@@ -529,6 +531,10 @@ export async function startRuntimeForSession(
           this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, timestamp())
           return resolvedRuntime
         }
+        const startRunId = `run-${randomUUID()}`
+        // T-08576 D5: an app birth that compiles an initial turn reserves its run
+        // id under the owner before any stale-mark, run, handle or launch effect.
+        issueAppBirthRunGrantForCompile(this.db, session, startIntent, startRunId)
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
           this.markRuntimeStaleForBrokerReprovision(session, reusableBrokerRuntime, {
             reason: 'headless-broker-start-reprovision',
@@ -541,7 +547,6 @@ export async function startRuntimeForSession(
         // broker headless plan needs interactive:false; normalizeRuntimeProvisionIntent
         // flips headless intents to interactive:true for tmux provisioning,
         // which would compile the broker plan in interactive mode.
-        const startRunId = `run-${randomUUID()}`
         const initialPrompt = startIntent.initialPrompt ?? ''
         const brokerRuntime = await this.startHeadlessBrokerRuntime(
           session,
@@ -618,6 +623,9 @@ export async function startRuntimeForSession(
         await this.publishPresentation(existingRuntime, presentationOptions)
         return existingRuntime
       }
+      const startRunId = `run-${randomUUID()}`
+      // T-08576 D5: reserve before any stale-mark, run, handle or launch effect.
+      issueAppBirthRunGrantForCompile(this.db, session, normalizedIntent, startRunId)
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
         this.markRuntimeStaleForBrokerReprovision(session, existingRuntime, {
           reason: 'interactive-broker-start-reprovision',
@@ -627,7 +635,6 @@ export async function startRuntimeForSession(
 
       // T-01757 (Wave C): the route is hardcoded 'broker', so the legacyTmux
       // closure was dead. Dropped — only the broker executor is reachable.
-      const startRunId = `run-${randomUUID()}`
       const runtime = await runInteractiveTmuxRoute('broker', {
         broker: async () =>
           this.startInteractiveTmuxBrokerRuntime(session, normalizedIntent, startRunId, {

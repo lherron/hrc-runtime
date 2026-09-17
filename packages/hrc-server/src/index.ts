@@ -61,6 +61,12 @@ import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
 } from './app-session-handlers.js'
+import {
+  appSelectorForSession,
+  currentAppBirthRunReservationToken,
+  refuseAppScopedSession,
+  withAppIdentityOwner,
+} from './app-session-identity.js'
 import { projectAspToolchainStatus } from './asp-toolchain.js'
 import {
   type BridgeSurfaceHandlersMethods,
@@ -2069,6 +2075,8 @@ class HrcServerInstance implements HrcServer {
     const parsed = parseResolveSessionRequest(body)
     const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
     if (parsed.create === true) {
+      // T-08576 G8: resolve-create never mints app identity.
+      refuseAppScopedSession({ scopeRef, laneRef }, 'resolve-create')
       assertLocalPersonaAllowed(this, scopeRef)
     }
     const existing = findContinuitySession(this.db, parsed.sessionRef)
@@ -2182,9 +2190,20 @@ class HrcServerInstance implements HrcServer {
     const body = parseLaunchCommandScopedRunRequest(await parseJsonBody(request))
     const operationId = commandRunOperationId(body.idempotencyKey)
     const runId = commandRunId(body.idempotencyKey)
+    // T-08576 G7: a command run never mints or acts on app identity.
+    const requestedScope = parseCommandRunSessionRef(body.sessionRef)
+    refuseAppScopedSession(requestedScope, 'command-run-launch')
     const replay = this.db.runs.getByRunId(runId)
     if (replay) {
       return json(commandRunResponseFromRun(replay, true))
+    }
+    // T-08576 D5: a run id reserved by an app birth cannot be claimed here.
+    if (this.db.runIdOwnership.reservationFor(runId) !== undefined) {
+      throw new HrcConflictError(
+        HrcErrorCode.RUN_MISMATCH,
+        `command run id "${runId}" is reserved by an app session birth`,
+        { reason: 'run-id-reserved', runId }
+      )
     }
 
     const command = this.options.commandRunTargets?.[body.configuredTargetId]
@@ -2198,6 +2217,7 @@ class HrcServerInstance implements HrcServer {
     validateConfiguredCommandRunTarget(body.configuredTargetId, command)
 
     const session = await this.resolveOrCreateCommandRunSession(body.sessionRef)
+    refuseAppScopedSession(session, 'command-run-launch')
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
 
@@ -2290,6 +2310,7 @@ class HrcServerInstance implements HrcServer {
 
   async resolveOrCreateCommandRunSession(sessionRef: string): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
+    refuseAppScopedSession({ scopeRef, laneRef }, 'command-run-launch')
     assertLocalPersonaAllowed(this, scopeRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
     if (continuity) {
@@ -2522,7 +2543,23 @@ class HrcServerInstance implements HrcServer {
 
   async handleClearContext(request: Request): Promise<Response> {
     const body = parseClearContextRequest(await parseJsonBody(request))
-    const session = requireSession(this.db, body.hostSessionId)
+    const requested = requireSession(this.db, body.hostSessionId)
+    const appSelector = appSelectorForSession(requested)
+    if (appSelector !== null) {
+      // T-08576 D8.1: generic clear-context stays supported for app sessions, under
+      // the selector owner, with the session re-read after the owner is held.
+      assertLocalPersonaAllowed(this, requested.scopeRef)
+      return await withAppIdentityOwner(this.db, appSelector, async () => {
+        const session = requireSession(this.db, body.hostSessionId)
+        return json(
+          await this.rotateSessionContext(session, {
+            relaunch: body.relaunch === true,
+            dropContinuation: body.dropContinuation === true,
+          })
+        )
+      })
+    }
+    const session = requested
     const managed = findManagedAppSessionForSession(this.db, session)
     return json(
       await this.rotateSessionContext(session, {
@@ -2623,6 +2660,7 @@ class HrcServerInstance implements HrcServer {
   async handleDropContinuation(request: Request): Promise<Response> {
     const body = parseDropContinuationRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
+    refuseAppScopedSession(session, 'drop-continuation')
     const previousContinuationKey = session.continuation?.key ?? null
 
     if (
@@ -2946,10 +2984,11 @@ class HrcServerInstance implements HrcServer {
             clearContext: true,
           },
           platform: {
-            appOwnedSessions: true,
-            appHarnessSessions: true,
-            commandSessions: true,
-            literalInput: true,
+            // T-08576 D7: a persona allowlist refuses every app entry.
+            appOwnedSessions: this.options.localPersonaAllowlist === undefined,
+            appHarnessSessions: this.options.localPersonaAllowlist === undefined,
+            commandSessions: this.options.localPersonaAllowlist === undefined,
+            literalInput: this.options.localPersonaAllowlist === undefined,
             surfaceBindings: true,
             legacyLocalBridges: ['legacy-agentchat'],
           },
@@ -3000,10 +3039,10 @@ class HrcServerInstance implements HrcServer {
           clearContext: true,
         },
         platform: {
-          appOwnedSessions: true,
-          appHarnessSessions: true,
-          commandSessions: true,
-          literalInput: true,
+          appOwnedSessions: this.options.localPersonaAllowlist === undefined,
+          appHarnessSessions: this.options.localPersonaAllowlist === undefined,
+          commandSessions: this.options.localPersonaAllowlist === undefined,
+          literalInput: this.options.localPersonaAllowlist === undefined,
           surfaceBindings: true,
           legacyLocalBridges: ['legacy-agentchat'],
         },
@@ -3172,6 +3211,12 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         )
       },
     })
+    // T-08576 D5 rev 8: holder writes carry the reservation token through the
+    // app identity owner context only.
+    const ownedDb = db
+    db.runIdOwnership.setReservationTokenReader((runId) =>
+      currentAppBirthRunReservationToken(ownedDb, runId)
+    )
     const backfilledContinuationClears = backfillLegacyContinuationClearBarriers(db)
     if (backfilledContinuationClears > 0) {
       writeServerLog('INFO', 'server.start.continuation_clear_barriers_backfilled', {

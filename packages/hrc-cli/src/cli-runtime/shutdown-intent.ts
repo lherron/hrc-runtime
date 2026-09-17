@@ -44,6 +44,13 @@ const SERVER_LIFECYCLE_ENVELOPE_KEYS = [
   'ASP_TASK_ID',
   'ASP_DEFAULT_TASK',
   'ASP_HANDLE',
+  // T-08576 D11: HRC emits host-session and generation identity on every
+  // correlated birth, including app harnesses that carry no session ref. Their
+  // presence is an envelope, so a sessionless one fails closed (T-05999 cond. 1).
+  'HRC_HOST_SESSION_ID',
+  'AGENT_HOST_SESSION_ID',
+  'HRC_GENERATION',
+  'AGENT_GENERATION',
 ] as const
 
 function normalizedOptionalText(value: string | undefined): string | null {

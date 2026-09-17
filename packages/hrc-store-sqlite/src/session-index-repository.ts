@@ -76,7 +76,8 @@ function buildWhere(
     'agentId' | 'effectiveStatus' | 'executionMode'
   >
 ): { clause: string; values: SQLQueryBindings[] } {
-  const where: string[] = []
+  // T-08576: synthetic app-session lineages are not served by the agent session index.
+  const where: string[] = ["scope_ref NOT LIKE 'app:%'"]
   const values: SQLQueryBindings[] = []
 
   if (filters.q !== undefined) {

@@ -1,5 +1,5 @@
 import { parseScopeRef } from 'agent-scope'
-import { HrcConflictError, HrcErrorCode } from 'hrc-core'
+import { HrcConflictError, HrcErrorCode, parseAppSessionScopeRef } from 'hrc-core'
 
 import { writeServerLog } from './server-log.js'
 
@@ -52,6 +52,21 @@ export function assertLocalPersonaAllowed(
 ): void {
   const allowlist = server.options?.localPersonaAllowlist
   if (allowlist === undefined) return
+
+  // T-08576 D7: an app session has no persona identity. Under a configured
+  // allowlist every app kind is refused with a typed decision, never admitted.
+  if (parseAppSessionScopeRef(scopeRef) !== null) {
+    writeServerLog('WARN', 'local_persona_policy.refusal', {
+      scopeRef,
+      reason: 'app-session-not-allowed',
+      allowedPersonaIds: allowlist,
+    })
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `local persona allowlist refuses app session scope "${scopeRef}"`,
+      { scopeRef, reason: 'app-session-not-allowed', allowedPersonaIds: allowlist }
+    )
+  }
 
   const agentId = parseScopeRef(scopeRef).agentId
   if (allowlist.includes(agentId)) return

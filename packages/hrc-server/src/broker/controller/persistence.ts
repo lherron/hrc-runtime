@@ -20,6 +20,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harness-broker-protocol'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 
+import { assertAppStartGraphRunIdentity } from '../../app-session-identity.js'
 import { armFirstTurnWatch } from '../../first-turn-watch'
 import { runtimeActivityPatch } from '../../runtime-activity'
 import {
@@ -66,6 +67,13 @@ export function persistStartGraph(
       `host session not found: ${String(identity.hostSessionId)}`
     )
   }
+  // T-08576 D5 backstop: an app compile identity carrying a run id must hold
+  // that run's live reservation token before any start-graph row.
+  assertAppStartGraphRunIdentity(
+    ctx.db,
+    session,
+    identity.runId !== undefined ? String(identity.runId) : undefined
+  )
 
   ctx.db.compiledRuntimePlans.insert({
     planHash: String(input.plan.planHash),

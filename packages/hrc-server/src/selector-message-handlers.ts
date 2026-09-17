@@ -20,6 +20,7 @@ import {
 } from './federation/summon-gate-server.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 
+import { assertAppIdentityOwner, issueAppBirthRunGrantForCompile } from './app-session-identity.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { assertReservedAddressAllowsBirth } from './participant-address-provisioning.js'
 import { requireSession } from './require-helpers.js'
@@ -194,6 +195,7 @@ export async function ensureRuntimeForSession(
   restartStyle: RestartStyle
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  assertAppIdentityOwner(session)
   validateEnsureRuntimeIntent(intent)
   const brokerOptions = this.selectInteractiveTmuxBrokerOptions(intent)
   if (!brokerOptions) {
@@ -220,6 +222,9 @@ export async function ensureRuntimeForSession(
     return existingBrokerRuntime
   }
 
+  const birthRunId = `run-${randomUUID()}`
+  // T-08576 D5: reserve before any stale-mark, run, handle or launch effect.
+  issueAppBirthRunGrantForCompile(this.db, session, intent, birthRunId)
   if (existingBrokerRuntime && !isRuntimeUnavailableStatus(existingBrokerRuntime.status)) {
     this.markRuntimeStaleForBrokerReprovision(session, existingBrokerRuntime, {
       reason: 'ensure-runtime-broker-reprovision',
@@ -227,12 +232,7 @@ export async function ensureRuntimeForSession(
     })
   }
 
-  return await this.startInteractiveTmuxBrokerRuntime(
-    session,
-    intent,
-    `run-${randomUUID()}`,
-    brokerOptions
-  )
+  return await this.startInteractiveTmuxBrokerRuntime(session, intent, birthRunId, brokerOptions)
 }
 
 export async function ensureTargetSession(

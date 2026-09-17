@@ -4,6 +4,7 @@ import {
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
+  parseAppSessionScopeRef,
 } from 'hrc-core'
 import type {
   AppSessionFreshnessFence,
@@ -70,11 +71,12 @@ export function findManagedAppSessionForSession(
   db: HrcDatabase,
   session: HrcSessionRecord
 ): AppManagedSessionRecord | null {
-  if (!session.scopeRef.startsWith('app:')) {
+  const app = parseAppSessionScopeRef(session.scopeRef)
+  if (app === null) {
     return null
   }
 
-  return db.appManagedSessions.findByKey(session.scopeRef.slice('app:'.length), session.laneRef)
+  return db.appManagedSessions.findByKey(app.appId, session.laneRef)
 }
 
 export function resolveManagedHarnessIntent(
