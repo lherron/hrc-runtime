@@ -304,10 +304,11 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
   const launchKey = `launch-${randomUUID()}`
   const desktopKey = `desktop-${randomUUID()}`
   const historicalLaunchId = `historical-${randomUUID()}`
+  let before: DurableSnapshot
+  let reconciledRuntimeStatus: string
 
   try {
     const seeded = openHrcDatabase(fixture.dbPath)
-    let before: DurableSnapshot
     try {
       const session = seeded.sessions.getByHostSessionId(runtime.hostSessionId)
       if (!session) throw new Error('fixture session is missing')
@@ -344,12 +345,27 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
         launchId: historicalLaunchId,
         payload: { wrapperPid: 8080 },
       })
-      before = durableSnapshot(seeded)
     } finally {
       seeded.close()
     }
 
     await server.stop()
+
+    // Establish a quiescent restart baseline before adding spool entries.
+    // Startup reconciliation independently marks this legacy fixture runtime
+    // stale and appends runtime.stale once; the spool-bearing restart must add
+    // nothing beyond that already-reconciled state.
+    server = await createHrcServer(fixture.serverOpts({ otelPreferredPort: 0 } as never))
+    await server.stop()
+    const baseline = openHrcDatabase(fixture.dbPath)
+    try {
+      before = durableSnapshot(baseline)
+      const reconciledRuntime = baseline.runtimes.getByRuntimeId(runtime.runtimeId)
+      if (!reconciledRuntime) throw new Error('fixture runtime is missing after reconciliation')
+      reconciledRuntimeStatus = reconciledRuntime.status
+    } finally {
+      baseline.close()
+    }
 
     const hookPath = await spoolCallback(fixture.spoolDir, hookKey, {
       endpoint: '/v1/internal/hooks/ingest',
@@ -414,7 +430,9 @@ test('R4: retired spool entries are quarantined while Desktop bytes, reader, and
       ])
       expect(observed.launches.getByLaunchId(historicalLaunchId)).not.toBeNull()
       expect(observed.launches.getByLaunchId(launchKey)).toBeNull()
-      expect(observed.runtimes.getByRuntimeId(runtime.runtimeId)).toMatchObject({ status: 'ready' })
+      expect(observed.runtimes.getByRuntimeId(runtime.runtimeId)).toMatchObject({
+        status: reconciledRuntimeStatus,
+      })
     } finally {
       observed.close()
     }
