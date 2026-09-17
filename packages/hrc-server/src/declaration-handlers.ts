@@ -30,6 +30,7 @@ import {
 } from 'hrc-core'
 import type {
   AspcDeclarationDiagnostic,
+  AspcInspectRuntimePlacementRequest,
   AspcResolveRuntimeDeclarationResponse,
   AspcRuntimeDeclarationContext,
   AspcRuntimePromptObservation,
@@ -461,9 +462,15 @@ export async function handleRunPreview(request: Request): Promise<Response> {
     return json(null)
   }
   // One admitted connection serves both operations, so the plan and the prompt
-  // facts always come from the same aspd release.
+  // facts always come from the same aspd release. PC-1 admits the preparation
+  // correlation capability on the same connection: absent, the preview is
+  // refused with aspd_capability_missing instead of an uncorrelated inspection.
   return await withAspdObservationSession(
-    ['compileHarnessInvocation', 'inspectRuntimePlacement'],
+    [
+      'compileHarnessInvocation',
+      'inspectRuntimePlacement',
+      'inspectRuntimePlacementPreparationCorrelation',
+    ],
     async ({ service, client }) => {
       const runtimeId = `dry-rt-${randomUUID()}`
       const aspHome = getAspHome()
@@ -484,9 +491,17 @@ export async function handleRunPreview(request: Request): Promise<Response> {
         return json(null)
       }
 
+      // PC-1: the inspection carries the correlation and dispatchEnv the same
+      // preview compiled. The compile echoes the intent placement through its
+      // request, so these are the compiled values; dispatchEnv stays inert.
+      const compiledPlacement = previewIntent.placement as unknown as Record<string, unknown>
       const inspected = await client.inspectRuntimePlacement({
         schemaVersion: 'aspc-inspect-runtime-placement-request/v1',
         context: previewInspectionContext(previewIntent, sessionRef),
+        preparationCorrelation: compiledPlacement[
+          'correlation'
+        ] as AspcInspectRuntimePlacementRequest['preparationCorrelation'],
+        dispatchEnv: compiledPlacement['dispatchEnv'] as Record<string, string> | undefined,
       })
       const prompt: PromptProjection = inspected.ok
         ? projectPrompt(inspected.prompt)

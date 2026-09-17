@@ -21,6 +21,7 @@ export type AspdObservationOperation =
   | 'resolveRuntimeDeclaration'
   | 'inspectRuntimePlacement'
   | 'compileHarnessInvocation'
+  | 'inspectRuntimePlacementPreparationCorrelation'
 
 export type AspdObservationClient = Pick<
   AspcUnixClient,
