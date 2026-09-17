@@ -814,6 +814,19 @@ export type BrokerDispatchInspectView = {
   lastUnexpectedClose: unknown | null
 }
 
+/**
+ * Model identity the harness broker reported as actually serving a turn
+ * (T-08583). Sourced from broker `usage.updated` `payload.model`, which the
+ * Codex driver fills from the provider response (or the harness config when
+ * the provider names no model). Null when nothing has been reported — never a
+ * fallback to the planned or adapter-default model. The model *provider*
+ * (e.g. `meta`) is out of scope: the broker contract carries no provider.
+ */
+export type HrcReportedModelIdentity = {
+  id: string
+  source: 'provider-response' | 'harness-config'
+}
+
 export type InspectRuntimeResponse = {
   runtimeId: string
   hostSessionId: string
@@ -823,6 +836,12 @@ export type InspectRuntimeResponse = {
   transport: 'tmux' | 'headless' | 'sdk' | string
   harness: HrcHarness
   provider: HrcProvider
+  /**
+   * The model the broker reported as actually running (T-08583), with the
+   * source that reported it. Null when no identity has been reported.
+   * `provider` above stays the HRC harness-family label, not the model provider.
+   */
+  reportedModel: HrcReportedModelIdentity | null
   status: string
   createdAt: string
   createdAgeSec: number

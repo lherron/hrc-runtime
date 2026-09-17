@@ -309,6 +309,7 @@ export type {
   InterruptAppSessionRequest,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  HrcReportedModelIdentity,
   KillBrokerTmuxLeasesResponse,
   ListAppSessionsRequest,
   OpenBrokerSessionRequest,

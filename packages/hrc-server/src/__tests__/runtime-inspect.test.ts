@@ -408,6 +408,44 @@ describe('POST /v1/runtimes/inspect', () => {
     expect(text).toContain('rt-does-not-exist')
   })
 
+  it('returns the Codex-reported model with its source (T-08583)', async () => {
+    fixture.seedSession('hsid-inspect-reported-model', 'inspect-reported-model')
+    seedRuntime({
+      runtimeId: 'rt-inspect-reported-model',
+      hostSessionId: 'hsid-inspect-reported-model',
+      scopeRef: 'inspect-reported-model',
+      transport: 'headless',
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        reportedModel: {
+          id: 'muse-spark-1.3-contributor',
+          source: 'provider-response',
+          updatedAt: '2026-09-17T15:00:00.000Z',
+        },
+      },
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-reported-model')
+    expect(body.reportedModel).toEqual({
+      id: 'muse-spark-1.3-contributor',
+      source: 'provider-response',
+    })
+  })
+
+  it('reports a null model when nothing was reported (T-08583)', async () => {
+    fixture.seedSession('hsid-inspect-no-model', 'inspect-no-model')
+    seedRuntime({
+      runtimeId: 'rt-inspect-no-model',
+      hostSessionId: 'hsid-inspect-no-model',
+      scopeRef: 'inspect-no-model',
+      transport: 'headless',
+      controllerKind: 'harness-broker',
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-no-model')
+    expect(body.reportedModel).toBeNull()
+  })
+
   it('returns top-level age fields that increase monotonically', async () => {
     const createdAt = new Date(Date.now() - 30_000).toISOString()
     const lastActivityAt = new Date(Date.now() - 10_000).toISOString()

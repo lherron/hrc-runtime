@@ -197,6 +197,7 @@ export function printRuntimeInspect(
     `  transport     ${runtime.transport}`,
     `  harness       ${runtime.harness}`,
     `  provider      ${runtime.provider}`,
+    `  model         ${runtime.reportedModel ? `${runtime.reportedModel.id} (reported, source: ${runtime.reportedModel.source})` : '(none reported)'}`,
     `  status        ${runtime.status}`,
     `  createdAt     ${runtime.createdAt} (age: ${formatAgeSec(runtime.createdAgeSec)})`,
     `  lastActivity  ${runtime.lastActivityAt ?? '(none)'} (age: ${

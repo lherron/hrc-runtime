@@ -74,6 +74,7 @@ import type {
   ToolCallStartedPayload,
   TurnFailedPayload,
   TurnRetryPayload,
+  UsageUpdatedPayload,
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
@@ -85,6 +86,11 @@ import {
   noteTurnStartedOnTerminalRun,
 } from '../first-turn-watch'
 import { appendHrcEvent } from '../hrc-event-helper'
+import {
+  REPORTED_MODEL_STATE_KEY,
+  isReportedModelIdentity,
+  readReportedModelIdentity,
+} from '../reported-model'
 import { runtimeActivityPatch } from '../runtime-activity'
 import { writeServerLog } from '../server-log'
 import { isLaunchCarriedInvokeCorrelationJson } from '../server-types'
@@ -1305,8 +1311,12 @@ export class BrokerEventMapper {
         this.projectPermission(envelope, ctx, now)
         return
 
+      case 'usage.updated':
+        this.projectUsageReportedModel(envelope, ctx, now)
+        return
+
       default: {
-        // Diagnostics / notices / usage and unknown event types still get
+        // Diagnostics / notices and unknown event types still get
         // persisted + emitted upstream; no state mutation here.
         return
       }
@@ -1885,6 +1895,36 @@ export class BrokerEventMapper {
     if (runtime.activeRunId !== undefined || hasOtherOpenTurn(this.db, envelope)) return
     this.db.brokerInvocations.update(invocationId, {
       invocationState: 'ready',
+      updatedAt: now,
+    })
+  }
+
+  /**
+   * T-08583 — record the model the broker reports as actually serving the turn.
+   * Latest wins; omission or a malformed identity stores nothing (and never
+   * clears a prior identity or fails the projection). Raw token-usage payloads
+   * stay in the broker ledger row only. Retained recovery never reaches here:
+   * `projectRetainedState` is an allowlist without a `usage.updated` arm, so a
+   * recovered usage event writes no runtime state by construction.
+   */
+  private projectUsageReportedModel(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const model: unknown = (envelope.payload as Partial<UsageUpdatedPayload> | undefined)?.model
+    if (!isReportedModelIdentity(model)) return
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    if (!runtime || runtime.generation !== ctx.generation) return
+    const previous = readReportedModelIdentity(
+      isRecord(runtime.runtimeStateJson) ? runtime.runtimeStateJson : undefined
+    )
+    if (previous?.id === model.id && previous.source === model.source) return
+    this.db.runtimes.update(ctx.runtimeId, {
+      runtimeStateJson: {
+        ...(runtime.runtimeStateJson ?? {}),
+        [REPORTED_MODEL_STATE_KEY]: { id: model.id, source: model.source, updatedAt: now },
+      },
       updatedAt: now,
     })
   }

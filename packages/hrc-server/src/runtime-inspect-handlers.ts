@@ -19,6 +19,7 @@ import {
 } from './broker/dispatch-observability.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
+import { readReportedModelIdentity } from './reported-model.js'
 import { requireSession } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -135,6 +136,7 @@ export async function handleInspectRuntime(
     transport: runtime.transport,
     harness: runtime.harness,
     provider: runtime.provider,
+    reportedModel: readReportedModelIdentity(runtime.runtimeStateJson),
     status: runtime.status,
     createdAt: runtime.createdAt,
     createdAgeSec: Number.isFinite(createdAtMs)
