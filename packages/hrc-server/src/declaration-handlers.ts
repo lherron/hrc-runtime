@@ -295,6 +295,13 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
 
     const provision = authorizedScalars(declaration.provisioning.scalars)
     const frontend = declaration.provisioning.frontend
+    // E1 fail-open parity: when the profile is invalid, today's target-only
+    // fallback names a harness only if something still declares one. A degraded
+    // declaration with no surviving harness scalar births with no harness id,
+    // exactly as `resolveAgentHarness` returns `harness: undefined` today.
+    const harnessDeclared =
+      declaration.source.agentProfile.state !== 'invalid' ||
+      declaration.provisioning.scalars['harness'] !== undefined
     const placement = declaration.placement
     // M1: HRC owns dryRun and every other intent field the observation does not
     // define; it never copies the observation placement verbatim.
@@ -310,7 +317,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
       harness: {
         provider: declaration.provisioning.provider,
         interactive: body.interactive,
-        ...(HRC_HARNESS_IDS.has(frontend) ? { id: frontend as HrcHarness } : {}),
+        ...(harnessDeclared && HRC_HARNESS_IDS.has(frontend) ? { id: frontend as HrcHarness } : {}),
       },
       execution: {
         preferredMode: body.preferredMode,
