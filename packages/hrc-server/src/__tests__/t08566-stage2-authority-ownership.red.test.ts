@@ -2,9 +2,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
+import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
+import { HarnessBrokerController } from '../broker/controller'
 import { BrokerEventMapper } from '../broker/event-mapper'
 import { type HrcServer, createHrcServer } from '../index'
+import { reattachDurableBrokerForDispatch } from '../startup-reconcile'
 import {
   RUNTIME_ID,
   type SeededFixture,
@@ -26,6 +29,31 @@ function responseCode(body: unknown): string | undefined {
 
 async function codeOf(response: Response): Promise<string | undefined> {
   return responseCode(await response.json().catch(() => undefined))
+}
+
+async function rejectionCode(operation: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await operation
+    return undefined
+  } catch (error) {
+    return (error as { code?: string }).code
+  }
+}
+
+function installRetainedMarker(db: HrcDatabase, invocationId: string, seq = 1): void {
+  const columns = db.sqlite
+    .query<{ name: string }, []>('PRAGMA table_info(broker_invocations)')
+    .all()
+  if (!columns.some((column) => column.name === 'retained_projected_through_seq')) {
+    db.sqlite.exec(
+      'ALTER TABLE broker_invocations ADD COLUMN retained_projected_through_seq INTEGER'
+    )
+  }
+  db.sqlite
+    .query<unknown, [number, string]>(
+      'UPDATE broker_invocations SET retained_projected_through_seq = ? WHERE invocation_id = ?'
+    )
+    .run(seq, invocationId)
 }
 
 function retainedCursor(dbPath: string, invocationId: string): number | null {
@@ -121,7 +149,7 @@ function retainedStart(invocationId: string) {
   }
 }
 
-async function livePathRequests(
+async function operatorOwnershipRequests(
   fixture: Awaited<ReturnType<typeof createHrcTestFixture>>,
   seeded: Awaited<ReturnType<typeof seedOfflineRuntime>>
 ): Promise<Array<[string, Response]>> {
@@ -132,6 +160,14 @@ async function livePathRequests(
     fixture
       .postJson('/v1/runtimes/adopt', { runtimeId: seeded.runtimeId })
       .then((r) => ['adopt', r] as [string, Response]),
+  ])
+}
+
+async function sessionDispatchRequests(
+  fixture: Awaited<ReturnType<typeof createHrcTestFixture>>,
+  seeded: Awaited<ReturnType<typeof seedOfflineRuntime>>
+): Promise<Array<[string, Response]>> {
+  return await Promise.all([
     fixture
       .postJson('/v1/turns', {
         hostSessionId: seeded.hostSessionId,
@@ -146,6 +182,79 @@ async function livePathRequests(
       })
       .then((r) => ['dm', r] as [string, Response]),
   ])
+}
+
+function servingOperations(server: HrcServer): Map<string, Promise<unknown>> {
+  return (server as unknown as { brokerReattachOperations: Map<string, Promise<unknown>> })
+    .brokerReattachOperations
+}
+
+function brokerWindow(runtime: HrcRuntimeSnapshot): unknown {
+  const substrate = (
+    runtime.runtimeStateJson as {
+      broker?: {
+        substrate?: {
+          tmuxSocketPath?: string
+          sessionName?: string
+          brokerWindow?: Record<string, unknown>
+        }
+      }
+    }
+  )?.broker?.substrate
+  return {
+    ...substrate?.brokerWindow,
+    socketPath: substrate?.tmuxSocketPath,
+    sessionName: substrate?.sessionName,
+  }
+}
+
+function scriptedReattachDeps(
+  server: HrcServer,
+  runtimeRoot: string,
+  runtime: HrcRuntimeSnapshot
+): {
+  calls: string[]
+  deps: Parameters<typeof reattachDurableBrokerForDispatch>[2]
+} {
+  const calls: string[] = []
+  return {
+    calls,
+    deps: {
+      runtimeRoot,
+      inFlightOperations: servingOperations(server) as Parameters<
+        typeof reattachDurableBrokerForDispatch
+      >[2]['inFlightOperations'],
+      controller: {
+        activeClientInvocationId: () => {
+          calls.push('activeClientInvocationId')
+          return undefined
+        },
+        attachAndReplay: async () => {
+          calls.push('attachAndReplay')
+          return {
+            ok: true,
+            brokerAttached: true,
+            replayedThroughSeq: 0,
+            ackedThroughSeq: 0,
+            acceptedInputIds: [],
+          }
+        },
+      },
+      brokerUnixClientFactory: async () => ({}) as never,
+      resolveAttachToken: async () => 't08566-attach-token',
+      probeBrokerLease: async () => ({
+        brokerSocketLive: true,
+        brokerWindow: brokerWindow(runtime) as never,
+        tuiWindow: null,
+      }),
+    },
+  }
+}
+
+function requireRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot {
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) throw new Error(`runtime fixture missing: ${runtimeId}`)
+  return runtime
 }
 
 let fixture: SeededFixture
@@ -238,13 +347,16 @@ describe('T-08566 stage 2 authority and ownership', () => {
       expect(durableOwnerRows(serverFixture.dbPath, seeded.runtimeId, seeded.invocationId)).toBe(
         before
       )
-      const live = await captureStderr(() => livePathRequests(serverFixture, seeded))
+      const live = await captureStderr(async () => ({
+        ownership: await operatorOwnershipRequests(serverFixture, seeded),
+        dispatch: await sessionDispatchRequests(serverFixture, seeded),
+      }))
       expect(
         live.stderr
           .split('\n')
           .filter((line) => line.includes(seeded.runtimeId) && /attach|ackEvents/.test(line))
       ).toEqual([])
-      for (const [path, response] of live.value) {
+      for (const [path, response] of live.value.ownership) {
         expect({ path, status: response.status, code: await codeOf(response) }).toEqual({
           path,
           status: 409,
@@ -253,6 +365,15 @@ describe('T-08566 stage 2 authority and ownership', () => {
         expect(durableOwnerRows(serverFixture.dbPath, seeded.runtimeId, seeded.invocationId)).toBe(
           before
         )
+      }
+      for (const [path] of live.value.dispatch) {
+        expect({
+          path,
+          rows: durableOwnerRows(serverFixture.dbPath, seeded.runtimeId, seeded.invocationId),
+        }).toEqual({
+          path,
+          rows: before,
+        })
       }
     } finally {
       await server?.stop()
@@ -265,8 +386,175 @@ describe('T-08566 stage 2 authority and ownership', () => {
     const seeded = await seedOfflineRuntime(serverFixture, 'full')
     const server = await createHrcServer(serverFixture.serverOpts())
     try {
-      for (const [path, response] of await livePathRequests(serverFixture, seeded)) {
+      const requests = [
+        ...(await operatorOwnershipRequests(serverFixture, seeded)),
+        ...(await sessionDispatchRequests(serverFixture, seeded)),
+      ]
+      for (const [path, response] of requests) {
         expect({ path, code: await codeOf(response) }).not.toEqual({ path, code: RETAINED_FENCE })
+      }
+    } finally {
+      await server.stop()
+      await serverFixture.cleanup()
+    }
+  })
+
+  test('C14b shared dispatch reattach refuses a projected runtime before controller use', async () => {
+    const serverFixture = await createHrcTestFixture('t08566-owner-shared-seam-')
+    const server = await createHrcServer(serverFixture.serverOpts())
+    const projected = await seedOfflineRuntime(serverFixture, 'full', { status: 'ready' })
+    const control = await seedOfflineRuntime(serverFixture, 'small-bytes', { status: 'ready' })
+    const db = openHrcDatabase(serverFixture.dbPath)
+    try {
+      installRetainedMarker(db, projected.invocationId)
+      const projectedRuntime = requireRuntime(db, projected.runtimeId)
+      const controlRuntime = requireRuntime(db, control.runtimeId)
+      const projectedDeps = scriptedReattachDeps(
+        server,
+        serverFixture.runtimeRoot,
+        projectedRuntime
+      )
+      const controlDeps = scriptedReattachDeps(server, serverFixture.runtimeRoot, controlRuntime)
+
+      const projectedCode = await rejectionCode(
+        reattachDurableBrokerForDispatch(db, projectedRuntime, projectedDeps.deps)
+      )
+      const controlResult = await reattachDurableBrokerForDispatch(
+        db,
+        controlRuntime,
+        controlDeps.deps
+      )
+
+      expect(controlResult).toEqual({ state: 'reattached' })
+      expect(controlDeps.calls).toContain('attachAndReplay')
+      expect({ code: projectedCode, controllerCalls: projectedDeps.calls }).toEqual({
+        code: RETAINED_FENCE,
+        controllerCalls: [],
+      })
+    } finally {
+      db.close()
+      await server.stop()
+      await serverFixture.cleanup()
+    }
+  })
+
+  test('C14b controller attach lower guard rejects before reading the broker client', async () => {
+    const serverFixture = await createHrcTestFixture('t08566-owner-controller-guard-')
+    const seeded = await seedOfflineRuntime(serverFixture, 'full')
+    const db = openHrcDatabase(serverFixture.dbPath)
+    try {
+      installRetainedMarker(db, seeded.invocationId)
+      let clientUses = 0
+      const client = new Proxy(
+        {},
+        {
+          get() {
+            clientUses += 1
+            throw new Error('projected runtime reached broker client')
+          },
+        }
+      )
+      const controller = new HarnessBrokerController({
+        db,
+        now: () => serverFixture.now(),
+        serverInstanceId: 't08566-lower-guard',
+      })
+      const code = await rejectionCode(
+        controller.attachAndReplay({
+          runtimeId: seeded.runtimeId,
+          client: client as never,
+          attachToken: 'must-not-be-used',
+        })
+      )
+
+      expect({ code, clientUses }).toEqual({ code: RETAINED_FENCE, clientUses: 0 })
+    } finally {
+      db.close()
+      await serverFixture.cleanup()
+    }
+  })
+
+  test('C14b positive birth: a new start uses a different runtime and preserves its retained predecessor', async () => {
+    const serverFixture = await createHrcTestFixture('t85b-')
+    const server = await createHrcServer(serverFixture.serverOpts())
+    try {
+      const scopeRef = 'agent:smokey:project:hrc-runtime:task:T-08566-positive-birth'
+      const sessionRef = `${scopeRef}/lane:default`
+      const continuity = await serverFixture.resolveSession(scopeRef)
+      expect(continuity).toMatchObject({ generation: 1 })
+      const seeded = await seedOfflineRuntime(serverFixture, 'full')
+      const db = openHrcDatabase(serverFixture.dbPath)
+      try {
+        const runtime = requireRuntime(db, seeded.runtimeId)
+        db.runtimes.update(seeded.runtimeId, {
+          hostSessionId: continuity.hostSessionId,
+          scopeRef,
+          laneRef: 'default',
+          generation: continuity.generation,
+          runtimeStateJson: {
+            ...runtime.runtimeStateJson,
+            hostSessionId: continuity.hostSessionId,
+            generation: continuity.generation,
+          },
+        })
+        installRetainedMarker(db, seeded.invocationId)
+      } finally {
+        db.close()
+      }
+      const predecessor = {
+        ...seeded,
+        hostSessionId: continuity.hostSessionId,
+        scopeRef,
+        sessionRef,
+      }
+      const before = durableOwnerRows(
+        serverFixture.dbPath,
+        predecessor.runtimeId,
+        predecessor.invocationId
+      )
+
+      const started = await serverFixture.postJson('/v1/command-runs/launch', {
+        configuredTargetId: 'test-command-run-success',
+        sessionRef,
+        idempotencyKey: ['t08566', 'retained', 'predecessor', 'birth'].join('-'),
+        binding: {
+          WRKF_TASK_ID: 'T-08566',
+          WRKF_ACTION_RUN_ID: 't08566-positive-birth-action',
+          WRKF_RUN_ID: 't08566-positive-birth-workflow',
+          WRKF_ACTION: 'validate',
+          WRKF_ROLE: 'smokey',
+          ASP_PROJECT: 'hrc-runtime',
+          HRC_SESSION_REF: sessionRef,
+          HRC_LANE: 'default',
+        },
+        stdinJson: { expectedExit: 0 },
+      })
+      const body = (await started.json()) as { runtimeId?: string }
+      expect(started.status).toBe(200)
+      expect(body.runtimeId).toMatch(/^rt-/)
+      expect(body.runtimeId).not.toBe(predecessor.runtimeId)
+      const birthDb = openHrcDatabase(serverFixture.dbPath)
+      try {
+        expect(requireRuntime(birthDb, body.runtimeId!)).toMatchObject({
+          runtimeId: body.runtimeId,
+          hostSessionId: continuity.hostSessionId,
+        })
+      } finally {
+        birthDb.close()
+      }
+      expect(
+        durableOwnerRows(serverFixture.dbPath, predecessor.runtimeId, predecessor.invocationId)
+      ).toBe(before)
+
+      for (const [path, response] of await operatorOwnershipRequests(serverFixture, predecessor)) {
+        expect({ path, status: response.status, code: await codeOf(response) }).toEqual({
+          path,
+          status: 409,
+          code: RETAINED_FENCE,
+        })
+        expect(
+          durableOwnerRows(serverFixture.dbPath, predecessor.runtimeId, predecessor.invocationId)
+        ).toBe(before)
       }
     } finally {
       await server.stop()
@@ -277,8 +565,10 @@ describe('T-08566 stage 2 authority and ownership', () => {
   test('recovery-first crossing makes attach wait, then refuse after the retained commit', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-crossing-')
     const server = await createHrcServer(serverFixture.serverOpts())
+    let db: HrcDatabase | undefined
     try {
       const seeded = await seedOfflineRuntime(serverFixture, 'timeout')
+      db = openHrcDatabase(serverFixture.dbPath)
       const beforeRuntime = runtimeRow(serverFixture.dbPath, seeded.runtimeId)
       const crossing = await captureStderr(async () => {
         const recovery = serverFixture.postJson('/v1/capture/recover', {
@@ -295,22 +585,21 @@ describe('T-08566 stage 2 authority and ownership', () => {
             settledAfterCompletion: [],
             recoveryStatus: (await recovery).status,
             responses: [] as Response[],
+            directCode: undefined,
+            controllerCalls: [] as string[],
           }
         }
-        const pending = [
+        const directRuntime = requireRuntime(db!, seeded.runtimeId)
+        const directDeps = scriptedReattachDeps(server, serverFixture.runtimeRoot, directRuntime)
+        const responsePromises = [
           serverFixture.postJson('/v1/runtimes/attach', { runtimeId: seeded.runtimeId }),
           serverFixture.postJson('/v1/runtimes/adopt', { runtimeId: seeded.runtimeId }),
-          serverFixture.postJson('/v1/turns', {
-            hostSessionId: seeded.hostSessionId,
-            prompt: 'crossing turn',
-          }),
-          serverFixture.postJson('/v1/messages/dm', {
-            from: { kind: 'entity', entity: 'human' },
-            to: { kind: 'session', sessionRef: seeded.sessionRef },
-            body: 'crossing dm',
-          }),
         ]
-        const settled = [false, false, false, false]
+        const directPromise = rejectionCode(
+          reattachDurableBrokerForDispatch(db!, directRuntime, directDeps.deps)
+        )
+        const pending = [...responsePromises, directPromise]
+        const settled = [false, false, false]
         pending.forEach(
           (request, index) =>
             void request.finally(() => {
@@ -320,23 +609,33 @@ describe('T-08566 stage 2 authority and ownership', () => {
         await Bun.sleep(20)
         const settledBeforeUnblock = [...settled]
         await writeFile(seeded.reader.unblockPath, '')
-        const responses = await Promise.all(pending)
+        const responses = await Promise.all(responsePromises)
+        const directCode = await directPromise
         return {
           readerSpawned: true,
           settledBeforeUnblock,
           settledAfterCompletion: [...settled],
           recoveryStatus: (await recovery).status,
           responses,
+          directCode,
+          controllerCalls: directDeps.calls,
         }
       })
       expect(crossing.value.readerSpawned).toBe(true)
-      expect(crossing.value.settledBeforeUnblock).toEqual([false, false, false, false])
-      expect(crossing.value.settledAfterCompletion).toEqual([true, true, true, true])
+      expect(crossing.value.settledBeforeUnblock).toEqual([false, false, false])
+      expect(crossing.value.settledAfterCompletion).toEqual([true, true, true])
       expect(crossing.value.recoveryStatus).toBe(200)
       for (const response of crossing.value.responses) {
         expect(response.status).toBe(409)
         expect(await codeOf(response)).toBe(RETAINED_FENCE)
       }
+      expect({
+        code: crossing.value.directCode,
+        controllerCalls: crossing.value.controllerCalls,
+      }).toEqual({
+        code: RETAINED_FENCE,
+        controllerCalls: [],
+      })
       expect(runtimeRow(serverFixture.dbPath, seeded.runtimeId)).toBe(beforeRuntime)
       expect(
         crossing.stderr
@@ -344,6 +643,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
           .filter((line) => line.includes(seeded.runtimeId) && /attach|ackEvents/.test(line))
       ).toEqual([])
     } finally {
+      db?.close()
       await server.stop()
       await serverFixture.cleanup()
     }
@@ -493,14 +793,23 @@ describe('T-08566 stage 2 authority and ownership', () => {
       await writeFile(seeded.reader.unblockPath, '')
       restarted = await createHrcServer(serverFixture.serverOpts())
 
-      for (const [path, response] of (await livePathRequests(serverFixture, seeded)).filter(
-        ([path]) => path !== 'dm'
-      )) {
+      for (const [path, response] of await operatorOwnershipRequests(serverFixture, seeded)) {
         expect({ path, status: response.status, code: await codeOf(response) }).toEqual({
           path,
           status: 409,
           code: RETAINED_FENCE,
         })
+      }
+      const db = openHrcDatabase(serverFixture.dbPath)
+      try {
+        const runtime = requireRuntime(db, seeded.runtimeId)
+        const directDeps = scriptedReattachDeps(restarted, serverFixture.runtimeRoot, runtime)
+        expect({
+          code: await rejectionCode(reattachDurableBrokerForDispatch(db, runtime, directDeps.deps)),
+          controllerCalls: directDeps.calls,
+        }).toEqual({ code: RETAINED_FENCE, controllerCalls: [] })
+      } finally {
+        db.close()
       }
       const resumed = await serverFixture.postJson('/v1/capture/recover', {
         runtimeId: seeded.runtimeId,
