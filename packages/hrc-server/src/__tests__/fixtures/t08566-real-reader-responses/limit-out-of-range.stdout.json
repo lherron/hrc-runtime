@@ -1,0 +1,1 @@
+{"schema":"harness-broker.offline-evidence/v1","ok":false,"operation":"eventsSince","release":{"releaseId":"asp-f450dc999924-20260917T054056Z-48f9f9","sourceCommit":"f450dc9999245939a09cfc4df8702b621fb5dee0","builtAt":"2026-09-17T05:40:56.973Z"},"error":{"code":"invalid_request","message":"limit must be an integer in 1..1000"}}
