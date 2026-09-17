@@ -10,7 +10,7 @@ import {
 } from '../transcript-search.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
-import { cmdCaptureRelease, cmdCaptureStatus } from './handlers-capture.js'
+import { cmdCaptureRecover, cmdCaptureRelease, cmdCaptureStatus } from './handlers-capture.js'
 import {
   cmdCapture,
   cmdInflightSend,
@@ -358,6 +358,22 @@ export function registerRuntimeCommands(program: Command): void {
       )
     })
 
+  capture
+    .command('recover')
+    .description('recover retained broker evidence of a terminal runtime (mutating; T-08566)')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--yes', 'confirm one recovery attempt')
+    .option('--dry-run', 'report eligibility, capability and current outcome without reading')
+    .option('--json', 'output as JSON')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      await cmdCaptureRecover(
+        toLegacyArgv([runtimeId], cmd.opts(), {
+          strings: [],
+          booleans: ['yes', 'dry-run', 'json'],
+        })
+      )
+    })
+
   const runtime = program.command('runtime').description('list, inspect, and control runtimes')
 
   runtime
@@ -531,14 +547,20 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--status <status>', 'filter by status (default: stale)')
     .option('--scope <scope>', 'filter by scope')
     .option('--older-than <duration>', 'filter by age (default: 24h)')
+    .option('--runtime-id <id>', 'exact runtime (required with --dispose-retained-evidence)')
+    .option(
+      '--dispose-retained-evidence',
+      "explicitly dispose a held runtime's retained evidence, then prune it"
+    )
+    .option('--reason <text>', 'operator reason recorded with the disposition')
     .option('--dry-run', 'preview without deleting')
     .option('--yes', 'confirm deletion')
     .option('--json', 'output as JSON')
     .action(async (_opts, cmd: Command) => {
       await cmdRuntimePrune(
         toLegacyArgv([], cmd.opts(), {
-          strings: ['transport', 'status', 'scope', 'older-than'],
-          booleans: ['dry-run', 'yes', 'json'],
+          strings: ['transport', 'status', 'scope', 'older-than', 'runtime-id', 'reason'],
+          booleans: ['dry-run', 'yes', 'json', 'dispose-retained-evidence'],
         })
       )
     })

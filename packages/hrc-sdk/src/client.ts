@@ -29,6 +29,7 @@ import type {
   TraceMessageResponse,
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
+import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -1031,6 +1032,11 @@ export class HrcClient {
 
   async captureBySelector(request: CaptureBySelectorRequest): Promise<CaptureBySelectorResponse> {
     return this.postJson<CaptureBySelectorResponse>('/v1/capture/by-selector', request)
+  }
+
+  /** T-08566: one explicit retained-evidence recovery attempt, or a dry run. */
+  async captureRecover(request: CaptureRecoverRequest): Promise<CaptureRecoverResponse> {
+    return this.postJson<CaptureRecoverResponse>('/v1/capture/recover', request)
   }
 
   // -- hrcchat: durable messages -----------------------------------------------

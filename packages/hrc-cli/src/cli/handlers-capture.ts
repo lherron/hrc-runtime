@@ -83,3 +83,37 @@ export async function cmdCaptureRelease(args: string[]): Promise<void> {
   })
   printJson(response)
 }
+
+/**
+ * T-08566: `hrc capture recover <runtimeId>` — one explicit operator attempt to
+ * project a terminal runtime's retained broker evidence through its owning
+ * release. Mutating, so it requires `--yes`; `--dry-run` reports eligibility,
+ * release capability and the current outcome without spawning a reader.
+ */
+export async function cmdCaptureRecover(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const yes = hasFlag(args, '--yes')
+  const dryRun = hasFlag(args, '--dry-run')
+  if (!yes && !dryRun) {
+    fatal('capture recover requires --yes (use --dry-run to preview)')
+  }
+  const client = createClient()
+  const response = await client.captureRecover({
+    runtimeId,
+    ...(dryRun ? { dryRun: true } : { yes: true }),
+  })
+  if (hasFlag(args, '--json')) {
+    printJson(response)
+    return
+  }
+  const parts = [
+    `capture recover${response.dryRun ? ' (dry-run)' : ''}: ${response.runtimeId}`,
+    `outcome=${response.outcome}`,
+    ...(response.class !== undefined ? [`class=${response.class}`] : []),
+    `held=${response.held}`,
+    `projectedThroughSeq=${response.projectedThroughSeq}`,
+    ...(response.currentSeq !== undefined ? [`currentSeq=${response.currentSeq}`] : []),
+    `spawned=${response.spawned}`,
+  ]
+  process.stdout.write(`${parts.join(' ')}\n`)
+}

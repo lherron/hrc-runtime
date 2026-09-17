@@ -910,6 +910,8 @@ function applyLifecycleProjection(
   events: readonly ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number][]
 ): void {
   for (const event of events) {
+    // T-08566 X5: retained-origin rows never move projected runtime/turn state.
+    if (event.evidenceOrigin !== undefined) continue
     const runtime =
       (event.runtimeId
         ? state.runtimes.find((candidate) => candidate.runtimeId === event.runtimeId)
@@ -1018,6 +1020,7 @@ function toMonitorEvent(event: {
   errorCode?: string | undefined
   payload: unknown
   replayed: boolean
+  evidenceOrigin?: 'retained' | undefined
 }): HrcMonitorEvent {
   const payload = isRecord(event.payload) ? event.payload : {}
   const monitorEvent = monitorEventName(event.eventKind)
@@ -1033,6 +1036,7 @@ function toMonitorEvent(event: {
     ...(event.runtimeId ? { runtimeId: event.runtimeId } : {}),
     ...(event.runId ? { turnId: event.runId, runId: event.runId } : {}),
     ...(event.replayed ? { replayed: true } : {}),
+    ...(event.evidenceOrigin !== undefined ? { evidenceOrigin: event.evidenceOrigin } : {}),
     ...monitorResultFields(monitorEvent, event.errorCode, payload),
   }
 }

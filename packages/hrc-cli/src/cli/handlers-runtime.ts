@@ -520,6 +520,20 @@ export async function cmdRuntimePrune(args: string[]): Promise<void> {
     fatal('runtime prune requires --yes to delete records (use --dry-run to preview)')
   }
 
+  const disposeRetainedEvidence = hasFlag(args, '--dispose-retained-evidence')
+  const dispositionReason = parseFlag(args, '--reason')
+  const exactRuntimeId = parseFlag(args, '--runtime-id')
+  if (disposeRetainedEvidence) {
+    if (dispositionReason === undefined || dispositionReason.trim().length === 0) {
+      fatal('--dispose-retained-evidence requires --reason <text>')
+    }
+    if (exactRuntimeId === undefined || exactRuntimeId.length === 0) {
+      fatal('--dispose-retained-evidence requires --runtime-id <id>')
+    }
+  } else if (dispositionReason !== undefined || exactRuntimeId !== undefined) {
+    fatal('--reason and --runtime-id are only valid with --dispose-retained-evidence')
+  }
+
   const runtimeIdsFile = parseFlag(args, '--runtime-ids-file')
   const includeLedgers = hasFlag(args, '--include-ledgers')
   if ((runtimeIdsFile !== undefined) !== includeLedgers) {
@@ -558,14 +572,20 @@ export async function cmdRuntimePrune(args: string[]): Promise<void> {
   const statusRaw = parseFlag(args, '--status')
   const scope = parseFlag(args, '--scope')
   const request: PruneRuntimesRequest = {
-    ...(runtimeIds
-      ? { runtimeIds, includeLedgers: true }
-      : {
-          ...(transport ? { transport } : {}),
-          olderThan: parseFlag(args, '--older-than') ?? '24h',
-          ...(statusRaw ? { status: splitCsv(statusRaw) } : {}),
-          ...(scope ? { scope } : {}),
-        }),
+    ...(disposeRetainedEvidence
+      ? {
+          runtimeIds: [exactRuntimeId as string],
+          disposeRetainedEvidence: true,
+          reason: dispositionReason,
+        }
+      : runtimeIds
+        ? { runtimeIds, includeLedgers: true }
+        : {
+            ...(transport ? { transport } : {}),
+            olderThan: parseFlag(args, '--older-than') ?? '24h',
+            ...(statusRaw ? { status: splitCsv(statusRaw) } : {}),
+            ...(scope ? { scope } : {}),
+          }),
     dryRun,
     ...(yes ? { yes } : {}),
   }

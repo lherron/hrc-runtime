@@ -117,6 +117,9 @@ export function toMonitorJsonEvent(
 
   const seq = numberField(event, 'seq') ?? numberField(event, 'hrcSeq')
   if (seq !== undefined) output['seq'] = seq
+  // T-08566: carry the durable evidence origin unchanged (render only).
+  const evidenceOrigin = stringField(event, 'evidenceOrigin')
+  if (evidenceOrigin) output['evidenceOrigin'] = evidenceOrigin
 
   for (const key of [
     'runtimeId',
@@ -599,6 +602,9 @@ function toLifecycleEvent(event: MonitorRenderableEvent): HrcLifecycleEvent {
     ...(transportFrom(event) ? { transport: transportFrom(event) } : {}),
     ...(stringField(event, 'errorCode') ? { errorCode: stringField(event, 'errorCode') } : {}),
     replayed: booleanField(event, 'replayed') ?? false,
+    ...(stringField(event, 'evidenceOrigin') === 'retained'
+      ? { evidenceOrigin: 'retained' as const }
+      : {}),
     payload: payloadFrom(event),
   }
 }

@@ -477,6 +477,7 @@ async function buildLiveMonitorState(
         launchId: e.launchId,
         transport: e.transport,
         errorCode: e.errorCode,
+        ...(e.evidenceOrigin ? { evidenceOrigin: e.evidenceOrigin } : {}),
         payload: e.payload,
         ...(payload && typeof payload === 'object' && 'messageId' in payload
           ? { messageId: String(payload['messageId']) }

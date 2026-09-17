@@ -433,6 +433,8 @@ function matchEdgeAtOrAfter(
   | undefined {
   for (const event of state.events) {
     if (event.seq < fromSeq || !eventMatchesSelectorSet(state, event, specs)) continue
+    // T-08566 X5: retained-origin rows are history, never wait authority.
+    if (hasEvidenceOrigin(event)) continue
     const name = event['eventKind'] ?? event.event
     if (
       plan.conditions.includes('turn-finished') &&
@@ -508,6 +510,15 @@ function monitorOutcome(exitCode: number): HrcMonitorOutcome {
   if (exitCode === MONITOR_EXIT_CODES.terminalFailure) return 'observed_failure'
   if (exitCode === MONITOR_EXIT_CODES.monitorError || exitCode === 130) return 'error'
   return 'not_matched'
+}
+
+/**
+ * T-08566 X5: an event carrying any evidence origin (`'retained'` today) was
+ * projected from a dead worker's retained ledger. It stays renderable but never
+ * satisfies a condition. Keyed on the durable origin, never on `replayed`.
+ */
+export function hasEvidenceOrigin(event: Record<string, unknown>): boolean {
+  return event['evidenceOrigin'] !== undefined && event['evidenceOrigin'] !== null
 }
 
 function monitorHighWater(state: HrcMonitorState): number {

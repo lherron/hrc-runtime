@@ -73,7 +73,7 @@ describe('consolidated hrc command graph', () => {
       'transcript',
       'stats',
     ])
-    expect(visibleChildren(child(program, 'capture'))).toEqual(['status', 'release'])
+    expect(visibleChildren(child(program, 'capture'))).toEqual(['status', 'release', 'recover'])
   })
 
   test('admin --help owns the complete maintenance cellar', () => {
