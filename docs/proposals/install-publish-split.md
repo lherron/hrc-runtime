@@ -1,6 +1,7 @@
 # Install / publish split (T-08559)
 
-Status: proposed, revision 2 — resubmitted to Daedalus after EN-13001 (F1–F4).
+Status: proposed, revision 3 — resubmitted to Daedalus after EN-13001 (F1–F4) and
+EN-13003 (F5, F6).
 
 ## Problem
 
@@ -109,6 +110,53 @@ What the registry then holds is "the files of release `R`'s package directories
 at publication, under tuple `T`". Release immutability after cutover remains the
 existing `observable-release` property; publication no longer weakens it.
 
+## Publication entrypoints (F5)
+
+After this change the registry-writing surface of hrc-runtime is exactly two
+commands, and `scripts/publish-local-verdaccio.ts` is the only code that writes
+the registry:
+
+| Command | Script invocation | Channel / tag | Law |
+| --- | --- | --- | --- |
+| `just publish [dry-run=1]` (main checkout) | `--channel canonical [--dry-run]` | canonical, `latest` | selected-release publication above |
+| `just publish [dry-run=1]` (linked worktree) | `--channel worktree [--dry-run]` | non-canonical, `worktree` | worktree channel below |
+
+The canonical law is enforced **inside the script**, not by the recipe: the
+`--channel canonical` code path itself acquires the install lock, selects `R`,
+runs the full tuple proof, stages, publishes, reads back and re-verifies. The
+script accepts no argument or environment input that supplies a pack root, a
+tuple, a source commit, a version, a tag, or `--force`. Removed from the CLI:
+the default dev mode, `--version`, `--tag`, `--force`; removed from the
+environment: `HRC_PUBLISH_SOURCE_ROOT`, `HRC_PUBLISH_EXPECTED_SOURCE_COMMIT`,
+`HRC_PUBLISH_BUILT_AT`, `HRC_PUBLISH_BUILD_OUTPUT`, `HRC_PUBLISH_VERSION`.
+`--channel` is required; any other invocation refuses before any registry or
+lock access. A direct `bun scripts/publish-local-verdaccio.ts --channel
+canonical` is therefore the same governed path as `just publish`.
+
+Retired recipes (deleted, not aliased): `publish-canonical`,
+`publish-canonical-dry-run`, `publish-dev`, `publish-dev-dry-run`,
+`publish-semver`, `publish-semver-dry-run`, `publish-worktree`,
+`publish-worktree-dry-run`. The dev and semver modes are retired rather than
+left as "non-canonical": they stamp a `praesidiumBuild` tuple from an
+uncontained checkout and move `latest`, which is indistinguishable in the
+registry from a canonical set and is exactly what latest-following consumers
+resolve (see *Consumers*).
+
+`--dry-run` on the canonical path performs everything except registry writes and
+read-back: lock, selection, full tuple and containment proof, staging, pack and
+packed-manifest verification, the no-replacement check, and it reports whether
+the real run would publish or be the idempotent no-op. It is the required
+dry-run test surface.
+
+Dependents updated with the retirement: `hrc-runtime.canonical-package-publication`
+`required_tests` (`just publish-canonical-dry-run` → `just publish dry-run=1`);
+`scripts/lib/publish-containment.ts` refusal remediation text;
+`docs/wave-b-registry.md` publication commands and its "install may publish"
+sentence; `docs/atomic-install.md`; `agent-loop/docs/dependency-consumption.md`
+(its "`just publish-dev` in that repo" instruction, for hrc-runtime →
+`just install` then `just publish`); the `publish-local-verdaccio` tests for
+removed modes become CLI-refusal tests.
+
 ## Linked worktrees
 
 `just install` in a linked worktree (link-mode off) builds in the checkout and
@@ -142,6 +190,47 @@ parity by `sourceCommit`; unchanged.
 Agent doctrine ("push once right before the delivery install") becomes "install
 needs a commit; publish needs a push".
 
+## Consumers (F6)
+
+Three repositories consume `hrc-*` packages from Verdaccio; each is accounted
+for by its own authority.
+
+**agent-control-plane — pinned producer tuple.** Authority is
+`agent-control-plane.asp-hrc-consumer-coherence` and `docs/producer-advance.md`:
+HRC movement happens only through `just advance-producers set=hrc version=…`,
+which derives membership from `praesidiumBuild`, requires every member at the
+requested version, and re-proves containment against ACP's fixed canonical
+remote. `pull-deps` never moves HRC. This change does not alter that mechanism;
+it alters the producer premise the record names:
+
+- The record's reopen condition "ASP/HRC publication stops minting latest as an
+  install side effect or gains a release signal" fires for HRC. Review outcome:
+  the predicate stands unchanged — `latest` stays advisory, and advance's own
+  containment proof and tuple derivation do not depend on when HRC publishes.
+  What changes is that every HRC set reachable at `latest` is now a canonical,
+  selected-release set (dev/semver modes retired), and an HRC install no longer
+  moves `latest`.
+- Amendment in the ACP record: `reopen_when` replaces that item with "ASP
+  publication stops minting latest as an install side effect, HRC publication
+  becomes an install side effect again, or either gains a release signal";
+  `authority` sources gain `wrkq:T-08559`; `last_verified` is set by the live
+  acceptance below.
+- Amendment in `docs/producer-advance.md` line 3: ASP's `just install`
+  publishes a node-local set and moves `latest`; HRC publishes and moves
+  `latest` only through explicit `just publish` (run by HRC deploy lanes).
+  Neither is a release signal for ACP. Line 25's prohibitions are unchanged.
+
+**agent-loop — follows `latest`.** `hrc-sdk: "latest"`, advanced by its
+`just pull-deps` (`scripts/sync-hrc-sdk-from-verdaccio.ts`). Its guarantee gets
+stronger: `latest` is now only ever written by the canonical path (contained
+commit, selected release), where previously `publish-dev` could move it from an
+uncontained checkout. The only change it sees is timing — a sibling change is
+available after the producer's `just publish`, not its `just install`. Its doc is
+in the dependents list above.
+
+**signal-pipeline — exact pins** (`hrc-core`/`hrc-sdk`
+`0.1.0-dev.20260822145920`). Hand-advanced; unaffected beyond the same timing.
+
 ## Invariant changes
 
 `hrc-runtime.canonical-package-publication` — predicate text retained; append:
@@ -162,9 +251,9 @@ publications" paragraph is rewritten to the above.
 
 ## Consequences
 
-- A node can run a release that was never published. Downstream consumers
-  (ACP `pull-deps`) see the last published set until `just publish` (or a deploy
-  lane) runs. This is the intended new state.
+- A node can run a release that was never published. Consumers see the last
+  published set until `just publish` (or a deploy lane) runs. This is the
+  intended new state.
 - `hrc server status` can show a `sourceCommit` absent from origin; it cannot
   enter the registry.
 - Install gets faster by the pack/verify/publish time; publish never builds.
@@ -194,7 +283,26 @@ valid release manifest with a minted tuple, and invokes no publisher.
 Deploy lane: fast path invokes publish before exit; changing path invokes
 publish only after the post-restart readback (asserted by recipe-order test).
 
-Live: commit without push → `just install` → `hrc server restart` → status
-`sourceCommit` == HEAD; `just publish` refused (uncontained); push → `just publish`
-succeeds, registry read-back == release tuple, release tree unchanged; second
-`just publish` no-op; ACP `pull-deps` resolves the version.
+Entrypoints: the script refuses no `--channel`, `--version`, `--tag`,
+`--force`, and each removed `HRC_PUBLISH_*` variable, before touching the lock
+or registry; `justfile` contains no recipe invoking the publisher other than
+`publish`, and none of the retired names (recipe-surface test).
+
+Live (max3):
+
+1. Commit without push → `just install` → `hrc server restart` → status
+   `sourceCommit` == HEAD, `runningEqualsInstalled` true.
+2. `just publish dry-run=1` and `just publish` refuse (uncontained); registry
+   unchanged.
+3. In agent-control-plane: `just advance-producers set=hrc version=<T.setVersion>
+   --dry-run` refuses (version not published).
+4. Push → `just publish dry-run=1` reports "would publish" → `just publish`
+   succeeds; registry read-back == `T`; release tree byte-identical; second
+   `just publish` is the no-op.
+5. In agent-control-plane: `just advance-producers set=hrc version=<T.setVersion>
+   --dry-run` succeeds, deriving the full HRC membership at `T.sourceCommit` and
+   proving containment against ACP's canonical remote; tracked tree unchanged.
+   `version=latest --dry-run` resolves the same version. (No real advance: that
+   is a coordinated deployment window, outside this change.)
+6. In agent-loop: `bun scripts/sync-hrc-sdk-from-verdaccio.ts` (read-only
+   advisory mode) reports `latest` == `T.setVersion`.
