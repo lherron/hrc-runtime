@@ -205,6 +205,10 @@ const SOURCE_BY_CODE: Record<string, string> = {
   priming_invalid: 'priming',
 }
 
+function agentInstallIncompleteMessage(agentRoot: string): string {
+  return `buildRuntimeBundleRef: agent-profile.toml not found at ${agentRoot}/agent-profile.toml — agent install incomplete`
+}
+
 /** Project a producer non-ok declaration into the HRC refusal the route owns. */
 function refuseDeclaration(
   response: Exclude<AspcResolveRuntimeDeclarationResponse, { ok: true }>,
@@ -216,7 +220,7 @@ function refuseDeclaration(
     if (resolution.code === 'agent_not_found') {
       return new HrcUnprocessableEntityError(
         HrcErrorCode.DECLARATION_INVALID,
-        `buildRuntimeBundleRef: agent-profile.toml not found at ${agentRoot}/agent-profile.toml — agent install incomplete`,
+        agentInstallIncompleteMessage(agentRoot),
         {
           source: 'agent-profile',
           producerCode: resolution.code,
@@ -291,6 +295,20 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
     })
     if (!declaration.ok) {
       throw refuseDeclaration(declaration, body.agentRoot, operation)
+    }
+    // A caller-supplied root is read directly, so a root without a profile is an
+    // ok arm with the profile absent rather than agent_not_found. E1 keeps
+    // today's refusal: an intent is never assembled for an uninstalled agent.
+    if (declaration.source.agentProfile.state === 'absent') {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.DECLARATION_INVALID,
+        agentInstallIncompleteMessage(body.agentRoot),
+        {
+          source: 'agent-profile',
+          producerCode: declaration.source.agentProfile.code,
+          diagnostics: declaration.diagnostics,
+        }
+      )
     }
 
     const provision = authorizedScalars(declaration.provisioning.scalars)
