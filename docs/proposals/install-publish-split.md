@@ -1,7 +1,7 @@
 # Install / publish split (T-08559)
 
 Status: proposed, revision 3 — resubmitted to Daedalus after EN-13001 (F1–F4) and
-EN-13003 (F5, F6).
+EN-13003 (F5, F6); EN-13005 FYI (F7, F8) folded in.
 
 ## Problem
 
@@ -157,6 +157,20 @@ sentence; `docs/atomic-install.md`; `agent-loop/docs/dependency-consumption.md`
 `just install` then `just publish`); the `publish-local-verdaccio` tests for
 removed modes become CLI-refusal tests.
 
+**Producer-owned caller (F7).** `agent-spaces/justfile` runs
+`(cd "$hrc_runtime" && just pull-deps && bun run build && just publish-dev)` in
+both its `install` downstream-sync branch and `sync-downstream`. That chain
+depended on the dev mode publishing an uncontained, just-committed lock. Under
+this law an HRC publication requires a pushed commit, which an ASP install must
+not create on HRC's behalf. Both call sites become
+`(cd "$hrc_runtime" && just pull-deps && bun run build)` followed by one line:
+`[hrc-sync] hrc-runtime lock advanced to <asp version> at <sha>; publish with
+just install && git push && just publish in hrc-runtime (or its deploy lane)`.
+The adjacent comments (T-07727 note naming `publish-dev`) are rewritten to match.
+Recipe-surface test on the HRC side already refuses the retired name; the ASP
+change is verified by running `just sync-downstream` on max3 and confirming HRC's
+lock commit lands and no publish is attempted.
+
 ## Linked worktrees
 
 `just install` in a linked worktree (link-mode off) builds in the checkout and
@@ -192,7 +206,9 @@ needs a commit; publish needs a push".
 
 ## Consumers (F6)
 
-Three repositories consume `hrc-*` packages from Verdaccio; each is accounted
+Four repositories consume `hrc-*` packages from Verdaccio (inventory: every
+`package.json` across the praesidium checkouts naming an `hrc-*` dependency —
+agent-control-plane, agent-loop, signal-pipeline, taskboard); each is accounted
 for by its own authority.
 
 **agent-control-plane — pinned producer tuple.** Authority is
@@ -230,6 +246,17 @@ in the dependents list above.
 
 **signal-pipeline — exact pins** (`hrc-core`/`hrc-sdk`
 `0.1.0-dev.20260822145920`). Hand-advanced; unaffected beyond the same timing.
+
+**taskboard — exact pin under its own consumer record (F8).**
+`apps/api` pins `hrc-sdk` `0.1.0-dev.20260725013259`; authority is
+`taskboard.asp-hrc-consumer-coherence`, whose checker proves a coherent HRC
+closure and the exact published `praesidiumBuild` tuple against cache-bypassed
+registry bytes, and which imports `hrc-runtime.canonical-package-publication`.
+Disposition: the imported predicate is retained (appended, not weakened), the
+seven-field tuple and registry locator are unchanged, and the pinned version is
+not moved — none of that record's `reopen_when` conditions fire. Its checker is
+run unchanged as part of live acceptance (step 7) to confirm; no edit to the
+taskboard record or code.
 
 ## Invariant changes
 
@@ -306,3 +333,4 @@ Live (max3):
    is a coordinated deployment window, outside this change.)
 6. In agent-loop: `bun scripts/sync-hrc-sdk-from-verdaccio.ts` (read-only
    advisory mode) reports `latest` == `T.setVersion`.
+7. In taskboard: its consumer-coherence checker exits 0 against its unchanged pin.
