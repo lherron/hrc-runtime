@@ -62,9 +62,20 @@ predicate: >
   one-reminder bound permits the attempt. Explicit policy operator and API
   permission decisions are HRC-owned and persist before permission.respond on
   the fenced control connection. A deadline fallback is broker-owned; HRC later
-  projects its already committed permission.resolved timeout fact.
-authority: Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
+  projects its already committed permission.resolved timeout fact. HRC exposes
+  no launch-wrapper hook, OTEL, or launch-callback ingest: POST
+  /v1/internal/hooks/ingest and
+  /v1/internal/launches/:launchId/{wrapper-started,child-started,continuation,event,exited}
+  refuse with legacy_launch_ingest_retired and write nothing durable, no OTLP
+  log listener is bound, and spooled entries for those routes are quarantined
+  without being applied, so run, turn, and runtime state are never derived from
+  those native payloads. Codex Desktop registration (POST
+  /v1/internal/desktop/register, including its hrc-desktop-hook spool entries)
+  is outside this sentence and remains governed by
+  hrc-runtime.participant-session-lifecycle.
+authority: wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
 source:
+  - wrkq:T-08566
   - wrkq:T-07853
   - wrkq:T-07827
   - wrkq:T-08098
@@ -91,6 +102,7 @@ required_tests:
   - T-08201 exact ownership gates cover multiple absorbed steers, delayed own attribution and old terminals after newer starts, repeated native ids across epochs, pre-fix borrowed rows, and first-launch-only compatibility
   - T-08201 auxiliary gates cover accepted and ACK-completed coalescence, truthful failed/cancelled/zombie preservation, duplicate absorption, crash after commit before ACK, unresolved teardown, and both prune dependency guards
   - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
+  - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and quarantines retired spool entries unapplied, while Desktop registration requests and their spool entries behave unchanged
 last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
