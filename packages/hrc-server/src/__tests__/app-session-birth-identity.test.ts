@@ -41,6 +41,9 @@ const NOW = '2026-09-17T07:10:00.000Z'
 const APP_ID = 't08576'
 const KEY = 'birth'
 const APP_SCOPE = `app:${APP_ID}`
+const PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE =
+  'refusing server lifecycle mutation: partial HRC/ASP session envelope; ' +
+  'run from a clean operator shell or a recognized primary scope'
 
 let root: string
 let socketPath: string
@@ -576,17 +579,58 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
   })
 
-  it('R-B6 the app birth envelope cannot authorize as an operator', () => {
-    const authorization = evaluateServerLifecycleAuthorization(
-      {
-        AGENT_HOST_SESSION_ID: 'hsid-t08576-app',
-        HRC_HOST_SESSION_ID: 'hsid-t08576-app',
-        AGENT_GENERATION: '1',
-        HRC_GENERATION: '1',
-      },
-      'must not authorize'
-    )
-    expect(authorization.allowed).toBe(false)
+  it('R-B6 refuses the actual composed grantless app birth envelope', async () => {
+    await bootAspdBirthServer()
+    const response = await post('/v1/app-sessions/ensure', {
+      selector: { appId: APP_ID, appSessionKey: KEY },
+      spec: { kind: 'harness', runtimeIntent: baseIntent() },
+    })
+    expect(response.status).toBe(200)
+    await settle(() => (ledger?.startCalls.length ?? 0) === 1)
+
+    const hostSessionId = internal.db.appManagedSessions.findByKey(APP_ID, KEY)
+      ?.activeHostSessionId as string
+    const env = dispatchedIdentityEnv()
+    expect(identityProjection(env)).toEqual({
+      AGENT_HOST_SESSION_ID: hostSessionId,
+      HRC_HOST_SESSION_ID: hostSessionId,
+      AGENT_GENERATION: '1',
+      HRC_GENERATION: '1',
+    })
+    const authorization = evaluateServerLifecycleAuthorization(env, 'must not authorize')
+    expect(authorization).toEqual({
+      allowed: false,
+      message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
+    })
+    expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
+  })
+
+  it('R-B6 refuses the actual composed granted app birth envelope', async () => {
+    await bootAspdBirthServer()
+    seedAppIdentity()
+    const runId = 'run-t08576-b6-granted'
+    const response = await post('/v1/app-sessions/turns', {
+      selector: { appId: APP_ID, appSessionKey: KEY },
+      prompt: 'capture granted lifecycle envelope',
+      runId,
+    })
+    expect(response.status).toBe(200)
+    await settle(() => (ledger?.startCalls.length ?? 0) === 1)
+
+    const env = dispatchedIdentityEnv()
+    expect(identityProjection(env)).toEqual({
+      AGENT_HOST_SESSION_ID: appHost,
+      HRC_HOST_SESSION_ID: appHost,
+      AGENT_RUN_ID: runId,
+      HRC_RUN_ID: runId,
+      AGENT_GENERATION: '1',
+      HRC_GENERATION: '1',
+    })
+    const authorization = evaluateServerLifecycleAuthorization(env, 'must not authorize')
+    expect(authorization).toEqual({
+      allowed: false,
+      message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
+    })
     expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
   })
 
