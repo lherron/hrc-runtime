@@ -26,6 +26,7 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 import { finalizeRuntimeTermination } from '../server-misc'
+import { markRuntimeDead } from '../startup-reconcile/runtime-mutations'
 import { dispatchTurnForSession } from '../turn-dispatch-handlers'
 import {
   type AspdDouble,
@@ -312,6 +313,43 @@ function counts(): Record<string, number> {
   )
 }
 
+function hostEffectCounts(hostSessionId: string): Record<string, number> {
+  const scalar = (sql: string): number =>
+    internal.db.sqlite.query<{ count: number }, [string]>(sql).get(hostSessionId)?.count ?? 0
+  return {
+    sessions: scalar('SELECT COUNT(*) AS count FROM sessions WHERE host_session_id = ?'),
+    continuities: scalar(
+      'SELECT COUNT(*) AS count FROM continuities WHERE active_host_session_id = ?'
+    ),
+    sessionIndex: scalar('SELECT COUNT(*) AS count FROM session_index WHERE host_session_id = ?'),
+    managed: scalar(
+      'SELECT COUNT(*) AS count FROM app_managed_sessions WHERE active_host_session_id = ?'
+    ),
+    runtimes: scalar('SELECT COUNT(*) AS count FROM runtimes WHERE host_session_id = ?'),
+    runs: scalar('SELECT COUNT(*) AS count FROM runs WHERE host_session_id = ?'),
+    operations: scalar(
+      'SELECT COUNT(*) AS count FROM runtime_operations WHERE host_session_id = ?'
+    ),
+    brokerInvocations: scalar(
+      `SELECT COUNT(*) AS count FROM broker_invocations bi
+       JOIN runtime_operations ro ON ro.operation_id = bi.operation_id
+       WHERE ro.host_session_id = ?`
+    ),
+    bridges: scalar('SELECT COUNT(*) AS count FROM local_bridges WHERE host_session_id = ?'),
+    surfaceBindings: scalar(
+      `SELECT COUNT(*) AS count FROM surface_bindings sb
+       JOIN runtimes r ON r.runtime_id = sb.runtime_id
+       WHERE r.host_session_id = ?`
+    ),
+    activeInputDeliveries: scalar(
+      `SELECT COUNT(*) AS count FROM active_input_deliveries aid
+       JOIN runtimes r ON r.runtime_id = aid.runtime_id
+       WHERE r.host_session_id = ?`
+    ),
+    events: scalar('SELECT COUNT(*) AS count FROM hrc_events WHERE host_session_id = ?'),
+  }
+}
+
 function seedAppIdentity(intent: HrcRuntimeIntent = baseIntent(), appSessionKey = KEY): string {
   const seededHost = `hsid-${randomUUID()}`
   if (appSessionKey === KEY) appHost = seededHost
@@ -344,11 +382,14 @@ function seedAppIdentity(intent: HrcRuntimeIntent = baseIntent(), appSessionKey 
   return seededHost
 }
 
-function forbiddenIntent(channel: 'lockedEnv' | 'env' | 'dispatchEnv'): HrcRuntimeIntent {
+function forbiddenIntent(
+  channel: 'lockedEnv' | 'env' | 'dispatchEnv',
+  key: 'AGENT_ID' | 'HRC_SESSION_REF' = 'AGENT_ID'
+): HrcRuntimeIntent {
   const intent = baseIntent() as HrcRuntimeIntent & {
     placement: HrcRuntimeIntent['placement'] & Record<string, unknown>
   }
-  intent.placement[channel] = { AGENT_ID: 'forged-app-agent' }
+  intent.placement[channel] = { [key]: 'forged-app-identity' }
   return intent
 }
 
@@ -445,13 +486,21 @@ function seedRun(runId: string, status: 'accepted' | 'completed', hostSessionId 
   })
 }
 
-function seedForeignRuntime(activeRunId: string): HrcRuntimeSnapshot {
-  const foreignHost = `hsid-${randomUUID()}`
-  const runtimeId = `rt-${randomUUID()}`
+function seedForeignRuntime(
+  options: {
+    runtimeId?: string
+    hostSessionId?: string
+    laneRef?: string
+    activeRunId?: string
+  } = {}
+): HrcRuntimeSnapshot {
+  const foreignHost = options.hostSessionId ?? `hsid-${randomUUID()}`
+  const runtimeId = options.runtimeId ?? `rt-${randomUUID()}`
+  const laneRef = options.laneRef ?? 'main'
   internal.db.sessions.insert({
     hostSessionId: foreignHost,
     scopeRef: 'agent:foreign:project:hrc-runtime',
-    laneRef: 'main',
+    laneRef,
     generation: 1,
     status: 'active',
     createdAt: NOW,
@@ -462,7 +511,7 @@ function seedForeignRuntime(activeRunId: string): HrcRuntimeSnapshot {
     runtimeId,
     hostSessionId: foreignHost,
     scopeRef: 'agent:foreign:project:hrc-runtime',
-    laneRef: 'main',
+    laneRef,
     generation: 1,
     transport: 'headless',
     harness: 'claude-code',
@@ -470,16 +519,25 @@ function seedForeignRuntime(activeRunId: string): HrcRuntimeSnapshot {
     status: 'ready',
     supportsInflightInput: false,
     adopted: false,
+    ...(options.activeRunId !== undefined ? { activeRunId: options.activeRunId } : {}),
     createdAt: NOW,
     updatedAt: NOW,
   })
-  // Seed the rev-5 residue directly so this termination-only red remains valid after the
-  // repository handle writer starts refusing creation of such a foreign pointer.
-  internal.db.sqlite.run('UPDATE runtimes SET active_run_id = ? WHERE runtime_id = ?', [
-    activeRunId,
-    runtimeId,
-  ])
   return internal.db.runtimes.getByRuntimeId(runtimeId)!
+}
+
+function writerOutcome(call: () => unknown): { threw: boolean; errorName?: string } {
+  try {
+    call()
+    return { threw: false }
+  } catch (error) {
+    return { threw: true, errorName: error instanceof Error ? error.name : String(error) }
+  }
+}
+
+function makeRunningAppRun(runId: string): void {
+  seedRun(runId, 'accepted')
+  internal.db.runs.update(runId, { status: 'running', updatedAt: NOW })
 }
 
 describe('T-08576 app-session birth identity boundary', () => {
@@ -644,14 +702,19 @@ describe('T-08576 app-session birth identity boundary', () => {
 
       expect({
         status: response.status,
-        code: response.body.error?.code,
+        reason: response.body.error?.detail?.reason,
+        field: response.body.error?.detail?.field,
+        keys: response.body.error?.detail?.keys,
         effects: counts(),
+        launchCalls,
       }).toEqual({
         status: 422,
-        code: 'app-session-identity-env-forbidden',
+        reason: 'app-session-identity-env-forbidden',
+        field: 'spec.runtimeIntent',
+        keys: ['AGENT_ID'],
         effects: before,
+        launchCalls: [],
       })
-      expect(launchCalls).toEqual([])
     })
   }
 
@@ -668,14 +731,21 @@ describe('T-08576 app-session birth identity boundary', () => {
       ],
     })
 
-    expect({ status: response.status, code: response.body.error?.code, effects: counts() }).toEqual(
-      {
-        status: 422,
-        code: 'app-session-identity-env-forbidden',
-        effects: before,
-      }
-    )
-    expect(launchCalls).toEqual([])
+    expect({
+      status: response.status,
+      reason: response.body.error?.detail?.reason,
+      field: response.body.error?.detail?.field,
+      keys: response.body.error?.detail?.keys,
+      effects: counts(),
+      launchCalls,
+    }).toEqual({
+      status: 422,
+      reason: 'app-session-identity-env-forbidden',
+      field: 'spec.runtimeIntent',
+      keys: ['AGENT_ID'],
+      effects: before,
+      launchCalls: [],
+    })
   })
 
   it('R-B3 refuses forbidden identity env on an existing ensure before any effect', async () => {
@@ -687,14 +757,21 @@ describe('T-08576 app-session birth identity boundary', () => {
       forceRestart: true,
     })
 
-    expect({ status: response.status, code: response.body.error?.code, effects: counts() }).toEqual(
-      {
-        status: 422,
-        code: 'app-session-identity-env-forbidden',
-        effects: before,
-      }
-    )
-    expect(launchCalls).toEqual([])
+    expect({
+      status: response.status,
+      reason: response.body.error?.detail?.reason,
+      field: response.body.error?.detail?.field,
+      keys: response.body.error?.detail?.keys,
+      effects: counts(),
+      launchCalls,
+    }).toEqual({
+      status: 422,
+      reason: 'app-session-identity-env-forbidden',
+      field: 'spec.runtimeIntent',
+      keys: ['AGENT_ID'],
+      effects: before,
+      launchCalls: [],
+    })
   })
 
   it('R-B3 refuses a turns runtimeIntent identity override before birth', async () => {
@@ -706,14 +783,21 @@ describe('T-08576 app-session birth identity boundary', () => {
       runtimeIntent: forbiddenIntent('dispatchEnv'),
     })
 
-    expect({ status: response.status, code: response.body.error?.code, effects: counts() }).toEqual(
-      {
-        status: 422,
-        code: 'app-session-identity-env-forbidden',
-        effects: before,
-      }
-    )
-    expect(launchCalls).toEqual([])
+    expect({
+      status: response.status,
+      reason: response.body.error?.detail?.reason,
+      field: response.body.error?.detail?.field,
+      keys: response.body.error?.detail?.keys,
+      effects: counts(),
+      launchCalls,
+    }).toEqual({
+      status: 422,
+      reason: 'app-session-identity-env-forbidden',
+      field: 'runtimeIntent',
+      keys: ['AGENT_ID'],
+      effects: before,
+      launchCalls: [],
+    })
   })
 
   it('R-B3 refuses a clear-context relaunch spec before invalidation or rotation', async () => {
@@ -726,19 +810,27 @@ describe('T-08576 app-session birth identity boundary', () => {
       spec: { kind: 'harness', runtimeIntent: forbiddenIntent('lockedEnv') },
     })
 
-    expect({ status: response.status, code: response.body.error?.code, effects: counts() }).toEqual(
-      {
-        status: 422,
-        code: 'app-session-identity-env-forbidden',
-        effects: before,
-      }
-    )
-    expect(internal.db.appManagedSessions.findByKey(APP_ID, KEY)).toEqual(beforeManaged)
-    expect(launchCalls).toEqual([])
+    expect({
+      status: response.status,
+      reason: response.body.error?.detail?.reason,
+      field: response.body.error?.detail?.field,
+      keys: response.body.error?.detail?.keys,
+      effects: counts(),
+      managed: internal.db.appManagedSessions.findByKey(APP_ID, KEY),
+      launchCalls,
+    }).toEqual({
+      status: 422,
+      reason: 'app-session-identity-env-forbidden',
+      field: 'spec.runtimeIntent',
+      keys: ['AGENT_ID'],
+      effects: before,
+      managed: beforeManaged,
+      launchCalls: [],
+    })
   })
 
   it('R-B3b rejects a stored forbidden intent at birth while preserving the identity', async () => {
-    seedAppIdentity(forbiddenIntent('lockedEnv'))
+    seedAppIdentity(forbiddenIntent('lockedEnv', 'HRC_SESSION_REF'))
     const before = counts()
     const beforeSession = internal.db.sessions.getByHostSessionId(appHost)
     const response = await post('/v1/app-sessions/turns', {
@@ -746,14 +838,25 @@ describe('T-08576 app-session birth identity boundary', () => {
       prompt: 'must not launch',
     })
 
-    expect({ status: response.status, code: response.body.error?.code }).toEqual({
+    expect({
+      status: response.status,
+      reason: response.body.error?.detail?.reason,
+      field: response.body.error?.detail?.field,
+      keys: response.body.error?.detail?.keys,
+      effects: counts(),
+      session: internal.db.sessions.getByHostSessionId(appHost),
+      managedStatus: internal.db.appManagedSessions.findByKey(APP_ID, KEY)?.status,
+      launchCalls,
+    }).toEqual({
       status: 422,
-      code: 'app-session-identity-env-forbidden',
+      reason: 'app-session-identity-env-forbidden',
+      field: 'stored-or-supplied intent',
+      keys: ['HRC_SESSION_REF'],
+      effects: before,
+      session: beforeSession,
+      managedStatus: 'active',
+      launchCalls: [],
     })
-    expect(counts()).toEqual(before)
-    expect(internal.db.sessions.getByHostSessionId(appHost)).toEqual(beforeSession)
-    expect(internal.db.appManagedSessions.findByKey(APP_ID, KEY)?.status).toBe('active')
-    expect(launchCalls).toEqual([])
   })
 
   for (const status of ['completed', 'accepted'] as const) {
@@ -916,27 +1019,93 @@ describe('T-08576 app-session birth identity boundary', () => {
   })
 
   it('R-B7(i) concurrent app selectors cannot both dispatch the same caller run id', async () => {
-    seedAppIdentity(baseIntent(), 'one')
-    seedAppIdentity(baseIntent(), 'two')
+    await bootAspdBirthServer()
+    const oneHost = seedAppIdentity(baseIntent(), 'one')
+    const twoHost = seedAppIdentity(baseIntent(), 'two')
+    const twoEffectsBefore = hostEffectCounts(twoHost)
     const runId = 'run-t08576-concurrent'
-    const [one, two] = await Promise.all([
-      post('/v1/app-sessions/turns', {
-        selector: { appId: APP_ID, appSessionKey: 'one' },
-        prompt: 'one',
-        runId,
-      }),
-      post('/v1/app-sessions/turns', {
-        selector: { appId: APP_ID, appSessionKey: 'two' },
-        prompt: 'two',
-        runId,
-      }),
-    ])
-    expect([one.status, two.status].sort()).toEqual([200, 409])
-    expect([one.body, two.body].find((body) => body.error)?.error).toMatchObject({
-      code: 'run_mismatch',
-      detail: { reason: 'app-session-run-id-reused' },
+    const gate = armInvocationStartGate()
+    const oneTurn = post('/v1/app-sessions/turns', {
+      selector: { appId: APP_ID, appSessionKey: 'one' },
+      prompt: 'one',
+      runId,
     })
-    expect(launchCalls).toHaveLength(1)
+    const firstRace = await Promise.race([
+      gate.reached.then(() => 'birth-reached' as const),
+      oneTurn.then(() => 'first-settled' as const),
+    ])
+    let twoSettled = false
+    const twoTurn = post('/v1/app-sessions/turns', {
+      selector: { appId: APP_ID, appSessionKey: 'two' },
+      prompt: 'two',
+      runId,
+    }).finally(() => {
+      twoSettled = true
+    })
+    await Bun.sleep(20)
+    const loserSettledBeforeWinnerRelease = twoSettled
+    gate.signalRelease()
+    const [one, two] = await Promise.all([oneTurn, twoTurn])
+
+    const outcomes = [
+      { key: 'one', hostSessionId: oneHost, response: one },
+      { key: 'two', hostSessionId: twoHost, response: two },
+    ]
+    const winner = outcomes.find(({ response }) => response.status === 200)
+    const loser = outcomes.find(({ response }) => response.status === 409)
+    const runRows = internal.db.sqlite
+      .query<{ host_session_id: string; generation: number }, [string]>(
+        'SELECT host_session_id, generation FROM runs WHERE run_id = ?'
+      )
+      .all(runId)
+    const handles = internal.db.sqlite
+      .query<{ host_session_id: string; generation: number }, [string]>(
+        'SELECT host_session_id, generation FROM runtimes WHERE active_run_id = ? ORDER BY runtime_id'
+      )
+      .all(runId)
+
+    expect({
+      firstRace,
+      loserSettledBeforeWinnerRelease,
+      statuses: outcomes.map(({ response }) => response.status).sort((a, b) => a - b),
+      loserCode: loser?.response.body.error?.code,
+      loserReason: loser?.response.body.error?.detail?.reason,
+      loserHost: loser?.hostSessionId,
+      aspdStarts: ledger?.startCalls.length,
+      runRows,
+      runOwnedByWinner:
+        runRows.length === 1 &&
+        runRows[0]?.host_session_id === winner?.hostSessionId &&
+        runRows[0]?.generation ===
+          internal.db.sessions.getByHostSessionId(winner?.hostSessionId ?? '')?.generation,
+      winnerHost: winner?.hostSessionId,
+      winnerGeneration: winner
+        ? internal.db.sessions.getByHostSessionId(winner.hostSessionId)?.generation
+        : undefined,
+      handles,
+      allHandlesBelongToWinner: handles.every(
+        (handle) =>
+          handle.host_session_id === winner?.hostSessionId &&
+          handle.generation ===
+            internal.db.sessions.getByHostSessionId(winner?.hostSessionId ?? '')?.generation
+      ),
+      loserEffects: hostEffectCounts(twoHost),
+    }).toEqual({
+      firstRace: 'birth-reached',
+      loserSettledBeforeWinnerRelease: true,
+      statuses: [200, 409],
+      loserCode: 'run_mismatch',
+      loserReason: 'app-session-run-id-reused',
+      loserHost: twoHost,
+      aspdStarts: 1,
+      runRows: [{ host_session_id: oneHost, generation: 1 }],
+      runOwnedByWinner: true,
+      winnerHost: oneHost,
+      winnerGeneration: 1,
+      handles: expect.any(Array),
+      allHandlesBelongToWinner: true,
+      loserEffects: twoEffectsBefore,
+    })
   })
 
   it('R-B7(j) broker reuse performs no birth and the later persisted id is refused', async () => {
@@ -1275,30 +1444,157 @@ describe('T-08576 app-session birth identity boundary', () => {
     expect(launchCalls).toEqual([])
   })
 
-  it('R-B7(q) direct foreign finalization cannot fail a live app run', () => {
+  it('R-B7(q) real insert/update refusals protect a live app run from direct finalization', () => {
     seedAppIdentity()
     const runId = 'run-t08576-live-direct'
-    seedRun(runId, 'accepted')
-    internal.db.sqlite.run("UPDATE runs SET status = 'running' WHERE run_id = ?", [runId])
-    const foreign = seedForeignRuntime(runId)
+    makeRunningAppRun(runId)
 
-    finalizeRuntimeTermination(internal.db, foreign, '2026-09-17T07:11:00.000Z')
+    const insertRuntimeId = 'rt-t08576-foreign-insert'
+    const insertOutcome = writerOutcome(() =>
+      seedForeignRuntime({ runtimeId: insertRuntimeId, laneRef: 'insert', activeRunId: runId })
+    )
+    const foreign = seedForeignRuntime({
+      runtimeId: 'rt-t08576-foreign-update',
+      laneRef: 'update',
+    })
+    const updateOutcome = writerOutcome(() =>
+      internal.db.runtimes.update(foreign.runtimeId, { activeRunId: runId, updatedAt: NOW })
+    )
+    const beforeFinalize = internal.db.runtimes.getByRuntimeId(foreign.runtimeId)!
 
-    expect(internal.db.runs.getByRunId(runId)?.status).toBe('running')
-    expect(internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status).toBe('terminated')
+    finalizeRuntimeTermination(internal.db, beforeFinalize, '2026-09-17T07:11:00.000Z')
+
+    expect({
+      insertOutcome,
+      insertAttemptState:
+        internal.db.runtimes.getByRuntimeId(insertRuntimeId)?.status ?? ('absent' as const),
+      updateOutcome,
+      activeRunIdBeforeFinalize: beforeFinalize.activeRunId,
+      finalizedRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
+      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
+    }).toEqual({
+      insertOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
+      insertAttemptState: 'absent',
+      updateOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
+      activeRunIdBeforeFinalize: undefined,
+      finalizedRuntimeStatus: 'terminated',
+      appRunStatus: 'running',
+    })
   })
 
-  it('R-B7(q) HTTP foreign termination cannot fail a live app run', async () => {
+  it('R-B7(q) real updateRunId refusal protects a live app run from HTTP termination', async () => {
     seedAppIdentity()
     const runId = 'run-t08576-live-http'
-    seedRun(runId, 'accepted')
-    internal.db.sqlite.run("UPDATE runs SET status = 'running' WHERE run_id = ?", [runId])
-    const foreign = seedForeignRuntime(runId)
+    makeRunningAppRun(runId)
+    const foreign = seedForeignRuntime({
+      runtimeId: 'rt-t08576-foreign-update-run-id',
+      laneRef: 'update-run-id',
+    })
+    const updateRunIdOutcome = writerOutcome(() =>
+      internal.db.runtimes.updateRunId(foreign.runtimeId, runId, NOW)
+    )
+    const activeRunIdBeforeTerminate = internal.db.runtimes.getByRuntimeId(
+      foreign.runtimeId
+    )?.activeRunId
 
     const response = await post('/v1/terminate', { runtimeId: foreign.runtimeId })
 
-    expect(response.status).toBe(200)
-    expect(internal.db.runs.getByRunId(runId)?.status).toBe('running')
-    expect(internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status).toBe('terminated')
+    expect({
+      updateRunIdOutcome,
+      activeRunIdBeforeTerminate,
+      responseStatus: response.status,
+      terminatedRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
+      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
+    }).toEqual({
+      updateRunIdOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
+      activeRunIdBeforeTerminate: undefined,
+      responseStatus: 200,
+      terminatedRuntimeStatus: 'terminated',
+      appRunStatus: 'running',
+    })
+  })
+
+  it('R-B7(q) refused foreign handle survives startup-reconcile mutation without failing the app run', () => {
+    seedAppIdentity()
+    const runId = 'run-t08576-live-startup'
+    makeRunningAppRun(runId)
+    const foreign = seedForeignRuntime({
+      runtimeId: 'rt-t08576-foreign-startup',
+      laneRef: 'startup',
+    })
+    const updateOutcome = writerOutcome(() =>
+      internal.db.runtimes.update(foreign.runtimeId, { activeRunId: runId, updatedAt: NOW })
+    )
+    const beforeMutation = internal.db.runtimes.getByRuntimeId(foreign.runtimeId)!
+    const session = internal.db.sessions.getByHostSessionId(foreign.hostSessionId)!
+
+    markRuntimeDead(internal.db, session, beforeMutation, 'runtime', {
+      reason: 't08576-startup-reconcile',
+    })
+
+    expect({
+      updateOutcome,
+      activeRunIdBeforeMutation: beforeMutation.activeRunId,
+      reconciledRuntimeStatus: internal.db.runtimes.getByRuntimeId(foreign.runtimeId)?.status,
+      appRunStatus: internal.db.runs.getByRunId(runId)?.status,
+    }).toEqual({
+      updateOutcome: { threw: true, errorName: 'RunIdOwnershipError' },
+      activeRunIdBeforeMutation: undefined,
+      reconciledRuntimeStatus: 'dead',
+      appRunStatus: 'running',
+    })
+  })
+
+  it('R-B7(q) controls allow own-host app and ordinary agent run handles', () => {
+    seedAppIdentity()
+    const appRunId = 'run-t08576-own-host-control'
+    makeRunningAppRun(appRunId)
+    internal.db.runtimes.insert({
+      runtimeId: 'rt-t08576-own-host-control',
+      hostSessionId: appHost,
+      scopeRef: APP_SCOPE,
+      laneRef: KEY,
+      generation: 1,
+      transport: 'headless',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      activeRunId: appRunId,
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+
+    const agentRuntime = seedForeignRuntime({
+      runtimeId: 'rt-t08576-agent-control-q',
+      laneRef: 'agent-control-q',
+    })
+    const agentRunId = 'run-t08576-agent-control-q'
+    internal.db.runs.insert({
+      runId: agentRunId,
+      hostSessionId: agentRuntime.hostSessionId,
+      scopeRef: agentRuntime.scopeRef,
+      laneRef: agentRuntime.laneRef,
+      generation: 1,
+      transport: 'headless',
+      status: 'running',
+      acceptedAt: NOW,
+      startedAt: NOW,
+      updatedAt: NOW,
+    })
+    internal.db.runtimes.updateRunId(agentRuntime.runtimeId, agentRunId, NOW)
+
+    expect({
+      appHandle: internal.db.runtimes.getByRuntimeId('rt-t08576-own-host-control')?.activeRunId,
+      appRunStatus: internal.db.runs.getByRunId(appRunId)?.status,
+      agentHandle: internal.db.runtimes.getByRuntimeId(agentRuntime.runtimeId)?.activeRunId,
+      agentRunStatus: internal.db.runs.getByRunId(agentRunId)?.status,
+    }).toEqual({
+      appHandle: appRunId,
+      appRunStatus: 'running',
+      agentHandle: agentRunId,
+      agentRunStatus: 'running',
+    })
   })
 })
