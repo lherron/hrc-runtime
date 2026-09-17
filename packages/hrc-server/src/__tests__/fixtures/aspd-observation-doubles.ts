@@ -31,6 +31,7 @@ export type AspdObservationOptions = {
   invalidAgentProfile?: boolean
   invalidAgentProfileNoTarget?: boolean
   absentAgentProfile?: boolean
+  nonexistentAgentRoot?: boolean
   protocolVersion?: string
   capabilities?: Partial<{
     resolveRuntimeDeclaration: boolean
@@ -222,6 +223,27 @@ function resolveIncompatibleResponse(): Record<string, unknown> {
       kind: 'incompatible',
       code: 'configured_context_mismatch',
       message: 'Configured path is not a directory: /tmp/t08564-notafile',
+    },
+  }
+}
+
+/**
+ * Copied from T-08564 evidence/double-parity-3/real/resolve_caller_root_nonexistent.json
+ * (live asp-aafe904ce28c-20260917T083116Z-355af1): a caller-supplied agent root
+ * that does not exist is refused as a context mismatch before any declaration
+ * is read.
+ */
+function resolveNonexistentCallerRootResponse(
+  context: Record<string, unknown>
+): Record<string, unknown> {
+  const agentRoot = String(context['agentRoot'] ?? '/tmp/t08564-agent')
+  return {
+    schemaVersion: 'aspc-resolve-runtime-declaration-response/v1',
+    ok: false,
+    failure: {
+      kind: 'incompatible',
+      code: 'configured_context_mismatch',
+      message: `ENOENT: no such file or directory, stat '${agentRoot}'`,
     },
   }
 }
@@ -962,13 +984,15 @@ export function startAspdObservationDouble(
           } else if (message.method === 'aspc.resolveRuntimeDeclaration') {
             const context = (params['context'] ?? {}) as Record<string, unknown>
             const result =
-              options.absentAgentProfile === true
-                ? resolveAbsentProfileCallerRootResponse(context)
-                : options.invalidAgentProfileNoTarget === true
-                  ? resolveInvalidProfileNoTargetResponse(context)
-                  : options.invalidAgentProfile === true
-                    ? resolveInvalidProfileTargetOnlyResponse(context)
-                    : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
+              options.nonexistentAgentRoot === true
+                ? resolveNonexistentCallerRootResponse(context)
+                : options.absentAgentProfile === true
+                  ? resolveAbsentProfileCallerRootResponse(context)
+                  : options.invalidAgentProfileNoTarget === true
+                    ? resolveInvalidProfileNoTargetResponse(context)
+                    : options.invalidAgentProfile === true
+                      ? resolveInvalidProfileTargetOnlyResponse(context)
+                      : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
             reply(socket as never, message.id, result)
           } else if (message.method === 'aspc.inspectRuntimePlacement') {
             const context = (params['context'] ?? {}) as Record<string, unknown>

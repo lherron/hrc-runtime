@@ -252,6 +252,35 @@ describe('caller agent root without a profile (T-08564 E1, activation #8 capture
     )
     expect(body.error.detail).toMatchObject({ source: 'agent-profile' })
   })
+
+  // Astra ruling (EN-14187): a missing caller root stays on the approved context
+  // boundary. The producer's configured_context_mismatch is a 400 carrying the
+  // producer message; HRC neither string-matches ENOENT nor stats the root to
+  // restore today's agent-install-incomplete 422. This status and text differ
+  // from today by that ruling.
+  test('a nonexistent caller root keeps the approved context-mismatch mapping, not the install-incomplete refusal', async () => {
+    const missingRoot = join(agentsRoot, 't08564-no-such-agent')
+    await boot({ nonexistentAgentRoot: true })
+    const { response, body } = await post(
+      '/v1/declarations/resolve',
+      resolveRequest({
+        agentId: 't08564-no-such-agent',
+        agentRoot: missingRoot,
+        projectRoot: undefined,
+        provision: undefined,
+      })
+    )
+
+    expect(response.status).toBe(400)
+    expect(body.error.code).toBe('malformed_request')
+    expect(body.error.message).toBe(`ENOENT: no such file or directory, stat '${missingRoot}'`)
+    expect(body.error.detail).toEqual({
+      code: 'configured_context_mismatch',
+      route: 'aspd',
+      operation: 'resolveRuntimeDeclaration',
+    })
+    expect(body.error.message).not.toContain('agent install incomplete')
+  })
 })
 
 describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
