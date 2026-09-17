@@ -209,6 +209,32 @@ function minimalReaderEnv(): Record<string, string> {
   return env
 }
 
+/** In-flight reader process groups, so server stop can reap them (no orphans). */
+const activeReaderGroups = new Set<number>()
+
+function killReaderGroup(pid: number | undefined): void {
+  if (pid === undefined) return
+  try {
+    // The reader leads its own process group; kill the group so helper
+    // grandchildren (shell wrappers, interpreters) cannot outlive it.
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/** Kill every in-flight offline reader (graceful server stop). */
+export function killActiveOfflineReaders(): number {
+  const pids = [...activeReaderGroups]
+  for (const pid of pids) killReaderGroup(pid)
+  activeReaderGroups.clear()
+  return pids.length
+}
+
 async function callReader(
   executable: string,
   ledgerPath: string,
@@ -226,21 +252,17 @@ async function callReader(
     const child = spawn(
       executable,
       ['evidence-read', '--event-ledger', ledgerPath, '--index', indexPath],
-      { env: minimalReaderEnv(), stdio: ['pipe', 'pipe', 'pipe'] }
+      { env: minimalReaderEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true }
     )
+    if (child.pid !== undefined) activeReaderGroups.add(child.pid)
     const finish = (result: ReaderCall) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (child.pid !== undefined) activeReaderGroups.delete(child.pid)
       resolve(result)
     }
-    const kill = () => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already gone
-      }
-    }
+    const kill = () => killReaderGroup(child.pid)
     const timer = setTimeout(() => {
       kill()
       finish({

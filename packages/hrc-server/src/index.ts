@@ -7,6 +7,7 @@ import {
   RETAINED_EVIDENCE_PASS_LIMIT,
   RETAINED_EVIDENCE_TERMINAL_DELAY_MS,
   type RecoverRetainedEvidenceInput,
+  killActiveOfflineReaders,
   recoverRetainedEvidence,
   retainedEvidencePassCandidates,
 } from './broker/offline-evidence'
@@ -1696,6 +1697,8 @@ class HrcServerInstance implements HrcServer {
     }
     for (const timer of this.retainedEvidenceTerminalTimers) clearTimeout(timer)
     this.retainedEvidenceTerminalTimers.clear()
+    // In-flight offline readers must not outlive the daemon that spawned them.
+    killActiveOfflineReaders()
     if (this.retainedEvidencePassInFlight) {
       try {
         await this.retainedEvidencePassInFlight
