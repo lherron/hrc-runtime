@@ -30,6 +30,7 @@ export type AspdObservationOptions = {
   identityRole?: string
   invalidAgentProfile?: boolean
   invalidAgentProfileNoTarget?: boolean
+  absentAgentProfile?: boolean
   protocolVersion?: string
   capabilities?: Partial<{
     resolveRuntimeDeclaration: boolean
@@ -258,99 +259,165 @@ function resolveAgentProfileInvalidLiveResponse(
   }
 }
 
-/**
- * PENDING LIVE CAPTURE on the T-08578 release — shaped from T-08563 rev 5 §4
- * ok-arm types; replace with the live capture. This is the sole provisional
- * exception authorized for route case (h): resolve_ok with only the profile
- * invalid observation, valid target observations, and target-only provisioning.
- */
-function resolveInvalidProfileTargetOnlyResponse(
-  context: Record<string, unknown>
-): Record<string, unknown> {
-  const response = resolveOkResponse(context)
-  const source = response['source'] as Record<string, unknown>
-  const root = String(context['agentRoot'] ?? '/tmp/t08564-agent')
-  const diagnostic = {
+/** The degraded ok arm's profile diagnostic, as captured on asp-aafe904ce28c-20260917T083116Z-355af1. */
+function invalidProfileDiagnostic(agentRoot: string): Record<string, unknown> {
+  return {
     severity: 'error',
     code: 'agent_profile_invalid',
-    message: 'Invalid agent-profile.toml: fixture profile parse failed',
+    message:
+      'Failed to parse TOML: Unexpected character, expected whitespace, . or ] at row 2, col 14, pos 26:\n1: version = 3\n2> [provisioning\n                ^\n3: harness = \n\n',
     source: 'agent-profile',
-    path: `${root}/agent-profile.toml`,
+    path: `${agentRoot}/agent-profile.toml`,
   }
-  const targetBaselineProvisioning = {
-    scalars: {
-      harness: 'codex',
-      model: 'gpt-5.6-terra',
-      yolo: false,
-      remote: false,
-    },
-    declaredHarness: 'codex',
-    effectiveHarness: 'codex',
-    frontend: 'codex',
-    provider: 'openai',
-    family: 'codex',
-    runtime: 'codex-cli',
-  }
-  const targetProvisioning = {
-    ...targetBaselineProvisioning,
-    scalars: {
-      ...targetBaselineProvisioning.scalars,
-      model:
-        ((context['provisionDirectives'] ?? {}) as Record<string, unknown>)['model'] ??
-        targetBaselineProvisioning.scalars.model,
-    },
+}
+
+/** Live-captured ok-arm envelope around a caller-supplied source and provisioning. */
+function capturedDegradedResponse(
+  context: Record<string, unknown>,
+  source: Record<string, unknown>,
+  provisioning: Record<string, unknown>,
+  diagnostics: Record<string, unknown>[]
+): Record<string, unknown> {
+  const root = projectRoot(context)
+  const agentRoot = String(context['agentRoot'] ?? '/tmp/t08564-agent')
+  const bundle = {
+    kind: 'agent-project',
+    agentName: String(context['agentId'] ?? 'smokey'),
+    ...(root !== undefined ? { projectRoot: root } : {}),
   }
   return {
-    ...response,
-    source: {
-      ...source,
-      agentProfile: { state: 'invalid', diagnostics: [diagnostic] },
-      projectTargets: { state: 'valid', code: 'parsed', contentHash: 'sha256:targets' },
-      selectedTarget: { state: 'valid', code: 'parsed', contentHash: 'sha256:selected' },
+    schemaVersion: 'aspc-resolve-runtime-declaration-response/v1',
+    ok: true,
+    evaluatedAt: '2026-09-17T08:32:07.600Z',
+    contextHash: '0d7c7b9d9373f50bc04f53d8f701663a76b5711728b85d46c74c9bd759d8f444',
+    agentSources: agentSources(context),
+    searchedAgentRoots: [],
+    source,
+    identity: { operator: false },
+    policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+    baselineProvisioning: provisioning,
+    provisioning,
+    placement: {
+      agentRoot,
+      ...(root !== undefined ? { projectRoot: root } : {}),
+      cwd: String(context['cwd'] ?? agentRoot),
+      runMode: String(context['runMode'] ?? 'task'),
+      bundle,
     },
-    baselineProvisioning: targetBaselineProvisioning,
-    provisioning: targetProvisioning,
+    bundle: {
+      ref: bundle,
+      identity: '49a9c5abbb5def6b2f141771c55dde44517ed4fbda468140ef1ac7a1bb9eef78',
+    },
+    diagnostics,
   }
 }
 
 /**
- * PENDING LIVE CAPTURE on the T-08578 activation #8 release — shaped from the
- * T-08578 spec (etag 10) degraded ok arm for a malformed profile with no valid
- * target (project mode none, or root without a selected target): targets
- * absent, scalars {}, no declared harness. Replace with the live capture.
+ * Copied from T-08564 evidence/double-parity-3/real/resolve_invalid_profile_target_root.json
+ * (live asp-aafe904ce28c-20260917T083116Z-355af1): case (h), a malformed profile with a valid
+ * selected target. Scalars are exactly the target's declared keys; there is no
+ * declaredHarness. A caller `model` directive overlays the captured scalar.
+ */
+function resolveInvalidProfileTargetOnlyResponse(
+  context: Record<string, unknown>
+): Record<string, unknown> {
+  const agentRoot = String(context['agentRoot'] ?? '/tmp/t08564-agent')
+  const diagnostic = invalidProfileDiagnostic(agentRoot)
+  const directives = (context['provisionDirectives'] ?? {}) as Record<string, unknown>
+  return capturedDegradedResponse(
+    context,
+    {
+      agentProfile: { state: 'invalid', diagnostics: [diagnostic] },
+      projectTargets: {
+        state: 'valid',
+        code: 'parsed',
+        contentHash: '4dbdf3f42104cc30ca00b2c7ec8eb33640d494fa76fa91214ca492080fe5f9f0',
+      },
+      selectedTarget: {
+        state: 'valid',
+        code: 'parsed',
+        contentHash: '2f6f4dbd10393a6e8db6d154d3d09933644dd58c97ef6591d4757857c5566744',
+      },
+      priming: { state: 'absent', code: 'not_declared' },
+    },
+    {
+      scalars: {
+        harness: 'codex',
+        model: directives['model'] ?? 'gpt-5.6-terra',
+      },
+      effectiveHarness: 'codex',
+      frontend: 'codex-cli',
+      provider: 'openai',
+      family: 'codex',
+      runtime: 'codex-cli',
+    },
+    [diagnostic]
+  )
+}
+
+/**
+ * Copied from T-08564 evidence/double-parity-3/real/resolve_invalid_profile_mode_none.json
+ * and resolve_invalid_profile_root_no_selected_target.json (live
+ * asp-aafe904ce28c-20260917T083116Z-355af1): a malformed profile with no valid target. Scalars
+ * are {}, there is no harness key and no declaredHarness, provider anthropic.
+ * Projectless observes targets absent; a root without this agent's target
+ * observes the targets file valid and the selected target absent.
  */
 function resolveInvalidProfileNoTargetResponse(
   context: Record<string, unknown>
 ): Record<string, unknown> {
-  const response = resolveOkResponse(context)
-  const source = response['source'] as Record<string, unknown>
-  const root = String(context['agentRoot'] ?? '/tmp/t08564-agent')
-  const diagnostic = {
-    severity: 'error',
-    code: 'agent_profile_invalid',
-    message: 'Invalid agent-profile.toml: fixture profile parse failed',
-    source: 'agent-profile',
-    path: `${root}/agent-profile.toml`,
-  }
-  const defaultOnlyProvisioning = {
-    scalars: {},
-    effectiveHarness: 'claude',
-    frontend: 'claude-code',
-    provider: 'anthropic',
-    family: 'claude',
-    runtime: 'claude-code',
-  }
-  return {
-    ...response,
-    source: {
-      ...source,
+  const agentRoot = String(context['agentRoot'] ?? '/tmp/t08564-agent')
+  const diagnostic = invalidProfileDiagnostic(agentRoot)
+  const projectless = projectRoot(context) === undefined
+  return capturedDegradedResponse(
+    context,
+    {
       agentProfile: { state: 'invalid', diagnostics: [diagnostic] },
-      projectTargets: { state: 'absent', code: 'not_declared' },
+      projectTargets: projectless
+        ? { state: 'absent', code: 'not_declared' }
+        : {
+            state: 'valid',
+            code: 'parsed',
+            contentHash: '76967903720684f8890854249faae9fc081ffb8bcc913acf2d71b88f78cc3b49',
+          },
       selectedTarget: { state: 'absent', code: 'not_declared' },
+      priming: { state: 'absent', code: 'not_declared' },
     },
-    baselineProvisioning: defaultOnlyProvisioning,
-    provisioning: defaultOnlyProvisioning,
-  }
+    {
+      scalars: {},
+      effectiveHarness: 'claude',
+      frontend: 'claude-code',
+      provider: 'anthropic',
+      family: 'claude',
+      runtime: 'claude-code',
+    },
+    [diagnostic]
+  )
+}
+
+/**
+ * Copied from T-08564 evidence/double-parity-3/real/resolve_caller_root_without_profile.json
+ * (live asp-aafe904ce28c-20260917T083116Z-355af1): a caller-supplied agent root that exists but
+ * holds no agent-profile.toml is an ok arm with the profile absent, not
+ * `agent_not_found` (T-08563 rev 5: a supplied root is read directly).
+ */
+function resolveAbsentProfileCallerRootResponse(
+  context: Record<string, unknown>
+): Record<string, unknown> {
+  const absent = { state: 'absent', code: 'not_declared' }
+  return capturedDegradedResponse(
+    context,
+    { agentProfile: absent, projectTargets: absent, selectedTarget: absent, priming: absent },
+    {
+      scalars: { yolo: false, remote: false },
+      effectiveHarness: 'claude',
+      frontend: 'claude-code',
+      provider: 'anthropic',
+      family: 'claude',
+      runtime: 'claude-code',
+    },
+    []
+  )
 }
 
 function resolveResponse(
@@ -895,11 +962,13 @@ export function startAspdObservationDouble(
           } else if (message.method === 'aspc.resolveRuntimeDeclaration') {
             const context = (params['context'] ?? {}) as Record<string, unknown>
             const result =
-              options.invalidAgentProfileNoTarget === true
-                ? resolveInvalidProfileNoTargetResponse(context)
-                : options.invalidAgentProfile === true
-                  ? resolveInvalidProfileTargetOnlyResponse(context)
-                  : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
+              options.absentAgentProfile === true
+                ? resolveAbsentProfileCallerRootResponse(context)
+                : options.invalidAgentProfileNoTarget === true
+                  ? resolveInvalidProfileNoTargetResponse(context)
+                  : options.invalidAgentProfile === true
+                    ? resolveInvalidProfileTargetOnlyResponse(context)
+                    : resolveResponse(context, options.resolve ?? 'ok', options.identityRole)
             reply(socket as never, message.id, result)
           } else if (message.method === 'aspc.inspectRuntimePlacement') {
             const context = (params['context'] ?? {}) as Record<string, unknown>

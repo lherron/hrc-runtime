@@ -209,7 +209,7 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
   })
 })
 
-describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; pending activation #8 capture)', () => {
+describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; activation #8 capture)', () => {
   for (const variant of [
     { name: 'projectless (project mode none)', overrides: { projectRoot: undefined } },
     { name: 'project root without a selected target', overrides: {} },
@@ -235,6 +235,23 @@ describe('invalid profile with no valid target (T-08564 E1, T-08578 etag 10; pen
       )
     })
   }
+})
+
+describe('caller agent root without a profile (T-08564 E1, activation #8 capture)', () => {
+  test("refuses with today's agent-install-incomplete text instead of birthing an undeclared agent", async () => {
+    await boot({ absentAgentProfile: true })
+    const { response, body } = await post(
+      '/v1/declarations/resolve',
+      resolveRequest({ projectRoot: undefined, provision: undefined })
+    )
+
+    expect(response.status).toBe(422)
+    expect(body.error.code).toBe('declaration_invalid')
+    expect(body.error.message).toBe(
+      `buildRuntimeBundleRef: agent-profile.toml not found at ${agentRoot}/agent-profile.toml — agent install incomplete`
+    )
+    expect(body.error.detail).toMatchObject({ source: 'agent-profile' })
+  })
 })
 
 describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
