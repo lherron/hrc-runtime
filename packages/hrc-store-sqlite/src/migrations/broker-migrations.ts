@@ -1001,6 +1001,50 @@ const runtimeOperationAspPreparationMigration: HrcMigration = {
   },
 }
 
+/**
+ * T-08566 stage 2 — retained-evidence origin, irreversibility marker and the
+ * keep-forever recovery outcome audit. Additive only; no backfill. NULL origin
+ * means live or ordinary, so a store without the column can hold no retained row.
+ */
+const retainedEvidenceMigration: HrcMigration = {
+  id: '0072_retained_evidence',
+  apply(db) {
+    const columns = (table: string) =>
+      db
+        .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((column) => column.name)
+    if (!columns('hrc_events').includes('evidence_origin')) {
+      db.exec(
+        "ALTER TABLE hrc_events ADD COLUMN evidence_origin TEXT CHECK (evidence_origin IS NULL OR evidence_origin = 'retained');"
+      )
+    }
+    if (!columns('broker_invocation_events').includes('evidence_origin')) {
+      db.exec(
+        "ALTER TABLE broker_invocation_events ADD COLUMN evidence_origin TEXT CHECK (evidence_origin IS NULL OR evidence_origin = 'retained');"
+      )
+    }
+    if (!columns('broker_invocations').includes('retained_projected_through_seq')) {
+      db.exec('ALTER TABLE broker_invocations ADD COLUMN retained_projected_through_seq INTEGER;')
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS retained_evidence_outcomes (
+        outcome_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        runtime_id TEXT NOT NULL,
+        invocation_id TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        outcome_class TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        detail_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_retained_evidence_outcomes_runtime_invocation
+        ON retained_evidence_outcomes(runtime_id, invocation_id, outcome_id);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -1025,4 +1069,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   askBracketScanIndexMigration,
   participantRuntimeOwnershipRepairMigration,
   runtimeOperationAspPreparationMigration,
+  retainedEvidenceMigration,
 ]

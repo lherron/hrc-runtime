@@ -325,6 +325,7 @@ const BROKER_INVOCATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<BrokerInvocati
   { key: 'startRequestProjectionJson', column: 'start_request_projection_json' },
   { key: 'lastEventSeq', column: 'last_event_seq' },
   { key: 'lastProjectedSeq', column: 'last_projected_seq' },
+  { key: 'retainedProjectedThroughSeq', column: 'retained_projected_through_seq' },
   { key: 'ownerServerInstanceId', column: 'owner_server_instance_id' },
   { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash' },
   { key: 'currentHarnessGeneration', column: 'current_harness_generation' },
@@ -478,6 +479,8 @@ export type BrokerInvocationEventAppendInput = {
   hrcEventSeq?: number | undefined
   projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
   projectionError?: string | undefined
+  /** `'retained'` only for rows mirrored by retained (offline) projection (T-08566). */
+  evidenceOrigin?: 'retained' | undefined
 }
 
 export type ImportedBrokerInvocationEventInput = {
@@ -609,8 +612,9 @@ export class BrokerInvocationEventRepository {
               hrc_event_seq,
               projection_status,
               projection_error,
+              evidence_origin,
               created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
           `,
           input.invocationId,
           input.seq,
@@ -624,7 +628,8 @@ export class BrokerInvocationEventRepository {
           brokerEnvelopeJson ?? null,
           input.hrcEventSeq ?? null,
           input.projectionStatus ?? 'pending',
-          input.projectionError ?? null
+          input.projectionError ?? null,
+          input.evidenceOrigin ?? null
         )
 
         const stored = requireRecord(
@@ -787,8 +792,8 @@ export class BrokerInvocationEventRepository {
         `INSERT INTO broker_invocation_events (
           invocation_id, seq, time, type, run_id, runtime_id, harness_generation,
           turn_attempt, broker_event_json, broker_envelope_json, hrc_event_seq,
-          projection_status, projection_error, source_ref, origin_seq, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'imported', ?, ?, ?, ?)`,
+          projection_status, projection_error, source_ref, origin_seq, evidence_origin, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'imported', ?, ?, ?, ?, ?)`,
         input.event.invocationId,
         input.event.seq,
         input.event.time,
@@ -802,6 +807,7 @@ export class BrokerInvocationEventRepository {
         input.event.projectionError ?? null,
         input.sourceRef,
         input.originSeq,
+        input.event.evidenceOrigin ?? null,
         input.event.createdAt
       )
       const stored = this.getBySourceOrigin(input.sourceRef, input.originSeq)

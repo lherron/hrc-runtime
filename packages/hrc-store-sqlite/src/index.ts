@@ -230,3 +230,9 @@ export type {
   HrcMailReplyValidationResult,
   HrcMailSchemaValidationError,
 } from './mail/reply-schema.js'
+export {
+  RetainedEvidenceOutcomeRepository,
+  type RetainedEvidenceOutcomeClass,
+  type RetainedEvidenceOutcomeRecord,
+  type RetainedEvidenceOutcomeTrigger,
+} from './repositories/retained-evidence-outcome-repository.js'

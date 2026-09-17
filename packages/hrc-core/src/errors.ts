@@ -56,6 +56,7 @@ export const HrcErrorCode = {
   NO_RESUMABLE_CONTINUATION: 'no_resumable_continuation',
   /** `hrc resume` selected a prior whose runtime is still live — attach/terminate first. */
   RESUME_RUNTIME_LIVE: 'resume_runtime_live',
+  RUNTIME_RETAINED_EVIDENCE_PROJECTED: 'runtime_retained_evidence_projected',
   /**
    * T-08553: a request declined the operator viewer (`presentation.operator:
    * 'none'`) for a scope whose live runtime already presents one (a `tmux-tui`
@@ -192,6 +193,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
   [HrcErrorCode.NO_RESUMABLE_CONTINUATION]: 422,
   [HrcErrorCode.RESUME_RUNTIME_LIVE]: 409,
+  [HrcErrorCode.RUNTIME_RETAINED_EVIDENCE_PROJECTED]: 409,
   [HrcErrorCode.PRESENTATION_CONFLICT]: 409,
   [HrcErrorCode.PRESENTATION_OPERATOR_UNSUPPORTED]: 422,
   [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,

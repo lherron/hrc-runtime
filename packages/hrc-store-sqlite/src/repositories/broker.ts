@@ -79,6 +79,7 @@ export type BrokerInvocationRow = {
   start_request_projection_json: string | null
   last_event_seq: number | null
   last_projected_seq: number
+  retained_projected_through_seq: number | null
   owner_server_instance_id: string | null
   lifecycle_policy_hash: string | null
   current_harness_generation: number | null
@@ -106,6 +107,7 @@ export type BrokerInvocationEventRow = {
   projection_error: string | null
   source_ref: string | null
   origin_seq: number | null
+  evidence_origin: string | null
   created_at: string
 }
 
@@ -201,6 +203,7 @@ export const BROKER_INVOCATION_COLUMNS = `
   start_request_projection_json,
   last_event_seq,
   last_projected_seq,
+  retained_projected_through_seq,
   owner_server_instance_id,
   lifecycle_policy_hash,
   current_harness_generation,
@@ -227,6 +230,7 @@ export const BROKER_INVOCATION_EVENT_COLUMNS = `
   projection_error,
   source_ref,
   origin_seq,
+  evidence_origin,
   created_at`
 
 export const RUNTIME_ARTIFACT_COLUMNS = `
@@ -339,6 +343,9 @@ export function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvoc
       : {}),
     ...(row.last_event_seq !== null ? { lastEventSeq: row.last_event_seq } : {}),
     lastProjectedSeq: row.last_projected_seq,
+    ...(row.retained_projected_through_seq !== null
+      ? { retainedProjectedThroughSeq: row.retained_projected_through_seq }
+      : {}),
     ...(row.owner_server_instance_id !== null
       ? { ownerServerInstanceId: row.owner_server_instance_id }
       : {}),
@@ -404,6 +411,7 @@ export function mapBrokerInvocationEventRow(
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),
     ...(row.source_ref !== null ? { sourceRef: row.source_ref } : {}),
     ...(row.origin_seq !== null ? { originSeq: row.origin_seq } : {}),
+    ...(row.evidence_origin === 'retained' ? { evidenceOrigin: 'retained' as const } : {}),
     createdAt: row.created_at,
   }
 }

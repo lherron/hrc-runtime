@@ -1028,6 +1028,25 @@ export type HrcEventIngestBatch =
       feed: 'broker_invocation_events'
       events: HrcBrokerIngestItem[]
     }
+  /**
+   * T-08566 — version 2 carries only retained-origin rows, and every item must
+   * be marked `evidenceOrigin: 'retained'`. A receiver that does not persist the
+   * origin refuses version 2 (`invalid_batch`), so retained history can never
+   * reach a peer's live fan-out stripped of its marker. Version 1 items must
+   * never carry an origin.
+   */
+  | {
+      version: 2
+      sourceRef: string
+      feed: 'hrc_events'
+      events: HrcLifecycleIngestItem[]
+    }
+  | {
+      version: 2
+      sourceRef: string
+      feed: 'broker_invocation_events'
+      events: HrcBrokerIngestItem[]
+    }
 
 export type HrcEventIngestAck =
   | {
@@ -1199,6 +1218,13 @@ export type PruneRuntimesRequest = {
   runtimeIds?: string[] | undefined
   /** Delete keep-forever ledgers and broker projections in addition to runtime satellites. */
   includeLedgers?: boolean | undefined
+  /**
+   * T-08566: explicitly dispose the retained evidence of one held runtime
+   * (`runtimeIds` of length 1). Records an `operator_disposed` outcome, then
+   * applies the ordinary prune. Requires `reason` and `yes`; refused unless held.
+   */
+  disposeRetainedEvidence?: boolean | undefined
+  reason?: string | undefined
   dryRun?: boolean | undefined
   yes?: boolean | undefined
 }
@@ -1710,4 +1736,46 @@ export type RetireRegistrationScopesResponse = {
     skipped: number
     errors: number
   }
+}
+
+/** T-08566 — retained-evidence recovery outcome classes (SPEC §3.4.4). */
+export type RetainedEvidenceOutcomeClass =
+  | 'complete'
+  | 'incomplete'
+  | 'retryable'
+  | 'unbound'
+  | 'disposed'
+
+export type RetainedEvidenceTrigger = 'terminal' | 'startup' | 'report' | 'gap' | 'operator'
+
+/** `POST /v1/capture/recover` — one explicit operator recovery attempt, or a dry run. */
+export type CaptureRecoverRequest = {
+  runtimeId: string
+  /** Required unless `dryRun`; recovery is a mutating operation. */
+  yes?: boolean | undefined
+  /** Report eligibility, capability and current outcome without spawning a reader. */
+  dryRun?: boolean | undefined
+}
+
+export type CaptureRecoverResponse = {
+  runtimeId: string
+  invocationId?: string | undefined
+  trigger: RetainedEvidenceTrigger
+  dryRun?: boolean | undefined
+  /** Whether a reader process was spawned by this call. */
+  spawned: boolean
+  outcome: string
+  class?: RetainedEvidenceOutcomeClass | undefined
+  complete: boolean
+  /** Whether the ledger directory stays held after this call (SPEC §4.2). */
+  held: boolean
+  /** Automatic attempts counted against the retry budget. */
+  attempts: number
+  /** Whether this outcome was recorded in the audit table. */
+  recorded: boolean
+  projectedThroughSeq: number
+  currentSeq?: number | undefined
+  eligibility?: { eligible: boolean; reason?: string | undefined } | undefined
+  capability?: { declared: boolean; releaseId?: string | undefined } | undefined
+  detail: Record<string, unknown>
 }

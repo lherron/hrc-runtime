@@ -376,6 +376,10 @@ export type {
   SendAppHarnessInFlightInputResponse,
   ClearAppSessionContextRequest,
   ClearAppSessionContextResponse,
+  CaptureRecoverRequest,
+  CaptureRecoverResponse,
+  RetainedEvidenceOutcomeClass,
+  RetainedEvidenceTrigger,
 } from './http-contracts.js'
 export {
   OPERATOR_REAP_REASON,

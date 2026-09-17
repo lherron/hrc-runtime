@@ -275,8 +275,9 @@ export class HrcLifecycleEventRepository {
             transport,
             error_code,
             replayed,
+            evidence_origin,
             payload_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         streamSeq,
         event.ts,
@@ -294,6 +295,7 @@ export class HrcLifecycleEventRepository {
         event.transport ?? null,
         event.errorCode ?? null,
         event.replayed ? 1 : 0,
+        event.evidenceOrigin ?? null,
         JSON.stringify(event.payload ?? {})
       )
 
@@ -534,8 +536,8 @@ export class HrcLifecycleEventRepository {
         `INSERT INTO hrc_events (
           stream_seq, source_ref, origin_seq, ts, host_session_id, scope_ref, lane_ref,
           generation, runtime_id, run_id, launch_id, app_id, app_session_key, category,
-          event_kind, transport, error_code, replayed, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          event_kind, transport, error_code, replayed, evidence_origin, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         streamSeq,
         input.sourceRef,
         input.originSeq,
@@ -554,6 +556,7 @@ export class HrcLifecycleEventRepository {
         input.event.transport ?? null,
         input.event.errorCode ?? null,
         input.event.replayed ? 1 : 0,
+        input.event.evidenceOrigin ?? null,
         JSON.stringify(input.event.payload ?? {})
       )
       const inserted = this.db

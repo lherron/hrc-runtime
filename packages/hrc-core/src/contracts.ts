@@ -82,6 +82,13 @@ export type HrcLifecycleEvent = {
   transport?: HrcLifecycleTransport | undefined
   errorCode?: string | undefined
   replayed: boolean
+  /**
+   * Durable evidence origin (T-08566). `'retained'` marks a row projected from a
+   * dead worker's retained ledger; such rows are observable history and never
+   * actuate current-run completion, delivery, activity or timeout. Omitted for
+   * live and ordinary rows. Distinct from `replayed` (transport replay state).
+   */
+  evidenceOrigin?: 'retained' | undefined
   payload: unknown
 }
 
@@ -816,6 +823,12 @@ export type HrcBrokerInvocationRecord = {
    * This is the only authority for broker replay and acknowledgement.
    */
   lastProjectedSeq?: number | undefined
+  /**
+   * Highest broker seq committed by retained (offline) projection (T-08566).
+   * Set atomically with that projection; once present, every live attach,
+   * reattach and adopt of the runtime is refused.
+   */
+  retainedProjectedThroughSeq?: number | undefined
   ownerServerInstanceId?: string | undefined
   lifecyclePolicyHash?: string | undefined
   currentHarnessGeneration?: number | undefined
@@ -859,6 +872,8 @@ export type HrcBrokerInvocationEventRecord = {
   sourceRef?: string | undefined
   /** Monotonic id in the source ledger. Present iff sourceRef is present. */
   originSeq?: number | undefined
+  /** Durable evidence origin (T-08566); `'retained'` for offline-projected rows. */
+  evidenceOrigin?: 'retained' | undefined
   /** Insertion time in the originating HRC ledger, distinct from broker event time. */
   createdAt: string
 }

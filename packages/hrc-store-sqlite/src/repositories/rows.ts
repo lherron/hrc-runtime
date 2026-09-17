@@ -168,6 +168,7 @@ export type HrcEventRow = {
   transport: HrcLifecycleEvent['transport'] | null
   error_code: string | null
   replayed: number
+  evidence_origin: string | null
   payload_json: string
 }
 

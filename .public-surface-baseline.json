@@ -487,6 +487,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "CaptureRecoverRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|CaptureRecoverRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CaptureRecoverResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|CaptureRecoverResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "CaptureResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3731,6 +3747,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ResumeContinuationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RetainedEvidenceOutcomeClass",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RetainedEvidenceOutcomeClass|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RetainedEvidenceTrigger",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RetainedEvidenceTrigger|type",
       "count": 1
     },
     {

@@ -389,6 +389,7 @@ export const HRC_EVENT_COLUMNS = `
   transport,
   error_code,
   replayed,
+  evidence_origin,
   payload_json`
 
 export const APP_SESSION_COLUMNS = `
@@ -925,6 +926,7 @@ export function mapHrcEventRow(
     transport: row.transport ?? undefined,
     errorCode: row.error_code ?? undefined,
     replayed: row.replayed !== 0,
+    ...(row.evidence_origin === 'retained' ? { evidenceOrigin: 'retained' as const } : {}),
     payload: hydratePayload(parseJson<unknown>(row.payload_json, 'payload_json')),
   }
 }
