@@ -1026,7 +1026,7 @@ async function renderSpecBuildPreview(
   w('  Run without --dry-run to execute.')
 }
 
-async function printLocalRunPreview(
+export async function printLocalRunPreview(
   command: 'run' | 'start',
   scope: string,
   sessionRef: string,
