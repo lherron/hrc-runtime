@@ -360,7 +360,7 @@ export async function buildCliInvocation(
     frontend,
     // T-07398: the directive-overlaid launch route, not `harness.model` alone —
     // this is the boundary that becomes process argv.
-    model: resolveLaunchModel(intent),
+    ...optional('model', resolveLaunchModel(intent)),
     interactionMode,
     ioMode,
     ...(options?.continuation ? { continuation: options.continuation } : {}),
