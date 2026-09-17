@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 import { HarnessBrokerController } from '../broker/controller'
@@ -125,6 +126,33 @@ async function recordedReaderAfterSeq(recordPath: string): Promise<number | null
     return typeof request.afterSeq === 'number' ? request.afterSeq : null
   } catch {
     return null
+  }
+}
+
+function processGroupIsAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function killProcessGroup(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+async function waitForProcessGroupExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 100 && processGroupIsAlive(pid); attempt += 1) {
+    await Bun.sleep(10)
   }
 }
 
@@ -693,8 +721,8 @@ describe('T-08566 stage 2 authority and ownership', () => {
 
   test('C14d attach-first: recovery refuses without spawning, then retries after owner release', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-attach-first-')
-    const seeded = await seedOfflineRuntime(serverFixture, 'full')
     const server = await createHrcServer(serverFixture.serverOpts())
+    const seeded = await seedOfflineRuntime(serverFixture, 'full')
     let releaseAttach!: () => void
     const attachOwner = new Promise<unknown>((resolve) => {
       releaseAttach = () => resolve(undefined)
@@ -788,32 +816,42 @@ describe('T-08566 stage 2 authority and ownership', () => {
   test('C14c kill-before-outcome: a committed marker survives SIGKILL and fences restart', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-kill-')
     const seeded = await seedOfflineRuntime(serverFixture, 'block-page-two')
+    const serverEntry = join(import.meta.dir, '..', 'index.ts')
     const childCode = `
-      import { createHrcServer } from './packages/hrc-server/src/index.ts'
+      import { createHrcServer } from ${JSON.stringify(serverEntry)}
       const options = JSON.parse(process.env.T08566_SERVER_OPTIONS)
       await createHrcServer(options)
       process.stdout.write('READY\\n')
       await new Promise(() => {})
     `
     const child = Bun.spawn(['bun', '-e', childCode], {
-      cwd: process.cwd(),
+      cwd: serverFixture.tmpDir,
       env: { ...process.env, T08566_SERVER_OPTIONS: JSON.stringify(serverFixture.serverOpts()) },
       stdout: 'pipe',
       stderr: 'pipe',
     })
+    const childStderr = new Response(child.stderr).text()
     let restarted: HrcServer | undefined
+    let blockedReaderPid: number | undefined
     try {
       const stdout = child.stdout
       if (!(stdout instanceof ReadableStream)) throw new Error('child stdout is not readable')
       const reader = stdout.getReader()
-      const first = await Promise.race([
-        reader.read(),
-        Bun.sleep(5_000).then(() => {
-          throw new Error('child daemon did not become ready')
-        }),
+      const readiness = await Promise.race([
+        reader.read().then((result) => ({ kind: 'stdout' as const, result })),
+        child.exited.then((exitCode) => ({ kind: 'exit' as const, exitCode })),
+        Bun.sleep(5_000).then(() => ({ kind: 'timeout' as const })),
       ])
       reader.releaseLock()
-      expect(new TextDecoder().decode(first.value)).toContain('READY')
+      const readyText =
+        readiness.kind === 'stdout' ? new TextDecoder().decode(readiness.result.value) : ''
+      if (!readyText.includes('READY')) {
+        if (child.exitCode === null) child.kill(9)
+        const [exitCode, stderr] = await Promise.all([child.exited, childStderr])
+        throw new Error(
+          `child daemon did not become ready (${readiness.kind}, exit ${exitCode}): ${stderr.trim()}`
+        )
+      }
 
       const recovery = serverFixture
         .postJson('/v1/capture/recover', {
@@ -834,11 +872,16 @@ describe('T-08566 stage 2 authority and ownership', () => {
       const blockedAfterSeq = await recordedReaderAfterSeq(seeded.reader.recordPath)
       expect(blockedAfterSeq).not.toBeNull()
       expect(blockedAfterSeq).toBeGreaterThan(0)
+      blockedReaderPid = Number((await readFile(seeded.reader.pidPath, 'utf8')).trim())
+      expect(Number.isSafeInteger(blockedReaderPid)).toBe(true)
       expect(retainedCursor(serverFixture.dbPath, seeded.invocationId)).not.toBeNull()
       expect(outcomeCount(serverFixture.dbPath, seeded.invocationId)).toBe(0)
 
       child.kill(9)
       await child.exited
+      killProcessGroup(blockedReaderPid)
+      await waitForProcessGroupExit(blockedReaderPid)
+      expect(processGroupIsAlive(blockedReaderPid)).toBe(false)
       const interrupted = await recovery
       if (interrupted.kind === 'error') {
         expect({
@@ -898,6 +941,10 @@ describe('T-08566 stage 2 authority and ownership', () => {
       if (child.exitCode === null) {
         child.kill(9)
         await child.exited
+      }
+      if (blockedReaderPid !== undefined) {
+        killProcessGroup(blockedReaderPid)
+        await waitForProcessGroupExit(blockedReaderPid)
       }
       await restarted?.stop()
       await serverFixture.cleanup()
