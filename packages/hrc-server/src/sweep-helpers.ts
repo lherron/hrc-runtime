@@ -7,6 +7,10 @@ import type {
   SweepRuntimeTransport,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import {
+  getBrokerRuntimeTmuxLeasedPaneId,
+  getBrokerRuntimeTmuxSocketPath,
+} from './broker-decisions.js'
 import { retainedEvidenceHold } from './broker/offline-evidence'
 import { hasUnsettledAbsorbedAuxiliary } from './broker/turn-ownership.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
@@ -15,6 +19,7 @@ import type { ListRuntimesFilter } from './server-parsers.js'
 import type { HrcServerRunRow } from './server-types.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import { getObservedTmuxSessionName } from './startup-reconcile.js'
+import { createTmuxManager } from './tmux.js'
 import type { TmuxManager as ServerTmuxManager, TmuxPaneState } from './tmux.js'
 
 export function parseSweepDurationMs(raw: string): number {
@@ -253,6 +258,13 @@ export async function evaluateRuntimeAgingDisposition(
   }
 }
 
+export type TmuxManagerFactory = (options: { socketPath: string }) => ServerTmuxManager
+
+export type PruneSafetyOptions = {
+  /** Seam for the per-runtime broker lease socket; production passes createTmuxManager. */
+  tmuxManagerFactory?: TmuxManagerFactory | undefined
+}
+
 /**
  * Orphan safety gate for `runtime prune` (T-05441). A runtime store row is only
  * prunable when it is genuinely orphaned: its status is unavailable
@@ -264,7 +276,8 @@ export async function evaluateRuntimeAgingDisposition(
 export async function evaluatePruneDisposition(
   runtime: HrcRuntimeSnapshot,
   tmux: ServerTmuxManager,
-  db?: HrcDatabase | undefined
+  db?: HrcDatabase | undefined,
+  options: PruneSafetyOptions = {}
 ): Promise<{ prunable: boolean; reason?: string }> {
   if (isExternalLifecycleOwner(runtime)) {
     return { prunable: false, reason: 'external_lifecycle_owner' }
@@ -278,6 +291,25 @@ export async function evaluatePruneDisposition(
   if (!isRuntimeUnavailableStatus(runtime.status)) {
     return { prunable: false, reason: `status_not_prunable:${runtime.status}` }
   }
+  return await evaluatePruneLivenessSafety(runtime, tmux, db, options)
+}
+
+/**
+ * Liveness safety shared by every prune caller (runtime prune, ledger-inclusive
+ * preflight, retained-evidence disposition). Status admission is each caller's
+ * own separate check. A probe error propagates as a safety-gate error; it is
+ * never evidence of absence. Nothing here kills or mutates a runtime, process or
+ * tmux server.
+ */
+export async function evaluatePruneLivenessSafety(
+  runtime: HrcRuntimeSnapshot,
+  tmux: ServerTmuxManager,
+  db: HrcDatabase | undefined,
+  options: PruneSafetyOptions = {}
+): Promise<{ prunable: boolean; reason?: string }> {
+  if (isExternalLifecycleOwner(runtime)) {
+    return { prunable: false, reason: 'external_lifecycle_owner' }
+  }
   if (runtime.activeRunId != null) {
     return { prunable: false, reason: 'active_run' }
   }
@@ -287,6 +319,29 @@ export async function evaluatePruneDisposition(
   const trackedPid = runtime.childPid ?? runtime.wrapperPid
   if (trackedPid !== undefined && isLiveProcess(trackedPid)) {
     return { prunable: false, reason: 'live_process' }
+  }
+
+  // H3: a harness-broker lease lives on its own per-runtime tmux server, not the
+  // daemon socket, and has no `main` window. Probe the recorded leased pane on
+  // that socket; fall back to the legacy session probe only when the private
+  // lease fields are unavailable. The lease fields resolve from tmuxJson or the
+  // hosting state, so a runtime whose hosting state no longer parses as a leased
+  // substrate (e.g. a failed replacement start left stale) is still probed.
+  const leaseSocketPath =
+    runtime.controllerKind === 'harness-broker'
+      ? getBrokerRuntimeTmuxSocketPath(runtime)
+      : undefined
+  const leasePaneId =
+    leaseSocketPath !== undefined ? getBrokerRuntimeTmuxLeasedPaneId(runtime) : undefined
+  if (leaseSocketPath !== undefined && leasePaneId !== undefined) {
+    const leaseTmux = (options.tmuxManagerFactory ?? createTmuxManager)({
+      socketPath: leaseSocketPath,
+    })
+    const liveness = await leaseTmux.inspectPaneLiveness(leasePaneId)
+    if (liveness !== null && !liveness.dead) {
+      return { prunable: false, reason: 'live_broker_lease' }
+    }
+    return { prunable: true }
   }
 
   if (runtime.transport === 'tmux') {

@@ -51,6 +51,7 @@ import {
 import { DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS } from './startup-reconcile/types.js'
 import {
   evaluatePruneDisposition,
+  evaluatePruneLivenessSafety,
   evaluateRuntimeAgingDisposition,
   parseSweepDurationMs,
   runtimeMatchesSweepRequest,
@@ -393,7 +394,9 @@ export async function handlePruneRuntimes(
 
     let disposition: { prunable: boolean; reason?: string }
     try {
-      disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db)
+      disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db, {
+        tmuxManagerFactory: this.brokerTmuxManagerFactory ?? createTmuxManager,
+      })
     } catch (err) {
       results.push({
         ...base,
@@ -508,6 +511,35 @@ async function disposeRetainedEvidence(
     hostSessionId: runtime.hostSessionId,
     transport,
   }
+  // H1b: disposition deletes the runtime row, so it passes the same liveness
+  // safety as runtime prune before anything is recorded. A probe error is a
+  // safety-gate error, never evidence that the runtime is gone.
+  let safety: { prunable: boolean; reason?: string }
+  try {
+    safety = await evaluatePruneLivenessSafety(runtime, this.tmux, this.db, {
+      tmuxManagerFactory: this.brokerTmuxManagerFactory ?? createTmuxManager,
+    })
+  } catch (err) {
+    return json({
+      ok: true,
+      results: [
+        {
+          ...base,
+          status: 'error',
+          errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      ],
+      summary: { type: 'summary', matched: 1, pruned: 0, skipped: 0, errors: 1 },
+    } satisfies PruneRuntimesResponse)
+  }
+  if (!safety.prunable) {
+    return json({
+      ok: true,
+      results: [{ ...base, status: 'skipped', reason: safety.reason ?? 'not_prunable' }],
+      summary: { type: 'summary', matched: 1, pruned: 0, skipped: 1, errors: 0 },
+    } satisfies PruneRuntimesResponse)
+  }
   if (raw['dryRun'] === true || raw['yes'] !== true) {
     return json({
       ok: true,
@@ -570,7 +602,9 @@ async function handleLedgerManifestPrune(
       reasons.push('scope_not_allowlisted')
     }
     try {
-      const disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db)
+      const disposition = await evaluatePruneDisposition(runtime, this.tmux, this.db, {
+        tmuxManagerFactory: this.brokerTmuxManagerFactory ?? createTmuxManager,
+      })
       if (!disposition.prunable) reasons.push(disposition.reason ?? 'not_prunable')
     } catch (error) {
       reasons.push(`safety_gate_error:${error instanceof Error ? error.message : String(error)}`)
