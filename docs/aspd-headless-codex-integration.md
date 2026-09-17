@@ -38,6 +38,20 @@ rule, and adds no flag, value, endpoint or ASP wire field. Where §1, §1.1, §1
 §8 or §9 below say a node-default `tmux-tui` stays on the facade, or that the
 omitted choice keeps today's defaults, §1.3 supersedes that sentence.
 
+Amendment (T-08556, `hrc run` on the aspd-prepared interactive Codex TUI;
+authorized by Lance, bearing Astra EN-12983): §1.4 prepares the interactive
+Codex app-server with its attached Codex TUI (the `codexTui` backend `hrc run`
+already uses) through aspd when the attached-run door births it, and launches the
+worker AND its codex-tui wrapper from one frozen execution release. It also
+states what `hrc run` does against a scope's live headless runtime. The
+interactive shape, the attach-before-start handshake and initial-input delivery
+are unchanged. Other doors that birth the interactive backend (cold `hrc attach`,
+stored-intent rebirth, §1.3 rule 3 reprovision, selector messages) keep the
+facade. No flag, value, endpoint, ASPC verb or wire field is added. Where §1,
+§2, §4, §8 or §9 say the aspd route is headless only, or that `hrc run` stays on
+the standalone backend with no release binding, §1.4 supersedes that sentence
+for the attached-run door.
+
 ## 1. Route and configuration
 
 **Route.** HRC-hosted headless Codex: a non-interactive runtime intent whose
@@ -501,6 +515,192 @@ refusals. Explicit-value validation, `presentation_conflict`,
 are unchanged. The default-selected path is subject to the same no-fallback
 refusals as an explicit request.
 
+### 1.4 `hrc run` on the aspd-prepared interactive Codex TUI (T-08556)
+
+**Intended behavior.** On a node with `HRC_ASPD_SOCKET` configured (max3),
+`hrc run <codex scope>` on a scope with nothing live births the same
+interactive Codex runtime it births today: a `codex-app-server` broker with
+`codexTui` presentation (transport `tmux`) whose codex-tui wrapper runs the
+native `codex app-server` on a websocket UDS and a real Codex TUI attached to it
+in the leased `tui` pane. The caller's terminal attaches to that pane before the
+invocation starts, and the operator types into the TUI. What changes is where the
+launch comes from: it is prepared through aspd and frozen, and the worker and its
+wrapper run from that one execution release. The read-only transcript renderer
+of §1.2 is never used by this door and stays observation-only.
+
+**Why the TUI was not release-bound.** The worker launched the wrapper as
+`<execPath> <dirname(import.meta.url)>/codex-tui-wrapper`. Inside a bun-compiled
+release that path is `/$bunfs/root/codex-tui-wrapper` and does not exist
+(reproduced by a compiled probe of agent-spaces `864e801e`, T-08556 evidence).
+The generated codex hook bridge ran `harness-broker codex-hook` from PATH. An
+aspd-prepared interactive worker could therefore not start its TUI, and its hook
+receiver would have come from whatever `harness-broker` PATH named.
+
+**ASP (agent-spaces artifact change, no wire change).** The same construction
+T-08554 used for the renderer (515063f6):
+- `harness-broker codex-tui-wrapper …` runs the wrapper entry from the same
+  executable.
+- The release entrypoint passes `codexTuiLauncher: <execPath>
+  codex-tui-wrapper`, plumbed through `runBrokerCli` → `createDefaultBroker` →
+  `createCodexAppServerDriver`. With it, the pane launch argv is `<execPath>
+  codex-tui-wrapper --command …`, and the hook bridge wrapper runs `<execPath>
+  codex-hook --socket …`. No environment variable selects either.
+- A checkout or package broker passes nothing and keeps `<execPath>
+  <wrapper entry>` and PATH `harness-broker codex-hook`.
+- The native `codex` binary stays `startSpec.process.command` from the compile,
+  as today. A new aspd release carrying this change is built, installed and
+  activated. The currently active release predates it, so an interactive
+  preparation served by it would launch a worker that cannot start its TUI;
+  activation order (§1.4 Delivery) prevents that on max3.
+
+**The door.** The attached-run door is `POST /v1/runs/prepare-attached` with its
+`resume-attached` completion, used by `hrc run` and `hrc resume`. It is the only
+caller that passes `attachBeforeInvocationStart`, and that option is the call
+intent this section keys on. Cold `hrc attach`, turn dispatch and mail births,
+§1.3 rule 3 reprovision into codex-tui, selector and target message births and
+`hrc start` do not pass it and keep their current preparation. That is a
+door-by-door migration step (as T-08555 migrated start and dispatch), not a
+permanent A/B mode. A scope's later birth by another door uses that door's
+preparation. Continuations are shared because both preparations compile under
+HRC's `ASP_HOME` (§1.3 Codex home).
+
+**Route selection (attached-run door, aspd configured).** Evaluated by the
+attached-run door before it enters the start or dispatch door. The door first
+awaits any start already in flight for the host session, then reads the rows
+after tmux liveness reconcile. A start that begins after this read is joined by
+the start or dispatch door as today, which is reuse, never replacement. First
+match wins:
+1. `--force-restart` (`restartStyle: fresh_pty`): the operator asked for
+   replacement. Existing behavior, except that a resulting interactive Codex
+   birth prepares through aspd (rule 4).
+2. The established runtime (§1.3 definition) has `transport: tmux`. Existing
+   interactive admission alone decides reuse, T-07397 refusal or fenced
+   replacement. A reused runtime keeps its worker, invocation, release (facade
+   or aspd) and presentation. `hrc run` attaches its `tui` pane, and `-p` is
+   delivered as today, through the interactive input turn into that runtime.
+3. The established runtime is `transport: headless`, provider `openai`,
+   harness `codex-cli` (or absent), and not transitional. `hrc run` never
+   replaces it:
+   - Operator attachable (`canOperatorAttach`, the §1.2/§1.3 app-server viewer):
+     reused. The door returns that runtime's existing attach descriptor (tmux
+     attach to its `:tui` renderer pane) with status `started`, and no
+     admission, stale-marking, preparation or intent change. `-p` is delivered
+     exactly once into that runtime through the turn-dispatch door with the
+     attached-run intent in its non-interactive form (`harness.interactive`
+     false, `preferredMode: headless`, no `initialPrompt`, no
+     `presentation.operator`). The dispatch door's existing headless reuse
+     applies (§1.3 rule 4 with the redirect off, de85ff26 with it on), so
+     the operator watches it render. The pane is the read-only renderer, and
+     further input to this runtime goes through turn doors. The door does not
+     convert it.
+   - Not operator attachable (presentation `none`, explicit or node default):
+     refused `presentation_conflict` (409), field `presentation.operator`,
+     `livePresentation: none`, before any runtime, operation or hosting effect,
+     with the runtime untouched. An operator terminal requires a presentation
+     this execution does not have. This is the §1.1 conflict rule applied to
+     the attached-run door's implicit request for a terminal. The caller
+     terminates it or uses `hrc run --force-restart`.
+   - Transitional (`starting`/`stopping` invocation) or any other harness:
+     existing interactive admission (unchanged).
+4. Nothing established, or the admission above decides a new interactive Codex
+   birth (`allowedBrokerDriver: codex-app-server`): the birth prepares through
+   aspd, frozen, then launches (below). There is no facade fallback.
+   `aspd_unavailable` and every §4/§5 refusal refuse the run before any hosting
+   effect. The attach handshake is cancelled and the CLI reports the error.
+
+
+**Preparation and freeze (§3–§5 reused).** `startInteractiveTmuxBrokerRuntime`,
+when it carries `attachBeforeInvocationStart` for a `codex-app-server` birth on a
+configured node, replaces only its compile call. It prepares through aspd with
+HRC's `aspHome`, runs the existing admission, and commits boundary P before
+any hosting effect. The frozen record is the same `hrc-aspd-preparation/v1` row
+with:
+- `route: 'interactive-codex-tui'`;
+- `hosting.presentation: 'codex-tui'`, meaning the substrate carries the
+  leased `tui` pane and no observer socket;
+- `hosting.argv` = `worker.argvPrefix` + HRC hosting flags (no observer
+  flag);
+- the frozen interactive `startRequest`, dispatch env, lifecycle overlay
+  (`interactive-broker:codex-app-server`) and route decision
+  `{ route: 'broker', selectedBy: 'decideInteractiveTmuxExecutionRoute',
+  durableInteractiveRoute: 'durable-ipc', brokerTransport: 'unix-jsonrpc-ndjson',
+  preparation: 'aspd', door: 'attached-run', aspdEndpoint, aspdRelease,
+  executionReleaseId, aspHome }`.
+
+Admission requires the selected profile to be `codex-app-server` with
+`interactionMode: interactive` and the tmux broker terminal. Anything else is
+refused `aspd_route_profile_mismatch`. The durable interactive route is
+required: with `HRC_BROKER_DURABLE_IPC_ENABLED` resolving off, the door refuses
+`aspd_route_requires_durable_ipc` before preparation. The stdio route spawns a
+resolver-selected broker, which cannot be the frozen release.
+
+**Launch.** From the operation id only, exactly as §5. Validation of the persisted
+bytes and hosting description is unchanged. The interactive allocator
+(`createBrokerDurableTmuxAllocator`) accepts the frozen worker launch
+(executable + argv, no resolver, frozen-argv hosting check) and releases a lease
+that never carried `invocation.start`. The controller's refusal of an aspd
+execution off the headless substrate narrows to: allowed on the interactive tmux
+substrate only when the frozen record's route is `interactive-codex-tui`. Worker
+hello protocol and release must equal the frozen release before
+`invocation.start`. Otherwise HRC releases the lease, records the refusal and
+sends no start. B4 and the existing interactive persistence follow: runtime
+`transport: tmux`, `runtime_state_json.executionRelease`. The attach
+handshake is unchanged. `prepare-attached` answers `prepared` once the controller
+reports attached-start readiness for this pending start, and the invocation
+starts only after `resume-attached` (the CLI has spawned its attach client) or
+the existing resume deadline cancels it.
+
+**Initial input exactly once.** Unchanged. `hrc run -p` enters the dispatch
+door with the interactive intent. A cold birth delivers the prompt once as the
+interactive input turn after boot (no launch-carried copy, since the attached-run
+door passes no `coldBirthPromptMode`). A reused tmux runtime receives it once as
+an input turn. A rule-3 headless reuse receives it once through the headless
+input path. A refused or cancelled attached run delivers none. The frozen
+`startRequest` carries no copy of it.
+
+**Operator attach marking.** Every attached-run outcome publishes presentation
+with `operatorAttachPending: true` before the attach descriptor is returned:
+births (existing), tmux reuse (existing) and rule-3 headless reuse (added).
+The viewer sidecar therefore opens no additional Ghostty viewer for a runtime the
+caller is attaching to.
+
+**Existing workers, detach, reattach, restart.** Unchanged (§6). Detach is a
+tmux client detach and leaves the app-server, TUI and worker running. Warm
+`hrc run`/`hrc attach` on an aspd interactive runtime is rule 2 reuse. Daemon
+restart reattaches it with the release hello check. aspd is never contacted on
+any of these paths, so aspd activation or outage affects only new attached-run
+births.
+
+**Persistence and readback.** Applied intent: the interactive intent, as today.
+Operation `preparation_json.route: 'interactive-codex-tui'`. Runtime
+`transport: tmux`, `runtime_state_json.executionRelease` (source `aspd`), route
+decision above. Pane processes: the `broker` window runs `<releaseRoot>/libexec/
+harness-broker run …`, and the `tui` pane runs `<releaseRoot>/libexec/harness-broker
+codex-tui-wrapper …` with its `codex app-server` and `codex --remote` children.
+
+**Node scope.** Gated by `HRC_ASPD_SOCKET` (max3 only; svc, lab and hrcdev have
+none) and the attached-run door. With the socket unset, `hrc run` is byte for
+byte today's behavior, including stale-and-reprovision of a live headless
+runtime. The redirect control is not consulted.
+
+**Delivery and rollback.**
+- Order: build, install and activate the new aspd release (it serves every route;
+  the headless routes are unchanged by the ASP change), verify its hello, and
+  only then install and restart HRC. Live aspd-prepared workers stay on their
+  releases (§6).
+- HRC rollback: repoint `hrc-runtime-current` to the recorded prior release
+  (3d9d0867), then `bootout`/`bootstrap`. `hrc run` returns to the facade. aspd
+  interactive runtimes stay live and reattach under the prior release, whose §6
+  hello check is transport-agnostic.
+- aspd rollback: activate the recorded prior release. Only after HRC is rolled
+  back, because the prior release cannot start a TUI.
+- No plist change.
+
+**Refusals.** New: `aspd_route_requires_durable_ipc`. Reused on this door:
+`presentation_conflict` (rule 3), `aspd_unavailable` and the other §4
+preparation refusals, `aspd_route_profile_mismatch`, and every §5 launch and hello
+refusal. Existing interactive admission refusals are unchanged.
+
 ## 2. Wire use (existing contract only)
 
 Published by agent-spaces `0.1.1-dev.20260916121635` (canonical, source
@@ -754,6 +954,26 @@ presentation default on this route. An intent that arrives interactive keeps the
 standalone interactive backend. No rollback pairs a release that gates
 interactive Codex admission on the redirect control with that control off.
 
+**Amend `hrc-runtime.aspd-prepared-execution-release` (T-08556):** the route
+also covers a new interactive `codex-app-server` birth with `codexTui`
+presentation made by the attached-run door (`hrc run`, `hrc resume`) on a node
+with `HRC_ASPD_SOCKET` configured. The attempt freezes route
+`interactive-codex-tui`, presentation `codex-tui` and the interactive start
+request at boundary P. It launches only on the durable interactive tmux substrate
+from those persisted bytes, requires the durable interactive route, and its
+codex-tui wrapper and hook receiver run from the same execution release as the
+worker. Other doors that birth the interactive backend are not on the route. On
+that door a live same-harness headless runtime is never replaced: an
+operator-attachable one is attached and receives the door's input, and one
+without an operator presentation is refused `presentation_conflict` untouched.
+Detach, reattach and restart never require aspd.
+
+**Amend `hrc-runtime.asp-toolchain-selection` (T-08556):** with
+`HRC_ASPD_SOCKET` configured, the resolver does not govern an interactive Codex
+birth made by the attached-run door. Its worker comes only from the frozen
+`executionRelease`, and there is no fallback. Interactive births by every other
+door stay resolver-governed.
+
 ## 9. Deliberate limits
 
 - `RuntimeCompileRequest` construction, runtime-intent assembly and config
@@ -773,8 +993,17 @@ interactive Codex admission on the redirect control with that control off.
 - T-08555: the default changes new executions only. There is no migration of live
   runtimes or of scopes whose stored intent is interactive, and no deletion of
   the standalone backend. `hrc run` and cold `hrc attach` stay on it, and it gets
-  no new release binding. The redirect flag keeps its name. Other nodes keep
+  no new release binding [T-08556: `hrc run`/`hrc resume` births move to aspd,
+  §1.4]. The redirect flag keeps its name. Other nodes keep
   their configuration.
+- T-08556: only the attached-run door moves. Cold `hrc attach`, stored-intent
+  rebirth, §1.3 rule 3 reprovision and message births of the interactive
+  backend keep the facade. The facade backend and its checkout wrapper launch are
+  not removed. The read-only renderer gains no input. A never-submitted
+  interactive preparation has no caller retry key (the attached-run door carries
+  none), so a pre-start refusal leaves it `prepared` and visible, and the run
+  fails. It is never auto-launched. No lost-start-reply retry, no flag, no
+  other node.
 
 ## 10. Acceptance (isolated, installed)
 
@@ -904,3 +1133,58 @@ equals installed, aspd identity, and warmup reattachment against the 9 known
 unreachable runtimes. Repeat 3–5 through the real ordinary doors on fresh scopes,
 plus omitted input to a pre-existing live codex-tui scope and a pre-existing
 app-server scope. Clean up test scopes only. Astra grades.
+
+### 10.4 `hrc run` interactive aspd acceptance (T-08556)
+
+Reproduction first: the compiled probe resolving `/$bunfs/root/codex-tui-wrapper`
+(absent) against agent-spaces `864e801e`, and the same probe passing on the fix.
+Isolation: a linked-worktree HRC artifact under `hrc server serve` with isolated
+state, runtime and socket, durable IPC on, max3 configuration (redirect off,
+`tmux-tui`, `HRC_ASPD_SOCKET` to an isolated aspd namespace with retained
+releases A (current operational, pre-fix) and B (fix), and HRC's `ASP_HOME`
+distinct from aspd's). Clean Ghostty via ghostmux, real cody Codex scopes, real
+keystrokes.
+1. B active. `hrc run <fresh>` with no flags gives:
+   - aspd compile +1 and an op `route: interactive-codex-tui` with executionRelease
+     and worker hello B;
+   - transport `tmux`, `broker` pane process `<B>/libexec/harness-broker run` and
+     `tui` pane process `<B>/libexec/harness-broker codex-tui-wrapper` with
+     `codex app-server` and `codex --remote` children;
+   - a prompt typed into the TUI produces a rendered response and a completed
+     turn with its native submission and normalized events;
+   - `routeDecision.aspHome` equals HRC's.
+2. `hrc run <fresh> -p MARK`: exactly one user input carrying MARK (HRC events
+   and native rollout), one completed turn, attached terminal.
+3. Detach (tmux client detach), then a warm turn while detached via `hrc turn`,
+   then `hrc run <scope>` (warm reuse) and `hrc attach <scope>`. Runtime,
+   invocation, worker pid, wrapper and app-server pids and release are
+   unchanged, and typed input still works.
+4. Reuse without replacement:
+   - `hrc run` on a live facade codex-tui scope (born by cold attach) attaches
+     it, unchanged;
+   - `hrc run -p` on a live default app-server viewer scope attaches its
+     renderer and delivers once, runtime unchanged;
+   - `hrc run` on a live `--no-viewer` scope refuses `presentation_conflict`
+     with nothing mutated.
+5. Cold `hrc attach <fresh>` still births the facade backend (no aspd
+   compile).
+6. Stop aspd: `hrc run <fresh>` refuses `aspd_unavailable` with no op, runtime
+   or tmux server left behind. `hrc run`/`hrc attach` on the live aspd
+   interactive scope still attach and take typed input.
+7. Retained-release proof: with A active, an interactive preparation launches a
+   worker that fails to start its TUI (recorded, run fails with state
+   accurate), which demonstrates that the binding is real. Activate B: the next
+   `hrc run` is B and works. A B interactive worker stays usable after
+   re-activating A. Restart the HRC artifact with aspd stopped: the B
+   interactive runtime reattaches (release hello), and its TUI keeps typed
+   input. A cancelled attach (CLI killed before resume) leaves no worker and an
+   accurate op/run state.
+8. Gates: targeted route/admission/allocation/duplicate-input tests,
+   hrc-server and hrc-cli suites, and the harness-broker suite in agent-spaces.
+
+Shared max3 (rollback record first): build and install the ASP release, activate
+it on the persistent aspd, verify hello, `just install` HRC, restart, and read
+back running equals installed, the aspd release and warmup reattachment against
+the 9 known unreachable. Repeat 1–4 on fresh cody scopes in clean Ghostty,
+without touching other users' scopes. Clean up test scopes only, leaving one
+active aspd release with prior releases retained. Astra grades.
