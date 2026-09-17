@@ -126,8 +126,12 @@ export function loadHookScopeIgnore(root: string): HookScopeIgnore {
  * Falls back to the working directory, whose missing file fails closed.
  */
 export function worktreeRoot(cwd: string = process.cwd()): string {
+  // Discovery must be cwd-based: an inherited GIT_DIR/GIT_WORK_TREE (git hooks set them)
+  // would make git treat any cwd as the work tree and defeat the outside-a-checkout fallback.
+  const { GIT_DIR: _gitDir, GIT_WORK_TREE: _gitWorkTree, ...env } = process.env
   const result = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel'], {
     cwd,
+    env,
     stdout: 'pipe',
     stderr: 'pipe',
   })
