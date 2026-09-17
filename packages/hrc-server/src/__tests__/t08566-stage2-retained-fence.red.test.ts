@@ -40,9 +40,9 @@ describe('T-08566 retained projection fence', () => {
     fixture.db.sessions.setContinuationReuseDisabled(HOST_SESSION_ID, true, ts(71))
     fixture.db.runtimes.update(RUNTIME_ID, {
       status: 'terminated',
-      activeRunId: undefined,
-      activeInvocationId: undefined,
-      activeOperationId: undefined,
+      activeRunId: null as never,
+      activeInvocationId: null as never,
+      activeOperationId: null as never,
       updatedAt: ts(80),
     })
     fixture.db.runs.update(RUN_ID, {
@@ -52,18 +52,20 @@ describe('T-08566 retained projection fence', () => {
       errorMessage: 'operator terminated',
       updatedAt: ts(80),
     })
+    const terminatedRuntime = fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)
+    expect(terminatedRuntime).toMatchObject({
+      status: 'terminated',
+      activeRunId: undefined,
+      activeInvocationId: undefined,
+      activeOperationId: undefined,
+    })
     const mapper = new BrokerEventMapper({ db: fixture.db, now: () => ts(90) })
     const applyRetained = (mapper as unknown as { applyRetained?: (value: unknown) => unknown })
       .applyRetained
     expect(typeof applyRetained).toBe('function')
     for (const envelope of headlessSequence()) applyRetained!.call(mapper, envelope)
 
-    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
-      status: 'terminated',
-      activeRunId: undefined,
-      activeInvocationId: undefined,
-      activeOperationId: undefined,
-    })
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)).toEqual(terminatedRuntime)
     expect(fixture.db.runs.getByRunId(RUN_ID)).toMatchObject({
       status: 'failed',
       startedAt: ts(70),
