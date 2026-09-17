@@ -174,6 +174,12 @@ describe('T-08576 app-session store scope', () => {
   it('R-S3 does not serve or facet app rows while retaining their projection', () => {
     seedSession(APP_HOST, APP_SCOPE, APP_LANE)
     seedSession('hsid-agent', 'agent:smokey:project:hrc-runtime', 'main')
+    db.continuities.upsert({
+      scopeRef: 'agent:smokey:project:hrc-runtime',
+      laneRef: 'main',
+      activeHostSessionId: 'hsid-agent',
+      updatedAt: NOW,
+    })
     db.sqlite.run(
       `INSERT INTO continuities
          (scope_ref, lane_ref, active_host_session_id, updated_at)
@@ -181,19 +187,30 @@ describe('T-08576 app-session store scope', () => {
       [APP_SCOPE, APP_LANE, APP_HOST, NOW]
     )
 
-    expect(
-      db.sqlite
+    expect({
+      appProjection: db.sqlite
         .query<{ count: number }, []>(
           "SELECT COUNT(*) AS count FROM session_index WHERE scope_ref LIKE 'app:%'"
         )
-        .get()?.count
-    ).toBe(1)
+        .get()?.count,
+      agentProjection: db.sqlite
+        .query<{ count: number }, [string]>(
+          'SELECT COUNT(*) AS count FROM session_index WHERE host_session_id = ?'
+        )
+        .get('hsid-agent')?.count,
+    }).toEqual({ appProjection: 1, agentProjection: 1 })
 
     const page = db.sessionIndex.listPage({ limit: 20 })
     const facets = db.sessionIndex.facets()
-    expect(page.items.map((item) => item.scopeRef)).toEqual(['agent:smokey:project:hrc-runtime'])
-    expect(facets.total).toBe(1)
-    expect(facets.byAgentId).toEqual({ smokey: 1 })
+    expect({
+      items: page.items.map((item) => item.scopeRef),
+      total: facets.total,
+      byAgentId: facets.byAgentId,
+    }).toEqual({
+      items: ['agent:smokey:project:hrc-runtime'],
+      total: 1,
+      byAgentId: { smokey: 1 },
+    })
   })
 })
 

@@ -83,23 +83,31 @@ function makeServer(launch: 'succeed' | 'reject' = 'succeed') {
   return { instance, launchHosts }
 }
 
-function captureFailure(error: unknown): { name: string; code?: string } {
-  const value = error as { constructor?: { name?: string }; code?: string }
+function captureFailure(
+  error: unknown,
+  includeMessage = false
+): { name: string; code?: string; message?: string } {
+  const value = error as { name?: string; code?: string; message?: string }
   return {
-    name: value.constructor?.name ?? String(error),
+    name: value.name ?? String(error),
     ...(value.code === undefined ? {} : { code: value.code }),
+    ...(!includeMessage || value.message === undefined ? {} : { message: value.message }),
   }
 }
 
 async function callEnsure(
   instance: HrcServerInstanceForHandlers,
-  request: EnsureAppSessionRequest
-): Promise<{ response?: Record<string, unknown>; error?: { name: string; code?: string } }> {
+  request: EnsureAppSessionRequest,
+  includeFailureMessage = false
+): Promise<{
+  response?: Record<string, unknown>
+  error?: { name: string; code?: string; message?: string }
+}> {
   try {
     const response = await ensureAppSessionFromBody.call(instance, request)
     return { response: (await response.json()) as Record<string, unknown> }
   } catch (error) {
-    return { error: captureFailure(error) }
+    return { error: captureFailure(error, includeFailureMessage) }
   }
 }
 
@@ -163,12 +171,21 @@ describe('T-08576 atomic app identity creation', () => {
     `)
     const before = counts()
 
-    const result = await callEnsure(instance, commandRequest('rollback'))
+    const result = await callEnsure(instance, commandRequest('rollback'), true)
 
-    expect(result.error?.name).toBe('SQLiteError')
-    expect(changedCounts(before)).toEqual({})
-    expect(rawContinuity('app:t08576', 'rollback')).toBe('hsid-prior')
-    expect(launchHosts).toEqual([])
+    expect({
+      errorName: result.error?.name,
+      injectedFailure: result.error?.message?.includes('t08576 injected') ?? false,
+      changes: changedCounts(before),
+      continuity: rawContinuity('app:t08576', 'rollback'),
+      launchHosts,
+    }).toEqual({
+      errorName: 'SQLiteError',
+      injectedFailure: true,
+      changes: {},
+      continuity: 'hsid-prior',
+      launchHosts: [],
+    })
   })
 
   it('R-C3 commits session, continuity, managed row and created event as one identity', async () => {

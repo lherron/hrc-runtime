@@ -129,6 +129,21 @@ function seedSession(hostSessionId: string, scopeRef: string, laneRef: string): 
       updatedAt: '2026-09-17T06:45:00.000Z',
       ancestorScopeRefs: [],
     })
+    db.runtimes.insert({
+      runtimeId: `rt-${hostSessionId}`,
+      hostSessionId,
+      scopeRef,
+      laneRef,
+      generation: 1,
+      transport: 'headless',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      supportsInflightInput: true,
+      adopted: false,
+      createdAt: '2026-09-17T06:45:00.000Z',
+      updatedAt: '2026-09-17T06:45:00.000Z',
+    })
   } finally {
     db.close()
   }
@@ -139,6 +154,18 @@ describe('T-08576 monitor show app session', () => {
     server = await createHrcServer(options())
     const hostSessionId = `hsid-${randomUUID()}`
     seedSession(hostSessionId, 'app:t08576', 'assistant')
+
+    const seeded = openHrcDatabase(dbPath)
+    try {
+      expect(seeded.runtimes.getByRuntimeId(`rt-${hostSessionId}`)).toMatchObject({
+        hostSessionId,
+        scopeRef: 'app:t08576',
+        laneRef: 'assistant',
+        generation: 1,
+      })
+    } finally {
+      seeded.close()
+    }
 
     const result = await runCli(['monitor', 'show', `host:${hostSessionId}`, '--json'])
 
