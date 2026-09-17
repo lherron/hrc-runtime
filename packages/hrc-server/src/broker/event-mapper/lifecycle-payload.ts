@@ -18,7 +18,12 @@ import type {
   UserMessagePayload,
 } from 'spaces-harness-broker-protocol'
 
-import { appendHrcEvent, createUserPromptPayload } from '../../hrc-event-helper'
+import {
+  type AppendHrcEventParams,
+  appendHrcEvent,
+  categoryForEventKind,
+  createUserPromptPayload,
+} from '../../hrc-event-helper'
 import {
   BROKER_TO_HRC_KIND,
   type ProjectionContext,
@@ -38,8 +43,8 @@ export function emitLifecycleEvent(
   now: string
 ): HrcLifecycleEvent | undefined {
   if (shouldSurfaceDiagnostic(envelope)) {
-    return appendHrcEvent(db, 'broker.diagnostic', {
-      ts: now,
+    return appendProjectedEvent(db, ctx, 'broker.diagnostic', {
+      ts: projectedEventTime(envelope, ctx, now),
       hostSessionId: ctx.hostSessionId,
       scopeRef: ctx.scopeRef,
       laneRef: ctx.laneRef,
@@ -61,8 +66,8 @@ export function emitLifecycleEvent(
   if (eventKind === 'turn.accepted' && hasDurableTurnAcceptance(db, ctx)) {
     return undefined
   }
-  return appendHrcEvent(db, eventKind, {
-    ts: now,
+  return appendProjectedEvent(db, ctx, eventKind, {
+    ts: projectedEventTime(envelope, ctx, now),
     hostSessionId: ctx.hostSessionId,
     scopeRef: ctx.scopeRef,
     laneRef: ctx.laneRef,
@@ -71,6 +76,50 @@ export function emitLifecycleEvent(
     ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
     transport: ctx.transport,
     payload: lifecyclePayload(envelope, ctx.transport),
+  })
+}
+
+/**
+ * T-08566 — a retained row keeps the broker envelope's original time, so any
+ * time-bounded reader sees history where it happened, not at recovery time.
+ */
+export function projectedEventTime(
+  envelope: InvocationEventEnvelope,
+  ctx: ProjectionContext,
+  now: string
+): string {
+  return ctx.evidenceOrigin !== undefined ? (envelope.time ?? now) : now
+}
+
+/**
+ * Append one canonical row for this projection. Live projection is unchanged;
+ * retained projection records the durable `evidence_origin` (never `replayed`).
+ */
+export function appendProjectedEvent(
+  db: HrcDatabase,
+  ctx: ProjectionContext,
+  eventKind: string,
+  params: AppendHrcEventParams
+): HrcLifecycleEvent {
+  if (ctx.evidenceOrigin === undefined) return appendHrcEvent(db, eventKind, params)
+  return db.hrcEvents.append({
+    ts: params.ts,
+    hostSessionId: params.hostSessionId,
+    scopeRef: params.scopeRef,
+    laneRef: params.laneRef,
+    generation: params.generation,
+    runtimeId: params.runtimeId,
+    runId: params.runId,
+    launchId: params.launchId,
+    appId: params.appId,
+    appSessionKey: params.appSessionKey,
+    category: categoryForEventKind(eventKind),
+    eventKind,
+    transport: params.transport,
+    errorCode: params.errorCode,
+    replayed: false,
+    evidenceOrigin: ctx.evidenceOrigin,
+    payload: params.payload ?? {},
   })
 }
 

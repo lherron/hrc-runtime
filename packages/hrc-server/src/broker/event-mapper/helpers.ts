@@ -132,6 +132,13 @@ export type ProjectionContext = {
   transport: HrcLifecycleTransport
   operationId: string
   runId: string | undefined
+  /**
+   * T-08566 — `'retained'` when projecting evidence recovered offline from a dead
+   * worker's retained ledger. Canonical rows then carry that durable origin and
+   * the broker envelope's original time, and every runtime-, session- and
+   * control-level writer is fenced (see BrokerEventMapper.applyRetained).
+   */
+  evidenceOrigin?: 'retained' | undefined
 }
 
 export type RuntimeRecord = NonNullable<ReturnType<HrcDatabase['runtimes']['getByRuntimeId']>>

@@ -73,6 +73,18 @@ export function notifyEvent(
   for (const subscriber of this.followSubscribers) {
     subscriber(event)
   }
+  // T-08566 — a retained-origin row is observable history, never current-run
+  // authority: it reaches follow subscribers only. Any non-null origin is
+  // non-actuating (ACP bridge, session project events, kicker, headless input
+  // drain and semantic response finalization are all skipped).
+  if ('hrcSeq' in event && event.evidenceOrigin != null) return
+  // T-08566 O2: a runtime just recorded terminal gets one background attempt.
+  if ('hrcSeq' in event && event.eventKind === 'runtime.terminated' && event.runtimeId) {
+    const runtime = this.db?.runtimes.getByRuntimeId(event.runtimeId)
+    if (runtime?.controllerKind === 'harness-broker') {
+      this.scheduleRetainedEvidenceRecovery?.(event.runtimeId)
+    }
+  }
   // T-07236 — HRC→ACP reason-coded event bridge. Same observer discipline as
   // the notification fan-out above and one step further: emission is detached, so
   // the bridge cannot delay, fail, or otherwise reach the write that produced

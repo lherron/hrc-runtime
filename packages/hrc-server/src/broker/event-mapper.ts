@@ -191,6 +191,11 @@ export class BrokerEventMapper {
    * projection can interleave.
    */
   private pendingLateStartEvents: HrcLifecycleEvent[] = []
+  /**
+   * T-08566 — true only inside {@link applyRetained}'s synchronous transaction.
+   * Same instance-state safety argument as `pendingLateStartEvents`.
+   */
+  private retainedProjection = false
 
   constructor(deps: BrokerEventMapperDeps) {
     this.db = deps.db
@@ -211,6 +216,64 @@ export class BrokerEventMapper {
       const result = run()
       if (!result.idempotent) this.logBlockedUnknownCaptureWarning(envelope)
       return result
+    } catch (error) {
+      this.nextBufferChunkSeqByRunId.clear()
+      for (const [runId, nextChunkSeq] of chunkSeqSnapshot) {
+        this.nextBufferChunkSeqByRunId.set(runId, nextChunkSeq)
+      }
+      throw error
+    }
+  }
+
+  /**
+   * T-08566 — project one committed envelope recovered offline from a dead
+   * worker's retained ledger, under the retained-evidence fence.
+   *
+   * Same transaction, idempotence, mirror, conflict check and contiguous cursor
+   * as {@link apply}, plus exactly these kept effects: the mirror row and the
+   * canonical lifecycle row both carry `evidence_origin = 'retained'` (the
+   * lifecycle row at the envelope's original time); provider-transcript
+   * artifacts; the runtime buffer of the envelope's own historical run;
+   * absorbed-auxiliary settlement against exact historical owners; terminal
+   * invocation state for that invocation; run terminals only where the run has
+   * no recorded terminal; permission audit as stale.
+   *
+   * Everything else is fenced by construction (an allowlist, not per-writer
+   * suppression): no runtime status/active run/invocation/operation/policy/
+   * continuation/activity write, no session continuation or reuse write, no run
+   * non-terminal transition, no first-turn supervision, no surface binding, no
+   * derived awaiting-input rows. The caller performs no controller effects.
+   *
+   * Every committed envelope — including an intentionally non-mirrored delta —
+   * also records `broker_invocations.retained_projected_through_seq` inside the
+   * same transaction, the durable fact that fences all later live attach.
+   */
+  applyRetained(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    const chunkSeqSnapshot = new Map(this.nextBufferChunkSeqByRunId)
+    const run = this.db.sqlite.transaction(() => {
+      this.retainedProjection = true
+      try {
+        const result = this.project(envelope)
+        if (!result.idempotent) {
+          const invocation = this.db.brokerInvocations.getByInvocationId(envelope.invocationId)
+          this.db.brokerInvocations.update(envelope.invocationId, {
+            retainedProjectedThroughSeq: Math.max(
+              invocation?.retainedProjectedThroughSeq ?? 0,
+              envelope.seq
+            ),
+          })
+        }
+        return result
+      } finally {
+        this.retainedProjection = false
+      }
+    })
+    try {
+      // Reserve the WAL writer first (BEGIN IMMEDIATE): recovery commits while
+      // other connections read and write the same store, and a deferred
+      // read-then-write transaction fails its upgrade with SQLITE_BUSY instead of
+      // waiting out busy_timeout. Same reasoning as the lifecycle append.
+      return run.immediate()
     } catch (error) {
       this.nextBufferChunkSeqByRunId.clear()
       for (const [runId, nextChunkSeq] of chunkSeqSnapshot) {
@@ -413,6 +476,7 @@ export class BrokerEventMapper {
       transport: lifecycleTransportFromRuntime(runtime.transport),
       operationId: invocation.operationId,
       runId: resolvedRunId,
+      ...(this.retainedProjection ? { evidenceOrigin: 'retained' as const } : {}),
     }
     const persistedEnvelope = this.envelopeWithWriteTimeRepairCorrelation(envelope, ctx.runId)
     const projectionEnvelopeHash = `sha256:${createHash('sha256')
@@ -449,6 +513,7 @@ export class BrokerEventMapper {
             ? { turnAttempt: persistedEnvelope.turnAttempt }
             : {}),
           payload: persistedEnvelope.payload,
+          ...(ctx.evidenceOrigin !== undefined ? { evidenceOrigin: ctx.evidenceOrigin } : {}),
           // T-05078: persist the FULL envelope verbatim as the wire authority for the
           // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
           // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
@@ -619,7 +684,11 @@ export class BrokerEventMapper {
     const stale =
       participantFenced || this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
     this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
-    this.projectState(persistedEnvelope, ctx, now, stale, participantFenced, derivedDescriptors)
+    if (ctx.evidenceOrigin !== undefined) {
+      this.projectRetainedState(persistedEnvelope, ctx, now, stale || participantFenced)
+    } else {
+      this.projectState(persistedEnvelope, ctx, now, stale, participantFenced, derivedDescriptors)
+    }
     // A retryable invocation failure is attempt-level evidence. Keep it in the
     // broker ledger for diagnostics/replay, but do not publish a canonical
     // invocation terminal while the harness has explicitly promised to retry.
@@ -884,6 +953,9 @@ export class BrokerEventMapper {
     // keeps the conservative undefined default that protects T-04238.
     const priorInput = this.findPriorInputAccepted(envelope.invocationId, envelope.seq)
     if (priorInput) {
+      // T-08566: the no-bracket rule infers ownership from the CURRENT runtime
+      // owner, which retained history must never borrow.
+      if (this.retainedProjection) return undefined
       return this.resolveNoBracketOwner(envelope, priorInput, invocation, runtime)
     }
     const fencedInput = this.findPriorFencedInputAccepted(envelope.invocationId, envelope.seq)
@@ -1239,6 +1311,151 @@ export class BrokerEventMapper {
         return
       }
     }
+  }
+
+  /**
+   * T-08566 — the retained-evidence fence's complete state projection (an
+   * allowlist). Anything not handled here writes nothing; see applyRetained.
+   */
+  private projectRetainedState(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    stale: boolean
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    switch (envelope.type) {
+      case 'invocation.exited': {
+        const payload = envelope.payload as InvocationExitedPayload
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'exited',
+          lifecycleTerminalReason: payload.reason ?? 'process-exit',
+          updatedAt: now,
+        })
+        return
+      }
+      case 'invocation.failed': {
+        if (isRetryableInvocationFailure(envelope)) return
+        const payload = envelope.payload as InvocationFailedPayload
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'failed',
+          lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',
+          updatedAt: now,
+        })
+        return
+      }
+      case 'invocation.disposed': {
+        const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+        failUnresolvedAbsorbedAuxiliaries(db, ctx.runtimeId, String(invocationId), now)
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'disposed',
+          ...(invocation?.lifecycleTerminalReason === undefined
+            ? { lifecycleTerminalReason: 'disposed' }
+            : {}),
+          updatedAt: now,
+        })
+        return
+      }
+      case 'permission.resolved':
+        auditPermissionResolved(db, envelope, ctx, now, true)
+        return
+      case 'permission.cancelled':
+        auditPermissionCancelled(db, envelope, ctx, now, true)
+        return
+    }
+    if (stale) return
+
+    switch (envelope.type) {
+      case 'submission.executed':
+      case 'turn.attributed': {
+        const ownerRunId = resolveExactTurnOwner(db, envelope)
+        if (ownerRunId !== undefined) settlePriorAbsorbedAuxiliaries(db, envelope, ownerRunId, now)
+        return
+      }
+      case 'submission.absorbed': {
+        const ownerRunId = resolveExactTurnOwner(db, envelope)
+        if (ownerRunId !== undefined) settleAbsorbedAuxiliary(db, envelope, ownerRunId, now)
+        return
+      }
+      case 'submission.rejected':
+      case 'submission.expired':
+      case 'submission.cancelled':
+      case 'submission.lost':
+      case 'turn.completed':
+      case 'turn.failed':
+      case 'turn.interrupted': {
+        this.projectRetainedRunTerminal(envelope, ctx, now)
+        return
+      }
+      case 'assistant.message.completed':
+      case 'assistant.message.delta':
+      case 'assistant.message.started':
+        this.projectMessage(envelope, ctx, now)
+        return
+    }
+  }
+
+  /** A retained terminal settles only a run that has no recorded terminal. */
+  private projectRetainedRunTerminal(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const { runId } = ctx
+    if (runId === undefined) return
+    const occurredAt = envelope.time ?? now
+    const run = this.db.runs.getByRunId(runId)
+    if (run !== null && run.completedAt === undefined) {
+      const payload = envelope.payload as {
+        reason?: string | undefined
+        message?: string | undefined
+      }
+      switch (envelope.type) {
+        case 'turn.completed':
+          this.db.runs.markCompleted(runId, {
+            status: 'completed',
+            completedAt: occurredAt,
+            updatedAt: now,
+          })
+          break
+        case 'turn.failed':
+          this.db.runs.markCompleted(runId, {
+            status: 'failed',
+            completedAt: occurredAt,
+            updatedAt: now,
+            ...(payload.message !== undefined ? { errorMessage: payload.message } : {}),
+          })
+          break
+        case 'turn.interrupted':
+        case 'submission.cancelled':
+          this.db.runs.markCompleted(runId, {
+            status: 'cancelled',
+            completedAt: occurredAt,
+            updatedAt: now,
+          })
+          break
+        case 'submission.lost':
+          this.db.runs.markCompleted(runId, {
+            status: 'failed',
+            completedAt: occurredAt,
+            updatedAt: now,
+            errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+            errorMessage: payload.reason ?? 'turn-correlation-lost',
+          })
+          break
+        default:
+          this.db.runs.markCompleted(runId, {
+            status: 'failed',
+            completedAt: occurredAt,
+            updatedAt: now,
+            ...(payload.reason !== undefined ? { errorMessage: payload.reason } : {}),
+          })
+      }
+    }
+    if (envelope.type.startsWith('turn.')) this.nextBufferChunkSeqByRunId.delete(runId)
   }
 
   // ── Invocation lifecycle -> runtime linkage + invocation state ──────────
