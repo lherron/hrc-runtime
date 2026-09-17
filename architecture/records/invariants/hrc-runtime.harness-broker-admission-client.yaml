@@ -59,6 +59,7 @@ predicate: >
   Each hold/preempt request remains an immediate isolated admission decision.
 authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, and wrkq:T-08098 companion design
 source:
+  - wrkq:T-08562
   - wrkq:T-07843
   - wrkq:T-08092
   - wrkq:T-08093
@@ -78,6 +79,7 @@ source:
   - packages/hrc-mail-kicker/src/drive/target-driver.ts
   - packages/hrc-server/src/broker/controller.ts
 required_tests:
+  - T-08562 launch-primed cold summons, cold invoke and cold enqueue on an aspd-prepared claude-code-tmux birth keep the T-07920, T-08004, T-08012 and T-08531 launch-turn, receipt and rendezvous facts
   - the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four
   - steer signatures cannot express wait obligation or own-response semantics
   - legacy whenBusy fields and implicit steer-else-queue composition are absent after adoption

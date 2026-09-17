@@ -39,13 +39,23 @@ predicate: >
   run only from the frozen executionRelease, with no fallback. Interactive
   births of other broker drivers (claude-code-tmux, pi-tui-tmux,
   codex-cli-tmux), hosted participant brokers, and the Codex Desktop observer
-  broker remain resolver-governed. The migrated broker-plan preview is an aspd
+  broker remain resolver-governed [superseded by the T-08562 amendment below].
+  As amended for every supported broker birth, every new interactive
+  claude-code-tmux and pi-tui-tmux birth on a configured node is likewise
+  aspd-prepared and not governed by the resolver: its worker, hook bridge and
+  tmux launch runner run only from the frozen executionRelease, with no
+  fallback. On a configured node the resolver still governs only the
+  non-interactive pi-sdk broker (harness-broker-pi), the deprecated
+  codex-cli-tmux interactive driver, hosted participant brokers, the Codex
+  Desktop observer broker, and the legacy stdio test seam; with HRC_ASPD_SOCKET
+  unset it governs every broker route as before. The migrated broker-plan preview is an aspd
   observation and spawns no HRC-owned aspc-facade child through this resolver;
   after the direct preview branch migrates, it also observes
   prepareProcessInvocation through aspd. Neither preview branch falls back to a
   resolver-selected compiler.
-authority: wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+authority: wrkq:T-08562 every supported broker birth amendment (mable acceptance EN-13464, dependency wording Astra EN-13470; Daedalus approval pending), 2026-09-17; wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
+  - wrkq:T-08562
   - wrkq:T-08564
   - wrkq:T-08560
   - wrkq:T-08556
@@ -67,6 +77,7 @@ source:
   - packages/hrc-server/src/broker/capabilities.ts
 required_tests:
   - just architecture-records
+  - T-08562 configured claude-code-tmux and pi-tui-tmux births launch worker and helpers from the frozen executionRelease with no resolver consultation, while pi-sdk, codex-cli-tmux and an unset endpoint keep resolver selection.
   - T-08542 configured aspd route bypasses every override root bundled PATH current and source resolver while all other routes retain the existing precedence and status projection
   - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload, and, with HRC_ASPD_SOCKET unset, node-default tmux-tui with no request choice keeps the resolver-governed facade route
   - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation while an unset endpoint keeps the facade for every presentation
@@ -77,7 +88,7 @@ required_tests:
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates
   - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
-last_verified: 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
+last_verified: 2026-09-17 T-08562 amendment accepted by mable EN-13464; Daedalus approval and implementation pending; 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
 reopen_when: A node-default presentation's route selection, an ASP child spawn or preview site, aspd-prepared or observation route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
 supersedes: []
 superseded_by: []

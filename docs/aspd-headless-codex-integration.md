@@ -78,7 +78,35 @@ The Claude, Pi and deprecated `codex-cli-tmux` interactive drivers, hosted
 participant brokers and the Codex Desktop observer are not moved. Where §1, §1.3,
 §1.4, §8, §9 or §10.4 say that a door other than the attached run keeps the
 facade, or that the interactive route is attached-run only, §1.5 supersedes that
-sentence.
+sentence. [T-08562: Claude and Pi TUI births move, §1.6.]
+
+Amendment (T-08562, every supported broker birth through aspd; campaign P-00521
+Leg B; spec accepted by mable EN-13464, dependency wording Astra EN-13470): §1.6 prepares every new `claude-code-tmux` and `pi-tui-tmux` interactive
+broker birth through aspd on a node with `HRC_ASPD_SOCKET` configured, whichever
+door requests it. It uses the chokepoint, doors, boundary P, launch, D1–D4 and
+reattach law that §1.5 established for `codex-app-server`. Each birth launches its
+worker and every ASP-owned helper (hook bridge, tmux launch runner) from one
+frozen execution release.
+
+HRC admits the prepared profile by generic hosting requirements (interactive
+tmux terminal, supported worker protocol, durable IPC, and the driver the door
+asked for). It no longer uses a driver-name list. Before launching any driver
+other than `codex-app-server` on this route, HRC requires positive hosting
+evidence: `executionRelease.worker.hostedDrivers` must contain the selected
+driver. Otherwise it refuses `aspd_worker_hosting_unproven` before any hosting
+effect.
+
+The following are unchanged:
+- `pi-sdk` stays on its non-aspd route;
+- the deprecated `codex-cli-tmux` keeps its current path;
+- the hosted participant broker, the Codex Desktop observer, app-session direct
+  launch, configuration/inspection and evidence are other tasks.
+
+No flag, value, endpoint, ASPC verb or wire field is added, and there is no ASP
+change. The route value, presentation value and refusal reason are
+HRC-internal. Where §1, §1.4, §1.5, §4, §5, §8, §9 or §10.5 say the aspd route is
+Codex-only, that Claude or Pi births keep the facade, or that they stay
+resolver-governed, §1.6 supersedes that sentence.
 
 ## 1. Route and configuration
 
@@ -91,7 +119,9 @@ otherwise the node default `HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`. As
 amended by T-08555 (§1.3), a node-default `tmux-tui` IS on this route; before it,
 it was not. Nothing else changes route. [T-08556 §1.4 and T-08560 §1.5 add the
 interactive `codex-app-server` TUI route, `interactive-codex-tui`: first for the
-attached-run door, then for every birth door.]
+attached-run door, then for every birth door. T-08562 §1.6 adds the non-Codex
+interactive route, `interactive-tmux-broker`, for `claude-code-tmux` and
+`pi-tui-tmux` births.]
 
 ### 1.1 Per-request operator presentation (T-08553)
 
@@ -169,7 +199,9 @@ Every other route (interactive tmux, the node-default codex `tmux-tui` viewer
 route — only an explicit §1.2 request moves a viewer onto aspd [superseded by
 §1.3: node-default `tmux-tui` is on aspd when configured] — pi-sdk,
 participant registration/establishment, previews, catalog/inspection) is
-untouched and keeps its facade/toolchain selection.
+untouched and keeps its facade/toolchain selection. [T-08560/T-08562: interactive
+Codex, Claude and Pi TUI births are on aspd when configured, §1.5 and §1.6;
+pi-sdk and participants stay.]
 
 **No fallback.** On this route with the endpoint configured, aspd
 unavailability, protocol/capability incompatibility, an unidentified service
@@ -712,7 +744,9 @@ with:
   `attached-run` | `interactive-birth`, §1.5.1].
 
 Admission requires the selected profile to be `codex-app-server` with
-`interactionMode: interactive` and the tmux broker terminal. Anything else is
+`interactionMode: interactive` and the tmux broker terminal [T-08562: on the Codex
+route; the non-Codex interactive route admits by hosting requirements plus hosting
+evidence, §1.6.3]. Anything else is
 refused `aspd_route_profile_mismatch`. The durable interactive route is
 required: with `HRC_BROKER_DURABLE_IPC_ENABLED` resolving off, the door refuses
 `aspd_route_requires_durable_ipc` before preparation. The stdio route spawns a
@@ -789,7 +823,8 @@ tmux client detach and leaves the app-server, TUI and worker running. Warm
 `hrc run`/`hrc attach` on an aspd interactive runtime is rule 2 reuse. Daemon
 restart reattaches it with the release hello check. aspd is never contacted on
 any of these paths, so aspd activation or outage affects only new attached-run
-births [T-08560: only new Codex births, by any door, §1.5].
+births [T-08560: only new Codex births, by any door, §1.5; T-08562: and every new
+`claude-code-tmux` and `pi-tui-tmux` birth, §1.6.10].
 
 **Persistence and readback.** Applied intent: the interactive intent, as today.
 Operation `preparation_json.route: 'interactive-codex-tui'`. Runtime
@@ -887,7 +922,8 @@ the launch fails `launch_description_mismatch`.
    `effectiveTurnIntent`.
 4. For `codex-app-server` the compiler carries the prompt as
    `startRequest.initialInput`, whose `inputId` is HRC's allocated
-   `initialInputId` (admission `compile-profile-selector.ts:200-215`).
+   `initialInputId` (admission `compile-profile-selector.ts:200-215`). [T-08562:
+   launch-argv drivers carry it in `spec.launch.initialPrompt` and argv, §1.6.6.]
 5. After compile admission and the route check, before `controller.start`, the
    chokepoint reports `onColdBirthPromptRoute(isInteractiveTmuxBrokerProfile(profile))`
    (`:1536-1538`).
@@ -929,7 +965,8 @@ not `coldBirthPrompt`, not the redirect control.
   `aspdInteractiveCodexEndpoint({ allowedBrokerDriver }, env)`.
 - With the socket unset, or for any other driver (`claude-code-tmux`,
   `pi-tui-tmux`, `codex-cli-tmux`), the chokepoint keeps today's facade code path
-  byte for byte, including Guard 1's compile-only intent.
+  byte for byte, including Guard 1's compile-only intent. [T-08562: of the other
+  drivers only `codex-cli-tmux` keeps it, §1.6.2.]
 
 **Door class, recorded.** The frozen route decision's `door` (today the constant
 `'attached-run'`, `aspd-headless-start.ts:442`) becomes one of two values:
@@ -1298,7 +1335,8 @@ aspd like every other door. Leg A does not register them, for three reasons:
   is `'interactive-birth'` for non-attached doors, and `launchCarriedPrompt` is
   added where D1 applies.
 - Not moved:
-  - the Claude, Pi and `codex-cli-tmux` interactive drivers (Leg B, after P1);
+  - the Claude, Pi and `codex-cli-tmux` interactive drivers (Leg B, after P1)
+    [T-08562: Claude and Pi moved, §1.6; `codex-cli-tmux` stays];
   - the hosted participant broker (M7);
   - the Codex Desktop observer (M18: Leg B / T-08567, U12 pending).
 
@@ -1322,6 +1360,547 @@ for byte today's behavior. The redirect control is not consulted.
   return to the facade. Runtimes born on the aspd route stay live and reattach
   under the prior release, whose §6 hello check is door-agnostic.
 - No plist change and no aspd release change.
+
+### 1.6 Every supported broker birth through aspd (T-08562)
+
+Source references are `packages/hrc-server/src` at `8ad4fa7c` unless another
+package is named. Every cited file is unchanged at `f5cee301` except `index.ts`,
+whose cited line is given at `f5cee301`.
+
+**Intended behavior.** On a node with `HRC_ASPD_SOCKET` configured (max3), a new
+Claude Code or Pi TUI broker birth is the runtime it is today:
+- a `claude-code-tmux` or `pi-tui-tmux` worker on the durable interactive tmux
+  substrate;
+- the native `claude` or `pi` in the leased `tui` pane;
+- hook bridge and tmux launch runner in place.
+
+Every door that births one now prepares it through aspd, freezes it at boundary P
+and launches it only from that operation. Four things stay as they are:
+- which door selects which runtime;
+- join, reuse, reprovision and refusal decisions;
+- how each door delivers its input;
+- the interactive shape.
+
+What changes is where the worker and helpers come from, what HRC admits, and one
+hosting-evidence refusal. Codex births are unchanged byte for byte (§1.5).
+
+#### 1.6.1 Where these births enter today
+
+**Chokepoints after T-08560.**
+- **Interactive:** `startInteractiveTmuxBrokerRuntime`
+  (`broker-interactive-handlers.ts:1359`). After the participant backstop (`:1378`)
+  and actuator-split preparation (`:1379`), it asks
+  `aspdInteractiveCodexEndpoint({ allowedBrokerDriver })` (`:1386-1388`), which
+  returns the endpoint only for `codex-app-server`
+  (`aspd-headless-start.ts:208-214`). The aspd branch is
+  `startAspdInteractiveBrokerRuntime` (`:1729`). Every other driver falls through
+  to the facade:
+  - compile-only intent `:1412-1420`;
+  - `startAspcFacadeBrokerClient` `:1421`;
+  - `compileBrokerRuntimePlan` `:1424`;
+  - route check `:1517-1535`;
+  - `onColdBirthPromptRoute` `:1536-1538`;
+  - `controller.start` without `aspdExecution` `:1554`.
+- **Headless:** `startHeadlessBrokerRuntime` (`broker-headless-handlers.ts:555`),
+  aspd only via `aspdHeadlessCodexEndpoint` (`:576`,
+  `aspd-headless-start.ts:222-229`, Codex headless only). Anthropic headless broker
+  births are structurally impossible (T-08558 M3). An anthropic headless dispatch
+  is redirected into a `claude-code-tmux` INTERACTIVE birth
+  (`turn-dispatch-handlers.ts:1835-1838`, `shouldRedirectClaudeToInteractiveBroker`
+  `broker-decisions.ts:687-710`). Leg B therefore needs no headless change for
+  Claude.
+- **Worker selection:** `allocateBrokerSubstrate`
+  (`broker-interactive-handlers/substrate-allocator.ts:204`):
+  `workerLaunch?.executable ?? resolveBrokerBinary(driverKind)`.
+  `resolveBrokerBinary` (`:183-185`) goes to `resolveAspToolchainBinary(
+  brokerDriverToolchainKind(driverKind))` (`asp-toolchain.ts:80-116`), which
+  applies override, then `HRC_ASP_TOOLCHAIN_ROOT`, then bundled.
+
+**Live population (read-only, `state.sqlite`, runtimes created since
+2026-09-16):**
+
+| Driver | Runtimes | With `executionRelease` |
+|---|---|---|
+| `claude-code-tmux` | 65 | 0 (all resolver-born) |
+| `codex-app-server` tmux | 60 | 10 |
+| headless | 36 | 32 |
+
+This seat (`rt-16bced09`, Claude) runs `bun
+/Users/lherron/praesidium/agent-spaces/harness/harness-broker/src/runtime/tmux-launch-runner.ts
+--launch-file …` from the shared checkout (via `HRC_ASP_TOOLCHAIN_ROOT=~/.bun/bin`,
+T-08558 §0). Its op row has `preparation_json` NULL.
+
+**Driver-keyed facts on the aspd path today (what Leg B generalizes):**
+1. `ASPD_BROKER_DRIVER = 'codex-app-server'` (`aspd-headless-start.ts:94`), used by:
+   - the interactive endpoint predicate (`:212`);
+   - profile admission `routeMatches` (`:370-378`), refused
+     `aspd_route_profile_mismatch` at `:379-392`;
+   - `hosting.driverKind` (`:125`, `:498`);
+   - hosting path derivation `describeAspdHostingPaths` (`:175`, `:179`).
+     `describeBrokerSubstratePaths` keys the btmux socket and session name on the
+     driver (`substrate-allocator.ts:137-153`; live example
+     `btmux/claude-code--rt-16bced09….sock`, session
+     `hrc-claude-code-tmux-rt-16bced09…`). A Claude record frozen with Codex paths
+     would fail the allocator's frozen-argv hosting check
+     (`substrate-allocator.ts:599-625`).
+2. The frozen route and presentation pair: `route: 'interactive-codex-tui'`,
+   `hosting.presentation: 'codex-tui'` (`:99`, `:146`, `:421-431`, `:476`). Launch
+   validation accepts that pair only (`:720-737`).
+3. The controller's substrate gate: `interactive-codex-tui` must be a broker tmux
+   profile (`broker/controller/dispatch.ts:424-445`). The hello-refusal lease
+   release picks the interactive allocator by that route (`:551-557`).
+4. The D2 fence compares route only (`assertPreparedAspdAttemptRoute`
+   `aspd-headless-start.ts:588-608`; `findPreparedAspdAttemptForRetry` `:612-636`
+   returns `route` but no driver).
+5. Static selector literals:
+   `isInteractiveTmuxBrokerProfile` lists four drivers
+   (`agent-spaces-adapter/compile-profile-selector.ts:114-128`), used by
+   `isBrokerControllerProfile` (`:80-90`) on both routes.
+
+**Driver-keyed facts that are HRC door or continuation law and stay:**
+- `resolveInteractiveBrokerAdmissionDriver` (`broker-decisions.ts:479-523`) and
+  `decideInteractiveTmuxBrokerStartRoute` (`:525-557`): intent to driver, gated by
+  `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` (max3 `1`) and
+  `HRC_PI_TUI_TMUX_BROKER_ENABLED` (absent on max3; default on,
+  `option-resolvers.ts:111-117`).
+- `decideInteractiveTmuxBrokerContinuation` (`:808-861`).
+- Pi and `codex-cli-tmux` forced `waitForCompletion: false`
+  (`turn-dispatch-handlers.ts:2147-2151`, `:2182-2186`).
+- `toProfileSelector` (`agent-spaces-adapter/compile-adapter.ts:221-244`) and its
+  use as the compile request's `profileSelector` (`:471-476`). HRC keeps sending the door's driver as `profileSelector`; moving that mapping
+  is T-08563/T-08564 (mable EN-13464).
+
+#### 1.6.2 Route predicate
+
+**New predicate.** A birth reaching `startInteractiveTmuxBrokerRuntime` prepares
+through aspd iff:
+- the node declares an aspd endpoint (`configuredAspdEndpoint`); and
+- `allowedBrokerDriver` is not the deprecated `codex-cli-tmux`.
+
+This replaces `aspdInteractiveCodexEndpoint`. Nothing else enters the predicate:
+not the door, not `attachBeforeInvocationStart`, not `coldBirthPrompt`, not a
+redirect control. With the socket unset the chokepoint keeps the facade byte for
+byte.
+
+**The one named exclusion is a deprecation fence, not admission.**
+`codex-cli-tmux` keeps the facade path it has today. It has no release binding
+(T-08561 §3.1) and is not retired. No door emits it in production:
+- `resolveInteractiveBrokerAdmissionDriver` and
+  `decideInteractiveTmuxBrokerStartRoute` never return it;
+- `toProfileSelector` never selects it (T-08558 U2).
+
+So the fence is proved by a unit gate only. mable kept this fence (EN-13464).
+
+**Headless route: unchanged.** `aspdHeadlessCodexEndpoint` stays headless
+`codex-app-server` only. A non-interactive `pi-sdk` start or dispatch keeps:
+- the facade compile (`startAspcFacadeBrokerClient`);
+- the resolver's `harness-broker-pi` kind (`asp-toolchain.ts:113-116`);
+- `extractPiSdkBrokerCredentialEnv` broker env (`broker-decisions.ts:621-632`).
+
+It never reaches aspd, so a production HRC never asks aspd for a pi-sdk
+preparation.
+
+**No silent fallback.** On a configured node no `claude-code-tmux` or
+`pi-tui-tmux` birth reaches `startAspcFacadeBrokerClient`, `resolveBrokerBinary`
+or a checkout worker or helper. Every §4 preparation refusal, the new hosting
+refusal and every §5 launch refusal fail the birth. The failure reaches the
+calling door exactly as §1.5.1 states for Codex.
+
+#### 1.6.3 Generic admission and hosting evidence (before P)
+
+`prepareAspdHeadlessAttempt` (`aspd-headless-start.ts:274`) admits an interactive
+preparation as follows. The ordering around it is unchanged: compile, identity
+and hash admission (`compileBrokerRuntimePlan`), then `execution_release_missing`
+(`:357-368`).
+1. **Hosting shape (replaces `routeMatches` `:370-392`).** The selected profile
+   satisfies all of:
+   - `kind: 'harness-broker'`;
+   - `interactionMode: 'interactive'`;
+   - `brokerTerminal.host === 'tmux'`;
+   - `brokerProtocol` ∈ `ASPD_SUPPORTED_WORKER_PROTOCOLS`
+     (`agent-spaces-adapter/aspd-execution-release.ts:15`);
+   - `brokerDriver` equal to the driver the door requested (`allowedBrokerDriver`,
+     sent as the request's `profileSelector`).
+
+   This is an equality with the caller's own request, not a name list. Otherwise:
+   `aspd_route_profile_mismatch` (existing). The durable interactive route is
+   checked before preparation as today
+   (`broker-interactive-handlers.ts:1747-1763`, `aspd_route_requires_durable_ipc`).
+2. **Positive hosting evidence (new).** If `brokerDriver !== 'codex-app-server'`,
+   `response.executionRelease.worker.hostedDrivers` must be an array of strings
+   containing `brokerDriver`. Otherwise HRC refuses with code
+   `aspd_worker_hosting_unproven`:
+   - error `HrcRuntimeUnavailableError`, route `aspd`;
+   - detail `{ brokerDriver, hostedDrivers: <array> | null, executionReleaseId,
+     aspdRelease }`;
+   - before P: no op, no runtime, no lease, no tmux server.
+
+   `codex-app-server` is exempt: its release binding is already proven, so a
+   retained pre-binding release (for example `90dd7508`, active today) keeps
+   serving Codex and rollback works.
+3. The remaining admissions are unchanged:
+   - `ask_client_unsupported`;
+   - actuator-split;
+   - the broker-credential-env refusal (`:408-415`). It is pi-sdk-only by
+     construction, `broker-decisions.ts:625`.
+
+**Reading `hostedDrivers` needs no lock advance.**
+- HRC's locked `spaces-aspc-protocol` `0.1.1-dev.20260916121635` has no
+  `hostedDrivers` type.
+- Its unix client returns the JSON-RPC result untouched
+  (`node_modules/spaces-aspc-protocol/dist/unix-client.js:106-115`).
+- `prepareThroughAspd` passes `response` through
+  (`agent-spaces-adapter/aspd-preparation-client.ts:160-161`).
+
+HRC reads the optional field with a local narrow parse
+(`Array.isArray && every(string)`). A malformed value counts as absent. The field
+is then frozen for free inside `response` and `executionRelease` at P. No lock
+advance is a Leg B prerequisite. If the typed `hostedDrivers` field is present in
+HRC's lock after mable's T-08561 `pull-deps`, the implementer may read the typed
+field instead; the admission rule (absent, malformed or non-matching refuses) is
+identical either way (mable EN-13464).
+
+**At launch (§5, from persisted bytes).** `launchAspdPreparedAttempt`
+(`aspd-headless-start.ts:668`) repeats step 2 against the frozen record. A failure
+refuses `aspd_worker_hosting_unproven` post-P: the op stays `prepared` with
+`error_code`. P never commits such a record, so this is a construction fact
+checked by a hand-edited-row gate. It is not an expected runtime path.
+
+**The static selector.** `isInteractiveTmuxBrokerProfile`
+(`compile-profile-selector.ts:114-128`) drops its driver list and becomes
+interactive + admissible protocol + `brokerTerminal.host === 'tmux'`. Effects:
+- **Facade route:** a profile the facade compiler emits is still bound to the
+  door's driver by `decideInteractiveTmuxExecutionRoute`
+  (`broker-decisions.ts:560-576`, `profile.brokerDriver === allowedBrokerDriver`),
+  so what the facade admits does not change in practice.
+- **Unchanged predicates:** `isHeadlessCodexBrokerProfile` (`:92-101`) and
+  `isNonInteractivePiBrokerProfile` (`:103-112`) keep their literals. They define
+  the headless substrate's supported shapes: Codex headless, and pi-sdk preserved.
+- **Identity rule:** the interactive-tmux exemption from the initial-input
+  identity check (`:199-216`) keeps its meaning. A launch-argv-primed tmux profile
+  carries no `initialInput`.
+
+#### 1.6.4 Frozen record
+
+A non-Codex interactive preparation freezes the §1.4 record shape with these
+values:
+- `route: 'interactive-tmux-broker'`: a new HRC-internal
+  `AspdPreparationRoute` value. Codex keeps `interactive-codex-tui`.
+- `hosting.driverKind`: the admitted `brokerDriver`, `claude-code-tmux` or
+  `pi-tui-tmux`. The type widens from `typeof ASPD_BROKER_DRIVER` to the admitted
+  driver string.
+- `hosting.presentation: 'interactive-tui'`: a new HRC-internal value meaning the
+  leased `tui` pane, no observer socket.
+- `hosting.paths`: `describeBrokerSubstratePaths(options, driverKind, runtimeId)`,
+  matching what the durable interactive allocator computes.
+- `hosting.argv`: `worker.argvPrefix` + HRC hosting flags, no observer flag.
+- Route decision: identical to the Codex interactive decision
+  (`aspd-headless-start.ts:460-474`):
+  - `flag` is the door's flag env name, for example
+    `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED`;
+  - `door` is `attached-run` | `interactive-birth`;
+  - `launchCarriedPrompt: { mode }` where D1 applies;
+  - `preparation: 'aspd'`, `aspdEndpoint`, `aspdRelease`, `executionReleaseId`,
+    `aspHome`.
+- Lifecycle overlay: `interactive-broker:<brokerDriver>` (already generic, `:417-420`).
+
+**Launch validation** (`:716-737`) accepts `interactive-tmux-broker` only with:
+- `hosting.presentation === 'interactive-tui'`;
+- `hosting.driverKind === admission.profile.brokerDriver`, not `codex-app-server`;
+- `door` ∈ {`attached-run`, `interactive-birth`}.
+
+Anything else is `launch_description_mismatch`, as today. `interactive-codex-tui`
+validation is unchanged.
+
+**Controller** (`broker/controller/dispatch.ts`):
+- The substrate gate (`:424-445`) treats both interactive routes alike: an aspd
+  execution on either must be a broker tmux profile.
+- The hello-refusal lease release (`:551-557`) uses `tmuxAllocator` for both
+  interactive routes.
+- Nothing else in the controller is route- or driver-keyed.
+
+Why a new route value rather than reusing `interactive-codex-tui`:
+- retained `prepared` Codex rows must keep validating byte for byte;
+- `codex-tui` names the Codex wrapper pane, which a Claude runtime does not have;
+- the D2 fence needs to tell the two apart.
+
+#### 1.6.5 Doors
+
+The §1.5.2 door table applies unchanged in entry path, registration, joins and
+retry key. Rows that differ for Claude or Pi:
+
+| Door | Claude / Pi difference | Source |
+|---|---|---|
+| Mail kicker summons birth | Same call, `launchPromptOnColdBirth: true`, `submissionDoor: 'invoke'` (`hrc-mail-kicker/src/drive/delivery.ts:410-427`). This is the **T-07920 launch-primed** class: the summons alone rides launch argv with priming omitted, there is no broker submission, and the receipt carries no input id (`delivery.ts:438-440`; record `hrc-runtime.harness-broker-admission-client` T-07920 sentence). The warm kicker path (`:246-252`) births only when its seat vanished in between, then `append-to-priming` like a submission door | `turn-dispatch-handlers.ts:2189-2193` |
+| `POST /v1/turns`, submission doors, target/DM | **T-08004** (invoke) and **T-08531** (every submission door) cold priming: priming plus caller ride launch argv in one native turn. B4 marks the run `launchCarriedInvoke` (`broker/controller/persistence.ts:236-244`), and the event mapper binds the first input-less native bracket to it (`broker/event-mapper.ts:853-859`, `:1463-1470`). The invoke rendezvous waits for that run's terminal (`broker-interactive-handlers.ts:799-831`) | as §1.5.2 |
+| Claude redirect (dispatch of an anthropic headless or SDK-shaped intent) | Claude only. `shouldRedirectClaudeToInteractiveBroker` normalizes the intent to interactive `claude-code` before routing (`turn-dispatch-handlers.ts:1835-1838`). The birth is then an ordinary dispatch-door interactive birth with its caller's prompt class | `broker-decisions.ts:687-730` |
+| `hrc run` / `hrc resume` (attached run) | §1.4's single start authority is **Codex-only** (`isAttachedRunAspdCodexIntent`, `presentation-operator.ts:430-439`; `turn-dispatch-handlers.ts:1481`) and stays so. Claude or Pi `hrc run -p` enters the dispatch door with `attachBeforeInvocationStart` and no `submissionDoor` (`:1507-1512`): no cold prompt mode, prompt submitted once after boot by runtime identity. Without `-p` it enters the start door (`:1517-1522`). Both freeze door class `attached-run` because the attempt carries `attachBeforeInvocationStart`. Neither freezes a prompt, which keeps the §1.5.1 construction fact "an `attached-run` record never carries a launch-carried prompt" | `broker-interactive-handlers.ts:716-731`, `:870-874` |
+| Explicit start with intent-carried `initialPrompt` | Same as Codex. `waitForInteractiveBrokerRunCompletion(startRunId)` (`runtime-io-handlers.ts:641-643`); the §9 T-08560 hazard applies equally | as §1.5.2 |
+| Pi TUI, every dispatch door | `waitForCompletion` forced false (`turn-dispatch-handlers.ts:2147-2151`, `:2182-2186`) | unchanged |
+| All other rows (selector, rule 3, cold attach, ensure/app-session ensure, rotation relaunch, federation claims) | No difference. Claude and Pi use the same entry functions (`selector-message-handlers.ts:190-236`, `runtime-io-handlers.ts:604-645` via `selectInteractiveTmuxBrokerOptions` `:712-742`, `session-rotation.ts:256`/`:282`, `exact-claim.ts:162`, `roster-claim.ts:199`) | as §1.5.2 |
+
+Join, crossing and backstop law is that of the path, as in §1.5. That covers
+T-07693, T-07202, T-07397, the §1.3 recorded-birth classification and the
+participant backstop.
+
+#### 1.6.6 D1 for launch-argv drivers: prompt frozen once, delivered once
+
+**How Claude and Pi carry a cold-birth prompt today (facade), end to end:**
+1. The dispatch door picks the mode (`turn-dispatch-handlers.ts:2189-2193`).
+2. The chokepoint compiles `{ ...intent, initialPrompt: coldBirthPrompt,
+   omitPriming? }` (`broker-interactive-handlers.ts:1412-1420`).
+3. The interactive tmux compiler puts the expanded prompt in two places inside
+   `startRequest.spec`:
+   - the harness's positional prompt argument in `spec.process.args`
+     (`drivers/harness-claude/src/adapters/claude-adapter.ts:448-474`, `:617-621`);
+   - `spec.launch.initialPrompt` (`compiler/agent-spaces/src/compile-runtime-plan.ts:1729-1745`),
+     which frames the pane header.
+
+   Claude's adapter also exports `ASP_PRIMING_PROMPT` into its env
+   (`claude-adapter.ts:539-541`). Whether that reaches `lockedEnv` in a compiled
+   plan was not checked; §10.6 O4 reads the frozen record. There is **no**
+   `startRequest.initialInput` (`compile-profile-selector.ts:199-216`), so the
+   `initialInputId` identity check does not apply.
+4. After compile, profile route and admission, the chokepoint reports
+   `onColdBirthPromptRoute(isInteractiveTmuxBrokerProfile(profile))` (`:1536-1538`).
+5. At B4 the controller writes no `dispatchedInputId` (no `initialInputId`). For a
+   submission door or the kicker it sets correlation `launchCarriedInvoke`
+   (`persistence.ts:236-244`).
+6. The worker's driver writes the tmux launch file with `prompts: spec.launch`
+   (`harness/harness-broker/src/drivers/claude-code-tmux/driver.ts:1565-1600`).
+   The runner launches `claude … -- <prompt>` in the pane.
+7. `promptRodeLaunch` closes every second-delivery path in the dispatch handler
+   (`broker-interactive-handlers.ts:833-839`, `:854-868`), as for Codex.
+
+**New law (D1 applied to these drivers).** §1.5.3 applies with the prompt's frozen
+location generalized. With a `coldBirthPrompt` on this route:
+- `prepareAspdHeadlessAttempt` compiles exactly the facade's compile-only intent
+  (already implemented, `aspd-headless-start.ts:291-302`).
+- Boundary P persists the prompt only inside the frozen `admission.startRequest`
+  (and the identical `response`): in `spec.launch.initialPrompt` and the prompt
+  argument of `spec.process.args`, exactly as the facade compiles them. It
+  records `routeDecision.launchCarriedPrompt: { mode }`.
+- `record.intent`, and therefore `last_applied_intent_json`, stays prompt-free.
+- The report fires only from the committed record, after P, when the record
+  carries `launchCarriedPrompt` and `admission.profile` is an interactive tmux
+  profile (already implemented, `broker-interactive-handlers.ts:1820-1826`).
+
+Delivery is the frozen launch argv, once: the worker writes the launch file only
+while handling the one `invocation.start` the controller sends after B4. B4
+provenance is the facade's: no `dispatchedInputId`, `launchCarriedInvoke` for
+submission doors and the kicker. The T-07920 receipt carries no input id.
+
+**Why exactly once** is §1.5.3's argument with "`invocation.start` initialInput"
+read as "the launch argv that `invocation.start` realizes":
+- the prompt exists only inside one frozen operation;
+- `invocation.start` is sent at most once per operation, and never for a
+  `prepared` one;
+- the native harness starts only after `invocation.start`, when the driver writes
+  and runs its launch file (T-08556 `ev/g1-cancel` shape: realized lease, no
+  native process before start);
+- a truthful report closes the handler's second-delivery paths.
+
+**Selector (after-boot).** No mode, no frozen prompt, one identity submission
+after boot. Unchanged.
+
+**D2, D3, D4.** §1.5.4–§1.5.6 apply unchanged, plus the D2 fence extension:
+- The interactive resume branch (`broker-interactive-handlers.ts:1766-1783`)
+  launches a same-key, same-runId `prepared` op only when both the frozen `route`
+  and the frozen `hosting.driverKind` match what this retry selected.
+  `codex-app-server` selects `interactive-codex-tui`; `claude-code-tmux` and
+  `pi-tui-tmux` select `interactive-tmux-broker`.
+- A mismatch in either refuses retryable `runtime_unavailable` with reason
+  `aspd_preparation_route_changed` (detail adds `frozenDriver` and
+  `selectedDriver`). Nothing launches.
+- `findPreparedAspdAttemptForRetry` also returns `driverKind`.
+- The D4 pre-P refusal class gains `aspd_worker_hosting_unproven`. The post-P
+  class gains it too, as the construction-fact launch check.
+
+#### 1.6.7 Continuation parity
+
+- **Selection stays HRC law, per driver.** Both routes compute
+  `decideInteractiveTmuxBrokerContinuation({ allowedBrokerDriver,
+  sessionContinuation: automaticContinuationForSession(...) })` identically:
+  - facade `broker-interactive-handlers.ts:1444-1449`;
+  - aspd `:1790-1795`.
+
+  For `claude-code-tmux` it passes a stored key when the provider is `anthropic`
+  or unrecorded (`broker-decisions.ts:817-825`); the compiler emits `claude
+  --resume <uuid>`. For `pi-tui-tmux` it returns undefined (`:859-860`), so no
+  resume on either route.
+- **Where Claude's continuation lives (observed on this seat, read-only).**
+  - Key: `runtimes.continuation_json` =
+    `{"provider":"anthropic","kind":"session","key":"758c0dc8-…"}`, captured from
+    hooks.
+  - Transcript: in the native Claude config, not under ASP_HOME.
+    `CLAUDE_CONFIG_DIR` is unset in the pane env, `HOME=/Users/lherron`, and no
+    HRC or compiler source sets it (`rg CLAUDE_CONFIG_DIR` finds only
+    `drivers/harness-claude/src/claude/workspace-trust.ts:35-39`, which reads it).
+    So `--resume` reads `$HOME/.claude/projects/<cwd-slug>/<uuid>.jsonl` on both
+    routes.
+  - ASP_HOME-dependent material: the Claude bundle (plugins, settings), which lives
+    under HRC's `ASP_HOME` (`/Users/lherron/praesidium/var/spaces-repo`, plist).
+    This seat's argv is `--plugin-dir
+    …/var/spaces-repo/codex-homes/hrc-runtime_clod/bundles/.versions/<hash>/clod/claude/plugins/…`.
+    `var/spaces-repo/claude-homes/*.json` are symlinks to `~/.claude.json`.
+- **Parity rule.** Every aspd compile already sends HRC's `aspHome`
+  (`aspd-headless-start.ts:290`, `:317-322`) and records it in the route decision.
+  Claude and Pi bundles therefore materialize in the same store on both routes,
+  independent of the aspd daemon's environment. The Claude transcript store is
+  ASP_HOME-independent. A continuation minted on a facade-born Claude runtime
+  resumes on an aspd-born one and back. §10.6 leg 4 proves it installed.
+
+#### 1.6.8 Hello, release and reattach
+
+Unchanged and driver-agnostic:
+- `validateFrozenExecutionRelease` (manifest identity, executable inside release,
+  protocol);
+- the frozen argv hosting check (`substrate-allocator.ts:599-625`);
+- `workerHelloRefusal` (hello protocol and release equal the frozen release,
+  before `invocation.start`, `broker/controller/dispatch.ts:533-560`);
+- G1 never-started lease cleanup;
+- reattach release-hello verification (`:1033-1045`).
+
+None of them reads the driver name. The only additions are the hosting-evidence
+revalidation at launch (§1.6.3) and route-aware lease release (§1.6.4).
+
+HRC does not re-derive helper paths. Release-bound hook bridges, tmux launch
+runner and statusline are the producer's guarantee
+(`agent-spaces.aspd-release-worker-hosting`). HRC's acceptance observes them
+(§10.6 O3) but does not enforce them.
+
+#### 1.6.9 What the resolver still serves after Leg B
+
+On a configured node `resolveBrokerBinary` / `resolveAspToolchainBinary` still
+serves exactly these:
+
+| Remaining user | Site | Why it stays | Owner |
+|---|---|---|---|
+| `pi-sdk` headless births (`harness-broker-pi`) | `substrate-allocator.ts:204` via `brokerDriverToolchainKind` `asp-toolchain.ts:113-116`; facade compile `option-resolvers.ts:182`, `:231` | Preserved non-aspd route. The producer's pi-sdk binding is deferred (T-08561 §3.1); a new release refuses `release_worker_driver_unavailable` | Future producer task, then an HRC consumer; not assigned |
+| `codex-cli-tmux` | chokepoint facade path | Deprecated in place, no binding, no retirement; unreachable in production | none |
+| Hosted participant broker | `participant-hosting-intent.ts:152` | M7 | T-08567 |
+| Codex Desktop observer broker | controller start without `workerLaunch` (`desktop/observer-attachment.ts:372-399`, `lifecycleOwner: 'external'` at `:380`, `:393`) | M18 | T-08574 (T-08567 lists M18; T-08574 owns the Desktop observer) |
+| Legacy stdio broker seam | `broker/controller.ts:557-563` | Non-durable test and legacy seam; the aspd route refuses stdio (`aspd_route_requires_durable_ipc`) | unchanged |
+| Every route with the socket unset | all of the above plus Claude, Pi and Codex | Endpoint configuration is the only gate | Leg D (fleet), later authority |
+
+The `aspc-facade` compiler spawn (`option-resolvers.ts:182`, `:231`) remains for
+the same unconfigured and preserved routes. `hrc server status` `aspToolchain`
+keeps describing the resolver for these routes.
+
+#### 1.6.10 Operational consequence (named, not new law)
+
+On max3, aspd becomes a hard dependency for every new `claude-code-tmux` and `pi-tui-tmux` birth on a configured node (Astra EN-13470, agreed by mable).
+`codex-app-server` births were already under this dependency by §1.5. The
+dependency does NOT cover `pi-sdk`, which stays on its preserved resolver route,
+or `codex-cli-tmux`, which keeps its deprecation fence. Most agent seats are
+`claude-code-tmux`, including supervisor and verifier seats. Three consequences:
+- **aspd outage.** Cold kicker summons, `hrc run`, cold attach, DM and
+  `/v1/turns` births of `claude-code-tmux` and `pi-tui-tmux` seats refuse
+  `aspd_unavailable`. The kicker marks each such envelope `uncertain`
+  (`dispatch_error`, `delivery.ts:428-433`) and never re-dispatches it (Q7,
+  unchanged; no replay is promised), so mail to absent seats strands until an
+  operator acts. Live seats keep working: warm turns, steer, reattach and
+  restart never touch aspd (§6). aspd runs under launchd with keepalive
+  (`com.praesidium.aspd`, observed running).
+- **Pre-binding aspd release active.** The active release today,
+  `asp-90dd75083a32-20260917T020900Z-81b3b5`, emits no `hostedDrivers`. With Leg B
+  HRC installed, every new `claude-code-tmux` and `pi-tui-tmux` birth refuses
+  `aspd_worker_hosting_unproven`; `codex-app-server` keeps working (exempt) and
+  `pi-sdk` is unaffected. Activation therefore requires a binding-aware T-08561
+  release active FIRST. An aspd rollback to a pre-binding release requires HRC
+  rollback first (Delivery below).
+- **Reprovision doors (D4).** A refusal after stale-marking leaves that Claude
+  scope with no live runtime until its next birth.
+
+There is no fallback by ruling.
+
+**Accepted operational dependency.** Accepted by mable@hrc-runtime:primary on
+2026-09-17 (EN-13464) as a named operational dependency, not a flaw: after Leg B an
+aspd outage or a pre-binding active aspd release refuses every new `claude-code-tmux` and `pi-tui-tmux` birth on a configured node (max3), supervisor
+seats included, while `codex-app-server` is already under §1.5, `pi-sdk` stays on
+its preserved resolver route outside the dependency and `codex-cli-tmux` keeps its
+deprecation fence (predicate wording per Astra EN-13470, agreed by mable); kicker envelopes strand `uncertain` (Q7
+unchanged, no replay promise); aspd stays launchd keepalive; delivery order is the T-08561
+binding-aware release ACTIVE on max3 before the Leg B HRC install; rollback order
+is HRC first, then aspd. Recorded on T-08571.
+
+#### 1.6.11 Excluded from Leg B (named)
+
+- **pi-sdk (M5):** preserved on its non-aspd route. It is not in `hostedDrivers`
+  and not part of any full-independence claim. There is no producer binding
+  (T-08561 deferral: compiled Pi SDK payload leaked build-host paths through
+  `photon-node`/`esbuild`).
+- **`codex-cli-tmux`:** deprecated in place, no binding, no retirement, facade
+  path kept.
+- **Hosted participant broker (M7), T-08567:** its launch is participant-hosting
+  law (`participant-hosting-intent.ts:152-178`), not a door birth through the
+  chokepoint. Adapter-prepared establishment is not wired in production
+  (`index.ts:2911`, T-08558 M7).
+- **Codex Desktop observer (M18), T-08574 (with T-08567):** HRC hand-builds the
+  observer profile without a compile. Whether a bundle-less conversation-bound
+  preparation is admissible is U12, a different preparation problem.
+- **App-session direct path (M6), T-08567:** an in-process `buildCliInvocation`
+  launch, not a broker birth. It needs facts the existing verbs may not return
+  (U10).
+- **Configuration and inspection (M8, M9, M10), T-08563/T-08564:** that includes
+  `toProfileSelector`'s harness-to-driver mapping. Moving interpretation
+  changes a request, not where a birth launches.
+- **Evidence and offline recovery (M11, M12), T-08565/T-08566:** event
+  normalization is independent of worker placement. Leg B keeps the existing
+  worker-side hook and event path.
+
+#### 1.6.12 Refusals
+
+- New: `aspd_worker_hosting_unproven` (pre-P at admission; post-P construction
+  check at launch). HRC-internal, carried as the `code` of HRC's existing
+  `runtime_unavailable` detail. Not a wire value.
+- Extended: `aspd_preparation_route_changed` now also fires on a driver mismatch
+  (D2).
+- Reused on Claude and Pi birth doors:
+  - `aspd_route_requires_durable_ipc`;
+  - `aspd_route_profile_mismatch`;
+  - every §4 refusal, including `aspd_unavailable` and `compile-not-ok` (which
+    carries aspd's `release_worker_driver_unavailable` diagnostic if a release
+    lacks a binding);
+  - every §5 launch and hello refusal.
+- Door admission refusals: unchanged.
+
+#### 1.6.13 Node scope, delivery and rollback
+
+**Node scope.** Gated by `HRC_ASPD_SOCKET` alone (max3 only). With it unset, every
+door is today's behavior byte for byte. `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` and
+`HRC_PI_TUI_TMUX_BROKER_ENABLED` keep deciding whether the broker route exists at
+all. Leg B reads neither.
+
+**Delivery order (max3, supervisor-owned):**
+1. T-08561 lands on agent-spaces main.
+2. mable builds, installs and inspects the binding-aware release. Readback:
+   `release.json` bindings, and `harness-broker drivers --json` includes
+   `claude-code-tmux` and `pi-tui-tmux`.
+3. mable activates it on the shared aspd. Readback: `/v1/status` `aspd.release`
+   equals the new id; a Codex regression birth still works on the Leg A HRC.
+4. Write the rollback record: prior HRC release, and prior aspd release `90dd7508`.
+5. HRC `just install` of Leg B, `hrc server restart`. Readback: running equals
+   installed, aspd reachable on the binding-aware release, warmup attached == total
+   minus the known unreachable set.
+6. S legs (§10.6).
+
+This order is required: activating Leg B HRC against a pre-binding release refuses
+every new `claude-code-tmux` and `pi-tui-tmux` birth.
+
+**HRC rollback.** Repoint `hrc-runtime-current` to the recorded prior release,
+then `bootout`/`bootstrap`. `claude-code-tmux` and `pi-tui-tmux` births return to
+facade plus resolver.
+aspd-born Claude and Pi runtimes stay live and reattach under the prior release,
+whose §6 hello check is route-agnostic. A `prepared` `interactive-tmux-broker` op
+left behind cannot launch under the prior release (unknown route, refused
+`launch_description_mismatch` or unparsed). It stays visible and inert: no lease,
+no input.
+
+**aspd rollback** to a pre-binding release happens only after HRC rollback.
+Rolling back to another binding-aware release needs no HRC action.
+
+No plist change. No ASP change in this task.
 
 ## 2. Wire use (existing contract only)
 
@@ -1381,7 +1960,9 @@ Transactions are single SQLite writes; effects happen only between them.
 2. **Admit (pure).** Existing `compileBrokerRuntimePlan` hash/identity/profile
    checks, then: `executionRelease` present (`execution_release_missing`);
    selected profile is headless `codex-app-server` [T-08556/T-08560: or, on the
-   interactive route, interactive `codex-app-server` with the tmux terminal, §1.4]
+   interactive route, interactive `codex-app-server` with the tmux terminal, §1.4;
+   T-08562: or a hosting-shape-admitted interactive tmux profile with hosting
+   evidence, §1.6.3, else also `aspd_worker_hosting_unproven`]
    (`aspd_route_profile_mismatch`); existing permission-policy and
    actuator-split admission.
 3. **Boundary P — freeze preparation + hosting intent.** One transaction inserts
@@ -1404,10 +1985,12 @@ database; nothing prepared in memory is passed through.
    supports (`harness-broker/0.2`, `unsupported_worker_protocol`); the frozen
    argv equals `worker.argvPrefix` + HRC's hosting flags
    (`launch_description_mismatch`); session generation still equals the frozen
-   generation (`preparation_generation_superseded`). A refusal writes
+   generation (`preparation_generation_superseded`); [T-08562: for a non-Codex
+   driver, the frozen `hostedDrivers` contains it (`aspd_worker_hosting_unproven`),
+   §1.6.3]. A refusal writes
    `error_code` on the op, leaves it `prepared`, and launches nothing.
 2. **Realize resources (effect).** The existing leased-tmux headless substrate
-   allocator, with the broker command rendered from the frozen executable/argv
+   allocator [T-08556/T-08562: or the durable interactive allocator], with the broker command rendered from the frozen executable/argv
    (no `resolveBrokerBinary`, no driver-name lookup, no PATH, no `current`, no
    override/root/bundled resolution). A leftover lease for this runtime id from
    an interrupted earlier launch of the same never-submitted attempt is
@@ -1539,7 +2122,8 @@ publishes runtime presentation; hrc-viewer/Ghostty actuation is unchanged — th
 T-08554 tmux-tui renderer is a worker-side pane, not the Ghostty viewer; the
 node-default viewer route keeps the facade [T-08555: it moves to aspd when
 configured; Ghostty actuation is still unchanged]), observable release (HRC
-identity unchanged).
+identity unchanged). [T-08562: broker admission client gains a required test for
+launch-primed aspd Claude births; no predicate change.]
 
 **Amend `hrc-runtime.asp-toolchain-selection` (T-08555):** with
 `HRC_ASPD_SOCKET` configured, the aspd-prepared route is every HRC-hosted
@@ -1645,7 +2229,43 @@ any door, is aspd-prepared and is not governed by the resolver. Its worker,
 codex-tui wrapper and hook receiver run only from the frozen `executionRelease`,
 with no fallback. Interactive births of other broker drivers (`claude-code-tmux`,
 `pi-tui-tmux`, `codex-cli-tmux`), hosted participant brokers and the Codex
-Desktop observer broker remain resolver-governed.
+Desktop observer broker remain resolver-governed [superseded by T-08562 below].
+
+**Amend `hrc-runtime.aspd-prepared-execution-release` (T-08562):** As amended for every supported broker birth, on a configured node every new
+interactive claude-code-tmux and pi-tui-tmux birth prepares through aspd by
+the same doors, door classes, launch-carried prompt, keyed resume,
+keyless-door, stale-mark ordering, no-fallback, durable-IPC and reattach rules
+as an interactive codex-app-server birth, freezing a non-Codex interactive
+route with its admitted driver, that driver's hosting paths and the leased TUI
+presentation. A launch-carried prompt for these drivers is frozen only where
+the compiler places it in the start request (the harness launch prompt), never
+as broker initial input and never in the applied intent, and its run
+provenance is the launch-argv class: no dispatched input id, the
+launch-carried invocation marker for submission doors and the mail kicker.
+HRC admits an interactive preparation by hosting requirements (interactive
+tmux terminal, supported worker protocol, durable IPC, and equality with the
+driver the door requested), never by a driver-name list. Before launching any
+selected driver other than codex-app-server, HRC requires the frozen
+executionRelease.worker.hostedDrivers to contain that driver, before boundary
+P and again from persisted bytes at launch; absence or mismatch refuses
+aspd_worker_hosting_unproven with no hosting effect. codex-app-server remains
+admissible without that evidence. A keyed resume launches only a preparation
+whose frozen route and driver both match the retry's selection; otherwise
+aspd_preparation_route_changed. The deprecated codex-cli-tmux driver and the
+non-interactive pi-sdk driver are not on this route, and HRC never requests a
+pi-sdk preparation from aspd.
+
+**Amend `hrc-runtime.asp-toolchain-selection` (T-08562):** As amended for every supported broker birth, every new interactive
+claude-code-tmux and pi-tui-tmux birth on a configured node is likewise
+aspd-prepared and not governed by the resolver: its worker, hook bridge and
+tmux launch runner run only from the frozen executionRelease, with no
+fallback. On a configured node the resolver still governs only the
+non-interactive pi-sdk broker (harness-broker-pi), the deprecated
+codex-cli-tmux interactive driver, hosted participant brokers, the Codex
+Desktop observer broker, and the legacy stdio test seam; with
+HRC_ASPD_SOCKET unset it governs every broker route as before.
+
+**Amend `hrc-runtime.harness-broker-admission-client` (T-08562):** no predicate change; a required test proves launch-primed cold summons, cold invoke and cold enqueue on an aspd-prepared claude-code-tmux birth keep the T-07920, T-08004, T-08012 and T-08531 facts.
 
 ## 9. Deliberate limits
 
@@ -1656,6 +2276,8 @@ Desktop observer broker remain resolver-governed.
   identity/ensure changes.
 - Bundled ASP packages remain in HRC's closure for other routes; no dependency
   removal, extraction, all-harness migration, fleet rollout, flags or release GC.
+  [T-08562: Claude and Pi TUI births migrate on a configured node; bundled packages
+  and the resolver remain for §1.6.9's users.]
 - Broker-side enforcement of `executionRelease` remains absent; HRC's
   pre-launch and hello checks enforce the binding.
 
@@ -1689,7 +2311,7 @@ Desktop observer broker remain resolver-governed.
   - max3 only; no fleet activation and no ACP producer advance.
   - The facade interactive backend is not removed. Its compile-only intent, the
     checkout wrapper launch and the resolver remain for unconfigured nodes and
-    other drivers.
+    other drivers [T-08562: the other interactive driver is now `codex-cli-tmux`].
   - Only `POST /v1/turns` resumes a frozen interactive preparation. The submission
     doors, the federation claim key and the mail kicker gain no retry semantics.
     The kicker's keyless dispatch and uncertain-on-throw classification are
@@ -1697,6 +2319,7 @@ Desktop observer broker remain resolver-governed.
   - Ensure stays unregistered (§1.5.7).
   - Not moved: Claude, Pi and `codex-cli-tmux` interactive births, hosted
     participant brokers, and the Codex Desktop observer (Leg B / T-08567).
+    [T-08562: Claude and Pi moved; participant T-08567; Desktop observer T-08574.]
   - There is no migration of live facade-born interactive runtimes. They are
     reused by admission and replaced only by today's reprovision rules, and that
     rebirth is aspd-prepared.
@@ -1714,6 +2337,33 @@ Desktop observer broker remain resolver-governed.
     Whether such a replay re-sends the prompt is unresolved. §1.5 does not change
     it, and it does not persist a launch-carried prompt (D1). The hazard is
     tracked on the P-00521 campaign ledger.
+
+- T-08562: every `claude-code-tmux` and `pi-tui-tmux` birth moves (§1.6).
+  - Only `claude-code-tmux` and `pi-tui-tmux` interactive births move. `pi-sdk`
+    stays on the facade plus `harness-broker-pi` resolver. It is not in
+    `hostedDrivers` and not in any full-independence claim. The deprecated
+    `codex-cli-tmux` keeps the facade path, with no binding and no retirement.
+  - Not moved: hosted participant brokers (T-08567), Codex Desktop observer
+    (T-08574), app-session direct launch (T-08567), configuration and inspection
+    including `toProfileSelector` (T-08563/T-08564), evidence and offline recovery
+    (T-08565/T-08566). The resolver and bundled ASP packages remain for §1.6.9's
+    users. The closure gate (T-08558 §5) is not claimed.
+  - Nothing new is added: no flag, value, endpoint, ASPC verb or wire field, and no
+    protocol lock advance. `hostedDrivers` is read from the untyped result.
+    `interactive-tmux-broker`, `interactive-tui` and `aspd_worker_hosting_unproven`
+    are HRC-internal. No ASP change and no kicker change.
+  - max3 only; no fleet activation and no ACP producer advance.
+  - There is still no durable start receipt and no lost-start-reply retry. Only
+    `POST /v1/turns` resumes a frozen preparation. The kicker's keyless,
+    uncertain-on-throw law is unchanged, so a Claude summons refused by aspd strands
+    its envelope `uncertain` (§1.6.10).
+  - No migration of live resolver-born Claude or Pi runtimes. Admission reuses them
+    and today's reprovision rules replace them; that rebirth is aspd-prepared.
+  - The §9 T-08560 intent-carried `initialPrompt` replay hazard applies unchanged to
+    Claude and Pi start-door births. Leg B does not change it.
+  - aspd is a hard dependency for every new `claude-code-tmux` and `pi-tui-tmux` birth on a configured node (max3), and a pre-binding aspd release
+    refuses them (§1.6.10). `pi-sdk` and `codex-cli-tmux` are outside it. Rollback order is HRC before
+    aspd.
 
 ## 10. Acceptance (isolated, installed)
 
@@ -1960,7 +2610,7 @@ the ledger is `$STATE/state.sqlite`, opened `sqlite3 -readonly`.
 | 8 | Cancellation / never-started lease cleanup (G1) on a non-attached door | Kill the leg 1 launch between P and `invocation.start` (worker handshake refused by withholding the release after realization, or a daemon stop mid-launch in the rig) on a kicker birth | Op `prepared` (hello refusal) or `failed` per §1.4 G1; no lease-server process, no broker socket, no native codex; run state accurate; no user-prompt event | I |
 | 9 | Restart reattach | Restart the rig HRC with aspd stopped, with leg 1/2/5 runtimes live | Each reattaches (release hello), typed input and a warm turn work | I |
 | 10 | Attached-run door unchanged | `hrc run <fresh> -p MARK` | §10.4 legs 1–2 hold; door `attached-run`; frozen copy ABSENT; O4 once | I, then S |
-| 11 | Other drivers unchanged | Kicker summons and cold attach to a Claude scope | No aspd compile; facade/resolver path as today | I, then S |
+| 11 | Other drivers unchanged [historical; T-08562 §10.6 legs 1 and 4 invert it] | Kicker summons and cold attach to a Claude scope | No aspd compile; facade/resolver path as today | I, then S |
 | 12 | Gates | The gate suites below, `just architecture-records` | Green | I |
 
 **Shared max3 (S).**
@@ -1989,7 +2639,8 @@ No aspd stop, activation or withheld release on shared.
   is joined only through admission caller policy (T-07397)".
 - `t07920-kicker-launch-prompt.test.ts`, `t08004-invoke-cold-priming.test.ts`,
   `t08531-enqueue-cold-priming.test.ts` (claude-code-tmux: facade by driver, must
-  be unaffected); `t08541-cold-invoke-initial-input-identity.test.ts` (Codex,
+  be unaffected [T-08562: they stay green because they run with the socket unset;
+  aspd twins in §10.6 gates]); `t08541-cold-invoke-initial-input-identity.test.ts` (Codex,
   socket unset: facade).
 - `t07944-cold-birth-lifecycle.test.ts`, `t07963-cold-birth-first-turn.test.ts`,
   `attached-run-operation-lifecycle.test.ts`.
@@ -2009,7 +2660,7 @@ don't change the assertion.
 - `t08556` "only the attached-run door, the codex-app-server driver and a
   configured node select aspd" (`:288-300`) becomes "the codex-app-server driver
   and a configured node select aspd for every door; other drivers and an unset
-  socket do not."
+  socket do not." [T-08562 rewrites it again, §10.6 F.2.]
 - `t08556` "another door birthing the interactive backend keeps the facade"
   (`:367-377`) becomes "a non-attached interactive Codex birth prepares through
   aspd with door `interactive-birth` (facade not reached)".
@@ -2023,8 +2674,8 @@ don't change the assertion.
   `handleEnsureRuntime`, app-session ensure, both rotation relaunch branches,
   `roster-start`/`exact-start` claims). Each gives aspd compile +1, op
   `interactive-codex-tui`, and door class as specified. The facade is never
-  reached. Claude/Pi on the same doors still reach the facade. The socket unset
-  reaches the facade.
+  reached. Claude/Pi on the same doors still reach the facade [inverted by
+  T-08562, §10.6 G-B-route]. The socket unset reaches the facade.
 - **G-D1:**
   - for `replace-priming` and `append-to-priming`, the frozen
     `startRequest.initialInput` carries the prompt once and priming is
@@ -2061,3 +2712,294 @@ don't change the assertion.
   preparation (no aspd compile), including ensure.
 - **G-ipc:** durable IPC off on a configured node refuses every door
   `aspd_route_requires_durable_ipc` before preparation.
+
+### 10.6 Every supported broker birth through aspd acceptance (T-08562)
+
+**Executors.**
+- **Implementer (I):** the §10.5 isolated rig (T-08560
+  `var/wrkq-artifacts/T-08560/bin/{hrc-serve,aspd,env.sh,obs.py,newdrv,…}`
+  pattern):
+  - linked-worktree HRC artifact under `hrc server serve`, isolated state, runtime
+    and socket;
+  - durable IPC on, redirect off, `tmux-tui`;
+  - `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED=1`, Pi TUI flag default;
+  - `HRC_ASPD_SOCKET` at an isolated aspd namespace with three releases:
+    - **A** = the T-08561 binding-aware release once built;
+    - **B** = a visibly different binding-aware release;
+    - **A0** = retained pre-binding `asp-90dd75083a32-…` (hosting-evidence and
+      rollback legs only);
+  - its own isolated wrkqd and kicker;
+  - clean Ghostty via ghostmux, real Claude (`clod`), real Pi and real cody Codex
+    scopes, real CLI.
+
+  I runs every destructive leg: aspd stop, activation, A0, withheld release,
+  cancellation, restart.
+- **Supervisor (S), mable:** shared max3 after the §1.6.13 delivery order, on
+  fresh probe scopes only. Non-destructive legs, then the population statement,
+  then independent grade.
+
+**Per-birth observation set (O).** Resolve `STATE=$(hrc server status --json | jq -r .stateRoot)`
+and open `$STATE/state.sqlite` with `sqlite3 -readonly`.
+- **O1 compile +1, route, driver, door, prompt mode:**
+  `select operation_id,status,error_code,json_extract(preparation_json,'$.route'),json_extract(preparation_json,'$.hosting.driverKind'),json_extract(preparation_json,'$.hosting.presentation'),json_extract(route_decision_json,'$.door'),json_extract(route_decision_json,'$.launchCarriedPrompt.mode'),json_extract(preparation_json,'$.executionRelease.releaseId'),json_extract(preparation_json,'$.dispatchIdempotencyKey') from runtime_operations where host_session_id=? and preparation_json is not null`.
+  Count before/after = +1, plus one `aspd.preparation.frozen` server log line.
+- **O1h hosting evidence:**
+  `json_extract(preparation_json,'$.executionRelease.worker.hostedDrivers')`
+  contains O1's `driverKind`. Cross-check with `<releaseRoot>/release.json`
+  bindings for that driver.
+- **O2 worker hello = frozen:** `hrc runtime inspect <rt> --json`.
+  `runtime_state_json.executionRelease` `{releaseId, helloRelease, source:'aspd'}`
+  equals O1's release; transport `tmux`; `tmux_json.brokerDriver` equals O1's
+  driver.
+- **O3 panes, processes and helper closure:**
+  - `tmux -S <sock> list-panes -a -F '#{window_name} #{pane_pid}'`, then
+    `ps -o pid,ppid,args -p <pid>` recursively:
+    - `broker` pane: `<releaseRoot>/libexec/harness-broker run …`;
+    - `tui` pane: `<releaseRoot>/libexec/harness-broker tmux-launch --launch-file …`
+      with native `claude` or `pi` as the child.
+  - Closure scan:
+    `rg -n '/\$bunfs|under-construction|/praesidium/agent-spaces/|tmux-launch-runner\.ts|(^|[ "])harness-broker ' <ipcDir>/hooks/*.settings.json <ipcDir>/hooks/*.launch.json <ipcDir>/hooks/*.pi-hook.ts <bundle>/settings.json`.
+    Every `harness-broker` match resolves under O1's `releaseRoot`; bad patterns
+    have zero matches. For Claude, the bundle `statusline.sh` digest equals the
+    release asset digest.
+- **O4 prompt exactly once:**
+  - HRC events: `select event_kind,count(*) from hrc_events where host_session_id=? and payload_json like '%<MARK>%' group by event_kind`
+    shows one user-prompt event and no duplicate submission.
+  - Native transcript:
+    - Claude: `$HOME/.claude/projects/<cwd-slug>/<key>.jsonl`, where `<key>` is
+      `json_extract(runtimes.continuation_json,'$.key')`. MARK appears in exactly
+      one `user` row.
+    - Pi: the session JSONL under the frozen
+      `json_extract(preparation_json,'$.admission.startRequest.spec.process.lockedEnv.PI_CODING_AGENT_DIR')`
+      (read the path from the record; do not assume it). MARK is in exactly one
+      user message.
+  - Frozen copy:
+    - `json_extract(preparation_json,'$.admission.startRequest.spec.launch.initialPrompt')`
+      contains MARK;
+    - `…'$.admission.startRequest.initialInput'` is null;
+    - MARK in `spec.process.args` only as the positional prompt.
+  - `select last_applied_intent_json from sessions where host_session_id=?` does
+    not contain MARK.
+  - Provenance: `select dispatched_input_id, correlation_json from runs where run_id=?`
+    gives `dispatched_input_id` null, and `launchCarriedInvoke` for submission door
+    and kicker rows.
+
+**Matrix.** C = `claude-code-tmux`, P = `pi-tui-tmux`.
+
+| Leg | Driver | Door / mechanism | Action | Required observation | Exec |
+|---|---|---|---|---|---|
+| 1 | C, P | Mail kicker summons (T-07920, replace-priming) | Fresh scope with a stored interactive intent; `wrkc say <scope> --to <scope>` MARK from a non-birthable driver principal (T-08560 leg 1 note) | O1 (`interactive-tmux-broker`, door `interactive-birth`, `replace-priming`), O1h, O2, O3, O4; priming absent from the launch turn; `hrc mail inspect <envelope>` receipt has no input id | I, then S (C; P if a Pi probe agent exists, otherwise "not observed on shared" with the reason) |
+| 2 | C | `/v1/turns` invoke (T-08004), submission `enqueue` (T-08531), hrcchat DM, Claude redirect, rule 3 | Cold `hrc turn <scope> MARK`; cold `enqueue`; DM cold birth; `POST /v1/turns` of an anthropic `preferredMode: headless` intent to a fresh scope; `hrc turn <claude scope>` against a live Codex tmux runtime of that scope (rule 3) | Each: O1 (`append-to-priming`; redirect by its door), O1h, O2, O3, O4 with priming present; rule 3: prior runtime stale-marked, one new runtime; invoke returns the launch submission | I (all); S (`hrc turn`, DM) |
+| 3 | C | Selector (after-boot) | Selector message MARK to a fresh scope | O1 (no `launchCarriedPrompt`), O1h, O2, O3; O4 with frozen copy ABSENT and one identity submission | I, then S |
+| 4 | C, P | Bare doors plus continuation | Cold `hrc attach <fresh>`; explicit interactive `POST /v1/runtimes/start`; `POST /v1/runtimes/ensure`; `hrc session rotate <hsid> --relaunch`; received `exact-start` claim (two-daemon isolated pair). Continuation: on a Claude scope born facade (rig with socket unset, first turn marks MARK-A), set the socket, `hrc session rotate --relaunch`, then ask for MARK-A | Each: O1 (`interactive-birth`, no prompt), O1h, O2, O3; attach gives a usable TUI with typed input rendering. Continuation: the aspd birth's frozen `startRequest.spec.process.args` carries `--resume <key>` equal to the facade runtime's `continuation_json.key`, and the reply recalls MARK-A. Then the reverse direction (aspd-born, then socket unset) | I (all); S (attach, rotate) |
+| 5 | C, P | Attached run | `hrc run <fresh claude scope>` (no `-p`); `hrc run <fresh> -p MARK` | O1 door `attached-run`, no `launchCarriedPrompt`; O2, O3; `-p` O4 once by identity (frozen copy absent); typed input renders | I, then S (C) |
+| 6 | C | D2 keyed retry | Withhold A's directory; `hrc start <claude scope> -p MARK --idempotency-key K` gives `release_unavailable`, op `prepared`, no worker or tmux; activate B; restore A; retry K. Separately retry K after changing the scope intent to Codex | Retry launches the frozen op (O2 hello A, O4 once, O1 count unchanged); a new un-keyed scope prepares on B. Driver-change retry: `aspd_preparation_route_changed`, op still `prepared` | I |
+| 7 | C, P, Codex | Hosting evidence and producer refusal | Activate A0 (pre-binding). Cold kicker summons C; cold `hrc attach` P; cold Codex `hrc turn`. Reactivate A | C and P: `aspd_worker_hosting_unproven` (server log `detail.hostedDrivers: null`); no op row, no runtime row, no btmux socket or process (`ls <runtimeRoot>/btmux`, `pgrep -fl harness-broker` before/after); envelope `uncertain`. Codex on A0: succeeds (O1 route `interactive-codex-tui`, `hostedDrivers` absent), proving the exemption | I |
+| 8 | pi-sdk | Preserved route and producer refusal | (a) `hrc start` or `hrc turn` of a non-interactive pi-sdk scope with a real turn. (b) With A active, send one `aspc.compileHarnessInvocation` for that pi-sdk profile directly to the rig aspd socket with the fixed pilot client (T-08561 §5 method), recording op counts, `pgrep -fl 'harness-broker|pi'` and btmux listing before/after | (a) op `preparation_json` NULL; runtime `executionRelease` absent; broker pane argv is the resolver's `harness-broker-pi` (`hrc server status --json` `aspToolchain` source and path match); marker turn completes. (b) Response `ok:false`, diagnostic `release_worker_driver_unavailable` with `details.brokerDriver: pi-sdk`, no `executionRelease`; before/after counts identical; no HRC op, no process, no pane | I; S (a) only if a pi-sdk probe agent exists (otherwise reported "not observed on shared" with the reason) |
+| 9 | C, P | No fallback, D3, D4; negative proof in one run | Stop aspd. In the SAME run, with a live aspd-born Claude worker and a live aspd-born Pi TUI worker established before the stop: (a) cold `hrc attach <fresh claude>` and cold `hrc attach <fresh pi>`; (b) kicker summons to a fresh Claude scope; (c) rule 3 or force-restart reprovision against a live Claude aspd runtime; (d) on the pre-existing Claude and Pi workers: typed input, `hrc runtime inspect`, `hrc server restart` of the rig HRC with aspd still stopped, then `hrc turn` to completion | (a) each `aspd_unavailable` for `claude-code-tmux` and `pi-tui-tmux`: no op, runtime, lease, btmux socket or process. (b) same, plus envelope `uncertain` (`dispatch_error`), not re-dispatched on the next sweep; no replay is expected or promised. (c) prior runtime stale-marked, nothing new. (d) beside those refusals, the existing workers are unaffected: live control works, reattach succeeds (release hello, `broker.warmup.complete` attached == total) and each completes a turn with MARK once. A pi-sdk control birth in the same window still succeeds on its resolver route (outside the dependency) | I |
+| 10 | C, P | A→B with live A workers | A active: legs 1 (C, P) on A. Activate B (same HRC pid, artifact and lock). Type into the A Claude TUI and complete a turn; `hrc turn` the A Pi runtime; fresh C and P births | A workers take typed input and complete turns, hello A unchanged; fresh births are B (O1h, O2); no HRC connection to aspd held across activation (`lsof -U` on the aspd socket) | I |
+| 11 | C | G1 never-started cleanup | Kicker birth with B's `libexec/harness-broker` chmod 000 after P (T-08560 leg 8 attempt-4 method) | Op `prepared` with hello or launch `error_code`; no lease-server process, broker socket or native claude; no user-prompt event | I |
+| 12 | C, P | Restart reattach | Restart the rig HRC with aspd stopped, with legs 1, 4 and 5 runtimes live | Each reattaches (release hello, `broker.warmup.complete` attached == total); typed input and a warm turn work | I |
+| 13 | Codex | Regression | §10.5 legs 1, 5 (attach), 10, plus one headless Codex turn | Unchanged §10.5 observations; route `interactive-codex-tui`/`codex-tui`; O1h not required | I, then S (legs 1, 10) |
+| 14 | all | Population statement | After activation, see below | Below | I (rig window), S (shared window) |
+| 15 | — | Gates | F.1–F.3, `just architecture-records`, `just verify` from a clean ghostmux shell | Green | I |
+
+**Population statement (leg 14).**
+
+Claim: on a configured node, after activation time T, there are zero
+resolver-launched `claude-code-tmux`, `pi-tui-tmux` and `codex-app-server` broker
+births.
+
+Subject query:
+```
+select coalesce(json_extract(tmux_json,'$.brokerDriver'),
+                case when transport='headless' and harness='codex-cli' then 'codex-app-server' end) as driver,
+       count(*) as total,
+       sum(json_extract(runtime_state_json,'$.executionRelease.source')='aspd') as aspd_born,
+       sum(json_extract(runtime_state_json,'$.executionRelease') is null) as resolver_born
+from runtimes
+where controller_kind='harness-broker' and created_at > :T
+group by driver;
+```
+Required: `resolver_born = 0` for those three drivers. Headless rows have no
+`tmux_json.brokerDriver` (observed), hence the `coalesce`.
+
+Discriminators (a uniform zero proves nothing without them):
+1. **Control present, subject absent.** Run the same query with
+   `created_at between :T0 and :T` (the window before Leg B activation). It must
+   show `resolver_born > 0` for `claude-code-tmux`; today's value is 65 of 65
+   since 2026-09-16. That shows the predicate can see a resolver birth.
+2. **Subject present.** After T, `aspd_born ≥ 1` for `claude-code-tmux` (mandatory)
+   and for `pi-tui-tmux` when a Pi birth occurred in the window. Otherwise the
+   statement is reported as "no Pi birth observed", never as "zero resolver Pi
+   births".
+3. **Cross-table.** For every runtime after T of those drivers, its op row has
+   `preparation_json` not null:
+   `select count(*) from runtimes r join runtime_operations o on o.operation_id=r.active_operation_id where r.created_at > :T and o.preparation_json is null and …`
+   must be 0. Its `tmux_json.socketPath` pane must not run `tmux-launch-runner.ts`:
+   sample `ps` over live panes,
+   `rg 'praesidium/agent-spaces/harness/harness-broker/src'` = 0 lines for
+   post-T runtimes.
+4. **Exclusions stated, not hidden.** `pi-sdk`, `agent-harness-tmux`,
+   `codex-cli-tmux`, participant and Desktop observer rows are listed separately
+   with their counts. They may be resolver-born by law.
+
+**Shared max3 (S).**
+1. Complete §1.6.13 steps 1–4: T-08561 release active and verified before HRC;
+   rollback record on T-08571.
+2. `just install`, then `hrc server restart`.
+3. Read back: running equals installed, aspd reachable on the binding-aware
+   release, warmup attached == total minus the known unreachable set.
+4. Run legs 1 (C), 2 (`hrc turn`, DM), 3, 4 (attach, rotate), 5 (C), 8a
+   (conditional), 13 (legs 1, 10) on fresh probe scopes in clean Ghostty. Do not
+   touch other agents' scopes.
+5. Population statement over [T, grade time], with discriminators 1–4.
+6. Clean up test scopes only.
+7. Independent grade.
+
+No aspd stop, activation, A0 or withheld release on shared. Pi and pi-sdk rows
+with no such agent on shared are reported "not observed on shared" with the reason,
+never as a pass by absence (mable EN-13464).
+
+#### Gates (T-08562)
+
+##### F.1 Must stay green unchanged (names from source)
+
+- `t08560-every-codex-birth-aspd.test.ts` except F.2; `t08556-attached-run-aspd-tui.test.ts`
+  except F.2; `t08542-aspd-prepared-execution.test.ts`,
+  `t08553-per-request-presentation.test.ts`, `t08554-app-server-viewer.test.ts`,
+  `t08555-default-app-server-viewer.test.ts`, `t08564` preview gates.
+- `t07920-kicker-launch-prompt.test.ts`, `t08004-invoke-cold-priming.test.ts`,
+  `t08531-enqueue-cold-priming.test.ts`,
+  `t08541-cold-invoke-initial-input-identity.test.ts`. These set no
+  `HRC_ASPD_SOCKET`, so they are facade-route gates. Each must clear
+  `HRC_ASPD_SOCKET` explicitly in setup so an ambient value cannot silently move
+  it onto the aspd route. Twins in F.3.
+- `claude-interactive-broker-routing.test.ts` (Phase B redirect, Phase C
+  wait convention, Phase D continuation gating per driver),
+  `t04836-resume-continuation-selector.test.ts`,
+  `interactive-broker-admission.red.test.ts`.
+- `pi-sdk-broker-cutover.test.ts`: the preserved Pi SDK route.
+- `t07764-asp-toolchain.test.ts`: resolver precedence for the routes it still
+  governs.
+- `t07693-two-wake-double-birth.red.test.ts`,
+  `t07202-semantic-dm-cold-singleflight.red.test.ts`,
+  `submission-door-session-surface.test.ts`, `t08456-dispatch-birth-presentation.test.ts`,
+  `t07944-cold-birth-lifecycle.test.ts`, `t07963-cold-birth-first-turn.test.ts`,
+  `attached-run-operation-lifecycle.test.ts`, `broker-controller-lifecycle.test.ts`.
+- hrc-mail-kicker: `t08394-absent-seat-cold-birth.test.ts`,
+  `t08139-broker-start-birth-retry.test.ts`, `t08094-*`.
+- The hrc-server and hrc-cli suites; `just architecture-records`.
+
+##### F.2 Must change (they encode the old premise; rewrite, don't delete)
+
+- `t08560-every-codex-birth-aspd.test.ts:482` "other drivers and an unconfigured
+  node keep the facade (G-route negative)". Becomes "claude-code-tmux and
+  pi-tui-tmux prepare through aspd on a configured node; codex-cli-tmux and an
+  unset socket keep the facade". The Claude call at `:485-491` now expects aspd
+  compile +1 and a `bundled facade reached` spy count of 0 for it.
+- `t08556-attached-run-aspd-tui.test.ts:289` "the codex-app-server driver and a
+  configured node select aspd for every door; other drivers and an unset socket do
+  not". It tests `aspdInteractiveCodexEndpoint`, which is replaced by the §1.6.2
+  predicate. Becomes: "every interactive driver except the deprecated
+  codex-cli-tmux selects aspd on a configured node; an unset socket selects none".
+- `compile-profile-selector.test.ts:72`, `:86` ("admits … by broker driver and
+  terminal"): retitle to "by interaction mode, protocol and tmux terminal".
+  `:137` "REJECTS a non-codex broker driver (does not admit other drivers)": its
+  fixture is a headless `claude-code-tmux` profile, which the unchanged headless
+  predicate still rejects. Retitle to "REJECTS a headless non-Codex broker profile";
+  keep the assertion.
+
+##### F.3 New gates (real handlers, aspd double, facade and resolver spies that throw)
+
+- **G-B-route:** for `claude-code-tmux` and `pi-tui-tmux`, per door through its own
+  entry function:
+  - kicker `deliver…`;
+  - `handleDispatchTurn`;
+  - `handleSubmission` × 4;
+  - both DM paths;
+  - selector input;
+  - dispatch rule 3;
+  - the Claude redirect of a headless anthropic dispatch;
+  - `attachRuntimeEffectfully`;
+  - `handleStartRuntime`;
+  - `handleEnsureRuntime` and app-session ensure;
+  - both rotation relaunch branches;
+  - `roster-start` and `exact-start` claims;
+  - `handlePrepareAttachedRun` with and without `-p`.
+
+  Each gives aspd compile +1, op `interactive-tmux-broker`, `hosting.driverKind`,
+  door class as specified, and neither `startAspcFacadeBrokerClient` nor
+  `resolveBrokerBinary` reached. `codex-cli-tmux` at the chokepoint reaches the
+  facade. The socket unset reaches the facade for all.
+- **G-B-admission:**
+  - selected profile with a non-tmux terminal, a headless mode, a non-v0.2
+    protocol, or a driver different from the requested one: each
+    `aspd_route_profile_mismatch` before P;
+  - durable IPC off: `aspd_route_requires_durable_ipc` with no compile;
+  - an interactive tmux profile with a driver name absent from today's literal
+    list, but equal to the request, passes shape admission. This proves no name
+    list.
+- **G-B-hosting:**
+  - `hostedDrivers` absent, `null`, a non-array, an array of non-strings, or an
+    array lacking the driver: `aspd_worker_hosting_unproven` pre-P, with no op, no
+    runtime, no lease, no tmux, and no report callback;
+  - containing the driver: admitted;
+  - `codex-app-server` with `hostedDrivers` absent: admitted (Codex exemption)
+    with the record byte-shape unchanged;
+  - a hand-edited `prepared` row with `hostedDrivers` removed: launch refuses
+    `aspd_worker_hosting_unproven`, op stays `prepared` with `error_code`, no
+    allocation.
+- **G-B-record:**
+  - hosting paths derived from `driverKind` equal the durable allocator's paths
+    (argv hosting check passes);
+  - launch validation refuses `interactive-tmux-broker` records with presentation
+    ≠ `interactive-tui`, `driverKind` ≠ profile driver, `driverKind`
+    `codex-app-server`, or an unknown door (`launch_description_mismatch`);
+  - the controller substrate gate accepts both interactive routes only on a broker
+    tmux profile;
+  - the hello-refusal lease release uses the interactive allocator for both.
+- **G-B-D1** (T-07920, T-08004, T-08531 twins on the aspd route, Claude, plus one
+  Pi kicker case):
+  - frozen `spec.launch.initialPrompt` carries the prompt, `initialInput` absent;
+  - priming omitted for `replace-priming`, included for `append-to-priming`;
+  - `launchCarriedPrompt.mode` recorded;
+  - `last_applied_intent_json` without `initialPrompt`;
+  - report after P, never on a pre-P refusal (including hosting-unproven);
+  - no post-boot `executeInteractiveBrokerInputTurn`;
+  - B4 `dispatchedInputId` null;
+  - `launchCarriedInvoke` correlation for submission door and kicker;
+  - kicker receipt with no input id;
+  - T-08012 crossing invoke waits for the launch terminal;
+  - selector: no frozen prompt, one identity submission;
+  - attached run `-p`: door `attached-run`, no frozen prompt, one identity
+    submission.
+- **G-B-D2:**
+  - a keyed Claude `/v1/turns` freezes the key; a withheld release refuses post-P;
+  - a same-key retry resumes with no aspd contact and delivers once;
+  - a frozen Claude op against a retry selecting Codex, and the reverse, refuses
+    `aspd_preparation_route_changed` untouched;
+  - a frozen Claude op against a retry selecting Pi (same route, different driver)
+    refuses the same.
+- **G-B-D3/D4:**
+  - a Claude kicker summons with a post-P refusal leaves op `prepared`, envelope
+    `uncertain`, nothing re-dispatched;
+  - rule 3, attach, start and ensure reprovision with aspd unavailable
+    stale-mark the old runtime and leave no op, runtime or lease.
+- **G-B-continuation:** for a session with an anthropic session key, the compile
+  request's `continuation` is identical on facade and aspd for `claude-code-tmux`.
+  For `pi-tui-tmux` it is absent on both. `aspHome` is sent and recorded.
+- **G-B-pisdk:**
+  - a configured node's non-interactive `pi-sdk` start and dispatch reach the
+    facade and resolve `harness-broker-pi`, with aspd compile 0;
+  - an aspd double answering a forced pi-sdk preparation with the
+    `release_worker_driver_unavailable` failure envelope yields `compile-not-ok`,
+    no op, no allocation. This seam exercises HRC's handling of the producer
+    refusal; production never sends it.
+- **G-B-join and G-B-backstop:** T-07693, T-07202 and T-07397 crossing tests re-run
+  with a Claude birth on the aspd route: one runtime, each prompt once. A
+  participant-registered Claude scope refuses at every door before any aspd
+  compile.
+- **G-B-codex-regression:** every T-08560 G-route Codex row still freezes
+  `interactive-codex-tui` / `codex-tui` / `codex-app-server` with unchanged route
+  decision keys, and needs no `hostedDrivers`.

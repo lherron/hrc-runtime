@@ -2,7 +2,7 @@ id: hrc-runtime.aspd-prepared-execution-release
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: HRC-hosted codex-app-server preparation, release binding, launch, reattachment, and declaration or preview observation through configured aspd
+scope: HRC-hosted broker preparation (codex-app-server, claude-code-tmux and pi-tui-tmux), release binding, hosting evidence, launch, reattachment, and declaration or preview observation through configured aspd
 predicate: >
   When HRC_ASPD_SOCKET is configured, an HRC-hosted headless
   codex-app-server runtime with effective operator presentation none prepares
@@ -40,7 +40,9 @@ predicate: >
   candidate connection before attach. Other harness and presentation routes,
   participant establishment, caller-policy and admission authority,
   continuation selection, environment ownership, HRC resource ownership, and
-  projection-before-acknowledgement laws remain unchanged. Effective operator
+  projection-before-acknowledgement laws remain unchanged. [T-08562: Claude and Pi TUI broker births
+  are on this route; pi-sdk, codex-cli-tmux, hosted participant brokers and the
+  Codex Desktop observer are not.] Effective operator
   presentation is an explicit per-request presentation.operator none when
   present, otherwise the node default unchanged; an explicit none also exempts
   that Codex dispatch from the node's Codex interactive redirect, as a
@@ -108,6 +110,10 @@ predicate: >
   ASP_HOME as the request aspHome and records it in the route decision, so the
   worker's codex home, and therefore continuation resume, is the same store the
   standalone interactive route uses, independent of the aspd daemon environment.
+  As amended for every supported broker birth, the same aspHome governs Claude
+  and Pi bundle materialization, so a bundle prepared on either route is the
+  store the other route uses; Claude continuation transcripts live in the
+  native Claude configuration and are independent of it.
   As amended for every interactive Codex birth door, on a configured node
   every new interactive codex-app-server birth prepares through aspd,
   whichever door requests it: attached run, cold attach, turn dispatch, mail
@@ -155,12 +161,38 @@ predicate: >
   replaces a live runtime stale-marks it before preparation, as on the facade
   route, so a preparation or pre-start launch refusal leaves that scope with
   no live runtime until its next birth. Ensure births stay unregistered in the
-  start singleflight. Declaration and preview observations share this configured
+  start singleflight.
+  As amended for every supported broker birth, on a configured node every new
+  interactive claude-code-tmux and pi-tui-tmux birth prepares through aspd by
+  the same doors, door classes, launch-carried prompt, keyed resume,
+  keyless-door, stale-mark ordering, no-fallback, durable-IPC and reattach
+  rules as an interactive codex-app-server birth, freezing a non-Codex
+  interactive route with its admitted driver, that driver's hosting paths and
+  the leased TUI presentation. A launch-carried prompt for these drivers is
+  frozen only where the compiler places it in the start request (the harness
+  launch prompt), never as broker initial input and never in the applied
+  intent, and its run provenance is the launch-argv class: no dispatched input
+  id, the launch-carried invocation marker for submission doors and the mail
+  kicker. HRC admits an interactive preparation by hosting requirements
+  (interactive tmux terminal, supported worker protocol, durable IPC, and
+  equality with the driver the door requested), never by a driver-name list.
+  Before launching any selected driver other than codex-app-server, HRC
+  requires the frozen executionRelease.worker.hostedDrivers to contain that
+  driver, before boundary P and again from persisted bytes at launch; absence
+  or mismatch refuses aspd_worker_hosting_unproven with no hosting effect.
+  codex-app-server remains admissible without that evidence. A keyed resume
+  launches only a preparation whose frozen route and driver both match the
+  retry's selection; otherwise aspd_preparation_route_changed. The deprecated
+  codex-cli-tmux driver and the non-interactive pi-sdk driver are not on this
+  route, and HRC never requests a pi-sdk preparation from aspd. Declaration and preview observations share this configured
   endpoint and hello admission boundary without creating or resuming a prepared
   operation. Both calls composing one preview use one admitted connection and
   one aspd release identity.
-authority: wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
+authority: wrkq:T-08562 every supported broker birth amendment (mable acceptance EN-13464, dependency wording Astra EN-13470; Daedalus approval pending), 2026-09-17; wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
+  - wrkq:T-08562
+  - wrkq:T-08561
+  - packages/hrc-server/src/agent-spaces-adapter/compile-profile-selector.ts
   - wrkq:T-08564
   - wrkq:T-08560
   - wrkq:T-08556
@@ -191,6 +223,10 @@ source:
   - packages/hrc-mail-kicker/src/drive/delivery.ts
 required_tests:
   - just architecture-records
+  - T-08562 route gates prove every claude-code-tmux and pi-tui-tmux birth door on a configured node prepares through aspd with its driver, route and door class and never reaches the facade or resolver, while codex-cli-tmux, pi-sdk and an unset endpoint keep their paths
+  - T-08562 admission gates prove generic hosting-shape admission, driver equality with the request, and aspd_worker_hosting_unproven for absent, malformed or non-matching hostedDrivers before boundary P and at launch, with codex-app-server admissible without it
+  - T-08562 launch-argv prompt gates prove replace-priming and append-to-priming Claude and Pi prompts are frozen once in the start request, absent from the applied intent, reported after boundary P, never submitted again, and carry launch-carried invocation provenance
+  - T-08562 isolated then shared max3 installed acceptance covers Claude and Pi door classes, hosting evidence, frozen release worker and helpers, prompt exactly once, aspd outage, pre-binding release refusal, A to B with a live A Claude worker, restart reattachment, Codex regression, the preserved Pi SDK route and pi-sdk producer refusal, the resolver population statement, and independent grade
   - T-08560 route gates prove every interactive codex-app-server birth door on a configured node prepares through aspd with its door class and never reaches the facade, while other drivers and an unset endpoint keep the facade
   - T-08560 launch-carried prompt gates prove replace-priming and append-to-priming prompts are frozen once in the start request, absent from the applied intent, reported launch-carried only after boundary P, never submitted again, and bound to the initial input identity at B4, while an after-boot selector prompt is delivered once by runtime identity
   - T-08560 retry gates prove a keyed interactive preparation freezes its key and resumes on the frozen release, a route mismatch refuses aspd_preparation_route_changed untouched, and keyless doors including the mail kicker leave refused preparations prepared and never auto-launched
@@ -220,8 +256,9 @@ required_tests:
   - T-08556 frozen interactive route gates prove boundary-P persistence, durable-IPC refusal, allocator and controller route admission, worker hello binding, and worker wrapper and hook execution from one retained execution release with no resolver fallback
   - T-08556 isolated then shared max3 acceptance covers real attached Codex TUI input, initial prompt identity, warm reuse and detach, headless viewer reuse and conflicts, cold-attach birth (facade before T-08560), aspd outage, retained-release activation and rollback ordering, restart reattachment, and cancelled attach cleanup
   - T-08564 D-14 and D-14a P-1/P-2 gates prove preview plan and prompt parity, one admitted connection and release identity, and unchanged non-preview routes
-last_verified: 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
+last_verified: 2026-09-17 T-08562 amendment accepted by mable EN-13464; Daedalus approval and implementation pending; 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
 reopen_when:
+  - the non-Codex interactive route, its hosting-evidence requirement, the codex-app-server exemption, or the set of drivers excluded from the route changes
   - the configured route or fallback behavior changes
   - declaration or preview observation stops sharing the configured endpoint and hello admission boundary or one preview can combine aspd release identities
   - the interactive birth door set, door class, launch-carried prompt freezing, keyed interactive resume, route fence, or keyless-door prepared behavior changes
