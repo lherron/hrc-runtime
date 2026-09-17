@@ -12,7 +12,6 @@ import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-
 import {
   getBrokerRuntimeTmuxLeasedPaneId,
   getBrokerRuntimeTmuxSocketPath,
@@ -44,6 +43,13 @@ type Lease = {
   windowId: string
   paneId: string
 }
+
+type PruneLivenessEvaluator = (
+  runtime: HrcRuntimeSnapshot,
+  tmux: ReturnType<typeof createTmuxManager>,
+  db: ReturnType<typeof openHrcDatabase>,
+  options: { tmuxManagerFactory: typeof createTmuxManager }
+) => Promise<{ prunable: boolean; reason?: string }>
 
 type Seeded = {
   runtimeId: string
@@ -108,6 +114,30 @@ async function createLiveLease(suffix: string): Promise<Lease> {
   return { socketPath, sessionId, sessionName, windowId, paneId }
 }
 
+async function createShellLease(suffix: string): Promise<Lease> {
+  const socketPath = join(fixture.runtimeRoot, 'btmux', `${suffix}.sock`)
+  const sessionName = `hrc-h1b-${suffix}`
+  await mkdir(join(fixture.runtimeRoot, 'btmux'), { recursive: true })
+  const created = tmux(socketPath, ['new-session', '-d', '-s', sessionName, '-n', 'tui'])
+  expect({ status: created.status, stderr: created.stderr }).toEqual({ status: 0, stderr: '' })
+  tmuxSockets.push(socketPath)
+  const identity = tmux(socketPath, [
+    'display-message',
+    '-p',
+    '-t',
+    `=${sessionName}:tui`,
+    '#{session_id}\t#{window_id}\t#{pane_id}',
+  ])
+  expect(identity.status).toBe(0)
+  const [sessionId, windowId, paneId] = identity.stdout.trim().split('\t')
+  if (!sessionId || !windowId || !paneId) {
+    throw new Error(`tmux did not return a complete shell lease identity: ${identity.stdout}`)
+  }
+  const liveness = await createTmuxManager({ socketPath }).inspectPaneLiveness(paneId)
+  expect(liveness).toMatchObject({ alive: false, dead: false })
+  return { socketPath, sessionId, sessionName, windowId, paneId }
+}
+
 function killLease(lease: Lease): void {
   const killed = tmux(lease.socketPath, ['kill-server'])
   expect(killed.status).toBe(0)
@@ -126,6 +156,7 @@ async function seedBrokerRuntime(
     bound: boolean
     lease: Lease
     hosted?: boolean | undefined
+    d8eShape?: boolean | undefined
     scopeRef?: string | undefined
     activeRunId?: string | undefined
     external?: boolean | undefined
@@ -150,52 +181,104 @@ async function seedBrokerRuntime(
       transport: 'headless',
       controllerKind: 'harness-broker',
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
-      tmuxJson: {
-        kind: 'broker-tmux-allocation',
-        socketPath: options.lease.socketPath,
-        sessionId: options.lease.sessionId,
-        sessionName: options.lease.sessionName,
-        windowId: options.lease.windowId,
-        paneId: options.lease.paneId,
-        windowName: 'tui',
-      },
-      runtimeStateJson: {
-        schemaVersion: 'runtime-state/v1',
-        kind: 'harness-broker',
-        runtimeId,
-        hostSessionId,
-        generation: 1,
-        ...(options.bound ? { executionRelease: EXECUTION_RELEASE } : {}),
-        ...(options.external ? { lifecycleOwner: 'external' } : {}),
-        broker:
-          options.hosted === false
-            ? { eventLedgerPath: ledgerPath }
-            : {
-                endpoint: {
-                  kind: 'unix-jsonrpc-ndjson',
-                  socketPath: join(ledgerDir, 'broker.sock'),
-                  attachTokenRef: {
-                    kind: 'file',
-                    path: join(ledgerDir, 'attach.token'),
-                    redacted: true,
-                  },
-                  protocolVersion: 'harness-broker/0.2',
-                },
-                substrate: {
-                  kind: 'leased-tmux',
-                  tmuxSocketPath: options.lease.socketPath,
-                  sessionName: options.lease.sessionName,
-                  brokerWindow: {
-                    sessionId: options.lease.sessionId,
-                    windowId: options.lease.windowId,
-                    paneId: options.lease.paneId,
-                  },
-                  generation: 1,
-                  eventLedgerPath: ledgerPath,
-                },
-                presentation: { kind: 'none' },
+      tmuxJson: options.d8eShape
+        ? {
+            kind: 'broker-tmux-allocation',
+            brokerDriver: 'codex-app-server',
+            socketPath: options.lease.socketPath,
+            allocatedAt: OLD,
+            sessionId: options.lease.sessionId,
+            windowId: options.lease.windowId,
+            paneId: options.lease.paneId,
+            sessionName: options.lease.sessionName,
+            windowName: 'tui',
+            generation: 1,
+          }
+        : {
+            kind: 'broker-tmux-allocation',
+            socketPath: options.lease.socketPath,
+            sessionId: options.lease.sessionId,
+            sessionName: options.lease.sessionName,
+            windowId: options.lease.windowId,
+            paneId: options.lease.paneId,
+            windowName: 'tui',
+          },
+      runtimeStateJson: options.d8eShape
+        ? {
+            schemaVersion: 'runtime-state/v1',
+            kind: 'harness-broker',
+            runtimeId,
+            hostSessionId,
+            generation: 1,
+            status: options.status,
+            executionRelease: {
+              ...EXECUTION_RELEASE,
+              operationId: `op-h1b-${suffix}`,
+              helloRelease: {
+                releaseId: EXECUTION_RELEASE.releaseId,
+                sourceCommit: EXECUTION_RELEASE.sourceCommit,
+                builtAt: EXECUTION_RELEASE.builtAt,
               },
-      },
+            },
+            tmux: {
+              brokerDriver: 'codex-app-server',
+              socketPath: options.lease.socketPath,
+              allocatedAt: OLD,
+              sessionId: options.lease.sessionId,
+              windowId: options.lease.windowId,
+              paneId: options.lease.paneId,
+              sessionName: options.lease.sessionName,
+              windowName: 'tui',
+              generation: 1,
+            },
+            updatedAt: OLD,
+            startFailure: { code: 'broker_start_failed', message: 'fixture start failed' },
+            staleReason: 'broker_tmux_lease_stale_on_restart',
+            stalePayload: {
+              runtimeId,
+              reason: 'broker_tmux_lease_stale_on_restart',
+              generation: 1,
+              invocationId,
+            },
+            terminalInvocation: { invocationId, eventType: 'hrc.runtime.stale' },
+          }
+        : {
+            schemaVersion: 'runtime-state/v1',
+            kind: 'harness-broker',
+            runtimeId,
+            hostSessionId,
+            generation: 1,
+            ...(options.bound ? { executionRelease: EXECUTION_RELEASE } : {}),
+            ...(options.external ? { lifecycleOwner: 'external' } : {}),
+            broker:
+              options.hosted === false
+                ? { eventLedgerPath: ledgerPath }
+                : {
+                    endpoint: {
+                      kind: 'unix-jsonrpc-ndjson',
+                      socketPath: join(ledgerDir, 'broker.sock'),
+                      attachTokenRef: {
+                        kind: 'file',
+                        path: join(ledgerDir, 'attach.token'),
+                        redacted: true,
+                      },
+                      protocolVersion: 'harness-broker/0.2',
+                    },
+                    substrate: {
+                      kind: 'leased-tmux',
+                      tmuxSocketPath: options.lease.socketPath,
+                      sessionName: options.lease.sessionName,
+                      brokerWindow: {
+                        sessionId: options.lease.sessionId,
+                        windowId: options.lease.windowId,
+                        paneId: options.lease.paneId,
+                      },
+                      generation: 1,
+                      eventLedgerPath: ledgerPath,
+                    },
+                    presentation: { kind: 'none' },
+                  },
+          },
       lastActivityAt: OLD,
       updatedAt: OLD,
     } as never)
@@ -220,14 +303,76 @@ async function seedBrokerRuntime(
 
   const persisted = runtime(runtimeId)
   expect(persisted).not.toBeNull()
-  expect(hasLeasedBrokerSubstrate(persisted as HrcRuntimeSnapshot)).toBe(options.hosted !== false)
+  expect(hasLeasedBrokerSubstrate(persisted as HrcRuntimeSnapshot)).toBe(
+    options.d8eShape ? false : options.hosted !== false
+  )
   expect(getBrokerRuntimeTmuxSocketPath(persisted as HrcRuntimeSnapshot)).toBe(
     options.lease.socketPath
   )
   expect(getBrokerRuntimeTmuxLeasedPaneId(persisted as HrcRuntimeSnapshot)).toBe(
     options.lease.paneId
   )
+  if (options.d8eShape) {
+    expect(Object.keys(persisted?.tmuxJson ?? {}).sort()).toEqual(
+      [
+        'allocatedAt',
+        'brokerDriver',
+        'generation',
+        'kind',
+        'paneId',
+        'sessionId',
+        'sessionName',
+        'socketPath',
+        'windowId',
+        'windowName',
+      ].sort()
+    )
+    expect(Object.keys(persisted?.runtimeStateJson ?? {}).sort()).toEqual(
+      [
+        'executionRelease',
+        'generation',
+        'hostSessionId',
+        'kind',
+        'runtimeId',
+        'stalePayload',
+        'staleReason',
+        'startFailure',
+        'status',
+        'terminalInvocation',
+        'tmux',
+        'updatedAt',
+        'schemaVersion',
+      ].sort()
+    )
+  }
   return { runtimeId, hostSessionId, invocationId, ledgerDir, ledgerPath, ledgerBytes }
+}
+
+async function sharedPruneLivenessEvaluator(): Promise<unknown> {
+  const sweepHelpers = (await import('../sweep-helpers')) as unknown as Record<string, unknown>
+  return sweepHelpers['evaluatePruneLivenessSafety']
+}
+
+async function evaluateSharedLiveness(runtimeId: string): Promise<{
+  evaluator: unknown
+  result?: { prunable: boolean; reason?: string } | undefined
+}> {
+  const evaluator = await sharedPruneLivenessEvaluator()
+  if (typeof evaluator !== 'function') return { evaluator }
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    const persisted = db.runtimes.getByRuntimeId(runtimeId)
+    if (!persisted) throw new Error(`missing runtime ${runtimeId}`)
+    const result = await (evaluator as PruneLivenessEvaluator)(
+      persisted,
+      createTmuxManager({ socketPath: fixture.tmuxSocketPath }),
+      db,
+      { tmuxManagerFactory: createTmuxManager }
+    )
+    return { evaluator, result }
+  } finally {
+    db.close()
+  }
 }
 
 function runtime(runtimeId: string): HrcRuntimeSnapshot | null {
@@ -266,6 +411,96 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 }
 
 describe('T-08566 H1b/H3 private broker lease prune safety', () => {
+  test('exports the shared status-agnostic prune liveness evaluator', async () => {
+    expect(typeof (await sharedPruneLivenessEvaluator())).toBe('function')
+  })
+
+  test('exact d8e stale shape is fenced by bulk dry-run without parsed leased hosting', async () => {
+    const lease = await createLiveLease('d8e-bulk')
+    const seeded = await seedBrokerRuntime('d8e-bulk', {
+      status: 'stale',
+      bound: true,
+      lease,
+      d8eShape: true,
+    })
+    const persisted = runtime(seeded.runtimeId) as HrcRuntimeSnapshot
+    expect(hasLeasedBrokerSubstrate(persisted)).toBe(false)
+
+    const response = await fixture.postJson('/v1/runtimes/prune', {
+      status: ['stale'],
+      olderThan: '0s',
+      dryRun: true,
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      results: [{ runtimeId: seeded.runtimeId, status: 'skipped', reason: 'live_broker_lease' }],
+    })
+    expect(runtime(seeded.runtimeId)).not.toBeNull()
+    expect(leaseAlive(lease)).toBe(true)
+  })
+
+  test('shared liveness evaluator fences the exact d8e stale shape', async () => {
+    const lease = await createLiveLease('d8e-unit')
+    const seeded = await seedBrokerRuntime('d8e-unit', {
+      status: 'stale',
+      bound: true,
+      lease,
+      d8eShape: true,
+    })
+    expect(await evaluateSharedLiveness(seeded.runtimeId)).toMatchObject({
+      evaluator: expect.any(Function),
+      result: { prunable: false, reason: 'live_broker_lease' },
+    })
+  })
+
+  test('busy parsed lease is live to the shared evaluator but status admission wins in bulk', async () => {
+    const lease = await createLiveLease('busy-control')
+    const seeded = await seedBrokerRuntime('busy-control', {
+      status: 'busy',
+      bound: false,
+      lease,
+    })
+    const response = await fixture.postJson('/v1/runtimes/prune', {
+      status: ['busy'],
+      olderThan: '0s',
+      dryRun: true,
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          runtimeId: seeded.runtimeId,
+          status: 'skipped',
+          reason: 'status_not_prunable:busy',
+        },
+      ],
+    })
+    expect(await evaluateSharedLiveness(seeded.runtimeId)).toMatchObject({
+      evaluator: expect.any(Function),
+      result: { prunable: false, reason: 'live_broker_lease' },
+    })
+  })
+
+  test('a present private shell pane is live evidence even when its foreground is not alive', async () => {
+    const lease = await createShellLease('shell-pane')
+    const seeded = await seedBrokerRuntime('shell-pane', {
+      status: 'stale',
+      bound: false,
+      lease,
+    })
+    const response = await fixture.postJson('/v1/runtimes/prune', {
+      status: ['stale'],
+      olderThan: '0s',
+      dryRun: true,
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      results: [{ runtimeId: seeded.runtimeId, status: 'skipped', reason: 'live_broker_lease' }],
+    })
+    expect(runtime(seeded.runtimeId)).not.toBeNull()
+    expect(leaseAlive(lease)).toBe(true)
+  })
+
   test('bulk dry-run and apply both spare an unbound runtime with a live private lease', async () => {
     const lease = await createLiveLease('bulk-live')
     const seeded = await seedBrokerRuntime('bulk-live', {
