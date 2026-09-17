@@ -6,6 +6,7 @@ import type {
   PreemptAdmission,
   PreemptSubmissionRequest,
 } from 'hrc-core'
+import { parseAppSessionScopeRef } from 'hrc-core'
 import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { MailKickerContext } from './context.js'
@@ -318,6 +319,9 @@ export function observeMailDriveLifecycleEvent(
         error: errorText(error),
       })
     })
+    // T-08576 D2: an app scope has no wrkq address. Its local intents are
+    // reconciled above; it has no ledger obligations to lapse.
+    if (parseAppSessionScopeRef(event.scopeRef) !== null) return
     void failLapsedObligations(this, targetSessionRef, new Set([runtimeId]))
       .then((complete) => {
         if (complete) this.mailKickerLapsedRuntimes.add(runtimeId)
@@ -342,6 +346,8 @@ export function observeMailDriveLifecycleEvent(
       turnEndedAt: event.ts,
     })
   }
+  // T-08576 D2: local disposal above still runs; an app scope is never a wake target.
+  if (parseAppSessionScopeRef(event.scopeRef) !== null) return
   this.wake(targetSessionRef, 'turn_completion')
 }
 
