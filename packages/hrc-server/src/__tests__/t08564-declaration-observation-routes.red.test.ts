@@ -303,6 +303,33 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     expect(JSON.stringify(body)).toContain(release.releaseId)
   })
 
+  // Astra EN-14276 (G1 audit A1/A6): the inspection context names the same
+  // project and effective directives the compile sees. The project id comes from
+  // the session scope and differs from the project directory basename; the
+  // directive harness differs from the double's claude-code profile.
+  test('inspects with the scope project id and the authorized provision directives the compile uses', async () => {
+    await boot()
+    const intent = {
+      ...managedIntent(),
+      provision: { harness: 'codex', model: 'x', yolo: true },
+    }
+    const { response } = await post('/v1/previews/run', {
+      intent,
+      sessionRef: 'agent:smokey:project:hrc-runtime:task:T-08564/lane:main',
+      restartStyle: 'fresh',
+    })
+
+    expect(response.status).toBe(200)
+    expect(projectRoot.split('/').at(-1)).not.toBe('hrc-runtime')
+    const context = requestParams(aspd!, 'aspc.inspectRuntimePlacement')['context'] as Record<
+      string,
+      unknown
+    >
+    expect(context['project']).toEqual({ mode: 'root', projectRoot, projectId: 'hrc-runtime' })
+    expect(context['provisionDirectives']).toEqual({ harness: 'codex', model: 'x' })
+    expect(context['taskId']).toBe('T-08564')
+  })
+
   test('omits prompt zones and failure fields for an absent prompt', async () => {
     await boot({ prompt: 'absent' })
     const { response, body } = await post('/v1/previews/run', previewBody())
