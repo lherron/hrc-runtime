@@ -4,8 +4,8 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { evaluateServerLifecycleAuthorization } from '../../../hrc-cli/src/cli-runtime/shutdown-intent'
+import { buildHrcCorrelationEnv } from '../agent-spaces-adapter/cli-adapter'
 import { BrokerEventMapper } from '../broker/event-mapper'
-import { buildDispatchInvocation } from '../dispatch-invocation'
 import { launchCarriedInvokeCorrelationJson } from '../server-types'
 import { dispatchTurnForSession } from '../turn-dispatch-handlers'
 import {
@@ -113,19 +113,20 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
   })
 
-  it('R-B5 T-08574 preview keeps app correlation unbuildable and agent correlation unchanged', async () => {
+  it('R-B5 T-08574 correlation env keeps app correlation unprojectable and agent correlation unchanged', () => {
     const previewIntent = {
       ...baseIntent(),
       harness: { provider: 'anthropic' as const, id: 'claude-code', interactive: true },
     }
-    const appPreview = buildDispatchInvocation({
-      ...previewIntent,
-      placement: {
-        ...previewIntent.placement,
-        correlation: { sessionRef: { scopeRef: 'app:t08576', laneRef: 'lane:preview' } },
-      },
-    } as HrcRuntimeIntent)
-    await expect(appPreview).rejects.toThrow()
+    expect(() =>
+      buildHrcCorrelationEnv({
+        ...previewIntent,
+        placement: {
+          ...previewIntent.placement,
+          correlation: { sessionRef: { scopeRef: 'app:t08576', laneRef: 'lane:preview' } },
+        },
+      } as HrcRuntimeIntent)
+    ).toThrow()
 
     const agentIntent = {
       ...previewIntent,
@@ -142,8 +143,7 @@ describe('T-08576 app-session birth identity boundary', () => {
         },
       },
     } as HrcRuntimeIntent
-    const preview = await buildDispatchInvocation(agentIntent)
-    expect(identityProjection(preview.env)).toMatchObject({
+    expect(identityProjection(buildHrcCorrelationEnv(agentIntent))).toMatchObject({
       AGENT_SESSION_REF: 'agent:smokey:project:hrc-runtime:task:T-08576/lane:preview',
       HRC_SESSION_REF: 'agent:smokey:project:hrc-runtime:task:T-08576/lane:preview',
       AGENT_HOST_SESSION_ID: 'hsid-preview',

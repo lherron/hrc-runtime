@@ -34,7 +34,7 @@ import {
   onAppIdentityOwnerRelease,
   withAppIdentityOwner,
 } from './app-session-identity.js'
-import { buildDispatchInvocation, normalizeDispatchIntent } from './dispatch-invocation.js'
+import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import {
   evictExternalParticipant,
   isExternalLifecycleOwner,
@@ -445,20 +445,11 @@ export async function handleEnsureAppSessionDryRun(
   const existing = this.db.appManagedSessions.findByKey(appId, appSessionKey)
 
   if (!existing || existing.status === 'removed') {
-    // No existing session — would create a new one
+    // No existing session — would create a new one. The plan names the
+    // outcome only; the broker-plan preview (T-08584) is the only preview.
     const plan: EnsureAppSessionDryRunPlan = {
       action: 'create',
       sessionExists: false,
-    }
-
-    // Build the invocation that would be used
-    if (spec.kind === 'harness' && spec.runtimeIntent.harness.interactive) {
-      try {
-        const invocation = await buildDispatchInvocation(spec.runtimeIntent)
-        plan.invocation = invocation
-      } catch {
-        // Invocation build failed — still report the plan without it
-      }
     }
 
     return json({ dryRun: plan })
@@ -491,7 +482,8 @@ export async function handleEnsureAppSessionDryRun(
       })
     }
 
-    // Would create a new runtime
+    // Would create a new runtime. The plan names the outcome only; the
+    // broker-plan preview (T-08584) is the only preview.
     const plan: EnsureAppSessionDryRunPlan = {
       action: 'create',
       sessionExists: true,
@@ -501,13 +493,6 @@ export async function handleEnsureAppSessionDryRun(
             runtimeStatus: priorRuntime.status,
           }
         : {}),
-    }
-
-    try {
-      const invocation = await buildDispatchInvocation(spec.runtimeIntent)
-      plan.invocation = invocation
-    } catch {
-      // Invocation build failed — still report the plan without it
     }
 
     return json({ dryRun: plan })

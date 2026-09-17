@@ -23,26 +23,20 @@
  * the guarantee has to hold at the adapter, since that is the shape the
  * persisted intent actually has.
  *
- * WHERE `reasoning` IS OBSERVABLE. Both live boundaries carry a
- * reasoning field at all, so it is asserted exactly there rather than three
- * times mechanically:
- *   - cli-adapter     -> `BuildProcessInvocationSpecRequest.modelReasoningEffort`
+ * WHERE `reasoning` IS OBSERVABLE. The surviving live boundary (the broker
+ * compile adapter; T-08584 retired the direct cli-adapter preview builder)
+ * carries its own reasoning field, so it is asserted exactly there:
  *   - compile-adapter -> `RuntimeCompileRequest.requested.reasoningEffort`
- * Because `modelReasoningEffort` and `reasoningEffort` are fields of their own,
- * the cheap fix of projecting the overlaid model onto `harness.model` — which
- * the adapters already read — cannot turn this file green.
+ * Because `reasoningEffort` is a field of its own, the cheap fix of projecting
+ * the overlaid model onto `harness.model` — which the adapter already reads —
+ * cannot turn this file green.
  */
 
 import { describe, expect, it } from 'bun:test'
 
-import type {
-  BuildProcessInvocationSpecRequest,
-  BuildProcessInvocationSpecResponse,
-} from 'agent-spaces'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
-import { buildCliInvocation } from '../agent-spaces-adapter/cli-adapter'
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
 import { makeBrokerProfile, makeCompileResponse } from './broker-compile-fixtures'
 
@@ -84,23 +78,6 @@ function directedIntent(harness: HrcRuntimeIntent['harness']): HrcRuntimeIntent 
 }
 
 describe('T-07398 cycle 2 item 1 — provisioning directives reach the launch path', () => {
-  it('cli-adapter: the process invocation spec is built for the directed model AND reasoning', async () => {
-    let captured: BuildProcessInvocationSpecRequest | undefined
-
-    await buildCliInvocation(directedIntent({ provider: 'anthropic', interactive: true }), {
-      specBuilder: async (request): Promise<BuildProcessInvocationSpecResponse> => {
-        captured = request
-        return { spec: { argv: ['agent-spaces-cli'], env: {}, cwd: '/tmp/materialized' } }
-      },
-    })
-
-    expect(captured?.model).toBe(DIRECTED_MODEL)
-    // Independently red: `modelReasoningEffort` is its own field on the process
-    // spec request, so projecting only the model onto `harness.model` (which the
-    // adapter already reads) cannot satisfy this line.
-    expect(captured?.modelReasoningEffort).toBe(DIRECTED_REASONING)
-  })
-
   it('compile-adapter: the broker compile request requests the directed model AND reasoning', async () => {
     const captured: { request?: RuntimeCompileRequest } = {}
 

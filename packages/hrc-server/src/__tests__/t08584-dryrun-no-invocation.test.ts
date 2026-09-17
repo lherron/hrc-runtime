@@ -14,21 +14,13 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context'
 const NOW = '2026-09-17T19:00:00.000Z'
 let root: string
 let db: HrcDatabase
-let savedShim: string | undefined
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 't08584-dryrun-'))
   db = openHrcDatabase(join(root, 'state.sqlite'))
-  savedShim = process.env['HRC_ALLOW_HARNESS_SHIM']
-  process.env['HRC_ALLOW_HARNESS_SHIM'] = '1'
 })
 
 afterEach(async () => {
-  if (savedShim === undefined) {
-    Reflect.deleteProperty(process.env, 'HRC_ALLOW_HARNESS_SHIM')
-  } else {
-    process.env['HRC_ALLOW_HARNESS_SHIM'] = savedShim
-  }
   db.close()
   await rm(root, { recursive: true, force: true })
 })

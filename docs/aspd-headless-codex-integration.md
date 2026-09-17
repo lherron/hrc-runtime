@@ -1839,9 +1839,9 @@ is HRC first, then aspd. Recorded on T-08571.
 - **Codex Desktop observer (M18), T-08574 (with T-08567):** HRC hand-builds the
   observer profile without a compile. Whether a bundle-less conversation-bound
   preparation is admissible is U12, a different preparation problem.
-- **App-session direct path (M6), T-08567:** an in-process `buildCliInvocation`
-  launch, not a broker birth. It needs facts the existing verbs may not return
-  (U10).
+- **App-session direct path (M6), RETIRED by T-08584:** the in-process
+  `buildCliInvocation` preview builder is deleted, not migrated; the only
+  preview is the broker-plan aspd observation.
 - **Configuration and inspection (M8, M9, M10), T-08563/T-08564:** that includes
   `toProfileSelector`'s harness-to-driver mapping. Moving interpretation
   changes a request, not where a birth launches.

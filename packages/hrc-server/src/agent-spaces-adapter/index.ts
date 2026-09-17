@@ -1,11 +1,5 @@
 // hrc-adapter-agent-spaces: adapter between HRC intent and agent-spaces execution surfaces
 
-// Phase 1: CLI adapter only
-export {
-  buildCliInvocation,
-  mergeEnv,
-  UnsupportedHarnessError,
-  type BuildCliInvocationOptions,
-  type CliInvocationResult,
-  type SpecBuilder,
-} from './cli-adapter.js'
+// Launch-environment helpers shared by the broker launch paths (T-08584
+// retired the in-process direct preview builder; only env helpers remain).
+export { mergeEnv } from './cli-adapter.js'

@@ -50,8 +50,8 @@ predicate: >
   Desktop observer broker, and the legacy stdio test seam; with HRC_ASPD_SOCKET
   unset it governs every broker route as before. The migrated broker-plan preview is an aspd
   observation and spawns no HRC-owned aspc-facade child through this resolver;
-  after the direct preview branch migrates, it also observes
-  prepareProcessInvocation through aspd. Neither preview branch falls back to a
+  the direct preview branch is retired (T-08584); the only preview is the
+  broker-plan aspd observation, and no preview falls back to a
   resolver-selected compiler.
 authority: wrkq:T-08562 every supported broker birth amendment (mable acceptance EN-13464, dependency wording Astra EN-13470; Daedalus approval EN-13574 on f5940449), 2026-09-17; wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
@@ -83,7 +83,7 @@ required_tests:
   - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation while an unset endpoint keeps the facade for every presentation
   - T-08556 configured attached-run interactive Codex birth launches the worker wrapper and hook receiver from one frozen executionRelease with no resolver consultation or fallback
   - T-08560 every configured interactive codex-app-server birth door launches its worker wrapper and hook receiver from the frozen executionRelease with no resolver consultation or fallback while other interactive drivers keep the resolver
-  - T-08564 D-14 and D-15 prove broker-plan and direct previews observe through aspd without an HRC-owned facade spawn or resolver fallback
+  - T-08564 D-14 proves the broker-plan preview observes through aspd without an HRC-owned facade spawn or resolver fallback (the D-15 direct preview is retired by T-08584)
   - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates

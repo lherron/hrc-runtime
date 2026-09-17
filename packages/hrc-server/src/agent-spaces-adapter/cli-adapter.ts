@@ -1,115 +1,20 @@
 /**
- * CLI adapter for hrc-adapter-agent-spaces.
+ * HRC launch-environment helpers for the agent-spaces adapter.
  *
- * Translates HRC harness intent + placement into a CLI invocation spec
- * using public agent-spaces APIs only. Phase 1 interactive harnesses only.
+ * T-08584 retired the in-process direct preview builder (`buildCliInvocation`
+ * and its spec-builder machinery): real births and turns go through the
+ * broker/tmux routes, and dry-run previews observe the broker plan. What
+ * remains here is the launch env policy shared by the broker launch paths.
  *
- * References: T-00960, T-00946
+ * References: T-00960, T-00946, T-08584
  */
 
 import { type LaneRef, formatSessionHandle, normalizeLaneRef, parseScopeRef } from 'agent-scope'
-import {
-  type BuildProcessInvocationSpecRequest,
-  type BuildProcessInvocationSpecResponse,
-  type ProcessInvocationSpec,
-  createAgentSpacesClient,
-} from 'agent-spaces'
-import type {
-  HrcContinuationRef,
-  HrcHarness,
-  HrcIoMode,
-  HrcLaunchEnvConfig,
-  HrcLaunchPromptMaterial,
-  HrcProvider,
-  HrcRuntimeIntent,
-} from 'hrc-core'
-import type { ResolvedRuntimeBundle } from 'spaces-config'
-import {
-  detectAgentLocalComponents,
-  harnessRegistry,
-  planPlacementRuntime,
-  prepareAgentToolRuntime,
-  prepareCodexRuntimeHome,
-} from 'spaces-execution'
-
-import { optional } from './optional.js'
-import { placementPlaceholders } from './placement-placeholders.js'
-import { resolveLaunchModel, resolveLaunchReasoning } from './provision-launch.js'
+import type { HrcLaunchEnvConfig, HrcRuntimeIntent } from 'hrc-core'
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Phase 1 supported interactive CLI harnesses */
-export const SUPPORTED_CLI_HARNESSES: ReadonlySet<HrcHarness> = new Set<HrcHarness>([
-  'claude-code',
-  'codex-cli',
-  'pi-cli',
-])
-
-const INTERACTIVE_TURN_SCOPED_ENV_KEYS = new Set(['WRKQ_CAUSATION_REF'])
-
-type CliFrontend = 'claude-code' | 'codex-cli' | 'pi-cli'
-
-const HARNESS_ID_TO_FRONTEND: Partial<Record<HrcHarness, CliFrontend>> = {
-  'claude-code': 'claude-code',
-  'codex-cli': 'codex-cli',
-  pi: 'pi-cli',
-  'pi-cli': 'pi-cli',
-}
-
-/** Map provider → CLI frontend for interactive mode */
-const PROVIDER_TO_FRONTEND: Record<HrcProvider, CliFrontend> = {
-  anthropic: 'claude-code',
-  openai: 'codex-cli',
-}
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/** Spec builder function — allows injection for testing */
-export type SpecBuilder = (
-  req: BuildProcessInvocationSpecRequest
-) => Promise<BuildProcessInvocationSpecResponse>
-
-/** Optional configuration for buildCliInvocation */
-export interface BuildCliInvocationOptions {
-  specBuilder?: SpecBuilder | undefined
-  continuation?: HrcContinuationRef | undefined
-  suppressInitialPrompt?: boolean | undefined
-}
-
-/** Result of building a CLI invocation from HRC intent */
-export interface CliInvocationResult {
-  argv: string[]
-  env: Record<string, string>
-  cwd: string
-  provider: HrcProvider
-  frontend: CliFrontend
-  interactionMode: 'headless' | 'interactive'
-  ioMode: HrcIoMode
-  resolvedBundle?: ResolvedRuntimeBundle | undefined
-  prompts?: HrcLaunchPromptMaterial | undefined
-  systemPromptFile?: string | undefined
-  codexAppServer?: ProcessInvocationSpec['codexAppServer'] | undefined
-  warnings?: string[] | undefined
-}
-
-/** Error thrown when an unsupported harness is requested */
-export class UnsupportedHarnessError extends Error {
-  readonly code = 'unsupported_harness' as const
-  readonly harness: string
-
-  constructor(harness: string) {
-    super(
-      `Unsupported interactive harness "${harness}". ` +
-        `Phase 1 supports: ${[...SUPPORTED_CLI_HARNESSES].join(', ')}`
-    )
-    this.name = 'UnsupportedHarnessError'
-    this.harness = harness
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Env merging
@@ -152,48 +57,6 @@ export function mergeEnv(
   }
 
   return merged
-}
-
-function stripInteractiveTurnScopedEnv(
-  launchConfig?: HrcLaunchEnvConfig | undefined
-): HrcLaunchEnvConfig | undefined {
-  if (launchConfig?.env === undefined) {
-    return launchConfig
-  }
-
-  const env = Object.fromEntries(
-    Object.entries(launchConfig.env).filter(([key]) => !INTERACTIVE_TURN_SCOPED_ENV_KEYS.has(key))
-  )
-  const { env: _ignored, ...rest } = launchConfig
-  return {
-    ...rest,
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Internal: resolve frontend from intent
-// ---------------------------------------------------------------------------
-
-function resolveCliFrontend(intent: HrcRuntimeIntent): CliFrontend {
-  if (!intent.harness.interactive) {
-    throw new UnsupportedHarnessError('non-interactive')
-  }
-
-  if (intent.harness.id) {
-    const frontend = HARNESS_ID_TO_FRONTEND[intent.harness.id]
-    if (!frontend || !SUPPORTED_CLI_HARNESSES.has(frontend)) {
-      throw new UnsupportedHarnessError(intent.harness.id)
-    }
-    return frontend
-  }
-
-  const frontend = PROVIDER_TO_FRONTEND[intent.harness.provider]
-  if (!frontend || !SUPPORTED_CLI_HARNESSES.has(frontend)) {
-    throw new UnsupportedHarnessError(intent.harness.provider)
-  }
-
-  return frontend
 }
 
 // ---------------------------------------------------------------------------
@@ -284,132 +147,4 @@ function normalizeCorrelationLaneRef(laneRef: string): LaneRef {
     return 'main'
   }
   return normalizeLaneRef(laneRef.startsWith('lane:') ? laneRef : `lane:${laneRef}`)
-}
-// ---------------------------------------------------------------------------
-// Default spec builder using real agent-spaces client
-// ---------------------------------------------------------------------------
-
-function defaultSpecBuilder(): SpecBuilder {
-  const client = createAgentSpacesClient({
-    runtime: {
-      getHarnessAdapter: (harnessId) => harnessRegistry.getOrThrow(harnessId),
-      detectAgentLocalComponents,
-      planPlacementRuntime,
-      prepareCodexRuntimeHome,
-      prepareAgentToolRuntime,
-    },
-  })
-  return (req) => client.buildProcessInvocationSpec(req)
-}
-
-function resolveInvocationModes(intent: HrcRuntimeIntent): {
-  interactionMode: 'headless' | 'interactive'
-  ioMode: HrcIoMode
-} {
-  const preferredMode = intent.execution?.preferredMode
-  // HRC only has a true detached headless lifecycle for Codex today.
-  // Claude must stay interactive so the tmux runtime remains attachable.
-  if (
-    intent.harness.provider === 'openai' &&
-    (preferredMode === 'headless' || preferredMode === 'nonInteractive')
-  ) {
-    return {
-      interactionMode: 'headless',
-      ioMode: 'pipes',
-    }
-  }
-
-  return {
-    interactionMode: 'interactive',
-    ioMode: 'pty',
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Core adapter function
-// ---------------------------------------------------------------------------
-
-/**
- * Build a CLI invocation spec from HRC runtime intent.
- *
- * Uses the public `agent-spaces` placement API to resolve the bundle and
- * construct argv/env/cwd. Applies HRC launch env policy on top of the
- * base env returned by agent-spaces, and injects HRC correlation env vars.
- *
- * Pass `options.specBuilder` to inject a stub for testing.
- *
- * @throws {UnsupportedHarnessError} if the harness is not a phase 1 interactive harness
- */
-export async function buildCliInvocation(
-  intent: HrcRuntimeIntent,
-  options?: BuildCliInvocationOptions
-): Promise<CliInvocationResult> {
-  const frontend = resolveCliFrontend(intent)
-  const { interactionMode, ioMode } = resolveInvocationModes(intent)
-  // `undefined` allows placement planning to fall back to the target's default
-  // priming prompt. Use an explicit empty string to mean "suppress replay".
-  const initialPrompt = options?.suppressInitialPrompt ? '' : intent.initialPrompt
-
-  const specBuilder = options?.specBuilder ?? defaultSpecBuilder()
-
-  // Use the placement-based path: when placement is set, aspHome/spec/cwd
-  // are ignored by agent-spaces (see client.ts buildPlacementInvocationSpec).
-  const placementReq: BuildProcessInvocationSpecRequest = {
-    placement: intent.placement,
-    provider: intent.harness.provider,
-    frontend,
-    // T-07398: the directive-overlaid launch route, not `harness.model` alone —
-    // this is the boundary that becomes process argv.
-    ...optional('model', resolveLaunchModel(intent)),
-    interactionMode,
-    ioMode,
-    ...(options?.continuation ? { continuation: options.continuation } : {}),
-    ...(intent.harness.yolo ? { yolo: true } : {}),
-    ...optional('modelReasoningEffort', resolveLaunchReasoning(intent)),
-    ...optional('prompt', initialPrompt),
-    ...optional('attachments', intent.attachments),
-    ...placementPlaceholders(),
-  }
-
-  const response = await specBuilder(placementReq)
-  const responseSpec = response.spec as typeof response.spec & {
-    prompts?: HrcLaunchPromptMaterial | undefined
-    systemPromptFile?: string | undefined
-    codexAppServer?: ProcessInvocationSpec['codexAppServer'] | undefined
-  }
-  const argv = responseSpec.argv
-
-  // Build HRC correlation env vars from placement
-  const correlationEnv = buildHrcCorrelationEnv(intent)
-
-  // Merge: agent-spaces base env → HRC correlation → launch overrides/unset/pathPrepend
-  const envWithCorrelation = { ...responseSpec.env, ...correlationEnv }
-  // CLI launches are durable runtimes, including Codex headless keep-alive.
-  // Turn-scoped causation env must not persist there because later turns could
-  // inherit stale ancestry; those CLI hook targets intentionally become
-  // causation orphans. Non-CLI SDK launch paths carry turn-scoped env directly.
-  const finalEnv = mergeEnv(envWithCorrelation, stripInteractiveTurnScopedEnv(intent.launch))
-  // Generation is an HRC dispatch fence, not caller-controlled launch config.
-  // Reassert both contract names after launch overrides/unsets so an intent
-  // cannot spoof or remove the authoritative session generation.
-  const generation = correlationEnv['HRC_GENERATION']
-  if (generation !== undefined) {
-    finalEnv['AGENT_GENERATION'] = generation
-    finalEnv['HRC_GENERATION'] = generation
-  }
-
-  return {
-    argv,
-    env: finalEnv,
-    cwd: responseSpec.cwd,
-    provider: intent.harness.provider,
-    frontend,
-    interactionMode,
-    ioMode,
-    resolvedBundle: response.resolvedBundle,
-    prompts: responseSpec.prompts,
-    ...optional('systemPromptFile', responseSpec.systemPromptFile),
-    ...optional('codexAppServer', responseSpec.codexAppServer),
-    warnings: response.warnings,
-  }
 }

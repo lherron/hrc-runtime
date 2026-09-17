@@ -5,7 +5,7 @@ import { userInfo } from 'node:os'
 import { recordCliLaunch } from 'hrc-core'
 import type { CliLaunchPhase, DispatchTurnRequest, HrcRuntimeIntent } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
+import { buildBrokerRunPreview } from 'hrc-server'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
 
 import { printJson } from '../print.js'
@@ -757,14 +757,11 @@ export async function cmdStart(args: string[]): Promise<void> {
 
 /** Max characters shown for an env value in the run/start dry-run preview. */
 const PREVIEW_ENV_VALUE_MAX_CHARS = 160
-/** Max characters shown for an `env overrides` value in the dry-run preview. */
-const PREVIEW_ENV_OVERRIDE_MAX_CHARS = 120
 
 type RunPreviewWriter = (s: string) => void
 
 /**
  * Key-sorted env entries with long values elided, for the dry-run env block.
- * Shared by the broker-plan and spec-build branches so both truncate alike.
  */
 function previewEnvEntries(env: Record<string, string>): Array<[string, string]> {
   return Object.keys(env)
@@ -927,105 +924,6 @@ async function renderBrokerPlanPreview(
   return true
 }
 
-/**
- * Render the spec-build branch of the run/start dry-run preview: framed system
- * prompt + priming, metadata, env block, command line, and the trailing note.
- * Emitted bytes are identical to the prior inline branch.
- */
-async function renderSpecBuildPreview(
-  w: RunPreviewWriter,
-  intent: HrcRuntimeIntent,
-  sessionRef: string,
-  restartStyle: 'reuse_pty' | 'fresh_pty',
-  prompt: string | undefined
-): Promise<void> {
-  // Build the actual argv/env that the harness would launch with, then render
-  // it through the shared display module so this matches `asp run --dry-run`
-  // and the runtime launch output: framed system prompt + priming, then
-  // metadata, env block, and a command line with `<N chars>` placeholders.
-  try {
-    const invocation = await buildCliInvocation(intent)
-    const structuredSystemPrompt =
-      invocation.prompts?.system?.content ?? readOptionalUtf8(invocation.systemPromptFile)
-    const sysPrompt =
-      extractSystemPromptFromArgv(invocation.argv) ??
-      (structuredSystemPrompt !== undefined
-        ? {
-            content: structuredSystemPrompt,
-            mode: invocation.prompts?.system?.mode ?? 'append',
-          }
-        : undefined)
-    const primingPrompt =
-      extractPrimingFromArgv(invocation.argv) ?? invocation.prompts?.priming?.content
-    const envBlock = renderKeyValueSection('env', previewEnvEntries(invocation.env))
-    const argvHead = invocation.argv[0] ?? ''
-    const display = formatDisplayCommand(argvHead, invocation.argv.slice(1))
-
-    // Metadata lives below the framed prompts: scope/session info first,
-    // then the resolved invocation context, then env overrides if any.
-    const betweenLines: string[] = []
-    betweenLines.push('')
-    betweenLines.push(`  sessionRef:   ${sessionRef}`)
-    betweenLines.push(`  restartStyle: ${restartStyle}`)
-    betweenLines.push(`  agentRoot:    ${intent.placement.agentRoot}`)
-    betweenLines.push(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
-    betweenLines.push(`  cwd:          ${intent.placement.cwd}`)
-    betweenLines.push(`  provider:     ${intent.harness.provider}`)
-    betweenLines.push(
-      `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`
-    )
-    betweenLines.push('')
-    betweenLines.push(`  invocation cwd:      ${invocation.cwd}`)
-    betweenLines.push(`  invocation provider: ${invocation.provider}`)
-    betweenLines.push(`  invocation frontend: ${invocation.frontend}`)
-
-    const envOverrides = intent.launch?.env
-    if (envOverrides && Object.keys(envOverrides).length > 0) {
-      betweenLines.push('')
-      betweenLines.push('  env overrides:')
-      for (const key of Object.keys(envOverrides).sort()) {
-        const val = envOverrides[key]
-        if (val === undefined) continue
-        const valDisplay =
-          val.length > PREVIEW_ENV_OVERRIDE_MAX_CHARS
-            ? `${val.slice(0, PREVIEW_ENV_OVERRIDE_MAX_CHARS - 3)}...`
-            : val
-        betweenLines.push(`    ${key}=${valDisplay}`)
-      }
-    }
-
-    if (envBlock.length > 0) {
-      betweenLines.push('')
-      betweenLines.push(...envBlock)
-    }
-
-    await displayPrompts({
-      systemPrompt: sysPrompt?.content,
-      systemPromptMode: sysPrompt?.mode,
-      primingPrompt,
-      betweenLines,
-      command: display,
-      showCommand: true,
-    })
-
-    if (invocation.warnings && invocation.warnings.length > 0) {
-      w('')
-      w('  warnings:')
-      for (const warning of invocation.warnings) {
-        w(`    - ${warning}`)
-      }
-    }
-  } catch (err) {
-    w('')
-    w(`  (spec build failed: ${err instanceof Error ? err.message : String(err)})`)
-  }
-
-  w('')
-  w('  Note: this preview shows the request the client would send. Server-side')
-  w('  details (existing runtime, PTY state, tmux session) are not consulted.')
-  w('  Run without --dry-run to execute.')
-}
-
 export async function printLocalRunPreview(
   command: 'run' | 'start',
   scope: string,
@@ -1045,14 +943,22 @@ export async function printLocalRunPreview(
   }
 
   // Detached starts and interactive runs can both be broker-owned. Ask the
-  // route-aware preview first; only legacy CLI shapes fall through to the
-  // interactive adapter.
+  // route-aware preview; when the intent has no broker route there is nothing
+  // to preview (T-08584 retired the direct spec-build fallthrough).
   const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
   if (rendered) {
     return
   }
 
-  await renderSpecBuildPreview(w, intent, sessionRef, restartStyle, prompt)
+  const harnessId = intent.harness.id ?? intent.harness.provider
+  w('')
+  w(
+    `  no broker route for harness "${harnessId}" (provider ${intent.harness.provider}, interactive ${intent.harness.interactive}); nothing to preview`
+  )
+  w('')
+  w('  Note: this preview shows the request the client would send. Server-side')
+  w('  details (existing runtime, PTY state, tmux session) are not consulted.')
+  w('  Run without --dry-run to execute.')
 }
 
 function readOptionalUtf8(path: string | undefined): string | undefined {

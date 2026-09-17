@@ -1569,13 +1569,6 @@ export type EnsureAppSessionDryRunPlan = {
   runtimeStatus?: string | undefined
   runtimePid?: number | undefined
   tmuxSession?: string | undefined
-  invocation?:
-    | {
-        argv: string[]
-        env: Record<string, string>
-        cwd: string
-      }
-    | undefined
 }
 
 export type EnsureAppSessionResponse = {
