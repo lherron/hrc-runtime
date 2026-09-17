@@ -13,6 +13,7 @@ import { join } from 'node:path'
 
 import type { HrcRuntimeIntent, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { SubmissionEnqueueRequest, SubmissionResponse } from 'spaces-harness-broker-protocol'
 
 import { evaluateServerLifecycleAuthorization } from '../../../hrc-cli/src/cli-runtime/shutdown-intent'
 import {
@@ -53,7 +54,13 @@ let internal: HrcServerInstanceForHandlers & { db: HrcDatabase }
 let appHost: string
 let launchCalls: string[]
 let aspd: AspdDouble | undefined
-let ledger: HostingLedger | undefined
+type AppBirthHostingLedger = HostingLedger & {
+  enqueueCalls: Array<{
+    request: SubmissionEnqueueRequest
+    response: SubmissionResponse
+  }>
+}
+let ledger: AppBirthHostingLedger | undefined
 let release: Release | undefined
 const savedEnv = new Map<string, string | undefined>()
 let invocationStartGate:
@@ -233,7 +240,7 @@ async function bootAspdBirthServer(): Promise<void> {
     },
   })
   internal = server as unknown as typeof internal
-  ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0 }
+  ledger = { commands: [], killedServers: [], startCalls: [], attachCalls: 0, enqueueCalls: [] }
   const tmuxManagerFactory = tmuxManagerDouble(ledger)
   const options = (internal as unknown as { options: { runtimeRoot: string } }).options
   const deps = (token: string) => ({
@@ -249,6 +256,14 @@ async function bootAspdBirthServer(): Promise<void> {
       const start = client.startInvocationFromRequest.bind(client)
       return {
         ...client,
+        enqueue: async (request: SubmissionEnqueueRequest): Promise<SubmissionResponse> => {
+          const response = {
+            submissionId: `submission-t08576-${ledger!.enqueueCalls.length + 1}`,
+            admission: 'admitted' as const,
+          }
+          ledger!.enqueueCalls.push({ request, response })
+          return response
+        },
         startInvocationFromRequest: async (...args: Parameters<typeof start>) => {
           const gate = invocationStartGate
           if (gate !== undefined) {
@@ -442,6 +457,52 @@ function identityProjection(env: Record<string, string>): Record<string, string>
   )
 }
 
+function expectBirthAutoDispatch(input: {
+  hostSessionId: string
+  runtimeId: string
+  body: string
+  callIndex?: number
+}): void {
+  const callIndex = input.callIndex ?? 0
+  const start = ledger?.startCalls[callIndex]
+  const enqueue = ledger?.enqueueCalls[callIndex]
+  const run = internal.db.sqlite
+    .query<
+      {
+        host_session_id: string
+        runtime_id: string | null
+        generation: number
+      },
+      [string, string]
+    >(
+      `SELECT host_session_id, runtime_id, generation
+         FROM runs WHERE host_session_id = ? AND runtime_id = ?`
+    )
+    .get(input.hostSessionId, input.runtimeId)
+
+  expect({
+    request: enqueue?.request,
+    response: enqueue?.response,
+    bornInvocationId: start === undefined ? undefined : String(start.request.spec.invocationId),
+    run,
+  }).toEqual({
+    request: expect.objectContaining({
+      invocationId: start === undefined ? undefined : String(start.request.spec.invocationId),
+      body: input.body,
+    }),
+    response: {
+      submissionId: `submission-t08576-${callIndex + 1}`,
+      admission: 'admitted',
+    },
+    bornInvocationId: expect.any(String),
+    run: {
+      host_session_id: input.hostSessionId,
+      runtime_id: input.runtimeId,
+      generation: 1,
+    },
+  })
+}
+
 function commandRunId(idempotencyKey: string): string {
   return `run-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`
 }
@@ -564,6 +625,11 @@ describe('T-08576 app-session birth identity boundary', () => {
       AGENT_GENERATION: '1',
       HRC_GENERATION: '1',
     })
+    expectBirthAutoDispatch({
+      hostSessionId,
+      runtimeId: response.body.runtimeId,
+      body: '',
+    })
   })
 
   it('R-B5 agent aspd birth preserves its compile correlation and dispatch identity', async () => {
@@ -661,6 +727,11 @@ describe('T-08576 app-session birth identity boundary', () => {
       message: PARTIAL_LIFECYCLE_ENVELOPE_MESSAGE,
     })
     expect((authorization as { callerKind?: string }).callerKind).not.toBe('operator')
+    expectBirthAutoDispatch({
+      hostSessionId,
+      runtimeId: response.body.runtimeId,
+      body: '',
+    })
   })
 
   it('R-B6 refuses the actual composed granted app birth envelope', async () => {
@@ -905,6 +976,11 @@ describe('T-08576 app-session birth identity boundary', () => {
     })
     expect(dispatchedIdentityEnv()).not.toHaveProperty('HRC_RUN_ID')
     expect(dispatchedIdentityEnv()).not.toHaveProperty('AGENT_RUN_ID')
+    expectBirthAutoDispatch({
+      hostSessionId: appHost,
+      runtimeId: response.body.runtimeId,
+      body: '',
+    })
   })
 
   it('R-B7(b) clear-context relaunch ignores a stored historical correlation run id', async () => {
