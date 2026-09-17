@@ -1463,6 +1463,146 @@ describe('T-08576 app identity owner crossings', () => {
     expect(deliveries).toBe(0)
   })
 
+  it('R-X-D9 commits the exact removal event with identity before teardown and returns counts', async () => {
+    const session = internal.db.sessions.getByHostSessionId(hostSessionId)!
+    const runtime = insertRuntime(session, { launchMode: 'exec', argv: ['/bin/true'] })
+    const order: string[] = []
+    ;(internal as any).tmux = {
+      inspectSession: async () => ({ sessionId: '$1' }),
+      terminate: async () => {
+        const event = internal.db.hrcEvents.listByKind('app-session.removed', { hostSessionId })[0]
+        order.push(event === undefined ? 'terminate-before-event' : 'terminate-after-event')
+      },
+    }
+
+    const response = await removeAppSessionFromBody.call(internal, {
+      selector: { appId: APP_ID, appSessionKey: KEY },
+    })
+    const body = await responseBody(response)
+    const removedRows = internal.db.sqlite
+      .query<{ hrc_seq: number; payload_json: string }, [string]>(
+        "SELECT hrc_seq, payload_json FROM hrc_events WHERE host_session_id = ? AND event_kind = 'app-session.removed' ORDER BY hrc_seq"
+      )
+      .all(hostSessionId)
+
+    expect({
+      body,
+      managedStatus: internal.db.appManagedSessions.findByKey(APP_ID, KEY)?.status,
+      sessionStatus: internal.db.sessions.getByHostSessionId(hostSessionId)?.status,
+      runtimeStatus: internal.db.runtimes.getByRuntimeId(runtime.runtimeId)?.status,
+      order,
+      removedRows: removedRows.map((row) => ({
+        hrcSeq: row.hrc_seq,
+        payload: JSON.parse(row.payload_json),
+      })),
+    }).toEqual({
+      body: {
+        removed: true,
+        runtimeTerminated: true,
+        bridgesClosed: 0,
+        surfacesUnbound: 0,
+      },
+      managedStatus: 'removed',
+      sessionStatus: 'archived',
+      runtimeStatus: 'terminated',
+      order: ['terminate-after-event'],
+      removedRows: [{ hrcSeq: expect.any(Number), payload: { kind: 'command' } }],
+    })
+  })
+
+  it('R-X-D9 rolls status and archive back when removal event append aborts, before teardown', async () => {
+    const session = internal.db.sessions.getByHostSessionId(hostSessionId)!
+    const runtime = insertRuntime(session, { launchMode: 'exec', argv: ['/bin/true'] })
+    let teardownCalls = 0
+    ;(internal as any).tmux = {
+      inspectSession: async () => {
+        teardownCalls += 1
+        return { sessionId: '$1' }
+      },
+      terminate: async () => {
+        teardownCalls += 1
+      },
+    }
+    internal.db.sqlite.exec(`
+      CREATE TRIGGER t08576_abort_removed_event
+      BEFORE INSERT ON hrc_events
+      WHEN NEW.event_kind = 'app-session.removed'
+      BEGIN
+        SELECT RAISE(ABORT, 't08576 removal event failure');
+      END
+    `)
+
+    let error: unknown
+    try {
+      await removeAppSessionFromBody.call(internal, {
+        selector: { appId: APP_ID, appSessionKey: KEY },
+      })
+    } catch (caught) {
+      error = caught
+    }
+
+    expect({
+      errorName: error instanceof Error ? error.name : undefined,
+      errorMessage: error instanceof Error ? error.message : undefined,
+      managedStatus: internal.db.appManagedSessions.findByKey(APP_ID, KEY)?.status,
+      sessionStatus: internal.db.sessions.getByHostSessionId(hostSessionId)?.status,
+      runtimeStatus: internal.db.runtimes.getByRuntimeId(runtime.runtimeId)?.status,
+      teardownCalls,
+      removedEvents: internal.db.hrcEvents.listByKind('app-session.removed', { hostSessionId }),
+    }).toEqual({
+      errorName: 'SQLiteError',
+      errorMessage: expect.stringContaining('t08576 removal event failure'),
+      managedStatus: 'active',
+      sessionStatus: 'active',
+      runtimeStatus: 'ready',
+      teardownCalls: 0,
+      removedEvents: [],
+    })
+  })
+
+  it('R-X-D9 already-removed retry re-runs teardown without appending a second event', async () => {
+    const session = internal.db.sessions.getByHostSessionId(hostSessionId)!
+    const runtime = insertRuntime(session, { launchMode: 'exec', argv: ['/bin/true'] })
+    ;(internal as any).tmux = {
+      inspectSession: async () => ({ sessionId: '$1' }),
+      terminate: async () => {},
+    }
+    const first = await responseBody(
+      await removeAppSessionFromBody.call(internal, {
+        selector: { appId: APP_ID, appSessionKey: KEY },
+        terminateRuntime: false,
+      })
+    )
+    const second = await responseBody(
+      await removeAppSessionFromBody.call(internal, {
+        selector: { appId: APP_ID, appSessionKey: KEY },
+      })
+    )
+
+    expect({
+      first,
+      second,
+      removedEvents: internal.db.hrcEvents.listByKind('app-session.removed', { hostSessionId })
+        .length,
+      runtimeStatus: internal.db.runtimes.getByRuntimeId(runtime.runtimeId)?.status,
+    }).toEqual({
+      first: {
+        removed: true,
+        runtimeTerminated: false,
+        bridgesClosed: 0,
+        surfacesUnbound: 0,
+      },
+      second: {
+        removed: true,
+        runtimeTerminated: true,
+        bridgesClosed: 0,
+        surfacesUnbound: 0,
+      },
+      removedEvents: 1,
+      runtimeStatus: 'terminated',
+    })
+  })
+
   it('R-X20 refuses owner re-entry instead of deadlocking or double-launching', async () => {
     let nested = false
     let launches = 0
