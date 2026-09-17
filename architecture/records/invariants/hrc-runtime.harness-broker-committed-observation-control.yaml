@@ -52,8 +52,41 @@ predicate: >
   sole broker-ledger retention-bearing consumer: its fenced control connection
   owns one durable scalar acknowledgement per invocation, bounded by forensic
   and active-invocation holds; read-only observer clients have no acknowledgement
-  identity or retention claim and fail typed below the retained floor. This does
-  not change the keep-forever HRC projection law in
+  identity or retention claim and fail typed below the retained floor. HRC may
+  read committed normalized envelopes without a fenced control connection only
+  for a runtime whose status is terminated or failed, whose worker endpoint is
+  unreachable, and whose invocation has no active controller client, and only
+  through the exact persisted owning release's read-only evidence reader;
+  crashed, dead, stale, and detached runtimes are refused. Offline recovery and
+  every live attach, reattach, and adopt path of a runtime are mutually exclusive
+  under one per-runtime owner, and each live path evaluates the retained-projection
+  fact only while holding that ownership. Such reads carry no acknowledgement,
+  attach, or control identity and write nothing in the ledger directory. HRC
+  projects them through BrokerEventMapper under a retained-evidence fence that
+  records the envelope mirror, contiguous projection cursor, exact historical
+  attribution, invocation history, artifacts, and canonical events whose durable
+  evidence origin is retained (distinct from replay transport state), and applies
+  a run terminal only to a run without a recorded terminal. Retained projection
+  itself never writes runtime status, active run, invocation, or operation,
+  runtime or session continuation or reuse state, or first-turn supervision, and
+  triggers no seat probe, lease reap, kicker, control-policy evaluation, raw
+  broker notification, or broker RPC; existing startup repair of null historical
+  continuation keys reads retained continuation.updated rows like any durable
+  broker row. After any retained envelope commits, which HRC records atomically
+  with its projection as a durable per-invocation retained-projection fact, HRC
+  refuses every attach, reattach, and adopt of that runtime, so retained sequences
+  are never acknowledged and no live projection follows them. Retained-origin
+  rows reach only observation subscribers in-process, keep their origin on every
+  read and federation path, and are forwarded only in ingest batches that a
+  receiver refuses unless it persists the origin; consumers that bound or order
+  HRC evidence by sequence for current-run completion, delivery, activity, or
+  timeout admit only rows without an evidence origin. Recovery outcomes are
+  recorded in a keep-forever audit store outside the lifecycle event stream,
+  distinguishing complete, incomplete, retryable, unbound, and operator-disposed
+  evidence; HRC retains the ledger directory of a bound runtime until recovery is
+  complete or an operator explicitly disposes it, and an exhausted retry budget
+  pauses recovery without releasing evidence. This does not change the
+  keep-forever HRC projection law in
   hrc-runtime.ledger-tool-result-storage. Control attempts remain typed durable
   intent over the existing specialized stores, and RPC acceptance never proves
   provider effect; effects return as later committed observations. The wrkq
@@ -73,9 +106,10 @@ predicate: >
   /v1/internal/desktop/register, including its hrc-desktop-hook spool entries)
   is outside this sentence and remains governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
+authority: wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
 source:
   - wrkq:T-08566
+  - wrkq:T-08565
   - wrkq:T-07853
   - wrkq:T-07827
   - wrkq:T-08098
@@ -103,6 +137,12 @@ required_tests:
   - T-08201 auxiliary gates cover accepted and ACK-completed coalescence, truthful failed/cancelled/zombie preservation, duplicate absorption, crash after commit before ACK, unresolved teardown, and both prune dependency guards
   - T-08201 installed Codex TUI and Claude original-run observers survive two mid-run steers and receive normal or interrupted terminals; raw/direct-wait interruption stays non-success while existing canonical mapping and stacked exit behavior remain unchanged
   - retired launch-wrapper hook, OTEL, and launch-callback ingest refuses without any run, runtime, launch, or event write, and quarantines retired spool entries unapplied, while Desktop registration requests and their spool entries behave unchanged
+  - retained turn-start without terminal does not change runtime status, active run, or an operator-written run terminal
+  - crashed, dead, stale, and detached runtimes are refused retained recovery without cursor movement
+  - a live attach crossing an in-flight recovery waits and then refuses if a retained envelope committed, while recovery crossing an in-flight attach refuses without reading
+  - attach, reattach, and adopt are refused after retained projection, including after a crash between projection and outcome recording, and are not refused after a read that projected nothing
+  - offline read issues no acknowledgement or ledger-directory write, while release mismatch and reader contract violation project nothing
+  - torn-tail and paused-retry outcomes hold the ledger directory, and recovery outcomes produce no hrc_events row
 last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
@@ -116,5 +156,10 @@ reopen_when:
   - exact initiating evidence, historical epoch ownership, launch compatibility, auxiliary settlement or retention, or old-owner terminal isolation changes
   - kicker trigger obligation authority or reminder bound changes
   - explicit-versus-timeout permission decision ownership changes
+  - the offline reader gains acknowledgement, mutation, or follow
+  - HRC projects retained evidence from a release other than the persisted owning release or for a runtime outside the terminated-or-failed eligibility boundary
+  - the retained-evidence fence admits a runtime-, session-, or control-level write
+  - any live attach follows retained projection
+  - recovery outcomes enter the lifecycle event stream or automation releases incomplete retained evidence
 supersedes: []
 superseded_by: []
