@@ -19,21 +19,24 @@ predicate: >
   Each selector has at most one live identity; births and input occur only on
   it; a launch failure after commit preserves identity for retry. Every app
   harness birth carries HRC-owned host session and generation, and a run id only
-  through a single-use grant issued under the selector owner for a run id
-  reserved in the daemon's run-id ownership registry, which every writer of a
-  run row or run-id handle observes, for the dispatch or start that this birth
-  carries. No runtime or contribution outside an app run's own host session can
-  ever name that run as active; the run is never matched from an existing row
-  or taken from supplied or stored correlation, and an app run id that already
-  exists is refused before effects. App birth correlation carries no sessionRef,
-  derived agent identity, or caller identity key. App scopes are excluded from
-  agent-addressed enumerations and mail decisions. A configured local persona
+  through a single-use grant issued under the selector owner exactly when the
+  birth's compile identity allocates a run id, for a run id reserved in the
+  daemon's run-id ownership registry, which every writer of a run row or run-id
+  handle observes. Only the birth's exact run, runtime, operation, host session,
+  and generation can name that run as active: a carried token establishes only
+  that tuple before its run row is sealed, and the persisted row is the authority
+  thereafter; host equality alone is never authority. The run is never matched
+  from an existing row or taken from supplied or stored correlation, and an app
+  run id that already exists is refused before effects. App birth correlation
+  carries no sessionRef, derived agent identity, or caller identity key. App
+  scopes are excluded from agent-addressed enumerations and mail decisions. A
+  configured local persona
   allowlist refuses app minting, birth, dispatch, rotation, and input before
   effects, and status capabilities report it. An app harness envelope is never
   a clean operator shell: the HRC host-session and generation keys it carries
   count as a present server-lifecycle envelope, which without a session
   reference fails closed.
-authority: wrkq:T-08576 revision 7 D11 amendment approval by Daedalus, 2026-09-17; revision 6 architecture approval by Daedalus, 2026-09-17
+authority: wrkq:T-08576 revision 8 D5 and D9 amendment approval by Daedalus, 2026-09-17; revision 7 D11 amendment approval by Daedalus, 2026-09-17; revision 6 architecture approval by Daedalus, 2026-09-17
 source:
   - wrkq:T-08576
   - wrkq:T-05999
@@ -45,7 +48,7 @@ required_tests:
   - just verify
   - wrkq:T-08576 in-process and installed no-shim gates
   - wrkq:T-08576 lifecycle-envelope classifier and installed scratch-daemon gates
-last_verified: 2026-09-17 revision 7 D11 amendment approved; implementation and installed evidence pending
+last_verified: 2026-09-17 revision 8 D5 and D9 amendment approved; implementation and installed evidence pending
 reopen_when: App-session representation, ownership or fencing, route boundary, identity atomicity, birth correlation, persona treatment, run-id ownership, agent ScopeRef grammar, or server-lifecycle envelope classification changes.
 supersedes: []
 superseded_by: []
