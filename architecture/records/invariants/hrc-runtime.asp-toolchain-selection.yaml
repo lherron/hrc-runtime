@@ -2,7 +2,7 @@ id: hrc-runtime.asp-toolchain-selection
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: HRC-owned ASP child-process and aspd-prepared worker selection and compatibility boundary
+scope: HRC-owned ASP child-process, aspd observation, and aspd-prepared worker selection and compatibility boundary
 predicate: >
   Except for the configured aspd-prepared route below, every HRC-owned ASP child
   spawn resolves its binary at spawn time through one selection authority. A
@@ -39,9 +39,14 @@ predicate: >
   run only from the frozen executionRelease, with no fallback. Interactive
   births of other broker drivers (claude-code-tmux, pi-tui-tmux,
   codex-cli-tmux), hosted participant brokers, and the Codex Desktop observer
-  broker remain resolver-governed.
-authority: wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+  broker remain resolver-governed. The migrated broker-plan preview is an aspd
+  observation and spawns no HRC-owned aspc-facade child through this resolver;
+  after the direct preview branch migrates, it also observes
+  prepareProcessInvocation through aspd. Neither preview branch falls back to a
+  resolver-selected compiler.
+authority: wrkq:T-08564 revision 4 architecture approval, 2026-09-17; wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus approval EN-13058 on 038454ba), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
+  - wrkq:T-08564
   - wrkq:T-08560
   - wrkq:T-08556
   - commit:91a7d9c3
@@ -67,11 +72,12 @@ required_tests:
   - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation while an unset endpoint keeps the facade for every presentation
   - T-08556 configured attached-run interactive Codex birth launches the worker wrapper and hook receiver from one frozen executionRelease with no resolver consultation or fallback
   - T-08560 every configured interactive codex-app-server birth door launches its worker wrapper and hook receiver from the frozen executionRelease with no resolver consultation or fallback while other interactive drivers keep the resolver
+  - T-08564 D-14 and D-15 prove broker-plan and direct previews observe through aspd without an HRC-owned facade spawn or resolver fallback
   - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates
   - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
-last_verified: 2026-09-17 T-08560 design approval EN-13058 on 038454ba; implementation and installed evidence pending; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
-reopen_when: A node-default presentation's route selection, an ASP child spawn site, aspd-prepared route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
+last_verified: 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-09-17 T-08560 design approval EN-13058 on 038454ba; 2026-09-16 T-08556 design approval on 91a7d9c3; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
+reopen_when: A node-default presentation's route selection, an ASP child spawn or preview site, aspd-prepared or observation route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
 supersedes: []
 superseded_by: []

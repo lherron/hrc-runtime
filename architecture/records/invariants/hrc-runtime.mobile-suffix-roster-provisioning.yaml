@@ -10,10 +10,12 @@ predicate: >
   home, and profile validation rejects pins or homes for reserved members. An
   undeclared family may instead use an explicit typed provision.node directive;
   it is validated at both origin and receiver against the federation registry
-  and the receiver's own profile, and any placement conflict is a typed refusal
-  before mutation. No placement is inferred from caller identity, transport,
-  connection, or environment. Origin HRC routes the whole family from registry
-  binding state and the baseSessionRef-derived family home. A remote home is
+  and the receiver's own declaration observation. An unavailable or incompatible
+  receiver observation is the existing retryable runtime_unavailable and is
+  never projected as undeclared placement; any placement conflict is a typed
+  refusal before mutation. No placement is inferred from caller identity,
+  transport, connection, or environment. Origin HRC routes the whole family
+  from registry binding state and the baseSessionRef-derived family home. A remote home is
   invoked only through the authenticated, capability-advertised rosterStart
   peer verb. The receiver independently preflights retirement, authority,
   binding state, placement, and materialization capability for the whole family
@@ -33,12 +35,14 @@ predicate: >
   responses. Operator starts without an explicit node directive remain
   explicit-local. Retryable peer failure is synchronous runtime_unavailable and
   does not use the message outbox.
-authority: Lance / wrkq:T-07398 / wrkq:T-08407
+authority: Lance / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
 source:
   - hrcchat#18964
   - hrcchat#20022
   - wrkq:T-07398
   - wrkq:T-08407
+  - wrkq:T-08564
+  - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml
   - packages/hrc-server/src/roster-claim.ts
   - packages/hrc-server/src/federation/runtime-intent-localization.ts
   - packages/hrc-server/src/federation/peer-protocol.ts
@@ -51,10 +55,12 @@ required_tests:
   - live multi-node rosterStart topology proof across max3, svc, and lab
   - live multi-node undeclared-family directive and declared-family conflict proof
   - wrkq:T-08407 atomic deferred-intent, awaiting occupancy, full-chain replay ownership, federation compatibility, and first-turn materialization gates
-last_verified: 2026-08-21 existing claim-and-start law; wrkq:T-08407 revision 4 amendment approved 2026-09-12 with implementation evidence pending
+  - T-08564 D-7 D-8 O-4 and O-6 prove origin and receiver declaration observations preserve placement refusal and return retryable runtime_unavailable without mutation when unavailable
+last_verified: 2026-09-17 T-08564 revision 4 design approval; implementation and installed evidence pending; 2026-08-21 existing claim-and-start law; wrkq:T-08407 revision 4 amendment approved 2026-09-12 with implementation evidence pending
 reopen_when: >
   The mobile base set, fixed roster suffix list, reserved-family placement
-  derivation, explicit provision directive admission, peer rosterStart contract,
+  derivation, receiver declaration-observation authority, explicit provision
+  directive admission, peer rosterStart contract,
   materialization mode, awaiting-first-turn or FREE semantics, atomic intent
   ownership, full-chain replay ownership, federation response compatibility, or
   home-local idempotency ownership changes.

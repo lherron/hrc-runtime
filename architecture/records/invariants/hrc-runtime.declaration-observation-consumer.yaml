@@ -1,0 +1,69 @@
+id: hrc-runtime.declaration-observation-consumer
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: HRC consumption of ASP declaration, preview, continuation-artifact, and runtime-capability observations
+predicate: >
+  The HRC daemon is the sole HRC client of node-local aspd for mutable ASP
+  declaration, preview, continuation-artifact, and runtime-capability facts;
+  HRC CLI and SDK callers use the daemon and never dial aspd. Each observation
+  uses the configured absolute Unix endpoint, one admitted request connection,
+  aspc/0.1, an identified ASP release, and the capability for that operation,
+  with no retry, cache, or in-process interpretation fallback. The two calls
+  composing one preview share one connection, hello, release identity, and
+  dispatch environment. ASP owns interpretation of profiles, targets, priming,
+  catalog mappings, prompt composition, historical artifacts, and runtime
+  capability; HRC retains project and worktree placement policy, provision
+  directive grammar and deny-list, home designation, authorization, lifecycle,
+  routing, refusal, and compatibility projection. An unavailable or
+  incompatible observation is never projected as an absent declaration,
+  target-only result, undeclared placement, false authorization, not-found
+  target, or missing continuation artifact. Existing-runtime control,
+  inspection, and attachment do not require declaration for runtime or session
+  selectors, canonical ScopeRefs, or handles whose project is explicit or
+  supplied by ASP_PROJECT; candidate lookup uses the complete committed session
+  set. A project-deferred handle without ASP_PROJECT depends on ASP cwd-project
+  inference, and a task-without-role handle with several committed candidates
+  depends on ASP role observation; either refuses explicitly when unavailable
+  and never guesses. Missing operator evidence grants no operator-agent
+  exception. A retained continuation may project missing only from a
+  key-bound runtime's frozen historical home or an absolute Pi key;
+  non-key-bound recorded placement is presence-only and otherwise projects
+  unknown. Runtime capability reads caller agentSources per request, uses only
+  the bounded read-only probes in T-08564, and never turns probe failure into a
+  positive fact. deriveSdkHarness may return HRC's constant agent-sdk only on
+  the existing anthropic SDK executor route and is not a catalog, route,
+  preparation, credential, or capability authority. Migration proceeds through
+  phases A through E and is not closed while hrc-sdk or hrc-core retains its
+  spaces-config dependency; closure requires the downstream ACP and agent-loop
+  callers to use the daemon-backed async SDK contract and installed evidence.
+authority: wrkq:T-08564 revision 4 architecture approval, 2026-09-17
+source:
+  - wrkq:T-08564
+  - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
+  - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
+  - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
+  - architecture/records/invariants/hrc-runtime.mobile-suffix-roster-provisioning.yaml
+  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
+  - packages/hrc-server/src/broker-run-preview.ts
+  - packages/hrc-server/src/session-resume-continuation.ts
+  - packages/hrc-server/src/target-message-handlers.ts
+  - packages/hrc-server/src/broker/event-mapper.ts
+  - packages/hrc-cli/src/selector-resolve.ts
+required_tests:
+  - just architecture-records
+  - T-08564 D-1 through D-18 and O-1 through O-14b prove every HRC consumer route, explicit failure projection, complete committed-session lookup, and named changed dependency
+  - T-08564 C-CONT-1 through C-CONT-8 prove key-bound historical-home absence, presence-only recorded placement, absolute Pi behavior, and dormant or broken projection
+  - T-08564 fixed-HRC ASP A-B activation proves observation behavior can change without an HRC artifact lock or process change
+  - T-08564 mutable reload and bounded capability-probe gates prove request-time freshness without cache and fail-closed probe results
+  - T-08564 D-14 and D-14a prove one preview connection and release identity plus plan, prompt, and execution-environment parity
+  - T-08564 Z-1 through Z-4 prevent a closure claim before implementation imports and the downstream hrc-sdk and hrc-core spaces-config dependency are removed
+last_verified: 2026-09-17 revision 4 design approval; implementation and installed evidence pending
+reopen_when: >
+  Observation ownership, endpoint or admission, caching or fallback, error
+  projection, existing-runtime declaration isolation, project or role inference,
+  operator authorization evidence, continuation historical-home binding,
+  capability probe bounds, SDK harness exception, preview release identity, or
+  the phase-E closure boundary changes.
+supersedes: []
+superseded_by: []
