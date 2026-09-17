@@ -194,6 +194,19 @@ function effectState(): Record<string, unknown> {
 
 type RefusalCase = { gate: string; path: string; body: () => unknown }
 
+function commandBinding(sessionRef: string, lane: string): Record<string, string> {
+  return {
+    WRKF_TASK_ID: 'T-08576',
+    WRKF_ACTION_RUN_ID: `action-${lane}`,
+    WRKF_RUN_ID: `workflow-${lane}`,
+    WRKF_ACTION: 'validate',
+    WRKF_ROLE: 'smokey',
+    ASP_PROJECT: 'hrc-runtime',
+    HRC_SESSION_REF: sessionRef,
+    HRC_LANE: lane,
+  }
+}
+
 const refusalCases: RefusalCase[] = [
   {
     gate: 'R-G1a enqueue',
@@ -278,6 +291,7 @@ const refusalCases: RefusalCase[] = [
       configuredTargetId: 't08576',
       idempotencyKey: 't08576-g7a',
       sessionRef: 'app:t08576/lane:newkey',
+      binding: commandBinding('app:t08576/lane:newkey', 'newkey'),
       input: {},
     }),
   },
@@ -288,6 +302,7 @@ const refusalCases: RefusalCase[] = [
       configuredTargetId: 't08576',
       idempotencyKey: 't08576-g7b',
       sessionRef: 'app:t08576/lane:assistant',
+      binding: commandBinding('app:t08576/lane:assistant', 'assistant'),
       input: {},
     }),
   },
@@ -384,6 +399,65 @@ describe('T-08576 generic entry refusal matrix', () => {
     expect(response.status).toBe(400)
     expect(response.body.error?.code).toBe('invalid_selector')
     expect(effectState()).toEqual(before)
+  })
+
+  it('R-G7 control executes a configured target for an agent session', async () => {
+    const sessionRef = 'agent:smokey/project:hrc-runtime/task:T-08576/lane:g7-control'
+    const response = await post('/v1/command-runs/launch', {
+      configuredTargetId: 't08576',
+      idempotencyKey: 't08576-g7-control',
+      sessionRef,
+      binding: commandBinding(sessionRef, 'g7-control'),
+      input: {},
+    })
+    const db = openHrcDatabase(dbPath)
+    try {
+      const run = db.sqlite
+        .query<
+          {
+            host_session_id: string
+            runtime_id: string | null
+            scope_ref: string
+            lane_ref: string
+            generation: number
+          },
+          [string]
+        >(
+          `SELECT host_session_id, runtime_id, scope_ref, lane_ref, generation
+             FROM runs WHERE run_id = ?`
+        )
+        .get(response.body.runId)
+      const startedEvents = db.sqlite
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) AS count FROM hrc_events
+             WHERE run_id = ? AND event_kind = 'command_run.started'`
+        )
+        .get(response.body.runId)?.count
+
+      expect({ response, run, startedEvents }).toEqual({
+        response: {
+          status: 200,
+          body: {
+            runId: expect.any(String),
+            hostSessionId: expect.any(String),
+            runtimeId: expect.any(String),
+            generation: 1,
+            transport: 'tmux',
+            replayed: false,
+          },
+        },
+        run: {
+          host_session_id: response.body.hostSessionId,
+          runtime_id: response.body.runtimeId,
+          scope_ref: 'agent:smokey:project:hrc-runtime:task:T-08576',
+          lane_ref: 'g7-control',
+          generation: 1,
+        },
+        startedEvents: 1,
+      })
+    } finally {
+      db.close()
+    }
   })
 
   it('R-G8 read-only resolve remains allowed', async () => {
