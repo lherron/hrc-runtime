@@ -330,6 +330,46 @@ describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
     expect(context['taskId']).toBe('T-08564')
   })
 
+  // PC-1 (ACCEPTANCE PC-1; T-08579 PROPOSAL §8.4; SPEC §8 as amended C-23662):
+  // inspection carries the compiled placement correlation, and the identical
+  // dispatchEnv (inert), only on a connection advertising the capability.
+  test('PC-1: inspection carries the compiled correlation and dispatchEnv when the capability is advertised', async () => {
+    await boot({ capabilities: { inspectRuntimePlacementPreparationCorrelation: true } })
+    const correlation = {
+      sessionRef: { scopeRef: 'agent:smokey:project:hrc-runtime:task:T-08564', laneRef: 'main' },
+    }
+    const dispatchEnv = { T08564_PC1_PROBE: 'caller-value' }
+    const base = managedIntent()
+    const { response } = await post('/v1/previews/run', {
+      intent: { ...base, placement: { ...base.placement, correlation, dispatchEnv } },
+      sessionRef: 'agent:smokey:project:hrc-runtime:task:T-08564/lane:main',
+      restartStyle: 'fresh',
+    })
+
+    expect(response.status).toBe(200)
+    const compileParams = requestParams(aspd!, 'aspc.compileHarnessInvocation')
+    const compiledPlacement = (compileParams['compileRequest'] as Record<string, unknown>)[
+      'placement'
+    ] as Record<string, unknown>
+    const inspectParams = requestParams(aspd!, 'aspc.inspectRuntimePlacement')
+    expect(inspectParams['preparationCorrelation']).toEqual(compiledPlacement['correlation'])
+    expect(inspectParams['preparationCorrelation']).toEqual(correlation)
+    expect(inspectParams['dispatchEnv']).toEqual(compiledPlacement['dispatchEnv'])
+    expect(inspectParams['dispatchEnv']).toEqual(dispatchEnv)
+    expect(aspd!.connections).toHaveLength(1)
+  })
+
+  test('PC-1: a connection without the capability refuses the preview instead of omitting the correlation', async () => {
+    await boot({ capabilities: { inspectRuntimePlacementPreparationCorrelation: undefined } })
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(503)
+    expect(body.error.code).toBe('runtime_unavailable')
+    expect(body.error.detail).toMatchObject({ code: 'aspd_capability_missing', route: 'aspd' })
+    const methods = aspd!.connections.flatMap((connection) => connection.methods)
+    expect(methods).not.toContain('aspc.inspectRuntimePlacement')
+  })
+
   test('omits prompt zones and failure fields for an absent prompt', async () => {
     await boot({ prompt: 'absent' })
     const { response, body } = await post('/v1/previews/run', previewBody())

@@ -663,6 +663,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "DeclarationRunMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|DeclarationRunMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeclarationSourceState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|DeclarationSourceState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "DeliverBridgeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -1107,6 +1123,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|formatCanonicalSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatProfileProvisioningStrippedWarning",
+      "kind": "value",
+      "file": "packages/hrc-core/src/runtime-intent-assembly.ts",
+      "hash": "hrc-core|formatProfileProvisioningStrippedWarning|value",
       "count": 1
     },
     {
@@ -3703,6 +3727,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ResolvedDeclarationAgentSources",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|ResolvedDeclarationAgentSources|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "resolveIngestSocketPath",
       "kind": "value",
       "file": "packages/hrc-core/src/paths.ts",
@@ -3723,6 +3755,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/paths.ts",
       "hash": "hrc-core|resolveMigrationsDir|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolveRuntimeIntentRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|ResolveRuntimeIntentRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolveRuntimeIntentResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|ResolveRuntimeIntentResponse|type",
       "count": 1
     },
     {
@@ -3843,6 +3891,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|RetireRegistrationScopesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RunPreviewRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/declaration-contracts.ts",
+      "hash": "hrc-core|RunPreviewRequest|type",
       "count": 1
     },
     {

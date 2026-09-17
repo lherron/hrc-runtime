@@ -37,6 +37,7 @@ export type AspdObservationOptions = {
     resolveRuntimeDeclaration: boolean
     inspectRuntimePlacement: boolean
     compileHarnessInvocation: boolean
+    inspectRuntimePlacementPreparationCorrelation: boolean
   }>
   socketAbsent?: boolean
 }
@@ -868,6 +869,7 @@ function helloResponse(
       compileHarnessInvocation: true,
       resolveRuntimeDeclaration: true,
       inspectRuntimePlacement: true,
+      inspectRuntimePlacementPreparationCorrelation: true,
       observeRuntimeCapability: true,
       observeContinuationArtifact: true,
       compileAndStart: false,
