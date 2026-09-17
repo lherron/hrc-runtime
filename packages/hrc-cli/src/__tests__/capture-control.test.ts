@@ -9,6 +9,10 @@ const RUNTIME_ID = 'rt-11111111-1111-4111-8111-111111111111'
 const ENVELOPE_KEYS = [
   'HRC_SESSION_REF',
   'HRC_RUN_ID',
+  'HRC_HOST_SESSION_ID',
+  'AGENT_HOST_SESSION_ID',
+  'HRC_GENERATION',
+  'AGENT_GENERATION',
   'ASP_SCOPE_REF',
   'ASP_TASK_ID',
   'ASP_DEFAULT_TASK',
@@ -20,7 +24,7 @@ const originalEnvelope = new Map<string, string | undefined>()
 beforeEach(() => {
   for (const key of ENVELOPE_KEYS) {
     originalEnvelope.set(key, process.env[key])
-    process.env[key] = undefined
+    Reflect.deleteProperty(process.env, key)
   }
   spyOn(HrcClient.prototype, 'listRuntimes').mockResolvedValue([])
 })
@@ -29,7 +33,11 @@ afterEach(() => {
   mock.restore()
   for (const key of ENVELOPE_KEYS) {
     const value = originalEnvelope.get(key)
-    process.env[key] = value
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, key)
+    } else {
+      process.env[key] = value
+    }
   }
   originalEnvelope.clear()
 })

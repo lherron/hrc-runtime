@@ -393,6 +393,10 @@ describe('restart refusal contract', () => {
     const envelopeKeys = [
       'HRC_SESSION_REF',
       'HRC_RUN_ID',
+      'HRC_HOST_SESSION_ID',
+      'AGENT_HOST_SESSION_ID',
+      'HRC_GENERATION',
+      'AGENT_GENERATION',
       'ASP_SCOPE_REF',
       'ASP_TASK_ID',
       'ASP_DEFAULT_TASK',
