@@ -7,6 +7,7 @@
  * `withAspdObservationSession` — no in-process declaration parsing, no fallback.
  */
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 
 import {
   DENIED_PROVISION_OVERRIDE_KEYS,
@@ -264,17 +265,17 @@ function sourceStates(
 function invalidProfileWarning(
   declaration: Extract<AspcResolveRuntimeDeclarationResponse, { ok: true }>,
   agentId: string,
+  requestAgentRoot: string,
   provision: ProvisioningScalars
 ): string | undefined {
   const profile = declaration.source.agentProfile
   if (profile.state !== 'invalid') return undefined
   const diagnostics: AspcDeclarationDiagnostic[] = profile.diagnostics
-  const profilePath =
-    diagnostics.find((diagnostic) => typeof diagnostic.path === 'string')?.path ??
-    `${declaration.placement.agentRoot}/agent-profile.toml`
   return formatProfileProvisioningStrippedWarning({
     agentId,
-    profilePath,
+    // Today's WARN names the caller's agent root joined with the profile file,
+    // not the producer's canonicalized diagnostic path, so the bytes stay equal.
+    profilePath: join(requestAgentRoot, 'agent-profile.toml'),
     errorMessage: diagnostics.map((diagnostic) => diagnostic.message).join(' '),
     survivingProvisionKeys: Object.keys(provision),
   })
@@ -321,7 +322,7 @@ export async function handleResolveRuntimeIntent(request: Request): Promise<Resp
       ...(Object.keys(provision).length === 0 ? {} : { provision }),
     } as HrcRuntimeIntent
 
-    const warning = invalidProfileWarning(declaration, body.agentId, provision)
+    const warning = invalidProfileWarning(declaration, body.agentId, body.agentRoot, provision)
     const response: ResolveRuntimeIntentResponse = {
       intent,
       declaration: {
