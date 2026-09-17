@@ -333,6 +333,8 @@ export function currentAppBirthRunReservationToken(
     const grant = owner.grants.get(runId)
     if (grant === undefined) continue
     if (db.runIdOwnership.reservationFor(runId) !== grant.token) return undefined
+    // Sealed (row bound to a runtime): the persisted tuple is the only authority.
+    if (db.runs.getByRunId(runId)?.runtimeId !== undefined) return undefined
     return grant.token
   }
   return undefined

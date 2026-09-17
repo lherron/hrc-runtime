@@ -33,7 +33,12 @@ export function claimRuntimeTurnOwnership(
   ctx: ProjectionContext,
   runId: string,
   occurredAt: string,
-  updatedAt: string
+  updatedAt: string,
+  serverLog: (
+    level: 'WARN',
+    event: string,
+    details?: Record<string, unknown> | undefined
+  ) => void = writeServerLog
 ): void {
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
@@ -55,7 +60,7 @@ export function claimRuntimeTurnOwnership(
       generation: runtime.generation,
     })
   ) {
-    writeServerLog('WARN', 'broker.run_handle_refused', {
+    serverLog('WARN', 'broker.run_handle_refused', {
       runtimeId: runtime.runtimeId,
       runId,
       hostSessionId: runtime.hostSessionId,

@@ -1780,7 +1780,7 @@ export class BrokerEventMapper {
             })
             if (lateStart !== null) this.pendingLateStartEvents.push(lateStart)
           }
-          claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now)
+          claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now, this.serverLog)
         } else {
           const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
           if (
