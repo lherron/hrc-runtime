@@ -2,7 +2,7 @@ id: hrc-runtime.aspd-prepared-execution-release
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: HRC-hosted headless codex-app-server preparation, release binding, launch, and reattachment through configured aspd
+scope: HRC-hosted codex-app-server preparation, release binding, launch, and reattachment through configured aspd
 predicate: >
   When HRC_ASPD_SOCKET is configured, an HRC-hosted headless
   codex-app-server runtime with effective operator presentation none prepares only through
@@ -95,8 +95,36 @@ predicate: >
   ASP_HOME as the request aspHome and records it in the route decision, so the
   worker's codex home, and therefore continuation resume, is the same store the
   standalone interactive route uses, independent of the aspd daemon environment.
-authority: wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
+  As amended for the attached-run door, on a configured node an interactive
+  openai codex-cli birth requested by hrc run or hrc resume also prepares through
+  aspd and freezes route interactive-codex-tui, presentation codex-tui, and the
+  interactive start request at boundary P. It requires durable IPC and launches
+  only on the interactive tmux substrate from the persisted preparation. The
+  worker, codex-tui wrapper, and hook receiver all execute from that frozen
+  execution release; there is no resolver or facade fallback. Other doors that
+  birth the interactive backend remain resolver-governed. Selection, birth, and
+  initial-prompt delivery for this door occur inside one operation registered in
+  the host session's start singleflight. Before joining an existing operation,
+  the door classifies its recorded birth and refuses a foreign provider or
+  harness; after a same-harness or unrecorded operation settles, the door
+  re-enters and registers its own operation carrying the joined newborn's
+  identity. A joined tmux newborn is reusable only when provider and harness
+  match and interactive admission against that newborn and the caller's intent
+  decides broker-reuse; it is never admission-replaced. A joined or established
+  headless runtime is never stale-marked, replaced, or started beside: only a
+  settled operator-attachable openai codex-cli viewer is reused, while a
+  no-viewer, transitional, or foreign runtime is refused and left untouched.
+  Explicit force-restart may replace only when no live joined newborn governs
+  the selection. An initial prompt is not part of the frozen start request; after
+  attached-start resume it is submitted exactly once by the selected runtime's
+  identity-specific input executor under turn admission, before the registered
+  operation is removed. No session-level reselection, admission,
+  stale-marking, or reprovision may redirect that prompt. Detach, reattach, and
+  daemon restart of the resulting runtime do not require aspd.
+authority: wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
+  - wrkq:T-08556
+  - commit:91a7d9c3
   - wrkq:T-08555
   - commit:d9012d25
   - commit:494fef39
@@ -138,8 +166,13 @@ required_tests:
   - T-08554 isolated installed acceptance covers aspd A viewer, attach detach reattach identity, fixed-HRC B activation with the attached A viewer usable and a fresh B viewer, refusals, aspd-absent HRC restart recovery, and unchanged omitted-choice routing on a redirect-on node; then shared max3 delivery and independent grade
   - T-08555 precedence gates at both start and dispatch doors prove configured node-default tmux-tui selects aspd with source node-default; redirect-on doors keep their pre-change routing; with the redirect off an established tmux runtime of any harness (including transitional) receives omitted, responseFormat, surface-refusing and high-risk requests only through interactive admission or its refusal, an established same-harness headless runtime (including transitional) stays on the headless route, a foreign-harness headless runtime refuses established_runtime_harness_mismatch untouched, a crossing same-harness birth takes its transport (a tmux birth join admitted only by broker-reuse, refusing surface-reuse refusals, non-matching ownership proofs and non-reusable newborns), a start swapped in after routing is refused at the join (unclassified, foreign or changed route), a crossing foreign birth of either transport refuses and an unrecorded in-flight start is awaited, the headless queue-behind-boot contract still holds, no cross-transport start occurs, and explicit interactive Codex stays admissible
   - T-08555 isolated then shared max3 installed acceptance covers default cold launch through ordinary doors with aspd preparation worker viewer and renderer from the active release, attach detach reattach identity, no-viewer opt-out, conflicts, pre-existing live codex-tui and app-server scopes preserved across the configuration change, aspd-outage refusal of new default executions, paired plist-plus-release rollback record, resume of a standalone-born continuation on the default route, and independent grade
+  - T-08556 crossing gates prove the attached-run door classifies a registered birth before awaiting it, refuses a foreign tmux birth, accepts a same-harness tmux newborn only through broker-reuse admission, re-enters under its own registered operation, and neither duplicates nor admission-replaces a joined runtime
+  - T-08556 attached-run selection gates prove established and joined headless runtimes receive viewer reuse, no-viewer conflict, transitional refusal, or foreign-harness refusal without stale-marking or a second runtime, while explicit force-restart with no live joined newborn remains the only replacement path
+  - T-08556 identity-delivery gates prove an initial prompt traverses turn admission and the selected runtime's input executor exactly once before the start operation deregisters, cannot be redirected by a crossing registered start or dispatch, and targets no replacement inserted for the session
+  - T-08556 frozen interactive route gates prove boundary-P persistence, durable-IPC refusal, allocator and controller route admission, worker hello binding, and worker wrapper and hook execution from one retained execution release with no resolver fallback
+  - T-08556 isolated then shared max3 acceptance covers real attached Codex TUI input, initial prompt identity, warm reuse and detach, headless viewer reuse and conflicts, unchanged cold-attach facade birth, aspd outage, retained-release activation and rollback ordering, restart reattachment, and cancelled attach cleanup
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
-last_verified: 2026-09-16 T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940; T-08554 implementation and installed evidence pending
+last_verified: 2026-09-16 T-08556 design approval on 91a7d9c3; implementation and installed evidence pending; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
 reopen_when:
   - the configured route or fallback behavior changes
   - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
@@ -149,6 +182,7 @@ reopen_when:
   - prepared retry auto-launch uncertain-start or idempotency semantics change
   - worker launch path hello release binding or retained-release validation changes
   - reattachment depends on aspd or stops verifying the candidate worker release
+  - attached-run door selection, registered-start joining, identity-bound initial-prompt delivery, durable interactive substrate, or interactive execution-release binding changes
   - caller identity environment lifecycle resource-ownership projection or acknowledgement authority changes on this route
 supersedes: []
 superseded_by: []
