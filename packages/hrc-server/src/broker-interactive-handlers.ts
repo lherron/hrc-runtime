@@ -13,6 +13,12 @@ import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
+import {
+  aspdInteractiveCodexEndpoint,
+  launchAspdPreparedAttempt,
+  prepareAspdHeadlessAttempt,
+  readAspdPreparation,
+} from './aspd-headless-start.js'
 import { waitForCompilerPrimingTerminal } from './broker-headless-handlers.js'
 import {
   BROKER_ADOPTION_PATH_OUTSIDE_RUNTIME_ROOT,
@@ -1370,6 +1376,24 @@ export async function startInteractiveTmuxBrokerRuntime(
   assertParticipantAddressNotSubstituted(this, session)
   const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
   const effectiveTurnIntent = preparedActuatorSplit.intent
+  // T-08556 (§1.4): the attached-run door's interactive Codex birth prepares
+  // through aspd and launches from the frozen execution release. No facade
+  // client is opened on this route and there is no fallback.
+  const aspdEndpoint =
+    flagOptions.coldBirthPrompt === undefined
+      ? aspdInteractiveCodexEndpoint({
+          allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+          attachedRunDoor: flagOptions.attachBeforeInvocationStart !== undefined,
+        })
+      : undefined
+  if (aspdEndpoint !== undefined) {
+    return await startAspdInteractiveBrokerRuntime(this, session, effectiveTurnIntent, {
+      ...flagOptions,
+      diagnosticRunId,
+      endpoint: aspdEndpoint,
+      preparedAuthority: preparedActuatorSplit.authority,
+    })
+  }
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext(
     'interactive',
@@ -1568,84 +1592,16 @@ export async function startInteractiveTmuxBrokerRuntime(
     })
 
     if (!result.ok) {
-      const acceptedRun = this.db.runs.getByRunId(diagnosticRunId)
-      if (acceptedRun !== null && isRunActive(acceptedRun)) {
-        const failedAt = timestamp()
-        this.db.runs.markCompleted(diagnosticRunId, {
-          status: 'failed',
-          completedAt: failedAt,
-          updatedAt: failedAt,
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-          errorMessage: result.error.message,
-        })
-        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
-          invocationState: 'failed',
-          updatedAt: failedAt,
-        })
-        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
-          status: 'failed',
-          completedAt: failedAt,
-          updatedAt: failedAt,
-          errorCode: result.error.code,
-          errorMessage: result.error.message,
-        })
-        this.db.runtimes.update(runtimeId, {
-          status: 'failed',
-          statusChangedAt: failedAt,
-          activeRunId: diagnosticRunId,
-          updatedAt: failedAt,
-          runtimeStateJson: {
-            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
-            status: 'failed',
-            updatedAt: failedAt,
-            startFailure: {
-              code: result.error.code,
-              message: result.error.message,
-            },
-          },
-        })
-        this.notifyEvent(
-          appendHrcEvent(this.db, 'turn.failed', {
-            ts: failedAt,
-            hostSessionId: session.hostSessionId,
-            scopeRef: session.scopeRef,
-            laneRef: session.laneRef,
-            generation: session.generation,
-            runId: diagnosticRunId,
-            runtimeId,
-            transport: 'tmux',
-            errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-            payload: {
-              code: result.error.code,
-              message: result.error.message,
-              phase: 'broker-invocation-start',
-            },
-          })
-        )
-      }
-      if (
-        result.error.code === 'unsupported_capability' &&
-        flagOptions.responseFormat?.kind === 'json_schema'
-      ) {
-        throw new HrcUnprocessableEntityError(
-          HrcErrorCode.UNSUPPORTED_CAPABILITY,
-          result.error.message,
-          result.error.detail
-        )
-      }
-      const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
-      throw new HrcRuntimeUnavailableError(
-        externalToolchainFailure ? result.error.message : 'interactive broker start failed',
-        {
-          hostSessionId: session.hostSessionId,
-          runId: diagnosticRunId,
-          code: result.error.code,
-          message: result.error.message,
-          route: 'interactive-broker',
-          flag: flagOptions.flagEnvName,
-          ...result.error.detail,
-        }
-      )
+      settleFailedInteractiveBrokerStart(this, {
+        session,
+        runId: diagnosticRunId,
+        runtimeId,
+        invocationId: String(compiled.identity.invocationId),
+        operationId: String(compiled.identity.operationId),
+        error: result.error,
+        responseFormat: flagOptions.responseFormat,
+        flagEnvName: flagOptions.flagEnvName,
+      })
     }
 
     // Match the headless authority invariant: rejected compilation, policy,
@@ -1659,6 +1615,189 @@ export async function startInteractiveTmuxBrokerRuntime(
     }
     throw error
   }
+}
+
+/**
+ * Project an interactive controller start failure onto the accepted run graph
+ * (when the start graph exists) and throw the caller-facing error. Shared by the
+ * facade-compiled and the aspd-prepared (T-08556) interactive routes.
+ */
+function settleFailedInteractiveBrokerStart(
+  server: HrcServerInstanceForHandlers,
+  input: {
+    session: HrcSessionRecord
+    runId: string
+    runtimeId: string
+    invocationId: string
+    operationId: string
+    error: { code: string; message: string; detail: Record<string, unknown> }
+    responseFormat?: HrcTurnResponseFormat | undefined
+    flagEnvName: string
+  }
+): never {
+  const { session, runId: diagnosticRunId, runtimeId } = input
+  const result = { error: input.error }
+  const flagOptions = { responseFormat: input.responseFormat, flagEnvName: input.flagEnvName }
+  const acceptedRun = server.db.runs.getByRunId(diagnosticRunId)
+  if (acceptedRun !== null && isRunActive(acceptedRun)) {
+    const failedAt = timestamp()
+    server.db.runs.markCompleted(diagnosticRunId, {
+      status: 'failed',
+      completedAt: failedAt,
+      updatedAt: failedAt,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: result.error.message,
+    })
+    server.db.brokerInvocations.update(input.invocationId, {
+      invocationState: 'failed',
+      updatedAt: failedAt,
+    })
+    server.db.runtimeOperations.update(input.operationId, {
+      status: 'failed',
+      completedAt: failedAt,
+      updatedAt: failedAt,
+      errorCode: result.error.code,
+      errorMessage: result.error.message,
+    })
+    server.db.runtimes.update(runtimeId, {
+      status: 'failed',
+      statusChangedAt: failedAt,
+      activeRunId: diagnosticRunId,
+      updatedAt: failedAt,
+      runtimeStateJson: {
+        ...(server.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+        status: 'failed',
+        updatedAt: failedAt,
+        startFailure: {
+          code: result.error.code,
+          message: result.error.message,
+        },
+      },
+    })
+    server.notifyEvent(
+      appendHrcEvent(server.db, 'turn.failed', {
+        ts: failedAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runId: diagnosticRunId,
+        runtimeId,
+        transport: 'tmux',
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        payload: {
+          code: result.error.code,
+          message: result.error.message,
+          phase: 'broker-invocation-start',
+        },
+      })
+    )
+  }
+  if (
+    result.error.code === 'unsupported_capability' &&
+    flagOptions.responseFormat?.kind === 'json_schema'
+  ) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.UNSUPPORTED_CAPABILITY,
+      result.error.message,
+      result.error.detail
+    )
+  }
+  const externalToolchainFailure = typeof result.error.detail['toolchainSource'] === 'string'
+  throw new HrcRuntimeUnavailableError(
+    externalToolchainFailure ? result.error.message : 'interactive broker start failed',
+    {
+      hostSessionId: session.hostSessionId,
+      runId: diagnosticRunId,
+      code: result.error.code,
+      message: result.error.message,
+      route: 'interactive-broker',
+      flag: flagOptions.flagEnvName,
+      ...result.error.detail,
+    }
+  )
+}
+
+/**
+ * T-08556 (§1.4) — the attached-run door's aspd-prepared interactive Codex
+ * birth. Prepare and freeze at boundary P, then launch only from the persisted
+ * operation with this process's live attach handshake. The durable interactive
+ * route is required: the stdio route would spawn a resolver-selected broker.
+ */
+async function startAspdInteractiveBrokerRuntime(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent,
+  options: DispatchRunPersistenceOptions & {
+    diagnosticRunId: string
+    endpoint: string
+    flagEnvName: string
+    allowedBrokerDriver: InteractiveTmuxBrokerDriver
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    onColdBirthPromptRoute?: ((rodeLaunch: boolean) => void) | undefined
+    preparedAuthority: Awaited<ReturnType<typeof prepareActuatorSplitIntent>>['authority']
+  }
+): Promise<HrcRuntimeSnapshot> {
+  const durableInteractiveRoute = decideBrokerDurableInteractiveRoute({
+    durableIpcEnabled: resolveBrokerDurableIpcEnabled(server.options),
+    endpointKind: 'unix-jsonrpc-ndjson',
+    interactionMode: 'interactive',
+  })
+  if (durableInteractiveRoute !== 'durable-ipc') {
+    throw new HrcRuntimeUnavailableError(
+      'the aspd-prepared interactive route requires durable broker IPC',
+      {
+        code: 'aspd_route_requires_durable_ipc',
+        route: 'aspd',
+        hostSessionId: session.hostSessionId,
+        runId: options.diagnosticRunId,
+      }
+    )
+  }
+  options.onColdBirthPromptRoute?.(false)
+  const operationId = await prepareAspdHeadlessAttempt(server, {
+    session,
+    intent,
+    interactive: {
+      flagEnvName: options.flagEnvName,
+      continuation: toRuntimeContinuationRef(
+        decideInteractiveTmuxBrokerContinuation({
+          allowedBrokerDriver: options.allowedBrokerDriver,
+          sessionContinuation: automaticContinuationForSession(server.db, session),
+        })
+      ),
+    },
+    preparedAuthority: options.preparedAuthority,
+    runId: options.diagnosticRunId,
+    endpoint: options.endpoint,
+    responseFormat: options.responseFormat,
+  })
+  const { runtime, intent: launchedIntent } = await launchAspdPreparedAttempt(server, operationId, {
+    ...dispatchRunPersistence(options),
+    ...(options.attachBeforeInvocationStart !== undefined
+      ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+      : {}),
+    ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
+    settleFailure: (error) => {
+      const { record } = readAspdPreparation(server, operationId)
+      return settleFailedInteractiveBrokerStart(server, {
+        session,
+        runId: record.runId,
+        runtimeId: record.runtimeId,
+        invocationId: String(record.admission.identity.invocationId),
+        operationId,
+        error,
+        responseFormat: options.responseFormat,
+        flagEnvName: options.flagEnvName,
+      })
+    },
+  })
+  // Same authority rule as the facade route: commit the applied intent only
+  // after the controller launched exactly this frozen intent.
+  server.db.sessions.updateIntent(session.hostSessionId, launchedIntent, timestamp())
+  return runtime
 }
 
 export const brokerInteractiveHandlersMethods = {

@@ -351,15 +351,22 @@ export async function startController(
   // T-08554: the tmux-tui viewer substrate is allowed because the route decision
   // it is selected by is the frozen preparation's own (launch checks it matches
   // the frozen hosting presentation).
+  // T-08556: the interactive tmux substrate is allowed only for a frozen
+  // `interactive-codex-tui` preparation; each route launches only on its own.
   if (
     input.aspdExecution !== undefined &&
-    (input.brokerClient !== undefined || !usesHeadlessBrokerSubstrate(input.profile))
+    (input.brokerClient !== undefined ||
+      (input.aspdExecution.route === 'interactive-codex-tui'
+        ? !isBrokerTmuxProfile(input.profile)
+        : !usesHeadlessBrokerSubstrate(input.profile)))
   ) {
     return {
       ok: false,
       error: new BrokerControllerError(
         'aspd_route_profile_mismatch',
-        'an aspd-prepared execution launches only on the headless broker substrate',
+        input.aspdExecution.route === 'interactive-codex-tui'
+          ? 'an aspd-prepared interactive execution launches only on the interactive tmux substrate'
+          : 'an aspd-prepared execution launches only on the headless broker substrate',
         {
           runtimeId: String(input.identity.runtimeId),
           operationId: input.aspdExecution.operationId,
@@ -470,10 +477,13 @@ export async function startController(
         ctx.markBrokerClosing(String(input.identity.runtimeId), refusal.code, client)
         await client.close().catch(() => undefined)
         if (tmuxAllocation !== undefined) {
-          await ctx
-            .allocationContext()
-            .headlessSubstrateAllocator?.release?.(tmuxAllocation)
-            .catch(() => undefined)
+          // T-08556: the interactive route's lease belongs to the interactive allocator.
+          const allocation = ctx.allocationContext()
+          const releasing =
+            input.aspdExecution.route === 'interactive-codex-tui'
+              ? allocation.tmuxAllocator
+              : allocation.headlessSubstrateAllocator
+          await releasing?.release?.(tmuxAllocation).catch(() => undefined)
         }
         return {
           ok: false,

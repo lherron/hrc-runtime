@@ -548,6 +548,12 @@ export type BrokerControllerStartInput = {
 
 export type BrokerAspdExecution = {
   operationId: string
+  /**
+   * The frozen route (T-08556): the headless substrate for
+   * `headless-codex-app-server`, the durable interactive tmux substrate for
+   * `interactive-codex-tui`.
+   */
+  route: 'headless-codex-app-server' | 'interactive-codex-tui'
   release: AspcExecutionRelease
   executable: string
   argv: string[]

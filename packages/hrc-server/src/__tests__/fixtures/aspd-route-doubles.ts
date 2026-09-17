@@ -16,7 +16,11 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import type { RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
-import { makeBrokerProfile, makeCompileResponse } from '../broker-compile-fixtures'
+import {
+  makeBrokerProfile,
+  makeCompileResponse,
+  makeInteractiveTmuxProfile,
+} from '../broker-compile-fixtures'
 
 export type Release = {
   releaseId: string
@@ -144,9 +148,16 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
             state.compileCalls += 1
             state.compileAspHomes.push(message.params?.aspHome)
             const identity = message.params.compileRequest.identity as RuntimeIdentityAllocation
-            const { profile, startRequest } = makeBrokerProfile(identity, {
-              initialInputText: message.params.compileRequest.materialization.initialPrompt,
-            })
+            // T-08556: an interactive compile selects the interactive codex-app-server TUI.
+            const { profile, startRequest } =
+              message.params.compileRequest.requested?.interactionMode === 'interactive'
+                ? makeInteractiveTmuxProfile(identity, {
+                    brokerDriver: 'codex-app-server',
+                    withInitialInput: false,
+                  })
+                : makeBrokerProfile(identity, {
+                    initialInputText: message.params.compileRequest.materialization.initialPrompt,
+                  })
             const compileResponse = makeCompileResponse(identity, [profile])
             if (!compileResponse.ok) throw new Error('fixture compile rejected')
             reply(socket as never, message.id, {

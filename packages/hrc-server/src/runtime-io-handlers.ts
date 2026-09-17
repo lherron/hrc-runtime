@@ -42,17 +42,26 @@ import { assertDesktopScopeNotColdBorn } from './desktop/scope-reservation.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
+  assertAttachedRunReusesHeadless,
+  assertBirthJoinAdmitted,
   assertNoOperatorPresentationConflict,
   assertOperatorPresentationRoutable,
   createStartBirthDecision,
+  decideCrossingBirthRoute,
   decideRedirectOffCodexRoute,
+  findEstablishedBrokerRuntime,
+  isAttachedRunAspdCodexIntent,
   isOmittedChoiceCodexRequest,
   recordStartBirth,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
+  startBirthOf,
   startBirthOfIntent,
+  startBirthOfRuntime,
 } from './presentation-operator.js'
 import {
+  isBrokerRuntimeInputDispatchable,
+  isBrokerRuntimeTransitional,
   requireKnownRuntime,
   requireRuntime,
   requireSession,
@@ -296,9 +305,23 @@ export async function startRuntimeForSession(
   options: {
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     operatorAttachPending?: boolean | undefined
+    /**
+     * T-08556 (§1.4): this start is the attached-run door's operation. With an
+     * aspd endpoint configured, a Codex intent's selection, birth and prompt
+     * delivery all happen inside ONE operation this door registers.
+     */
+    attachedRunDoor?: boolean | undefined
+    /** §1.4 "Joining a registered start": the newborn a joined start produced. */
+    attachedRunJoinedRuntimeId?: string | undefined
+    /** The settled start this door already joined; it can no longer change rows. */
+    attachedRunJoinedOperation?: Promise<HrcRuntimeSnapshot> | undefined
+    /** §1.4 "Initial input": delivered by identity before the operation deregisters. */
+    attachedRunPrompt?: AttachedRunPrompt | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   assertLocalPersonaAllowed(this, session.scopeRef)
+  const attachedRunAspdSelection =
+    options.attachedRunDoor === true && isAttachedRunAspdCodexIntent(intent)
   // T-08294: never boot a runtime onto a Codex desktop conversation's permanent
   // address. This is the single door every start path shares, and HRC's own
   // desktop observer does not use it.
@@ -317,7 +340,25 @@ export async function startRuntimeForSession(
     })
   }
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
-  if (existingOperation) {
+  if (
+    existingOperation &&
+    attachedRunAspdSelection &&
+    existingOperation !== options.attachedRunJoinedOperation
+  ) {
+    // T-08556 (§1.4): never return another start's result as this door's. A
+    // foreign recorded birth refuses before its boot is awaited; otherwise the
+    // start settles and the door re-enters to select inside its OWN registered
+    // operation, carrying the newborn (a newborn is never admission-replaced).
+    const birth = await startBirthOf(existingOperation)
+    if (birth !== undefined) decideCrossingBirthRoute(intent, birth)
+    const joined = await existingOperation.catch(() => undefined)
+    return await this.startRuntimeForSession(session, intent, restartStyle, {
+      ...options,
+      attachedRunJoinedRuntimeId: joined?.runtimeId ?? options.attachedRunJoinedRuntimeId,
+      attachedRunJoinedOperation: existingOperation,
+    })
+  }
+  if (existingOperation && !attachedRunAspdSelection) {
     const runtime = await existingOperation
     assertActuatorSplitRuntimeReuse(intent, runtime)
     // T-08553: joining a boot is reuse; a conflicting live presentation refuses.
@@ -332,6 +373,67 @@ export async function startRuntimeForSession(
     let existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
     if (existingRuntime) {
       existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
+    }
+    // T-08556 (§1.4): the attached-run door's selection. The selected runtime
+    // is marked operator-attach-pending and receives the door's prompt by
+    // identity before this registered operation settles.
+    const attachedRunSelected = async (
+      runtime: HrcRuntimeSnapshot
+    ): Promise<HrcRuntimeSnapshot> => {
+      await this.publishPresentation(runtime, { operatorAttachPending: true })
+      if (options.attachedRunPrompt !== undefined) {
+        await deliverAttachedRunPrompt(this, session, runtime, options.attachedRunPrompt)
+      }
+      return runtime
+    }
+    if (attachedRunAspdSelection) {
+      const joined =
+        options.attachedRunJoinedRuntimeId !== undefined
+          ? this.db.runtimes.getByRuntimeId(options.attachedRunJoinedRuntimeId)
+          : null
+      const liveJoined =
+        joined !== null &&
+        joined.controllerKind === 'harness-broker' &&
+        joined.status !== 'failed' &&
+        !isRuntimeUnavailableStatus(joined.status)
+          ? joined
+          : undefined
+      // Rules 1–2: a live joined newborn is never replaced.
+      if (liveJoined !== undefined) {
+        decideCrossingBirthRoute(intent, startBirthOfRuntime(liveJoined))
+        if (liveJoined.transport === 'tmux') {
+          assertBirthJoinAdmitted(
+            intent,
+            liveJoined,
+            {
+              route: 'interactive',
+              claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
+              piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
+            },
+            isBrokerRuntimeInputDispatchable(this.db, liveJoined)
+          )
+        } else {
+          assertAttachedRunReusesHeadless(liveJoined, {
+            transitional: isBrokerRuntimeTransitional(this.db, liveJoined),
+          })
+        }
+        startBirth.decide(startBirthOfRuntime(liveJoined))
+        return await attachedRunSelected(liveJoined)
+      }
+      // Rule 5: an established headless runtime of any harness or state is never
+      // stale-marked, replaced or started beside, short of --force-restart.
+      if (restartStyle !== 'fresh_pty') {
+        const established = findEstablishedBrokerRuntime(
+          this.db.runtimes.listByHostSessionId(session.hostSessionId)
+        )
+        if (established !== undefined && established.transport !== 'tmux') {
+          assertAttachedRunReusesHeadless(established, {
+            transitional: isBrokerRuntimeTransitional(this.db, established),
+          })
+          startBirth.decide(startBirthOfRuntime(established))
+          return await attachedRunSelected(established)
+        }
+      }
     }
     const highRiskActuatorSplit =
       normalizeActuatorSplitPolicy(intent.execution?.actuatorSplit)?.mode === 'high-risk'
@@ -512,6 +614,7 @@ export async function startRuntimeForSession(
         )
       ) {
         assertActuatorSplitRuntimeReuse(normalizedIntent, existingRuntime)
+        if (attachedRunAspdSelection) return await attachedRunSelected(existingRuntime)
         await this.publishPresentation(existingRuntime, presentationOptions)
         return existingRuntime
       }
@@ -534,6 +637,7 @@ export async function startRuntimeForSession(
               : {}),
           }),
       })
+      if (attachedRunAspdSelection) return await attachedRunSelected(runtime)
       await this.publishPresentation(runtime, presentationOptions)
       if ((normalizedIntent.initialPrompt ?? '').length > 0) {
         await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
@@ -562,6 +666,47 @@ export async function startRuntimeForSession(
   recordStartBirth(operation, startBirth.decided)
   this.runtimeStartOperations.set(session.hostSessionId, operation)
   return await operation
+}
+
+/** T-08556 (§1.4): the attached-run door's prompt and the sink for its turn response. */
+export type AttachedRunPrompt = {
+  prompt: string
+  runId: string
+  onDelivered: (response: Response) => void
+}
+
+/**
+ * §1.4 "Initial input exactly once": the prompt goes to the selected runtime by
+ * identity, through the turn admission gate and that transport's input-turn
+ * executor. No session-level selection, admission or reprovision runs here.
+ */
+async function deliverAttachedRunPrompt(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  input: AttachedRunPrompt
+): Promise<void> {
+  const releaseAdmission = server.turnAdmissionGate.admit({ existingAcceptedRun: false })
+  try {
+    const current = requireRuntime(server.db, runtime.runtimeId)
+    const response =
+      current.transport === 'tmux'
+        ? await server.executeInteractiveBrokerInputTurn(
+            session,
+            current,
+            input.prompt,
+            input.runId,
+            {
+              waitForCompletion: false,
+            }
+          )
+        : await server.executeHeadlessBrokerInputTurn(session, current, input.prompt, input.runId, {
+            waitForCompletion: false,
+          })
+    input.onDelivered(response)
+  } finally {
+    releaseAdmission()
+  }
 }
 
 export function selectInteractiveTmuxBrokerOptions(

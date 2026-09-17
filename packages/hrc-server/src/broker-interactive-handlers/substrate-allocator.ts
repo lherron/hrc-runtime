@@ -494,6 +494,7 @@ export function createBrokerDurableTmuxAllocator(
       brokerDriver,
       generation,
       brokerEnv,
+      workerLaunch,
     }): Promise<BrokerTmuxAllocation> => {
       const sub = await allocateBrokerSubstrate(options, deps, {
         runtimeId,
@@ -503,6 +504,8 @@ export function createBrokerDurableTmuxAllocator(
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'tmux-tui',
         ...(brokerEnv !== undefined ? { brokerEnv } : {}),
+        // T-08556: an aspd-prepared interactive TUI launches its frozen release worker.
+        ...(workerLaunch !== undefined ? { workerLaunch } : {}),
       })
       // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
       // the optional fields at runtime (fail-fast on a latent partial) rather than
@@ -523,6 +526,9 @@ export function createBrokerDurableTmuxAllocator(
         sessionName: tuiWindow.sessionName,
         windowName: tuiWindow.windowName,
       }
+    },
+    release: async (allocation) => {
+      await releaseBrokerLeaseServer(deps, allocation.socketPath, allocation.brokerIpcSocketPath)
     },
   }
 }

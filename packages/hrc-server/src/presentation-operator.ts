@@ -22,6 +22,7 @@ import {
 
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { configuredAspdEndpoint } from './agent-spaces-adapter/aspd-preparation-client.js'
 import { toProfileSelector } from './agent-spaces-adapter/compile-adapter.js'
 import {
   decideInteractiveBrokerAdmission,
@@ -388,11 +389,13 @@ export async function assertBirthJoinRoute(
 export function assertBirthJoinAdmitted(
   intent: HrcRuntimeIntent,
   newborn: HrcRuntimeSnapshot,
-  join: RedirectOffBirthJoin
+  join: RedirectOffBirthJoin,
+  /** T-08556: the attached-run door judges the newborn's actual dispatchability. */
+  inputDispatchable = true
 ): void {
   const admission = decideInteractiveBrokerAdmission(
     intent,
-    toLatestRuntimeAdmissionView(newborn, true),
+    toLatestRuntimeAdmissionView(newborn, inputDispatchable),
     {
       claudeCodeTmuxBrokerEnabled: join.claudeCodeTmuxBrokerEnabled,
       piTuiTmuxBrokerEnabled: join.piTuiTmuxBrokerEnabled,
@@ -417,4 +420,63 @@ export function assertBirthJoinAdmitted(
       route: 'interactive-broker-birth-join',
     }
   )
+}
+
+/**
+ * T-08556 (§1.4) — the attached-run door (`hrc run`, `hrc resume`) selects its
+ * Codex runtime inside the start singleflight on a node that declares an aspd
+ * endpoint. True for the intents that rule applies to.
+ */
+export function isAttachedRunAspdCodexIntent(
+  intent: HrcRuntimeIntent,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  return (
+    configuredAspdEndpoint(env) !== undefined &&
+    intent.harness.provider === 'openai' &&
+    (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
+  )
+}
+
+/**
+ * §1.4 rule 3 — the attached-run door against a headless subject (the joined
+ * start's runtime, or the established runtime). It never stale-marks, replaces
+ * or starts beside it: a settled, operator-attachable Codex runtime is reused;
+ * every other headless runtime refuses before any effect and stays untouched.
+ */
+export function assertAttachedRunReusesHeadless(
+  runtime: HrcRuntimeSnapshot,
+  options: { transitional: boolean }
+): void {
+  const detail = {
+    runtimeId: runtime.runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    establishedProvider: runtime.provider,
+    establishedHarness: runtime.harness,
+    establishedTransport: runtime.transport,
+  }
+  if (runtime.provider !== 'openai' || runtime.harness !== 'codex-cli') {
+    throw new HrcRuntimeUnavailableError(
+      'scope has an established broker runtime of another harness; terminate it before running codex here',
+      { reason: 'established_runtime_harness_mismatch', requestedHarness: 'codex-cli', ...detail }
+    )
+  }
+  if (options.transitional) {
+    throw new HrcRuntimeUnavailableError(
+      'scope has a headless codex runtime that is starting or stopping; retry once it settles',
+      { reason: 'attached_run_runtime_transitional', ...detail }
+    )
+  }
+  if (parseBrokerRuntimeHostingState(runtime)?.presentation.kind !== 'tmux-tui') {
+    throw new HrcConflictError(
+      HrcErrorCode.PRESENTATION_CONFLICT,
+      "scope has a live runtime presenting 'none'; hrc run needs an operator terminal (terminate it or use --force-restart)",
+      {
+        field: 'presentation.operator',
+        runtimeId: runtime.runtimeId,
+        hostSessionId: runtime.hostSessionId,
+        livePresentation: 'none',
+      }
+    )
+  }
 }

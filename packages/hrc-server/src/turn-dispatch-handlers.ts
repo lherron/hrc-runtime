@@ -77,6 +77,7 @@ import {
   assertOperatorPresentationRoutable,
   decideCrossingBirthRoute,
   decideRedirectOffCodexRoute,
+  isAttachedRunAspdCodexIntent,
   isOmittedChoiceCodexRequest,
   requestsOperatorPresentation,
   scopeHasLiveHeadlessBrokerRuntime,
@@ -1473,6 +1474,37 @@ export async function handlePrepareAttachedRun(
   const controller = this.getHarnessBrokerController()
 
   const operation = (async (): Promise<AttachedRunResult> => {
+    // T-08556 (§1.4): on a node that declares an aspd endpoint, a Codex attached
+    // run selects its runtime only through the start singleflight (join first,
+    // registered before its first await), with or without a prompt, and the
+    // prompt is delivered once after that start settles into the runtime it chose.
+    if (isAttachedRunAspdCodexIntent(body.intent)) {
+      const { initialPrompt: _initialPrompt, ...startIntent } = body.intent
+      let delivered: Response | undefined
+      const runtime = await this.startRuntimeForSession(
+        session,
+        startIntent,
+        body.restartStyle ?? 'reuse_pty',
+        {
+          attachBeforeInvocationStart: { pendingStartId },
+          attachedRunDoor: true,
+          ...(body.prompt && body.prompt.length > 0
+            ? {
+                attachedRunPrompt: {
+                  prompt: body.prompt,
+                  runId: `run-${randomUUID()}`,
+                  onDelivered: (response: Response) => {
+                    delivered = response
+                  },
+                },
+              }
+            : {}),
+        }
+      )
+      return delivered !== undefined
+        ? await dispatchTurnResponseJson(delivered)
+        : toStartRuntimeResponse(runtime)
+    }
     if (body.prompt && body.prompt.length > 0) {
       const response = await this.dispatchTurnForSession(session, body.intent, body.prompt, {
         runId: `run-${randomUUID()}`,

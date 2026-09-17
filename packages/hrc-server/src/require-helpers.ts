@@ -334,6 +334,13 @@ export function isBrokerRuntimeInputDispatchable(
   )
 }
 
+/** T-08556: the runtime's active broker invocation is `starting` or `stopping`. */
+export function isBrokerRuntimeTransitional(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
+  if (runtime.activeInvocationId === undefined) return false
+  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  return isTransitionalBrokerInvocationState(inv?.invocationState)
+}
+
 export function isTerminalBrokerInputFailure(message: string): boolean {
   return /Cannot accept input in state: (exited|failed|disposed)/.test(message)
 }

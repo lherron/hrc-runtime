@@ -13,6 +13,10 @@
  *    the row, validates the persisted bytes, then hands the frozen material to
  *    the controller, whose existing start graph (B4) moves the row to `starting`
  *    before invocation.start.
+ *
+ * T-08556 (§1.4): the same two boundaries also carry the interactive
+ * codex-app-server + codexTui birth of the attached-run door (`hrc run`,
+ * `hrc resume`), frozen as route `interactive-codex-tui`.
  */
 import { randomUUID } from 'node:crypto'
 
@@ -37,6 +41,7 @@ import type {
   CompiledRuntimePlan,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
+import type { BrokerControllerStartInput } from './broker/controller/types.js'
 
 import { actuatorSplitRuntimeAuthority, assertActuatorSplitAdmission } from './actuator-split.js'
 import {
@@ -56,7 +61,9 @@ import {
   toProfileSelector,
 } from './agent-spaces-adapter/compile-adapter.js'
 import {
+  type InteractiveTmuxBrokerDriver,
   decideCodexAppServerPresentation,
+  decideInteractiveTmuxExecutionRoute,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
@@ -86,10 +93,13 @@ const ASPD_BROKER_DRIVER = 'codex-app-server'
 
 type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: true }>
 
+/** The routes a frozen aspd preparation launches on (T-08556 adds the interactive TUI). */
+export type AspdPreparationRoute = 'headless-codex-app-server' | 'interactive-codex-tui'
+
 /** The frozen preparation persisted in `runtime_operations.preparation_json`. */
 export type AspdPreparationRecord = {
   schemaVersion: typeof ASPD_PREPARATION_SCHEMA
-  route: 'headless-codex-app-server'
+  route: AspdPreparationRoute
   preparedAt: string
   hostSessionId: string
   generation: number
@@ -111,7 +121,10 @@ export type AspdPreparationRecord = {
   }
   hosting: {
     driverKind: typeof ASPD_BROKER_DRIVER
-    /** T-08554: `tmux-tui` only when the request explicitly selected the viewer. */
+    /**
+     * `none` or the `tmux-tui` viewer (T-08553–T-08555) on the headless route;
+     * `codex-tui`, the leased interactive TUI pane, on the interactive route (T-08556).
+     */
     presentation: AspdHostingPresentation
     executable: string
     argv: string[]
@@ -128,7 +141,7 @@ export type AspdPreparationRecord = {
   startOutcome?: 'rejected' | 'uncertain' | undefined
 }
 
-type AspdHostingPresentation = 'none' | 'tmux-tui'
+type AspdHostingPresentation = 'none' | 'tmux-tui' | 'codex-tui'
 
 /** HRC's deterministic hosting paths; a viewer adds its observer socket. */
 type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | undefined }
@@ -185,6 +198,23 @@ function aspdWorkerArgv(
 }
 
 /**
+ * T-08556 (§1.4) — the interactive route: an interactive codex-app-server birth
+ * made by the attached-run door (the only caller that carries
+ * `attachBeforeInvocationStart`) on a node that declares an aspd endpoint.
+ * Returns the endpoint, or undefined for every other interactive birth.
+ */
+export function aspdInteractiveCodexEndpoint(
+  input: {
+    allowedBrokerDriver: InteractiveTmuxBrokerDriver
+    attachedRunDoor: boolean
+  },
+  env: Record<string, string | undefined> = process.env
+): string | undefined {
+  if (!input.attachedRunDoor || input.allowedBrokerDriver !== ASPD_BROKER_DRIVER) return undefined
+  return configuredAspdEndpoint(env)
+}
+
+/**
  * The route this module owns: the node declares an aspd endpoint and the intent
  * is ordinary headless codex-app-server, with operator presentation `none` or
  * the `tmux-tui` viewer, chosen by request or node default (T-08555).
@@ -206,9 +236,17 @@ function aspdStartError(
   return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
+/** T-08556: the interactive-route facts the start door decides before preparation. */
+export type AspdInteractivePreparation = {
+  flagEnvName: string
+  continuation: ReturnType<typeof toRuntimeContinuationRef>
+}
+
 export type AspdPrepareInput = {
   session: HrcSessionRecord
   intent: HrcRuntimeIntent
+  /** Present for the interactive route (§1.4); absent for the headless route. */
+  interactive?: AspdInteractivePreparation | undefined
   preparedAuthority?: Parameters<typeof assertActuatorSplitAdmission>[0]['preparedAuthority']
   runId: string
   endpoint: string
@@ -242,7 +280,10 @@ export async function prepareAspdHeadlessAttempt(
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       dispatchEnv: hrcDispatchEnv,
-      continuation: toRuntimeContinuationRef(automaticContinuationForSession(server.db, session)),
+      continuation:
+        input.interactive !== undefined
+          ? input.interactive.continuation
+          : toRuntimeContinuationRef(automaticContinuationForSession(server.db, session)),
       allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
       responseFormat: input.responseFormat,
     },
@@ -299,13 +340,21 @@ export async function prepareAspdHeadlessAttempt(
       }
     )
   }
-  if (
-    compiled.profile.brokerDriver !== ASPD_BROKER_DRIVER ||
-    compiled.profile.interactionMode !== 'headless'
-  ) {
+  const interactive = input.interactive
+  const routeMatches =
+    compiled.profile.brokerDriver === ASPD_BROKER_DRIVER &&
+    (interactive === undefined
+      ? compiled.profile.interactionMode === 'headless'
+      : decideInteractiveTmuxExecutionRoute(intent, compiled.profile, {
+          brokerFlagEnabled: true,
+          allowedBrokerDriver: ASPD_BROKER_DRIVER,
+        }) === 'broker')
+  if (!routeMatches) {
     throw aspdStartError(
       'aspd_route_profile_mismatch',
-      'aspd selected a profile outside the headless codex-app-server route',
+      interactive === undefined
+        ? 'aspd selected a profile outside the headless codex-app-server route'
+        : 'aspd selected a profile outside the interactive codex-app-server TUI route',
       {
         hostSessionId: session.hostSessionId,
         runId,
@@ -324,7 +373,7 @@ export async function prepareAspdHeadlessAttempt(
   }
   const actuatorSplitAuthority = await assertActuatorSplitAdmission({
     intent,
-    route: 'broker',
+    route: interactive === undefined ? 'broker' : 'interactive-broker',
     startRequest: compiled.startRequest,
     preparedAuthority: input.preparedAuthority,
   })
@@ -340,11 +389,12 @@ export async function prepareAspdHeadlessAttempt(
   }
   const dispatchEnv = filterBrokerDispatchEnvForLockedEnv(mergedDispatchEnv, compiled.startRequest)
   const lifecyclePolicy = resolveLifecyclePolicyOverlay({
-    routeId: `headless-broker:${compiled.profile.brokerDriver}`,
+    routeId: `${interactive === undefined ? 'headless-broker' : 'interactive-broker'}:${compiled.profile.brokerDriver}`,
     brokerRoute: true,
   })
   const operationId = String(compiled.identity.operationId)
-  const presentation = aspdRoutePresentation(intent, process.env)
+  const presentation: AspdHostingPresentation | undefined =
+    interactive === undefined ? aspdRoutePresentation(intent, process.env) : 'codex-tui'
   if (presentation === undefined) {
     throw aspdStartError(
       'aspd_route_profile_mismatch',
@@ -361,9 +411,40 @@ export async function prepareAspdHeadlessAttempt(
   const runtimeAuthority = actuatorSplitRuntimeAuthority(actuatorSplitAuthority)
   const requestedResponseFormat = toBrokerResponseFormat(input.responseFormat)
   const preparedAt = timestamp()
+  const aspdRouteDecision = {
+    preparation: 'aspd',
+    aspdEndpoint: endpoint,
+    aspdRelease: prepared.service.release,
+    executionReleaseId: release.releaseId,
+    // T-08555: the ASP_HOME the worker's codex home was compiled under.
+    aspHome,
+  }
+  const routeDecision: Record<string, unknown> =
+    interactive === undefined
+      ? {
+          route: 'broker',
+          flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+          selectedBy: 'aspdHeadlessCodexEndpoint',
+          headlessRoute: 'durable-leased',
+          brokerTransport: 'unix-jsonrpc-ndjson',
+          operatorPresentation: presentation,
+          operatorPresentationSource: operatorPresentationSource(intent),
+          ...aspdRouteDecision,
+        }
+      : {
+          // T-08556 (§1.4): the attached-run door's interactive birth.
+          route: 'broker',
+          flag: interactive.flagEnvName,
+          selectedBy: 'decideInteractiveTmuxExecutionRoute',
+          durableInteractiveRoute: 'durable-ipc',
+          brokerTransport: 'unix-jsonrpc-ndjson',
+          durableRouteSelectedBy: 'decideBrokerDurableInteractiveRoute',
+          door: 'attached-run',
+          ...aspdRouteDecision,
+        }
   const record: AspdPreparationRecord = {
     schemaVersion: ASPD_PREPARATION_SCHEMA,
-    route: 'headless-codex-app-server',
+    route: interactive === undefined ? 'headless-codex-app-server' : 'interactive-codex-tui',
     preparedAt,
     hostSessionId: session.hostSessionId,
     generation: session.generation,
@@ -394,21 +475,7 @@ export async function prepareAspdHeadlessAttempt(
     dispatch: {
       ...(dispatchEnv !== undefined ? { dispatchEnv } : {}),
       ...(lifecyclePolicy !== undefined ? { lifecyclePolicy } : {}),
-      routeDecision: {
-        route: 'broker',
-        flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-        selectedBy: 'aspdHeadlessCodexEndpoint',
-        headlessRoute: 'durable-leased',
-        brokerTransport: 'unix-jsonrpc-ndjson',
-        operatorPresentation: presentation,
-        operatorPresentationSource: operatorPresentationSource(intent),
-        preparation: 'aspd',
-        aspdEndpoint: endpoint,
-        aspdRelease: prepared.service.release,
-        executionReleaseId: release.releaseId,
-        // T-08555: the ASP_HOME the worker's codex home was compiled under.
-        aspHome,
-      },
+      routeDecision,
       ...(runtimeAuthority !== undefined ? { runtimeAuthority } : {}),
       ...(requestedResponseFormat !== undefined ? { requestedResponseFormat } : {}),
     },
@@ -449,6 +516,7 @@ export async function prepareAspdHeadlessAttempt(
     })
   })()
   writeServerLog('INFO', 'aspd.preparation.frozen', {
+    route: record.route,
     operationId,
     runtimeId,
     runId,
@@ -525,6 +593,11 @@ function recordPrelaunchRefusal(
 
 export type AspdLaunchOptions = DispatchRunPersistenceOptions & {
   onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+  /**
+   * T-08556: the attached-run door's live attach handshake. Not frozen: it names
+   * this process's pending attach, which a preparation cannot outlive.
+   */
+  attachBeforeInvocationStart?: BrokerControllerStartInput['attachBeforeInvocationStart']
   settleFailure: (error: {
     code: string
     message: string
@@ -587,10 +660,19 @@ export async function launchAspdPreparedAttempt(
     record.hosting.presentation
   )
   const expectedArgv = aspdWorkerArgv(record.executionRelease, record, currentPaths)
+  // The route and its presentation are one frozen fact: the interactive TUI
+  // route hosts only `codex-tui`, the headless route only its decided viewer.
+  const presentationMatchesRoute =
+    record.route === 'interactive-codex-tui'
+      ? record.hosting.presentation === 'codex-tui' &&
+        record.dispatch.routeDecision['door'] === 'attached-run'
+      : record.route === 'headless-codex-app-server' &&
+        record.hosting.presentation !== 'codex-tui' &&
+        record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
   if (
     JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
     JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
-    record.dispatch.routeDecision['operatorPresentation'] !== record.hosting.presentation
+    !presentationMatchesRoute
   ) {
     refuse('launch_description_mismatch', 'frozen worker launch description no longer matches', {
       frozenArgv: record.hosting.argv,
@@ -619,8 +701,12 @@ export async function launchAspdPreparedAttempt(
     ...(record.dispatch.lifecyclePolicy !== undefined
       ? { lifecyclePolicy: record.dispatch.lifecyclePolicy }
       : {}),
+    ...(options.attachBeforeInvocationStart !== undefined
+      ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+      : {}),
     aspdExecution: {
       operationId,
+      route: record.route,
       release: record.executionRelease,
       executable,
       argv: record.hosting.argv,
