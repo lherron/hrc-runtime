@@ -25,6 +25,8 @@ export type ReaderMode =
   | 'small-bytes'
   | 'unknown-invocation'
   | 'after-beyond-current'
+  | 'tail-empty'
+  | 'checkout-exec'
   | 'release-mismatch'
   | 'nonprogress'
   | 'snapshot-change'
@@ -58,6 +60,20 @@ export type OfflineRuntime = {
   reader: ReaderDouble
 }
 
+export type ReaderResponseMutation = {
+  path: string[]
+  operation: 'set' | 'delete'
+  value?: unknown
+  when?: 'always' | 'after-first-page'
+}
+
+type ReaderDoubleOptions = {
+  capability?: boolean
+  releaseId?: string
+  exitCode?: 0 | 2
+  responseMutations?: ReaderResponseMutation[]
+}
+
 const CAPTURES = join(import.meta.dir, 't08566-real-reader-responses')
 
 export async function capturedReaderResponse(name: string): Promise<Record<string, unknown>> {
@@ -82,6 +98,8 @@ export async function deriveReaderResponse(
     'below-floor': 'below-floor.stdout.json',
     'unknown-invocation': 'wrong-invocation.stdout.json',
     'after-beyond-current': 'after-beyond-current.stdout.json',
+    'tail-empty': 'tail-empty.stdout.json',
+    'checkout-exec': 'checkout-exec.stdout.json',
   }
   const sourceName =
     exactCapture[mode] ??
@@ -92,7 +110,7 @@ export async function deriveReaderResponse(
       ? 'small-bytes.stdout.json'
       : 'full.stdout.json')
   const captured = await capturedReaderResponse(sourceName)
-  captured['release'] = { ...release }
+  if (mode !== 'checkout-exec') captured['release'] = { ...release }
   if (mode === 'release-mismatch') {
     captured['release'] = {
       ...release,
@@ -115,7 +133,7 @@ export async function deriveReaderResponse(
 export async function makeOfflineReaderDouble(
   root: string,
   mode: ReaderMode,
-  opts: { capability?: boolean; releaseId?: string } = {}
+  opts: ReaderDoubleOptions = {}
 ): Promise<ReaderDouble> {
   const releaseId = opts.releaseId ?? `asp-f450dc999924-test-${randomUUID()}`
   const releaseRoot = join(root, releaseId)
@@ -124,11 +142,13 @@ export async function makeOfflineReaderDouble(
   const recordPath = join(releaseRoot, 'reader-invocation.json')
   const pidPath = join(releaseRoot, 'reader.pid')
   const unblockPath = join(releaseRoot, 'unblock')
+  const mutationsPath = join(releaseRoot, 'reader-mutations.json')
   const sourceCommit = 'f450dc9999240000000000000000000000000000'
   const builtAt = '2026-09-17T05:40:56.000Z'
   const release = { releaseId, sourceCommit, builtAt }
   await mkdir(releaseRoot, { recursive: true })
   await writeFile(responsePath, await deriveReaderResponse(mode, release))
+  await writeFile(mutationsPath, JSON.stringify(opts.responseMutations ?? []))
   await writeFile(
     join(releaseRoot, 'release.json'),
     JSON.stringify({
@@ -153,13 +173,14 @@ ${mode === 'timeout' ? `while [ ! -e "${unblockPath}" ]; do sleep 0.05; done` : 
 ${
   mode === 'overflow'
     ? `cat "${responsePath}"`
-    : `python3 - "$stdin" "${responsePath}" "${mode}" "${unblockPath}" <<'PY'
+    : `python3 - "$stdin" "${responsePath}" "${mode}" "${unblockPath}" "${mutationsPath}" <<'PY'
 import json, os, sys, time
 request = json.load(open(sys.argv[1]))
 response = json.load(open(sys.argv[2]))
 mode = sys.argv[3]
 after = int(request.get('afterSeq', 0))
 invocation = request.get('invocationId')
+mutations = json.load(open(sys.argv[5]))
 events = response.get('result', {}).get('events', [])
 for index, event in enumerate(events, 1):
     if invocation:
@@ -181,10 +202,28 @@ if mode == 'block-page-two' and after > 0:
         time.sleep(0.05)
 if mode == 'snapshot-change' and after > 0:
     response['snapshot']['ledger']['mtimeMs'] += 1
+for mutation in mutations:
+    if mutation.get('when') == 'after-first-page' and after <= 0:
+        continue
+    path = mutation.get('path', [])
+    if not path:
+        continue
+    target = response
+    for key in path[:-1]:
+        if not isinstance(target, dict) or key not in target:
+            target = None
+            break
+        target = target[key]
+    if not isinstance(target, dict):
+        continue
+    if mutation.get('operation') == 'delete':
+        target.pop(path[-1], None)
+    else:
+        target[path[-1]] = mutation.get('value')
 print(json.dumps(response, separators=(',', ':')))
 PY`
 }
-exit ${mode === 'exit-one' ? 1 : ['corrupt', 'duplicate', 'oversize', 'below-floor'].includes(mode) ? 2 : 0}
+exit ${opts.exitCode ?? (mode === 'exit-one' ? 1 : ['corrupt', 'duplicate', 'oversize', 'below-floor', 'checkout-exec'].includes(mode) ? 2 : 0)}
 `
   await writeFile(executable, script)
   await chmod(executable, 0o755)
@@ -207,7 +246,13 @@ exit ${mode === 'exit-one' ? 1 : ['corrupt', 'duplicate', 'oversize', 'below-flo
 export async function seedOfflineRuntime(
   fixture: HrcServerTestFixture,
   mode: ReaderMode,
-  opts: { lastProjectedSeq?: number; capability?: boolean; status?: string } = {}
+  opts: {
+    lastProjectedSeq?: number
+    capability?: boolean
+    status?: string
+    exitCode?: 0 | 2
+    responseMutations?: ReaderResponseMutation[]
+  } = {}
 ): Promise<OfflineRuntime> {
   const suffix = `${mode}-${Math.random().toString(16).slice(2)}`
   const runtimeId = `rt-${suffix}`
@@ -217,6 +262,8 @@ export async function seedOfflineRuntime(
   const scopeRef = `agent:smokey:project:hrc-runtime:task:T-08566-${suffix}`
   const reader = await makeOfflineReaderDouble(fixture.tmpDir, mode, {
     ...(opts.capability === undefined ? {} : { capability: opts.capability }),
+    ...(opts.exitCode === undefined ? {} : { exitCode: opts.exitCode }),
+    ...(opts.responseMutations === undefined ? {} : { responseMutations: opts.responseMutations }),
   })
   const ledgerDir = join(fixture.runtimeRoot, 'bipc', runtimeId)
   const ledgerPath = join(ledgerDir, 'events.ndjson')
