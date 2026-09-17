@@ -400,6 +400,7 @@ describe('lastActivityAt is qualifying agent/turn activity, not row mutation tim
           'lastActivityAgeSec',
           'lastActivityAt',
           'provider',
+          'reportedModel',
           'runtimeId',
           'scopeRef',
           'status',
