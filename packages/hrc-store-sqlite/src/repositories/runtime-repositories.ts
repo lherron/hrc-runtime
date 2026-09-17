@@ -243,18 +243,24 @@ export class RunIdOwnershipRegistry {
     ) {
       throw new RunIdOwnershipError(runId, 'operation-immutable')
     }
-    if (patch.runtimeId === undefined) return
-    if (row.runtime_id !== null) {
-      if (patch.runtimeId !== row.runtime_id) {
-        throw new RunIdOwnershipError(runId, 'runtime-immutable')
-      }
-      return
+    if (
+      patch.runtimeId !== undefined &&
+      row.runtime_id !== null &&
+      patch.runtimeId !== row.runtime_id
+    ) {
+      throw new RunIdOwnershipError(runId, 'runtime-immutable')
     }
-    // Sealing an unbound run: only the holder's token, for the reserved tuple.
-    if (reservation === undefined)
+    const runtimeFill = patch.runtimeId !== undefined && row.runtime_id === null
+    const operationFill = patch.operationId !== undefined && row.operation_id === null
+    if (!runtimeFill && !operationFill) return
+    // Every first binding of a tuple column is clause (A): only the holder's
+    // live token, for the reserved tuple. Once sealed the token is unobtainable,
+    // so a late first binding is refused too.
+    if (reservation === undefined) {
       throw new RunIdOwnershipError(runId, 'unbound-without-reservation')
+    }
     const writer: RunHandleWriter = {
-      runtimeId: patch.runtimeId,
+      runtimeId: patch.runtimeId ?? row.runtime_id ?? undefined,
       operationId: patch.operationId ?? row.operation_id ?? undefined,
       hostSessionId: row.host_session_id,
       generation: row.generation,
