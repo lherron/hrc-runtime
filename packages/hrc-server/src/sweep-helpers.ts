@@ -1,5 +1,5 @@
 import { parseScopeRef } from 'agent-scope'
-import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode, TERMINAL_RUNTIME_STATUSES } from 'hrc-core'
 import type {
   HrcRunRecord,
   HrcRuntimeSnapshot,
@@ -292,6 +292,22 @@ export async function evaluatePruneDisposition(
     return { prunable: false, reason: `status_not_prunable:${runtime.status}` }
   }
   return await evaluatePruneLivenessSafety(runtime, tmux, db, options)
+}
+
+/**
+ * Status admission for explicit retained-evidence disposition (T-08566 §4.2, H1
+ * rev 3). Separate from bulk prune's unavailable-status admission: every
+ * non-live status (hrc-core TERMINAL_RUNTIME_STATUSES plus detached) is admitted,
+ * so held failed/stopped/disposed evidence keeps an explicit release. Liveness is
+ * a separate check (evaluatePruneLivenessSafety).
+ */
+export function evaluateDispositionStatusAdmission(
+  runtime: HrcRuntimeSnapshot
+): { admitted: true } | { admitted: false; reason: string } {
+  if (TERMINAL_RUNTIME_STATUSES.has(runtime.status) || runtime.status === 'detached') {
+    return { admitted: true }
+  }
+  return { admitted: false, reason: `status_not_disposable:${runtime.status}` }
 }
 
 /**

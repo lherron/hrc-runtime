@@ -50,6 +50,7 @@ import {
 } from './startup-reconcile.js'
 import { DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS } from './startup-reconcile/types.js'
 import {
+  evaluateDispositionStatusAdmission,
   evaluatePruneDisposition,
   evaluatePruneLivenessSafety,
   evaluateRuntimeAgingDisposition,
@@ -510,6 +511,14 @@ async function disposeRetainedEvidence(
     runtimeId,
     hostSessionId: runtime.hostSessionId,
     transport,
+  }
+  const admission = evaluateDispositionStatusAdmission(runtime)
+  if (!admission.admitted) {
+    return json({
+      ok: true,
+      results: [{ ...base, status: 'skipped', reason: admission.reason }],
+      summary: { type: 'summary', matched: 1, pruned: 0, skipped: 1, errors: 0 },
+    } satisfies PruneRuntimesResponse)
   }
   // H1b: disposition deletes the runtime row, so it passes the same liveness
   // safety as runtime prune before anything is recorded. A probe error is a

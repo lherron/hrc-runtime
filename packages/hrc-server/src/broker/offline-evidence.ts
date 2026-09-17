@@ -976,6 +976,7 @@ function targetInvocationId(db: HrcDatabase, runtime: HrcRuntimeSnapshot): strin
 }
 
 function responseFor(
+  db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
   invocationId: string | undefined,
   trigger: RetainedEvidenceTrigger,
@@ -1003,7 +1004,9 @@ function responseFor(
     outcome: fields.outcome,
     ...(outcomeClass !== 'paused' ? { class: outcomeClass } : { class: 'incomplete' as const }),
     complete: outcomeClass === 'complete',
-    held: fields.bound && outcomeHoldsEvidence(fields.outcome),
+    // §4.2 (H1 rev 3): `held` is the directory-hold predicate on the runtime row
+    // as it stands after the attempt, never the attempt outcome's class.
+    held: currentHold(db, runtime.runtimeId),
     attempts: fields.attempts,
     recorded: fields.recorded,
     projectedThroughSeq: fields.projectedThroughSeq,
@@ -1076,7 +1079,7 @@ export async function recoverRetainedEvidence(
     : 0
 
   if (invocationId === undefined) {
-    return responseFor(runtime, undefined, input.trigger, {
+    return responseFor(db, runtime, undefined, input.trigger, {
       outcome: 'offline_read_no_invocation',
       recorded: false,
       attempts: 0,
@@ -1091,7 +1094,7 @@ export async function recoverRetainedEvidence(
     const refusal = await eligibilityRefusal(deps, runtime, invocationId)
     const release = persistedAspdExecutionRelease(runtime)
     const declared = release ? releaseCapabilityDeclared(release.releaseRoot) : undefined
-    return responseFor(runtime, invocationId, input.trigger, {
+    return responseFor(db, runtime, invocationId, input.trigger, {
       outcome: prior?.outcome ?? 'not_attempted',
       recorded: false,
       attempts: priorAttempts,
@@ -1117,7 +1120,7 @@ export async function recoverRetainedEvidence(
         requestedAfterSeq: projectedNow,
       })
     }
-    return responseFor(runtime, invocationId, input.trigger, {
+    return responseFor(db, runtime, invocationId, input.trigger, {
       outcome,
       recorded: ownership.heldBy === 'attach',
       attempts: priorAttempts,
@@ -1140,7 +1143,7 @@ export async function recoverRetainedEvidence(
         reason: refusal.reason,
         trigger: input.trigger,
       })
-      return responseFor(owned, invocationId, input.trigger, {
+      return responseFor(db, owned, invocationId, input.trigger, {
         outcome: refusal.outcome,
         recorded: false,
         attempts: priorAttempts,
@@ -1155,7 +1158,7 @@ export async function recoverRetainedEvidence(
     if (input.trigger !== 'operator' && prior !== null) {
       const priorClass = classifyRetainedOutcome(prior.outcome)
       if (priorClass === 'complete' || priorClass === 'disposed' || priorClass === 'paused') {
-        return responseFor(owned, invocationId, input.trigger, {
+        return responseFor(db, owned, invocationId, input.trigger, {
           outcome: prior.outcome,
           recorded: false,
           attempts: priorAttempts,
@@ -1175,7 +1178,7 @@ export async function recoverRetainedEvidence(
           priorAttempts,
           { priorOutcome: prior.outcome, requestedAfterSeq: projectedNow }
         )
-        return responseFor(owned, invocationId, input.trigger, {
+        return responseFor(db, owned, invocationId, input.trigger, {
           outcome: paused.outcome,
           recorded: true,
           attempts: priorAttempts,
@@ -1194,7 +1197,7 @@ export async function recoverRetainedEvidence(
       projectedThroughSeq: attempt.projectedThroughSeq,
       ...(attempt.currentSeq !== undefined ? { currentSeq: attempt.currentSeq } : {}),
     })
-    return responseFor(owned, invocationId, input.trigger, {
+    return responseFor(db, owned, invocationId, input.trigger, {
       outcome: attempt.outcome,
       recorded: true,
       attempts,
@@ -1225,6 +1228,11 @@ export type RetainedEvidenceHold = {
  * ends only on `recovered` or `operator_disposed`; a retry budget never releases
  * evidence. Unbound runtimes get no new hold (U16).
  */
+function currentHold(db: HrcDatabase, runtimeId: string): boolean {
+  const current = db.runtimes.getByRuntimeId(runtimeId)
+  return current ? retainedEvidenceHold(db, current).held : false
+}
+
 export function retainedEvidenceHold(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot
@@ -1236,7 +1244,9 @@ export function retainedEvidenceHold(
   if (REVIVABLE_STATUSES.has(runtime.status)) {
     return { held: true, reason: 'revivable', ledgerPath }
   }
-  if (!ELIGIBLE_STATUSES.has(runtime.status)) return { held: false, ledgerPath }
+  // §4.2 (H1 rev 3): the outcome clause applies in every status. A live, adopted
+  // or stopped runtime stays held until each invocation is recovered or disposed;
+  // the hold never gates live replay (the retained-projection fence does).
   for (const invocation of db.brokerInvocations.listByRuntimeId(runtime.runtimeId)) {
     const latest = db.retainedEvidenceOutcomes.latest(runtime.runtimeId, invocation.invocationId)
     if (latest === null) return { held: true, reason: 'not_attempted', ledgerPath }
