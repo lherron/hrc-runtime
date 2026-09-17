@@ -47,10 +47,38 @@ states what `hrc run` does against a scope's live headless runtime. The
 interactive shape, the attach-before-start handshake and initial-input delivery
 are unchanged. Other doors that birth the interactive backend (cold `hrc attach`,
 stored-intent rebirth, §1.3 rule 3 reprovision, selector messages) keep the
-facade. No flag, value, endpoint, ASPC verb or wire field is added. Where §1,
-§2, §4, §8 or §9 say the aspd route is headless only, or that `hrc run` stays on
-the standalone backend with no release binding, §1.4 supersedes that sentence
-for the attached-run door.
+facade [T-08560: every door moves, §1.5]. No flag, value, endpoint, ASPC verb or
+wire field is added. Where §1, §2, §4, §8 or §9 say the aspd route is headless
+only, or that `hrc run` stays on the standalone backend with no release binding,
+§1.4 supersedes that sentence for the attached-run door.
+
+Amendment (T-08560, every Codex interactive birth through aspd; campaign P-00521
+Leg A, analysis T-08558 rev 2 accepted by Astra, spec accepted by mable EN-13046):
+§1.5 prepares EVERY new interactive `codex-app-server` birth (`codexTui`
+presentation, transport `tmux`) through aspd on a node with `HRC_ASPD_SOCKET`
+configured, whichever door requests it:
+- cold `hrc attach`;
+- turn dispatch and the mail kicker's summons birth;
+- submission doors;
+- target and selector messages;
+- §1.3 rule 3 reprovision;
+- explicit interactive `POST /v1/runtimes/start`;
+- `/v1/runtimes/ensure` and app-session ensure;
+- rotation relaunch;
+- received federation claims;
+- the attached-run door (§1.4, unchanged).
+
+Each birth launches the worker, its codex-tui wrapper and its hook receiver from
+one frozen execution release. §1.5 states how a launch-carried cold-birth prompt
+is frozen and delivered exactly once (D1), how a caller retry key is frozen and
+resumed (D2), what keyless doors do (D3), and where reprovision stale-marking sits
+relative to preparation (D4). No flag, value, endpoint, ASPC verb or wire field is
+added. The one new refusal reason and the two-value door class are HRC-internal.
+The Claude, Pi and deprecated `codex-cli-tmux` interactive drivers, hosted
+participant brokers and the Codex Desktop observer are not moved. Where §1, §1.3,
+§1.4, §8, §9 or §10.4 say that a door other than the attached run keeps the
+facade, or that the interactive route is attached-run only, §1.5 supersedes that
+sentence.
 
 ## 1. Route and configuration
 
@@ -61,7 +89,9 @@ presentation `tmux-tui` selected by an explicit request. The effective
 presentation is the request's explicit choice when present (§1.1, §1.2),
 otherwise the node default `HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION`. As
 amended by T-08555 (§1.3), a node-default `tmux-tui` IS on this route; before it,
-it was not. Nothing else changes route.
+it was not. Nothing else changes route. [T-08556 §1.4 and T-08560 §1.5 add the
+interactive `codex-app-server` TUI route, `interactive-codex-tui`: first for the
+attached-run door, then for every birth door.]
 
 ### 1.1 Per-request operator presentation (T-08553)
 
@@ -329,7 +359,8 @@ transport beside it.
 **Precedence for a Codex request on a redirect-off node (first match wins).**
 1. The intent arrives interactive (`harness.interactive: true` or
    `preferredMode: interactive`). This is an explicit interactive request:
-   interactive broker admission (standalone codex-tui), independent of the
+   interactive broker admission (standalone codex-tui; [T-08560: its births are
+   aspd-prepared on a configured node, §1.5]), independent of the
    redirect flag (decision 1). Door sources are `hrc run`, a cold
    `hrc attach <scope>`, an API caller, or a door that replays a stored session
    intent persisted interactive (below). `presentation.operator` on such an
@@ -428,7 +459,8 @@ messages, ACP) enters through that dispatch door.
   Rules 1–5 apply to whichever intent arrives.
 - `hrc run <scope>` and a cold `hrc attach <scope>` build interactive intents.
   Rule 1 applies: they are the explicit standalone interactive backend and are
-  not changed. `hrc attach <scope>` on a live operator-attachable app-server
+  not changed [T-08556/T-08560: that backend's births by these doors are
+  aspd-prepared on a configured node, §1.4 and §1.5]. `hrc attach <scope>` on a live operator-attachable app-server
   runtime returns its attach descriptor (§1.2, unchanged); detach/reattach are
   tmux client operations.
 
@@ -437,7 +469,8 @@ executed, so a scope whose earlier start was redirected (or ran via `hrc run` or
 attach) has a stored interactive intent. HRC cannot distinguish a
 redirect-normalized stored intent from an explicit `hrc run`. Such a scope
 therefore keeps the standalone backend at a later cold birth by a door that
-replays the stored intent (rule 1). It is not migrated. A later `hrc start` on it
+replays the stored intent (rule 1) [T-08560: on a configured node that birth
+prepares through aspd, §1.5]. It is not migrated. A later `hrc start` on it
 with nothing live builds a fresh non-interactive intent and takes the new
 default. A scope whose stored intent is non-interactive, including every scope
 first born under the new default, takes the default at its next execution when
@@ -562,10 +595,11 @@ T-08554 used for the renderer (515063f6):
 caller that passes `attachBeforeInvocationStart`, and that option (with the
 door's own marking to the start door) is the call intent this section keys on. Cold `hrc attach`, turn dispatch and mail births,
 §1.3 rule 3 reprovision into codex-tui, selector and target message births and
-`hrc start` do not pass it and keep their current preparation. That is a
-door-by-door migration step (as T-08555 migrated start and dispatch), not a
-permanent A/B mode. A scope's later birth by another door uses that door's
-preparation. Continuations are shared because both preparations compile under
+`hrc start` do not pass it and keep their current preparation [T-08560: they
+move to aspd too, §1.5; `attachBeforeInvocationStart` no longer selects the
+route and only decides the recorded door class]. That is a door-by-door
+migration step (as T-08555 migrated start and dispatch), not a permanent A/B
+mode. A scope's later birth by another door uses that door's preparation. Continuations are shared because both preparations compile under
 HRC's `ASP_HOME` (§1.3 Codex home).
 
 **One start authority (attached-run door, aspd configured).** For a Codex
@@ -674,7 +708,8 @@ with:
   `{ route: 'broker', selectedBy: 'decideInteractiveTmuxExecutionRoute',
   durableInteractiveRoute: 'durable-ipc', brokerTransport: 'unix-jsonrpc-ndjson',
   preparation: 'aspd', door: 'attached-run', aspdEndpoint, aspdRelease,
-  executionReleaseId, aspHome }`.
+  executionReleaseId, aspHome }` [T-08560: `door` is the two-value door class
+  `attached-run` | `interactive-birth`, §1.5.1].
 
 Admission requires the selected profile to be `codex-app-server` with
 `interactionMode: interactive` and the tmux broker terminal. Anything else is
@@ -715,7 +750,9 @@ reports attached-start readiness for this pending start, and the invocation
 starts only after `resume-attached` (the CLI has spawned its attach client) or
 the existing resume deadline cancels it.
 
-**Initial input exactly once.** `-p` is never part of the start request and
+**Initial input exactly once.** [Attached-run door only; T-08560 §1.5.3 freezes
+a launch-carried cold-birth prompt for the other doors.] `-p` is never part of
+the start request and
 is never routed by session. Inside the door's registered operation, after
 selection (and, for a birth, after `resume-attached` let the invocation start),
 the operation delivers the prompt once, with a fresh run id and
@@ -734,7 +771,8 @@ delivery. A refused or cancelled operation delivers nothing. The frozen
 the start door on this node, `hrc run --force-restart -p` now honors
 `--force-restart`; the pre-change prompt path ignored `restartStyle`.
 
-An unregistered birth (`/v1/runtimes/ensure`, the pre-existing limit below) can
+An unregistered birth (`/v1/runtimes/ensure`, the pre-existing limit below;
+[T-08560: now aspd-prepared, still unregistered, §1.5.7]) can
 still stale-mark the session's runtime concurrently. On this path that affects
 only the executor's own result for the runtime it was given. It cannot redirect
 the prompt to another runtime.
@@ -751,7 +789,7 @@ tmux client detach and leaves the app-server, TUI and worker running. Warm
 `hrc run`/`hrc attach` on an aspd interactive runtime is rule 2 reuse. Daemon
 restart reattaches it with the release hello check. aspd is never contacted on
 any of these paths, so aspd activation or outage affects only new attached-run
-births.
+births [T-08560: only new Codex births, by any door, §1.5].
 
 **Persistence and readback.** Applied intent: the interactive intent, as today.
 Operation `preparation_json.route: 'interactive-codex-tui'`. Runtime
@@ -761,7 +799,8 @@ harness-broker run …`, and the `tui` pane runs `<releaseRoot>/libexec/harness-
 codex-tui-wrapper …` with its `codex app-server` and `codex --remote` children.
 
 **Node scope.** Gated by `HRC_ASPD_SOCKET` (max3 only; svc, lab and hrcdev have
-none) and the attached-run door. With the socket unset, `hrc run` is byte for
+none) and the attached-run door [T-08560: the socket alone gates every Codex
+interactive birth door, §1.5.8]. With the socket unset, `hrc run` is byte for
 byte today's behavior, including stale-and-reprovision of a live headless
 runtime. The redirect control is not consulted.
 
@@ -781,7 +820,8 @@ runtime. The redirect control is not consulted.
 **Pre-existing limit, unchanged.** `POST /v1/runtimes/ensure`
 (`ensureRuntime`) births without registering in `runtimeStartOperations`, as it
 does today for every door. It is an explicit operator ensure outside this
-migration.
+migration [T-08560: its preparation moves to aspd; its registration does not,
+§1.5.7].
 
 **Refusals.** New: `aspd_route_requires_durable_ipc` and
 `attached_run_runtime_transitional`. Reused on this door:
@@ -790,6 +830,498 @@ migration.
 `aspd_unavailable` and the other §4
 preparation refusals, `aspd_route_profile_mismatch`, and every §5 launch and hello
 refusal. Existing interactive admission refusals are unchanged.
+
+### 1.5 Every Codex interactive birth through aspd (T-08560)
+
+Source references in §1.5 are `packages/hrc-server/src` at `d27babfd` (whose
+`packages/` tree equals installed HRC `bc390971`) unless another package is named.
+
+**Intended behavior.** On a node with `HRC_ASPD_SOCKET` configured (max3), every
+new interactive Codex birth is the runtime it is today: a `codex-app-server`
+broker with `codexTui` presentation whose codex-tui wrapper runs the native
+`codex app-server` and a Codex TUI in the leased `tui` pane. Every door that
+births one now prepares it through aspd, freezes it at boundary P as
+`route: 'interactive-codex-tui'` (§1.4 record), and launches it only from that
+operation. §1.4 already made this true for `hrc run`/`hrc resume`. Four things
+are unchanged:
+- which door selects which runtime;
+- join, reuse, reprovision and refusal decisions;
+- how each door delivers its input;
+- the interactive shape.
+
+What changes is where the launch comes from, plus the four rules D1–D4 that make
+the frozen route carry what the facade route carried.
+
+**Why the other doors are still on the facade (two guards).** Both are in
+`startInteractiveTmuxBrokerRuntime` (`broker-interactive-handlers.ts:1357`),
+the single interactive birth chokepoint:
+- **Guard 1 (cold-birth prompt bypass),** `:1382-1388`. When
+  `flagOptions.coldBirthPrompt !== undefined`, the aspd endpoint is never
+  consulted.
+- **Guard 2 (attached-run key),** `aspdInteractiveCodexEndpoint`
+  (`aspd-headless-start.ts:206-215`). It returns undefined unless
+  `attachedRunDoor` is true, which `:1386` derives from
+  `attachBeforeInvocationStart !== undefined`. Only `handlePrepareAttachedRun`
+  passes that (`turn-dispatch-handlers.ts:1463`, `:1484-1495`).
+
+A third, door-keyed fact would refuse any other door even with both guards
+removed: launch validation requires `routeDecision.door === 'attached-run'` for
+an `interactive-codex-tui` record (`aspd-headless-start.ts:666-668`). Otherwise
+the launch fails `launch_description_mismatch`.
+
+**The cold-birth prompt today, end to end (facade).**
+1. The dispatch door picks the prompt mode (`turn-dispatch-handlers.ts:2189-2193`):
+   - `launchPromptOnColdBirth` (mail kicker, `hrc-mail-kicker/src/drive/delivery.ts:426`)
+     ⇒ `replace-priming`;
+   - otherwise any `submissionDoor` (`server-types.ts:131-135`) ⇒ `append-to-priming`;
+   - otherwise none.
+2. `handleInteractiveTmuxBrokerDispatchTurn` strips `initialPrompt` from the
+   intent it will persist (`broker-interactive-handlers.ts:655`). It calls the
+   chokepoint with `coldBirthPrompt: prompt`,
+   `includePrimingForColdBirthPrompt: mode === 'append-to-priming'` and an
+   `onColdBirthPromptRoute` callback (`:716-731`).
+3. The chokepoint builds a compile-only intent
+   `{ ...effectiveTurnIntent, initialPrompt: coldBirthPrompt, omitPriming? }`
+   (`:1413-1420`, `omitPriming: true` unless append). It is "deliberately not
+   persisted": the applied intent written at `:1610` is the prompt-free
+   `effectiveTurnIntent`.
+4. For `codex-app-server` the compiler carries the prompt as
+   `startRequest.initialInput`, whose `inputId` is HRC's allocated
+   `initialInputId` (admission `compile-profile-selector.ts:200-215`).
+5. After compile admission and the route check, before `controller.start`, the
+   chokepoint reports `onColdBirthPromptRoute(isInteractiveTmuxBrokerProfile(profile))`
+   (`:1536-1538`).
+6. At B4 the run row gets `dispatchedInputId` and, for a submission door,
+   `brokerSubmissionId = initialInputId`
+   (`broker/controller/persistence.ts:215-224`, T-08541). `invocation.start`
+   carries the prompt. The native TUI never sees it earlier.
+7. Because `promptRodeLaunch` is true, the dispatch handler never submits the
+   prompt again:
+   - the detached path returns early (`:833`);
+   - the awaited path answers with the launch submission (`:853-866`);
+   - the invoke rendezvous waits for the launch turn's terminal (`:803-805`).
+
+   When the prompt did not ride (no mode, or a non-launch profile), the handler
+   submits it once after boot by runtime identity through
+   `executeInteractiveBrokerInputTurn` (`:833-839`, `:868-872`).
+
+The existing aspd interactive path (`startAspdInteractiveBrokerRuntime`,
+`:1727-1801`) has three gaps:
+- it reports `onColdBirthPromptRoute(false)` unconditionally (`:1759`);
+- it calls `prepareAspdHeadlessAttempt` without `dispatchIdempotencyKey`
+  (`:1760-1776`);
+- it has no resume branch.
+
+Guard 1 therefore exists because this path could not carry a launch prompt.
+
+#### 1.5.1 Route predicate (Guards 1 and 2)
+
+**New predicate.** A birth reaching `startInteractiveTmuxBrokerRuntime` prepares
+through aspd iff:
+- `allowedBrokerDriver === 'codex-app-server'`; and
+- the node declares an aspd endpoint (`configuredAspdEndpoint`).
+
+Nothing else enters the predicate: not the door, not `attachBeforeInvocationStart`,
+not `coldBirthPrompt`, not the redirect control.
+- Guard 1 is removed. `coldBirthPrompt` no longer selects a route; it is an input
+  to preparation (D1).
+- Guard 2 loses its `attachedRunDoor` input:
+  `aspdInteractiveCodexEndpoint({ allowedBrokerDriver }, env)`.
+- With the socket unset, or for any other driver (`claude-code-tmux`,
+  `pi-tui-tmux`, `codex-cli-tmux`), the chokepoint keeps today's facade code path
+  byte for byte, including Guard 1's compile-only intent.
+
+**Door class, recorded.** The frozen route decision's `door` (today the constant
+`'attached-run'`, `aspd-headless-start.ts:442`) becomes one of two values:
+- `'attached-run'` when the attempt carries `attachBeforeInvocationStart`;
+- `'interactive-birth'` otherwise.
+
+Launch validation (`:666-668`) accepts either value for an
+`interactive-codex-tui` record whose presentation is `codex-tui`. A record with
+any other `door` value is refused `launch_description_mismatch` as today.
+- An `'attached-run'` record never carries a launch-carried prompt: that door
+  passes none (§1.4).
+- An `'interactive-birth'` record is never launched with an attach handshake:
+  only the attached-run door has one.
+
+These are construction facts. They are asserted in tests, not new refusals.
+
+**No silent fallback.** On a configured node, no Codex interactive birth reaches
+`startAspcFacadeBrokerClient`, the resolver or a checkout worker. Every §4
+preparation refusal and every §5 launch refusal fails the birth. The failure
+propagates to the calling door exactly as a facade compile failure does today:
+- the dispatch/kicker/DM/selector call throws;
+- `hrc attach` reports the error;
+- a registered start settles rejected and its joiners see the rejection.
+
+`aspd_unavailable` (and every other pre-P refusal) leaves no operation row, no
+runtime row for the attempt, no lease and no tmux server. A post-P, pre-start
+refusal leaves the op `prepared` with `error_code` (§3) and no worker. The
+never-started lease cleanup (§1.4 G1) releases any lease that was realized.
+
+**Durable IPC.** The route requires the durable interactive route (§1.4). With
+`HRC_BROKER_DURABLE_IPC_ENABLED` resolving off on a configured node, EVERY Codex
+interactive birth now refuses `aspd_route_requires_durable_ipc` before
+preparation, not only the attached run. max3 runs with it on (`launchctl print`,
+T-08558 §0).
+
+**Participant backstop.** `assertParticipantAddressNotSubstituted` runs at
+`broker-interactive-handlers.ts:1376`, before the route predicate. It therefore
+guards every door on both routes, including the unregistered ensure door. The
+start door's own guards (`runtime-io-handlers.ts:327-341`: desktop reservation
+and participant registration) are unchanged.
+
+#### 1.5.2 Doors
+
+Every door below reaches the chokepoint through one of four paths:
+- the dispatch handler (`handleInteractiveTmuxBrokerDispatchTurn`, which
+  registers its boot in `runtimeStartOperations` at
+  `broker-interactive-handlers.ts:792-793`, synchronously after `:716`);
+- the start door (`startRuntimeForSession`, which registers at
+  `runtime-io-handlers.ts:667`);
+- the ensure door (`ensureRuntimeForSession`, `selector-message-handlers.ts:190-236`,
+  unregistered);
+- the attached-run door (§1.4).
+
+Joining, crossing fences and backstops are those of the path. §1.5 changes none
+of them. The prompt class column names the D1 treatment.
+
+| Door | Entry → caller path | Start operation registered | Joins / is joined | Prompt class | Caller retry key |
+|---|---|---|---|---|---|
+| Mail kicker summons birth (`wrkc say`, wake sweep) | `hrc-mail-kicker/src/drive/delivery.ts:410-427` → `dispatchTurn(session, lastAppliedIntentJson ?? runtimeIntent, …, { submissionDoor: 'invoke', launchPromptOnColdBirth: true, waitForCompletion: false })` → dispatch door | Dispatch handler boot (`broker-interactive-handlers.ts:793`) plus the invoke rendezvous (`:816-828`) | Joins an in-flight birth at the T-07693 fence (`turn-dispatch-handlers.ts:2031-2066`, not on attach), which also carries the T-08555 recorded-birth check when the redirect is off. A later wake joins this boot the same way. | Launch-carried, `replace-priming` | **None** (U8, below) |
+| `POST /v1/turns` (`hrc turn`, `hrc start -p`, SDK) | `handleDispatchTurn` `turn-dispatch-handlers.ts:1063-1130` (door `invoke`) → dispatch door | Dispatch handler boot | Same T-07693 fence; T-08012 invoke rendezvous | Launch-carried, `append-to-priming` | `body.idempotencyKey` → `dispatchIdempotencyKey` (`:1063`, `:1121-1125`). The CLI mints a fresh key per invocation unless `--idempotency-key` is given (`hrc-cli/src/cli/handlers-scope-cmd.ts:130`) |
+| Submission doors `steer`/`enqueue`/`invoke`/`preempt` | `handleSubmission` `turn-dispatch-handlers.ts:519-620` → `dispatchPublicSubmission` | Dispatch handler boot | T-07693 fence | Launch-carried, `append-to-priming` | **None.** `handleSubmission` parses no idempotency key and passes none (`:596-616`) |
+| Target/DM messages (hrcchat) | `target-message-handlers.ts:1135-1142` (`enqueue`); `:1713-1722` (`enqueue`, `joinInFlightRuntimeStart: true`, T-07202) | Dispatch handler boot | T-07693 fence; T-07202 handler join (`broker-interactive-handlers.ts:668-697`) | Launch-carried, `append-to-priming` | None (durable message record, no dispatch key) |
+| Selector messages | `selector-message-handlers/selector-input.ts:462-468` (no door) → dispatch door | Dispatch handler boot | T-07693 fence | After-boot: no mode; one submission by runtime identity (`broker-interactive-handlers.ts:868-872`) | None |
+| §1.3 rule 3 reprovision at dispatch | Stale-mark `turn-dispatch-handlers.ts:2159-2172`, then the dispatch handler (`:2179-2198`) | Dispatch handler boot | As its caller door | As its caller door | As its caller door |
+| Cold `hrc attach <scope>` birth and reprovision | `attachRuntimeEffectfully` `runtime-io-handlers.ts:812-942`: awaits a registered start (`:825-828`); admission (`:894-919`, stale-mark `:914-919`); birth `:921-927` → `startRuntimeForSession(…, 'reuse_pty', { operatorAttachPending: true })` | Start door (`:667`) | Start door joins a registered start (`:366-372`); later starts and dispatches join it | Bare (no input) | None |
+| Explicit interactive `POST /v1/runtimes/start`, including §1.3 rule 3 at the start door | `handleStartRuntime` `turn-dispatch-handlers.ts:917` → `startRuntimeForSession`; reprovision stale-mark `runtime-io-handlers.ts:621-626`; birth `:630-639` | Start door | As above | Bare; or an intent-carried `initialPrompt` that is compiled and persisted as today, with the door waiting for `startRunId` completion (`:641-643`) | None (the claim keys below are not dispatch keys) |
+| `POST /v1/runtimes/ensure`; app-session ensure/apply | `handleEnsureRuntime` `turn-dispatch-handlers.ts:899-915`; `app-session-handlers.ts:202`, `:315` → `ensureRuntimeForSession`; stale-mark `selector-message-handlers.ts:223-228`, birth `:230-235` | **None** (pre-existing, kept) | Neither joins nor is joined | Bare. App-session `initialPrompt` is a separate later dispatch (`app-session-handlers.ts:215-221`, `:321`) that reuses the ensured runtime | None |
+| Rotation relaunch (`hrc session rotate --relaunch`, fresh-context) | `runtime-control-handlers/session-rotation.ts:256` (`effectiveSpec` interactive) and `:282` (stored intent) → `startRuntimeForSession(nextSession, …, 'fresh_pty')` | Start door, on the NEW host session | Start door rules | Bare. The stored intent is replayed; see §9 T-08560 for an intent-carried prompt | None |
+| Received federation claims `roster-start` / `exact-start` | `roster-claim.ts:199`, `exact-claim.ts:162` → `startRuntimeForSession` (called under the claim mutex, registered synchronously) | Start door | Start door rules; claim-level replay via `replayRecordedClaim` (`scope-claim-core.ts:221-252`) | Bare | The claim `idempotencyKey` keys the claim record, not a dispatch. It is not a §5 retry key (below) |
+| `hrc run` / `hrc resume` (attached run) | `handlePrepareAttachedRun` `turn-dispatch-handlers.ts:1463-1500` | Door-owned start operation (§1.4) | §1.4 joining rules | `-p` after start by identity (§1.4); never frozen | None by design (§9) |
+
+**U8, settled from source: the kicker/dispatch cold birth carries no key usable
+as the §5 same-attempt retry key.**
+- The kicker calls `server.dispatchTurn` with `submissionDoor`, `ttlMs`,
+  `submissionOrigin` and `launchPromptOnColdBirth`, and no
+  `dispatchIdempotencyKey` (`hrc-mail-kicker/src/drive/delivery.ts:410-427`).
+- `DispatchTurnForSessionOptions` takes the key only through
+  `DispatchRunPersistenceOptions` (`server-types.ts:101`). Its one production
+  producer is `handleDispatchTurn` (`turn-dispatch-handlers.ts:1121-1125`, key
+  from `body.idempotencyKey`, `:1063`). Every other `dispatchIdempotencyKey`
+  reference in `src` re-threads an already-supplied value
+  (`rg dispatchIdempotencyKey packages/hrc-server/src`, excluding tests).
+- The envelope id reaches HRC only as the origin label
+  `submissionOrigin.envelopeId` (`delivery.ts:108-114`). Nothing looks up a
+  prepared op by it (`findPreparedAspdAttemptForRetry` matches only
+  `record.dispatchIdempotencyKey`, `aspd-headless-start.ts:557-577`).
+- The kicker never re-dispatches after a throw. Any thrown dispatch is
+  `markUncertain(…, 'dispatch_error')` (`delivery.ts:428-433`), so there is no
+  retry caller that could present a key.
+
+Among the doors in the table, only `POST /v1/turns` carries a key. The submission
+doors are keyless: `handleSubmission` parses and forwards no idempotency key
+(`turn-dispatch-handlers.ts:519-620`). This row supersedes T-08558 rev 2's M2 row
+("Body key where supplied"), for which Astra recorded an erratum on T-08558. Leg A
+adds no submission-door key; that would be a wire addition.
+
+**The federation claim key is not a §5 retry key.** `roster-start` and
+`exact-start` require an `idempotencyKey`, but it keys the durable claim record
+(`replayRecordedClaim`, `scope-claim-core.ts:221-252`), not a dispatch. A replayed
+claim re-enters `startRuntimeForSession` (`exact-claim.ts:162`,
+`roster-claim.ts:199`), which carries no key into preparation. It therefore
+prepares anew and leaves any earlier `prepared` operation visible (D3). Using the
+claim key to resume would give the start door a resume concept it does not have,
+for births that carry no input.
+
+#### 1.5.3 D1 — launch-carried prompt: frozen once, reported after admission
+
+**Current behavior.** See the end-to-end trace above:
+- facade: the prompt compiles into `startRequest.initialInput` and is reported as
+  launch-carried after admission, so the dispatch handler never submits it again;
+- aspd: Guard 1 keeps every launch-carried birth off the route.
+
+**New law.**
+1. *Compile.* When the chokepoint takes the aspd route with a `coldBirthPrompt`,
+   `prepareAspdHeadlessAttempt` receives the prompt and its mode. It compiles
+   exactly the facade's compile intent:
+   `{ ...intent, initialPrompt: coldBirthPrompt }` plus `omitPriming: true`
+   unless the mode is `append-to-priming`.
+
+   No new wire field is used. `initialPrompt` and `omitPriming` are existing
+   `HrcRuntimeIntent` inputs that `compileBrokerRuntimePlan` already sends in
+   `compileHarnessInvocation` on both routes. The prompt appears in the response
+   as the existing `startRequest.initialInput`. No representational capacity is
+   missing.
+2. *Admit.* Admission is unchanged (§1.4: `codex-app-server`, `interactive`, tmux
+   terminal; otherwise `aspd_route_profile_mismatch`). The existing
+   initial-input identity check applies: `initialInput.inputId` must equal HRC's
+   allocated `initialInputId` (`compile-profile-selector.ts:208-215`), otherwise
+   `initial-input-id-mismatch` before P.
+3. *Freeze.* Boundary P persists the prompt in exactly one place: the frozen
+   `admission.startRequest` (and the identical `response.startRequest`). The
+   route decision records `launchCarriedPrompt: { mode }` with mode
+   `'replace-priming'` or `'append-to-priming'`, and records nothing when no
+   prompt was compiled. The record's `intent`, which launch returns and the
+   caller persists as the applied intent
+   (`aspd-headless-start.ts:482`, `:732`; `broker-interactive-handlers.ts:1799`),
+   is the prompt-free intent. That preserves the facade rule "compile-only intent
+   deliberately not persisted" (`:1412`, `:1610`).
+
+   Consequences:
+   - A later stored-intent birth (kicker, rotation, cold attach) never replays a
+     summons body.
+   - `routeDecision.launchCarriedPrompt` is the recorded fact that the caller's
+     prompt rode the start. It is needed because a promptless managed interactive
+     birth can also carry priming as `initialInput`
+     (`compile-adapter.ts:130-150`), so the presence of `initialInput` alone
+     cannot distinguish the two.
+4. *Report.* `onColdBirthPromptRoute(true)` fires only after P has committed an
+   admitted interactive tmux profile with `launchCarriedPrompt`, and before
+   launch. The `(false)` at `:1759` is removed.
+   - A resumed attempt (D2) reports from the frozen record's
+     `launchCarriedPrompt`, never from the retry's mode.
+   - A birth without a `coldBirthPrompt` does not call the callback.
+   - A refusal before P reports nothing. The dispatch handler's `promptRodeLaunch`
+     stays false, and the boot operation rejects, so the post-boot submission
+     paths (`:833`, `:868`) never run: nothing is delivered.
+5. *Deliver.* The prompt reaches the native harness only as the frozen
+   `invocation.start` `initialInput`, sent once by the controller.
+   Initial-input provenance is preserved:
+   - B4 writes `dispatchedInputId = initialInputId`, and `brokerSubmissionId` for
+     a submission door (`persistence.ts:215-224`, unchanged);
+   - the kicker's `launch` admission record, the T-08012 invoke rendezvous and
+     `waitForLaunchCarriedInvokeSubmission` see the same run and submission
+     identities as on the facade.
+
+**Why exactly once.**
+- The prompt exists only inside one frozen operation.
+- `invocation.start` is sent at most once per operation. It is sent only after B4
+  moves the op out of `prepared`, and an uncertain start is never replayed (§5).
+- A `prepared` op proves no `invocation.start` was sent (§3), so no native TUI
+  consumed the prompt. The native TUI starts only on `invocation.start` (T-08556
+  `ev/g1-cancel`: realized lease, no native codex before resume).
+- The dispatch handler's second-delivery paths are closed by the truthful report.
+- A crossing dispatch that joins this boot delivers its OWN prompt (T-07693), not
+  this one.
+
+**Attached-run door.** Unchanged. `-p` is never in its frozen `startRequest` and
+is delivered after start by identity (§1.4 "Initial input exactly once"). The
+two treatments differ by door class, which the record carries (`door`).
+
+**Proof rows.** §10.5 legs 1, 2, 3 (prompt once in HRC events and the native
+rollout; the frozen copy is present exactly once in `startRequest` and absent
+from `sessions.last_applied_intent_json`) and gate G-D1.
+
+#### 1.5.4 D2 — retry key frozen, same-attempt resume
+
+**Current behavior.**
+- The headless aspd route freezes `dispatchIdempotencyKey` at P
+  (`broker-headless-handlers.ts:784`). It resumes a `prepared` op when a
+  same-host-session, same-key retry arrives with the frozen run id
+  (`:757-775`).
+- `handleDispatchTurn` finds that op and rebinds `runId` before routing
+  (`turn-dispatch-handlers.ts:1080-1091`).
+- The interactive aspd route freezes no key (`broker-interactive-handlers.ts:1760-1776`)
+  and has no resume branch. `dispatchRunPersistence` carries the key only to the
+  B4 run row (`:1777-1778`, `persistence.ts:215`).
+
+**New law.**
+1. `startAspdInteractiveBrokerRuntime` passes `dispatchIdempotencyKey` into
+   `prepareAspdHeadlessAttempt`, which freezes it (`aspd-headless-start.ts:454-456`,
+   unchanged).
+2. Before preparing, it looks up `findPreparedAspdAttemptForRetry(hostSessionId,
+   key)`. When a match has `runId === diagnosticRunId` it launches that
+   operation with no aspd contact, no re-preparation and no rebinding, exactly
+   like the headless branch (`:766-775`). D1 reporting then comes from the frozen
+   record.
+3. **Route fence.** A resume branch launches only a record of its own route:
+   - the interactive branch only `interactive-codex-tui`;
+   - the headless branch only `headless-codex-app-server`.
+
+   A same-key, same-runId match of the other route refuses retryable
+   `runtime_unavailable` with reason `aspd_preparation_route_changed`. Nothing is
+   launched and the op stays `prepared` and visible. The reason is an
+   HRC-internal refusal carried in HRC's existing `runtime_unavailable` error
+   detail. It is not an ASPC or broker wire value.
+
+   Why: today `findPreparedAspdAttemptForRetry` is route-blind, which is harmless
+   only because interactive records never carry a key. After step 1, a keyed
+   retry whose session routing changed (for example a body intent that is now
+   non-interactive) would otherwise launch a frozen interactive op through the
+   headless handler. Preparing anew instead would rebind a committed attempt to
+   the active release, which §5 forbids.
+4. A same-key retry whose routing selects reuse of a live runtime, or a join, does
+   not reach a resume branch. It delivers the retry's input through that
+   runtime with the frozen run id (existing `handleDispatchTurn` behavior). The
+   prepared op is left `prepared` and visible, never launched. This is safe
+   because it never sent `invocation.start`.
+5. The retry body's prompt is not compared with the frozen prompt. The frozen
+   prompt is the attempt's input, as on the headless route today.
+
+**Scope of D2.** It gives same-attempt retry to `POST /v1/turns` only: `hrc turn`,
+`hrc start -p --idempotency-key K` and SDK callers passing a key. No other door
+carries a key (§1.5.2). §5 "Resume" is otherwise unchanged. There is no startup
+auto-launch. A retry after B activation launches A. A retry after the frozen
+release is missing refuses `release_unavailable` again and stays visible.
+
+**Proof rows.** §10.5 leg 4 and gate G-D2.
+
+#### 1.5.5 D3 — keyless doors
+
+**Current behavior.** The attached-run door carries no key. A pre-start refusal
+leaves its op `prepared` and visible, and the run fails (§9 T-08556). Headless
+kicker and DM births through aspd behave the same today (T-08555, same keyless
+doors).
+
+**New law.** For every keyless door:
+- the kicker summons birth;
+- submission doors;
+- target/DM and selector messages;
+- cold attach;
+- keyless start;
+- ensure;
+- rotation relaunch;
+- received federation claims;
+- `hrc run`.
+
+A post-P, pre-start refusal leaves the op `prepared`, with `error_code` and
+`error_message` recorded, and no worker. The op is never auto-launched and never
+resumed by that door, which has no key to present. The door's own failure
+handling runs unchanged:
+- dispatch-style doors settle the run `failed` where a run row exists
+  (`settleFailedInteractiveBrokerStart`), otherwise they throw;
+- start-door births reject their registered operation;
+- cold attach reports the error.
+
+A later request by the same door is a new attempt: it gets a new preparation
+against the active release. Recovery for the stranded op:
+- it is visible in `runtime_operations` (status `prepared`, `error_code`) and in
+  `aspd.launch.refused` / `aspd.launch.failed` server logs;
+- it is inert: it holds no lease (G1 cleanup) and sent no input;
+- the operator re-sends through the door;
+- an op frozen for a keyed `/v1/turns` dispatch alone can be resumed (D2).
+
+**Mail kicker (Q7, preserved).** Leg A does not change the kicker. It keeps:
+- the keyless dispatch;
+- its classification of ANY thrown dispatch as uncertain (`markUncertain(…,
+  'dispatch_error')`, `delivery.ts:428-433`), including a known-unapplied aspd
+  refusal before or after P;
+- no auto-resume.
+
+An envelope whose summons birth refuses stays uncertain and needs operator
+action (`hrc mail inspect <envelope>`), exactly as a facade compile failure does
+today. Retry semantics are not enlarged to route births. Duplicate safety holds
+because an uncertain envelope is never re-dispatched, and the refused op never
+launches.
+
+**Proof rows.** §10.5 legs 3 and 6 and gate G-D3.
+
+#### 1.5.6 D4 — stale-mark before preparation; the new pre-launch failure class
+
+**Current behavior.** The reprovision doors stale-mark the live runtime they
+replace BEFORE the chokepoint runs:
+- dispatch rule 3 / interactive admission, `turn-dispatch-handlers.ts:2159-2172`;
+- the start door, `runtime-io-handlers.ts:621-626`;
+- cold attach, `:914-919`;
+- ensure, `selector-message-handlers.ts:223-228`;
+- rotation invalidates the prior host session's runtimes before relaunch,
+  `session-rotation.ts:196-256`.
+
+A facade compile failure after that point leaves the scope with the old runtime
+stale-marked and no new runtime.
+
+**New law.** The ordering is unchanged:
+1. selection and stale-mark;
+2. preparation (aspd RPC);
+3. P;
+4. launch.
+
+No aspd preflight is added before stale-marking. A hello probe is not a
+reservation: aspd can fail between probe and compile, so a preflight would only
+narrow the window, not close it.
+
+aspd adds a new pre-launch failure class for reprovision doors on a configured
+node:
+- **pre-P refusals, which leave no op:** `aspd_unavailable`,
+  `aspd_protocol_incompatible`, `aspd_capability_missing`,
+  `aspd_release_unidentified`, `aspd_connection_closed`,
+  `execution_release_missing`, `aspd_route_profile_mismatch`,
+  `aspd_route_requires_durable_ipc`, compile-not-ok;
+- **post-P, pre-start refusals, which leave the op `prepared` with
+  `error_code`:** `release_unavailable`, `release_identity_mismatch`,
+  `worker_executable_outside_release`, `unsupported_worker_protocol`,
+  `launch_description_mismatch`, `preparation_generation_superseded`,
+  `worker_protocol_mismatch`, `worker_release_unidentified`,
+  `worker_release_mismatch`.
+
+In either case the replaced runtime is already stale-marked, and no new runtime,
+lease or tmux server remains for the attempt. The scope has no live runtime
+until the next birth. The same statement holds for rotation relaunch on the new
+host session. For a non-reprovision birth (nothing live), a refusal leaves the
+scope as it was.
+
+**Proof rows.** §10.5 leg 6 (aspd stopped against a reprovision door) and gate
+G-D4.
+
+#### 1.5.7 Ensure stays unregistered
+
+`/v1/runtimes/ensure` and app-session ensure still birth without registering in
+`runtimeStartOperations` (§1.4 "Pre-existing limit"). They now prepare through
+aspd like every other door. Leg A does not register them, for three reasons:
+- **It would change a door, not a preparation.** Registration would make ensure
+  a joinable birth for every dispatch and start. It would also make ensure join
+  in-flight starts, which it does not do today: it reuses or stale-marks by rows
+  alone (`selector-message-handlers.ts:208-228`). That is a change in join law
+  for an operator door, orthogonal to where the launch is prepared.
+- **Exactly-once does not depend on it.** Ensure carries no input. Every prompt
+  on the route is either frozen inside its own operation (D1) or delivered by
+  runtime identity (§1.4; selector after-boot).
+- **The hazard is pre-existing and unchanged.** Ensure can stale-mark a runtime
+  another door is still birthing. aspd adds preparation latency, which widens the
+  window, but a concurrent stale-mark still cannot move a frozen prompt to
+  another runtime.
+
+#### 1.5.8 Unchanged
+
+- The attached-run door (§1.4): selection, joining, `-p` by identity, attach
+  handshake and G1 cleanup.
+- §6: existing workers, detach, reattach, restart and release-hello reattach.
+  aspd is never contacted there, so aspd activation or outage affects only new
+  Codex births.
+- §1.3 precedence rules 1–5, redirect scope, the established-runtime definition,
+  crossing refusals and the T-07693/T-07202/T-07397 joins and refusals.
+- Continuation selection (`decideInteractiveTmuxBrokerContinuation` on both
+  routes) and HRC `aspHome` on every compile (§1.3 Codex home).
+- Persistence and readback per §1.4, with two exceptions: route decision `door`
+  is `'interactive-birth'` for non-attached doors, and `launchCarriedPrompt` is
+  added where D1 applies.
+- Not moved:
+  - the Claude, Pi and `codex-cli-tmux` interactive drivers (Leg B, after P1);
+  - the hosted participant broker (M7);
+  - the Codex Desktop observer (M18: Leg B / T-08567, U12 pending).
+
+**Refusals.** New: `aspd_preparation_route_changed` (D2 route fence, retryable
+`runtime_unavailable`; HRC-internal, not wire). Reused on every Codex interactive birth door:
+`aspd_route_requires_durable_ipc`, `aspd_route_profile_mismatch`, every §4
+preparation refusal including `aspd_unavailable`, and every §5 launch and hello
+refusal. Door admission refusals are unchanged.
+
+**Node scope.** Gated by `HRC_ASPD_SOCKET` alone. Only max3 has it; svc, lab and
+hrcdev have none (§1.3 fleet readback). With the socket unset, every door is byte
+for byte today's behavior. The redirect control is not consulted.
+
+**Delivery and rollback.**
+- No ASP change: producer `90dd7508` already carries the interactive wrapper,
+  hook and tmux-launch launchers (T-08558 §4 Leg A, M2).
+- Order: `just install` HRC, restart, and verify that running equals installed,
+  that aspd is reachable on the active release, and that warmup reattached.
+- HRC rollback: repoint `hrc-runtime-current` to the recorded prior release
+  (at the time of writing, HRC `bc390971`), then `bootout`/`bootstrap`. Non-attached Codex interactive births
+  return to the facade. Runtimes born on the aspd route stay live and reattach
+  under the prior release, whose §6 hello check is door-agnostic.
+- No plist change and no aspd release change.
 
 ## 2. Wire use (existing contract only)
 
@@ -848,7 +1380,8 @@ Transactions are single SQLite writes; effects happen only between them.
    worker and no native harness.
 2. **Admit (pure).** Existing `compileBrokerRuntimePlan` hash/identity/profile
    checks, then: `executionRelease` present (`execution_release_missing`);
-   selected profile is headless `codex-app-server`
+   selected profile is headless `codex-app-server` [T-08556/T-08560: or, on the
+   interactive route, interactive `codex-app-server` with the tmux terminal, §1.4]
    (`aspd_route_profile_mismatch`); existing permission-policy and
    actuator-split admission.
 3. **Boundary P — freeze preparation + hosting intent.** One transaction inserts
@@ -1052,8 +1585,8 @@ with `HRC_ASPD_SOCKET` configured. The attempt freezes route
 request at boundary P. It launches only on the durable interactive tmux substrate
 from those persisted bytes, requires the durable interactive route, and its
 codex-tui wrapper and hook receiver run from the same execution release as the
-worker. Other doors that birth the interactive backend are not on the route. On
-that door, selection, birth and input delivery happen inside one operation
+worker. Other doors that birth the interactive backend are not on the route
+[T-08560: every door is, amendment below]. On that door, selection, birth and input delivery happen inside one operation
 the door registers in the host session's start singleflight. A joined start is
 re-checked by its recorded birth and joined only as a same-harness newborn
 that interactive admission reuses (tmux) or that rule 5 reuses (headless). The
@@ -1070,7 +1603,49 @@ reattach and restart never require aspd.
 `HRC_ASPD_SOCKET` configured, the resolver does not govern an interactive Codex
 birth made by the attached-run door. Its worker comes only from the frozen
 `executionRelease`, and there is no fallback. Interactive births by every other
-door stay resolver-governed.
+door stay resolver-governed [superseded by T-08560 below].
+
+**Amend `hrc-runtime.aspd-prepared-execution-release` (T-08560):** on a configured
+node every new interactive `codex-app-server` birth prepares through aspd,
+whichever door requests it: attached run, cold attach, turn dispatch, mail summons,
+submission doors, target and selector messages, reprovision, explicit start,
+ensure, rotation relaunch, or a received federation claim. It freezes route
+`interactive-codex-tui`, presentation `codex-tui`, its door class (`attached-run`
+or `interactive-birth`) and the interactive start request at boundary P.
+- **No fallback.** No interactive `codex-app-server` birth on a configured node is
+  facade-prepared or resolver-launched, and none falls back when aspd or launch
+  validation refuses. A refusal before boundary P leaves no operation, runtime,
+  lease or tmux server. A refusal after it leaves the operation `prepared` with its
+  refusal recorded.
+- **Attached-run door.** The attached-run door keeps its single registered
+  operation, its joins and its identity-bound `-p` delivery. Its prompt is never
+  part of the frozen start request.
+- **Other doors' prompts.** A cold-birth prompt carried by any other door is
+  compiled into the preparation exactly as the facade compiles it: priming is
+  replaced for a launch-primed summons and appended for a submission door. The
+  prompt is persisted only in the frozen start request, recorded as launch-carried
+  with its priming mode, and never persisted in the applied intent. It is reported
+  to the dispatch door as launch-carried only after boundary P commits an admitted
+  interactive profile, so the dispatch door never submits it separately. A
+  prepared operation proves the prompt was never applied.
+- **Retry.** Interactive and headless preparations freeze the caller's key alike. A
+  resume launches only a preparation of the route the retry selected. Otherwise it
+  refuses `aspd_preparation_route_changed` (HRC-internal), and the operation stays
+  `prepared`. A door that carries no caller key never resumes a prepared
+  operation. That includes the mail kicker, whose classification of a thrown
+  dispatch as uncertain is unchanged.
+- **Stale-mark ordering.** A door that replaces a live runtime stale-marks it
+  before preparation, as on the facade route. A preparation or pre-start launch
+  refusal therefore leaves that scope with no live runtime until its next birth.
+- **Ensure.** Ensure births stay unregistered in the start singleflight.
+
+**Amend `hrc-runtime.asp-toolchain-selection` (T-08560):** with
+`HRC_ASPD_SOCKET` configured, every new interactive `codex-app-server` birth, by
+any door, is aspd-prepared and is not governed by the resolver. Its worker,
+codex-tui wrapper and hook receiver run only from the frozen `executionRelease`,
+with no fallback. Interactive births of other broker drivers (`claude-code-tmux`,
+`pi-tui-tmux`, `codex-cli-tmux`), hosted participant brokers and the Codex
+Desktop observer broker remain resolver-governed.
 
 ## 9. Deliberate limits
 
@@ -1087,21 +1662,58 @@ door stay resolver-governed.
 - T-08554: the standalone interactive Codex CLI/tmux backend (`codexTui`
   interactive broker, the default max3 Codex route until T-08555) is not moved to aspd and its
   entry resolution is unchanged. Hook-bridge and codex-tui wrapper paths used
-  only by that backend are untouched.
+  only by that backend are untouched [T-08556/T-08560: its births move to aspd on
+  a configured node, §1.4 and §1.5; the facade path remains elsewhere].
 - T-08555: the default changes new executions only. There is no migration of live
   runtimes or of scopes whose stored intent is interactive, and no deletion of
   the standalone backend. `hrc run` and cold `hrc attach` stay on it, and it gets
   no new release binding [T-08556: `hrc run`/`hrc resume` births move to aspd,
-  §1.4]. The redirect flag keeps its name. Other nodes keep
+  §1.4; T-08560: cold `hrc attach` and every other door's births move too,
+  §1.5]. The redirect flag keeps its name. Other nodes keep
   their configuration.
 - T-08556: only the attached-run door moves. Cold `hrc attach`, stored-intent
   rebirth, §1.3 rule 3 reprovision and message births of the interactive
-  backend keep the facade. The facade backend and its checkout wrapper launch are
+  backend keep the facade [superseded by T-08560 below]. The facade backend and its checkout wrapper launch are
   not removed. The read-only renderer gains no input. A never-submitted
   interactive preparation has no caller retry key (the attached-run door carries
   none), so a pre-start refusal leaves it `prepared` and visible, and the run
   fails. It is never auto-launched. No lost-start-reply retry, no flag, no
   other node.
+
+- T-08560: every Codex interactive birth door moves.
+  - There is still no durable start receipt and no lost-start-reply retry. A
+    transport-uncertain start stays uncertain on every door.
+  - Nothing new is added: no flag, value, endpoint, ASPC verb, wire field or
+    producer change. `aspd_preparation_route_changed` and the door class are
+    HRC-internal.
+  - max3 only; no fleet activation and no ACP producer advance.
+  - The facade interactive backend is not removed. Its compile-only intent, the
+    checkout wrapper launch and the resolver remain for unconfigured nodes and
+    other drivers.
+  - Only `POST /v1/turns` resumes a frozen interactive preparation. The submission
+    doors, the federation claim key and the mail kicker gain no retry semantics.
+    The kicker's keyless dispatch and uncertain-on-throw classification are
+    unchanged.
+  - Ensure stays unregistered (§1.5.7).
+  - Not moved: Claude, Pi and `codex-cli-tmux` interactive births, hosted
+    participant brokers, and the Codex Desktop observer (Leg B / T-08567).
+  - There is no migration of live facade-born interactive runtimes. They are
+    reused by admission and replaced only by today's reprovision rules, and that
+    rebirth is aspd-prepared.
+  - **Named hazard, pre-existing, outside Leg A, not assumed safe:** an
+    intent-carried `initialPrompt` is persisted in `last_applied_intent_json`.
+    - The start door persists it on the facade interactive route
+      (`broker-interactive-handlers.ts:1610`, intent from
+      `runtime-io-handlers.ts:633`).
+    - The headless aspd route persists it too (read-only max3 query, 2026-09-17:
+      14 of 14 `headless-codex-app-server` preparations carry
+      `intent.initialPrompt`).
+    - Rotation relaunch and cold attach replay the stored intent into
+      `startRuntimeForSession`.
+
+    Whether such a replay re-sends the prompt is unresolved. §1.5 does not change
+    it, and it does not persist a launch-carried prompt (D1). The hazard is
+    tracked on the P-00521 campaign ledger.
 
 ## 10. Acceptance (isolated, installed)
 
@@ -1259,13 +1871,14 @@ keystrokes.
    unchanged, and typed input still works.
 4. Reuse without replacement:
    - `hrc run` on a live facade codex-tui scope (born by cold attach) attaches
-     it, unchanged;
+     it, unchanged [T-08560: cold attach no longer births facade runtimes on a
+     configured node; a re-run uses a pre-change facade runtime];
    - `hrc run -p` on a live default app-server viewer scope attaches its
      renderer and delivers once, runtime unchanged;
    - `hrc run` on a live `--no-viewer` scope refuses `presentation_conflict`
      with nothing mutated.
 5. Cold `hrc attach <fresh>` still births the facade backend (no aspd
-   compile).
+   compile). [Inverted by T-08560: §10.5 leg 5.]
 6. Stop aspd: `hrc run <fresh>` refuses `aspd_unavailable` with no op, runtime
    or tmux server left behind. `hrc run`/`hrc attach` on the live aspd
    interactive scope still attach and take typed input.
@@ -1296,3 +1909,155 @@ back running equals installed, the aspd release and warmup reattachment against
 the 9 known unreachable. Repeat 1–4 on fresh cody scopes in clean Ghostty,
 without touching other users' scopes. Clean up test scopes only, leaving one
 active aspd release with prior releases retained. Astra grades.
+
+### 10.5 Every Codex interactive birth through aspd acceptance (T-08560)
+
+**Executors.**
+- **Implementer (I):** an isolated rig identical to §10.4: linked-worktree HRC
+  artifact under `hrc server serve` with isolated state, runtime and socket;
+  durable IPC on; redirect off; `tmux-tui`; `HRC_ASPD_SOCKET` pointing at an
+  isolated aspd namespace with retained A (current operational `90dd7508`) and
+  B (a visibly different staged release); clean Ghostty via ghostmux; real cody
+  Codex scopes; real CLI. I runs every destructive leg (aspd stop, A→B, withheld
+  release, cancellation, restart) because those affect every max3 user on shared.
+- **Supervisor (S), mable:** shared max3 after guarded `just install` and restart,
+  on fresh cody scopes, non-destructive legs only, then independent grade.
+
+**Per-birth observation set (O).** Resolve `STATE=$(hrc server status --json | jq -r .stateRoot)`;
+the ledger is `$STATE/state.sqlite`, opened `sqlite3 -readonly`.
+- **O1 compile +1 and route:**
+  `select operation_id,status,error_code,json_extract(preparation_json,'$.route'),json_extract(route_decision_json,'$.door'),json_extract(route_decision_json,'$.launchCarriedPrompt.mode'),json_extract(preparation_json,'$.executionRelease.releaseId'),json_extract(preparation_json,'$.dispatchIdempotencyKey') from runtime_operations where host_session_id=? and preparation_json is not null`
+  count before/after = +1, plus one `aspd.preparation.frozen` line in the HRC
+  server log.
+- **O2 worker hello = frozen:** `hrc runtime inspect <rt> --json`, reading
+  `runtime_state_json.executionRelease` (`releaseId`, `helloRelease`, source
+  `aspd`) equal to O1's release; transport `tmux`.
+- **O3 panes:** the runtime's tmux socket from `hrc runtime inspect`, then
+  `tmux -S <sock> list-panes -a -F '#{window_name} #{pane_pid}'` and
+  `ps -o pid,ppid,args -p <pid>` recursively.
+  - `broker` pane: `<release>/libexec/harness-broker run …`;
+  - `tui` pane: `<release>/libexec/harness-broker codex-tui-wrapper …` with
+    `codex app-server` and `codex --remote` children.
+- **O4 prompt exactly once:**
+  - `select event_kind,count(*) from hrc_events where host_session_id=? and payload_json like '%<MARK>%' group by event_kind`
+    shows exactly one user-prompt event and no duplicate submission;
+  - in the native rollout, `<ASP_HOME>/codex-homes/<project>_<agent>/sessions/**/rollout-*.jsonl`,
+    MARK appears in exactly one user message (T-08556 `shared/s2` method);
+  - frozen copy: `json_extract(preparation_json,'$.admission.startRequest.initialInput')`
+    contains MARK once;
+  - `select last_applied_intent_json from sessions where host_session_id=?` does
+    not contain MARK.
+
+| Leg | Door / mechanism | Action | Required observation | Exec |
+|---|---|---|---|---|
+| 1 | Mail kicker summons (C-replace) | Seed a fresh scope's stored intent interactive (one `hrc run`, then terminate), then `wrkc say <scope> --to <scope>` with MARK | O1 (door `interactive-birth`, mode `replace-priming`), O2, O3, O4; mail receipt landed (`hrc mail inspect <envelope>`); priming absent from the launch turn | I, then S |
+| 2 | `/v1/turns` (C-append), DM (C-append), submission door `enqueue` (C-append), rule 3 reprovision | Cold `hrc turn <scope> MARK` on an interactive-stored fresh scope; hrcchat DM cold birth; `enqueue` submission cold birth; `hrc turn` against a live Claude tmux runtime of the same scope (rule 3 → stale-mark → birth) | Each: O1 (mode `append-to-priming`), O2, O3, O4 with priming present; rule 3: prior runtime stale, one new runtime | I (all), S (`hrc turn`, DM) |
+| 3 | Selector message (C-after) | Selector message MARK to an interactive-stored fresh scope | O1 (no `launchCarriedPrompt`), O2, O3; O4 with the frozen copy ABSENT and one identity submission | I, then S |
+| 4 | D2 same-key retry | I: withhold release A's directory; `hrc start <scope> -p MARK --idempotency-key K` on an interactive-stored scope, giving `release_unavailable`, op `prepared`, no worker/tmux; activate B; restore A; retry K | Retry launches the frozen op: O2 hello A (not B), O4 once, O1 count unchanged by the retry; a new un-keyed scope prepares on B | I |
+| 5 | C-bare doors | Cold `hrc attach <fresh interactive-stored scope>`; `hrc session rotate <hostSessionId> --relaunch` on a live interactive scope; `POST /v1/runtimes/ensure` (interactive intent); explicit interactive `POST /v1/runtimes/start`; received `exact-start` claim | Each: O1 (door `interactive-birth`, no prompt), O2, O3; attach gives a usable TUI with typed input rendering; claim via a two-daemon isolated pair (peer-routed) | I (all); S (attach, rotate --relaunch) |
+| 6 | No fallback / D3 / D4 | Stop aspd. (a) Cold `hrc attach <fresh>`; (b) kicker summons to a fresh scope; (c) cold attach against a live facade-born or Claude tmux runtime (reprovision) | (a) `aspd_unavailable`, no op row, no runtime row, no lease, no btmux socket/process; (b) same, plus envelope `uncertain` (`dispatch_error`) and not re-dispatched on the next sweep; (c) prior runtime stale-marked, nothing new; live aspd interactive runtimes still take typed input and `hrc turn` | I |
+| 7 | A→B activation with a live A interactive worker | A active: leg 1 birth on A. Activate B (same HRC pid/artifact). Type into the A TUI and `hrc turn` it; fresh summons birth | A worker keeps typed input and a completed turn, hello A unchanged; the fresh birth is B (O2); no HRC connection to aspd held across activation | I |
+| 8 | Cancellation / never-started lease cleanup (G1) on a non-attached door | Kill the leg 1 launch between P and `invocation.start` (worker handshake refused by withholding the release after realization, or a daemon stop mid-launch in the rig) on a kicker birth | Op `prepared` (hello refusal) or `failed` per §1.4 G1; no lease-server process, no broker socket, no native codex; run state accurate; no user-prompt event | I |
+| 9 | Restart reattach | Restart the rig HRC with aspd stopped, with leg 1/2/5 runtimes live | Each reattaches (release hello), typed input and a warm turn work | I |
+| 10 | Attached-run door unchanged | `hrc run <fresh> -p MARK` | §10.4 legs 1–2 hold; door `attached-run`; frozen copy ABSENT; O4 once | I, then S |
+| 11 | Other drivers unchanged | Kicker summons and cold attach to a Claude scope | No aspd compile; facade/resolver path as today | I, then S |
+| 12 | Gates | The gate suites below, `just architecture-records` | Green | I |
+
+**Shared max3 (S).**
+1. Write the rollback record first (prior HRC release `bc390971`).
+2. `just install`, `hrc server restart`.
+3. Read back running equals installed, aspd reachable on
+   `asp-90dd75083a32-20260917T020900Z-81b3b5`, and warmup attached == total
+   minus the known unreachable set.
+4. Run legs 1, 2 (`hrc turn`, DM), 3, 5 (attach, rotate --relaunch), 10 and 11 on
+   fresh `cody` scopes in clean Ghostty, without touching other users' scopes.
+5. Clean up test scopes only.
+6. Independent grade.
+
+No aspd stop, activation or withheld release on shared.
+
+**Gates that must stay green unchanged (names from source).**
+
+- `t08556-attached-run-aspd-tui.test.ts` except the two rewritten below: cold birth,
+  `-p` exactly once, aspd unavailable, durable IPC, established runtimes, crossing,
+  F4 identity delivery, G1 lease cleanup.
+- `t07693-two-wake-double-birth.red.test.ts` (join, never double-birth);
+  `t07202-semantic-dm-cold-singleflight.red.test.ts`.
+- T-07397 surface-reuse refusal and join caller policy:
+  `submission-door-session-surface.test.ts`, and
+  `t08555-default-app-server-viewer.test.ts` "a crossing same-harness tmux birth
+  is joined only through admission caller policy (T-07397)".
+- `t07920-kicker-launch-prompt.test.ts`, `t08004-invoke-cold-priming.test.ts`,
+  `t08531-enqueue-cold-priming.test.ts` (claude-code-tmux: facade by driver, must
+  be unaffected); `t08541-cold-invoke-initial-input-identity.test.ts` (Codex,
+  socket unset: facade).
+- `t07944-cold-birth-lifecycle.test.ts`, `t07963-cold-birth-first-turn.test.ts`,
+  `attached-run-operation-lifecycle.test.ts`.
+- `t08542-aspd-prepared-execution.test.ts`, `t08553-per-request-presentation.test.ts`,
+  `t08554-app-server-viewer.test.ts`, `t08555-default-app-server-viewer.test.ts`.
+- hrc-mail-kicker: `t08394-absent-seat-cold-birth.test.ts`,
+  `t08139-broker-start-birth-retry.test.ts`, `t08094-*`.
+- The hrc-server and hrc-cli suites, and `just architecture-records`.
+
+Note: `t08553` "omitted choice keeps the node Codex redirect: interactive route,
+no aspd preparation" stays green only because it stubs the interactive route. Its
+title states a premise §1.5 makes false for a real configured node. Retitle it,
+don't change the assertion.
+
+**Gates whose premise inverts (rewrite, do not delete).**
+
+- `t08556` "only the attached-run door, the codex-app-server driver and a
+  configured node select aspd" (`:288-300`) becomes "the codex-app-server driver
+  and a configured node select aspd for every door; other drivers and an unset
+  socket do not."
+- `t08556` "another door birthing the interactive backend keeps the facade"
+  (`:367-377`) becomes "a non-attached interactive Codex birth prepares through
+  aspd with door `interactive-birth` (facade not reached)".
+- The `door: 'attached-run'` expectation (`:316`) stays for the attached run.
+
+**New gates (real handlers, aspd double, facade spy throwing).**
+
+- **G-route:** per door in §1.5.2, through its own entry function (kicker
+  `deliver…`, `handleDispatchTurn`, `handleSubmission` ×4, both DM paths, selector
+  input, dispatch rule 3, `attachRuntimeEffectfully`, `handleStartRuntime`,
+  `handleEnsureRuntime`, app-session ensure, both rotation relaunch branches,
+  `roster-start`/`exact-start` claims). Each gives aspd compile +1, op
+  `interactive-codex-tui`, and door class as specified. The facade is never
+  reached. Claude/Pi on the same doors still reach the facade. The socket unset
+  reaches the facade.
+- **G-D1:**
+  - for `replace-priming` and `append-to-priming`, the frozen
+    `startRequest.initialInput` carries the prompt once and priming is
+    omitted/included;
+  - `routeDecision.launchCarriedPrompt.mode` is recorded;
+  - `last_applied_intent_json` has no `initialPrompt`;
+  - `onColdBirthPromptRoute(true)` fires after P and before launch, and never on
+    a pre-P refusal;
+  - no post-boot `executeInteractiveBrokerInputTurn` for the run;
+  - B4 `dispatchedInputId`/`brokerSubmissionId` equal `initialInputId`;
+  - the invoke rendezvous crossing waits for the launch turn terminal (T-08004
+    shape on codex-app-server);
+  - selector (no mode): no frozen prompt and one identity submission.
+- **G-D2:**
+  - a keyed `/v1/turns` interactive birth freezes the key;
+  - a withheld release refuses post-P (op `prepared`);
+  - a same-key retry resumes with no aspd contact and delivers once;
+  - a retry after B activation launches A;
+  - the route fence refuses `aspd_preparation_route_changed` both ways with the
+    op untouched;
+  - a retry that finds a live runtime delivers through it and leaves the op
+    `prepared`.
+- **G-D3:**
+  - kicker summons with a post-P refusal leaves op `prepared` + `error_code`, the
+    envelope uncertain (`dispatch_error`) and nothing re-dispatched on the next
+    sweep;
+  - DM/selector/attach/start/ensure/rotate/claim refusals leave op `prepared` and
+    no auto-launch after a daemon restart.
+- **G-D4:** rule 3 / attach / start / ensure reprovision with aspd unavailable:
+  the old runtime is stale-marked, no op, no new runtime, no lease.
+- **G-join:** the T-07693, T-07202 and T-08555 crossing tests re-run with the
+  birth on the aspd route: one runtime, each prompt once.
+- **G-backstop:** a participant-registered scope refuses at every door before
+  preparation (no aspd compile), including ensure.
+- **G-ipc:** durable IPC off on a configured node refuses every door
+  `aspd_route_requires_durable_ipc` before preparation.

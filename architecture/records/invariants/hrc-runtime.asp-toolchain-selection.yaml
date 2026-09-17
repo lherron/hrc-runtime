@@ -33,13 +33,16 @@ predicate: >
   tuple governed by hrc-runtime.observable-release. The root is one
   configuration namespace, not an atomic build-identity boundary, and the
   daemon's in-process ASP imports remain pinned to its release. As amended for
-  the attached-run door, on a configured node a new interactive openai codex-cli
-  birth requested by hrc run or hrc resume is also aspd-prepared and is not
-  governed by the resolver. Its worker, codex-tui wrapper, and hook receiver run
-  only from the frozen executionRelease, with no fallback. Interactive births by
-  every other door remain resolver-governed.
-authority: wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
+  every interactive Codex birth door, on a configured node every new
+  interactive codex-app-server birth, by any door, is aspd-prepared and is not
+  governed by the resolver. Its worker, codex-tui wrapper, and hook receiver
+  run only from the frozen executionRelease, with no fallback. Interactive
+  births of other broker drivers (claude-code-tmux, pi-tui-tmux,
+  codex-cli-tmux), hosted participant brokers, and the Codex Desktop observer
+  broker remain resolver-governed.
+authority: wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus ruling pending), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; wrkq:T-07764 rev 2 architecture approval, 2026-08-30
 source:
+  - wrkq:T-08560
   - wrkq:T-08556
   - commit:91a7d9c3
   - wrkq:T-08555
@@ -62,12 +65,13 @@ required_tests:
   - T-08542 configured aspd route bypasses every override root bundled PATH current and source resolver while all other routes retain the existing precedence and status projection
   - T-08554 explicit tmux-tui aspd route launches its worker from the frozen executionRelease with no resolver consultation, its renderer runs from that release payload, and, with HRC_ASPD_SOCKET unset, node-default tmux-tui with no request choice keeps the resolver-governed facade route
   - T-08555 configured node-default tmux-tui headless codex-app-server prepares through aspd with no resolver consultation while an unset endpoint keeps the facade for every presentation
-  - T-08556 configured attached-run interactive Codex birth launches the worker wrapper and hook receiver from one frozen executionRelease with no resolver consultation or fallback while every other interactive birth door retains the resolver
+  - T-08556 configured attached-run interactive Codex birth launches the worker wrapper and hook receiver from one frozen executionRelease with no resolver consultation or fallback
+  - T-08560 every configured interactive codex-app-server birth door launches its worker wrapper and hook receiver from the frozen executionRelease with no resolver consultation or fallback while other interactive drivers keep the resolver
   - T-08542 aspd outage incompatibility and missing execution release refuse without resolver fallback or worker hosting
   - T-07764 per-spawn precedence and configured-root refusal gates across facade, durable broker, and legacy stdio paths
   - T-07764 protocol/capability remedy and status/resolver authority gates
   - T-07764 live durable and legacy external-root round trips plus bundled rollback proof
-last_verified: 2026-09-16 T-08556 design approval on 91a7d9c3; implementation and installed evidence pending; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
+last_verified: 2026-09-17 T-08560 amendment drafted, Daedalus ruling pending; 2026-09-16 T-08556 design approval on 91a7d9c3; implementation and installed evidence pending; prior T-08542 design approval, T-08553 shared acceptance, and T-08554 amendment approval EN-12940
 reopen_when: A node-default presentation's route selection, an ASP child spawn site, aspd-prepared route, selection precedence, external-root or execution-release semantics, compatibility handshake, toolchain or aspd status projection, or in-process ASP dependency boundary changes.
 supersedes: []
 superseded_by: []

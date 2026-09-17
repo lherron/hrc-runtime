@@ -5,7 +5,8 @@ owner_project: hrc-runtime
 scope: HRC-hosted codex-app-server preparation, release binding, launch, and reattachment through configured aspd
 predicate: >
   When HRC_ASPD_SOCKET is configured, an HRC-hosted headless
-  codex-app-server runtime with effective operator presentation none prepares only through
+  codex-app-server runtime with effective operator presentation none prepares
+  only through
   one per-preparation connection to that absolute node-local endpoint. HRC
   requires aspc/0.1, Unix transport, compileHarnessInvocation capability, and
   service release identity; it neither requires a cohosted broker nor falls back
@@ -23,7 +24,14 @@ predicate: >
   caller identity fences, dispatch environment, and lifecycle policy commit
   before invocation.start. A prepared operation proves no invocation.start was
   submitted and may be resumed only by an explicit same-host-session,
-  same-idempotency-key caller retry; startup never auto-launches it. Once the
+  same-idempotency-key caller retry; startup never auto-launches it.
+  Interactive and headless preparations freeze the caller's key alike. A
+  resume launches only a preparation of the route the retry selected;
+  otherwise it refuses with the HRC-internal reason
+  aspd_preparation_route_changed and the operation stays prepared. A door that
+  carries no caller key, including the mail kicker, never resumes a prepared
+  operation, and the kicker's classification of a thrown dispatch as uncertain
+  is unchanged. Once the
   start graph commits, a missing or failed start result never authorizes an
   automatic invocation.start replay, and a transport-uncertain start remains
   uncertain. Active worker control, event replay and acknowledgement, and daemon
@@ -36,7 +44,8 @@ predicate: >
   presentation is an explicit per-request presentation.operator none when
   present, otherwise the node default unchanged; an explicit none also exempts
   that Codex dispatch from the node's Codex interactive redirect, as a
-  responseFormat does, while an explicit choice changes no omitted-choice routing; the
+  responseFormat does, while an explicit choice changes no omitted-choice
+  routing; the
   request choice is accepted
   only as none, only on the headless broker route and never with a viewer
   placement, is persisted in the applied intent and route decision with its
@@ -48,7 +57,8 @@ predicate: >
   exempts that Codex dispatch from the interactive redirect and places the
   headless codex-app-server with HRC's tmux-tui renderer viewer on this route,
   while an omitted choice resolving to a node-default tmux-tui is governed by
-  the node-default amendment below; both accepted values are refused off the headless
+  the node-default amendment below; both accepted values are refused off the
+  headless
   codex-app-server broker route; any request whose presentation differs from
   the scope's live runtime is refused with presentation_conflict and left
   untouched. Such an attempt freezes its tmux-tui presentation and observer
@@ -87,24 +97,36 @@ predicate: >
   start_in_flight_harness_mismatch for tmux, since a newborn is never
   admission-replaced), and a start that recorded no birth is awaited in full and
   never treated as absent. No rule starts a runtime of another transport beside
-  an established one. With nothing established, the request runs headless codex-app-server
+  an established one. With nothing established, the request runs headless
+  codex-app-server
   with the node presentation default on this route. An intent that arrives
-  interactive keeps the standalone interactive backend. No rollback pairs a
+  interactive goes to interactive broker admission for the interactive Codex
+  app-server TUI backend, whose births on a configured node are aspd-prepared
+  as amended below. No rollback pairs a
   release that gates interactive Codex admission on the redirect control with
   that control off. Every aspd compile on this route carries HRC's resolved
   ASP_HOME as the request aspHome and records it in the route decision, so the
   worker's codex home, and therefore continuation resume, is the same store the
   standalone interactive route uses, independent of the aspd daemon environment.
-  As amended for the attached-run door, on a configured node an interactive
-  openai codex-cli birth requested by hrc run or hrc resume also prepares through
-  aspd and freezes route interactive-codex-tui, presentation codex-tui, and the
-  interactive start request at boundary P. It requires durable IPC and launches
+  As amended for every interactive Codex birth door, on a configured node
+  every new interactive codex-app-server birth prepares through aspd,
+  whichever door requests it: attached run, cold attach, turn dispatch, mail
+  summons, submission doors, target and selector messages, reprovision,
+  explicit start, ensure, rotation relaunch, or a received federation claim.
+  It freezes route interactive-codex-tui, presentation codex-tui, its door
+  class (attached-run or interactive-birth), and the interactive start request
+  at boundary P. It requires durable IPC and launches
   only on the interactive tmux substrate from the persisted preparation. The
   worker, codex-tui wrapper, and hook receiver all execute from that frozen
-  execution release; there is no resolver or facade fallback. Other doors that
-  birth the interactive backend remain resolver-governed. Selection, birth, and
-  initial-prompt delivery for this door occur inside one operation registered in
-  the host session's start singleflight. Before joining an existing operation,
+  execution release; there is no resolver or facade fallback. No interactive
+  codex-app-server birth on a configured node is facade-prepared or
+  resolver-launched, and none falls back when aspd or launch validation
+  refuses. A refusal before boundary P leaves no operation, runtime, lease, or
+  tmux server. A refusal after it leaves the operation prepared with its
+  refusal recorded. For the attached-run door (hrc run, hrc resume),
+  selection, birth, and initial-prompt delivery occur inside one operation
+  registered in the host session's start singleflight. Before joining an
+  existing operation,
   the door classifies its recorded birth and refuses a foreign provider or
   harness; after a same-harness or unrecorded operation settles, the door
   re-enters and registers its own operation carrying the joined newborn's
@@ -115,14 +137,28 @@ predicate: >
   settled operator-attachable openai codex-cli viewer is reused, while a
   no-viewer, transitional, or foreign runtime is refused and left untouched.
   Explicit force-restart may replace only when no live joined newborn governs
-  the selection. An initial prompt is not part of the frozen start request; after
-  attached-start resume it is submitted exactly once by the selected runtime's
-  identity-specific input executor under turn admission, before the registered
-  operation is removed. No session-level reselection, admission,
-  stale-marking, or reprovision may redirect that prompt. Detach, reattach, and
-  daemon restart of the resulting runtime do not require aspd.
-authority: wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
+  the selection. On the attached-run door an initial prompt is not part of the
+  frozen start request; after attached-start resume it is submitted exactly
+  once by the selected runtime's identity-specific input executor under turn
+  admission, before the registered operation is removed. A cold-birth prompt
+  carried by any other door is compiled into the preparation exactly as the
+  facade compiles it, with its priming replaced for a launch-primed summons
+  and appended for a submission door. It is persisted only in the frozen start
+  request, recorded as launch-carried with its priming mode, and never
+  persisted in the applied intent. It is reported to the dispatch door as
+  launch-carried only after boundary P commits an admitted interactive
+  profile, so the dispatch door never submits it separately. A prepared
+  operation proves the prompt was never applied. No session-level reselection,
+  admission,
+  stale-marking, or reprovision may redirect that prompt. Detach, reattach,
+  and daemon restart of the resulting runtime do not require aspd. A door that
+  replaces a live runtime stale-marks it before preparation, as on the facade
+  route, so a preparation or pre-start launch refusal leaves that scope with
+  no live runtime until its next birth. Ensure births stay unregistered in the
+  start singleflight.
+authority: wrkq:T-08560 every interactive Codex birth door amendment (mable acceptance EN-13046 under campaign P-00521; Daedalus ruling pending), 2026-09-17; wrkq:T-08556 attached-run interactive Codex amendment (Lance authorization via Astra EN-12983; Daedalus approval of 91a7d9c3), 2026-09-16; wrkq:T-08555 node-default app-server viewer amendment (Lance authorization via Astra EN-12947; Daedalus approval EN-12956 on 494fef39; in-flight birth amendment approval EN-12966 on 4cbcb04c; continuation-store aspHome amendment approval EN-12972 on d9012d25), 2026-09-16; wrkq:T-08542 architecture approval, 2026-09-16; wrkq:T-08553 per-request presentation amendment (Lance selection EN-12917, Daedalus approval EN-12927), 2026-09-16; wrkq:T-08554 explicit app-server viewer amendment (Astra release EN-12934 under Lance authorization EN-12932; Daedalus approval EN-12940), 2026-09-16; governing split approval EN-12789, 2026-09-16
 source:
+  - wrkq:T-08560
   - wrkq:T-08556
   - commit:91a7d9c3
   - wrkq:T-08555
@@ -146,8 +182,16 @@ source:
   - packages/hrc-server/src/startup-reconcile.ts
   - packages/hrc-server/src/runtime-io-handlers.ts
   - packages/hrc-server/src/presentation-operator.ts
+  - packages/hrc-server/src/broker-interactive-handlers.ts
+  - packages/hrc-server/src/aspd-headless-start.ts
+  - packages/hrc-mail-kicker/src/drive/delivery.ts
 required_tests:
   - just architecture-records
+  - T-08560 route gates prove every interactive codex-app-server birth door on a configured node prepares through aspd with its door class and never reaches the facade, while other drivers and an unset endpoint keep the facade
+  - T-08560 launch-carried prompt gates prove replace-priming and append-to-priming prompts are frozen once in the start request, absent from the applied intent, reported launch-carried only after boundary P, never submitted again, and bound to the initial input identity at B4, while an after-boot selector prompt is delivered once by runtime identity
+  - T-08560 retry gates prove a keyed interactive preparation freezes its key and resumes on the frozen release, a route mismatch refuses aspd_preparation_route_changed untouched, and keyless doors including the mail kicker leave refused preparations prepared and never auto-launched
+  - T-08560 ordering gates prove reprovision doors stale-mark before preparation and leave no operation, runtime, lease, or tmux server on a pre-boundary-P refusal, joins and participant backstops hold on the aspd route, and ensure stays unregistered
+  - T-08560 isolated then shared max3 installed acceptance covers every door class, frozen release worker and wrapper, prompt exactly once, keyed retry across activation, aspd outage, A to B activation with a live A interactive worker, never-started lease cleanup on a non-attached door, restart reattachment, unchanged attached run and other drivers, and independent grade
   - T-08542 configured-route negotiation and no-fallback gates cover unavailable incompatible unidentified and connection-closed aspd plus missing executionRelease
   - T-08542 boundary-P transaction and readback gates prove complete immutable preparation precedes hosting and launch consumes persisted bytes only
   - T-08542 same-key retry launches the frozen A preparation after B activation while startup performs no automatic launch and a new preparation selects B
@@ -170,11 +214,12 @@ required_tests:
   - T-08556 attached-run selection gates prove established and joined headless runtimes receive viewer reuse, no-viewer conflict, transitional refusal, or foreign-harness refusal without stale-marking or a second runtime, while explicit force-restart with no live joined newborn remains the only replacement path
   - T-08556 identity-delivery gates prove an initial prompt traverses turn admission and the selected runtime's input executor exactly once before the start operation deregisters, cannot be redirected by a crossing registered start or dispatch, and targets no replacement inserted for the session
   - T-08556 frozen interactive route gates prove boundary-P persistence, durable-IPC refusal, allocator and controller route admission, worker hello binding, and worker wrapper and hook execution from one retained execution release with no resolver fallback
-  - T-08556 isolated then shared max3 acceptance covers real attached Codex TUI input, initial prompt identity, warm reuse and detach, headless viewer reuse and conflicts, unchanged cold-attach facade birth, aspd outage, retained-release activation and rollback ordering, restart reattachment, and cancelled attach cleanup
+  - T-08556 isolated then shared max3 acceptance covers real attached Codex TUI input, initial prompt identity, warm reuse and detach, headless viewer reuse and conflicts, cold-attach birth (facade before T-08560), aspd outage, retained-release activation and rollback ordering, restart reattachment, and cancelled attach cleanup
   - T-08542 unchanged-route regression gates cover interactive tmux tmux-tui pi-sdk participant preview catalog and inspection paths
-last_verified: 2026-09-16 T-08556 design approval on 91a7d9c3; implementation and installed evidence pending; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
+last_verified: 2026-09-17 T-08560 amendment drafted, Daedalus ruling pending; 2026-09-16 T-08556 design approval on 91a7d9c3; implementation and installed evidence pending; prior T-08542 design approval plus T-08553 amendment approval EN-12927 and shared max3 acceptance (Astra EN-12934), plus T-08554 amendment approval EN-12940
 reopen_when:
   - the configured route or fallback behavior changes
+  - the interactive birth door set, door class, launch-carried prompt freezing, keyed interactive resume, route fence, or keyless-door prepared behavior changes
   - per-request presentation precedence, accepted values, doors, persistence, or existing-scope behavior changes
   - node-default presentation routing, the Codex redirect control's scope, or omitted-choice live-runtime delivery changes
   - preparation connection negotiation or release selection changes
