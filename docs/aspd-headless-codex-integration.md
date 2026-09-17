@@ -544,7 +544,11 @@ T-08554 used for the renderer (515063f6):
   codex-tui-wrapper`, plumbed through `runBrokerCli` → `createDefaultBroker` →
   `createCodexAppServerDriver`. With it, the pane launch argv is `<execPath>
   codex-tui-wrapper --command …`, and the hook bridge wrapper runs `<execPath>
-  codex-hook --socket …`. No environment variable selects either.
+  codex-hook --socket …`. The pane's tmux launch runner is also resolved from
+  the module path (`exec bun /$bunfs/root/tmux-launch-runner`) in a compiled
+  release, so it runs as `<execPath> tmux-launch --launch-file …` (found by the
+  first installed isolated `hrc run`, agent-spaces `90dd7508`). No environment
+  variable selects any of them.
 - A checkout or package broker passes nothing and keeps `<execPath>
   <wrapper entry>` and PATH `harness-broker codex-hook`.
 - The native `codex` binary stays `startSpec.process.command` from the compile,
