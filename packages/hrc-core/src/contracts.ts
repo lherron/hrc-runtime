@@ -6,8 +6,15 @@ import type { HrcSessionRef } from './selectors.js'
 
 import type { AttachmentRef } from 'spaces-runtime'
 
-export type HrcProvider = 'anthropic' | 'openai'
-export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
+export type HrcProvider = 'anthropic' | 'openai' | 'meta'
+export type HrcHarness =
+  | 'agent-sdk'
+  | 'claude-code'
+  | 'codex-cli'
+  | 'pi'
+  | 'pi-cli'
+  | 'pi-sdk'
+  | 'muse-cli'
 export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux' | 'broker'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'

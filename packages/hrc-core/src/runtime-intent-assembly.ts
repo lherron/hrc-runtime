@@ -32,7 +32,7 @@ import {
 import type { HrcExecutionMode, HrcHarness, HrcRuntimeIntent } from './contracts.js'
 
 export type ResolvedAgentHarness = {
-  provider: 'anthropic' | 'openai'
+  provider: 'anthropic' | 'openai' | 'meta'
   /** Frontend harness name from the profile/target (e.g. "claude-code", "codex"). */
   harness: string | undefined
   /**
@@ -85,7 +85,7 @@ function scalarsOnly(scalars: Record<string, unknown>): ProvisioningScalars {
   ) as ProvisioningScalars
 }
 
-function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' {
+function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' | 'meta' {
   return resolveHarnessProvider(harness) ?? 'anthropic'
 }
 
@@ -308,7 +308,7 @@ export function applyProvisionDirectives(
 ): {
   provision: ProvisioningScalars
   harness: string | undefined
-  provider: 'anthropic' | 'openai'
+  provider: 'anthropic' | 'openai' | 'meta'
   harnessId: HrcHarness | undefined
 } {
   const provision = overridableProvision({

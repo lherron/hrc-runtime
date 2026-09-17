@@ -41,6 +41,14 @@ describe('resolveAgentHarness — provider/harness derived from the agent profil
     })
   })
 
+  test('muse profile resolves to meta (P-00522)', () => {
+    const { agentRoot, agentId } = makeAgentDir('muse')
+    expect(resolveAgentHarness({ agentRoot, agentId })).toMatchObject({
+      provider: 'meta',
+      harness: 'muse',
+    })
+  })
+
   test('missing profile falls back to anthropic', () => {
     const root = mkdtempSync(join(tmpdir(), 'hrc-sdk-resolve-intent-empty-'))
     tempRoots.push(root)

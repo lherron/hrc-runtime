@@ -21,7 +21,7 @@ import {
 import { fatal, formatAgentNotFound, writePlacementWarnings } from './shared.js'
 
 export function createDefaultRuntimeIntent(
-  provider: 'anthropic' | 'openai',
+  provider: 'anthropic' | 'openai' | 'meta',
   cwd = process.cwd(),
   preferredMode: 'headless' | 'interactive' | 'nonInteractive' = 'interactive'
 ): HrcRuntimeIntent {
