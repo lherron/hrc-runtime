@@ -33,6 +33,7 @@ export const aspSyncSpec: SyncSpec = {
         'spaces-aspc-facade',
         'spaces-harness-claude',
         'spaces-harness-codex',
+        'spaces-harness-muse',
         'spaces-harness-pi',
         'spaces-harness-pi-sdk',
         'agent-spaces',
