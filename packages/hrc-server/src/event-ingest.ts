@@ -120,10 +120,24 @@ async function readBoundedBody(request: Request): Promise<string> {
   return new TextDecoder().decode(bytes)
 }
 
+/** A refusal of the whole batch that names the offending item when there is one. */
+class IngestBatchValidationError extends Error {
+  constructor(
+    message: string,
+    readonly rejectedOriginSeq?: number | undefined
+  ) {
+    super(message)
+    this.name = 'IngestBatchValidationError'
+  }
+}
+
 function validateBatch(value: unknown): HrcEventIngestBatch {
   if (!value || typeof value !== 'object') throw new Error('batch must be an object')
   const batch = value as Partial<HrcEventIngestBatch>
-  if (batch.version !== 1) throw new Error('unsupported ingest version')
+  if (batch.version !== 1 && batch.version !== 2) throw new Error('unsupported ingest version')
+  if (batch.version === 2 && (batch.feed as string | undefined) === 'tool_result_blobs') {
+    throw new Error('ingest version 2 carries only retained-origin event feeds')
+  }
   if (typeof batch.sourceRef !== 'string' || batch.sourceRef.trim().length === 0) {
     throw new Error('sourceRef must be non-empty')
   }
@@ -184,6 +198,21 @@ function validateBatch(value: unknown): HrcEventIngestBatch {
     const event = item.event as HrcLifecycleEvent | HrcBrokerInvocationEventRecord
     if (event.sourceRef !== undefined || event.originSeq !== undefined) {
       throw new Error('forwarding an already-imported event is not allowed')
+    }
+    // T-08566: the batch version is the origin admission. Version 2 items must
+    // be marked retained; version 1 items must carry no origin at all.
+    const origin = (event as { evidenceOrigin?: unknown }).evidenceOrigin
+    if (batch.version === 2 && origin !== 'retained') {
+      throw new IngestBatchValidationError(
+        'ingest version 2 requires evidenceOrigin retained on every item',
+        item.originSeq
+      )
+    }
+    if (batch.version === 1 && origin !== undefined) {
+      throw new IngestBatchValidationError(
+        'ingest version 1 items must not carry evidenceOrigin',
+        item.originSeq
+      )
     }
   }
   return batch as HrcEventIngestBatch
@@ -265,6 +294,9 @@ function createIngestHandler(options: {
             ok: false,
             code: 'invalid_batch',
             message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof IngestBatchValidationError && error.rejectedOriginSeq !== undefined
+              ? { rejectedOriginSeq: error.rejectedOriginSeq }
+              : {}),
           },
           400
         )
@@ -304,7 +336,11 @@ function createIngestHandler(options: {
             if (result.idempotent) duplicates += 1
             else {
               inserted += 1
-              options.onBrokerEvent?.(result.record)
+              // T-08566 receiver fence: retained broker history is persisted but
+              // never reaches broker actuators (mail landing observation).
+              if (result.record.evidenceOrigin === undefined) {
+                options.onBrokerEvent?.(result.record)
+              }
             }
           }
         } catch (error) {
@@ -690,6 +726,29 @@ async function forwardSequencedBatch(options: {
   return { forwarded, deadLettered }
 }
 
+/**
+ * T-08566 — split one cursor-ordered feed page into maximal contiguous runs of
+ * the same origin class, preserving order: unmarked rows ride version 1 and
+ * retained rows ride version 2. Runs are posted strictly in order and each run
+ * advances the cursor only through what it acked or dead-lettered, so a
+ * transient failure never lets the cursor pass an unsent lower sequence, and an
+ * old receiver's `invalid_batch` on version 2 dead-letters each retained item
+ * individually before forwarding continues with the next live run.
+ */
+function originRuns<T>(
+  items: readonly T[],
+  originOf: (item: T) => string | undefined
+): Array<{ version: 1 | 2; items: T[] }> {
+  const runs: Array<{ version: 1 | 2; items: T[] }> = []
+  for (const item of items) {
+    const version = originOf(item) === undefined ? 1 : 2
+    const current = runs.at(-1)
+    if (current?.version === version) current.items.push(item)
+    else runs.push({ version, items: [item] })
+  }
+  return runs
+}
+
 export async function forwardAvailableEvents(options: {
   db: HrcDatabase
   sourceRef: string
@@ -775,13 +834,16 @@ export async function forwardAvailableEvents(options: {
     },
     { hydrate: false }
   )
-  if (lifecycle.length > 0) {
+  for (const run of originRuns(
+    lifecycle.map((event) => ({ originSeq: event.streamSeq, event })),
+    (item) => item.event.evidenceOrigin
+  )) {
     const result = await forwardSequencedBatch({
       batch: {
-        version: 1,
+        version: run.version,
         sourceRef: options.sourceRef,
         feed: 'hrc_events',
-        events: lifecycle.map((event) => ({ originSeq: event.streamSeq, event })),
+        events: run.items,
       },
       target: options.target,
       cursorPath: options.cursorPath,
@@ -797,17 +859,17 @@ export async function forwardAvailableEvents(options: {
     batchSize,
     { hydrate: false }
   )
-  if (broker.length > 0) {
-    const events = broker.map((event) => {
-      if (event.id === undefined) throw new Error('local broker row is missing its table id')
-      return { originSeq: event.id, event }
-    })
+  const brokerItems = broker.map((event) => {
+    if (event.id === undefined) throw new Error('local broker row is missing its table id')
+    return { originSeq: event.id, event }
+  })
+  for (const run of originRuns(brokerItems, (item) => item.event.evidenceOrigin)) {
     const result = await forwardSequencedBatch({
       batch: {
-        version: 1,
+        version: run.version,
         sourceRef: options.sourceRef,
         feed: 'broker_invocation_events',
-        events,
+        events: run.items,
       },
       target: options.target,
       cursorPath: options.cursorPath,
