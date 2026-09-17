@@ -386,10 +386,12 @@ function previewInspectionContext(
   const placement = intent.placement as unknown as Record<string, unknown>
   const scopeRef = sessionRef.includes('/lane:') ? splitSessionRef(sessionRef).scopeRef : sessionRef
   let agentId: string | undefined
+  let projectId: string | undefined
   let taskId: string | undefined
   try {
     const parsed = parseScopeRef(scopeRef)
     agentId = parsed.agentId
+    projectId = parsed.projectId
     taskId = parsed.taskId
   } catch {
     // A non-agent session ref still previews; the bundle names the agent.
@@ -398,13 +400,23 @@ function previewInspectionContext(
   const bundleAgent = typeof bundle?.agentName === 'string' ? bundle.agentName : undefined
   const agentRoot = String(placement['agentRoot'])
   const projectRoot = placement['projectRoot']
+  // The compile names the project from the session scope and applies the
+  // intent's provision directives, so inspection observes the same two inputs
+  // rather than the directory basename and the undirected profile.
+  const directives = authorizedScalars(intent.provision as Record<string, unknown> | undefined)
   return {
     agentId: agentId ?? bundleAgent ?? agentRoot.split('/').filter(Boolean).at(-1) ?? 'agent',
     agentRoot,
-    project: typeof projectRoot === 'string' ? { mode: 'root', projectRoot } : { mode: 'none' },
+    project:
+      typeof projectRoot === 'string'
+        ? { mode: 'root', projectRoot, ...(projectId !== undefined ? { projectId } : {}) }
+        : { mode: 'none' },
     cwd: String(placement['cwd'] ?? projectRoot ?? agentRoot),
     runMode: (placement['runMode'] as AspcRuntimeDeclarationContext['runMode']) ?? 'task',
     ...(taskId !== undefined ? { taskId } : {}),
+    ...(Object.keys(directives).length > 0
+      ? { provisionDirectives: directives as Record<string, string | number | boolean> }
+      : {}),
   }
 }
 
