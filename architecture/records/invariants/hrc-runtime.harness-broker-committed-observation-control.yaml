@@ -83,10 +83,23 @@ predicate: >
   timeout admit only rows without an evidence origin. Recovery outcomes are
   recorded in a keep-forever audit store outside the lifecycle event stream,
   distinguishing complete, incomplete, retryable, unbound, and operator-disposed
-  evidence; HRC retains the ledger directory of a bound runtime until recovery is
-  complete or an operator explicitly disposes it, and an exhausted retry budget
-  pauses recovery without releasing evidence. This does not change the
-  keep-forever HRC projection law in
+  evidence. For a bound harness-broker runtime with a persisted ledger path, HRC
+  holds the ledger directory while the status is crashed, dead, stale, or
+  detached, or while any invocation's latest recovery outcome is absent or has
+  class incomplete, retryable, or paused. The hold ends only when the status is not
+  revivable and every invocation's latest outcome is recovered or
+  operator_disposed. Adoption, live reattachment, replay, and acknowledgement
+  neither release a hold nor are blocked by the hold; the retained-projection
+  fence remains the independent authority for refusing live return. Sweep, prune
+  reason, explicit disposition, recovery API, startup selection, and rollback
+  inventory derive the hold from this same predicate. Explicit disposition has
+  status admission separate from bulk prune: it admits terminated, failed,
+  stopped, disposed, exited, dead, stale, crashed, and detached, but refuses
+  while there is an external lifecycle owner, active run, unsettled absorbed
+  auxiliary, live tracked process, live legacy tmux session, or private broker
+  lease, and probe uncertainty refuses rather than proving absence. An exhausted
+  retry budget pauses recovery without releasing evidence. This does not change
+  the keep-forever HRC projection law in
   hrc-runtime.ledger-tool-result-storage. Control attempts remain typed durable
   intent over the existing specialized stores, and RPC acceptance never proves
   provider effect; effects return as later committed observations. The wrkq
@@ -106,7 +119,7 @@ predicate: >
   /v1/internal/desktop/register, including its hrc-desktop-hook spool entries)
   is outside this sentence and remains governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
+authority: wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, and wrkq:T-08201 revision 5 (C-19938)
 source:
   - wrkq:T-08566
   - wrkq:T-08565
@@ -143,6 +156,9 @@ required_tests:
   - attach, reattach, and adopt are refused after retained projection, including after a crash between projection and outcome recording, and are not refused after a read that projected nothing
   - offline read issues no acknowledgement or ledger-directory write, while release mismatch and reader contract violation project nothing
   - torn-tail and paused-retry outcomes hold the ledger directory, and recovery outcomes produce no hrc_events row
+  - every hold consumer agrees for each runtime status and absent, recovered, operator-disposed, incomplete, retryable, and paused outcomes
+  - direct termination of a stale held runtime refuses without mutation, while disposition and adopt then terminate then recovery each provide an authorized release path
+  - explicit disposition admits each non-live status but refuses external ownership, active runs, unsettled absorbed auxiliaries, live processes, live tmux sessions, private broker leases, and probe uncertainty
 last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
@@ -161,5 +177,6 @@ reopen_when:
   - the retained-evidence fence admits a runtime-, session-, or control-level write
   - any live attach follows retained projection
   - recovery outcomes enter the lifecycle event stream or automation releases incomplete retained evidence
+  - the directory-hold predicate, its consumers, or explicit-disposition status or liveness gates change
 supersedes: []
 superseded_by: []
