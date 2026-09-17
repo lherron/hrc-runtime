@@ -120,6 +120,7 @@ const events = response.result.events
   .filter((event) => event.seq > afterSeq)
   .slice(0, 18)
   .map((event) => ({ ...event, invocationId: request.invocationId }))
+response.integrity.lastIntact.invocationId = request.invocationId
 const nextAfterSeq = events.at(-1)?.seq ?? afterSeq
 response.result.events = events
 response.hasMore = nextAfterSeq < response.result.currentSeq
@@ -130,7 +131,138 @@ process.stdout.write(JSON.stringify(response))
   await chmod(seeded.reader.executable, 0o755)
 }
 
+async function invokeReaderDouble(mode: ReaderMode, afterSeq: number) {
+  const invocationId = `inv-double-audit-${mode}`
+  const reader = await makeOfflineReaderDouble(fixture.tmpDir, mode, {
+    releaseId: `asp-double-audit-${mode}`,
+  })
+  const request = {
+    schema: 'harness-broker.offline-evidence/v1',
+    operation: 'eventsSince',
+    invocationId,
+    afterSeq,
+    limit: 500,
+    maxBytes: 4 * 1024 * 1024,
+  }
+  const proc = Bun.spawn([reader.executable, 'evidence-read', '--event-ledger', '/ledger'], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+  })
+  proc.stdin.write(JSON.stringify(request))
+  proc.stdin.end()
+  const [stdout, stderr, exitCode, persistedRelease] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+    readFile(`${reader.root}/release.json`, 'utf8').then(
+      (text) => JSON.parse(text) as Record<string, unknown>
+    ),
+  ])
+  return {
+    invocationId,
+    reader,
+    exitCode,
+    stderr,
+    response: JSON.parse(stdout) as Record<string, unknown>,
+    persistedRelease,
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 describe('T-08566 exact immutable reader release', () => {
+  test('reader double conforms across every non-malformed response mode', async () => {
+    const allModes: ReaderMode[] = [
+      'full',
+      'small-bytes',
+      'unknown-invocation',
+      'after-beyond-current',
+      'release-mismatch',
+      'nonprogress',
+      'snapshot-change',
+      'overflow',
+      'exit-one',
+      'timeout',
+      'block-page-two',
+      'torn',
+      'corrupt',
+      'duplicate',
+      'oversize',
+      'below-floor',
+    ]
+    const deliberatelyMalformedModes = new Set<ReaderMode>([
+      'release-mismatch',
+      'nonprogress',
+      'snapshot-change', // Its deliberately invalid behavior is on page 2.
+      'overflow',
+      'exit-one',
+      'timeout',
+      'corrupt',
+      'duplicate',
+      'oversize',
+      'below-floor',
+    ])
+    for (const mode of allModes) {
+      if (deliberatelyMalformedModes.has(mode)) continue
+      const afterSeq = mode === 'unknown-invocation' ? 7 : mode === 'after-beyond-current' ? 100 : 0
+      const observed = await invokeReaderDouble(mode, afterSeq)
+      expect({ mode, exitCode: observed.exitCode, stderr: observed.stderr }).toEqual({
+        mode,
+        exitCode: 0,
+        stderr: '',
+      })
+      expect(observed.persistedRelease['capabilities']).toContain(
+        'harness-broker.offline-evidence/v1'
+      )
+      const persistedIdentity = {
+        releaseId: observed.persistedRelease['releaseId'],
+        sourceCommit: observed.persistedRelease['sourceCommit'],
+        builtAt: observed.persistedRelease['builtAt'],
+      }
+      expect(observed.response['release']).toEqual(persistedIdentity)
+
+      const result = observed.response['result'] as {
+        currentSeq: number
+        events: Array<{ invocationId: string; seq: number }>
+      }
+      expect(result.events.map((event) => event.invocationId)).toEqual(
+        result.events.map(() => observed.invocationId)
+      )
+      const integrity = observed.response['integrity'] as
+        | { lastIntact?: { invocationId?: string } }
+        | undefined
+      if (integrity?.lastIntact) {
+        expect(integrity.lastIntact.invocationId).toBe(observed.invocationId)
+      }
+      expect(result.events.map((event) => event.seq)).toEqual(
+        result.events.map((_, index) => afterSeq + index + 1)
+      )
+      const expectedNextAfterSeq = result.events.at(-1)?.seq ?? afterSeq
+      expect(observed.response['nextAfterSeq']).toBe(expectedNextAfterSeq)
+      expect(observed.response['hasMore']).toBe(expectedNextAfterSeq < result.currentSeq)
+      expect(Number(observed.response['nextAfterSeq'])).toBeGreaterThanOrEqual(afterSeq)
+    }
+
+    const mismatch = await invokeReaderDouble('release-mismatch', 0)
+    expect(mismatch.response['release']).toEqual({
+      releaseId: 'asp-derived-mismatch',
+      sourceCommit: mismatch.persistedRelease['sourceCommit'],
+      builtAt: mismatch.persistedRelease['builtAt'],
+    })
+    expect((mismatch.response['release'] as { releaseId: string }).releaseId).not.toBe(
+      mismatch.persistedRelease['releaseId']
+    )
+  })
+
   test('compiled-response reader double executes and records the real invocation seam', async () => {
     const reader = await makeOfflineReaderDouble(fixture.tmpDir, 'full')
     const proc = Bun.spawn([reader.executable, 'evidence-read', '--event-ledger', '/ledger'], {
@@ -272,7 +404,13 @@ describe('T-08566 exact immutable reader release', () => {
       retained_hrc_events: 0,
       retained_broker_events: 0,
     })
-  })
+    const readerPid = Number((await readFile(seeded.reader.pidPath, 'utf8')).trim())
+    expect(Number.isSafeInteger(readerPid)).toBe(true)
+    for (let attempt = 0; attempt < 50 && processIsAlive(readerPid); attempt += 1) {
+      await Bun.sleep(10)
+    }
+    expect(processIsAlive(readerPid)).toBe(false)
+  }, 20_000)
 
   test('torn tail projects every intact row through seq 60 and preserves integrity detail', async () => {
     const seeded = await seedOfflineRuntime(fixture, 'torn')

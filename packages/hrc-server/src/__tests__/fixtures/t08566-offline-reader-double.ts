@@ -4,11 +4,13 @@
  * The immutable reader responses in ./t08566-real-reader-responses are byte
  * copies of the compiled asp-f450dc99 release. Error-mode responses are
  * mechanically derived from those captures here; no producer error body is
- * invented by these tests. The unknown-invocation capture used afterSeq 0; its
- * positive-cursor derivative preserves captured currentSeq 0 and echoes the
- * request's afterSeq into nextAfterSeq, matching the real reader cursor floor.
- * The wrapper also records argv, stdin and the exact environment offered by
- * HRC, and can block on a sentinel for ownership races.
+ * invented by these tests. Derived responses stamp the fixture's persisted
+ * release identity; only release-mismatch deliberately substitutes a different
+ * releaseId. The unknown-invocation capture used afterSeq 0; its positive-cursor
+ * derivative preserves captured currentSeq 0 and echoes the request's afterSeq
+ * into nextAfterSeq, matching the real reader cursor floor. The wrapper also
+ * records argv, stdin and the exact environment offered by HRC, and can block
+ * on a sentinel for ownership races.
  */
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -38,6 +40,7 @@ export type ReaderDouble = {
   root: string
   executable: string
   recordPath: string
+  pidPath: string
   unblockPath: string
 }
 
@@ -58,7 +61,16 @@ export async function capturedReaderResponse(name: string): Promise<Record<strin
   return JSON.parse(await readFile(join(CAPTURES, name), 'utf8')) as Record<string, unknown>
 }
 
-export async function deriveReaderResponse(mode: ReaderMode): Promise<string> {
+type ReaderReleaseIdentity = {
+  releaseId: string
+  sourceCommit: string
+  builtAt: string
+}
+
+export async function deriveReaderResponse(
+  mode: ReaderMode,
+  release: ReaderReleaseIdentity
+): Promise<string> {
   const exactCapture: Partial<Record<ReaderMode, string>> = {
     torn: 'torn.stdout.json',
     corrupt: 'corrupt.stdout.json',
@@ -77,9 +89,10 @@ export async function deriveReaderResponse(mode: ReaderMode): Promise<string> {
       ? 'small-bytes.stdout.json'
       : 'full.stdout.json')
   const captured = await capturedReaderResponse(sourceName)
+  captured['release'] = { ...release }
   if (mode === 'release-mismatch') {
     captured['release'] = {
-      ...(captured['release'] as object),
+      ...release,
       releaseId: 'asp-derived-mismatch',
     }
   } else if (mode === 'nonprogress') {
@@ -106,21 +119,25 @@ export async function makeOfflineReaderDouble(
   const executable = join(releaseRoot, 'harness-broker')
   const responsePath = join(releaseRoot, 'response.json')
   const recordPath = join(releaseRoot, 'reader-invocation.json')
+  const pidPath = join(releaseRoot, 'reader.pid')
   const unblockPath = join(releaseRoot, 'unblock')
-  await mkdir(releaseRoot, { recursive: true })
-  await writeFile(responsePath, await deriveReaderResponse(mode))
   const sourceCommit = 'f450dc9999240000000000000000000000000000'
+  const builtAt = '2026-09-17T05:40:56.000Z'
+  const release = { releaseId, sourceCommit, builtAt }
+  await mkdir(releaseRoot, { recursive: true })
+  await writeFile(responsePath, await deriveReaderResponse(mode, release))
   await writeFile(
     join(releaseRoot, 'release.json'),
     JSON.stringify({
       releaseId,
       sourceCommit,
-      builtAt: '2026-09-17T05:40:56.000Z',
-      capabilities: opts.capability === false ? [] : ['offline-evidence-read/v1'],
+      builtAt,
+      capabilities: opts.capability === false ? [] : ['harness-broker.offline-evidence/v1'],
     })
   )
   const script = `#!/bin/sh
 set -eu
+printf '%s\n' "$$" > "${pidPath}"
 stdin=$(mktemp)
 cat > "$stdin"
 env | LC_ALL=C sort > "${recordPath}.env"
@@ -146,6 +163,9 @@ for index, event in enumerate(events, 1):
         event['invocationId'] = invocation
     if mode in ('small-bytes', 'block-page-two', 'snapshot-change'):
         event['seq'] = after + index
+integrity = response.get('integrity')
+if invocation and isinstance(integrity, dict) and isinstance(integrity.get('lastIntact'), dict):
+    integrity['lastIntact']['invocationId'] = invocation
 if mode in ('small-bytes', 'block-page-two', 'snapshot-change'):
     current = 72 if mode == 'small-bytes' else 36
     response['result']['currentSeq'] = current
@@ -169,12 +189,11 @@ exit ${mode === 'exit-one' ? 1 : 0}
     root: releaseRoot,
     executable,
     recordPath,
+    pidPath,
     unblockPath,
     release: {
       source: 'aspd',
-      releaseId,
-      sourceCommit,
-      builtAt: '2026-09-17T05:40:56.000Z',
+      ...release,
       releaseRoot,
       worker: { protocol: 'harness-broker/0.2', executable, argvPrefix: [] },
     },
