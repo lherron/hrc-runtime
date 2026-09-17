@@ -159,7 +159,9 @@ export function persistedEventLedgerPath(runtime: HrcRuntimeSnapshot): string | 
   }
   const command = record['brokerCommand']
   if (typeof command === 'string') {
-    const match = /--event-ledger\s+(?:'([^']+)'|"([^"]+)"|(\S+))/.exec(command)
+    // Persisted commands are shell-quoted per argument for release workers
+    // (`'--event-ledger' '/…/events.ndjson'`) and unquoted for checkout brokers.
+    const match = /(?:^|\s)['"]?--event-ledger['"]?\s+(?:'([^']+)'|"([^"]+)"|(\S+))/.exec(command)
     const path = match?.[1] ?? match?.[2] ?? match?.[3]
     if (path !== undefined && path.length > 0) return path
   }

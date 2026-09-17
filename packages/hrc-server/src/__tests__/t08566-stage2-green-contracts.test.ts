@@ -8,7 +8,7 @@ import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { validateOfflineEvidencePage } from '../broker/offline-evidence'
+import { persistedEventLedgerPath, validateOfflineEvidencePage } from '../broker/offline-evidence'
 import { type HrcServer, createHrcServer } from '../index'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import { capturedReaderResponse, seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
@@ -128,6 +128,33 @@ describe('T-08566 stage-2 green contracts', () => {
     }
     expect(source).toContain('mapper.applyRetained(envelope)')
     expect(source).not.toMatch(/mapper\.apply\(/)
+  })
+
+  test('D6: the ledger path is read from every real persisted hosting shape', () => {
+    const runtime = (broker: Record<string, unknown>) =>
+      ({ runtimeId: 'rt-shape', runtimeStateJson: { broker } }) as never
+    // Real max3 shapes: release workers persist per-argument shell quoting;
+    // checkout brokers persist bare arguments; normalized hosting names it directly.
+    expect(
+      persistedEventLedgerPath(
+        runtime({
+          brokerCommand:
+            "exec '/r/asp-2c46922dce78/harness-broker' 'run' '--transport' 'unix' '--socket' '/b/b558fda24256/b.sock' '--event-ledger' '/b/b558fda24256/events.ndjson' '--runtime-id' 'rt-ca618818'",
+        })
+      )
+    ).toBe('/b/b558fda24256/events.ndjson')
+    expect(
+      persistedEventLedgerPath(
+        runtime({
+          brokerCommand:
+            "exec '/Users/x/.bun/bin/harness-broker' run --transport unix --socket /b/95fd54ac03b5/b.sock --event-ledger /b/95fd54ac03b5/events.ndjson --runtime-id rt-dff43a8b",
+        })
+      )
+    ).toBe('/b/95fd54ac03b5/events.ndjson')
+    expect(persistedEventLedgerPath(runtime({ eventLedgerPath: '/b/flat/events.ndjson' }))).toBe(
+      '/b/flat/events.ndjson'
+    )
+    expect(persistedEventLedgerPath(runtime({ brokerCommand: "exec 'x' 'run'" }))).toBeUndefined()
   })
 
   test('wire: real compiled-reader ok pages validate against their own identity', async () => {
