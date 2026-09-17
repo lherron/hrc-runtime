@@ -25,6 +25,7 @@ afterEach(async () => {
 
 async function recover(mode: ReaderMode, lastProjectedSeq = 0) {
   const seeded = await seedOfflineRuntime(fixture, mode, { lastProjectedSeq })
+  const projectedRowsBefore = projectedRowCounts(seeded.runtimeId, seeded.invocationId)
   const response = await fixture.postJson('/v1/capture/recover', {
     runtimeId: seeded.runtimeId,
     yes: true,
@@ -33,9 +34,24 @@ async function recover(mode: ReaderMode, lastProjectedSeq = 0) {
   return {
     response,
     seeded,
+    projectedRowsBefore,
     body: text.trimStart().startsWith('{')
       ? (JSON.parse(text) as Record<string, unknown>)
       : { raw: text },
+  }
+}
+
+function projectedRowCounts(runtimeId: string, invocationId: string) {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.sqlite
+      .query<{ hrc_events: number; broker_invocation_events: number }, [string, string]>(
+        `SELECT (SELECT COUNT(*) FROM hrc_events WHERE runtime_id = ?) AS hrc_events,
+                (SELECT COUNT(*) FROM broker_invocation_events WHERE invocation_id = ?) AS broker_invocation_events`
+      )
+      .get(runtimeId, invocationId)
+  } finally {
+    db.close()
   }
 }
 
@@ -300,10 +316,20 @@ describe('T-08566 exact immutable reader release', () => {
 
   test('cursor above currentSeq is held as reader_contract_violation with exact detail', async () => {
     for (const testReader of [
-      { mode: 'unknown-invocation' as const, requestedAfterSeq: 7 },
-      { mode: 'after-beyond-current' as const, requestedAfterSeq: 100 },
+      {
+        mode: 'unknown-invocation' as const,
+        requestedAfterSeq: 7,
+        currentSeq: 0,
+        nextAfterSeq: 7,
+      },
+      {
+        mode: 'after-beyond-current' as const,
+        requestedAfterSeq: 100,
+        currentSeq: 61,
+        nextAfterSeq: 100,
+      },
     ]) {
-      const { response, body, seeded } = await recover(
+      const { response, body, seeded, projectedRowsBefore } = await recover(
         testReader.mode,
         testReader.requestedAfterSeq
       )
@@ -312,8 +338,13 @@ describe('T-08566 exact immutable reader release', () => {
         outcome: 'reader_contract_violation',
         class: 'incomplete',
         held: true,
-        detail: { requestedAfterSeq: testReader.requestedAfterSeq },
+        detail: {
+          requestedAfterSeq: testReader.requestedAfterSeq,
+          currentSeq: testReader.currentSeq,
+          nextAfterSeq: testReader.nextAfterSeq,
+        },
       })
+      expect(projectedRowCounts(seeded.runtimeId, seeded.invocationId)).toEqual(projectedRowsBefore)
       const db = openHrcDatabase(fixture.dbPath)
       try {
         const row = db.sqlite

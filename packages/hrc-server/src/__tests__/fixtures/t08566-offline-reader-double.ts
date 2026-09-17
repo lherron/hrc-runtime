@@ -4,8 +4,11 @@
  * The immutable reader responses in ./t08566-real-reader-responses are byte
  * copies of the compiled asp-f450dc99 release. Error-mode responses are
  * mechanically derived from those captures here; no producer error body is
- * invented by these tests. The wrapper also records argv, stdin and the exact
- * environment offered by HRC, and can block on a sentinel for ownership races.
+ * invented by these tests. The unknown-invocation capture used afterSeq 0; its
+ * positive-cursor derivative preserves captured currentSeq 0 and echoes the
+ * request's afterSeq into nextAfterSeq, matching the real reader cursor floor.
+ * The wrapper also records argv, stdin and the exact environment offered by
+ * HRC, and can block on a sentinel for ownership races.
  */
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -148,6 +151,8 @@ if mode in ('small-bytes', 'block-page-two', 'snapshot-change'):
     response['result']['currentSeq'] = current
     response['hasMore'] = after + len(events) < current
     response['nextAfterSeq'] = after + len(events)
+if mode == 'unknown-invocation':
+    response['nextAfterSeq'] = after
 if mode == 'block-page-two' and after > 0:
     while not os.path.exists(sys.argv[4]):
         time.sleep(0.05)

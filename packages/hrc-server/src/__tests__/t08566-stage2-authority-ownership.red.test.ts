@@ -291,7 +291,8 @@ describe('T-08566 stage 2 authority and ownership', () => {
         if (!existsSync(seeded.reader.recordPath)) {
           return {
             readerSpawned: false,
-            settled: [],
+            settledBeforeUnblock: [],
+            settledAfterCompletion: [],
             recoveryStatus: (await recovery).status,
             responses: [] as Response[],
           }
@@ -317,16 +318,20 @@ describe('T-08566 stage 2 authority and ownership', () => {
             })
         )
         await Bun.sleep(20)
+        const settledBeforeUnblock = [...settled]
         await writeFile(seeded.reader.unblockPath, '')
+        const responses = await Promise.all(pending)
         return {
           readerSpawned: true,
-          settled,
+          settledBeforeUnblock,
+          settledAfterCompletion: [...settled],
           recoveryStatus: (await recovery).status,
-          responses: await Promise.all(pending),
+          responses,
         }
       })
       expect(crossing.value.readerSpawned).toBe(true)
-      expect(crossing.value.settled).toEqual([false, false, false, false])
+      expect(crossing.value.settledBeforeUnblock).toEqual([false, false, false, false])
+      expect(crossing.value.settledAfterCompletion).toEqual([true, true, true, true])
       expect(crossing.value.recoveryStatus).toBe(200)
       for (const response of crossing.value.responses) {
         expect(response.status).toBe(409)
