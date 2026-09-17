@@ -585,3 +585,339 @@ describe('T-08576 R-B7(p) durable app-run handle ownership', () => {
     )
   })
 })
+
+type ReservationHarness = {
+  tokens: Map<string, string>
+  reserve(runId: string, token?: string): string
+  setToken(runId: string, token: string | undefined): void
+}
+
+function reservationHarness(): ReservationHarness {
+  const tokens = new Map<string, string>()
+  db.runIdOwnership.setReservationTokenReader((runId) => tokens.get(runId))
+  return {
+    tokens,
+    reserve(runId, token = `token-${runId}`) {
+      tokens.set(runId, token)
+      const result = db.runIdOwnership.reserveRunId(runId, token, APP_HOST, 1)
+      if (result !== 'reserved') throw new Error(`failed to reserve ${runId}: ${result}`)
+      db.runs.insert({
+        runId,
+        hostSessionId: APP_HOST,
+        scopeRef: APP_SCOPE,
+        laneRef: APP_LANE,
+        generation: 1,
+        transport: 'tmux',
+        status: 'queued',
+        acceptedAt: NOW,
+        updatedAt: NOW,
+      })
+      return token
+    },
+    setToken(runId, token) {
+      if (token === undefined) tokens.delete(runId)
+      else tokens.set(runId, token)
+    },
+  }
+}
+
+const authorityErrorName = expect.stringMatching(/^RunId(?:Ownership|Reserved)Error$/)
+
+describe('T-08576 G1 reserved-run tuple binding authority', () => {
+  beforeEach(() => {
+    seedSession(APP_HOST, APP_SCOPE, APP_LANE)
+  })
+
+  it('G1a [green-phase registry seam] refuses a tokenless first operation binding', () => {
+    const reservations = reservationHarness()
+    const runId = 'run-g1a-tokenless-operation'
+    reservations.reserve(runId)
+    reservations.setToken(runId, undefined)
+
+    const attempted = outcome(() => {
+      db.runs.update(runId, { operationId: 'op-g1a-foreign', updatedAt: NOW })
+    })
+
+    expect({ attempted, operationId: db.runs.getByRunId(runId)?.operationId }).toEqual({
+      attempted: { ok: false, errorName: authorityErrorName },
+      operationId: undefined,
+    })
+  })
+
+  it('G1b [green-phase registry seam] refuses a wrong-token first operation binding', () => {
+    const reservations = reservationHarness()
+    const runId = 'run-g1b-wrong-token-operation'
+    reservations.reserve(runId)
+    reservations.setToken(runId, 'token-not-the-holder')
+
+    const attempted = outcome(() => {
+      db.runs.update(runId, { operationId: 'op-g1b-foreign', updatedAt: NOW })
+    })
+
+    expect({ attempted, operationId: db.runs.getByRunId(runId)?.operationId }).toEqual({
+      attempted: { ok: false, errorName: authorityErrorName },
+      operationId: undefined,
+    })
+  })
+
+  it('G1c [green-phase registry seam] lets only the holder establish an operation tuple', () => {
+    const reservations = reservationHarness()
+    const runId = 'run-g1c-holder-operation'
+    reservations.reserve(runId)
+
+    const first = outcome(() => {
+      db.runs.update(runId, { operationId: 'op-g1c-holder', updatedAt: NOW })
+    })
+    const idempotent = outcome(() => {
+      db.runs.update(runId, { operationId: 'op-g1c-holder', updatedAt: NOW })
+    })
+    const different = outcome(() => {
+      db.runs.update(runId, { operationId: 'op-g1c-other', updatedAt: NOW })
+    })
+
+    expect({
+      first,
+      idempotent,
+      different,
+      operationId: db.runs.getByRunId(runId)?.operationId,
+    }).toEqual({
+      first: { ok: true },
+      idempotent: { ok: true },
+      different: { ok: false, errorName: 'RunIdOwnershipError' },
+      operationId: 'op-g1c-holder',
+    })
+  })
+
+  it('G1d [green-phase registry seam] lets claimQueued seal the exact holder tuple', () => {
+    const reservations = reservationHarness()
+    const runId = 'run-g1d-holder-claim'
+    reservations.reserve(runId)
+    seedRuntime({
+      runtimeId: 'rt-g1d-holder',
+      hostSessionId: APP_HOST,
+      scopeRef: APP_SCOPE,
+      laneRef: APP_LANE,
+      activeOperationId: 'op-g1d-holder',
+    })
+
+    const claimed = db.runs.claimQueued(runId, {
+      runtimeId: 'rt-g1d-holder',
+      operationId: 'op-g1d-holder',
+      invocationId: undefined,
+      dispatchedInputId: 'input-g1d-holder',
+      updatedAt: NOW,
+    })
+
+    expect({ claimed, row: db.runs.getByRunId(runId) }).toEqual({
+      claimed: true,
+      row: expect.objectContaining({
+        status: 'accepted',
+        hostSessionId: APP_HOST,
+        generation: 1,
+        runtimeId: 'rt-g1d-holder',
+        operationId: 'op-g1d-holder',
+      }),
+    })
+  })
+
+  it('G1e [green-phase registry seam] gates every first reserved tuple-column binding', () => {
+    const reservations = reservationHarness()
+    const runIds = {
+      runtimeUpdate: 'run-g1e-runtime-update',
+      runtimeClaim: 'run-g1e-runtime-claim',
+      operationUpdate: 'run-g1e-operation-update',
+      operationClaim: 'run-g1e-operation-claim',
+      host: 'run-g1e-host',
+      generation: 'run-g1e-generation',
+      same: 'run-g1e-same-values',
+    }
+    for (const runId of Object.values(runIds)) {
+      reservations.reserve(runId)
+      reservations.setToken(runId, undefined)
+    }
+
+    const runtimeUpdate = outcome(() => {
+      db.runs.update(runIds.runtimeUpdate, { runtimeId: 'rt-g1e-update', updatedAt: NOW })
+    })
+    const runtimeClaim = outcome(() => {
+      db.runs.claimQueued(runIds.runtimeClaim, {
+        runtimeId: 'rt-g1e-claim',
+        operationId: undefined,
+        invocationId: 'inv-g1e-runtime-claim',
+        dispatchedInputId: 'input-g1e-runtime-claim',
+        updatedAt: NOW,
+      })
+    })
+    const operationUpdate = outcome(() => {
+      db.runs.update(runIds.operationUpdate, {
+        operationId: 'op-g1e-update',
+        updatedAt: NOW,
+      })
+    })
+    const operationClaim = outcome(() => {
+      db.runs.claimQueued(runIds.operationClaim, {
+        runtimeId: undefined,
+        operationId: 'op-g1e-claim',
+        invocationId: 'inv-g1e-operation-claim',
+        dispatchedInputId: 'input-g1e-operation-claim',
+        updatedAt: NOW,
+      })
+    })
+    const host = outcome(() => {
+      db.runs.update(runIds.host, { hostSessionId: 'hsid-g1e-other', updatedAt: NOW })
+    })
+    const generation = outcome(() => {
+      db.runs.update(runIds.generation, { generation: 2, updatedAt: NOW })
+    })
+    const same = outcome(() => {
+      db.runs.update(runIds.same, {
+        hostSessionId: APP_HOST,
+        generation: 1,
+        updatedAt: NOW,
+      })
+    })
+
+    expect({
+      runtimeUpdate,
+      runtimeClaim,
+      operationUpdate,
+      operationClaim,
+      host,
+      generation,
+      same,
+      rows: Object.fromEntries(
+        Object.entries(runIds).map(([key, runId]) => [
+          key,
+          db.runs.getByRunId(runId) === null
+            ? null
+            : {
+                hostSessionId: db.runs.getByRunId(runId)?.hostSessionId,
+                generation: db.runs.getByRunId(runId)?.generation,
+                runtimeId: db.runs.getByRunId(runId)?.runtimeId,
+                operationId: db.runs.getByRunId(runId)?.operationId,
+                status: db.runs.getByRunId(runId)?.status,
+              },
+        ])
+      ),
+    }).toEqual({
+      runtimeUpdate: { ok: false, errorName: authorityErrorName },
+      runtimeClaim: { ok: false, errorName: authorityErrorName },
+      operationUpdate: { ok: false, errorName: authorityErrorName },
+      operationClaim: { ok: false, errorName: authorityErrorName },
+      host: { ok: false, errorName: 'RunIdOwnershipError' },
+      generation: { ok: false, errorName: 'RunIdOwnershipError' },
+      same: { ok: true },
+      rows: {
+        runtimeUpdate: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        runtimeClaim: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        operationUpdate: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        operationClaim: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        host: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        generation: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+        same: {
+          hostSessionId: APP_HOST,
+          generation: 1,
+          runtimeId: undefined,
+          operationId: undefined,
+          status: 'queued',
+        },
+      },
+    })
+  })
+
+  it('G1f control keeps ordinary unreserved run tuple binding unchanged', () => {
+    const agentHost = 'hsid-g1f-agent'
+    const agentScope = 'agent:smokey:project:hrc-runtime:task:T-08576'
+    seedSession(agentHost, agentScope, 'g1f')
+    seedRuntime({
+      runtimeId: 'rt-g1f-update',
+      hostSessionId: agentHost,
+      scopeRef: agentScope,
+      laneRef: 'g1f',
+      activeOperationId: 'op-g1f-update',
+    })
+    seedRuntime({
+      runtimeId: 'rt-g1f-claim',
+      hostSessionId: agentHost,
+      scopeRef: agentScope,
+      laneRef: 'g1f',
+      activeOperationId: 'op-g1f-claim',
+    })
+    for (const runId of ['run-g1f-update', 'run-g1f-claim']) {
+      db.runs.insert({
+        runId,
+        hostSessionId: agentHost,
+        scopeRef: agentScope,
+        laneRef: 'g1f',
+        generation: 1,
+        transport: 'tmux',
+        status: 'queued',
+        acceptedAt: NOW,
+        updatedAt: NOW,
+      })
+    }
+
+    const updated = db.runs.update('run-g1f-update', {
+      runtimeId: 'rt-g1f-update',
+      operationId: 'op-g1f-update',
+      updatedAt: NOW,
+    })
+    const claimed = db.runs.claimQueued('run-g1f-claim', {
+      runtimeId: 'rt-g1f-claim',
+      operationId: 'op-g1f-claim',
+      invocationId: undefined,
+      dispatchedInputId: 'input-g1f-claim',
+      updatedAt: NOW,
+    })
+
+    expect({ updated, claimed, claimedRow: db.runs.getByRunId('run-g1f-claim') }).toEqual({
+      updated: expect.objectContaining({
+        runtimeId: 'rt-g1f-update',
+        operationId: 'op-g1f-update',
+        status: 'queued',
+      }),
+      claimed: true,
+      claimedRow: expect.objectContaining({
+        runtimeId: 'rt-g1f-claim',
+        operationId: 'op-g1f-claim',
+        status: 'accepted',
+      }),
+    })
+  })
+})
