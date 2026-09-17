@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite'
 /** T-08566 C14/C14d: retained recovery never races live ownership. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
@@ -57,7 +58,7 @@ function installRetainedMarker(db: HrcDatabase, invocationId: string, seq = 1): 
 }
 
 function retainedCursor(dbPath: string, invocationId: string): number | null {
-  const db = openHrcDatabase(dbPath)
+  const db = new Database(dbPath, { readonly: true })
   try {
     return (
       db.sqlite
@@ -75,8 +76,29 @@ function retainedCursor(dbPath: string, invocationId: string): number | null {
   }
 }
 
+function retainedCheckpoint(
+  dbPath: string,
+  invocationId: string
+): { last_projected_seq: number; retained_projected_through_seq: number | null } | null {
+  const db = new Database(dbPath, { readonly: true })
+  try {
+    return db.sqlite
+      .query<
+        { last_projected_seq: number; retained_projected_through_seq: number | null },
+        [string]
+      >(
+        `SELECT last_projected_seq, retained_projected_through_seq
+           FROM broker_invocations
+          WHERE invocation_id = ?`
+      )
+      .get(invocationId)
+  } finally {
+    db.close()
+  }
+}
+
 function outcomeCount(dbPath: string, invocationId: string): number {
-  const db = openHrcDatabase(dbPath)
+  const db = new Database(dbPath, { readonly: true })
   try {
     return (
       db.sqlite
@@ -89,6 +111,18 @@ function outcomeCount(dbPath: string, invocationId: string): number {
     return 0
   } finally {
     db.close()
+  }
+}
+
+async function recordedReaderAfterSeq(recordPath: string): Promise<number | null> {
+  if (!existsSync(recordPath)) return null
+  try {
+    const record = JSON.parse(await readFile(recordPath, 'utf8')) as { stdin?: string }
+    if (typeof record.stdin !== 'string') return null
+    const request = JSON.parse(record.stdin) as { afterSeq?: unknown }
+    return typeof request.afterSeq === 'number' ? request.afterSeq : null
+  } catch {
+    return null
   }
 }
 
@@ -383,8 +417,8 @@ describe('T-08566 stage 2 authority and ownership', () => {
 
   test('C14b control: unprojected runtimes are not refused by the retained-evidence fence', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-live-control-')
-    const seeded = await seedOfflineRuntime(serverFixture, 'full')
     const server = await createHrcServer(serverFixture.serverOpts())
+    const seeded = await seedOfflineRuntime(serverFixture, 'full')
     try {
       const requests = [
         ...(await operatorOwnershipRequests(serverFixture, seeded)),
@@ -713,11 +747,11 @@ describe('T-08566 stage 2 authority and ownership', () => {
 
   test('C14c negative: pre-projection outcomes leave the marker null and live attach unfenced', async () => {
     const serverFixture = await createHrcTestFixture('t08566-owner-negative-')
-    const unavailable = await seedOfflineRuntime(serverFixture, 'full')
-    const empty = await seedOfflineRuntime(serverFixture, 'unknown-invocation')
-    await Bun.$`mv ${unavailable.reader.root} ${`${unavailable.reader.root}.missing`}`.quiet()
     const server = await createHrcServer(serverFixture.serverOpts())
     try {
+      const unavailable = await seedOfflineRuntime(serverFixture, 'full')
+      const empty = await seedOfflineRuntime(serverFixture, 'unknown-invocation')
+      await Bun.$`mv ${unavailable.reader.root} ${`${unavailable.reader.root}.missing`}`.quiet()
       const unavailableResponse = await serverFixture.postJson('/v1/capture/recover', {
         runtimeId: unavailable.runtimeId,
         yes: true,
@@ -773,23 +807,48 @@ describe('T-08566 stage 2 authority and ownership', () => {
       reader.releaseLock()
       expect(new TextDecoder().decode(first.value)).toContain('READY')
 
-      const recovery = serverFixture.postJson('/v1/capture/recover', {
-        runtimeId: seeded.runtimeId,
-        yes: true,
-      })
+      const recovery = serverFixture
+        .postJson('/v1/capture/recover', {
+          runtimeId: seeded.runtimeId,
+          yes: true,
+        })
+        .then(
+          (response) => ({ kind: 'response' as const, response }),
+          (error: unknown) => ({ kind: 'error' as const, error })
+        )
       for (
         let attempt = 0;
-        attempt < 200 && retainedCursor(serverFixture.dbPath, seeded.invocationId) === null;
+        attempt < 500 && ((await recordedReaderAfterSeq(seeded.reader.recordPath)) ?? 0) === 0;
         attempt += 1
       ) {
-        await Bun.sleep(10)
+        await Bun.sleep(20)
       }
+      const blockedAfterSeq = await recordedReaderAfterSeq(seeded.reader.recordPath)
+      expect(blockedAfterSeq).not.toBeNull()
+      expect(blockedAfterSeq).toBeGreaterThan(0)
       expect(retainedCursor(serverFixture.dbPath, seeded.invocationId)).not.toBeNull()
       expect(outcomeCount(serverFixture.dbPath, seeded.invocationId)).toBe(0)
 
       child.kill(9)
       await child.exited
-      await recovery.catch(() => undefined)
+      const interrupted = await recovery
+      expect(interrupted.kind).toBe('error')
+      const interruptedError =
+        interrupted.kind === 'error'
+          ? interrupted.error
+          : new Error('recovery unexpectedly replied')
+      expect({
+        code: (interruptedError as { code?: string }).code,
+        message:
+          interruptedError instanceof Error ? interruptedError.message : String(interruptedError),
+      }).toEqual({
+        code: 'ECONNRESET',
+        message: expect.stringContaining('socket connection was closed unexpectedly'),
+      })
+      const checkpoint = retainedCheckpoint(serverFixture.dbPath, seeded.invocationId)
+      expect(checkpoint?.last_projected_seq).toBeGreaterThan(0)
+      expect(checkpoint?.retained_projected_through_seq).toBe(checkpoint?.last_projected_seq)
+      expect(outcomeCount(serverFixture.dbPath, seeded.invocationId)).toBe(0)
       await writeFile(seeded.reader.unblockPath, '')
       restarted = await createHrcServer(serverFixture.serverOpts())
 
@@ -819,7 +878,7 @@ describe('T-08566 stage 2 authority and ownership', () => {
       const recorded = JSON.parse(await readFile(seeded.reader.recordPath, 'utf8')) as {
         stdin: string
       }
-      expect(JSON.parse(recorded.stdin)).toMatchObject({ afterSeq: 18 })
+      expect(JSON.parse(recorded.stdin)).toMatchObject({ afterSeq: checkpoint!.last_projected_seq })
     } finally {
       if (child.exitCode === null) {
         child.kill(9)
@@ -828,5 +887,5 @@ describe('T-08566 stage 2 authority and ownership', () => {
       await restarted?.stop()
       await serverFixture.cleanup()
     }
-  }, 15_000)
+  }, 25_000)
 })

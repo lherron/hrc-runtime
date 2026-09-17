@@ -10,8 +10,11 @@
  * derivative preserves captured currentSeq 0 and echoes the request's afterSeq
  * into nextAfterSeq, matching the real reader cursor floor. The wrapper also
  * records argv, stdin and the exact environment offered by HRC, and can block
- * on a sentinel for ownership races.
+ * on a sentinel for ownership races. The compiled f450dc99 captures exit 0 for
+ * ok:true and exit 2 for typed ok:false responses; the deliberate exit-one mode
+ * remains the sole exit-1 derivative.
  */
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -114,7 +117,7 @@ export async function makeOfflineReaderDouble(
   mode: ReaderMode,
   opts: { capability?: boolean; releaseId?: string } = {}
 ): Promise<ReaderDouble> {
-  const releaseId = opts.releaseId ?? 'asp-f450dc999924-test'
+  const releaseId = opts.releaseId ?? `asp-f450dc999924-test-${randomUUID()}`
   const releaseRoot = join(root, releaseId)
   const executable = join(releaseRoot, 'harness-broker')
   const responsePath = join(releaseRoot, 'response.json')
@@ -181,7 +184,7 @@ if mode == 'snapshot-change' and after > 0:
 print(json.dumps(response, separators=(',', ':')))
 PY`
 }
-exit ${mode === 'exit-one' ? 1 : 0}
+exit ${mode === 'exit-one' ? 1 : ['corrupt', 'duplicate', 'oversize', 'below-floor'].includes(mode) ? 2 : 0}
 `
   await writeFile(executable, script)
   await chmod(executable, 0o755)

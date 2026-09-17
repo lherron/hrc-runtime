@@ -206,18 +206,15 @@ describe('T-08566 exact immutable reader release', () => {
       'overflow',
       'exit-one',
       'timeout',
-      'corrupt',
-      'duplicate',
-      'oversize',
-      'below-floor',
     ])
     for (const mode of allModes) {
       if (deliberatelyMalformedModes.has(mode)) continue
       const afterSeq = mode === 'unknown-invocation' ? 7 : mode === 'after-beyond-current' ? 100 : 0
       const observed = await invokeReaderDouble(mode, afterSeq)
+      const ok = observed.response['ok']
       expect({ mode, exitCode: observed.exitCode, stderr: observed.stderr }).toEqual({
         mode,
-        exitCode: 0,
+        exitCode: ok === false ? 2 : 0,
         stderr: '',
       })
       expect(observed.persistedRelease['capabilities']).toContain(
@@ -229,6 +226,11 @@ describe('T-08566 exact immutable reader release', () => {
         builtAt: observed.persistedRelease['builtAt'],
       }
       expect(observed.response['release']).toEqual(persistedIdentity)
+
+      if (ok === false) {
+        expect((observed.response['error'] as { code?: unknown })?.code).toBeString()
+        continue
+      }
 
       const result = observed.response['result'] as {
         currentSeq: number
@@ -260,6 +262,55 @@ describe('T-08566 exact immutable reader release', () => {
     })
     expect((mismatch.response['release'] as { releaseId: string }).releaseId).not.toBe(
       mismatch.persistedRelease['releaseId']
+    )
+  })
+
+  test('two seeded readers own distinct releases and cannot overwrite or remove each other', async () => {
+    const intact = await seedOfflineRuntime(fixture, 'full')
+    const typedError = await seedOfflineRuntime(fixture, 'corrupt')
+    const intactManifest = JSON.parse(
+      await readFile(`${intact.reader.root}/release.json`, 'utf8')
+    ) as Record<string, unknown>
+    const typedManifest = JSON.parse(
+      await readFile(`${typedError.reader.root}/release.json`, 'utf8')
+    ) as Record<string, unknown>
+    const intactResponse = JSON.parse(
+      await readFile(`${intact.reader.root}/response.json`, 'utf8')
+    ) as Record<string, unknown>
+    const typedResponseText = await readFile(`${typedError.reader.root}/response.json`, 'utf8')
+    const typedResponse = JSON.parse(typedResponseText) as Record<string, unknown>
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const intactBinding = db.runtimes.getByRuntimeId(intact.runtimeId)?.runtimeStateJson?.[
+        'executionRelease'
+      ] as Record<string, unknown>
+      const typedBinding = db.runtimes.getByRuntimeId(typedError.runtimeId)?.runtimeStateJson?.[
+        'executionRelease'
+      ] as Record<string, unknown>
+      for (const observed of [
+        { manifest: intactManifest, binding: intactBinding, response: intactResponse },
+        { manifest: typedManifest, binding: typedBinding, response: typedResponse },
+      ]) {
+        const identity = {
+          releaseId: observed.manifest['releaseId'],
+          sourceCommit: observed.manifest['sourceCommit'],
+          builtAt: observed.manifest['builtAt'],
+        }
+        expect(observed.binding).toMatchObject(identity)
+        expect(observed.response['release']).toEqual(identity)
+      }
+    } finally {
+      db.close()
+    }
+    expect(intact.reader.root).not.toBe(typedError.reader.root)
+    expect(intactManifest['releaseId']).not.toBe(typedManifest['releaseId'])
+    expect(intactResponse).toMatchObject({ ok: true })
+    expect(typedResponse).toMatchObject({ ok: false, error: { code: 'ledger_corrupt' } })
+
+    await rm(intact.reader.root, { recursive: true, force: true })
+    expect(existsSync(typedError.reader.executable)).toBe(true)
+    expect(await readFile(`${typedError.reader.root}/response.json`, 'utf8')).toBe(
+      typedResponseText
     )
   })
 
@@ -413,6 +464,30 @@ describe('T-08566 exact immutable reader release', () => {
   }, 20_000)
 
   test('torn tail projects every intact row through seq 60 and preserves integrity detail', async () => {
+    const intact = await capturedReaderResponse('full.stdout.json')
+    const intactEvents = (
+      intact['result'] as {
+        events: Array<{
+          seq: number
+          type: string
+          turnId?: string
+          correlation?: { runId?: string }
+        }>
+      }
+    ).events.filter((event) => event.seq <= 60)
+    const expectedTerminals = intactEvents
+      .filter((event) => event.type === 'turn.completed')
+      .map((event) => ({
+        seq: event.seq,
+        type: event.type,
+        turn_id: event.turnId,
+      }))
+    const incompleteTurn = intactEvents.find(
+      (event) => event.seq === 8 && event.type === 'turn.started'
+    )
+    expect(expectedTerminals).toHaveLength(1)
+    expect(incompleteTurn?.turnId).toBeString()
+
     const seeded = await seedOfflineRuntime(fixture, 'torn')
     await installPagedTornReader(seeded)
     const response = await fixture.postJson('/v1/capture/recover', {
@@ -442,10 +517,40 @@ describe('T-08566 exact immutable reader release', () => {
     try {
       expect(
         db.sqlite
-          .query<{ count: number }, []>(
-            "SELECT COUNT(*) AS count FROM hrc_events WHERE evidence_origin = 'retained' AND event_kind = 'turn.completed'"
+          .query<{ seq: number; type: string; turn_id: string | null }, [string]>(
+            `SELECT seq,
+                    type,
+                    json_extract(broker_envelope_json, '$.turnId') AS turn_id
+               FROM broker_invocation_events
+              WHERE invocation_id = ?
+                AND evidence_origin = 'retained'
+                AND type = 'turn.completed'
+              ORDER BY seq`
           )
-          .get()?.count
+          .all(seeded.invocationId)
+      ).toEqual(expectedTerminals)
+      expect(
+        db.sqlite
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count
+               FROM broker_invocation_events
+              WHERE invocation_id = ?
+                AND evidence_origin = 'retained'
+                AND seq > 60`
+          )
+          .get(seeded.invocationId)?.count
+      ).toBe(0)
+      expect(
+        db.sqlite
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) AS count
+               FROM broker_invocation_events
+              WHERE invocation_id = ?
+                AND evidence_origin = 'retained'
+                AND type = 'turn.completed'
+                AND json_extract(broker_envelope_json, '$.turnId') = ?`
+          )
+          .get(seeded.invocationId, incompleteTurn!.turnId!)?.count
       ).toBe(0)
     } finally {
       db.close()
