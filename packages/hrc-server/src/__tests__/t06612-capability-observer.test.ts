@@ -84,6 +84,35 @@ describe('node materialization capability observer', () => {
     expect(await observer(SCOPE)).toEqual({ outcome: 'capable' })
   })
 
+  test('muse profile resolves to the muse harness with no credential marker (muse seat)', async () => {
+    await writeFile(
+      join(agentRoot, 'agent-profile.toml'),
+      [
+        'version = 3',
+        '',
+        '[identity]',
+        '[provisioning]',
+        'harness = "muse"',
+        '',
+        '[spaces]',
+        'base = []',
+        '',
+      ].join('\n')
+    )
+    const observer = createSummonCapabilityObserver({
+      env: {},
+      userHome,
+      detectHarness: async () => ({ available: true }),
+    })
+
+    expect(
+      await observer(
+        SCOPE,
+        hint({ harness: { provider: 'meta', interactive: true, id: 'muse-cli' } })
+      )
+    ).toEqual({ outcome: 'capable' })
+  })
+
   test('registered placement wins when the daemon cwd is outside the checkout collection', async () => {
     await mkdir(join(userHome, '.codex'), { recursive: true })
     await writeFile(join(userHome, '.codex', 'auth.json'), '{}')

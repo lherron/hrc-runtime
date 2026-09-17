@@ -100,6 +100,8 @@ function adapterIdFor(
         return 'pi'
       case 'pi-sdk':
         return 'pi-sdk'
+      case 'muse-cli':
+        return 'muse'
     }
   }
 
@@ -116,6 +118,8 @@ function adapterIdFor(
       return 'pi'
     case 'pi-sdk':
       return 'pi-sdk'
+    case 'muse-cli':
+      return 'muse'
     default:
       return undefined
   }
@@ -154,6 +158,12 @@ function credentialRefusal(
         'credentials',
         'pi credentials not observed: no ~/.pi/agent/auth.json — configure Pi authentication as this user'
       )
+    }
+    case 'muse': {
+      // No file marker to check: muse authenticates through keychain-bound
+      // oauth under the operator HOME, which the run env preserves. Auth
+      // failures surface from the driver at runtime, not at summon.
+      return undefined
     }
   }
 }
