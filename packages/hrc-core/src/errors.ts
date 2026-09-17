@@ -49,6 +49,11 @@ export const HrcErrorCode = {
   APP_SESSION_REMOVED: 'app_session_removed',
   SESSION_KIND_MISMATCH: 'session_kind_mismatch',
   UNSUPPORTED_CAPABILITY: 'unsupported_capability',
+  /**
+   * T-08564: an ASP declaration observation reported an invalid source that
+   * prevents an effective declaration (targets, selected target, priming).
+   */
+  DECLARATION_INVALID: 'declaration_invalid',
   MISSING_SESSION_SPEC: 'missing_session_spec',
   /** A `--reply-to` anchor lives in a different conversation scope than the target. */
   REPLY_TO_SCOPE_MISMATCH: 'reply_to_scope_mismatch',
@@ -189,6 +194,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.APP_SESSION_REMOVED]: 409,
   [HrcErrorCode.SESSION_KIND_MISMATCH]: 422,
   [HrcErrorCode.UNSUPPORTED_CAPABILITY]: 422,
+  [HrcErrorCode.DECLARATION_INVALID]: 422,
   [HrcErrorCode.MISSING_SESSION_SPEC]: 422,
   [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
   [HrcErrorCode.NO_RESUMABLE_CONTINUATION]: 422,
@@ -328,6 +334,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
       | 'ask_client_unsupported'
       | 'session_kind_mismatch'
       | 'unsupported_capability'
+      | 'declaration_invalid'
       | 'missing_session_spec'
       | 'no_resumable_continuation'
       | 'presentation_operator_unsupported'

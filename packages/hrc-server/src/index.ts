@@ -104,6 +104,7 @@ import {
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
 export { projectSemanticTurnResponse } from './event-notification-handlers.js'
+import { handleResolveRuntimeIntent, handleRunPreview } from './declaration-handlers.js'
 import {
   type DesktopObserverHandlersMethods,
   desktopObserverHandlersMethods,
@@ -1117,6 +1118,9 @@ class HrcServerInstance implements HrcServer {
       this.handleMailStopDecision(request),
     [exactRouteKey('POST', '/v1/internal/mail/hint-decision')]: (request) =>
       this.handleMailHintDecision(request),
+    [exactRouteKey('POST', '/v1/declarations/resolve')]: (request) =>
+      handleResolveRuntimeIntent(request),
+    [exactRouteKey('POST', '/v1/previews/run')]: (request) => handleRunPreview(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>

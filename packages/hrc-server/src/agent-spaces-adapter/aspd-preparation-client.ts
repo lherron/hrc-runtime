@@ -87,7 +87,7 @@ export function configuredAspdEndpoint(
   return value
 }
 
-function aspdError(
+export function aspdError(
   code: AspdPreparationErrorCode,
   message: string,
   detail: Record<string, unknown>
@@ -95,8 +95,17 @@ function aspdError(
   return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
-/** Validate the service hello this route depends on. Returns the identity or throws. */
-export function admitAspdHello(endpoint: string, hello: AspcHelloResponse): AspdServiceIdentity {
+/**
+ * Validate the service hello a route depends on. Returns the identity or throws.
+ * T-08564: `requiredCapabilities` names the operations the caller will invoke on
+ * this connection; the default is the preparation route's single operation, so
+ * existing callers keep their exact refusal detail.
+ */
+export function admitAspdHello(
+  endpoint: string,
+  hello: AspcHelloResponse,
+  requiredCapabilities: readonly string[] = ['compileHarnessInvocation']
+): AspdServiceIdentity {
   if (hello.protocolVersion !== ASPC_PROTOCOL_VERSION) {
     throw aspdError(
       'aspd_protocol_incompatible',
@@ -104,19 +113,23 @@ export function admitAspdHello(endpoint: string, hello: AspcHelloResponse): Aspd
       { endpoint, offered: hello.protocolVersion, required: ASPC_PROTOCOL_VERSION }
     )
   }
-  const capabilities = hello.capabilities
-  const transports = (capabilities?.transports ?? []) as readonly string[]
-  if (
-    capabilities?.compileHarnessInvocation !== true ||
-    !transports.includes('unix-jsonrpc-ndjson')
-  ) {
+  const capabilities = hello.capabilities as Record<string, unknown> | undefined
+  const transports = (capabilities?.['transports'] ?? []) as readonly string[]
+  const missing = requiredCapabilities.filter((name) => capabilities?.[name] !== true)
+  if (missing.length > 0 || !transports.includes('unix-jsonrpc-ndjson')) {
     throw aspdError(
       'aspd_capability_missing',
-      'aspd does not offer unix compileHarnessInvocation',
+      `aspd does not offer unix ${requiredCapabilities.join(', ')}`,
       {
         endpoint,
-        required: { compileHarnessInvocation: true, transport: 'unix-jsonrpc-ndjson' },
-        offered: { compileHarnessInvocation: capabilities?.compileHarnessInvocation, transports },
+        required: {
+          ...Object.fromEntries(requiredCapabilities.map((name) => [name, true])),
+          transport: 'unix-jsonrpc-ndjson',
+        },
+        offered: {
+          ...Object.fromEntries(requiredCapabilities.map((name) => [name, capabilities?.[name]])),
+          transports,
+        },
       }
     )
   }
@@ -184,7 +197,7 @@ export async function probeAspdService(
   }
 }
 
-function translateAspdError(endpoint: string, error: unknown): unknown {
+export function translateAspdError(endpoint: string, error: unknown): unknown {
   if (error instanceof HrcRuntimeUnavailableError) return error
   if (error instanceof AspcServiceUnavailableError) {
     return aspdError('aspd_unavailable', `aspd unavailable at ${endpoint}`, {

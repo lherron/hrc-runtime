@@ -604,9 +604,18 @@ export type {
 export {
   applyProvisionDirectives,
   buildHrcRuntimeIntent,
+  formatProfileProvisioningStrippedWarning,
   harnessFrontendToHrcHarness,
   resolveAgentHarness,
 } from './runtime-intent-assembly.js'
+export type {
+  DeclarationRunMode,
+  DeclarationSourceState,
+  ResolveRuntimeIntentRequest,
+  ResolveRuntimeIntentResponse,
+  ResolvedDeclarationAgentSources,
+  RunPreviewRequest,
+} from './declaration-contracts.js'
 export type {
   BuildHrcRuntimeIntentInput,
   ResolvedAgentHarness,

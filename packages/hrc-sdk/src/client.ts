@@ -30,6 +30,7 @@ import type {
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
+import type { ResolveRuntimeIntentRequest, ResolveRuntimeIntentResponse } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -358,6 +359,59 @@ export class HrcClient {
   }
 
   // -- Typed SDK methods -----------------------------------------------------
+
+  /**
+   * T-08564: resolve a runtime intent from ASP declaration observations through
+   * the daemon (`POST /v1/declarations/resolve`). No local declaration parsing and
+   * no fallback: a daemon without the route is `unsupported_capability`, an
+   * unreachable daemon socket is `runtime_unavailable`/`hrc_daemon_unreachable`,
+   * and a positive `timeoutMs` aborts with the platform abort/timeout error.
+   */
+  async resolveRuntimeIntent(
+    request: ResolveRuntimeIntentRequest,
+    opts?: { timeoutMs?: number | undefined }
+  ): Promise<ResolveRuntimeIntentResponse> {
+    const path = '/v1/declarations/resolve'
+    const timeoutMs = opts?.timeoutMs
+    const signal =
+      typeof timeoutMs === 'number' && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
+    let res: Response
+    try {
+      res = await this.unixFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        ...(signal ? { signal } : {}),
+      })
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.name === 'TimeoutError')
+      ) {
+        throw error
+      }
+      throw new HrcDomainError(
+        HrcErrorCode.RUNTIME_UNAVAILABLE,
+        `HRC daemon unreachable at ${this.socketPath}`,
+        {
+          code: 'hrc_daemon_unreachable',
+          socketPath: this.socketPath,
+          cause: error instanceof Error ? error.message : String(error),
+        }
+      )
+    }
+    if (res.status === 404) {
+      throw new HrcDomainError(
+        HrcErrorCode.UNSUPPORTED_CAPABILITY,
+        'HRC daemon does not serve declaration resolution',
+        { capability: 'declarations.resolve', route: path }
+      )
+    }
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+    return (await res.json()) as ResolveRuntimeIntentResponse
+  }
 
   async resolveSession(request: ResolveSessionRequest): Promise<ResolveSessionResponse> {
     return this.postJson<ResolveSessionResponse>('/v1/sessions/resolve', request)

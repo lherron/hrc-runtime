@@ -204,7 +204,29 @@ function warnProfileProvisioningStripped(
   error: unknown,
   fallback: ResolvedAgentHarness
 ): void {
-  const survived = Object.keys(fallback.provision)
+  console.error(
+    formatProfileProvisioningStrippedWarning({
+      agentId,
+      profilePath,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      survivingProvisionKeys: Object.keys(fallback.provision),
+    })
+  )
+}
+
+/**
+ * T-08564: the single-line `agent.provisioning.stripped` warning, shared by the
+ * in-process assembler above and the declaration-observation route, which
+ * projects it from an explicit producer `invalid` profile observation. Only
+ * the `error=` detail comes from the caller; every other byte is HRC-owned.
+ */
+export function formatProfileProvisioningStrippedWarning(input: {
+  agentId: string
+  profilePath: string
+  errorMessage: string
+  survivingProvisionKeys: readonly string[]
+}): string {
+  const survived = input.survivingProvisionKeys
   // Two different facts, so two different sentences: with a matching project
   // target the agent keeps that target's pins and loses only the profile's;
   // with none it is born with nothing at all.
@@ -216,17 +238,13 @@ function warnProfileProvisioningStripped(
   // embedded source excerpt spanning several lines, and a multi-line WARN in a
   // busy daemon log greps as one hit plus a few lines of orphaned noise — which
   // is most of the way back to being unreadable.
-  const rendered = (error instanceof Error ? error.message : String(error))
-    .replace(/\s+/g, ' ')
-    .trim()
+  const rendered = input.errorMessage.replace(/\s+/g, ' ').trim()
   const detail = rendered.length > 300 ? `${rendered.slice(0, 297)}...` : rendered
-  console.error(
-    [
-      `[hrc-core] WARN agent.provisioning.stripped — agent "${agentId}" ${consequence}.`,
-      'Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing.',
-      `profile=${profilePath} error=${detail}`,
-    ].join(' ')
-  )
+  return [
+    `[hrc-core] WARN agent.provisioning.stripped — agent "${input.agentId}" ${consequence}.`,
+    'Its agent-profile.toml EXISTS but could not be read or parsed, so it contributed nothing.',
+    `profile=${input.profilePath} error=${detail}`,
+  ].join(' ')
 }
 
 /**
