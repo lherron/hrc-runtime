@@ -566,73 +566,93 @@ HRC's `ASP_HOME` (§1.3 Codex home).
 
 **One start authority (attached-run door, aspd configured).** For a Codex
 interactive intent (`provider: openai`, harness `codex-cli` or absent) on a node
-with `HRC_ASPD_SOCKET` configured, the attached-run door does not enter the
-turn-dispatch door to birth or select a runtime, with or without `-p`. It
-calls the start door (`startRuntimeForSession`) with the intent (minus
-`initialPrompt`), the request's `restartStyle` and `attachBeforeInvocationStart`,
-and marks the call as the attached-run door. The start door is the host
-session's start singleflight. It joins a start already registered in
-`runtimeStartOperations` before doing anything else, and otherwise registers its
-own operation before its first await. A start that begins later joins it at
-the start door. A dispatch that begins later joins it through the dispatch
-door's T-07693 in-flight birth join, preceded, when the redirect is off and the
-choice is omitted, by the §1.3 recorded-birth classification. That dispatch
-then applies its own door's existing rules to the runtime this start produced,
-the same rules it applies to that runtime when no start is in flight.
-The attached-run door no longer passes through the dispatch door's
-attach-exempt path (the T-07693 join exemption), so no attached run can cross a
-registered birth unjoined. Every selection below therefore happens inside one
-registered start, against rows no other registered birth can change in between. `-p` is delivered only
-after that start has settled (Initial input, below). With the socket unset, or
-for any other harness, the door keeps today's code path.
+with `HRC_ASPD_SOCKET` configured, the attached-run door does not use the
+turn-dispatch door, with or without `-p`. It calls the start door
+(`startRuntimeForSession`) with the intent (minus `initialPrompt`), the request's
+`restartStyle`, `attachBeforeInvocationStart`, the door marker and, when present,
+the prompt with a fresh run id. The start door is the host session's start
+singleflight. Selection, birth and `-p` delivery all happen inside ONE operation
+that this door registers in `runtimeStartOperations`. The operation is registered
+before its first await and deregistered only after its selected runtime has
+received `-p` or the operation refused.
 
-**Selection (inside the start operation, after tmux liveness reconcile).** The
-subject is the joined runtime when the door joined a start, otherwise the
-scope's established runtime (§1.3 definition: the newest harness-broker runtime
-not unavailable or failed, of ANY provider, harness, driver or invocation state,
-so `starting`/`stopping` count). First match wins:
-1. `restartStyle: fresh_pty` (`--force-restart`), with no start joined: the
-   operator asked for replacement. Existing behavior: the established runtime is
-   stale-marked, then the interactive birth runs (rule 4). Nothing runs beside a
-   live runtime. A joined start is never replaced; it falls through to rules 2–3.
-2. The subject has `transport: tmux`. Existing interactive start admission
-   decides, exactly as today: reuse of a matching runtime, otherwise its fenced
-   stale-and-reprovision into the interactive birth (rule 4). This is same-transport
-   admission, which §1.3 permits. A joined tmux start is returned as reuse. A
-   reused runtime keeps its worker, invocation, release (facade or aspd) and
-   presentation.
-3. The subject has `transport: headless`. The door never stale-marks, replaces
-   or starts beside it, whatever its harness or state:
+**Joining a registered start.** If a start is already registered when the door
+arrives, the door never returns that start's result as its own:
+1. It reads that start's recorded birth (§1.3) without awaiting the boot. A
+   foreign birth refuses at once, before any effect: tmux with
+   `start_in_flight_harness_mismatch`, headless with
+   `established_runtime_harness_mismatch`. Foreign means provider other than
+   `openai` or harness other than `codex-cli`.
+2. Otherwise it awaits that start to settle, success or failure, and records the
+   runtime it produced as the *joined newborn*.
+3. It re-enters the start door. If another start registered meanwhile, it
+   repeats from step 1. Otherwise it registers its own operation, carrying the
+   joined newborn's id.
+
+A start that recorded no birth is awaited in full (step 2) and never treated as
+absent. Every selection below happens inside the door's own registered operation,
+against rows no other registered birth can change in between. A later start
+joins the door's operation at the start door. A later dispatch joins it through
+the dispatch door's T-07693 birth join (preceded, redirect off and choice
+omitted, by the §1.3 recorded-birth classification) and then applies its own
+door's existing rules to the runtime this operation produced. The attached-run
+door no longer passes through the dispatch door's attach-exempt path. With the
+socket unset, or for any other harness, the door keeps today's code path.
+
+**Selection (inside the door's operation, after tmux liveness reconcile).** The
+subject is the joined newborn when it is still live (not unavailable or failed).
+Otherwise it is the scope's established runtime (§1.3 definition: the newest
+harness-broker runtime not unavailable or failed, of ANY provider, harness,
+driver or invocation state, so `starting`/`stopping` count). First match wins:
+1. Joined newborn, `transport: tmux`. A newborn is never admission-replaced
+   (T-07693). It must be provider `openai` and harness `codex-cli`, or the door
+   refuses `start_in_flight_harness_mismatch`. It is then joined only when
+   interactive admission (`decideInteractiveBrokerAdmission`, the caller's
+   intent, input-dispatchability) decides `broker-reuse`. Any other decision
+   refuses retryable `runtime_unavailable`: with the admission reason for
+   `runtime-unavailable`, otherwise `start_in_flight_not_reusable`. This is
+   the §1.3 crossing-join rule applied to the attached-run door.
+2. Joined newborn, `transport: headless`: rule 5 below. It is never
+   replaced.
+3. `restartStyle: fresh_pty` (`--force-restart`) with no live joined newborn:
+   the operator asked for replacement. Existing behavior: the established runtime
+   is stale-marked, then the interactive birth runs (rule 6). Nothing runs
+   beside a live runtime.
+4. Established `transport: tmux`: existing interactive start admission decides,
+   exactly as today. It reuses a matching runtime, otherwise applies its fenced
+   stale-and-reprovision into the interactive birth (rule 6). This is
+   same-transport admission for a settled established runtime, which §1.3
+   permits. A reused runtime keeps its worker, invocation, release (facade or
+   aspd) and presentation.
+5. Established or joined `transport: headless`: never stale-marked, replaced
+   or started beside, whatever its harness or state.
    - Provider `openai`, harness `codex-cli`, operator attachable
-     (`canOperatorAttach`: the §1.2/§1.3 app-server viewer), and not transitional:
-     reused. The operation returns it with no admission, preparation or intent
-     change, and the door attaches its `:tui` renderer pane.
-   - Same harness, not operator attachable (presentation `none`, explicit or node
-     default): refused `presentation_conflict` (409), field
-     `presentation.operator`, `livePresentation: none`, with the runtime
-     untouched. An operator terminal requires a presentation this execution does
-     not have. This is the §1.1 conflict rule applied to the door's implicit
-     request for a terminal.
+     (`canOperatorAttach`: the §1.2/§1.3 app-server viewer), not transitional:
+     reused. There is no admission, preparation or intent change, and the door
+     attaches its `:tui` renderer pane.
+   - Same harness, not operator attachable (presentation `none`): refused
+     `presentation_conflict` (409), field `presentation.operator`,
+     `livePresentation: none`, untouched. An operator terminal requires a
+     presentation this execution does not have (the §1.1 conflict rule applied
+     to the door's implicit request for a terminal).
    - Same harness, transitional (active invocation `starting`/`stopping`):
      refused retryable `runtime_unavailable`, reason
      `attached_run_runtime_transitional`, untouched.
    - Any other provider or harness: refused `runtime_unavailable`, reason
      `established_runtime_harness_mismatch` (§1.3), untouched.
-   The caller terminates the runtime or retries. `--force-restart` (rule 1) is
-   the only door path that replaces a live headless runtime, and only by explicit
-   request with no start joined.
-4. Nothing established (or rule 1/2 stale-marked it): the interactive birth. It
+   The caller terminates it or retries. `--force-restart` with no live joined
+   newborn (rule 3) is the only door path that replaces a live headless runtime.
+6. Nothing established (or rule 3/4 stale-marked it): the interactive birth. It
    prepares through aspd, frozen, then launches (below). There is no facade
    fallback. `aspd_unavailable` and every §4/§5 refusal refuse the run before any
    hosting effect, the attach handshake is cancelled, and the CLI reports the
    error.
 
-Refusals in rules 3–4 happen before any runtime, operation or hosting effect of
-this door. The start's recorded birth (§1.3) is decided from the selection: tmux
-for rules 1, 2 and 4, and headless (openai, codex-cli) for a rule 3 reuse. A
-crossing redirect-off dispatch is therefore routed to the transport the door
-actually returns. A refusal records no birth, so a crossing dispatch awaits it in
-full and then applies the row rules.
+Every refusal happens before any runtime, operation or hosting effect of this
+door and delivers no input. The operation's recorded birth (§1.3) is decided from
+the selection: tmux for rules 1, 3, 4 and 6, and headless (openai, codex-cli)
+for rules 2 and 5. A crossing redirect-off dispatch is therefore routed to the
+transport the door actually returns. A refusal records no birth.
 
 **Preparation and freeze (§3–§5 reused).** `startInteractiveTmuxBrokerRuntime`,
 when it carries `attachBeforeInvocationStart` for a `codex-app-server` birth on a
@@ -675,28 +695,33 @@ reports attached-start readiness for this pending start, and the invocation
 starts only after `resume-attached` (the CLI has spawned its attach client) or
 the existing resume deadline cancels it.
 
-**Initial input exactly once.** `-p` is never part of the start. After the
-door's start operation returns a runtime (and, for a birth, after
-`resume-attached` let the invocation start), the door delivers the prompt once
-through the turn-dispatch door, with `waitForCompletion: false`, a fresh run id
-and no attach option, into the runtime the start just selected:
-- If it is tmux, with the attached-run interactive intent. Interactive admission
-  finds that runtime established and reuses it.
-- If it is a rule 3 headless reuse, with the intent's non-interactive form
-  (`harness.interactive` false, `preferredMode: headless`, no `initialPrompt`, no
-  `presentation.operator`). The dispatch door's existing headless reuse applies
-  (§1.3 rule 4 with the redirect off, de85ff26 with it on).
+**Initial input exactly once.** `-p` is never part of the start request and
+is never routed by session. Inside the door's registered operation, after
+selection (and, for a birth, after `resume-attached` let the invocation start),
+the operation delivers the prompt once, with a fresh run id and
+`waitForCompletion: false`, directly into the selected runtime by identity. It
+passes through the turn admission gate and the same executor the dispatch door
+uses for an already-selected runtime: `executeInteractiveBrokerInputTurn` for
+tmux and `executeHeadlessBrokerInputTurn` for a rule 5 reuse (the executors the
+participant path uses, with run persistence, user-prompt event, first-turn watch
+and broker admission). No session-level selection, admission, stale-marking or
+reprovision runs on this path. The prompt therefore reaches exactly the runtime
+whose pane the door hands the caller, or fails on that runtime. The operation
+deregisters only after the executor has returned its submission, so no
+registered start or crossing dispatch can move the session between selection and
+delivery. A refused or cancelled operation delivers nothing. The frozen
+`startRequest` carries no copy of the prompt. Because `-p` no longer bypasses
+the start door on this node, `hrc run --force-restart -p` now honors
+`--force-restart`; the pre-change prompt path ignored `restartStyle`.
 
-A refused or cancelled start delivers nothing. The frozen `startRequest` carries
-no copy of the prompt. The dispatch door can only reuse or apply same-transport
-admission to the runtime it finds, so the delivery never starts a runtime beside
-it. Because `-p` no longer bypasses the start door on this node, `hrc run
---force-restart -p` now honors `--force-restart`. Before this change the prompt
-path ignored `restartStyle`.
+An unregistered birth (`/v1/runtimes/ensure`, the pre-existing limit below) can
+still stale-mark the session's runtime concurrently. On this path that affects
+only the executor's own result for the runtime it was given. It cannot redirect
+the prompt to another runtime.
 
 **Operator attach marking.** Every attached-run outcome publishes presentation
 with `operatorAttachPending: true` before the attach descriptor is returned:
-births (existing), tmux reuse (existing) and rule 3 headless reuse (added, in
+births (existing), tmux reuse (existing) and rule 2/5 headless reuse (added, in
 the start operation before it returns).
 The viewer sidecar therefore opens no additional Ghostty viewer for a runtime the
 caller is attaching to.
@@ -740,7 +765,9 @@ migration.
 
 **Refusals.** New: `aspd_route_requires_durable_ipc` and
 `attached_run_runtime_transitional`. Reused on this door:
-`presentation_conflict` and `established_runtime_harness_mismatch` (rule 3), `aspd_unavailable` and the other §4
+`presentation_conflict`, `established_runtime_harness_mismatch`,
+`start_in_flight_harness_mismatch` and `start_in_flight_not_reusable`,
+`aspd_unavailable` and the other §4
 preparation refusals, `aspd_route_profile_mismatch`, and every §5 launch and hello
 refusal. Existing interactive admission refusals are unchanged.
 
@@ -1006,9 +1033,12 @@ request at boundary P. It launches only on the durable interactive tmux substrat
 from those persisted bytes, requires the durable interactive route, and its
 codex-tui wrapper and hook receiver run from the same execution release as the
 worker. Other doors that birth the interactive backend are not on the route. On
-that door, selection and birth happen inside the host session's registered
-start singleflight, and the door's input is delivered only after that start
-settles. A live headless runtime of any harness or invocation state is never
+that door, selection, birth and input delivery happen inside one operation
+the door registers in the host session's start singleflight. A joined start is
+re-checked by its recorded birth and joined only as a same-harness newborn
+that interactive admission reuses (tmux) or that rule 5 reuses (headless). The
+input is delivered by runtime identity to the selected runtime before the
+operation deregisters. A live headless runtime of any harness or invocation state is never
 stale-marked, replaced or started beside, except by explicit `--force-restart`
 with no start joined. A settled, operator-attachable Codex one is attached and
 receives the input. A Codex one without an operator presentation is refused
@@ -1233,6 +1263,10 @@ keystrokes.
    door's start joins it. Established transitional, foreign-harness, no-viewer
    and viewer headless runtimes each get the rule 3 outcome with rows untouched,
    with no stale-mark and no second runtime.
+   A joined foreign tmux birth refuses without awaiting its boot. A joined
+   same-harness tmux newborn that admission does not reuse is refused. `-p`
+   reaches the selected runtime by identity even when another runtime is
+   stale-marked or inserted for the session between selection and delivery.
    Suites:
    hrc-server and hrc-cli suites, and the harness-broker suite in agent-spaces.
 
