@@ -122,11 +122,11 @@ describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
 
     expect(response.status).toBe(200)
     expect(body.intent.harness).toEqual({
-      provider: 'openai',
+      provider: 'anthropic',
       interactive: false,
-      id: 'codex-cli',
+      id: 'claude-code',
     })
-    expect(body.intent.provision).toEqual({ model: 'x' })
+    expect(body.intent.provision).toEqual({ harness: 'claude-code', model: 'x', remote: true })
     expect(body.declaration.agentSources).toEqual({
       agentsRoot,
       aspHome,
