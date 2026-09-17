@@ -1,4 +1,5 @@
 /** T-08566 C1/C5/C6/C19/C22: exact-release reader admission and failures. */
+import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { chmod, readFile, rm, writeFile } from 'node:fs/promises'
@@ -41,10 +42,33 @@ async function recover(mode: ReaderMode, lastProjectedSeq = 0) {
   }
 }
 
-function projectedRowCounts(runtimeId: string, invocationId: string) {
-  const db = openHrcDatabase(fixture.dbPath)
+function openReadProbe(): Database {
+  const db = new Database(fixture.dbPath, { readonly: true })
+  db.exec('PRAGMA busy_timeout = 5000')
+  return db
+}
+
+function executionRelease(runtimeId: string): Record<string, unknown> | undefined {
+  const db = openReadProbe()
   try {
-    return db.sqlite
+    const row = db
+      .query<{ runtime_state_json: string | null }, [string]>(
+        'SELECT runtime_state_json FROM runtimes WHERE runtime_id = ?'
+      )
+      .get(runtimeId)
+    if (!row?.runtime_state_json) return undefined
+    return (JSON.parse(row.runtime_state_json) as Record<string, unknown>)['executionRelease'] as
+      | Record<string, unknown>
+      | undefined
+  } finally {
+    db.close()
+  }
+}
+
+function projectedRowCounts(runtimeId: string, invocationId: string) {
+  const db = openReadProbe()
+  try {
+    return db
       .query<{ hrc_events: number; broker_invocation_events: number }, [string, string]>(
         `SELECT (SELECT COUNT(*) FROM hrc_events WHERE runtime_id = ?) AS hrc_events,
                 (SELECT COUNT(*) FROM broker_invocation_events WHERE invocation_id = ?) AS broker_invocation_events`
@@ -56,9 +80,9 @@ function projectedRowCounts(runtimeId: string, invocationId: string) {
 }
 
 function projectionState(invocationId: string) {
-  const db = openHrcDatabase(fixture.dbPath)
+  const db = openReadProbe()
   try {
-    return db.sqlite
+    return db
       .query<
         {
           last_projected_seq: number
@@ -279,28 +303,19 @@ describe('T-08566 exact immutable reader release', () => {
     ) as Record<string, unknown>
     const typedResponseText = await readFile(`${typedError.reader.root}/response.json`, 'utf8')
     const typedResponse = JSON.parse(typedResponseText) as Record<string, unknown>
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      const intactBinding = db.runtimes.getByRuntimeId(intact.runtimeId)?.runtimeStateJson?.[
-        'executionRelease'
-      ] as Record<string, unknown>
-      const typedBinding = db.runtimes.getByRuntimeId(typedError.runtimeId)?.runtimeStateJson?.[
-        'executionRelease'
-      ] as Record<string, unknown>
-      for (const observed of [
-        { manifest: intactManifest, binding: intactBinding, response: intactResponse },
-        { manifest: typedManifest, binding: typedBinding, response: typedResponse },
-      ]) {
-        const identity = {
-          releaseId: observed.manifest['releaseId'],
-          sourceCommit: observed.manifest['sourceCommit'],
-          builtAt: observed.manifest['builtAt'],
-        }
-        expect(observed.binding).toMatchObject(identity)
-        expect(observed.response['release']).toEqual(identity)
+    const intactBinding = executionRelease(intact.runtimeId)
+    const typedBinding = executionRelease(typedError.runtimeId)
+    for (const observed of [
+      { manifest: intactManifest, binding: intactBinding, response: intactResponse },
+      { manifest: typedManifest, binding: typedBinding, response: typedResponse },
+    ]) {
+      const identity = {
+        releaseId: observed.manifest['releaseId'],
+        sourceCommit: observed.manifest['sourceCommit'],
+        builtAt: observed.manifest['builtAt'],
       }
-    } finally {
-      db.close()
+      expect(observed.binding).toMatchObject(identity)
+      expect(observed.response['release']).toEqual(identity)
     }
     expect(intact.reader.root).not.toBe(typedError.reader.root)
     expect(intactManifest['releaseId']).not.toBe(typedManifest['releaseId'])
@@ -513,10 +528,10 @@ describe('T-08566 exact immutable reader release', () => {
     expect(projected?.last_projected_seq).toBe(60)
     expect(projected?.retained_projected_through_seq).toBe(60)
     expect(projected?.retained_hrc_events).toBeGreaterThan(0)
-    const db = openHrcDatabase(fixture.dbPath)
+    const db = openReadProbe()
     try {
       expect(
-        db.sqlite
+        db
           .query<{ seq: number; type: string; turn_id: string | null }, [string]>(
             `SELECT seq,
                     type,
@@ -530,7 +545,7 @@ describe('T-08566 exact immutable reader release', () => {
           .all(seeded.invocationId)
       ).toEqual(expectedTerminals)
       expect(
-        db.sqlite
+        db
           .query<{ count: number }, [string]>(
             `SELECT COUNT(*) AS count
                FROM broker_invocation_events
@@ -541,7 +556,7 @@ describe('T-08566 exact immutable reader release', () => {
           .get(seeded.invocationId)?.count
       ).toBe(0)
       expect(
-        db.sqlite
+        db
           .query<{ count: number }, [string, string]>(
             `SELECT COUNT(*) AS count
                FROM broker_invocation_events
@@ -588,9 +603,9 @@ describe('T-08566 exact immutable reader release', () => {
         },
       })
       expect(projectedRowCounts(seeded.runtimeId, seeded.invocationId)).toEqual(projectedRowsBefore)
-      const db = openHrcDatabase(fixture.dbPath)
+      const db = openReadProbe()
       try {
-        const row = db.sqlite
+        const row = db
           .query<
             { last_projected_seq: number; retained_projected_through_seq: number | null },
             [string]

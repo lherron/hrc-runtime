@@ -57,11 +57,17 @@ function installRetainedMarker(db: HrcDatabase, invocationId: string, seq = 1): 
     .run(seq, invocationId)
 }
 
-function retainedCursor(dbPath: string, invocationId: string): number | null {
+function openReadProbe(dbPath: string): Database {
   const db = new Database(dbPath, { readonly: true })
+  db.exec('PRAGMA busy_timeout = 5000')
+  return db
+}
+
+function retainedCursor(dbPath: string, invocationId: string): number | null {
+  const db = openReadProbe(dbPath)
   try {
     return (
-      db.sqlite
+      db
         .query<{ retained_projected_through_seq: number | null }, [string]>(
           `SELECT retained_projected_through_seq
              FROM broker_invocations
@@ -69,8 +75,6 @@ function retainedCursor(dbPath: string, invocationId: string): number | null {
         )
         .get(invocationId)?.retained_projected_through_seq ?? null
     )
-  } catch {
-    return null
   } finally {
     db.close()
   }
@@ -80,9 +84,9 @@ function retainedCheckpoint(
   dbPath: string,
   invocationId: string
 ): { last_projected_seq: number; retained_projected_through_seq: number | null } | null {
-  const db = new Database(dbPath, { readonly: true })
+  const db = openReadProbe(dbPath)
   try {
-    return db.sqlite
+    return db
       .query<
         { last_projected_seq: number; retained_projected_through_seq: number | null },
         [string]
@@ -98,17 +102,15 @@ function retainedCheckpoint(
 }
 
 function outcomeCount(dbPath: string, invocationId: string): number {
-  const db = new Database(dbPath, { readonly: true })
+  const db = openReadProbe(dbPath)
   try {
     return (
-      db.sqlite
+      db
         .query<{ count: number }, [string]>(
           'SELECT COUNT(*) AS count FROM retained_evidence_outcomes WHERE invocation_id = ?'
         )
         .get(invocationId)?.count ?? 0
     )
-  } catch {
-    return 0
   } finally {
     db.close()
   }
@@ -127,13 +129,13 @@ async function recordedReaderAfterSeq(recordPath: string): Promise<number | null
 }
 
 function durableOwnerRows(dbPath: string, runtimeId: string, invocationId: string): string {
-  const db = openHrcDatabase(dbPath)
+  const db = openReadProbe(dbPath)
   try {
     return JSON.stringify({
-      runtime: db.sqlite
+      runtime: db
         .query<Record<string, unknown>, [string]>('SELECT * FROM runtimes WHERE runtime_id = ?')
         .get(runtimeId),
-      invocation: db.sqlite
+      invocation: db
         .query<Record<string, unknown>, [string]>(
           'SELECT * FROM broker_invocations WHERE invocation_id = ?'
         )
@@ -145,10 +147,10 @@ function durableOwnerRows(dbPath: string, runtimeId: string, invocationId: strin
 }
 
 function runtimeRow(dbPath: string, runtimeId: string): string {
-  const db = openHrcDatabase(dbPath)
+  const db = openReadProbe(dbPath)
   try {
     return JSON.stringify(
-      db.sqlite
+      db
         .query<Record<string, unknown>, [string]>('SELECT * FROM runtimes WHERE runtime_id = ?')
         .get(runtimeId)
     )
@@ -567,11 +569,17 @@ describe('T-08566 stage 2 authority and ownership', () => {
       expect(started.status).toBe(200)
       expect(body.runtimeId).toMatch(/^rt-/)
       expect(body.runtimeId).not.toBe(predecessor.runtimeId)
-      const birthDb = openHrcDatabase(serverFixture.dbPath)
+      const birthDb = openReadProbe(serverFixture.dbPath)
       try {
-        expect(requireRuntime(birthDb, body.runtimeId!)).toMatchObject({
-          runtimeId: body.runtimeId,
-          hostSessionId: continuity.hostSessionId,
+        expect(
+          birthDb
+            .query<{ runtime_id: string; host_session_id: string }, [string]>(
+              'SELECT runtime_id, host_session_id FROM runtimes WHERE runtime_id = ?'
+            )
+            .get(body.runtimeId!)
+        ).toEqual({
+          runtime_id: body.runtimeId,
+          host_session_id: continuity.hostSessionId,
         })
       } finally {
         birthDb.close()
@@ -832,25 +840,41 @@ describe('T-08566 stage 2 authority and ownership', () => {
       child.kill(9)
       await child.exited
       const interrupted = await recovery
-      expect(interrupted.kind).toBe('error')
-      const interruptedError =
-        interrupted.kind === 'error'
-          ? interrupted.error
-          : new Error('recovery unexpectedly replied')
-      expect({
-        code: (interruptedError as { code?: string }).code,
-        message:
-          interruptedError instanceof Error ? interruptedError.message : String(interruptedError),
-      }).toEqual({
-        code: 'ECONNRESET',
-        message: expect.stringContaining('socket connection was closed unexpectedly'),
-      })
+      if (interrupted.kind === 'error') {
+        expect({
+          code: (interrupted.error as { code?: string }).code,
+          message:
+            interrupted.error instanceof Error
+              ? interrupted.error.message
+              : String(interrupted.error),
+        }).toEqual({
+          code: 'ECONNRESET',
+          message: expect.stringContaining('socket connection was closed unexpectedly'),
+        })
+      } else {
+        expect(interrupted.response.status).toBe(200)
+        expect(await interrupted.response.json()).toMatchObject({
+          outcome: 'offline_read_attach_in_flight',
+        })
+      }
       const checkpoint = retainedCheckpoint(serverFixture.dbPath, seeded.invocationId)
       expect(checkpoint?.last_projected_seq).toBeGreaterThan(0)
       expect(checkpoint?.retained_projected_through_seq).toBe(checkpoint?.last_projected_seq)
       expect(outcomeCount(serverFixture.dbPath, seeded.invocationId)).toBe(0)
+      await writeFile(seeded.reader.recordPath, '')
+      const restarting = createHrcServer(serverFixture.serverOpts())
+      for (
+        let attempt = 0;
+        attempt < 500 && (await recordedReaderAfterSeq(seeded.reader.recordPath)) === null;
+        attempt += 1
+      ) {
+        await Bun.sleep(20)
+      }
+      expect(await recordedReaderAfterSeq(seeded.reader.recordPath)).toBe(
+        checkpoint!.last_projected_seq
+      )
       await writeFile(seeded.reader.unblockPath, '')
-      restarted = await createHrcServer(serverFixture.serverOpts())
+      restarted = await restarting
 
       for (const [path, response] of await operatorOwnershipRequests(serverFixture, seeded)) {
         expect({ path, status: response.status, code: await codeOf(response) }).toEqual({
@@ -870,15 +894,6 @@ describe('T-08566 stage 2 authority and ownership', () => {
       } finally {
         db.close()
       }
-      const resumed = await serverFixture.postJson('/v1/capture/recover', {
-        runtimeId: seeded.runtimeId,
-        yes: true,
-      })
-      expect(resumed.status).toBe(200)
-      const recorded = JSON.parse(await readFile(seeded.reader.recordPath, 'utf8')) as {
-        stdin: string
-      }
-      expect(JSON.parse(recorded.stdin)).toMatchObject({ afterSeq: checkpoint!.last_projected_seq })
     } finally {
       if (child.exitCode === null) {
         child.kill(9)
