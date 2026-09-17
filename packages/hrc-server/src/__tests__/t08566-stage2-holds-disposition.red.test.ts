@@ -1,8 +1,8 @@
+import { Database } from 'bun:sqlite'
 /** T-08566 D1-D5/D8/D9: evidence holds outlive automation and need disposition. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { Database } from 'bun:sqlite'
-import { createHrcServer, type HrcServer } from '../index'
-import { createHrcTestFixture, type HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { type HrcServer, createHrcServer } from '../index'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import { seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
 
 let fixture: HrcServerTestFixture
@@ -29,13 +29,13 @@ describe('T-08566 recovery holds and disposition', () => {
 
   test('recovery is mutating: confirmation required and dry-run never spawns', async () => {
     const seeded = await seedOfflineRuntime(fixture, 'full')
-    const unconfirmed = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const unconfirmed = await fixture.postJson('/v1/capture/recover', {
       runtimeId: seeded.runtimeId,
     })
     expect(unconfirmed.status).toBe(400)
     expect(await unconfirmed.json()).toMatchObject({ error: { code: 'confirmation_required' } })
 
-    const dryRun = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const dryRun = await fixture.postJson('/v1/capture/recover', {
       runtimeId: seeded.runtimeId,
       dryRun: true,
     })
@@ -45,7 +45,7 @@ describe('T-08566 recovery holds and disposition', () => {
 
   test('bulk prune spares held evidence and explicit disposal requires a reason', async () => {
     const seeded = await seedOfflineRuntime(fixture, 'release-mismatch')
-    const recovery = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const recovery = await fixture.postJson('/v1/capture/recover', {
       runtimeId: seeded.runtimeId,
       yes: true,
     })

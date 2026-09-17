@@ -1,11 +1,8 @@
 /** T-08566 C16/C17/C18/C21: bounded paging, progress and resumable slices. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { createHrcServer, type HrcServer } from '../index'
-import { createHrcTestFixture, type HrcServerTestFixture } from './fixtures/hrc-test-fixture'
-import {
-  type ReaderMode,
-  seedOfflineRuntime,
-} from './fixtures/t08566-offline-reader-double'
+import { type HrcServer, createHrcServer } from '../index'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { type ReaderMode, seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -19,7 +16,7 @@ afterEach(async () => {
 })
 
 async function recoverRuntime(runtimeId: string) {
-  const response = await fixture.postJson('/v1/runtimes/capture/recover', {
+  const response = await fixture.postJson('/v1/capture/recover', {
     runtimeId,
     yes: true,
   })
@@ -56,9 +53,7 @@ describe('T-08566 paging and work slices', () => {
 
   test('slice checkpoint is in_progress without consuming retry budget, then resumes', async () => {
     await server.stop()
-    server = await createHrcServer(
-      fixture.serverOpts({ offlineEvidenceSliceMaxPages: 3 } as never)
-    )
+    server = await createHrcServer(fixture.serverOpts({ offlineEvidenceSliceMaxPages: 3 } as never))
     const seeded = await seedOfflineRuntime(fixture, 'small-bytes')
     const first = await recoverRuntime(seeded.runtimeId)
     expect(first.status).toBe(200)

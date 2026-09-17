@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import { createHrcServer, type HrcServer } from '../index'
-import { createHrcTestFixture, type HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { type HrcServer, createHrcServer } from '../index'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import {
   type ReaderMode,
   makeOfflineReaderDouble,
@@ -24,7 +24,7 @@ afterEach(async () => {
 
 async function recover(mode: ReaderMode, lastProjectedSeq = 0) {
   const seeded = await seedOfflineRuntime(fixture, mode, { lastProjectedSeq })
-  const response = await fixture.postJson('/v1/runtimes/capture/recover', {
+  const response = await fixture.postJson('/v1/capture/recover', {
     runtimeId: seeded.runtimeId,
     yes: true,
   })
@@ -78,7 +78,7 @@ describe('T-08566 exact immutable reader release', () => {
 
   test('unbound, incapable, and unavailable releases refuse before reader spawn', async () => {
     const incapable = await seedOfflineRuntime(fixture, 'full', { capability: false })
-    const incapableResponse = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const incapableResponse = await fixture.postJson('/v1/capture/recover', {
       runtimeId: incapable.runtimeId,
       yes: true,
     })
@@ -96,7 +96,7 @@ describe('T-08566 exact immutable reader release', () => {
     } finally {
       db.close()
     }
-    const unboundResponse = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const unboundResponse = await fixture.postJson('/v1/capture/recover', {
       runtimeId: unbound.runtimeId,
       yes: true,
     })
@@ -108,7 +108,7 @@ describe('T-08566 exact immutable reader release', () => {
 
     const unavailable = await seedOfflineRuntime(fixture, 'full')
     await rm(unavailable.reader.root, { recursive: true, force: true })
-    const unavailableResponse = await fixture.postJson('/v1/runtimes/capture/recover', {
+    const unavailableResponse = await fixture.postJson('/v1/capture/recover', {
       runtimeId: unavailable.runtimeId,
       yes: true,
     })
@@ -120,7 +120,7 @@ describe('T-08566 exact immutable reader release', () => {
   test('revivable statuses never spawn an offline reader or move the cursor', async () => {
     for (const status of ['crashed', 'dead', 'stale', 'detached']) {
       const seeded = await seedOfflineRuntime(fixture, 'full', { status })
-      const response = await fixture.postJson('/v1/runtimes/capture/recover', {
+      const response = await fixture.postJson('/v1/capture/recover', {
         runtimeId: seeded.runtimeId,
         yes: true,
       })

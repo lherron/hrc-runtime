@@ -23,6 +23,7 @@ export type ReaderMode =
   | 'overflow'
   | 'exit-one'
   | 'timeout'
+  | 'block-page-two'
   | 'torn'
   | 'corrupt'
   | 'duplicate'
@@ -40,6 +41,9 @@ export type ReaderDouble = {
 export type OfflineRuntime = {
   runtimeId: string
   invocationId: string
+  hostSessionId: string
+  scopeRef: string
+  sessionRef: string
   ledgerPath: string
   indexPath: string
   reader: ReaderDouble
@@ -63,7 +67,10 @@ export async function deriveReaderResponse(mode: ReaderMode): Promise<string> {
   }
   const sourceName =
     exactCapture[mode] ??
-    (mode === 'small-bytes' || mode === 'nonprogress' || mode === 'snapshot-change'
+    (mode === 'small-bytes' ||
+    mode === 'block-page-two' ||
+    mode === 'nonprogress' ||
+    mode === 'snapshot-change'
       ? 'small-bytes.stdout.json'
       : 'full.stdout.json')
   const captured = await capturedReaderResponse(sourceName)
@@ -123,8 +130,8 @@ ${mode === 'timeout' ? `while [ ! -e "${unblockPath}" ]; do sleep 0.05; done` : 
 ${
   mode === 'overflow'
     ? `cat "${responsePath}"`
-    : `python3 - "$stdin" "${responsePath}" "${mode}" <<'PY'
-import json, sys
+    : `python3 - "$stdin" "${responsePath}" "${mode}" "${unblockPath}" <<'PY'
+import json, os, sys, time
 request = json.load(open(sys.argv[1]))
 response = json.load(open(sys.argv[2]))
 mode = sys.argv[3]
@@ -134,13 +141,16 @@ events = response.get('result', {}).get('events', [])
 for index, event in enumerate(events, 1):
     if invocation:
         event['invocationId'] = invocation
-    if mode in ('small-bytes', 'snapshot-change'):
+    if mode in ('small-bytes', 'block-page-two', 'snapshot-change'):
         event['seq'] = after + index
-if mode in ('small-bytes', 'snapshot-change'):
+if mode in ('small-bytes', 'block-page-two', 'snapshot-change'):
     current = 72 if mode == 'small-bytes' else 36
     response['result']['currentSeq'] = current
     response['hasMore'] = after + len(events) < current
     response['nextAfterSeq'] = after + len(events)
+if mode == 'block-page-two' and after > 0:
+    while not os.path.exists(sys.argv[4]):
+        time.sleep(0.05)
 if mode == 'snapshot-change' and after > 0:
     response['snapshot']['ledger']['mtimeMs'] += 1
 print(json.dumps(response, separators=(',', ':')))
@@ -197,6 +207,9 @@ export async function seedOfflineRuntime(
   const now = fixture.now()
   try {
     db.runtimes.update(runtimeId, {
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
       controllerKind: 'harness-broker',
       activeInvocationId: invocationId,
       runtimeStateJson: {
@@ -245,10 +258,22 @@ export async function seedOfflineRuntime(
   } finally {
     db.close()
   }
-  return { runtimeId, invocationId, ledgerPath, indexPath, reader }
+  return {
+    runtimeId,
+    invocationId,
+    hostSessionId,
+    scopeRef,
+    sessionRef: `${scopeRef}/lane:default`,
+    ledgerPath,
+    indexPath,
+    reader,
+  }
 }
 
-export function columnNames(sqlite: { query<T, P extends unknown[]>(sql: string): { all(...p: P): T[] } }, table: string): string[] {
+export function columnNames(
+  sqlite: { query<T, P extends unknown[]>(sql: string): { all(...p: P): T[] } },
+  table: string
+): string[] {
   return sqlite
     .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
     .all()
