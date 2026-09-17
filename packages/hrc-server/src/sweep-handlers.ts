@@ -1,4 +1,10 @@
-import { HrcConflictError, HrcDomainError, HrcErrorCode } from 'hrc-core'
+import {
+  HrcBadRequestError,
+  HrcConflictError,
+  HrcDomainError,
+  HrcErrorCode,
+  HrcNotFoundError,
+} from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -11,6 +17,7 @@ import type {
   SweepRuntimesResponse,
   SweepRuntimesSummary,
 } from 'hrc-core'
+import { recordOperatorDisposition, retainedEvidenceHold } from './broker/offline-evidence'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { runFirstTurnEvaluationOnce } from './first-turn-eval.js'
 import { resolveFirstTurnEvalIntervalSeconds } from './first-turn-watch.js'
@@ -340,7 +347,17 @@ export async function handlePruneRuntimes(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
-  const body = parsePruneRuntimesRequest(await parseJsonBody(request))
+  const raw = await parseJsonBody(request)
+  // T-08566: disposition has its own grammar (one runtimeId, no includeLedgers),
+  // so it is routed before the ledger-manifest pairing rule below.
+  if (
+    typeof raw === 'object' &&
+    raw !== null &&
+    (raw as Record<string, unknown>)['disposeRetainedEvidence'] === true
+  ) {
+    return disposeRetainedEvidence.call(this, raw as Record<string, unknown>)
+  }
+  const body = parsePruneRuntimesRequest(raw)
   if (body.runtimeIds && body.includeLedgers === true) {
     return handleLedgerManifestPrune.call(this, body.runtimeIds, {
       dryRun: body.dryRun === true,
@@ -430,6 +447,96 @@ export async function handlePruneRuntimes(
     ok: true,
     results,
     summary,
+  } satisfies PruneRuntimesResponse)
+}
+
+/**
+ * T-08566 §4.2 — `hrc runtime prune --runtime-id <id> --dispose-retained-evidence
+ * --reason <text> --yes`. Records `operator_disposed` for the held invocations,
+ * then applies the ordinary prune, in one transaction. The audit rows are not
+ * cascaded. Refused, with no mutation, unless the runtime is under hold.
+ */
+async function disposeRetainedEvidence(
+  this: HrcServerInstanceForHandlers,
+  raw: Record<string, unknown>
+): Promise<Response> {
+  const reason = typeof raw['reason'] === 'string' ? raw['reason'].trim() : ''
+  if (reason.length === 0) {
+    return json(
+      {
+        error: {
+          code: 'disposition_reason_required',
+          message: 'retained-evidence disposition requires a reason',
+          detail: {},
+        },
+      },
+      400
+    )
+  }
+  const runtimeIds = Array.isArray(raw['runtimeIds'])
+    ? raw['runtimeIds'].filter((entry): entry is string => typeof entry === 'string')
+    : []
+  if (runtimeIds.length !== 1 || raw['includeLedgers'] === true) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'retained-evidence disposition takes exactly one runtimeId',
+      { runtimeIds }
+    )
+  }
+  const runtimeId = runtimeIds[0] as string
+  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
+  }
+  const hold = retainedEvidenceHold(this.db, runtime)
+  if (!hold.held) {
+    return json(
+      {
+        error: {
+          code: 'retained_evidence_not_held',
+          message: 'runtime has no held retained evidence to dispose',
+          detail: { runtimeId },
+        },
+      },
+      409
+    )
+  }
+  const transport = runtime.transport as SweepRuntimeTransport
+  const base = {
+    type: 'runtime' as const,
+    runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    transport,
+  }
+  if (raw['dryRun'] === true || raw['yes'] !== true) {
+    return json({
+      ok: true,
+      results: [{ ...base, status: 'skipped', reason: 'dry_run_disposition' }],
+      summary: { type: 'summary', matched: 1, pruned: 0, skipped: 1, errors: 0 },
+    } satisfies PruneRuntimesResponse)
+  }
+  const at = timestamp()
+  const by = typeof raw['by'] === 'string' && raw['by'].length > 0 ? raw['by'] : 'operator'
+  const removed = this.db.sqlite.transaction(() => {
+    recordOperatorDisposition(this.db, runtime, { by, reason, at })
+    return this.db.runtimes.pruneRuntime(runtimeId)
+  })()
+  return json({
+    ok: true,
+    results: [
+      {
+        ...base,
+        status: removed ? 'pruned' : 'skipped',
+        reason: removed ? 'operator_disposed' : 'already_absent',
+      },
+    ],
+    summary: {
+      type: 'summary',
+      matched: 1,
+      pruned: removed ? 1 : 0,
+      skipped: removed ? 0 : 1,
+      errors: 0,
+    },
   } satisfies PruneRuntimesResponse)
 }
 
@@ -659,6 +766,8 @@ export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandle
         cadence: 'recurring',
       })
     }
+    // T-08566: the bounded retained-evidence pass runs before the orphan sweep.
+    await this.runRetainedEvidencePass()
     const broker = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
       graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
       removeDeadSocketFiles: true,

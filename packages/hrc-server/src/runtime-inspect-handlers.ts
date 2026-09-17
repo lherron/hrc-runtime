@@ -170,7 +170,8 @@ export async function handleInspectRuntime(
     capture?: CaptureStateView | undefined
     evidenceAuthority?: EvidenceAuthorityMatrix | undefined
   }
-  return json(response)
+  // T-08566 §3.4.4: read-only retained-evidence outcome visibility (never spawns).
+  return json({ ...response, ...retainedEvidenceInspectFacts(this.db, runtime) })
 }
 
 function requireNonEmptyString(
@@ -359,6 +360,37 @@ export async function handleBrokerInspect(
       finalSummaryRecovery = { state: 'not_needed' }
     } else if (runtime.controllerKind !== 'harness-broker') {
       finalSummaryRecovery = { state: 'not_broker' }
+    } else if (runtime.status === 'terminated' || runtime.status === 'failed') {
+      // T-08566 O1 (U14): no report path connects to or controls a terminal
+      // runtime's broker. Read its retained evidence offline instead of attach.
+      const timeoutMs = body.recoverFinalSummary.timeoutMs ?? 750
+      const attempt = this.recoverRetainedEvidence({
+        runtimeId: runtime.runtimeId,
+        trigger: 'report',
+      })
+      const settled = await Promise.race([
+        attempt.then((response) => ({ kind: 'done' as const, response })),
+        new Promise<{ kind: 'timeout' }>((resolve) =>
+          setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs)
+        ),
+      ])
+      const recoveredRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+      finalSummary = (recoveredRuntime?.runtimeStateJson as { finalSummary?: unknown } | undefined)
+        ?.finalSummary
+      if (finalSummary !== undefined) {
+        finalSummaryRecovery = { state: 'recovered' }
+      } else if (settled.kind === 'timeout') {
+        void attempt.catch(() => undefined)
+        finalSummaryRecovery = {
+          state: 'timeout',
+          message: `summary recovery exceeded ${timeoutMs}ms`,
+        }
+      } else {
+        finalSummaryRecovery = {
+          state: 'unavailable',
+          message: settled.response?.outcome ?? 'unknown_runtime',
+        }
+      }
     } else {
       const endpoint = getPersistedDurableBrokerEndpoint(runtime)
       const attachToken = endpoint ? await resolvePersistedBrokerAttachToken(runtime) : undefined
@@ -391,6 +423,7 @@ export async function handleBrokerInspect(
     lastActivityAt: runtime.lastActivityAt ?? null,
     ...(finalSummary !== undefined ? { finalSummary } : {}),
     ...(finalSummaryRecovery !== undefined ? { finalSummaryRecovery } : {}),
+    ...retainedEvidenceInspectFacts(this.db, runtime),
   }
 
   // Broker-backed: delegate to the P2 controller read model. The summaries pass
@@ -441,3 +474,25 @@ export const runtimeInspectHandlersMethods = {
 }
 
 export type RuntimeInspectHandlersMethods = typeof runtimeInspectHandlersMethods
+
+/**
+ * T-08566 §3.4.4 — latest retained-evidence outcome per invocation, read-only.
+ * Omitted entirely for runtimes with no recorded outcome.
+ */
+function retainedEvidenceInspectFacts(
+  db: HrcServerInstanceForHandlers['db'],
+  runtime: { runtimeId: string }
+): { retainedEvidence?: Array<Record<string, unknown>> } {
+  const latest = db.retainedEvidenceOutcomes.latestByRuntime(runtime.runtimeId)
+  if (latest.length === 0) return {}
+  return {
+    retainedEvidence: latest.map((record) => ({
+      invocationId: record.invocationId,
+      outcome: record.outcome,
+      class: record.outcomeClass,
+      trigger: record.trigger,
+      attempts: record.attempts,
+      recordedAt: record.recordedAt,
+    })),
+  }
+}

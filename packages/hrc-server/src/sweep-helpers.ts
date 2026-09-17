@@ -7,6 +7,7 @@ import type {
   SweepRuntimeTransport,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { retainedEvidenceHold } from './broker/offline-evidence'
 import { hasUnsettledAbsorbedAuxiliary } from './broker/turn-ownership.js'
 import { isExternalLifecycleOwner } from './external-participant-lifecycle.js'
 import { isLiveProcess } from './server-lock.js'
@@ -276,6 +277,10 @@ export async function evaluatePruneDisposition(
   }
   if (db !== undefined && hasUnsettledAbsorbedAuxiliary(db, runtime.runtimeId)) {
     return { prunable: false, reason: 'unsettled_absorbed_auxiliary' }
+  }
+  // T-08566 §4.2: bulk prune never implicitly disposes held retained evidence.
+  if (db !== undefined && retainedEvidenceHold(db, runtime).held) {
+    return { prunable: false, reason: 'offline_evidence_held' }
   }
 
   const trackedPid = runtime.childPid ?? runtime.wrapperPid

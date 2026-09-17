@@ -61,6 +61,7 @@ import {
 } from './dispatch-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import { isRetryableInvocationFailure } from './invocation-failure'
+import { assertNoRetainedProjection } from './runtime-exclusive-owner'
 import { parseBrokerRuntimeHostingState } from './runtime-hosting'
 
 import {
@@ -1050,7 +1051,16 @@ export class HarnessBrokerController {
     this.brokerSeatMonitorTimers.delete(runtimeId)
   }
 
+  /**
+   * T-08566 O3 — set by the server: request one retained-evidence attempt for a
+   * terminal runtime whose projection gap has no live client to repair it.
+   */
+  retainedEvidenceGapHandler: ((runtimeId: string) => void) | undefined
+
   async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
+    // T-08566: the lower guard. No attach, replay or ACK ever follows a committed
+    // retained projection, whichever caller reached this seam.
+    assertNoRetainedProjection(this.db, input.runtimeId, 'controller-replay')
     return attachAndReplayFlow(this.dispatchContext(), input)
   }
 
@@ -2072,6 +2082,13 @@ export class HarnessBrokerController {
         missingSeqs,
         reason: 'client_unavailable',
       })
+      // T-08566 O3: a terminal runtime's gap is repaired only from its retained
+      // evidence (eligibility re-checked there); a non-terminal gap waits for the
+      // next live attachAndReplay.
+      const status = this.db.runtimes.getByRuntimeId(runtimeId)?.status
+      if (status === 'terminated' || status === 'failed') {
+        this.retainedEvidenceGapHandler?.(runtimeId)
+      }
       return
     }
 

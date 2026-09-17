@@ -21,6 +21,12 @@ import type {
   HarnessBrokerController,
 } from './broker/controller.js'
 import {
+  assertNoRetainedProjection,
+  awaitRetainedRecoveryOwner,
+  hasRetainedProjection,
+  retainedRecoveryInFlight,
+} from './broker/runtime-exclusive-owner'
+import {
   brokerLeaseIdentityMatches,
   hasDurableBrokerEndpoint,
   hasLeasedBrokerSubstrate,
@@ -377,6 +383,16 @@ export async function reconcileDurableBrokerRuntimeReattach(
   deps: DurableBrokerReattachDeps
 ): Promise<BrokerReattachOutcome> {
   const runtimeId = runtime.runtimeId
+  // T-08566: a runtime with committed retained projection is never probed,
+  // classified, reattached or ACKed again, and this refusal writes nothing.
+  if (hasRetainedProjection(db, runtimeId)) {
+    return {
+      runtimeId,
+      state: 'stale',
+      brokerAttached: false,
+      reason: HrcErrorCode.RUNTIME_RETAINED_EVIDENCE_PROJECTED,
+    }
+  }
   const hosting = parseBrokerRuntimeHostingState(runtime)
   const brokerState = runtime.runtimeStateJson?.['broker']
   const brokerRecord =
@@ -785,8 +801,18 @@ export async function attachDurableBrokerShared(
   // Sharing the outcome is the whole contract. A genuinely LATER call — one that
   // finds no flight at entry — still acquires ownership normally and retries,
   // which is where a retry belongs.
+  // T-08566: an in-flight retained recovery owns this runtime. Wait for it, then
+  // decide inside our own ownership: the guard below is evaluated synchronously
+  // with acquiring the flight, never on a value read before recovery finished.
+  // Only yield when a recovery actually owns the runtime, so an ordinary attach
+  // still acquires its flight synchronously (callers rely on that ordering).
+  if (retainedRecoveryInFlight(deps.inFlightOperations, runtime.runtimeId)) {
+    await awaitRetainedRecoveryOwner(deps.inFlightOperations, runtime.runtimeId)
+  }
   const joined = deps.inFlightOperations.get(runtime.runtimeId)
   if (joined) return await joined
+
+  assertNoRetainedProjection(db, runtime.runtimeId, 'dispatch')
 
   if (alreadyAttachedOnServingController(db, runtime, deps)) {
     return { runtimeId: runtime.runtimeId, state: 'broker-attached', brokerAttached: true }

@@ -11,6 +11,11 @@ import {
   rejectedBrokerAdoptionPaths,
 } from '../broker/adoption-root.js'
 import {
+  persistedEventLedgerPath,
+  recordUnboundBeforeSweep,
+  retainedEvidenceHold,
+} from '../broker/offline-evidence'
+import {
   compareBrokerLeaseIdentity,
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting.js'
@@ -902,6 +907,27 @@ async function sweepOrphanedBrokerIpcDirs(
   }
 
   const referencedPaths = new Set<string>()
+  // T-08566 §4.2: a bound runtime's ledger directory is held until its retained
+  // evidence is recovered or explicitly disposed, regardless of terminal age or
+  // substrate kind. Unbound terminal runtimes get their unrecoverable-by-design
+  // outcome recorded here, before this pass may remove their directory.
+  const recordedAt = new Date(now).toISOString()
+  const unboundLedgerOwners = new Map<string, { runtimeId: string; outcome: string }>()
+  for (const runtime of db.runtimes.listAll()) {
+    const hold = retainedEvidenceHold(db, runtime)
+    if (hold.held && hold.ledgerPath !== undefined) {
+      referencedPaths.add(hold.ledgerPath)
+      continue
+    }
+    const unbound = recordUnboundBeforeSweep(db, runtime, recordedAt)
+    const ledgerPath = unbound !== undefined ? persistedEventLedgerPath(runtime) : undefined
+    if (unbound !== undefined && ledgerPath !== undefined) {
+      unboundLedgerOwners.set(dirname(ledgerPath), {
+        runtimeId: runtime.runtimeId,
+        outcome: unbound,
+      })
+    }
+  }
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
@@ -967,7 +993,11 @@ async function sweepOrphanedBrokerIpcDirs(
       if (live) continue
       await rm(dirPath, { recursive: true, force: true })
       result.removedBrokerIpcDirs += 1
-      writeServerLog('INFO', 'broker.orphan_ipc_dir_removed', { dirPath })
+      const owner = unboundLedgerOwners.get(dirPath)
+      writeServerLog('INFO', 'broker.orphan_ipc_dir_removed', {
+        dirPath,
+        ...(owner !== undefined ? { runtimeId: owner.runtimeId, outcome: owner.outcome } : {}),
+      })
     } catch (error) {
       result.errors += 1
       writeServerLog('WARN', 'broker.orphan_ipc_dir_sweep_failed', { dirPath, error })

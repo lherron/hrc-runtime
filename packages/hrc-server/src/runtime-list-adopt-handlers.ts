@@ -12,6 +12,10 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import {
+  assertNoRetainedProjection,
+  awaitRetainedRecoveryOwner,
+} from './broker/runtime-exclusive-owner'
 import { canOperatorAttach, parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -46,6 +50,8 @@ export type RuntimeListAdoptDependencies = {
   readonly staleGenerationThresholdSec: number
   reconcileTmuxRuntimeLiveness(runtime: HrcRuntimeSnapshot): Promise<HrcRuntimeSnapshot>
   notifyEvent(event: HrcEventEnvelope | HrcLifecycleEvent): void
+  /** T-08566: the server's per-runtime exclusive owner map (attach + retained recovery). */
+  readonly brokerReattachOperations?: Map<string, Promise<unknown>> | undefined
 }
 
 export type RuntimeListAdoptRoute = {
@@ -291,10 +297,16 @@ async function handleAdoptRuntime(
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
   }
   const runtimeId = body['runtimeId'] as string
+  // T-08566: adopt is a live path into the runtime. Wait out an in-flight
+  // retained recovery, then refuse inside that ownership if it committed.
+  if (deps.brokerReattachOperations !== undefined) {
+    await awaitRetainedRecoveryOwner(deps.brokerReattachOperations, runtimeId)
+  }
   const runtime = deps.db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
   }
+  assertNoRetainedProjection(deps.db, runtimeId, 'adopt')
   if (runtime.transport !== 'tmux' && !canOperatorAttach(runtime)) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,

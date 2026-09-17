@@ -2,6 +2,19 @@ import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
+import type { CaptureRecoverResponse } from 'hrc-core'
+import {
+  RETAINED_EVIDENCE_PASS_LIMIT,
+  RETAINED_EVIDENCE_TERMINAL_DELAY_MS,
+  type RecoverRetainedEvidenceInput,
+  recoverRetainedEvidence,
+  retainedEvidencePassCandidates,
+} from './broker/offline-evidence'
+import {
+  assertNoRetainedProjection,
+  awaitRetainedRecoveryOwner,
+} from './broker/runtime-exclusive-owner'
+import { probeBrokerHealth } from './startup-reconcile/broker-probe.js'
 
 import {
   HRC_API_VERSION,
@@ -878,6 +891,10 @@ class HrcServerInstance implements HrcServer {
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
   brokerLeaseGcTimer: ReturnType<typeof setInterval> | undefined
+  /** T-08566: startup retained-evidence pass and O2 terminal-trigger timers. */
+  retainedEvidenceStartupTimer: ReturnType<typeof setTimeout> | undefined
+  readonly retainedEvidenceTerminalTimers = new Set<ReturnType<typeof setTimeout>>()
+  retainedEvidencePassInFlight: Promise<void> | undefined
   brokerLeaseGcInFlight: Promise<void> | undefined
   tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
   tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
@@ -972,7 +989,19 @@ class HrcServerInstance implements HrcServer {
       this.handleLaunchCommandScopedRun(request),
     [exactRouteKey('POST', '/v1/broker-sessions/open')]: (request) =>
       this.handleOpenBrokerSession(request),
-    [exactRouteKey('POST', '/v1/runtimes/attach')]: (request) => this.handleAttachRuntime(request),
+    [exactRouteKey('POST', '/v1/runtimes/attach')]: async (request) => {
+      // T-08566: operator attach is a live path into the runtime. Wait out an
+      // in-flight retained recovery, then refuse if its projection committed.
+      const body = (await request
+        .clone()
+        .json()
+        .catch(() => undefined)) as { runtimeId?: unknown } | undefined
+      if (typeof body?.runtimeId === 'string') {
+        await awaitRetainedRecoveryOwner(this.brokerReattachOperations, body.runtimeId)
+        assertNoRetainedProjection(this.db, body.runtimeId, 'operator')
+      }
+      return this.handleAttachRuntime(request)
+    },
     [exactRouteKey('POST', '/v1/runtimes/inspect')]: (request) =>
       this.handleInspectRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/broker/inspect')]: (request) =>
@@ -981,6 +1010,7 @@ class HrcServerInstance implements HrcServer {
       this.handleBrokerCaptureStatus(request),
     [exactRouteKey('POST', '/v1/runtimes/capture/release')]: (request) =>
       this.handleBrokerCaptureRelease(request),
+    [exactRouteKey('POST', '/v1/capture/recover')]: (request) => this.handleCaptureRecover(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/runtimes/prune')]: (request) => this.handlePruneRuntimes(request),
     [exactRouteKey('POST', '/v1/server/tmux/kill-broker-leases')]: () =>
@@ -1381,12 +1411,18 @@ class HrcServerInstance implements HrcServer {
       staleGenerationThresholdSec: this.staleGenerationThresholdSec,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
       notifyEvent: (event) => this.notifyEvent(event),
+      brokerReattachOperations: this.brokerReattachOperations,
     })) {
       this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler
     }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startBrokerLeaseGc()
+    // T-08566: bounded retained-evidence retry, off the request path.
+    this.retainedEvidenceStartupTimer = setTimeout(() => {
+      this.retainedEvidenceStartupTimer = undefined
+      void this.runRetainedEvidencePass()
+    }, 0)
     this.startTmuxAging()
     this.startSessionRetentionSweep()
     this.startFirstTurnWatchdog()
@@ -1416,6 +1452,12 @@ class HrcServerInstance implements HrcServer {
     // loop. Single-flight (constructor-scoped) and `.catch`-wrapped so it ALWAYS
     // resolves — broker input handlers await it and fall through to the lazy
     // reattach path on failure, never wedging on a rejected promise.
+    // T-08566 O3: terminal-runtime projection gaps are repaired offline.
+    this.getHarnessBrokerController().retainedEvidenceGapHandler = (runtimeId) => {
+      void this.recoverRetainedEvidence({ runtimeId, trigger: 'gap' }).catch((error) => {
+        writeServerLog('WARN', 'retained_evidence.gap_attempt_failed', { runtimeId, error })
+      })
+    }
     this.brokerWarmupComplete = warmDurableBrokerBindings(this.db, {
       runtimeRoot: this.options.runtimeRoot,
       controller: this.getHarnessBrokerController(),
@@ -1648,6 +1690,19 @@ class HrcServerInstance implements HrcServer {
       clearInterval(this.brokerLeaseGcTimer)
       this.brokerLeaseGcTimer = undefined
     }
+    if (this.retainedEvidenceStartupTimer) {
+      clearTimeout(this.retainedEvidenceStartupTimer)
+      this.retainedEvidenceStartupTimer = undefined
+    }
+    for (const timer of this.retainedEvidenceTerminalTimers) clearTimeout(timer)
+    this.retainedEvidenceTerminalTimers.clear()
+    if (this.retainedEvidencePassInFlight) {
+      try {
+        await this.retainedEvidencePassInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.retained_evidence_pass_wait_failed', { error })
+      }
+    }
     if (this.brokerLeaseGcInFlight) {
       try {
         await this.brokerLeaseGcInFlight
@@ -1794,6 +1849,130 @@ class HrcServerInstance implements HrcServer {
       // Metrics are observational and must never alter request handling.
     }
     return response
+  }
+
+  /**
+   * T-08566 — one retained-evidence recovery attempt for a runtime. Shared by the
+   * operator route and the automatic triggers (terminal, startup, report, gap).
+   */
+  async recoverRetainedEvidence(
+    input: RecoverRetainedEvidenceInput
+  ): Promise<CaptureRecoverResponse | undefined> {
+    const controller = this.getHarnessBrokerController()
+    const extra = this.options as HrcServerOptions & {
+      offlineEvidenceSliceMaxPages?: number | undefined
+    }
+    return await recoverRetainedEvidence(
+      {
+        db: this.db,
+        now: timestamp,
+        ownerMap: this.brokerReattachOperations,
+        probeBrokerHealth,
+        activeClientInvocationId: (runtimeId) => controller.activeClientInvocationId(runtimeId),
+        notifyEvent: (event) => this.notifyEvent(event),
+        options: {
+          ...(extra.offlineEvidenceSliceMaxPages !== undefined
+            ? { sliceMaxPages: extra.offlineEvidenceSliceMaxPages }
+            : {}),
+        },
+      },
+      input
+    )
+  }
+
+  /**
+   * T-08566 O2 — one background attempt after HRC records a harness-broker
+   * runtime entering a terminal status. Delayed briefly so an exiting worker's
+   * endpoint has gone; a still-reachable endpoint is refused unrecorded and the
+   * next startup pass retries.
+   */
+  scheduleRetainedEvidenceRecovery(runtimeId: string): void {
+    const timer = setTimeout(() => {
+      this.retainedEvidenceTerminalTimers.delete(timer)
+      void this.recoverRetainedEvidence({ runtimeId, trigger: 'terminal' }).catch((error) => {
+        writeServerLog('WARN', 'retained_evidence.terminal_attempt_failed', { runtimeId, error })
+      })
+    }, RETAINED_EVIDENCE_TERMINAL_DELAY_MS)
+    this.retainedEvidenceTerminalTimers.add(timer)
+  }
+
+  /**
+   * T-08566 — bounded retained-evidence pass (startup and each lease-GC tick,
+   * before the orphan sweep): at most 20 bound terminal runtimes whose evidence
+   * is not yet attempted or is retryable. Incomplete and paused evidence waits
+   * for an operator. Never blocks request service.
+   */
+  async runRetainedEvidencePass(): Promise<void> {
+    if (this.retainedEvidencePassInFlight) return await this.retainedEvidencePassInFlight
+    const pass = (async () => {
+      const candidates = retainedEvidencePassCandidates(this.db, RETAINED_EVIDENCE_PASS_LIMIT)
+      const outcomes: Record<string, number> = {}
+      for (const runtimeId of candidates.runtimeIds) {
+        try {
+          const response = await this.recoverRetainedEvidence({ runtimeId, trigger: 'startup' })
+          const outcome = response?.outcome ?? 'unknown_runtime'
+          outcomes[outcome] = (outcomes[outcome] ?? 0) + 1
+        } catch (error) {
+          outcomes['attempt_error'] = (outcomes['attempt_error'] ?? 0) + 1
+          writeServerLog('WARN', 'retained_evidence.startup_attempt_failed', { runtimeId, error })
+        }
+      }
+      // Quiet on an empty store (embedded CLI daemons keep stderr clean); any
+      // attempt, eligible backlog or unbound-by-design history is logged.
+      if (
+        candidates.runtimeIds.length === 0 &&
+        candidates.eligible === 0 &&
+        candidates.unboundTerminal === 0
+      ) {
+        return
+      }
+      writeServerLog('INFO', 'retained_evidence.pass_complete', {
+        attempted: candidates.runtimeIds.length,
+        eligible: candidates.eligible,
+        limit: RETAINED_EVIDENCE_PASS_LIMIT,
+        outcomes,
+        unboundTerminalRuntimes: candidates.unboundTerminal,
+      })
+    })()
+    this.retainedEvidencePassInFlight = pass
+    try {
+      await pass
+    } finally {
+      if (this.retainedEvidencePassInFlight === pass) this.retainedEvidencePassInFlight = undefined
+    }
+  }
+
+  /** `POST /v1/capture/recover` — explicit, mutating operator recovery (SPEC §4.2). */
+  async handleCaptureRecover(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['runtimeId'] !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
+    }
+    const dryRun = body['dryRun'] === true
+    if (!dryRun && body['yes'] !== true) {
+      return json(
+        {
+          error: {
+            code: 'confirmation_required',
+            message: 'capture recover is mutating; pass yes (or dryRun)',
+            detail: { runtimeId: body['runtimeId'] },
+          },
+        },
+        400
+      )
+    }
+    const response = await this.recoverRetainedEvidence({
+      runtimeId: body['runtimeId'],
+      trigger: 'operator',
+      dryRun,
+    })
+    if (response === undefined) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_RUNTIME,
+        `unknown runtime: ${body['runtimeId']}`
+      )
+    }
+    return json(response)
   }
 
   async handleCloseTurnAdmission(request: Request): Promise<Response> {
@@ -2870,6 +3049,9 @@ export type HrcServerInstanceClassBodyMethods = {
     | 'handleResolveSession'
     | 'handleStatus'
     | 'handleTerminate'
+    | 'recoverRetainedEvidence'
+    | 'runRetainedEvidencePass'
+    | 'scheduleRetainedEvidenceRecovery'
     | 'stop']: OmitThisParameter<HrcServerInstance[K]>
 }
 

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { appendHrcEvent } from '../hrc-event-helper'
-import { createHrcServer, type HrcServer } from '../index'
-import { createHrcTestFixture, type HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { type HrcServer, createHrcServer } from '../index'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer

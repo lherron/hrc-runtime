@@ -352,7 +352,7 @@ describe('broker-inspect finalSummary passthrough (T-01893)', () => {
     try {
       const runtime = db.runtimes.getByRuntimeId(runtimeId)
       db.runtimes.update(runtimeId, {
-        status: 'terminated',
+        status: 'stale',
         runtimeStateJson: {
           ...(runtime?.runtimeStateJson ?? {}),
           broker: {
