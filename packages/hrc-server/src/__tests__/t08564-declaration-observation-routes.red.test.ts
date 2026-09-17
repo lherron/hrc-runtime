@@ -1,0 +1,267 @@
+/**
+ * T-08564 Phase A route reds. The daemon is real and the ASP producer double
+ * speaks NDJSON JSON-RPC over a real Unix socket. Before implementation every
+ * case must collect and fail at the HTTP status assertion because both public
+ * routes are absent; after implementation the later assertions pin projection,
+ * forwarding, admission failures, and the preview's one-connection boundary.
+ */
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
+
+import { type HrcServer, createHrcServer } from '../index'
+import {
+  type AspdObservationDouble,
+  type AspdObservationOptions,
+  startAspdObservationDouble,
+} from './fixtures/aspd-observation-doubles'
+import { type Release, makeRelease } from './fixtures/aspd-route-doubles'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
+
+let fixture: HrcServerTestFixture
+let server: HrcServer | undefined
+let aspd: AspdObservationDouble | undefined
+let release: Release
+let aspdSocket: string
+let savedAspdSocket: string | undefined
+let agentRoot: string
+let projectRoot: string
+let agentsRoot: string
+let aspHome: string
+
+beforeEach(async () => {
+  fixture = await createHrcTestFixture('hrc-t08564-routes-')
+  aspdSocket = join(fixture.tmpDir, 'aspd.sock')
+  release = makeRelease(join(fixture.tmpDir, 'releases'), 't08564')
+  agentRoot = join(fixture.tmpDir, 'agents', 'smokey')
+  projectRoot = join(fixture.tmpDir, 'project')
+  agentsRoot = join(fixture.tmpDir, 'agents')
+  aspHome = join(fixture.tmpDir, 'asp-home')
+  await Promise.all([
+    mkdir(agentRoot, { recursive: true }),
+    mkdir(projectRoot, { recursive: true }),
+    mkdir(aspHome, { recursive: true }),
+  ])
+  savedAspdSocket = process.env['HRC_ASPD_SOCKET']
+})
+
+afterEach(async () => {
+  await server?.stop()
+  aspd?.stop()
+  server = undefined
+  aspd = undefined
+  if (savedAspdSocket === undefined) Reflect.deleteProperty(process.env, 'HRC_ASPD_SOCKET')
+  else process.env['HRC_ASPD_SOCKET'] = savedAspdSocket
+  await fixture.cleanup()
+})
+
+async function boot(options: AspdObservationOptions = {}) {
+  aspd = startAspdObservationDouble(aspdSocket, release, options)
+  process.env['HRC_ASPD_SOCKET'] = aspdSocket
+  server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+}
+
+function resolveRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    agentId: 'smokey',
+    agentRoot,
+    projectRoot,
+    cwd: projectRoot,
+    runMode: 'task',
+    interactive: false,
+    preferredMode: 'nonInteractive',
+    allowInteractiveSurfaceReuse: false,
+    provision: { model: 'x' },
+    agentSources: { agentsRoot, aspHome },
+    ...overrides,
+  }
+}
+
+function managedIntent() {
+  return {
+    placement: {
+      agentRoot,
+      projectRoot,
+      cwd: projectRoot,
+      runMode: 'task',
+      bundle: { kind: 'compose', compose: [] },
+      dryRun: true,
+    },
+    harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
+    execution: { preferredMode: 'headless' },
+    provision: { model: 'x' },
+  }
+}
+
+async function post(path: string, body: unknown): Promise<{ response: Response; body: any }> {
+  const response = await fixture.postJson(path, body)
+  const text = await response.text()
+  let parsed: unknown = {}
+  if (text.length > 0) {
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      parsed = { raw: text }
+    }
+  }
+  return { response, body: parsed }
+}
+
+function requestParams(double: AspdObservationDouble, method: string): Record<string, unknown> {
+  const request = double.connections
+    .flatMap((connection) => connection.requests)
+    .find((candidate) => candidate.method === method)
+  expect(request, `${method} should reach the aspd double`).toBeDefined()
+  return request!.params
+}
+
+describe('POST /v1/declarations/resolve (T-08564 Phase A red)', () => {
+  test('assembles the intent from producer facts and forwards root context plus caller sources', async () => {
+    await boot()
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(200)
+    expect(body.intent.harness).toEqual({
+      provider: 'openai',
+      interactive: false,
+      id: 'codex-cli',
+    })
+    expect(body.intent.provision).toEqual({ model: 'x' })
+    expect(body.declaration.agentSources).toEqual({
+      agentsRoot,
+      aspHome,
+      provenance: 'caller-agent-root',
+    })
+    const params = requestParams(aspd!, 'aspc.resolveRuntimeDeclaration')
+    expect(params['context']).toMatchObject({
+      project: { mode: 'root', projectRoot },
+      agentSources: { agentsRoot, aspHome },
+    })
+  })
+
+  test('uses explicit project mode none and returns no projectRoot when it was omitted', async () => {
+    await boot()
+    const input = resolveRequest({ projectRoot: undefined })
+    const { response, body } = await post('/v1/declarations/resolve', input)
+
+    expect(response.status).toBe(200)
+    expect(body.intent.placement).not.toHaveProperty('projectRoot')
+    const params = requestParams(aspd!, 'aspc.resolveRuntimeDeclaration')
+    expect((params['context'] as Record<string, unknown>)['project']).toEqual({ mode: 'none' })
+  })
+
+  test('maps configured_context_mismatch to malformed_request without fallback', async () => {
+    await boot({ resolve: 'incompatible' })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(400)
+    expect(body.error.code).toBe('malformed_request')
+    expect(body.error.detail.code).toBe('configured_context_mismatch')
+  })
+
+  test('maps invalid project targets to declaration_invalid with producer diagnostics', async () => {
+    await boot({ resolve: 'invalid' })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(422)
+    expect(body.error.code).toBe('declaration_invalid')
+    expect(body.error.detail).toMatchObject({
+      source: 'project-targets',
+      producerCode: 'project_targets_invalid',
+    })
+  })
+
+  test('reports an absent aspd socket as a typed 503 rather than declaration absence', async () => {
+    await boot({ socketAbsent: true })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(503)
+    expect(body.error.code).toBe('runtime_unavailable')
+    expect(body.error.detail).toMatchObject({ code: 'aspd_unavailable', route: 'aspd' })
+  })
+
+  test('fails closed when resolveRuntimeDeclaration is not advertised', async () => {
+    await boot({ capabilities: { resolveRuntimeDeclaration: false } })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(503)
+    expect(body.error.detail.code).toBe('aspd_capability_missing')
+  })
+
+  test('fails closed when aspd advertises an incompatible protocol', async () => {
+    await boot({ protocolVersion: 'aspc/999' })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(503)
+    expect(body.error.detail.code).toBe('aspd_protocol_incompatible')
+  })
+
+  test('keeps target-only intent but emits the HRC-owned invalid-profile warning', async () => {
+    await boot({ invalidAgentProfile: true })
+    const { response, body } = await post('/v1/declarations/resolve', resolveRequest())
+
+    expect(response.status).toBe(200)
+    expect(body.declaration.warnings).toHaveLength(1)
+    expect(body.declaration.warnings[0]).toStartWith(
+      '[hrc-core] WARN agent.provisioning.stripped — agent "smokey"'
+    )
+    expect(body.declaration.warnings[0]).toContain(' error=')
+  })
+})
+
+describe('POST /v1/previews/run (T-08564 Phase A red)', () => {
+  const previewBody = () => ({
+    intent: managedIntent(),
+    sessionRef: 'agent:smokey:project:hrc-runtime:task:T-08564',
+    restartStyle: 'fresh',
+  })
+
+  test('compiles and inspects on one admitted connection and names that release', async () => {
+    await boot()
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(200)
+    expect(aspd!.connections).toHaveLength(1)
+    const methods = aspd!.connections[0]!.methods
+    expect(methods.filter((method) => method === 'aspc.hello')).toHaveLength(1)
+    expect(methods).toContain('aspc.compileHarnessInvocation')
+    expect(methods).toContain('aspc.inspectRuntimePlacement')
+    expect(JSON.stringify(body)).toContain(release.releaseId)
+  })
+
+  test('omits prompt zones and failure fields for an absent prompt', async () => {
+    await boot({ prompt: 'absent' })
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(200)
+    expect(body).not.toHaveProperty('systemPrompt')
+    expect(body).not.toHaveProperty('reminderContent')
+    expect(body).not.toHaveProperty('promptResolution')
+  })
+
+  test('keeps plan fields and diagnostics but no zones for an invalid prompt', async () => {
+    await boot({ prompt: 'invalid' })
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      controllerKind: 'harness-broker',
+      promptResolution: {
+        state: 'invalid',
+        code: 'prompt_resolution_failed',
+      },
+    })
+    expect(body).not.toHaveProperty('systemPrompt')
+    expect(body).not.toHaveProperty('reminderContent')
+  })
+
+  test('reports an aspd outage as typed 503 without an in-process preview fallback', async () => {
+    await boot()
+    aspd!.stop()
+    const { response, body } = await post('/v1/previews/run', previewBody())
+
+    expect(response.status).toBe(503)
+    expect(body.error.code).toBe('runtime_unavailable')
+    expect(body.error.detail).toMatchObject({ code: 'aspd_unavailable', route: 'aspd' })
+  })
+})
