@@ -14,7 +14,8 @@ import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-ada
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import {
-  aspdInteractiveCodexEndpoint,
+  aspdInteractiveBrokerEndpoint,
+  aspdInteractiveRouteFor,
   assertPreparedAspdAttemptRoute,
   findPreparedAspdAttemptForRetry,
   launchAspdPreparedAttempt,
@@ -1378,12 +1379,12 @@ export async function startInteractiveTmuxBrokerRuntime(
   assertParticipantAddressNotSubstituted(this, session)
   const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
   const effectiveTurnIntent = preparedActuatorSplit.intent
-  // T-08556 (§1.4), T-08560 (§1.5.1): every door's interactive Codex birth
-  // prepares through aspd on a configured node and launches from the frozen
-  // execution release. A cold-birth prompt is a preparation input (D1), not a
-  // route selector. No facade client is opened on this route and there is no
-  // fallback.
-  const aspdEndpoint = aspdInteractiveCodexEndpoint({
+  // T-08556 (§1.4), T-08560 (§1.5.1), T-08562 (§1.6.2): every door's interactive
+  // broker birth prepares through aspd on a configured node and launches from the
+  // frozen execution release; only the deprecated codex-cli-tmux keeps the facade.
+  // A cold-birth prompt is a preparation input (D1), not a route selector. No
+  // facade client is opened on this route and there is no fallback.
+  const aspdEndpoint = aspdInteractiveBrokerEndpoint({
     allowedBrokerDriver: flagOptions.allowedBrokerDriver,
   })
   if (aspdEndpoint !== undefined) {
@@ -1719,9 +1720,10 @@ function settleFailedInteractiveBrokerStart(
 }
 
 /**
- * T-08556 (§1.4), T-08560 (§1.5) — an aspd-prepared interactive Codex birth by
- * any door. Prepare and freeze at boundary P (or resume a same-key frozen
- * attempt, D2), then launch only from the persisted operation, with the
+ * T-08556 (§1.4), T-08560 (§1.5), T-08562 (§1.6) — an aspd-prepared interactive
+ * broker birth (Codex TUI, Claude Code or Pi TUI) by any door. Prepare and freeze
+ * at boundary P (or resume a same-key frozen attempt, D2), then launch only from
+ * the persisted operation, with the
  * attached-run door's live attach handshake when it has one. The durable
  * interactive route is required: the stdio route would spawn a
  * resolver-selected broker.
@@ -1773,7 +1775,14 @@ async function startAspdInteractiveBrokerRuntime(
       : undefined
   let operationId: string
   if (resumable !== undefined && resumable.runId === options.diagnosticRunId) {
-    assertPreparedAspdAttemptRoute(resumable, 'interactive-codex-tui', session.hostSessionId)
+    assertPreparedAspdAttemptRoute(
+      resumable,
+      {
+        route: aspdInteractiveRouteFor(options.allowedBrokerDriver),
+        driverKind: options.allowedBrokerDriver,
+      },
+      session.hostSessionId
+    )
     operationId = resumable.operationId
     writeServerLog('INFO', 'aspd.preparation.resume', {
       operationId,
@@ -1787,6 +1796,7 @@ async function startAspdInteractiveBrokerRuntime(
       intent,
       interactive: {
         flagEnvName: options.flagEnvName,
+        brokerDriver: options.allowedBrokerDriver,
         continuation: toRuntimeContinuationRef(
           decideInteractiveTmuxBrokerContinuation({
             allowedBrokerDriver: options.allowedBrokerDriver,

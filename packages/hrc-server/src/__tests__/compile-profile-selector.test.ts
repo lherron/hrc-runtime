@@ -69,7 +69,7 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('compile-not-ok')
   })
 
-  it('admits an interactive claude-code-tmux broker profile by broker driver and terminal', () => {
+  it('admits an interactive claude-code-tmux broker profile by interaction mode, protocol and tmux terminal', () => {
     const identity = makeIdentity()
     const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
     const response = makeCompileResponse(identity, [profile])
@@ -83,7 +83,7 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect((selection.startRequest as unknown as { runtime?: unknown }).runtime).toBeUndefined()
   })
 
-  it('admits an interactive pi-tui-tmux broker profile by broker driver and terminal', () => {
+  it('admits an interactive pi-tui-tmux broker profile by interaction mode, protocol and tmux terminal', () => {
     const identity = makeIdentity()
     const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
       brokerDriver: 'pi-tui-tmux',
@@ -96,6 +96,20 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.profile.brokerDriver).toBe('pi-tui-tmux')
     expect(selection.profile.brokerTerminal).toEqual({ host: 'tmux' })
     expect(selection.startRequest).toBe(startRequest)
+  })
+
+  // T-08562 (§1.6.3): admission is by hosting shape, not a driver-name list; which
+  // driver a door may launch is bound by equality with the requested driver.
+  it('admits an interactive tmux profile whose driver is outside any name list', () => {
+    const identity = makeIdentity()
+    const { profile } = makeInteractiveTmuxProfile(identity, {
+      brokerDriver: 'future-tmux-driver' as never,
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+    expect(selection.admitted).toBe(true)
   })
 
   it('admits an interactive codex-app-server broker profile with a tmux terminal', () => {
@@ -134,7 +148,7 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.startRequest).toBe(startRequest)
   })
 
-  it('REJECTS a non-codex broker driver (does not admit other drivers)', () => {
+  it('REJECTS a headless non-Codex broker profile', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { brokerDriver: 'claude-code-tmux' })
     const selection = selectBrokerExecutionProfile(

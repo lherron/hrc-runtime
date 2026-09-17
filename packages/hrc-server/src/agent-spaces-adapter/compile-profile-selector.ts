@@ -74,8 +74,10 @@ function isAdmissibleBrokerProtocol(brokerProtocol: unknown): boolean {
 /**
  * Static admission predicate for broker-controller profiles. Headless Codex and
  * interactive broker-owned tmux drivers share the same HRC controller; the
- * interactive path is selected by profile driver/terminal metadata, not harness
- * identity.
+ * interactive path is selected by the profile's hosting shape (interaction mode,
+ * protocol, tmux terminal), not harness identity or a driver-name list (T-08562
+ * §1.6.3). Which driver a door may launch is bound separately, by equality with
+ * the driver that door requested.
  */
 export function isBrokerControllerProfile(
   profile: RuntimeExecutionProfile
@@ -119,10 +121,7 @@ export function isInteractiveTmuxBrokerProfile(
     profile.interactionMode === 'interactive' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     typeof profile.brokerDriver === 'string' &&
-    (profile.brokerDriver === 'claude-code-tmux' ||
-      profile.brokerDriver === 'codex-app-server' ||
-      profile.brokerDriver === 'codex-cli-tmux' ||
-      profile.brokerDriver === 'pi-tui-tmux') &&
+    profile.brokerDriver.length > 0 &&
     profile.brokerTerminal?.host === 'tmux'
   )
 }

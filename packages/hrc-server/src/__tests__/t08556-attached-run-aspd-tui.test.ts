@@ -21,7 +21,7 @@ import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
-import { aspdInteractiveCodexEndpoint } from '../aspd-headless-start'
+import { aspdInteractiveBrokerEndpoint } from '../aspd-headless-start'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
@@ -285,15 +285,19 @@ async function startHeadless(hostSessionId: string, operator?: 'none' | 'tmux-tu
 // ── Route key ─────────────────────────────────────────────────────────────────
 
 describe('T-08556 route key', () => {
-  // T-08560 (§1.5.1): the door no longer enters the predicate.
-  it('the codex-app-server driver and a configured node select aspd for every door; other drivers and an unset socket do not', () => {
+  // T-08560 (§1.5.1): the door no longer enters the predicate. T-08562 (§1.6.2):
+  // neither does the driver, except the named codex-cli-tmux deprecation fence.
+  it('every interactive driver except the deprecated codex-cli-tmux selects aspd on a configured node; an unset socket selects none', () => {
     const env = { HRC_ASPD_SOCKET: '/tmp/aspd.sock' }
-    const codex = { allowedBrokerDriver: 'codex-app-server' as const }
-    expect(aspdInteractiveCodexEndpoint(codex, env)).toBe('/tmp/aspd.sock')
-    for (const driver of ['claude-code-tmux', 'pi-tui-tmux', 'codex-cli-tmux'] as const) {
-      expect(aspdInteractiveCodexEndpoint({ allowedBrokerDriver: driver }, env)).toBeUndefined()
+    for (const driver of ['codex-app-server', 'claude-code-tmux', 'pi-tui-tmux'] as const) {
+      expect(aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: driver }, env)).toBe(
+        '/tmp/aspd.sock'
+      )
+      expect(aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: driver }, {})).toBeUndefined()
     }
-    expect(aspdInteractiveCodexEndpoint(codex, {})).toBeUndefined()
+    expect(
+      aspdInteractiveBrokerEndpoint({ allowedBrokerDriver: 'codex-cli-tmux' }, env)
+    ).toBeUndefined()
   })
 })
 

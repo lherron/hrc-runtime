@@ -19,6 +19,11 @@
  * `hrc resume`), frozen as route `interactive-codex-tui`. T-08560 (§1.5): every
  * door's interactive codex-app-server birth takes that route, with its door
  * class and any launch-carried cold-birth prompt frozen at boundary P.
+ *
+ * T-08562 (§1.6): every claude-code-tmux and pi-tui-tmux interactive birth takes
+ * the same boundaries as route `interactive-tmux-broker`, admitted by hosting
+ * shape plus equality with the requested driver, and launched only when the
+ * frozen execution release carries positive hosting evidence for that driver.
  */
 import { randomUUID } from 'node:crypto'
 
@@ -62,6 +67,7 @@ import {
   compileBrokerRuntimePlan,
   toProfileSelector,
 } from './agent-spaces-adapter/compile-adapter.js'
+import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import {
   type InteractiveTmuxBrokerDriver,
   decideCodexAppServerPresentation,
@@ -95,8 +101,20 @@ const ASPD_BROKER_DRIVER = 'codex-app-server'
 
 type OkCompileResponse = Extract<AspcCompileHarnessInvocationResponse, { ok: true }>
 
-/** The routes a frozen aspd preparation launches on (T-08556 adds the interactive TUI). */
-export type AspdPreparationRoute = 'headless-codex-app-server' | 'interactive-codex-tui'
+/**
+ * The routes a frozen aspd preparation launches on (T-08556 adds the interactive
+ * Codex TUI; T-08562 adds the non-Codex interactive tmux broker route).
+ */
+export type AspdPreparationRoute =
+  | 'headless-codex-app-server'
+  | 'interactive-codex-tui'
+  | 'interactive-tmux-broker'
+
+/**
+ * T-08562 (§1.6.2): the one named deprecation fence. `codex-cli-tmux` keeps its
+ * current (facade) path; it has no release binding and no door emits it.
+ */
+const ASPD_DEPRECATED_INTERACTIVE_DRIVER = 'codex-cli-tmux'
 
 /** The frozen preparation persisted in `runtime_operations.preparation_json`. */
 export type AspdPreparationRecord = {
@@ -122,10 +140,17 @@ export type AspdPreparationRecord = {
     identity: RuntimeIdentityAllocation
   }
   hosting: {
-    driverKind: typeof ASPD_BROKER_DRIVER
+    /**
+     * The admitted broker driver: `codex-app-server` on the Codex routes; the
+     * admitted `claude-code-tmux` or `pi-tui-tmux` on `interactive-tmux-broker`
+     * (T-08562). HRC's hosting paths are keyed on it.
+     */
+    driverKind: string
     /**
      * `none` or the `tmux-tui` viewer (T-08553–T-08555) on the headless route;
-     * `codex-tui`, the leased interactive TUI pane, on the interactive route (T-08556).
+     * `codex-tui`, the leased interactive TUI pane, on the interactive Codex route
+     * (T-08556); `interactive-tui`, the leased TUI pane of a non-Codex driver, on
+     * `interactive-tmux-broker` (T-08562).
      */
     presentation: AspdHostingPresentation
     executable: string
@@ -143,7 +168,7 @@ export type AspdPreparationRecord = {
   startOutcome?: 'rejected' | 'uncertain' | undefined
 }
 
-type AspdHostingPresentation = 'none' | 'tmux-tui' | 'codex-tui'
+type AspdHostingPresentation = 'none' | 'tmux-tui' | 'codex-tui' | 'interactive-tui'
 
 /** HRC's deterministic hosting paths; a viewer adds its observer socket. */
 type AspdHostingPaths = BrokerSubstratePaths & { observerSocketPath?: string | undefined }
@@ -169,16 +194,46 @@ function aspdRoutePresentation(
 
 function describeAspdHostingPaths(
   options: HrcServerInstanceForHandlers['options'],
+  driverKind: string,
   runtimeId: string,
   presentation: AspdHostingPresentation
 ): AspdHostingPaths {
-  const paths = describeBrokerSubstratePaths(options, ASPD_BROKER_DRIVER, runtimeId)
+  const paths = describeBrokerSubstratePaths(options, driverKind, runtimeId)
   return presentation === 'tmux-tui'
     ? {
         ...paths,
-        observerSocketPath: getBrokerObserverSocketPath(options, ASPD_BROKER_DRIVER, runtimeId),
+        observerSocketPath: getBrokerObserverSocketPath(options, driverKind, runtimeId),
       }
     : paths
+}
+
+/**
+ * T-08562 (§1.6.3): the positive hosting evidence a frozen release carries for
+ * its worker, read from the optional `executionRelease.worker.hostedDrivers`
+ * (untyped in HRC's locked protocol; the thin client passes the result through).
+ * A malformed value is treated as absent.
+ */
+function hostedDriversOf(release: AspcExecutionRelease): string[] | undefined {
+  const value = (release.worker as { hostedDrivers?: unknown }).hostedDrivers
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+    ? (value as string[])
+    : undefined
+}
+
+/**
+ * T-08562 (§1.6.3): any driver other than codex-app-server launches on the aspd
+ * route only when the frozen release lists it in `hostedDrivers`. codex-app-server
+ * is exempt: its binding is already proven, so retained releases keep serving it.
+ */
+function workerHostingUnproven(
+  release: AspcExecutionRelease,
+  brokerDriver: string
+): { hostedDrivers: string[] | null } | undefined {
+  if (brokerDriver === ASPD_BROKER_DRIVER) return undefined
+  const hostedDrivers = hostedDriversOf(release)
+  return hostedDrivers?.includes(brokerDriver) === true
+    ? undefined
+    : { hostedDrivers: hostedDrivers ?? null }
 }
 
 function aspdWorkerArgv(
@@ -200,17 +255,22 @@ function aspdWorkerArgv(
 }
 
 /**
- * T-08556 (§1.4), T-08560 (§1.5.1) — the interactive route: every interactive
- * codex-app-server birth, whichever door requests it, on a node that declares
- * an aspd endpoint. Returns the endpoint, or undefined for every other driver
- * and for an unconfigured node.
+ * T-08556 (§1.4), T-08560 (§1.5.1), T-08562 (§1.6.2) — the interactive route:
+ * every interactive broker birth, whichever door requests it, on a node that
+ * declares an aspd endpoint. Returns the endpoint, or undefined for an
+ * unconfigured node and for the deprecated `codex-cli-tmux` fence.
  */
-export function aspdInteractiveCodexEndpoint(
+export function aspdInteractiveBrokerEndpoint(
   input: { allowedBrokerDriver: InteractiveTmuxBrokerDriver },
   env: Record<string, string | undefined> = process.env
 ): string | undefined {
-  if (input.allowedBrokerDriver !== ASPD_BROKER_DRIVER) return undefined
+  if (input.allowedBrokerDriver === ASPD_DEPRECATED_INTERACTIVE_DRIVER) return undefined
   return configuredAspdEndpoint(env)
+}
+
+/** T-08562: the frozen interactive route an admitted driver launches on. */
+export function aspdInteractiveRouteFor(brokerDriver: string): AspdPreparationRoute {
+  return brokerDriver === ASPD_BROKER_DRIVER ? 'interactive-codex-tui' : 'interactive-tmux-broker'
 }
 
 /**
@@ -247,6 +307,8 @@ export type AspdLaunchCarriedPromptMode = 'replace-priming' | 'append-to-priming
 /** T-08556: the interactive-route facts the start door decides before preparation. */
 export type AspdInteractivePreparation = {
   flagEnvName: string
+  /** T-08562: the driver the door requested; the admitted profile must equal it. */
+  brokerDriver: InteractiveTmuxBrokerDriver
   continuation: ReturnType<typeof toRuntimeContinuationRef>
   door: AspdInteractiveDoor
   /**
@@ -367,25 +429,53 @@ export async function prepareAspdHeadlessAttempt(
     )
   }
   const interactive = input.interactive
+  // T-08562 (§1.6.3): an interactive preparation is admitted by hosting shape
+  // (interactive, supported protocol, tmux terminal) plus equality with the
+  // driver the door requested; no driver-name list.
   const routeMatches =
-    compiled.profile.brokerDriver === ASPD_BROKER_DRIVER &&
-    (interactive === undefined
-      ? compiled.profile.interactionMode === 'headless'
-      : decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
+    interactive === undefined
+      ? compiled.profile.brokerDriver === ASPD_BROKER_DRIVER &&
+        compiled.profile.interactionMode === 'headless'
+      : isInteractiveTmuxBrokerProfile(compiled.profile) &&
+        compiled.profile.brokerDriver === interactive.brokerDriver &&
+        decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
           brokerFlagEnabled: true,
-          allowedBrokerDriver: ASPD_BROKER_DRIVER,
-        }) === 'broker')
+          allowedBrokerDriver: interactive.brokerDriver,
+        }) === 'broker'
   if (!routeMatches) {
     throw aspdStartError(
       'aspd_route_profile_mismatch',
       interactive === undefined
         ? 'aspd selected a profile outside the headless codex-app-server route'
-        : 'aspd selected a profile outside the interactive codex-app-server TUI route',
+        : `aspd selected a profile outside the interactive ${interactive.brokerDriver} route`,
       {
         hostSessionId: session.hostSessionId,
         runId,
         brokerDriver: compiled.profile.brokerDriver,
         interactionMode: compiled.profile.interactionMode,
+        ...(interactive !== undefined ? { requestedBrokerDriver: interactive.brokerDriver } : {}),
+      }
+    )
+  }
+  const hostingUnproven = workerHostingUnproven(release, compiled.profile.brokerDriver)
+  if (hostingUnproven !== undefined) {
+    writeServerLog('WARN', 'aspd.preparation.hosting_unproven', {
+      hostSessionId: session.hostSessionId,
+      runId,
+      brokerDriver: compiled.profile.brokerDriver,
+      hostedDrivers: hostingUnproven.hostedDrivers,
+      executionReleaseId: release.releaseId,
+    })
+    throw aspdStartError(
+      'aspd_worker_hosting_unproven',
+      `the aspd execution release does not prove it hosts ${compiled.profile.brokerDriver}; refusing without fallback`,
+      {
+        hostSessionId: session.hostSessionId,
+        runId,
+        brokerDriver: compiled.profile.brokerDriver,
+        hostedDrivers: hostingUnproven.hostedDrivers,
+        executionReleaseId: release.releaseId,
+        aspdRelease: prepared.service.release,
       }
     )
   }
@@ -419,8 +509,15 @@ export async function prepareAspdHeadlessAttempt(
     brokerRoute: true,
   })
   const operationId = String(compiled.identity.operationId)
+  const brokerDriver = compiled.profile.brokerDriver
+  const route: AspdPreparationRoute =
+    interactive === undefined ? 'headless-codex-app-server' : aspdInteractiveRouteFor(brokerDriver)
   const presentation: AspdHostingPresentation | undefined =
-    interactive === undefined ? aspdRoutePresentation(intent, process.env) : 'codex-tui'
+    interactive === undefined
+      ? aspdRoutePresentation(intent, process.env)
+      : route === 'interactive-codex-tui'
+        ? 'codex-tui'
+        : 'interactive-tui'
   if (presentation === undefined) {
     throw aspdStartError(
       'aspd_route_profile_mismatch',
@@ -428,7 +525,7 @@ export async function prepareAspdHeadlessAttempt(
       { hostSessionId: session.hostSessionId, runId }
     )
   }
-  const paths = describeAspdHostingPaths(server.options, runtimeId, presentation)
+  const paths = describeAspdHostingPaths(server.options, brokerDriver, runtimeId, presentation)
   const argv = aspdWorkerArgv(
     release,
     { runtimeId, hostSessionId: session.hostSessionId, generation: session.generation },
@@ -458,7 +555,7 @@ export async function prepareAspdHeadlessAttempt(
           ...aspdRouteDecision,
         }
       : {
-          // T-08556 (§1.4), T-08560 (§1.5): an interactive birth by any door.
+          // T-08556 (§1.4), T-08560 (§1.5), T-08562 (§1.6): an interactive birth by any door.
           route: 'broker',
           flag: interactive.flagEnvName,
           selectedBy: 'decideInteractiveTmuxExecutionRoute',
@@ -473,7 +570,7 @@ export async function prepareAspdHeadlessAttempt(
         }
   const record: AspdPreparationRecord = {
     schemaVersion: ASPD_PREPARATION_SCHEMA,
-    route: interactive === undefined ? 'headless-codex-app-server' : 'interactive-codex-tui',
+    route,
     preparedAt,
     hostSessionId: session.hostSessionId,
     generation: session.generation,
@@ -495,7 +592,7 @@ export async function prepareAspdHeadlessAttempt(
       identity: compiled.identity,
     },
     hosting: {
-      driverKind: ASPD_BROKER_DRIVER,
+      driverKind: brokerDriver,
       presentation,
       executable: release.worker.executable,
       argv,
@@ -586,21 +683,29 @@ export function readAspdPreparation(
  * anew would rebind a committed attempt to the active release (§5).
  */
 export function assertPreparedAspdAttemptRoute(
-  resumable: { operationId: string; runId: string; route: AspdPreparationRoute },
-  selectedRoute: AspdPreparationRoute,
+  resumable: {
+    operationId: string
+    runId: string
+    route: AspdPreparationRoute
+    driverKind: string
+  },
+  selected: { route: AspdPreparationRoute; driverKind: string },
   hostSessionId: string
 ): void {
-  if (resumable.route === selectedRoute) return
+  // T-08562 (§1.6.6): route AND driver; two non-Codex drivers share a route.
+  if (resumable.route === selected.route && resumable.driverKind === selected.driverKind) return
   throw aspdStartError(
     'aspd_preparation_route_changed',
-    `the frozen aspd preparation is ${resumable.route}; this retry selected ${selectedRoute}`,
+    `the frozen aspd preparation is ${resumable.route}/${resumable.driverKind}; this retry selected ${selected.route}/${selected.driverKind}`,
     {
       reason: 'aspd_preparation_route_changed',
       operationId: resumable.operationId,
       runId: resumable.runId,
       hostSessionId,
       frozenRoute: resumable.route,
-      selectedRoute,
+      selectedRoute: selected.route,
+      frozenDriver: resumable.driverKind,
+      selectedDriver: selected.driverKind,
     }
   )
 }
@@ -613,7 +718,9 @@ export function findPreparedAspdAttemptForRetry(
   server: Pick<HrcServerInstanceForHandlers, 'db'>,
   hostSessionId: string,
   dispatchIdempotencyKey: string
-): { operationId: string; runId: string; route: AspdPreparationRoute } | undefined {
+):
+  | { operationId: string; runId: string; route: AspdPreparationRoute; driverKind: string }
+  | undefined {
   for (const operation of server.db.runtimeOperations.listPreparedByHostSession(hostSessionId)) {
     if (operation.preparationJson === undefined) continue
     try {
@@ -622,7 +729,12 @@ export function findPreparedAspdAttemptForRetry(
         record.schemaVersion === ASPD_PREPARATION_SCHEMA &&
         record.dispatchIdempotencyKey === dispatchIdempotencyKey
       ) {
-        return { operationId: operation.operationId, runId: record.runId, route: record.route }
+        return {
+          operationId: operation.operationId,
+          runId: record.runId,
+          route: record.route,
+          driverKind: record.hosting.driverKind,
+        }
       }
     } catch {
       // An unreadable row is not a match; launch will name it if addressed directly.
@@ -711,20 +823,32 @@ export async function launchAspdPreparedAttempt(
   }
   const currentPaths = describeAspdHostingPaths(
     server.options,
+    record.hosting.driverKind,
     record.runtimeId,
     record.hosting.presentation
   )
   const expectedArgv = aspdWorkerArgv(record.executionRelease, record, currentPaths)
   // The route and its presentation are one frozen fact: the interactive TUI
   // route hosts only `codex-tui`, the headless route only its decided viewer.
+  const interactiveDoor =
+    record.dispatch.routeDecision['door'] === 'attached-run' ||
+    record.dispatch.routeDecision['door'] === 'interactive-birth'
   const presentationMatchesRoute =
     record.route === 'interactive-codex-tui'
       ? record.hosting.presentation === 'codex-tui' &&
-        (record.dispatch.routeDecision['door'] === 'attached-run' ||
-          record.dispatch.routeDecision['door'] === 'interactive-birth')
-      : record.route === 'headless-codex-app-server' &&
-        record.hosting.presentation !== 'codex-tui' &&
-        record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
+        record.hosting.driverKind === ASPD_BROKER_DRIVER &&
+        interactiveDoor
+      : record.route === 'interactive-tmux-broker'
+        ? // T-08562 (§1.6.4): the frozen driver is bound back to the admitted profile.
+          record.hosting.presentation === 'interactive-tui' &&
+          record.hosting.driverKind !== ASPD_BROKER_DRIVER &&
+          record.hosting.driverKind === record.admission.profile.brokerDriver &&
+          interactiveDoor
+        : record.route === 'headless-codex-app-server' &&
+          record.hosting.driverKind === ASPD_BROKER_DRIVER &&
+          record.hosting.presentation !== 'codex-tui' &&
+          record.hosting.presentation !== 'interactive-tui' &&
+          record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation
   if (
     JSON.stringify(expectedArgv) !== JSON.stringify(record.hosting.argv) ||
     JSON.stringify(currentPaths) !== JSON.stringify(record.hosting.paths) ||
@@ -733,6 +857,22 @@ export async function launchAspdPreparedAttempt(
     refuse('launch_description_mismatch', 'frozen worker launch description no longer matches', {
       frozenArgv: record.hosting.argv,
     })
+  }
+
+  // T-08562 (§1.6.3): re-check the hosting evidence from persisted bytes.
+  const launchHostingUnproven = workerHostingUnproven(
+    record.executionRelease,
+    record.admission.profile.brokerDriver
+  )
+  if (launchHostingUnproven !== undefined) {
+    refuse(
+      'aspd_worker_hosting_unproven',
+      `the frozen execution release does not prove it hosts ${record.admission.profile.brokerDriver}`,
+      {
+        brokerDriver: record.admission.profile.brokerDriver,
+        hostedDrivers: launchHostingUnproven.hostedDrivers,
+      }
+    )
   }
 
   writeServerLog('INFO', 'aspd.launch.begin', { ...detail, executable })

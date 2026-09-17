@@ -421,11 +421,15 @@ async function startControllerAttempt(
   // it is selected by is the frozen preparation's own (launch checks it matches
   // the frozen hosting presentation).
   // T-08556: the interactive tmux substrate is allowed only for a frozen
-  // `interactive-codex-tui` preparation; each route launches only on its own.
+  // interactive preparation (`interactive-codex-tui`, or T-08562's
+  // `interactive-tmux-broker`); each route launches only on its own.
+  const aspdInteractiveRoute =
+    input.aspdExecution?.route === 'interactive-codex-tui' ||
+    input.aspdExecution?.route === 'interactive-tmux-broker'
   if (
     input.aspdExecution !== undefined &&
     (input.brokerClient !== undefined ||
-      (input.aspdExecution.route === 'interactive-codex-tui'
+      (aspdInteractiveRoute
         ? !isBrokerTmuxProfile(input.profile)
         : !usesHeadlessBrokerSubstrate(input.profile)))
   ) {
@@ -433,7 +437,7 @@ async function startControllerAttempt(
       ok: false,
       error: new BrokerControllerError(
         'aspd_route_profile_mismatch',
-        input.aspdExecution.route === 'interactive-codex-tui'
+        aspdInteractiveRoute
           ? 'an aspd-prepared interactive execution launches only on the interactive tmux substrate'
           : 'an aspd-prepared execution launches only on the headless broker substrate',
         {
@@ -550,10 +554,9 @@ async function startControllerAttempt(
         if (tmuxAllocation !== undefined) {
           // T-08556: the interactive route's lease belongs to the interactive allocator.
           const allocation = ctx.allocationContext()
-          const releasing =
-            input.aspdExecution.route === 'interactive-codex-tui'
-              ? allocation.tmuxAllocator
-              : allocation.headlessSubstrateAllocator
+          const releasing = aspdInteractiveRoute
+            ? allocation.tmuxAllocator
+            : allocation.headlessSubstrateAllocator
           await releasing?.release?.(tmuxAllocation).catch(() => undefined)
         }
         return {

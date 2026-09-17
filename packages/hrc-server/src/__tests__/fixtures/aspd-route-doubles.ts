@@ -76,6 +76,22 @@ export type AspdDouble = {
   openConnections: number
   helloOverride?: Record<string, unknown> | undefined
   omitExecutionRelease?: boolean | undefined
+  /**
+   * T-08562: `executionRelease.worker.hostedDrivers` to emit. Undefined omits the
+   * field (a retained pre-binding release); any value is sent verbatim.
+   */
+  hostedDrivers?: unknown
+  /** The `profileSelector` carried by each compile request, in order (T-08562). */
+  compileSelectors: Array<Record<string, unknown> | undefined>
+  /** T-08562: force the selected interactive driver (driver-substitution gate). */
+  selectDriverOverride?: string | undefined
+  /** The `continuation` carried by each compile request, in order (T-08562). */
+  compileContinuations: unknown[]
+  /**
+   * T-08562: answer compiles with the existing failure envelope carrying this
+   * diagnostic code (e.g. the producer's `release_worker_driver_unavailable`).
+   */
+  compileFailureCode?: string | undefined
   stop(): void
 }
 
@@ -85,6 +101,8 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
     compileCalls: 0,
     compileAspHomes: [],
     compileMaterializations: [],
+    compileSelectors: [],
+    compileContinuations: [],
     openConnections: 0,
     stop: () => listener.stop(true),
   }
@@ -152,6 +170,31 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
             state.compileAspHomes.push(message.params?.aspHome)
             const materialization = message.params.compileRequest.materialization ?? {}
             state.compileMaterializations.push(materialization)
+            state.compileSelectors.push(message.params?.profileSelector)
+            state.compileContinuations.push(message.params.compileRequest.continuation)
+            if (state.compileFailureCode !== undefined) {
+              const diagnostic = {
+                level: 'error',
+                code: state.compileFailureCode,
+                message: 'Selected broker driver is not hosted by this ASP release',
+                plane: 'asp-compiler',
+                details: {
+                  releaseId: state.serving.releaseId,
+                  brokerDriver: message.params?.profileSelector?.brokerDriver,
+                },
+              }
+              reply(socket as never, message.id, {
+                schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+                ok: false,
+                compileResponse: {
+                  schemaVersion: 'agent-runtime-compile-response/v1',
+                  ok: false,
+                  diagnostics: [diagnostic],
+                },
+                diagnostics: [diagnostic],
+              })
+              continue
+            }
             const identity = message.params.compileRequest.identity as RuntimeIdentityAllocation
             // T-08556: an interactive compile selects the interactive codex-app-server TUI.
             // T-08560: a launch-carried prompt rides it as the broker initialInput,
@@ -161,14 +204,27 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
               materialization.initialPrompt.length > 0
                 ? materialization.initialPrompt
                 : undefined
+            // T-08562: the selected driver follows the request's profileSelector; a
+            // non-Codex tmux driver carries the prompt as launch material (the
+            // launch-argv compiler shape), never as broker initialInput.
+            const selectedDriver =
+              state.selectDriverOverride ??
+              (message.params?.profileSelector?.brokerDriver as string | undefined) ??
+              'codex-app-server'
+            const launchArgvDriver = selectedDriver !== 'codex-app-server'
             const { profile, startRequest } =
               message.params.compileRequest.requested?.interactionMode === 'interactive'
                 ? makeInteractiveTmuxProfile(identity, {
-                    brokerDriver: 'codex-app-server',
+                    brokerDriver: selectedDriver as never,
                     withInitialInput:
-                      interactivePrompt !== undefined && identity.initialInputId !== undefined,
-                    ...(interactivePrompt !== undefined
+                      !launchArgvDriver &&
+                      interactivePrompt !== undefined &&
+                      identity.initialInputId !== undefined,
+                    ...(interactivePrompt !== undefined && !launchArgvDriver
                       ? { initialInputText: interactivePrompt }
+                      : {}),
+                    ...(interactivePrompt !== undefined && launchArgvDriver
+                      ? { launchInitialPrompt: interactivePrompt }
                       : {}),
                   })
                 : makeBrokerProfile(identity, {
@@ -187,7 +243,17 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
               diagnostics: [],
               ...(state.omitExecutionRelease
                 ? {}
-                : { executionRelease: executionReleaseOf(state.serving) }),
+                : {
+                    executionRelease: {
+                      ...executionReleaseOf(state.serving),
+                      worker: {
+                        ...executionReleaseOf(state.serving).worker,
+                        ...(state.hostedDrivers !== undefined
+                          ? { hostedDrivers: state.hostedDrivers }
+                          : {}),
+                      },
+                    },
+                  }),
             })
           }
         }
@@ -268,14 +334,12 @@ export function workerClient(
           brokerToClientRequests: true,
           attachReplay: true,
         },
-        drivers: [
-          {
-            kind: 'codex-app-server',
-            version: '0.2.0-test',
-            available: true,
-            capabilities: capabilities(),
-          },
-        ],
+        drivers: ['codex-app-server', 'claude-code-tmux', 'pi-tui-tmux'].map((kind) => ({
+          kind,
+          version: '0.2.0-test',
+          available: true,
+          capabilities: capabilities(),
+        })),
         ...(release !== undefined ? { release } : {}),
       } as BrokerHelloResponse
     },
