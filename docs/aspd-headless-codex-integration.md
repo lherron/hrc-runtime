@@ -694,7 +694,23 @@ hello protocol and release must equal the frozen release before
 `invocation.start`. Otherwise HRC releases the lease, records the refusal and
 sends no start. B4 and the existing interactive persistence follow: runtime
 `transport: tmux`, `runtime_state_json.executionRelease`. The attach
-handshake is unchanged. `prepare-attached` answers `prepared` once the controller
+handshake is unchanged.
+
+**Never-started lease cleanup (Astra grade G1).** The controller releases the
+lease an attempt realized whenever that start ends without success before
+`invocation.start` was sent: an attach cancelled at its resume deadline, a worker
+connect or handshake failure, a pre-start admission refusal, or a failed start-graph
+commit. The release is the allocator's existing lease-server kill plus broker
+socket removal. It sits at the controller's single start exit, so it covers every
+route's pre-start failure; before this, only the aspd hello refusal released. Fences:
+- once `invocation.start` was sent, the lease is never touched, whether the outcome
+  is live or `uncertain`;
+- an injected broker client owns no HRC lease;
+- an aspd launch's deterministic lease is released only while its frozen operation
+  is still `prepared` or this attempt committed its start graph, never when another
+  launch owns that operation.
+
+The runtime, run and operation rows settle `failed` as before. `prepare-attached` answers `prepared` once the controller
 reports attached-start readiness for this pending start, and the invocation
 starts only after `resume-attached` (the CLI has spawned its attach client) or
 the existing resume deadline cancels it.

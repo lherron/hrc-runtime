@@ -312,9 +312,78 @@ export async function proveReattachedBrokerControl(
   }
 }
 
+/**
+ * What one start attempt has done, read by {@link startController} after the
+ * attempt returns: whether it realized a lease, sent `invocation.start`, and
+ * committed its own start graph.
+ */
+type StartAttempt = {
+  tmuxAllocation?: BrokerTmuxAllocation | undefined
+  invocationStartSent: boolean
+  startGraphCommitted: boolean
+}
+
 export async function startController(
   ctx: DispatchContext,
   input: BrokerControllerStartInput
+): Promise<BrokerControllerStartResult> {
+  const attempt: StartAttempt = { invocationStartSent: false, startGraphCommitted: false }
+  const result = await startControllerAttempt(ctx, input, attempt)
+  if (!result.ok) {
+    await releaseNeverStartedLease(ctx, input, attempt)
+  }
+  return result
+}
+
+/**
+ * T-08556 (§1.4 Launch; §5.2) — a lease this attempt realized that never
+ * carried `invocation.start` holds no native invocation and is HRC's to
+ * reclaim when the start fails or its attach is cancelled. Fences:
+ * - once `invocation.start` was sent the outcome may be live or uncertain, and
+ *   the lease is never touched;
+ * - an injected client owns no HRC lease;
+ * - an aspd launch's lease is deterministic by runtime id, so it is released
+ *   only while the frozen operation is still `prepared` or this attempt
+ *   committed its start graph, never when another launch owns that row.
+ */
+async function releaseNeverStartedLease(
+  ctx: DispatchContext,
+  input: BrokerControllerStartInput,
+  attempt: StartAttempt
+): Promise<void> {
+  const allocation = attempt.tmuxAllocation
+  if (allocation === undefined || attempt.invocationStartSent) return
+  if (input.brokerClient !== undefined) return
+  if (input.aspdExecution !== undefined && !attempt.startGraphCommitted) {
+    const operation = ctx.db.runtimeOperations.getByOperationId(input.aspdExecution.operationId)
+    if (operation?.status !== 'prepared') return
+  }
+  const allocators = ctx.allocationContext()
+  const owner = isBrokerTmuxProfile(input.profile)
+    ? allocators.tmuxAllocator
+    : isTmuxTuiRoute(input)
+      ? allocators.tmuxTuiAllocator
+      : allocators.headlessSubstrateAllocator
+  // Every durable allocator's lease is released the same way (its tmux server and
+  // broker socket), so an allocator without its own release uses the headless one.
+  const release = owner?.release ?? allocators.headlessSubstrateAllocator?.release
+  if (release === undefined) return
+  await release(allocation).catch((error: unknown) => {
+    ctx.logger.warn?.('never-started broker lease release failed', {
+      runtimeId: String(input.identity.runtimeId),
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
+  ctx.logger.info?.('broker.lease.released_never_started', {
+    runtimeId: String(input.identity.runtimeId),
+    operationId: String(input.identity.operationId),
+  })
+}
+
+async function startControllerAttempt(
+  ctx: DispatchContext,
+  input: BrokerControllerStartInput,
+  attempt: StartAttempt
 ): Promise<BrokerControllerStartResult> {
   // Launch-timing instrumentation (diagnostic). The broker has no log of its
   // own — its stderr is swallowed into a tail buffer by the stdio transport and
@@ -391,6 +460,7 @@ export async function startController(
     // persisted substrate/endpoint, never from a compile-time marker or flag.
     if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
+      attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-tmux-alloc')
     } else if (input.brokerClient === undefined && usesHeadlessBrokerSubstrate(input.profile)) {
       // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
@@ -406,6 +476,7 @@ export async function startController(
       tmuxAllocation = isTmuxTuiRoute(input)
         ? await allocateTmuxTuiSubstrate(ctx.allocationContext(), input)
         : await allocateHeadlessSubstrate(ctx.allocationContext(), input)
+      attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-headless-substrate-alloc')
     }
 
@@ -638,6 +709,7 @@ export async function startController(
 
     if (tmuxAllocation === undefined) {
       tmuxAllocation = await allocateTmuxIfRequired(ctx.allocationContext(), input)
+      attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-tmux-alloc')
     }
     // T-01874 Ph3 — a headless durable runtime has presentation='none' and no
@@ -680,6 +752,7 @@ export async function startController(
           }
         : input.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
+    attempt.startGraphCommitted = true
     await input.onAccepted?.(persisted)
     if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
       await ctx.pauseForAttachedInvocationStart({
@@ -692,6 +765,7 @@ export async function startController(
     // The lifecycle overlay rides ONLY on the dispatch options envelope —
     // never on input.startRequest (INV-14.4 compiler closure).
     invocationStartSent = true
+    attempt.invocationStartSent = true
     const startResult = input.lifecyclePolicy
       ? await client.startInvocationFromRequest(input.startRequest, {
           dispatchEnv,

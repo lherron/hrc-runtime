@@ -53,6 +53,9 @@ let ledger: HostingLedger
 let facadeCalls: number
 let facadeSpy: ReturnType<typeof spyOn>
 let delivered: Array<{ transport: string; runtimeId: string; prompt: string }>
+/** Lease releases per allocator, and a switch that makes the worker connect fail. */
+let releases: string[]
+let connectThrows: Error | undefined
 const savedEnv: Record<string, string | undefined> = {}
 
 type Internal = {
@@ -124,14 +127,36 @@ async function bootServer(overrides: { durableIpc?: boolean } = {}): Promise<voi
     tmuxManagerFactory: tmuxManagerFactory as never,
     generateAttachToken: () => token,
   })
+  releases = []
+  connectThrows = undefined
+  const counted = <T extends { release?: (a: never) => Promise<void> }>(
+    name: string,
+    allocator: T
+  ): T => {
+    const release = allocator.release
+    return release === undefined
+      ? allocator
+      : {
+          ...allocator,
+          release: async (allocation: never) => {
+            releases.push(name)
+            await release(allocation)
+          },
+        }
+  }
   internal().harnessBrokerController = new HarnessBrokerController({
     db: internal().db,
-    brokerUnixClientFactory: async () =>
-      workerClient(ledger, [releaseA], ledger.commands.at(-1)) as never,
-    tmuxAllocator: createBrokerDurableTmuxAllocator(internal().options, deps('attach-t08556-tui')),
-    headlessSubstrateAllocator: createBrokerDurableHeadlessAllocator(
-      internal().options,
-      deps('attach-t08556')
+    brokerUnixClientFactory: async () => {
+      if (connectThrows !== undefined) throw connectThrows
+      return workerClient(ledger, [releaseA], ledger.commands.at(-1)) as never
+    },
+    tmuxAllocator: counted(
+      'tmux',
+      createBrokerDurableTmuxAllocator(internal().options, deps('attach-t08556-tui'))
+    ),
+    headlessSubstrateAllocator: counted(
+      'headless',
+      createBrokerDurableHeadlessAllocator(internal().options, deps('attach-t08556'))
     ),
     tmuxTuiAllocator: createBrokerTmuxTuiAllocator(internal().options, deps('attach-t08556-v')),
     now: () => new Date().toISOString(),
@@ -599,5 +624,98 @@ describe('T-08556 prompt fenced to the selected runtime (F4)', () => {
     await attachedRun(s.hostSessionId, { prompt: 'fenced' })
     await Bun.sleep(20)
     expect(delivered).toEqual([{ transport: 'tmux', runtimeId: first.runtimeId, prompt: 'fenced' }])
+  })
+})
+
+// ── G1: a never-started lease is released; a started one never is ────────────
+
+describe('T-08556 G1 never-started lease cleanup', () => {
+  function operationOf(hostSessionId: string) {
+    return internal()
+      .db.sqlite.query<
+        { status: string; error_code: string | null; runtime_id: string; preparation_json: string },
+        [string]
+      >(
+        `SELECT status, error_code, runtime_id, preparation_json FROM runtime_operations
+          WHERE host_session_id = ? AND preparation_json IS NOT NULL ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(hostSessionId)
+  }
+
+  it('a cancelled attach releases the lease it realized; nothing was started', async () => {
+    const s = await session()
+    const response = await fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: s.hostSessionId,
+      intent: runIntent(),
+    })
+    const prepared = (await response.json()) as PrepareBody
+    expect(prepared.status).toBe('prepared')
+    expect(releases).toEqual([])
+
+    // What the resume deadline does when the CLI never resumes.
+    internal().harnessBrokerController?.cancelAttachedStart(
+      prepared.pendingStartId as string,
+      'attached run resume deadline expired'
+    )
+    for (let i = 0; i < 50 && releases.length === 0; i++) await Bun.sleep(10)
+
+    expect(releases).toEqual(['tmux'])
+    expect(ledger.startCalls).toHaveLength(0)
+    // The release killed this runtime's lease server (the fixture persists no run
+    // row for a no-prompt start, so row settlement is proven by the live rig).
+    const op = operationOf(s.hostSessionId)
+    const leaseKey = (op?.runtime_id as string).slice(3, 11)
+    expect(ledger.killedServers.some((sock) => sock.includes(leaseKey))).toBe(true)
+  })
+
+  it('a pre-start failure after allocation releases the lease', async () => {
+    const s = await session()
+    connectThrows = new Error('worker socket never came up')
+    const refused = await refusedAttachedRun(s.hostSessionId)
+    expect(refused.status).toBeGreaterThanOrEqual(500)
+    expect(ledger.commands).toHaveLength(1)
+    expect(releases).toEqual(['tmux'])
+    expect(ledger.startCalls).toHaveLength(0)
+  })
+
+  it('a start whose invocation.start was sent is never released, and stays uncertain', async () => {
+    const s = await session()
+    ledger.startThrows = new Error('lost start reply')
+    const response = await fixture.postJson('/v1/runs/prepare-attached', {
+      hostSessionId: s.hostSessionId,
+      intent: runIntent(),
+    })
+    const prepared = (await response.json()) as PrepareBody
+    expect(prepared.status).toBe('prepared')
+    await fixture.postJson('/v1/runs/resume-attached', { pendingStartId: prepared.pendingStartId })
+    for (let i = 0; i < 50 && operationOf(s.hostSessionId)?.status !== 'failed'; i++)
+      await Bun.sleep(10)
+
+    expect(ledger.startCalls).toHaveLength(1)
+    expect(releases).toEqual([])
+    const op = operationOf(s.hostSessionId)
+    expect(JSON.parse(op?.preparation_json as string).startOutcome).toBe('uncertain')
+  })
+
+  it('a launch that lost its frozen operation to another launch never releases that lease', async () => {
+    const s = await session()
+    // After launch validation and before the start graph, another launch of the
+    // same frozen attempt commits it: this lease path now belongs to that launch.
+    ledger.onFirstHostingEffect = () => {
+      const row = internal()
+        .db.sqlite.query<{ operation_id: string }, [string]>(
+          `SELECT operation_id FROM runtime_operations WHERE host_session_id = ? AND status = 'prepared'`
+        )
+        .get(s.hostSessionId)
+      internal().db.runtimeOperations.update(row?.operation_id as string, {
+        status: 'starting',
+        updatedAt: new Date().toISOString(),
+      })
+    }
+    const refused = await refusedAttachedRun(s.hostSessionId)
+    expect(refused.status).toBeGreaterThanOrEqual(500)
+    expect(JSON.stringify(refused.body)).toContain('aspd_preparation_not_prepared')
+    expect(releases).toEqual([])
+    expect(ledger.startCalls).toHaveLength(0)
   })
 })
