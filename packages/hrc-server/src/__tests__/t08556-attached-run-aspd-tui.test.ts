@@ -285,14 +285,14 @@ async function startHeadless(hostSessionId: string, operator?: 'none' | 'tmux-tu
 // ── Route key ─────────────────────────────────────────────────────────────────
 
 describe('T-08556 route key', () => {
-  it('only the attached-run door, the codex-app-server driver and a configured node select aspd', () => {
+  // T-08560 (§1.5.1): the door no longer enters the predicate.
+  it('the codex-app-server driver and a configured node select aspd for every door; other drivers and an unset socket do not', () => {
     const env = { HRC_ASPD_SOCKET: '/tmp/aspd.sock' }
-    const codex = { allowedBrokerDriver: 'codex-app-server' as const, attachedRunDoor: true }
+    const codex = { allowedBrokerDriver: 'codex-app-server' as const }
     expect(aspdInteractiveCodexEndpoint(codex, env)).toBe('/tmp/aspd.sock')
-    expect(aspdInteractiveCodexEndpoint({ ...codex, attachedRunDoor: false }, env)).toBeUndefined()
-    expect(
-      aspdInteractiveCodexEndpoint({ ...codex, allowedBrokerDriver: 'claude-code-tmux' }, env)
-    ).toBeUndefined()
+    for (const driver of ['claude-code-tmux', 'pi-tui-tmux', 'codex-cli-tmux'] as const) {
+      expect(aspdInteractiveCodexEndpoint({ allowedBrokerDriver: driver }, env)).toBeUndefined()
+    }
     expect(aspdInteractiveCodexEndpoint(codex, {})).toBeUndefined()
   })
 })
@@ -364,16 +364,24 @@ describe('T-08556 attached-run cold birth', () => {
     expect(facadeCalls).toBe(0)
   })
 
-  it('another door birthing the interactive backend keeps the facade', async () => {
+  // T-08560 (§1.5): a non-attached door's interactive Codex birth is on the route too.
+  it('a non-attached interactive Codex birth prepares through aspd with door interactive-birth (facade not reached)', async () => {
     const s = await session()
-    await expect(
-      internal().startInteractiveTmuxBrokerRuntime(s, runIntent(), 'run-cold-attach', {
+    const runtime = await internal().startInteractiveTmuxBrokerRuntime(
+      s,
+      runIntent(),
+      'run-cold-attach',
+      {
         flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
         allowedBrokerDriver: 'codex-app-server',
-      })
-    ).rejects.toThrow('bundled facade reached')
-    expect(facadeCalls).toBe(1)
-    expect(aspd.compileCalls).toBe(0)
+      }
+    )
+    expect(facadeCalls).toBe(0)
+    expect(aspd.compileCalls).toBe(1)
+    const [record] = preparations(s.hostSessionId)
+    expect(record.route).toBe('interactive-codex-tui')
+    expect(record.dispatch.routeDecision.door).toBe('interactive-birth')
+    expect(runtime.transport).toBe('tmux')
   })
 
   it('a node without an aspd endpoint keeps the pre-change attached-run path', async () => {

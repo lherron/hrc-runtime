@@ -223,7 +223,9 @@ describe('T-08553 per-request operator presentation', () => {
     )
   })
 
-  it('omitted choice keeps the node Codex redirect: interactive route, no aspd preparation', async () => {
+  // The interactive handler is observed here, so no preparation is expected. On a
+  // real configured node that interactive birth is itself aspd-prepared (T-08560).
+  it('omitted choice keeps the node Codex redirect: routed to the interactive handler, not the headless aspd route', async () => {
     const recorded = await bootMax3Node()
     const s = await session()
     const response = await turn(s.hostSessionId, headlessIntent())

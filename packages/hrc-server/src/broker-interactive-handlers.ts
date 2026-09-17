@@ -15,6 +15,8 @@ import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter
 import { isInteractiveTmuxBrokerProfile } from './agent-spaces-adapter/compile-profile-selector.js'
 import {
   aspdInteractiveCodexEndpoint,
+  assertPreparedAspdAttemptRoute,
+  findPreparedAspdAttemptForRetry,
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
   readAspdPreparation,
@@ -1376,16 +1378,14 @@ export async function startInteractiveTmuxBrokerRuntime(
   assertParticipantAddressNotSubstituted(this, session)
   const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
   const effectiveTurnIntent = preparedActuatorSplit.intent
-  // T-08556 (§1.4): the attached-run door's interactive Codex birth prepares
-  // through aspd and launches from the frozen execution release. No facade
-  // client is opened on this route and there is no fallback.
-  const aspdEndpoint =
-    flagOptions.coldBirthPrompt === undefined
-      ? aspdInteractiveCodexEndpoint({
-          allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-          attachedRunDoor: flagOptions.attachBeforeInvocationStart !== undefined,
-        })
-      : undefined
+  // T-08556 (§1.4), T-08560 (§1.5.1): every door's interactive Codex birth
+  // prepares through aspd on a configured node and launches from the frozen
+  // execution release. A cold-birth prompt is a preparation input (D1), not a
+  // route selector. No facade client is opened on this route and there is no
+  // fallback.
+  const aspdEndpoint = aspdInteractiveCodexEndpoint({
+    allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+  })
   if (aspdEndpoint !== undefined) {
     return await startAspdInteractiveBrokerRuntime(this, session, effectiveTurnIntent, {
       ...flagOptions,
@@ -1719,10 +1719,12 @@ function settleFailedInteractiveBrokerStart(
 }
 
 /**
- * T-08556 (§1.4) — the attached-run door's aspd-prepared interactive Codex
- * birth. Prepare and freeze at boundary P, then launch only from the persisted
- * operation with this process's live attach handshake. The durable interactive
- * route is required: the stdio route would spawn a resolver-selected broker.
+ * T-08556 (§1.4), T-08560 (§1.5) — an aspd-prepared interactive Codex birth by
+ * any door. Prepare and freeze at boundary P (or resume a same-key frozen
+ * attempt, D2), then launch only from the persisted operation, with the
+ * attached-run door's live attach handshake when it has one. The durable
+ * interactive route is required: the stdio route would spawn a
+ * resolver-selected broker.
  */
 async function startAspdInteractiveBrokerRuntime(
   server: HrcServerInstanceForHandlers,
@@ -1736,6 +1738,8 @@ async function startAspdInteractiveBrokerRuntime(
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
+    coldBirthPrompt?: string | undefined
+    includePrimingForColdBirthPrompt?: boolean | undefined
     onColdBirthPromptRoute?: ((rodeLaunch: boolean) => void) | undefined
     preparedAuthority: Awaited<ReturnType<typeof prepareActuatorSplitIntent>>['authority']
   }
@@ -1756,24 +1760,70 @@ async function startAspdInteractiveBrokerRuntime(
       }
     )
   }
-  options.onColdBirthPromptRoute?.(false)
-  const operationId = await prepareAspdHeadlessAttempt(server, {
-    session,
-    intent,
-    interactive: {
-      flagEnvName: options.flagEnvName,
-      continuation: toRuntimeContinuationRef(
-        decideInteractiveTmuxBrokerContinuation({
-          allowedBrokerDriver: options.allowedBrokerDriver,
-          sessionContinuation: automaticContinuationForSession(server.db, session),
-        })
-      ),
-    },
-    preparedAuthority: options.preparedAuthority,
-    runId: options.diagnosticRunId,
-    endpoint: options.endpoint,
-    responseFormat: options.responseFormat,
-  })
+  // T-08560 D2: a same-host-session, same-key retry whose frozen run identity
+  // this dispatch reused launches that never-submitted preparation, and only a
+  // preparation frozen on this route.
+  const resumable =
+    options.dispatchIdempotencyKey !== undefined
+      ? findPreparedAspdAttemptForRetry(
+          server,
+          session.hostSessionId,
+          options.dispatchIdempotencyKey
+        )
+      : undefined
+  let operationId: string
+  if (resumable !== undefined && resumable.runId === options.diagnosticRunId) {
+    assertPreparedAspdAttemptRoute(resumable, 'interactive-codex-tui', session.hostSessionId)
+    operationId = resumable.operationId
+    writeServerLog('INFO', 'aspd.preparation.resume', {
+      operationId,
+      runId: options.diagnosticRunId,
+      hostSessionId: session.hostSessionId,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    })
+  } else {
+    operationId = await prepareAspdHeadlessAttempt(server, {
+      session,
+      intent,
+      interactive: {
+        flagEnvName: options.flagEnvName,
+        continuation: toRuntimeContinuationRef(
+          decideInteractiveTmuxBrokerContinuation({
+            allowedBrokerDriver: options.allowedBrokerDriver,
+            sessionContinuation: automaticContinuationForSession(server.db, session),
+          })
+        ),
+        door:
+          options.attachBeforeInvocationStart !== undefined ? 'attached-run' : 'interactive-birth',
+        ...(options.coldBirthPrompt !== undefined
+          ? {
+              launchCarriedPrompt: {
+                prompt: options.coldBirthPrompt,
+                mode: options.includePrimingForColdBirthPrompt
+                  ? ('append-to-priming' as const)
+                  : ('replace-priming' as const),
+              },
+            }
+          : {}),
+      },
+      preparedAuthority: options.preparedAuthority,
+      runId: options.diagnosticRunId,
+      endpoint: options.endpoint,
+      responseFormat: options.responseFormat,
+      dispatchIdempotencyKey: options.dispatchIdempotencyKey,
+    })
+  }
+  // T-08560 D1: the launch-carried report comes only from the committed frozen
+  // record (after boundary P, or from the resumed attempt), never from the
+  // caller's mode. A refusal before P reaches no report, so the dispatch door
+  // delivers nothing.
+  if (options.onColdBirthPromptRoute !== undefined) {
+    const { record } = readAspdPreparation(server, operationId)
+    options.onColdBirthPromptRoute(
+      record.dispatch.routeDecision['launchCarriedPrompt'] !== undefined &&
+        isInteractiveTmuxBrokerProfile(record.admission.profile)
+    )
+  }
   const { runtime, intent: launchedIntent } = await launchAspdPreparedAttempt(server, operationId, {
     ...dispatchRunPersistence(options),
     ...(options.attachBeforeInvocationStart !== undefined

@@ -164,6 +164,8 @@ export type InteractiveTmuxFixtureOpts = {
    * Included in spec hashing, so the priming is hash-bound and invocationId-bound.
    */
   launchInitialPrompt?: string
+  /** T-08560: the text of the broker initialInput, when one is included. */
+  initialInputText?: string
   /**
    * Force-include (true) or omit (false) the broker initialInput. Defaults to
    * including it whenever `identity.initialInputId` is allocated — the OLD
@@ -234,7 +236,7 @@ export function makeInteractiveTmuxProfile(
           initialInput: {
             inputId: (opts.initialInputId ?? identity.initialInputId) as string,
             kind: 'user',
-            content: [{ type: 'text', text: `hello ${brokerDriver}` }],
+            content: [{ type: 'text', text: opts.initialInputText ?? `hello ${brokerDriver}` }],
           },
         }
       : {}),

@@ -16,7 +16,9 @@
  *
  * T-08556 (§1.4): the same two boundaries also carry the interactive
  * codex-app-server + codexTui birth of the attached-run door (`hrc run`,
- * `hrc resume`), frozen as route `interactive-codex-tui`.
+ * `hrc resume`), frozen as route `interactive-codex-tui`. T-08560 (§1.5): every
+ * door's interactive codex-app-server birth takes that route, with its door
+ * class and any launch-carried cold-birth prompt frozen at boundary P.
  */
 import { randomUUID } from 'node:crypto'
 
@@ -198,19 +200,16 @@ function aspdWorkerArgv(
 }
 
 /**
- * T-08556 (§1.4) — the interactive route: an interactive codex-app-server birth
- * made by the attached-run door (the only caller that carries
- * `attachBeforeInvocationStart`) on a node that declares an aspd endpoint.
- * Returns the endpoint, or undefined for every other interactive birth.
+ * T-08556 (§1.4), T-08560 (§1.5.1) — the interactive route: every interactive
+ * codex-app-server birth, whichever door requests it, on a node that declares
+ * an aspd endpoint. Returns the endpoint, or undefined for every other driver
+ * and for an unconfigured node.
  */
 export function aspdInteractiveCodexEndpoint(
-  input: {
-    allowedBrokerDriver: InteractiveTmuxBrokerDriver
-    attachedRunDoor: boolean
-  },
+  input: { allowedBrokerDriver: InteractiveTmuxBrokerDriver },
   env: Record<string, string | undefined> = process.env
 ): string | undefined {
-  if (!input.attachedRunDoor || input.allowedBrokerDriver !== ASPD_BROKER_DRIVER) return undefined
+  if (input.allowedBrokerDriver !== ASPD_BROKER_DRIVER) return undefined
   return configuredAspdEndpoint(env)
 }
 
@@ -236,10 +235,25 @@ function aspdStartError(
   return new HrcRuntimeUnavailableError(message, { code, route: 'aspd', ...detail })
 }
 
+/**
+ * T-08560 (§1.5.1): the recorded door class of an interactive preparation. Only
+ * the attached-run door carries an attach handshake.
+ */
+export type AspdInteractiveDoor = 'attached-run' | 'interactive-birth'
+
+/** T-08560 (§1.5.3): how a launch-carried cold-birth prompt treats priming. */
+export type AspdLaunchCarriedPromptMode = 'replace-priming' | 'append-to-priming'
+
 /** T-08556: the interactive-route facts the start door decides before preparation. */
 export type AspdInteractivePreparation = {
   flagEnvName: string
   continuation: ReturnType<typeof toRuntimeContinuationRef>
+  door: AspdInteractiveDoor
+  /**
+   * T-08560 D1: a door's cold-birth prompt, compiled into this preparation
+   * exactly as the facade compiles it and frozen only in the start request.
+   */
+  launchCarriedPrompt?: { prompt: string; mode: AspdLaunchCarriedPromptMode } | undefined
 }
 
 export type AspdPrepareInput = {
@@ -274,9 +288,21 @@ export async function prepareAspdHeadlessAttempt(
 
   let prepared: AspdPreparationResult | undefined
   const aspHome = getAspHome()
+  // T-08560 D1: the facade's compile-only intent. The prompt reaches only the
+  // frozen start request; `record.intent`, which the caller persists as the
+  // applied intent, stays prompt-free.
+  const launchCarriedPrompt = input.interactive?.launchCarriedPrompt
+  const compileIntent: HrcRuntimeIntent =
+    launchCarriedPrompt !== undefined
+      ? {
+          ...intent,
+          initialPrompt: launchCarriedPrompt.prompt,
+          ...(launchCarriedPrompt.mode === 'append-to-priming' ? {} : { omitPriming: true }),
+        }
+      : intent
   const compiled = await compileBrokerRuntimePlan(
     {
-      intent,
+      intent: compileIntent,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       dispatchEnv: hrcDispatchEnv,
@@ -345,7 +371,7 @@ export async function prepareAspdHeadlessAttempt(
     compiled.profile.brokerDriver === ASPD_BROKER_DRIVER &&
     (interactive === undefined
       ? compiled.profile.interactionMode === 'headless'
-      : decideInteractiveTmuxExecutionRoute(intent, compiled.profile, {
+      : decideInteractiveTmuxExecutionRoute(compileIntent, compiled.profile, {
           brokerFlagEnabled: true,
           allowedBrokerDriver: ASPD_BROKER_DRIVER,
         }) === 'broker')
@@ -432,14 +458,17 @@ export async function prepareAspdHeadlessAttempt(
           ...aspdRouteDecision,
         }
       : {
-          // T-08556 (§1.4): the attached-run door's interactive birth.
+          // T-08556 (§1.4), T-08560 (§1.5): an interactive birth by any door.
           route: 'broker',
           flag: interactive.flagEnvName,
           selectedBy: 'decideInteractiveTmuxExecutionRoute',
           durableInteractiveRoute: 'durable-ipc',
           brokerTransport: 'unix-jsonrpc-ndjson',
           durableRouteSelectedBy: 'decideBrokerDurableInteractiveRoute',
-          door: 'attached-run',
+          door: interactive.door,
+          ...(launchCarriedPrompt !== undefined
+            ? { launchCarriedPrompt: { mode: launchCarriedPrompt.mode } }
+            : {}),
           ...aspdRouteDecision,
         }
   const record: AspdPreparationRecord = {
@@ -551,6 +580,32 @@ export function readAspdPreparation(
 }
 
 /**
+ * T-08560 D2 route fence: a resume branch launches only a preparation frozen on
+ * its own route. A same-key retry whose session routing now selects the other
+ * route is refused retryably and the preparation stays `prepared`; preparing
+ * anew would rebind a committed attempt to the active release (§5).
+ */
+export function assertPreparedAspdAttemptRoute(
+  resumable: { operationId: string; runId: string; route: AspdPreparationRoute },
+  selectedRoute: AspdPreparationRoute,
+  hostSessionId: string
+): void {
+  if (resumable.route === selectedRoute) return
+  throw aspdStartError(
+    'aspd_preparation_route_changed',
+    `the frozen aspd preparation is ${resumable.route}; this retry selected ${selectedRoute}`,
+    {
+      reason: 'aspd_preparation_route_changed',
+      operationId: resumable.operationId,
+      runId: resumable.runId,
+      hostSessionId,
+      frozenRoute: resumable.route,
+      selectedRoute,
+    }
+  )
+}
+
+/**
  * The never-submitted preparation a same-key caller retry resumes, if any.
  * Status `prepared` is the only resumable state.
  */
@@ -558,7 +613,7 @@ export function findPreparedAspdAttemptForRetry(
   server: Pick<HrcServerInstanceForHandlers, 'db'>,
   hostSessionId: string,
   dispatchIdempotencyKey: string
-): { operationId: string; runId: string } | undefined {
+): { operationId: string; runId: string; route: AspdPreparationRoute } | undefined {
   for (const operation of server.db.runtimeOperations.listPreparedByHostSession(hostSessionId)) {
     if (operation.preparationJson === undefined) continue
     try {
@@ -567,7 +622,7 @@ export function findPreparedAspdAttemptForRetry(
         record.schemaVersion === ASPD_PREPARATION_SCHEMA &&
         record.dispatchIdempotencyKey === dispatchIdempotencyKey
       ) {
-        return { operationId: operation.operationId, runId: record.runId }
+        return { operationId: operation.operationId, runId: record.runId, route: record.route }
       }
     } catch {
       // An unreadable row is not a match; launch will name it if addressed directly.
@@ -665,7 +720,8 @@ export async function launchAspdPreparedAttempt(
   const presentationMatchesRoute =
     record.route === 'interactive-codex-tui'
       ? record.hosting.presentation === 'codex-tui' &&
-        record.dispatch.routeDecision['door'] === 'attached-run'
+        (record.dispatch.routeDecision['door'] === 'attached-run' ||
+          record.dispatch.routeDecision['door'] === 'interactive-birth')
       : record.route === 'headless-codex-app-server' &&
         record.hosting.presentation !== 'codex-tui' &&
         record.dispatch.routeDecision['operatorPresentation'] === record.hosting.presentation

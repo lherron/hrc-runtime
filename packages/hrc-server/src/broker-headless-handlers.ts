@@ -30,6 +30,7 @@ import {
 } from './actuator-split.js'
 import {
   aspdHeadlessCodexEndpoint,
+  assertPreparedAspdAttemptRoute,
   findPreparedAspdAttemptForRetry,
   launchAspdPreparedAttempt,
   prepareAspdHeadlessAttempt,
@@ -764,6 +765,8 @@ async function startAspdHeadlessBrokerRuntime(
       : undefined
   let operationId: string
   if (resumable !== undefined && resumable.runId === runId) {
+    // T-08560 D2: launch only a preparation frozen on this route.
+    assertPreparedAspdAttemptRoute(resumable, 'headless-codex-app-server', session.hostSessionId)
     operationId = resumable.operationId
     writeServerLog('INFO', 'aspd.preparation.resume', {
       operationId,

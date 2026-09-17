@@ -71,6 +71,8 @@ export type AspdDouble = {
   compileCalls: number
   /** `aspHome` carried by each compile request, in order (T-08555). */
   compileAspHomes: Array<string | undefined>
+  /** The materialization of each compile request, in order (T-08560). */
+  compileMaterializations: Array<Record<string, unknown>>
   openConnections: number
   helloOverride?: Record<string, unknown> | undefined
   omitExecutionRelease?: boolean | undefined
@@ -82,6 +84,7 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
     serving,
     compileCalls: 0,
     compileAspHomes: [],
+    compileMaterializations: [],
     openConnections: 0,
     stop: () => listener.stop(true),
   }
@@ -147,13 +150,26 @@ export function startAspdDouble(socketPath: string, serving: Release): AspdDoubl
           } else if (message.method === 'aspc.compileHarnessInvocation') {
             state.compileCalls += 1
             state.compileAspHomes.push(message.params?.aspHome)
+            const materialization = message.params.compileRequest.materialization ?? {}
+            state.compileMaterializations.push(materialization)
             const identity = message.params.compileRequest.identity as RuntimeIdentityAllocation
             // T-08556: an interactive compile selects the interactive codex-app-server TUI.
+            // T-08560: a launch-carried prompt rides it as the broker initialInput,
+            // the codex-app-server compiler shape.
+            const interactivePrompt =
+              typeof materialization.initialPrompt === 'string' &&
+              materialization.initialPrompt.length > 0
+                ? materialization.initialPrompt
+                : undefined
             const { profile, startRequest } =
               message.params.compileRequest.requested?.interactionMode === 'interactive'
                 ? makeInteractiveTmuxProfile(identity, {
                     brokerDriver: 'codex-app-server',
-                    withInitialInput: false,
+                    withInitialInput:
+                      interactivePrompt !== undefined && identity.initialInputId !== undefined,
+                    ...(interactivePrompt !== undefined
+                      ? { initialInputText: interactivePrompt }
+                      : {}),
                   })
                 : makeBrokerProfile(identity, {
                     initialInputText: message.params.compileRequest.materialization.initialPrompt,
