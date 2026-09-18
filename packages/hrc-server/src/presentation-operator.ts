@@ -37,7 +37,7 @@ export type OperatorPresentationSource = 'request' | 'node-default'
 /** The request's explicit operator presentation, if it made a choice. */
 export function requestedOperatorPresentation(
   intent: HrcRuntimeIntent
-): 'none' | 'tmux-tui' | undefined {
+): 'none' | 'tmux-tui' | 'observer' | undefined {
   return intent.presentation?.operator
 }
 
@@ -96,6 +96,9 @@ export function assertOperatorPresentationRoutable(
   if (requested === 'tmux-tui' && toProfileSelector(intent)?.brokerDriver !== 'codex-app-server') {
     unsupported('driver-has-no-viewer', detail)
   }
+  if (requested === 'observer' && toProfileSelector(intent)?.brokerDriver !== 'muse-serve') {
+    unsupported('driver-has-no-viewer', detail)
+  }
 }
 
 /**
@@ -140,13 +143,15 @@ export function scopeHasLiveHeadlessBrokerRuntime(
  */
 export function liveRuntimePresentation(
   runtime: HrcRuntimeSnapshot
-): 'none' | 'tmux-tui' | 'interactive' | 'unknown' | undefined {
+): 'none' | 'tmux-tui' | 'observer' | 'interactive' | 'unknown' | undefined {
   if (isRuntimeUnavailableStatus(runtime.status) || runtime.status === 'failed') return undefined
   if (runtime.transport === 'tmux') return 'interactive'
   if (runtime.controllerKind !== 'harness-broker') return 'none'
   const hosting = parseBrokerRuntimeHostingState(runtime)
   if (hosting === undefined) return 'unknown'
-  return hosting.presentation.kind === 'tmux-tui' ? 'tmux-tui' : 'none'
+  if (hosting.presentation.kind === 'tmux-tui') return 'tmux-tui'
+  if (hosting.presentation.kind === 'observer') return 'observer'
+  return 'none'
 }
 
 /**

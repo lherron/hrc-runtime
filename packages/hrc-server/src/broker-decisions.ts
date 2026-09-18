@@ -202,7 +202,7 @@ export function decideBrokerDurableInteractiveRoute(input: {
  * headless broker runtime. `tmux-tui` requests the dual-tmux viewer route (a
  * broker window + an operator-attachable TUI pane); `none` is ordinary headless.
  */
-export type OperatorPresentation = 'tmux-tui' | 'none'
+export type OperatorPresentation = 'tmux-tui' | 'observer' | 'none'
 
 /**
  * T-04921 (T-04905 Phase A) — pure route decision for the codex-app-server
@@ -220,7 +220,7 @@ export function decideCodexAppServerPresentation(input: {
   operatorPresentation: string | undefined
   brokerDriver: string
   /** T-08553/T-08554: an explicit per-request `presentation.operator` replaces the node policy. */
-  requestedOperator?: 'none' | 'tmux-tui' | undefined
+  requestedOperator?: 'none' | 'tmux-tui' | 'observer' | undefined
 }): OperatorPresentation {
   // Applicability gate: only the codex-app-server driver can host a viewer. A
   // policy aimed at any other driver is inert (the policy is not APPLICABLE).
@@ -228,12 +228,36 @@ export function decideCodexAppServerPresentation(input: {
     return 'none'
   }
   // A request can decline or select the viewer for its own new execution;
-  // absent, the node policy decides exactly as before.
+  // absent, the node policy decides exactly as before. 'observer' is the
+  // muse-serve viewer and never selects the codex one.
   if (input.requestedOperator !== undefined) {
-    return input.requestedOperator
+    return input.requestedOperator === 'tmux-tui' ? 'tmux-tui' : 'none'
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.
   return input.operatorPresentation === 'tmux-tui' ? 'tmux-tui' : 'none'
+}
+
+/**
+ * HRC-owned operator-presentation policy for a headless muse-serve runtime.
+ * `observer` requests the observer-pane viewer route (broker window +
+ * operator-attachable renderer pane + observer socket); `none` is ordinary
+ * headless. Same shape as the codex decision: the POLICY is the trigger,
+ * driver applicability (muse-serve only) is the gate, and an explicit
+ * per-request `presentation.operator` replaces the node policy.
+ */
+export function decideMuseServePresentation(input: {
+  operatorPresentation: string | undefined
+  brokerDriver: string
+  requestedOperator?: 'none' | 'tmux-tui' | 'observer' | undefined
+}): OperatorPresentation {
+  // Applicability gate: only the muse-serve driver can host the renderer pane.
+  if (input.brokerDriver !== 'muse-serve') {
+    return 'none'
+  }
+  if (input.requestedOperator !== undefined) {
+    return input.requestedOperator === 'observer' ? 'observer' : 'none'
+  }
+  return input.operatorPresentation === 'observer' ? 'observer' : 'none'
 }
 
 export type InteractiveTmuxBrokerDriver =

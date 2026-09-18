@@ -383,6 +383,7 @@ export class HarnessBrokerController {
   private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
   private readonly headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
   private readonly tmuxTuiAllocator: BrokerTmuxAllocator | undefined
+  private readonly observerPaneAllocator: BrokerTmuxAllocator | undefined
   private readonly waitForAttachedTerminal:
     | ((input: { runtime: HrcRuntimeSnapshot; allocation: BrokerTmuxAllocation }) => Promise<void>)
     | undefined
@@ -499,6 +500,7 @@ export class HarnessBrokerController {
     this.tmuxAllocator = deps.tmuxAllocator
     this.headlessSubstrateAllocator = deps.headlessSubstrateAllocator
     this.tmuxTuiAllocator = deps.tmuxTuiAllocator
+    this.observerPaneAllocator = deps.observerPaneAllocator
     this.waitForAttachedTerminal = deps.waitForAttachedTerminal
     this.reapBrokerTmuxLease = deps.reapBrokerTmuxLease
     this.brokerTmuxSummaryReapGraceMs =
@@ -579,6 +581,7 @@ export class HarnessBrokerController {
       tmuxAllocator: this.tmuxAllocator,
       headlessSubstrateAllocator: this.headlessSubstrateAllocator,
       tmuxTuiAllocator: this.tmuxTuiAllocator,
+      observerPaneAllocator: this.observerPaneAllocator,
       env: this.env,
       now: this.now,
     }

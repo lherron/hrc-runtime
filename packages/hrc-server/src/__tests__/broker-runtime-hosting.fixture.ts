@@ -91,6 +91,49 @@ export const flatInteractiveRuntime = makeRuntime({
   },
 })
 
+// Flat observer shape — broker window + observer window (renderer pane), no TUI.
+export const flatObserverBrokerBlock: Record<string, unknown> = {
+  protocolVersion: 'harness-broker/0.2',
+  multiInvocation: true,
+  startedAt: '2026-06-04T10:00:00Z',
+  ownerServerInstanceId: 'srv-001',
+  endpoint: {
+    kind: 'unix-jsonrpc-ndjson',
+    socketPath: FLAT_BROKER_IPC,
+    attachTokenRef: { kind: 'file', path: FLAT_TOKEN_PATH, redacted: true },
+  },
+  generation: 2,
+  brokerWindow: {
+    socketPath: FLAT_TMUX_SOCKET,
+    sessionName: FLAT_SESSION,
+    windowName: 'broker',
+    sessionId: '$3',
+    windowId: '@7',
+    paneId: '%12',
+  },
+  observerWindow: {
+    socketPath: FLAT_TMUX_SOCKET,
+    sessionName: FLAT_SESSION,
+    windowName: 'observer',
+    sessionId: '$3',
+    windowId: '@9',
+    paneId: '%14',
+  },
+}
+
+export const flatObserverRuntime = makeRuntime({
+  runtimeId: 'rt-observer',
+  generation: 2,
+  transport: 'headless',
+  runtimeStateJson: {
+    schemaVersion: 'runtime-state/v1',
+    kind: 'harness-broker',
+    runtimeId: 'rt-observer',
+    broker: flatObserverBrokerBlock,
+    control: { mode: 'broker-ipc', brokerAttached: true },
+  },
+})
+
 // Flat headless shape — stdio endpoint, no tmux windows; the old headless path
 export const flatHeadlessBrokerBlock: Record<string, unknown> = {
   protocolVersion: 'harness-broker/0.1',
@@ -153,6 +196,44 @@ export const normalizedInteractiveRuntime = makeRuntime({
     kind: 'harness-broker',
     runtimeId: 'rt-456',
     broker: normalizedInteractiveBrokerBlock,
+    control: { mode: 'broker-ipc', brokerAttached: true },
+  },
+})
+
+// Normalized observer shape — leased-tmux substrate + presentation.observer.
+export const normalizedObserverBrokerBlock: Record<string, unknown> = {
+  endpoint: {
+    kind: 'unix-jsonrpc-ndjson',
+    socketPath: NORM_BROKER_IPC,
+    attachTokenRef: { kind: 'file', path: NORM_TOKEN_PATH, redacted: true },
+    protocolVersion: 'harness-broker/0.2',
+  },
+  substrate: {
+    kind: 'leased-tmux',
+    tmuxSocketPath: NORM_TMUX_SOCKET,
+    sessionName: NORM_SESSION,
+    brokerWindow: { sessionId: '$9', windowId: '@22', paneId: '%31' },
+    generation: 4,
+    eventLedgerPath: NORM_LEDGER_PATH,
+  },
+  presentation: {
+    kind: 'observer',
+    observerWindow: { sessionId: '$9', windowId: '@24', paneId: '%33' },
+    operatorAttachTarget: true,
+    attachCommand: `tmux -S ${NORM_TMUX_SOCKET} attach -t ${NORM_SESSION}:observer`,
+  },
+}
+
+export const normalizedObserverRuntime = makeRuntime({
+  runtimeId: 'rt-observer-norm',
+  generation: 4,
+  transport: 'headless',
+  controllerKind: 'harness-broker',
+  runtimeStateJson: {
+    schemaVersion: 'runtime-state/v1',
+    kind: 'harness-broker',
+    runtimeId: 'rt-observer-norm',
+    broker: normalizedObserverBrokerBlock,
     control: { mode: 'broker-ipc', brokerAttached: true },
   },
 })

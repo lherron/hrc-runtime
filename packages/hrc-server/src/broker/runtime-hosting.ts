@@ -76,6 +76,12 @@ export type BrokerRuntimePresentation =
       operatorAttachTarget: true
       attachCommand?: string
     }
+  | {
+      kind: 'observer'
+      observerWindow: TmuxWindowIdentity
+      operatorAttachTarget: true
+      attachCommand?: string
+    }
 
 export type BrokerRuntimeHostingState = {
   endpoint: BrokerRuntimeEndpoint
@@ -91,6 +97,8 @@ export type BrokerLeaseProbe = {
   brokerWindowName?: string | undefined
   tuiWindow?: TmuxWindowIdentity
   tuiWindowName?: string | undefined
+  observerWindow?: TmuxWindowIdentity
+  observerWindowName?: string | undefined
 }
 
 export type BrokerLeaseIdentityMismatch = {
@@ -102,6 +110,8 @@ export type BrokerLeaseIdentityMismatch = {
     | 'brokerWindowName'
     | 'tuiWindow'
     | 'tuiWindowName'
+    | 'observerWindow'
+    | 'observerWindowName'
   recorded: string | TmuxWindowIdentity | null
   observed: string | TmuxWindowIdentity | null
 }
@@ -255,6 +265,20 @@ function parseNormalizedPresentation(value: unknown): BrokerRuntimePresentation 
       ...(attachCommand !== undefined ? { attachCommand } : {}),
     }
   }
+  if (kind === 'observer') {
+    const observerWindow = extractTmuxWindowIdentity(value['observerWindow'])
+    if (!observerWindow) {
+      return undefined
+    }
+    const attachCommand =
+      typeof value['attachCommand'] === 'string' ? value['attachCommand'] : undefined
+    return {
+      kind: 'observer',
+      observerWindow,
+      operatorAttachTarget: true,
+      ...(attachCommand !== undefined ? { attachCommand } : {}),
+    }
+  }
   return undefined
 }
 
@@ -305,12 +329,15 @@ function parseFlatSubstrate(
 
 /**
  * Infer the presentation from the flat broker block:
- *  - tuiWindow ABSENT (broker['tuiWindow'] === undefined) ⇒ none (valid).
+ *  - tuiWindow AND observerWindow ABSENT ⇒ none (valid).
+ *  - observerWindow PRESENT ⇒ observer presentation (operator attachable),
+ *    well-formed required, attachCommand targets the observer window.
  *  - tuiWindow PRESENT but malformed (key set, but extractTmuxWindowIdentity
  *    fails — wrong type, empty object, missing sessionId/windowId/paneId) ⇒
  *    undefined (REJECT parse). A corrupted interactive lease must NOT silently
  *    downgrade to presentation:none, or Ph4 would skip TUI window verification
- *    on restart and let a stale lease survive the gate (C-03285).
+ *    on restart and let a stale lease survive the gate (C-03285). Same rule
+ *    applies to a malformed observerWindow.
  *  - tuiWindow PRESENT and well-formed ⇒ tmux-tui presentation (operator
  *    attachable), with the attachCommand synthesized from the broker window's
  *    tmux socket + session.
@@ -318,28 +345,48 @@ function parseFlatSubstrate(
 function parseFlatPresentation(
   broker: Record<string, unknown>
 ): BrokerRuntimePresentation | undefined {
-  if (broker['tuiWindow'] === undefined) {
+  if (broker['tuiWindow'] === undefined && broker['observerWindow'] === undefined) {
     return { kind: 'none' }
+  }
+  if (broker['observerWindow'] !== undefined) {
+    const observerWindow = extractTmuxWindowIdentity(broker['observerWindow'])
+    if (!observerWindow) {
+      return undefined
+    }
+    return {
+      kind: 'observer',
+      observerWindow,
+      operatorAttachTarget: true,
+      ...flatAttachCommand(broker, 'observer'),
+    }
   }
   const tuiWindow = extractTmuxWindowIdentity(broker['tuiWindow'])
   if (!tuiWindow) {
     return undefined
   }
+  return {
+    kind: 'tmux-tui',
+    tuiWindow,
+    operatorAttachTarget: true,
+    ...flatAttachCommand(broker, 'tui'),
+  }
+}
+
+function flatAttachCommand(
+  broker: Record<string, unknown>,
+  windowName: string
+): { attachCommand: string } | Record<string, never> {
   const brokerWindowRaw = broker['brokerWindow']
-  let attachCommand: string | undefined
   if (
     isRecord(brokerWindowRaw) &&
     typeof brokerWindowRaw['socketPath'] === 'string' &&
     typeof brokerWindowRaw['sessionName'] === 'string'
   ) {
-    attachCommand = `tmux -S ${brokerWindowRaw['socketPath']} attach -t ${brokerWindowRaw['sessionName']}:tui`
+    return {
+      attachCommand: `tmux -S ${brokerWindowRaw['socketPath']} attach -t ${brokerWindowRaw['sessionName']}:${windowName}`,
+    }
   }
-  return {
-    kind: 'tmux-tui',
-    tuiWindow,
-    operatorAttachTarget: true,
-    ...(attachCommand !== undefined ? { attachCommand } : {}),
-  }
+  return {}
 }
 
 // ── the choke-point parser ────────────────────────────────────────────────────
@@ -452,6 +499,12 @@ export type BrokerHostingProjection = {
         operatorAttachTarget: true
         attachCommand?: string
       }
+    | {
+        kind: 'observer'
+        observerWindow: TmuxWindowIdentity
+        operatorAttachTarget: true
+        attachCommand?: string
+      }
 }
 
 export function projectBrokerHostingState(
@@ -494,7 +547,16 @@ export function projectBrokerHostingState(
             ? { attachCommand: hosting.presentation.attachCommand }
             : {}),
         }
-      : { kind: 'none' as const }
+      : hosting.presentation.kind === 'observer'
+        ? {
+            kind: 'observer' as const,
+            observerWindow: hosting.presentation.observerWindow,
+            operatorAttachTarget: true as const,
+            ...(hosting.presentation.attachCommand !== undefined
+              ? { attachCommand: hosting.presentation.attachCommand }
+              : {}),
+          }
+        : { kind: 'none' as const }
 
   return {
     broker: {
@@ -559,14 +621,16 @@ export function hasBrokerPresentation(
   return parseBrokerRuntimeHostingState(runtime)?.presentation.kind === kind
 }
 
-/** True iff a human operator can attach a TUI (presentation.kind === 'tmux-tui'). */
+/** True iff a human operator can attach (tmux-tui TUI or observer pane). */
 export function canOperatorAttach(runtime: HrcRuntimeSnapshot): boolean {
-  return parseBrokerRuntimeHostingState(runtime)?.presentation.kind === 'tmux-tui'
+  const kind = parseBrokerRuntimeHostingState(runtime)?.presentation.kind
+  return kind === 'tmux-tui' || kind === 'observer'
 }
 
-/** True iff a direct-pane fallback is possible (requires a tmux-tui presentation). */
+/** True iff a direct-pane fallback is possible (tmux-tui or observer pane). */
 export function canUseDirectPaneFallback(runtime: HrcRuntimeSnapshot): boolean {
-  return parseBrokerRuntimeHostingState(runtime)?.presentation.kind === 'tmux-tui'
+  const kind = parseBrokerRuntimeHostingState(runtime)?.presentation.kind
+  return kind === 'tmux-tui' || kind === 'observer'
 }
 
 function identityMatches(a: TmuxWindowIdentity, b: TmuxWindowIdentity | undefined): boolean {
@@ -587,8 +651,10 @@ function identityMatches(a: TmuxWindowIdentity, b: TmuxWindowIdentity | undefine
  *    broker window still has the canonical name, AND
  *  - when presentation.kind === 'tmux-tui', the probe ALSO carries a tuiWindow
  *    whose identity matches presentation.tuiWindow and, when supplied, the
- *    observed TUI window still has the canonical name. For presentation.none,
- *    the tuiWindow and name are neither required nor consulted.
+ *    observed TUI window still has the canonical name. The 'observer' kind
+ *    mirrors this with observerWindow / the canonical 'observer' name.
+ *    For presentation.none, the extra window and name are neither required
+ *    nor consulted.
  *
  * The structured mismatch list lets destructive callers distinguish identity
  * drift from positive evidence that the persisted lease is orphaned.
@@ -647,6 +713,22 @@ export function compareBrokerLeaseIdentity(
         field: 'tuiWindowName',
         recorded: 'tui',
         observed: probe.tuiWindowName,
+      })
+    }
+  }
+  if (hosting.presentation.kind === 'observer') {
+    if (!identityMatches(hosting.presentation.observerWindow, probe.observerWindow)) {
+      mismatches.push({
+        field: 'observerWindow',
+        recorded: hosting.presentation.observerWindow,
+        observed: probe.observerWindow ?? null,
+      })
+    }
+    if (probe.observerWindowName !== undefined && probe.observerWindowName !== 'observer') {
+      mismatches.push({
+        field: 'observerWindowName',
+        recorded: 'observer',
+        observed: probe.observerWindowName,
       })
     }
   }

@@ -23,7 +23,7 @@ import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { AspcFacadeBrokerClient } from '../agent-spaces-adapter/aspc-facade-client'
-import { decideCodexAppServerPresentation } from '../broker-decisions'
+import { decideCodexAppServerPresentation, decideMuseServePresentation } from '../broker-decisions'
 import { createBrokerDurableHeadlessAllocator } from '../broker-interactive-handlers/substrate-allocator'
 import { HarnessBrokerController } from '../broker/controller'
 import { createHrcServer } from '../index'
@@ -221,6 +221,17 @@ describe('T-08553 per-request operator presentation', () => {
     expect(decideCodexAppServerPresentation({ ...base, operatorPresentation: undefined })).toBe(
       'none'
     )
+  })
+
+  it('the muse presentation decision: observer policy selects the renderer pane for muse-serve only', () => {
+    const base = { operatorPresentation: 'observer', brokerDriver: 'muse-serve' }
+    expect(decideMuseServePresentation(base)).toBe('observer')
+    expect(decideMuseServePresentation({ ...base, requestedOperator: 'none' })).toBe('none')
+    expect(decideMuseServePresentation({ ...base, operatorPresentation: undefined })).toBe('none')
+    expect(decideMuseServePresentation({ ...base, brokerDriver: 'codex-app-server' })).toBe('none')
+    expect(
+      decideMuseServePresentation({ ...base, requestedOperator: 'tmux-tui' })
+    ).toBe('none')
   })
 
   // The interactive handler is observed here, so no preparation is expected. On a

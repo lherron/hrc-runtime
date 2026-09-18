@@ -948,6 +948,12 @@ export type InspectRuntimeResponse = {
         operatorAttachTarget: true
         attachCommand?: string | undefined
       }
+    | {
+        kind: 'observer'
+        observerWindow: { sessionId: string; windowId: string; paneId: string }
+        operatorAttachTarget: true
+        attachCommand?: string | undefined
+      }
     | undefined
 }
 

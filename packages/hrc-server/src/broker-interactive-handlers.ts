@@ -210,6 +210,7 @@ export {
   BrokerTuiAllocationError,
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
+  createBrokerObserverPaneAllocator,
   type DurableTmuxManagerLike,
 } from './broker-interactive-handlers/substrate-allocator.js'
 export { getHarnessBrokerController }

@@ -269,8 +269,12 @@ export type HrcPresentationIntent = {
    * renderer viewer for a new execution: the same redirect exemption as `'none'`,
    * the viewer regardless of the node default, and (with aspd configured) the
    * aspd-prepared route. Refused off the headless codex-app-server broker route.
+   *
+   * `'observer'` selects the headless muse-serve WITH HRC's observer-pane
+   * renderer viewer for a new execution. Refused off the headless muse-serve
+   * broker route.
    */
-  operator?: 'none' | 'tmux-tui' | undefined
+  operator?: 'none' | 'tmux-tui' | 'observer' | undefined
 }
 
 export type HrcRuntimeIntent = {

@@ -15,6 +15,7 @@ export type AllocationContext = {
   tmuxAllocator: BrokerTmuxAllocator | undefined
   headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
   tmuxTuiAllocator: BrokerTmuxAllocator | undefined
+  observerPaneAllocator: BrokerTmuxAllocator | undefined
   env: Record<string, string | undefined> | undefined
   now: () => string
 }
@@ -33,6 +34,32 @@ export function isTmuxTuiRoute(input: BrokerControllerStartInput): boolean {
     return false
   }
   return (routeDecision as { operatorPresentation?: unknown }).operatorPresentation === 'tmux-tui'
+}
+
+/**
+ * Observer-pane viewer route: the dispatch `routeDecision` selected
+ * `operatorPresentation === 'observer'` for a renderer-capable driver. Like
+ * the tmux-tui route this is policy-selected, never driver-name-selected.
+ */
+export function isObserverPaneRoute(input: BrokerControllerStartInput): boolean {
+  const routeDecision = input.routeDecision
+  if (typeof routeDecision !== 'object' || routeDecision === null) {
+    return false
+  }
+  return (routeDecision as { operatorPresentation?: unknown }).operatorPresentation === 'observer'
+}
+
+/** A viewer-pane route carrying an operator-attachable renderer surface. */
+export type ViewerPaneRoute = 'tmux-tui' | 'observer'
+
+/**
+ * Collapse the routeDecision viewer checks to one route (or undefined for
+ * ordinary headless). Keeps dispatch call sites branch-free.
+ */
+export function viewerPaneRouteOf(input: BrokerControllerStartInput): ViewerPaneRoute | undefined {
+  if (isTmuxTuiRoute(input)) return 'tmux-tui'
+  if (isObserverPaneRoute(input)) return 'observer'
+  return undefined
 }
 
 export async function allocateTmuxIfRequired(
@@ -133,6 +160,49 @@ export async function allocateTmuxTuiSubstrate(
   return allocateSubstrateVia(ctx, ctx.tmuxTuiAllocator, input)
 }
 
+/**
+ * Allocate the durable OBSERVER substrate (presentation='observer' + observer
+ * socket) for the renderer viewer route. Requires the injected observer-pane
+ * allocator; unlike the ordinary headless path there is NO in-process
+ * synthesis fallback — an observer runtime without an allocator is a wiring
+ * error, not a route we silently degrade.
+ */
+export async function allocateObserverPaneSubstrate(
+  ctx: AllocationContext,
+  input: BrokerControllerStartInput
+): Promise<BrokerTmuxAllocation> {
+  if (!ctx.observerPaneAllocator) {
+    throw new BrokerControllerError(
+      'broker_observer_pane_allocator_unavailable',
+      'observer route requires an HRC observer-pane allocator',
+      {
+        runtimeId: String(input.identity.runtimeId),
+        brokerDriver: input.profile.brokerDriver,
+      }
+    )
+  }
+  return allocateSubstrateVia(ctx, ctx.observerPaneAllocator, input)
+}
+
+/**
+ * Allocate the viewer-pane substrate for the route (tmux-tui, observer) or
+ * the ordinary headless substrate. One call site replaces the route ternary
+ * in dispatch.
+ */
+export async function allocateViewerOrHeadlessSubstrate(
+  ctx: AllocationContext,
+  input: BrokerControllerStartInput
+): Promise<BrokerTmuxAllocation> {
+  switch (viewerPaneRouteOf(input)) {
+    case 'tmux-tui':
+      return allocateTmuxTuiSubstrate(ctx, input)
+    case 'observer':
+      return allocateObserverPaneSubstrate(ctx, input)
+    default:
+      return allocateHeadlessSubstrate(ctx, input)
+  }
+}
+
 export async function allocateSubstrateVia(
   ctx: AllocationContext,
   allocator: BrokerTmuxAllocator,
@@ -194,5 +264,8 @@ export async function allocateSubstrateVia(
     ...(allocation.brokerPid !== undefined ? { brokerPid: allocation.brokerPid } : {}),
     ...(allocation.brokerWindow !== undefined ? { brokerWindow: allocation.brokerWindow } : {}),
     ...(allocation.tuiWindow !== undefined ? { tuiWindow: allocation.tuiWindow } : {}),
+    ...(allocation.observerWindow !== undefined
+      ? { observerWindow: allocation.observerWindow }
+      : {}),
   }
 }

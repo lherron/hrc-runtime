@@ -50,10 +50,9 @@ import {
   usesHeadlessBrokerSubstrate,
 } from '../runtime-state'
 import {
-  allocateHeadlessSubstrate,
   allocateTmuxIfRequired,
-  allocateTmuxTuiSubstrate,
-  isTmuxTuiRoute,
+  allocateViewerOrHeadlessSubstrate,
+  viewerPaneRouteOf,
 } from './allocation'
 import type { AllocationContext } from './allocation'
 import { BrokerControllerError } from './errors'
@@ -359,10 +358,15 @@ async function releaseNeverStartedLease(
     if (operation?.status !== 'prepared') return
   }
   const allocators = ctx.allocationContext()
+  const viewerAllocators = {
+    'tmux-tui': allocators.tmuxTuiAllocator,
+    observer: allocators.observerPaneAllocator,
+  } as const
+  const viewerRoute = viewerPaneRouteOf(input)
   const owner = isBrokerTmuxProfile(input.profile)
     ? allocators.tmuxAllocator
-    : isTmuxTuiRoute(input)
-      ? allocators.tmuxTuiAllocator
+    : viewerRoute !== undefined
+      ? viewerAllocators[viewerRoute]
       : allocators.headlessSubstrateAllocator
   // Every durable allocator's lease is released the same way (its tmux server and
   // broker socket), so an allocator without its own release uses the headless one.
@@ -378,6 +382,53 @@ async function releaseNeverStartedLease(
     runtimeId: String(input.identity.runtimeId),
     operationId: String(input.identity.operationId),
   })
+}
+
+/**
+ * Resolve the viewer-pane dispatch overlay for an attempt: the
+ * `runtime.terminalSurface` lease + `terminalSurfaceRequired` hard-require,
+ * and the renderer observer-socket dispatch env.
+ *
+ * T-04921 (T-04905 Phase A) — the EXCEPTIONS are viewer-pane runtimes
+ * (tmux-tui, observer): headless BUT carrying an operator-attachable pane
+ * lease, so they dispatch the presentation pane (NEVER the broker pane, which
+ * has no lease) with the hard-require flag, and HRC injects the SAME observer
+ * socket path the broker launch command carries (ONE path, never two
+ * independent derivations). Ordinary headless (T-01874 Ph3) dispatches NO
+ * runtime overlay, so the broker-window pane never becomes a terminalSurface.
+ */
+function resolveViewerPaneDispatch(
+  input: BrokerControllerStartInput,
+  tmuxAllocation: BrokerTmuxAllocation | undefined
+): {
+  dispatchRuntime: InvocationRuntimeContext | undefined
+  dispatchEnv: Record<string, string> | undefined
+} {
+  const viewerPaneRoute =
+    usesHeadlessBrokerSubstrate(input.profile) &&
+    viewerPaneRouteOf(input) !== undefined &&
+    tmuxAllocation?.lease !== undefined
+  let dispatchRuntime: InvocationRuntimeContext | undefined
+  if (
+    tmuxAllocation !== undefined &&
+    usesHeadlessBrokerSubstrate(input.profile) &&
+    !viewerPaneRoute
+  ) {
+    dispatchRuntime = undefined
+  } else if (viewerPaneRoute) {
+    const base = toDispatchRuntime(tmuxAllocation)
+    dispatchRuntime = base ? { ...base, terminalSurfaceRequired: true as const } : undefined
+  } else {
+    dispatchRuntime = toDispatchRuntime(tmuxAllocation)
+  }
+  const dispatchEnv =
+    viewerPaneRoute && tmuxAllocation?.observerSocketPath
+      ? {
+          ...(input.dispatchEnv ?? {}),
+          HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath,
+        }
+      : input.dispatchEnv
+  return { dispatchRuntime, dispatchEnv }
 }
 
 async function startControllerAttempt(
@@ -477,9 +528,7 @@ async function startControllerAttempt(
       // VIEWER substrate instead (presentation='tmux-tui' + observer socket). The
       // profile is still headless and public transport stays 'headless'; only the
       // operator-attachable TUI pane + observer socket are added.
-      tmuxAllocation = isTmuxTuiRoute(input)
-        ? await allocateTmuxTuiSubstrate(ctx.allocationContext(), input)
-        : await allocateHeadlessSubstrate(ctx.allocationContext(), input)
+      tmuxAllocation = await allocateViewerOrHeadlessSubstrate(ctx.allocationContext(), input)
       attempt.tmuxAllocation = tmuxAllocation
       markPhase('broker-headless-substrate-alloc')
     }
@@ -720,40 +769,11 @@ async function startControllerAttempt(
     // shim): the broker-window pane must never become a terminalSurface. Only
     // the interactive tmux-tui route carries the operator pane lease.
     //
-    // T-04921 (T-04905 Phase A) — the EXCEPTION is a tmux-tui runtime: it
-    // is headless BUT carries the operator-attachable TUI pane lease, so it
-    // dispatches `runtime.terminalSurface` = the TUI pane (NEVER the broker pane,
-    // which has no lease) and `terminalSurfaceRequired=true` so the codex driver
-    // hard-requires the presentation pane.
-    const tmuxTuiRoute =
-      usesHeadlessBrokerSubstrate(input.profile) &&
-      isTmuxTuiRoute(input) &&
-      tmuxAllocation?.lease !== undefined
-    let dispatchRuntime: InvocationRuntimeContext | undefined
-    if (
-      tmuxAllocation !== undefined &&
-      usesHeadlessBrokerSubstrate(input.profile) &&
-      !tmuxTuiRoute
-    ) {
-      dispatchRuntime = undefined
-    } else if (tmuxTuiRoute) {
-      const base = toDispatchRuntime(tmuxAllocation)
-      dispatchRuntime = base ? { ...base, terminalSurfaceRequired: true as const } : undefined
-    } else {
-      dispatchRuntime = toDispatchRuntime(tmuxAllocation)
-    }
-
-    // T-04921 — for the tmux-tui route HRC injects the SAME observer socket
-    // path the broker launch command carries onto the renderer dispatch env
-    // (HARNESS_BROKER_OBSERVER_SOCKET), so the renderer connects to the socket the
-    // broker actually serves. ONE path, never two independent derivations.
-    const dispatchEnv =
-      tmuxTuiRoute && tmuxAllocation?.observerSocketPath
-        ? {
-            ...(input.dispatchEnv ?? {}),
-            HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath,
-          }
-        : input.dispatchEnv
+    // Viewer-pane lease + observer socket ride one helper so the attempt
+    // function stays under the complexity cap (see resolveViewerPaneDispatch).
+    const viewerPane = resolveViewerPaneDispatch(input, tmuxAllocation)
+    const dispatchRuntime = viewerPane.dispatchRuntime
+    const dispatchEnv = viewerPane.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
     attempt.startGraphCommitted = true
     await input.onAccepted?.(persisted)

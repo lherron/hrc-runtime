@@ -22,6 +22,7 @@ import { createTmuxManager } from '../tmux.js'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
+  createBrokerObserverPaneAllocator,
   createBrokerTmuxTuiAllocator,
 } from './substrate-allocator.js'
 
@@ -111,6 +112,16 @@ export function getHarnessBrokerController(
     tmuxManagerFactory,
     generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
   })
+  // Observer-pane substrate allocator (presentation='observer' + observer
+  // socket). Selected by the controller ONLY when the route decision selects
+  // operatorPresentation='observer' for a renderer-capable driver (muse-serve).
+  const observerPaneAllocator: BrokerTmuxAllocator = createBrokerObserverPaneAllocator(
+    this.options,
+    {
+      tmuxManagerFactory,
+      generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
+    }
+  )
   this.harnessBrokerController = HarnessBrokerController.createProduction({
     db: this.db,
     mapper: {
@@ -151,6 +162,7 @@ export function getHarnessBrokerController(
     tmuxAllocator,
     headlessSubstrateAllocator,
     tmuxTuiAllocator,
+    observerPaneAllocator,
     metricsStateRoot: this.options.stateRoot,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName

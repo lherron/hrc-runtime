@@ -185,11 +185,14 @@ function aspdRoutePresentation(
 ): AspdHostingPresentation | undefined {
   if (intent.harness.interactive === true) return undefined
   if (toProfileSelector(intent)?.brokerDriver !== ASPD_BROKER_DRIVER) return undefined
-  return decideCodexAppServerPresentation({
+  const decided = decideCodexAppServerPresentation({
     operatorPresentation: env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
     brokerDriver: ASPD_BROKER_DRIVER,
     requestedOperator: intent.presentation?.operator,
   })
+  // The codex decider never selects the muse-serve 'observer' viewer; narrow
+  // the widened OperatorPresentation back to the aspd hosting union.
+  return decided === 'observer' ? 'none' : decided
 }
 
 function describeAspdHostingPaths(

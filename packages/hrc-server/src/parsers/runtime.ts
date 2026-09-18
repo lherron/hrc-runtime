@@ -213,12 +213,13 @@ function parseOptionalPresentationIntent(
     })
   }
   // T-08553/T-08554: the request declines the operator viewer ('none') or selects
-  // the app-server viewer ('tmux-tui').
+  // the app-server viewer ('tmux-tui'); the observer-pane renderer viewer
+  // ('observer') is the muse-serve equivalent.
   const operator = value['operator']
-  if (operator !== undefined && operator !== 'none' && operator !== 'tmux-tui') {
+  if (operator !== undefined && operator !== 'none' && operator !== 'tmux-tui' && operator !== 'observer') {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      "presentation.operator accepts only 'none' or 'tmux-tui'",
+      "presentation.operator accepts only 'none', 'tmux-tui', or 'observer'",
       { field: 'presentation.operator' }
     )
   }

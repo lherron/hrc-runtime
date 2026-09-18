@@ -358,6 +358,7 @@ export function buildRuntimeStateJson(
         ...(tmuxAllocation.brokerPid !== undefined ? { brokerPid: tmuxAllocation.brokerPid } : {}),
         ...(tmuxAllocation.brokerWindow ? { brokerWindow: tmuxAllocation.brokerWindow } : {}),
         ...(tmuxAllocation.tuiWindow ? { tuiWindow: tmuxAllocation.tuiWindow } : {}),
+        ...(tmuxAllocation.observerWindow ? { observerWindow: tmuxAllocation.observerWindow } : {}),
       }
     : { endpoint: { kind: BROKER_TRANSPORT } }
   return {

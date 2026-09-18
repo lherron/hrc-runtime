@@ -178,6 +178,10 @@ export type BrokerSubstrateAllocation = {
   tuiWindow?: BrokerWindowIdentity | undefined
   /** The TUI pane lease handed to runtime.terminalSurface (tmux-tui only). */
   tuiLease?: BrokerTmuxLease | undefined
+  /** Present only for presentation='observer'. */
+  observerWindow?: BrokerWindowIdentity | undefined
+  /** The observer pane lease handed to runtime.terminalSurface (observer only). */
+  observerLease?: BrokerTmuxLease | undefined
 }
 
 export function resolveBrokerBinary(driverKind: string): string {
@@ -273,12 +277,18 @@ export async function allocateBrokerSubstrate(
     ...(input.brokerEnv !== undefined ? { env: input.brokerEnv } : {}),
   })
 
-  // presentation='tmux-tui' adds the operator TUI window; presentation='none'
-  // (headless substrate) creates no TUI window. Window-creation order (broker then
-  // tui) is preserved from the pre-split allocator.
+  // presentation='tmux-tui' adds the operator TUI window; presentation='observer'
+  // adds the observer window (renderer pane, no TUI process — the driver
+  // launches the renderer there); presentation='none' (headless substrate)
+  // creates no extra window. Window-creation order (broker then extra) is
+  // preserved from the pre-split allocator.
   const tuiWindow =
     presentation === 'tmux-tui'
       ? await tmux.createOrInspectWindow({ sessionName, windowName: 'tui' })
+      : undefined
+  const observerWindow =
+    presentation === 'observer'
+      ? await tmux.createOrInspectWindow({ sessionName, windowName: 'observer' })
       : undefined
 
   // Capture the broker pane's running pid for persisted identity (best effort —
@@ -320,6 +330,46 @@ export async function allocateBrokerSubstrate(
     ...(observerSocketPath !== undefined ? { observerSocketPath } : {}),
     ...(brokerPid !== undefined ? { brokerPid } : {}),
     brokerWindow,
+  }
+
+  if (observerWindow) {
+    // The lease handed to runtime.terminalSurface is the observer pane (the
+    // viewer attaches here; the driver launches the renderer there) — NEVER
+    // the broker pane. The pane is observation-only by construction (the
+    // driver pastes exactly one launch line; the renderer reads no input
+    // except /quit); the lease ops stay all-true per the protocol contract.
+    const observerLease: BrokerTmuxLease = {
+      kind: 'tmux-pane',
+      ownership: 'hrc',
+      socketPath: observerWindow.socketPath,
+      sessionId: observerWindow.sessionId,
+      windowId: observerWindow.windowId,
+      paneId: observerWindow.paneId,
+      sessionName: observerWindow.sessionName,
+      windowName: observerWindow.windowName,
+      allowedOps: {
+        inspect: true,
+        sendInput: true,
+        sendInterrupt: true,
+        capture: true,
+        resize: false,
+      },
+    }
+    return {
+      ...base,
+      presentation: {
+        kind: 'observer',
+        observerWindow: {
+          sessionId: observerWindow.sessionId,
+          windowId: observerWindow.windowId,
+          paneId: observerWindow.paneId,
+        },
+        operatorAttachTarget: true,
+        attachCommand: `tmux -S ${btmuxSocketPath} attach -t ${sessionName}:observer`,
+      },
+      observerWindow,
+      observerLease,
+    }
   }
 
   if (!tuiWindow) {
@@ -696,6 +746,63 @@ export function createBrokerTmuxTuiAllocator(
         paneId: tuiWindow.paneId,
         sessionName: tuiWindow.sessionName,
         windowName: tuiWindow.windowName,
+      }
+    },
+  }
+}
+
+/**
+ * The durable OBSERVER substrate allocator (presentation='observer' +
+ * observer socket). Selected by the controller ONLY when the route decision
+ * selects the observer presentation for a renderer-capable driver
+ * (muse-serve); ordinary headless keeps headlessSubstrateAllocator. Like the
+ * tmux-tui allocator there is NO in-process synthesis fallback.
+ */
+export function createBrokerObserverPaneAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  return {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+      brokerEnv,
+      workerLaunch,
+    }): Promise<BrokerTmuxAllocation> => {
+      // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
+      // the broker launch command and the renderer dispatch env never derive it
+      // independently.
+      const observerSocketPath = getBrokerObserverSocketPath(options, brokerDriver, runtimeId)
+      const sub = await allocateBrokerSubstrate(options, deps, {
+        runtimeId,
+        hostSessionId,
+        generation,
+        driverKind: brokerDriver,
+        endpoint: 'unix-jsonrpc-ndjson',
+        presentation: 'observer',
+        observerSocketPath,
+        ...(brokerEnv !== undefined ? { brokerEnv } : {}),
+        ...(workerLaunch !== undefined ? { workerLaunch } : {}),
+      })
+      // observer always yields a COMPLETE observer window + lease; same
+      // fail-fast narrowing as the tmux-tui allocator (T-04755).
+      const observerWindow = sub.observerWindow
+      const lease = sub.observerLease
+      assertCompleteBrokerWindowIdentity(observerWindow, 'observer allocation observerWindow')
+      assertCompleteBrokerTmuxLease(lease, 'observer allocation observerLease')
+      return {
+        ...projectBaseAllocation(sub),
+        lease,
+        observerWindow,
+        // Legacy single-pane fields mirror the observer pane for restart
+        // reconcile / teardown that still reads the flat shape.
+        sessionId: observerWindow.sessionId,
+        windowId: observerWindow.windowId,
+        paneId: observerWindow.paneId,
+        sessionName: observerWindow.sessionName,
+        windowName: observerWindow.windowName,
       }
     },
   }

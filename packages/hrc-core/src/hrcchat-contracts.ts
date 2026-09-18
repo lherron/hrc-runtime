@@ -83,11 +83,11 @@ export type HrcTargetRuntimeView = {
    * from parseBrokerRuntimeHostingState (NOT runtime.transport). `brokerEndpoint`
    * exposes HOW HRC reaches the broker ('unix-jsonrpc-ndjson' durable vs
    * 'stdio-jsonrpc-ndjson' ephemeral); `presentation` exposes WHETHER a human can
-   * attach a TUI ('tmux-tui') or not ('none'). Present only for harness-broker
-   * runtimes with a parseable hosting state.
+   * attach ('tmux-tui' TUI, 'observer' renderer pane) or not ('none').
+   * Present only for harness-broker runtimes with a parseable hosting state.
    */
   brokerEndpoint?: 'unix-jsonrpc-ndjson' | 'stdio-jsonrpc-ndjson' | undefined
-  presentation?: 'none' | 'tmux-tui' | undefined
+  presentation?: 'none' | 'tmux-tui' | 'observer' | undefined
   operatorAttachable?: boolean | undefined
 }
 

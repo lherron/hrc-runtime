@@ -40,6 +40,7 @@ import {
 } from './aspd-headless-start.js'
 import {
   decideCodexAppServerPresentation,
+  decideMuseServePresentation,
   extractPiSdkBrokerCredentialEnv,
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
@@ -68,6 +69,7 @@ import {
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+  HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV,
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -680,11 +682,18 @@ export async function startHeadlessBrokerRuntime(
     // an env var (unset → ordinary headless, behaviour-preserving); the decision
     // gates on driver applicability (codex-app-server only). The trigger is the
     // POLICY, never the driver name alone.
-    const operatorPresentation = decideCodexAppServerPresentation({
-      operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
-      brokerDriver: compiled.profile.brokerDriver,
-      requestedOperator: turnIntent.presentation?.operator,
-    })
+    const operatorPresentation =
+      compiled.profile.brokerDriver === 'muse-serve'
+        ? decideMuseServePresentation({
+            operatorPresentation: process.env[HRC_MUSE_SERVE_OPERATOR_PRESENTATION_ENV],
+            brokerDriver: compiled.profile.brokerDriver,
+            requestedOperator: turnIntent.presentation?.operator,
+          })
+        : decideCodexAppServerPresentation({
+            operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
+            brokerDriver: compiled.profile.brokerDriver,
+            requestedOperator: turnIntent.presentation?.operator,
+          })
     const mergedDispatchEnv = { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv }
     const result = await controller.start({
       plan: compiled.plan,
@@ -705,7 +714,8 @@ export async function startHeadlessBrokerRuntime(
         headlessRoute: 'durable-leased',
         brokerTransport: 'unix-jsonrpc-ndjson',
         // The presenter policy the controller routes on: 'tmux-tui' selects the
-        // tmux-tui allocator + observer socket; 'none' is ordinary headless.
+        // tmux-tui allocator + observer socket, 'observer' selects the
+        // observer-pane allocator + observer socket; 'none' is ordinary headless.
         operatorPresentation,
         operatorPresentationSource: operatorPresentationSource(turnIntent),
       },

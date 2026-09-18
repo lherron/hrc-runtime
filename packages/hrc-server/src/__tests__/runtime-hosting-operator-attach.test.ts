@@ -44,10 +44,12 @@ import { canOperatorAttach } from '../broker/runtime-hosting'
 import {
   flatInteractiveBrokerBlock,
   flatInteractiveRuntime,
+  flatObserverRuntime,
   makeRuntime,
   noBrokerBlockRuntime,
   normalizedHeadlessRuntime,
   normalizedInteractiveRuntime,
+  normalizedObserverRuntime,
 } from './broker-runtime-hosting.fixture.js'
 describe('canOperatorAttach', () => {
   it('returns true for normalized interactive (presentation.kind = tmux-tui)', () => {
@@ -103,6 +105,14 @@ describe('canOperatorAttach', () => {
       },
     })
     expect(canOperatorAttach(flatNoTui)).toBe(false)
+  })
+
+  it('returns true for normalized observer (presentation.kind = observer)', () => {
+    expect(canOperatorAttach(normalizedObserverRuntime)).toBe(true)
+  })
+
+  it('returns true for flat observer shape (has observerWindow, no tuiWindow)', () => {
+    expect(canOperatorAttach(flatObserverRuntime)).toBe(true)
   })
 })
 
