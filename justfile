@@ -16,7 +16,8 @@ info:
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
     @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
-    @echo "  just install   - Atomic install; refuses uncommitted SOURCE unless allow-dirty=1"
+    @echo "  just install-dev - Local install: build the working tree and cut the CLI over (no push)"
+    @echo "  just install   - Release install; refuses an unpushed, dirty, or uncontained tree"
     @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
     @echo "  just env-down  - Tear that environment down"
     @echo "  just e2e       - Run the suite against the provisioned environment"
@@ -183,6 +184,8 @@ rebuild:
 install *options:
     #!/usr/bin/env bash
     set -euo pipefail
+    echo "[install] RELEASE path: requires a clean tree pushed to and contained by origin/main."
+    echo "[install] For a LOCAL install use \`just install-dev\` -- same build and cutover, no push."
     # Repo-owned hooks, not lefthook's generated template. Set here because a
     # fresh clone otherwise silently falls back to .git/hooks, whose final branch
     # is `pnpm lefthook` — which materialises a pnpm node_modules that shadows the

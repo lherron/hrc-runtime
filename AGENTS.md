@@ -7,7 +7,7 @@ Verdaccio registry at `http://mini:4873/`.
 
 ## Build & deploy
 
-Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: push before `just install` (a main-checkout install refuses an unpushed or non-clean tree); install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple — and so does one after a `pull-deps` that did not move `bun.lock`, so read back `git log -1 -- bun.lock` before installing; never `bun update`/`bun add` a synced package (`check-lock-coherence` refuses the split lock it leaves); fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
+Read `~/praesidium/build_deploy_guide.md` before building, installing, or promoting anything in agent-spaces, hrc-runtime, or agent-control-plane. It is the agent digest of the published references `/a/hrc-build-deploy-guide` and `/a/asp-hrc-acp-dev-guide` on the taskboard. The rules that bite most: push before `just install` (a main-checkout install refuses an unpushed or non-clean tree; for a local install use `just install-dev`, which needs neither); install ≠ activate (`hrc server restart --reason …`, then read back `runningEqualsInstalled`); an HRC install before `just pull-deps` ships the OLD agent-spaces tuple — and so does one after a `pull-deps` that did not move `bun.lock`, so read back `git log -1 -- bun.lock` before installing; never `bun update`/`bun add` a synced package (`check-lock-coherence` refuses the split lock it leaves); fleet promotion is `just deploy-*` / `just fleet-status`, never by hand.
 
 ## Validation
 
@@ -118,6 +118,13 @@ gateway-discord through the RenderFrame contract.
 
 - Plist: `launchd/com.praesidium.hrc-server.plist` (canonical source) → `~/Library/LaunchAgents/`.
 - Socket `var/run/hrc/hrc.sock`; state DB `var/state/hrc/state.sqlite`; logs `var/logs/hrc-server.{log,err.log}`.
+
+**Use `just install-dev` for local installs.** It runs the same atomic build,
+entrypoint smoke, and CLI cutover against the working tree as it stands — no push,
+no clean-tree requirement, no `origin/main` containment — and publishes under the
+`worktree` tag, so the `latest` channel other repos pull is untouched. `just
+install` is the release path: use it when the commit is pushed and the install is
+meant to be promoted to the fleet.
 
 `just install` builds an immutable release away from the checkout and atomically
 advances the shared `hrc` / `hrcchat` indirection only after build, entrypoint
